@@ -444,9 +444,13 @@
   - **Task Impact**: 0% to #7 (0% overall).
   - **Summary**: Extract the specified 1 MiB blocked-stdin input from the duplex fixture, preserving exact acceptance documentation.
 
-- **Commit `HEAD`**: `fix(test): honor explicit path mapping grammar in VM cmd case`
+- **Commit `7e95c60`**: `fix(test): honor explicit path mapping grammar in VM cmd case`
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: Real Viosock stream, exit, and argv cases pass. Run cmd slash-switch acceptance without export translation, whose documented strict grammar treats slash-prefixed tokens as POSIX paths; correct the manual export example.
+
+- **Commit `HEAD`**: `fix(test): expect CLI status for missing guest programs`
+  - **Task Impact**: 0% to #6 and #7 (0% overall).
+  - **Summary**: The guest returns wire spawn status 2, which the existing host CLI deliberately maps to shell status 127. Assert the user-visible status in VM acceptance.
 
 ## Verification snapshot
 

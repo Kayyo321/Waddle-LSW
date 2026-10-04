@@ -25,7 +25,7 @@ printf 'args ok\n' > "$work_dir/expected"; cmp "$work_dir/expected" "$work_dir/o
 status=0
 ./build/waddle exec --pipe --vsock-cid "$WADDLE_VSOCK_CID" --timeout 60 --cwd 'C:\' -- cmd.exe /c 'exit 37' > "$work_dir/out" 2> "$work_dir/err" || status=$?
 test "$status" -eq 37
-run_status 2 no-such-waddle-acceptance-program.exe
+run_status 127 no-such-waddle-acceptance-program.exe
 mkdir "$source_path/waddle_日本語"
 "${base[@]}" --cwd "$source_path/waddle_日本語" --env WADDLE_TEST=first --env waddle_test=日本語 -- "$fixture" --child context > "$work_dir/out"
 printf 'context ok\n' > "$work_dir/expected"; cmp "$work_dir/expected" "$work_dir/out"
