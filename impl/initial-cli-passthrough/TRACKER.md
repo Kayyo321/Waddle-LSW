@@ -17,10 +17,10 @@
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 85% | Raw/ConPTY process lifecycle implemented; native Windows verification pending |
-| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 75% | Session dispatch and ordered teardown implemented; listener and native verification pending |
+| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 85% | Viosock/AF_UNIX listener and session pumps implemented; native Windows/VSOCK verification pending |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `94.5%`
+**Total Feature Completion**: `95.5%`
 
 ## Commit History & Progress Log
 
@@ -204,9 +204,13 @@
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Dispatch one validated spawn, send success before workers, monitor child/failure, terminate descendants, cancel and join input, close ConPTY while output drains, join readers, then send exit. Release session resources on every path; strict cross-build passes.
 
-- **Commit `HEAD`**: `feat(guest): parse listener ports with bounds-checked Zig`
+- **Commit `cff37e5`**: `feat(guest): parse listener ports with bounds-checked Zig`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Validate decimal listener ports without C string-to-integer parsing; reject zero, signs, whitespace and overflow. Native tests cover the full unsigned boundary.
+
+- **Commit `HEAD`**: `feat(guest): listen on native Viosock and Windows UNIX sockets`
+  - **Task Impact**: +10% to #7 (+1% overall).
+  - **Summary**: Query the installed Viosock family through its device IOCTL, bind the independently declared 12-byte native ABI, provide AF_UNIX local testing, and dispatch sequential sessions with noninheritable sockets and handshake deadlines. Strict Windows object build passes.
 
 ## Verification snapshot
 
