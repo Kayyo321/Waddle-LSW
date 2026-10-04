@@ -17,10 +17,10 @@
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
-| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Pending | 10% | 0% | Multi-threaded I/O forwarding and exit code retrieval |
+| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 15% | Bounded guest wire header parser complete; listener and pump pending |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `70.0%`
+**Total Feature Completion**: `71.5%`
 
 ## Commit History & Progress Log
 
@@ -156,9 +156,13 @@
   - **Task Impact**: +10% to #5 (+1% overall).
   - **Summary**: Accept at most 64 validated source=drive rules; reject normalized duplicate sources; map argv and cwd and free every owned source on all exits.
 
-- **Commit `HEAD`**: `test(paths): verify export selection and invalid API inputs`
+- **Commit `dd53ebe`**: `test(paths): verify export selection and invalid API inputs`
   - **Task Impact**: +10% to #5 (+1% overall).
   - **Summary**: Verify longest-prefix selection, component boundaries, root fallback, missing exports, NULL pointers, invalid syntax, rule limits and relative-path preservation.
+
+- **Commit `HEAD`**: `feat(guest): validate bounded wire headers in Zig`
+  - **Task Impact**: +15% to #7 (+1.5% overall).
+  - **Summary**: Add allocation-free header validation before payload allocation, enforce direction/session/sequence/size, and provide CRC verification; native adversarial header tests pass.
 
 ## Verification snapshot
 
