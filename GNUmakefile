@@ -63,7 +63,7 @@ GuestSources = src/guest_listener.c src/guest_session.c src/guest_wire.c src/gue
 GuestHeaders = src/guest_session.h src/guest_wire.h src/guest_pump.h src/guest_process.h src/guest_environment.h src/guest_codec.h
 
 build/guest_codec.obj: src/guest_codec.zig | build
-	$(ZIG) build-obj $< -target x86_64-windows-gnu -O ReleaseSafe -lc -fcompiler-rt -femit-bin=$@
+	$(ZIG) build-obj $< -target x86_64-windows-gnu -O ReleaseSafe -lc -fno-compiler-rt -femit-bin=$@
 
 build/waddle-guest-exec.exe: $(GuestSources) $(GuestHeaders) build/guest_codec.obj | build
 	$(ZIG) cc $(WindowsFlags) $(GuestSources) build/guest_codec.obj -lws2_32 -o $@

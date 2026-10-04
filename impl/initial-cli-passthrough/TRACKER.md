@@ -248,9 +248,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add make windows-test for native execution of the cross-buildable AF_UNIX regression suite, with strict test compilation and explicit dependencies.
 
-- **Commit `HEAD`**: `ci(guest): run regressions on a native Windows runner`
+- **Commit `f63f27d`**: `ci(guest): run regressions on a native Windows runner`
   - **Task Impact**: 0% across #1–#8 (0% overall; first CI run pending).
   - **Summary**: Add Windows 2022 CI with a checksum-pinned Zig 0.13 toolchain, strict guest/fixture builds, native parser allocator tests and AF_UNIX regressions; initialize any repository submodules recursively.
+
+- **Commit `HEAD`**: `fix(build): link Windows compiler runtime at the executable boundary`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Native Windows CI exposed Zig 0.13 COFF build-obj inability to merge compiler-runtime objects. Disable object-level runtime emission and let zig cc provide it at final link; complete Linux-to-Windows cross-build passes.
 
 ## Verification snapshot
 
