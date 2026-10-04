@@ -180,7 +180,14 @@ static void drain(SOCKET socket, const char *out, const char *err, uint32_t code
                     check(want != NULL && offset < strlen(want) && body[j] == (uint8_t)want[offset], "stream content");
                 }
             }
+            if (large && received[index] == 0) {
+                printf("duplex: first stream %u frame (%zu bytes)\n", index + 1, length - 8);
+            }
+            size_t previous = received[index];
             received[index] += length - 8;
+            if (large && previous / 1048576 != received[index] / 1048576) {
+                printf("duplex: stream %u received %zu MiB\n", index + 1, received[index] / 1048576);
+            }
             if (signal && !signaled && index == 0 && received[0] >= 6) {
                 uint8_t control[4]; put32(control, (uint32_t)signal);
                 send_frame(socket, &outgoing, 5, control, sizeof(control)); signaled = 1;
@@ -219,6 +226,9 @@ static DWORD WINAPI binary_writer(void *context) {
     for (size_t offset = 0; offset < 5 * 1048576; offset += 16384) {
         for (size_t i = 0; i < 16384; i++) { body[i + 8] = (uint8_t)((offset + i) % 251); }
         send_frame(writer->socket, &writer->sequence, 3, body, sizeof(body));
+        if (offset == 0 || (offset + 16384) % 1048576 == 0) {
+            printf("duplex: stdin sent %zu bytes\n", offset + 16384);
+        }
     }
     send_eof(writer->socket, &writer->sequence);
     return 0;

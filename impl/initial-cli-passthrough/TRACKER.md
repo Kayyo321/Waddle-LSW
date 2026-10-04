@@ -368,9 +368,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Make the native fixture socket nonblocking too; handle partial transfers with readiness waits and explicit deadlines, and wait for expected closure without racing would-block. Prevent client-side blocking calls from masking server duplex behavior.
 
-- **Commit `HEAD`**: `fix(guest): observe graceful EOF without consuming input frames`
+- **Commit `0bcc6d6`**: `fix(guest): observe graceful EOF without consuming input frames`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Poll read readiness as well as exceptional socket state and use a bounded nonblocking peek to distinguish graceful EOF from queued data; tolerate a concurrent receive worker consuming readiness before the peek.
+
+- **Commit `HEAD`**: `test(guest): locate duplex stalls with bounded progress output`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Report the first stream/input chunk and one message per MiB during the native duplex fixture so provider stalls are attributed to a direction and byte boundary.
 
 ## Verification snapshot
 
