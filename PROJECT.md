@@ -60,7 +60,21 @@ To ensure strict consistency, aesthetic elegance, and seamless cross-language in
   - Tests may be authored in Zig using its native, built-in test specifications (`test "..." { ... }`).
   - Leverages Zig's native test runner (`zig test`), standard testing assertions (`std.testing.expect`, `std.testing.expectEqual`), and zero-overhead C interop (`@cImport`) to test C ABI libraries, Zig components, and system interfaces natively without external test framework dependencies.
 
-### 2.5 External Dependency & Git Submodule Policy
+### 2.5 Zero-Leak Memory Safety Policy & Enforcement
+Waddle-LSW enforces an uncompromising, zero-tolerance policy against memory leaks, use-after-free conditions, double-free bugs, and unverified buffer overflows across all components:
+- **Mandatory Zero-Leak Invariant**:
+  - No code may leak dynamic memory under any normal execution path, error unwinding branch, cancellation signal, or protocol failure condition.
+  - Every single allocated byte must have a deterministically proven, documented deallocation site. Memory leaks are classified as critical severity bugs and will cause automated build rejections.
+- **Strict Ownership & Resource Lifecycle Rules**:
+  - **Explicit Ownership Transfers in C**: Every function allocating or transferring memory must explicitly state ownership transfer in its API documentation. Systems must provide symmetric allocator/deallocator pairs (e.g., `*_create()` and `*_destroy()`, or `*_init()` and `*_free()`).
+  - **Memory Safety via Zig**: Components handling untrusted inputs, variable-length serialization, and network parsing are implemented in Zig, leveraging bounds-checked slices and explicit allocators without runtime garbage collection.
+  - **RAII in C++ Interop**: Where C++ compatibility boundaries are required, raw pointer ownership (`new`/`delete`) is strictly prohibited in favor of standard RAII containers (`std::unique_ptr`, `std::vector`, `std::span`).
+- **Enforced Leak Detection via Sanitizers**:
+  - All test suites must execute clean runs under **LLVM LeakSanitizer (`-fsanitize=leak` / `-fsanitize=address`)** with `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1`.
+  - In Zig test harnesses, tests must utilize `std.testing.allocator`, which automatically detects and fails on un-freed memory upon test completion.
+  - Test suites with even a single leaked byte are considered broken and cannot be merged.
+
+### 2.6 External Dependency & Git Submodule Policy
 - **Mandatory Git Submodule Architecture**:
   - All external third-party libraries, vendor SDKs, protocols, and header collections not provided by standard host/guest base system packages must be vendored as **Git submodules** residing under the dedicated `submodules/` directory (e.g., `submodules/<library-name>`).
   - Loose source vendoring directly into the repository tree without submodule tracking is strictly prohibited.
