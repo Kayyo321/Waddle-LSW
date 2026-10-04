@@ -94,6 +94,36 @@ Diagnostics & Tooling:
   waddle --help, -h              Show comprehensive help message
 ```
 
+### 1.5 Primary Subsystem & Filesystem Validation Milestone
+
+This feature is designed around a mandatory, end-to-end acceptance milestone demonstrating a live, responsive background subsystem and unified filesystem interoperability:
+
+1. **Step 1: Start Subsystem**:
+   ```bash
+   $ waddle start
+   ```
+   Starts `waddled`, spawns `virtiofsd` (exporting `/home/$USER`), boots `qemu-system-x86_64` with KVM acceleration, performs QMP handshake, and verifies guest agent readiness over VSOCK.
+2. **Step 2: Enter Integrated Terminal**:
+   ```bash
+   $ waddle
+   ```
+   Invoked without flags from any host directory (e.g. `/home/dev/Desktop` or `/home/dev/Waddle-LSW`). Auto-maps the current working directory to the guest drive (e.g. `Z:\home\dev\Desktop` or `Z:\home\dev\Waddle-LSW`) and attaches the user's terminal to an interactive ConPTY session (`cmd.exe` or `powershell.exe`).
+3. **Step 3: List Working Directory**:
+   ```cmd
+   Z:\home\dev\Desktop> dir
+   ```
+   Lists the live contents of the host Linux directory directly inside the Windows guest shell.
+4. **Step 4: Create Directory from Inside Guest**:
+   ```cmd
+   Z:\home\dev\Desktop> mkdir new_project_folder
+   ```
+5. **Step 5: Verify Live Linux Visibility**:
+   The directory `new_project_folder` immediately appears on the host Linux filesystem without file-copying, caching delays, or manual sync commands:
+   ```bash
+   $ ls -ld /home/dev/Desktop/new_project_folder
+   drwxr-xr-x 2 dev dev 4096 Oct  4 19:45 /home/dev/Desktop/new_project_folder
+   ```
+
 ---
 
 ## 2. Architecture & Inter-Component Interactions
