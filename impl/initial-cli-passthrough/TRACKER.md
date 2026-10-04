@@ -256,9 +256,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Native Windows CI exposed Zig 0.13 COFF build-obj inability to merge compiler-runtime objects. Disable object-level runtime emission and let zig cc provide it at final link; complete Linux-to-Windows cross-build passes.
 
-- **Commit `HEAD`**: `fix(guest): detect disconnect while stdin is backpressured`
+- **Commit `962dd9e`**: `fix(guest): detect disconnect while stdin is backpressured`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Monitor exceptional socket conditions in the main child wait loop without consuming input frames, so pipe writes cannot hide peer disconnection; session failure cancels blocked stdin and kills the child tree.
+
+- **Commit `HEAD`**: `fix(build): package the Windows Zig codec as a static library`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Zig 0.13 native COFF still emits multiple objects with libc despite disabling compiler runtime; package the parser using build-lib -static, which supports the native archive boundary. Cross-linked guest and fixture pass.
 
 ## Verification snapshot
 

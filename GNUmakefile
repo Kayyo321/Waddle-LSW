@@ -62,16 +62,16 @@ WindowsFlags = -target x86_64-windows-gnu -U_WIN32_WINNT -D_WIN32_WINNT=0x0A00 -
 GuestSources = src/guest_listener.c src/guest_session.c src/guest_wire.c src/guest_input.c src/guest_output.c src/guest_process.c src/guest_environment.c
 GuestHeaders = src/guest_session.h src/guest_wire.h src/guest_pump.h src/guest_process.h src/guest_environment.h src/guest_codec.h
 
-build/guest_codec.obj: src/guest_codec.zig | build
-	$(ZIG) build-obj $< -target x86_64-windows-gnu -O ReleaseSafe -lc -fno-compiler-rt -femit-bin=$@
+build/guest_codec.lib: src/guest_codec.zig | build
+	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -lc -fno-compiler-rt -femit-bin=$@
 
-build/waddle-guest-exec.exe: $(GuestSources) $(GuestHeaders) build/guest_codec.obj | build
-	$(ZIG) cc $(WindowsFlags) $(GuestSources) build/guest_codec.obj -lws2_32 -o $@
+build/waddle-guest-exec.exe: $(GuestSources) $(GuestHeaders) build/guest_codec.lib | build
+	$(ZIG) cc $(WindowsFlags) $(GuestSources) build/guest_codec.lib -lws2_32 -o $@
 
 windows: build/waddle-guest-exec.exe
 
-build/windows_guest_test.exe: tests/windows_guest.c src/guest_codec.h build/guest_codec.obj | build
-	$(ZIG) cc $(WindowsFlags) tests/windows_guest.c build/guest_codec.obj -lws2_32 -municode -o $@
+build/windows_guest_test.exe: tests/windows_guest.c src/guest_codec.h build/guest_codec.lib | build
+	$(ZIG) cc $(WindowsFlags) tests/windows_guest.c build/guest_codec.lib -lws2_32 -municode -o $@
 
 windows-test: windows build/windows_guest_test.exe
 	./build/windows_guest_test.exe
