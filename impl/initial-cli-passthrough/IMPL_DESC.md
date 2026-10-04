@@ -1,0 +1,501 @@
+# Implementation Description: Initial CLI Passthrough (`feature/initial-cli-passthrough`)
+
+## 1. Title & High-Level Scope
+
+### 1.1 Document & Feature Title
+- **Feature Name**: Initial CLI Passthrough Architecture & Implementation (`feature/initial-cli-passthrough`)
+- **Subsystem Category**: Component 4 (CLI Passthrough & Process Execution Bridge) & Component 2 (IPC Transport Layer)
+- **Primary Languages**: C (C11/C17/C23) and Zig (0.13+)
+- **Language Ceiling**: C++ (C++20) strictly where external Win32/C++ APIs make C/Zig impractical; pure C ABI across all boundary definitions.
+
+### 1.2 High-Level Vision & Purpose
+In traditional virtualization setups, executing a command inside a guest OS requires heavy external network services (such as SSH, WinRM, or PowerShell remoting) with noticeable latency, complex authentication, and poor integration with the host environment.
+
+Waddle-LSW reverses the WSL paradigm: it enables a Linux user to run Windows executables, command-line utilities, shells, and batch scripts directly from their native Linux terminal emulator (e.g. Alacritty, Foot, Kitty, GNOME Terminal) as if they were native Linux binaries.
+
+The command:
+```bash
+waddle exec -- powershell.exe -NoProfile -Command "Get-Service | Select-Object -First 5"
+```
+or transparently:
+```bash
+waddle run cmd.exe /c "dir /b C:\Windows"
+```
+must execute inside the Windows guest VM, stream `stdin`, `stdout`, and `stderr` bidirectionally with sub-millisecond latency over `AF_VSOCK` or VirtIO-Serial, correctly forward terminal window resizes (`SIGWINCH`), translate signals (`SIGINT` / `Ctrl+C` into console control events), handle interactive terminal applications via Windows Pseudo Console (ConPTY), translate filesystem paths between Linux host paths and Windows guest drive letters (mapped via VirtIO-FS/WinFsp), and faithfully propagate process exit codes back to the calling Linux shell.
+
+### 1.3 Boundaries: In-Scope vs. Out-of-Scope
+
+#### In-Scope:
+1. **Shared Wire Protocol Specification & C Header (`include/waddle/cli_protocol.h`)**:
+   - Strict C ABI header defining packet framing, magic numbers, versioning, message types, stream identifiers, error codes, and aligned payload structures.
+   - Little-endian encoding with 64-bit alignment and 32-bit CRC or header sanity verification.
+2. **Windows Command Line Quoting & Escaping Engine**:
+   - Fully compliant inverse implementation of `CommandLineToArgvW` in C/Zig.
+   - Deterministic quoting and escaping of special characters, quotes (`"`), backslashes (`\`), and whitespace to construct unambiguous Win32 command lines.
+3. **Linux Host CLI Client (`waddle-cli` / `waddle`)**:
+   - Command-line argument parsing supporting execution options (`--interactive`/`-i`, `--tty`/`-t`, `--cwd`, `--env`, `--timeout`, `--socket-path`, `--vsock-cid`, `--vsock-port`).
+   - Terminal mode configuration using POSIX `termios`: query current terminal attributes, switch to raw mode for interactive sessions, restore canonical mode on exit or crash.
+   - Signal handling: catch `SIGWINCH` to forward terminal dimension updates (`winsize` -> ConPTY rows/cols); catch `SIGINT`/`SIGTERM` to transmit cancellation signals to the guest process without abruptly dropping the transport link.
+   - Asynchronous I/O multiplexer using `poll()` / `epoll()` to stream host `STDIN` into the IPC channel and demultiplex incoming `STDOUT` and `STDERR` frames to the host standard outputs.
+   - Exit code propagation: exiting with the exact exit code of the guest process.
+4. **Windows Guest Console Execution Agent (`waddle-guest-exec.exe`)**:
+   - Low-latency listener over `AF_VSOCK` (port 5242) and VirtIO-Serial / local test sockets.
+   - Process launcher supporting two execution modes:
+     - **Mode A: Raw Anonymous Pipes**: For non-interactive execution, batch scripts, and command piping (`| grep`, redirection), creating separate pipes for `hStdInput`, `hStdOutput`, `hStdError`.
+     - **Mode B: ConPTY (Windows Pseudo Console)**: Using Windows `CreatePseudoConsole`, `STARTUPINFOEXW`, and `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` for interactive terminal sessions, full ANSI/VT100 escape code processing, and interactive curses/REPL utilities.
+   - Multi-threaded or overlapped asynchronous I/O pump bridging Windows pipe handles and the guest transport socket.
+   - Signal mapping: translating `WADDLE_SIGNAL_SIGINT` into `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)` or `CTRL_BREAK_EVENT`.
+   - Process termination detection using `WaitForSingleObject` and `GetExitCodeProcess`, ensuring all remaining buffered output is flushed before sending the final exit notification.
+5. **Path & Environment Translation Engine**:
+   - Rule-based translation mapping host POSIX paths (e.g. `/home/dev/project`) to guest Windows drive paths (e.g. `Z:\home\dev\project` or `\\waddle-host\shared\...`).
+   - Environment variable inheritance filter and translator.
+6. **Host Loopback Mock Server & Test Harness**:
+   - Linux-based mock server mimicking the guest console agent over a Unix domain socket (`/tmp/waddle-mock.sock`) to allow comprehensive unit and integration testing of the host CLI tool, argument escaping, raw terminal handling, and exit code propagation directly on the Linux host development environment.
+
+#### Out-of-Scope:
+- Wayland window surface capture, DXGI surface tapping, and compositor blitting (covered by Component 1 & Component 3).
+- Windows Service Control Manager (SCM) background daemon installation (the agent runs as a standalone userland executable or autostart background process during this initial feature).
+- Windows GUI window integration or borderless floating window management (handled by Wayland compositor client).
+- VirtIO-FS kernel driver development (standard virtiofs drivers and WinFsp are utilized).
+
+---
+
+## 2. Architecture & Inter-Component Interactions
+
+### 2.1 Architectural Flow Diagram
+
+```
++-----------------------------------------------------------------------------------------+
+|                                    LINUX HOST ENVIRONMENT                               |
+|                                                                                         |
+|   +---------------------------------------------------------------------------------+   |
+|   |  User Terminal (Alacritty / Foot / Kitty / GNOME Terminal / Bash / Zsh)         |   |
+|   |  $ waddle exec -i -- powershell.exe -NoExit                                      |   |
+|   +---------------------------------------+-----------------------------------------+   |
+|                                           | STDIN / STDOUT / STDERR                     |
+|                                           v                                             |
+|   +---------------------------------------------------------------------------------+   |
+|   |  Host CLI Utility (`waddle` / `waddle-cli`) [Written in C / Zig]                 |   |
+|   |  - Parses CLI flags, validates command arguments, escapes Windows cmdline       |   |
+|   |  - Queries `isatty(STDIN_FILENO)`, configures raw `termios` if interactive      |   |
+|   |  - Traps `SIGWINCH` (updates rows/cols) and `SIGINT` (forwards Ctrl+C signal)   |   |
+|   |  - Non-blocking multiplexing event loop (`poll` / `epoll`)                      |   |
+|   +---------------------------------------+-----------------------------------------+   |
+|                                           | Bidirectional Binary Stream                 |
+|                                           | (`waddle_cli_msg_header_t` frames)          |
+|                                           v                                             |
+|   +---------------------------------------------------------------------------------+   |
+|   |  Host Transport Socket Driver                                                   |   |
+|   |  - Linux `AF_VSOCK` (socket(AF_VSOCK, SOCK_STREAM, 0))                          |   |
+|   |  - Fallback / Mock: Unix Domain Socket (`/tmp/waddle-mock.sock`)                |   |
+|   +---------------------------------------+-----------------------------------------+   |
++-------------------------------------------|---------------------------------------------+
+                                            |
+                         HYPERVISOR / KVM BOUNDARY (VSOCK CID: 3, Port: 5242)
+                                            |
++-------------------------------------------|---------------------------------------------+
+|                                           v                                             |
+|   +---------------------------------------------------------------------------------+   |
+|   |  Guest Transport Socket Driver                                                  |   |
+|   |  - Windows `AF_HYPERV` / VirtIO-Serial / WinSock AF_VSOCK                       |   |
+|   +---------------------------------------+-----------------------------------------+   |
+|                                           | Bidirectional Binary Stream                 |
+|                                           v                                             |
+|   +---------------------------------------------------------------------------------+   |
+|   |  Guest Console Execution Agent (`waddle-guest-exec.exe`) [Written in C / Zig]  |   |
+|   |  - Listens on VSOCK port 5242; accepts incoming client connection               |   |
+|   |  - Decodes `WADDLE_MSG_SPAWN_REQ`, verifies session ID and security credentials |   |
+|   |  - Translates working directory and environment variables                       |   |
+|   |  - Branch:                                                                      |   |
+|   |      * If Interactive: Instantiates Win32 ConPTY (`CreatePseudoConsole`)        |   |
+|   |      * If Pipe Mode:   Creates anonymous pipes (`CreatePipe`)                   |   |
+|   |  - Spawns child process via `CreateProcessW` with `STARTUPINFOEXW`              |   |
+|   |  - Launches reader/writer worker threads with overlapped I/O                    |   |
+|   |  - Monitors process exit (`WaitForSingleObject`) -> sends exit code frame       |   |
+|   +-------------------+-----------------------------------+-------------------------+   |
+|                       | (Input Pipe)                      | (Output Pipe)               |
+|                       v                                   ^                             |
+|   +-------------------------------------------------------+-------------------------+   |
+|   |  Target Windows Process                                                         |   |
+|   |  (e.g., `cmd.exe`, `powershell.exe`, `cl.exe`, `python.exe`, `cargo.exe`)       |   |
+|   +---------------------------------------------------------------------------------+   |
+|                                                                                         |
+|                                 WINDOWS GUEST ENVIRONMENT                               |
++-----------------------------------------------------------------------------------------+
+```
+
+### 2.2 System Layers and Boundaries
+1. **Userland Presentation Layer (Host)**:
+   - Preserves user terminal escape sequences (RGB truecolor, 256 colors, cursor positioning, mouse reporting if enabled).
+   - In raw mode, input is passed byte-for-byte (including `\x03` for Ctrl+C, `\x04` for Ctrl+D, arrow keys, etc.) to the guest console agent.
+2. **Framing & Transport Layer**:
+   - Fixed 32-byte header `waddle_cli_msg_header_t` prepended to every message payload.
+   - Multiplexes multiple logical streams over a single stream-oriented socket connection (`AF_VSOCK` or mock UNIX domain socket).
+   - Eliminates head-of-line blocking for control signals: resize and signal packets are small (32-byte header + 8-byte body) and can be injected immediately between stream chunks.
+3. **Execution & Virtual Terminal Layer (Guest)**:
+   - For interactive sessions, Windows ConPTY acts as a high-fidelity translation layer between Win32 Console subsystem calls (`WriteConsoleOutput`, `SetConsoleCursorPosition`) and modern VT100/ANSI escape codes, streaming them back to the Linux host terminal.
+   - For non-interactive batch commands, direct Win32 pipes guarantee that raw binary streams (such as piped files, tarballs, or binary compiler artifacts) are not altered by console line wrapping or VT escape code insertion.
+
+---
+
+## 3. Data Structures, Protocols & Memory Layouts
+
+All data structures are defined with explicit integer widths, 64-bit alignment, and no compiler-dependent padding. The wire protocol is native little-endian.
+
+### 3.1 Common Message Header (`waddle_cli_msg_header_t`)
+
+```c
+#ifndef WADDLE_CLI_PROTOCOL_H
+#define WADDLE_CLI_PROTOCOL_H
+
+#include <stdint.h>
+#include <stddef.h>
+
+#define WADDLE_CLI_MAGIC 0x57444C43 /* 'WDLC' in ASCII, Little-Endian: 'C', 'L', 'D', 'W' */
+#define WADDLE_CLI_VERSION 1
+#define WADDLE_DEFAULT_VSOCK_PORT 5242
+#define WADDLE_MAX_PAYLOAD_SIZE (1024 * 1024) /* 1 MB maximum single payload chunk */
+
+#pragma pack(push, 1)
+
+typedef struct {
+    uint32_t magic;          /* Magic identifier: WADDLE_CLI_MAGIC (0x57444C43) */
+    uint16_t version;        /* Protocol version: WADDLE_CLI_VERSION (1) */
+    uint16_t msg_type;       /* Message type: enum waddle_cli_msg_type */
+    uint64_t session_id;     /* Unique process session ID */
+    uint32_t payload_len;    /* Byte length of the following payload (0 to 1MB) */
+    uint32_t flags;          /* Message-specific flags */
+    uint32_t sequence;       /* Monotonically increasing sequence number */
+    uint32_t crc32;          /* CRC-32/ISO-HDLC checksum of payload, or 0 if disabled */
+} waddle_cli_msg_header_t;
+
+#pragma pack(pop)
+```
+
+### 3.2 Message Types (`waddle_cli_msg_type_t`)
+
+```c
+typedef enum {
+    WADDLE_MSG_SPAWN_REQ        = 0x0001, /* Host -> Guest: Request process execution */
+    WADDLE_MSG_SPAWN_RESP       = 0x0002, /* Guest -> Host: Process spawn confirmation / error */
+    WADDLE_MSG_STREAM_DATA      = 0x0003, /* Bidirectional: Multiplexed standard I/O data */
+    WADDLE_MSG_TERMINAL_RESIZE  = 0x0004, /* Host -> Guest: Window dimensions change (SIGWINCH) */
+    WADDLE_MSG_SIGNAL_EVENT     = 0x0005, /* Host -> Guest: Forwarded signal (Ctrl+C, Ctrl+Break) */
+    WADDLE_MSG_PROCESS_EXIT     = 0x0006, /* Guest -> Host: Process termination & exit code */
+    WADDLE_MSG_HEARTBEAT_PING   = 0x0007, /* Host -> Guest / Guest -> Host: Keepalive check */
+    WADDLE_MSG_HEARTBEAT_PONG   = 0x0008, /* Response to HEARTBEAT_PING */
+    WADDLE_MSG_STREAM_EOF       = 0x0009, /* Bidirectional: Indicates EOF on specific stream */
+    WADDLE_MSG_ERROR            = 0x00FF  /* Fatal protocol or execution error */
+} waddle_cli_msg_type_t;
+```
+
+### 3.3 Stream Identifiers (`waddle_stream_id_t`)
+
+```c
+typedef enum {
+    WADDLE_STREAM_STDIN  = 0, /* Standard Input (Host -> Guest) */
+    WADDLE_STREAM_STDOUT = 1, /* Standard Output (Guest -> Host) */
+    WADDLE_STREAM_STDERR = 2  /* Standard Error (Guest -> Host) */
+} waddle_stream_id_t;
+```
+
+### 3.4 Execution Flags (`waddle_spawn_flags_t`)
+
+```c
+typedef enum {
+    WADDLE_SPAWN_FLAG_INTERACTIVE = (1 << 0), /* Allocate ConPTY pseudo console */
+    WADDLE_SPAWN_FLAG_RAW_PIPES   = (1 << 1), /* Use raw Win32 pipes (non-interactive) */
+    WADDLE_SPAWN_FLAG_INHERIT_ENV = (1 << 2), /* Merge host env into guest process env */
+    WADDLE_SPAWN_FLAG_TRANSLATE_PATH = (1 << 3), /* Auto-translate Linux paths in argv/cwd */
+    WADDLE_SPAWN_FLAG_ELEVATED    = (1 << 4)  /* Request administrator elevation if supported */
+} waddle_spawn_flags_t;
+```
+
+### 3.5 Payload Payloads and Memory Layouts
+
+#### 3.5.1 Spawn Request (`waddle_msg_spawn_req_t`)
+```c
+#pragma pack(push, 1)
+
+typedef struct {
+    uint32_t spawn_flags;    /* Bitmask of waddle_spawn_flags_t */
+    uint16_t initial_rows;   /* Terminal rows (e.g. 24) */
+    uint16_t initial_cols;   /* Terminal columns (e.g. 80) */
+    uint16_t x_pixels;       /* Terminal horizontal pixels (optional, 0 if unknown) */
+    uint16_t y_pixels;       /* Terminal vertical pixels (optional, 0 if unknown) */
+    uint32_t cwd_len;        /* Length of UTF-8 working directory path (excluding null) */
+    uint32_t cmdline_len;    /* Length of UTF-8 command line string (excluding null) */
+    uint32_t env_len;        /* Length of null-delimited KEY=VALUE environment block */
+    /* Trailing dynamic buffer:
+     * - char cwd[cwd_len + 1];
+     * - char cmdline[cmdline_len + 1];
+     * - char env[env_len];
+     */
+} waddle_msg_spawn_req_t;
+
+#pragma pack(pop)
+```
+
+#### 3.5.2 Spawn Response (`waddle_msg_spawn_resp_t`)
+```c
+#pragma pack(push, 1)
+
+typedef struct {
+    uint32_t status_code;    /* 0 = SUCCESS, non-zero = Win32 or protocol error code */
+    uint32_t guest_pid;      /* Windows Process ID (PID) of spawned child process */
+    uint32_t error_len;      /* Length of human-readable error description string */
+    /* Trailing dynamic buffer:
+     * - char error_message[error_len];
+     */
+} waddle_msg_spawn_resp_t;
+
+#pragma pack(pop)
+```
+
+#### 3.5.3 Stream Data Header (`waddle_msg_stream_data_t`)
+```c
+#pragma pack(push, 1)
+
+typedef struct {
+    uint8_t  stream_id;      /* waddle_stream_id_t (STDIN, STDOUT, STDERR) */
+    uint8_t  reserved[3];    /* Padding for 32-bit alignment */
+    uint32_t data_len;       /* Byte count of payload chunk */
+    /* Trailing dynamic buffer:
+     * - uint8_t data[data_len];
+     */
+} waddle_msg_stream_data_t;
+
+#pragma pack(pop)
+```
+
+#### 3.5.4 Terminal Resize Notification (`waddle_msg_resize_t`)
+```c
+#pragma pack(push, 1)
+
+typedef struct {
+    uint16_t rows;           /* New terminal rows */
+    uint16_t cols;           /* New terminal columns */
+    uint16_t x_pixels;       /* Optional pixel width */
+    uint16_t y_pixels;       /* Optional pixel height */
+} waddle_msg_resize_t;
+
+#pragma pack(pop)
+```
+
+#### 3.5.5 Signal Event Notification (`waddle_msg_signal_t`)
+```c
+typedef enum {
+    WADDLE_SIGNAL_SIGINT  = 2,  /* Mapped to CTRL_C_EVENT */
+    WADDLE_SIGNAL_SIGQUIT = 3,  /* Mapped to CTRL_BREAK_EVENT */
+    WADDLE_SIGNAL_SIGTERM = 15, /* TerminateProcess request */
+    WADDLE_SIGNAL_SIGKILL = 9   /* Immediate TerminateProcess request */
+} waddle_signal_type_t;
+
+#pragma pack(push, 1)
+
+typedef struct {
+    uint32_t signal_type;    /* waddle_signal_type_t */
+} waddle_msg_signal_t;
+
+#pragma pack(pop)
+```
+
+#### 3.5.6 Process Exit Notification (`waddle_msg_exit_t`)
+```c
+#pragma pack(push, 1)
+
+typedef struct {
+    uint32_t exit_code;      /* Windows GetExitCodeProcess value */
+    uint32_t termination_status; /* 0 = Normal Exit, 1 = Killed by Signal, 2 = Exception/Crash */
+    uint64_t wall_time_ms;   /* Total elapsed execution time in milliseconds */
+} waddle_msg_exit_t;
+
+#pragma pack(pop)
+```
+
+---
+
+## 4. Step-by-Step Execution Sequence
+
+### 4.1 Host CLI Initialization & Launch Phase
+1. **Command Line Parsing**:
+   - `waddle-cli` parses arguments: `waddle exec [options] -- <program> [arguments...]`.
+   - Flags determine whether ConPTY is requested (default is interactive if `isatty(STDIN_FILENO)` is true; forceable via `-i` / `--interactive` or `-P` / `--pipe`).
+2. **Windows Argument Quoting (`CommandLineToArgvW` Inverse)**:
+   - Each argument string in `argv` is escaped according to Microsoft Win32 rules:
+     - If argument is empty, serialize as `""`.
+     - Count consecutive backslashes preceding quotation marks or the end of the argument string:
+       - Before `"`, output `2 * backslashes + 1` backslashes followed by `"`.
+       - At end of argument, output `2 * backslashes` backslashes followed by `"`.
+       - If argument contains spaces, tabs, or quotes, enclose the entire escaped argument in outer quotes `"`.
+   - The resulting strings are joined with a single space delimiter to form the complete `cmdline` string.
+3. **Working Directory & Environment Gathering**:
+   - Query host current working directory (`getcwd`).
+   - If path translation flag is active, translate `/home/<user>/...` to `Z:\home\<user>\...` or the configured VirtIO-FS mount point.
+   - Filter host environment variables (strip display/X11/Wayland variables, preserve `PATH`, custom overrides specified via `-e KEY=VAL`).
+4. **Terminal Setup (if interactive)**:
+   - Call `tcgetattr(STDIN_FILENO, &orig_termios)`.
+   - Register `atexit()` handler and signal handlers (`SIGINT`, `SIGTERM`, `SIGSEGV`) to guarantee `tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios)` is called under all exit scenarios.
+   - Query terminal dimensions via `ioctl(STDIN_FILENO, TIOCGWINSZ, &ws)`.
+   - Switch terminal to raw mode:
+     ```c
+     struct termios raw = orig_termios;
+     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+     raw.c_oflag &= ~(OPOST);
+     raw.c_cflag |= (CS8);
+     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+     raw.c_cc[VMIN] = 1;
+     raw.c_cc[VTIME] = 0;
+     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+     ```
+   - Register `SIGWINCH` handler using `sigaction`.
+5. **Connection Establishment**:
+   - Connect to guest via `AF_VSOCK` (VM CID, Port 5242) or test loopback socket.
+   - Send `WADDLE_MSG_SPAWN_REQ` packet containing the header and `waddle_msg_spawn_req_t` payload.
+
+### 4.2 Guest Console Agent Execution Phase
+1. **Connection Acceptance**:
+   - `waddle-guest-exec` accepts client connection.
+   - Reads 32-byte header, verifies `magic == WADDLE_CLI_MAGIC` and `version == WADDLE_CLI_VERSION`.
+   - Reads `waddle_msg_spawn_req_t` and trailing string payloads (`cwd`, `cmdline`, `env`).
+2. **Process Spawn Initialization**:
+   - **Branch A (Interactive ConPTY Mode)**:
+     - Calls `CreatePipe(&hPipeInRead, &hPipeInWrite, NULL, 0)`.
+     - Calls `CreatePipe(&hPipeOutRead, &hPipeOutWrite, NULL, 0)`.
+     - Calls `CreatePseudoConsole(coord, hPipeInRead, hPipeOutWrite, 0, &hPC)`.
+     - Closes `hPipeInRead` and `hPipeOutWrite` (owned by pseudo console).
+     - Allocates and initializes `STARTUPINFOEXW`:
+       - `InitializeProcThreadAttributeList(NULL, 1, 0, &size)`.
+       - Allocates buffer, calls `InitializeProcThreadAttributeList`.
+       - Updates attribute: `UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hPC, sizeof(HPCON), NULL, NULL)`.
+     - Calls `CreateProcessW(NULL, cmdline_w, NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT, env_block, cwd_w, &siEx.StartupInfo, &pi)`.
+   - **Branch B (Raw Pipe Mode)**:
+     - Creates 3 sets of pipes with `SECURITY_ATTRIBUTES bInheritHandle = TRUE`:
+       - Stdin (Read handle inherited, Write handle private to agent).
+       - Stdout (Read handle private to agent, Write handle inherited).
+       - Stderr (Read handle private to agent, Write handle inherited).
+     - Configures `STARTUPINFOW` with `dwFlags = STARTF_USESTDHANDLES`, setting `hStdInput`, `hStdOutput`, `hStdError`.
+     - Calls `CreateProcessW(NULL, cmdline_w, NULL, NULL, TRUE, 0, env_block, cwd_w, &si, &pi)`.
+     - Closes child-side handles in agent process.
+3. **Spawn Response**:
+   - Constructs and sends `WADDLE_MSG_SPAWN_RESP` with `status_code = 0` and `guest_pid = pi.dwProcessId`.
+
+### 4.3 Bidirectional Streaming & Event Loop Phase
+1. **Guest I/O Pump**:
+   - **Output Reader Thread**:
+     - Loops reading from ConPTY output pipe (or stdout/stderr pipes) into a 64KB buffer using `ReadFile()`.
+     - When data is read, wraps buffer in `WADDLE_MSG_STREAM_DATA` packet and writes synchronously to the VSOCK socket.
+     - On pipe EOF (`ERROR_BROKEN_PIPE`), sends `WADDLE_MSG_STREAM_EOF` for the respective stream.
+   - **Input Writer Thread**:
+     - Reads incoming packets from VSOCK.
+     - When `WADDLE_MSG_STREAM_DATA` with `stream_id == WADDLE_STREAM_STDIN` arrives, writes data to ConPTY input pipe (or child stdin pipe) using `WriteFile()`.
+     - When `WADDLE_MSG_TERMINAL_RESIZE` arrives, calls `ResizePseudoConsole(hPC, new_coord)`.
+     - When `WADDLE_MSG_SIGNAL_EVENT` arrives:
+       - If `WADDLE_SIGNAL_SIGINT`: calls `GenerateConsoleCtrlEvent(CTRL_C_EVENT, pi.dwProcessId)` or `CTRL_BREAK_EVENT`.
+       - If `WADDLE_SIGNAL_SIGKILL` / `SIGTERM`: calls `TerminateProcess(pi.hProcess, 1)`.
+2. **Host Multiplexer Loop (`poll`)**:
+   - Polling file descriptors:
+     - `STDIN_FILENO` (POLLIN)
+     - `socket_fd` (POLLIN, POLLHUP, POLLERR)
+     - Signal pipe `signal_pipe[0]` (POLLIN, notified by `SIGWINCH` handler)
+   - On `STDIN_FILENO` readable: reads up to 64KB, writes `WADDLE_MSG_STREAM_DATA` to `socket_fd`.
+   - On `socket_fd` readable:
+     - Reads 32-byte header.
+     - Reads payload bytes.
+     - If `WADDLE_MSG_STREAM_DATA`:
+       - If `stream_id == WADDLE_STREAM_STDOUT`: writes payload to `STDOUT_FILENO`.
+       - If `stream_id == WADDLE_STREAM_STDERR`: writes payload to `STDERR_FILENO`.
+     - If `WADDLE_MSG_PROCESS_EXIT`: saves exit code, breaks poll loop.
+   - On `signal_pipe[0]` readable:
+     - Calls `ioctl(STDIN_FILENO, TIOCGWINSZ, &ws)`.
+     - Sends `WADDLE_MSG_TERMINAL_RESIZE` to guest.
+
+### 4.4 Teardown & Clean Exit Phase
+1. **Child Process Termination**:
+   - Guest agent monitors `pi.hProcess` using `WaitForSingleObject(pi.hProcess, INFINITE)`.
+   - Once signaled, calls `GetExitCodeProcess(pi.hProcess, &exitCode)`.
+   - Closes process and thread handles (`CloseHandle(pi.hThread)`, `CloseHandle(pi.hProcess)`).
+2. **Flush & ConPTY Teardown**:
+   - Calls `ClosePseudoConsole(hPC)`.
+   - Allows reader thread to flush remaining bytes from output pipe.
+   - Sends `WADDLE_MSG_PROCESS_EXIT` with `exit_code`.
+3. **Host Restoration**:
+   - Host receives `WADDLE_MSG_PROCESS_EXIT`.
+   - Restores terminal mode: `tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios)`.
+   - Closes transport socket.
+   - Calls `exit(exit_code)`.
+
+---
+
+## 5. Concurrency, Threading & Synchronization
+
+### 5.1 Host Concurrency Model
+- **Single-Threaded Event Loop with Non-Blocking I/O**:
+  - The host CLI client utilizes a single-threaded asynchronous event loop driven by `poll(2)` (or `epoll(7)`).
+  - Eliminates thread synchronization overhead, mutex contention, and race conditions between stdin and socket writes.
+- **Signal Self-Pipe Trick**:
+  - Asynchronous signals (`SIGWINCH`, `SIGINT`) write a single byte to a non-blocking UNIX pipe (`pipe2(..., O_NONBLOCK)`).
+  - The read end of the pipe is polled within the main loop, ensuring all signal reactions occur sequentially and safely inside normal execution flow without async-signal-unsafe function calls.
+
+### 5.2 Guest Concurrency Model
+- **Thread Ownership & Roles**:
+  - `Main Dispatcher Thread`: Manages VSOCK listener, decodes spawn request, sets up ConPTY, spawns process.
+  - `Output Pump Thread`: Synchronously reads from `hPipeOutRead` and writes to socket.
+  - `Input Pump Thread`: Reads from socket and writes to `hPipeInWrite`.
+  - `Process Watcher Thread`: Waits on `pi.hProcess` via `WaitForSingleObject`.
+- **Synchronization Primitives**:
+  - Win32 Event objects (`CreateEventW`) for coordination:
+    - `hStopEvent`: Signaled when connection drops or process exits, waking up blocking I/O calls.
+  - Atomic sequence counters (`std::atomic<uint32_t>` in C11 `stdatomic.h` / Zig atomics) for packet sequence numbers.
+
+---
+
+## 6. Error Handling & Failure Modes
+
+### 6.1 Disconnect & Transport Teardown
+- **Host Socket Dropped**:
+  - If the guest agent crashes or the hypervisor VSOCK link is severed, `poll()` returns `POLLHUP` / `POLLERR`.
+  - The host CLI immediately restores `orig_termios`, writes an error message to `stderr`, and exits with return code 128 + `SIGPIPE` (141) or 255.
+- **Guest Socket Dropped**:
+  - If the host CLI terminates unexpectedly, the guest agent detects socket read/write errors.
+  - The guest agent sends a `CTRL_BREAK_EVENT` or calls `TerminateProcess` to avoid orphaned zombie processes consuming CPU in the guest VM, closes all pipe handles and pseudo console objects, and cleans up.
+
+### 6.2 Process Creation Failures
+- If `CreateProcessW` fails (e.g. `ERROR_FILE_NOT_FOUND`, `ERROR_ACCESS_DENIED`):
+  - Agent formats a `WADDLE_MSG_SPAWN_RESP` with `status_code = GetLastError()` and a detailed error message formatted via `FormatMessageW`.
+  - Host receives the spawn response, prints `waddle: failed to execute '<cmd>': <error message>` to `stderr`, and exits with code 127 (command not found) or 126 (permission denied).
+
+### 6.3 Buffer Exhaustion & Flow Control
+- Fixed maximum payload limit of 1 MB per chunk prevents memory exhaustion attacks or unbounded allocation.
+- Socket buffers use native OS TCP/VSOCK window flow control: if the host terminal is slow to render, the socket buffer fills, pausing the guest reader thread naturally without dropping data.
+
+---
+
+## 7. Verification & Testing Criteria
+
+### 7.1 Unit Tests
+- **Argument Quoting Test Suite**:
+  - Test simple arguments without spaces (`foo` -> `foo`).
+  - Test arguments with spaces (`hello world` -> `"hello world"`).
+  - Test embedded quotes (`foo"bar` -> `"foo\"bar"`).
+  - Test trailing backslashes (`C:\Program Files\` -> `"C:\Program Files\\"`).
+  - Test consecutive backslashes followed by quotes (`a\\\"b` -> `"a\\\\\\\"b"`).
+  - Test empty string (`""` -> `""`).
+- **Wire Protocol Serialization Tests**:
+  - Verify `sizeof(waddle_cli_msg_header_t) == 32`.
+  - Verify pack/unpack routines preserve exact byte layouts across little-endian systems.
+  - Verify CRC32 computation and validation.
+
+### 7.2 Integration Tests (Loopback Mock Harness)
+- **Local Linux Mock Runner**:
+  - Run the host CLI against a mock server communicating over a UNIX domain socket.
+  - Test normal exit code forwarding (`exit 0`, `exit 42`, `exit 1`).
+  - Test stdout streaming vs stderr streaming verification.
+  - Test stdin echoing (interactive typing simulation).
+  - Test terminal resize event delivery.
+  - Test Ctrl+C cancellation forwarding.
+
+### 7.3 Performance & Latency Thresholds
+- **Startup Latency**: Time from `waddle exec` invocation to first byte received from guest process < 15ms.
+- **Throughput**: Sustained data transfer rate > 100 MB/s for piped data streams (`waddle exec -- type large_file.bin | wc -c`).
+- **CPU Utilization**: Host CLI CPU utilization < 1% during active terminal streaming.
