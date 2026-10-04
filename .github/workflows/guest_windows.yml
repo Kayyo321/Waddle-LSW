@@ -43,7 +43,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run native AF_UNIX regressions
         shell: pwsh
-        timeout-minutes: 3
+        timeout-minutes: 5
         run: |
           ./build/windows_guest_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

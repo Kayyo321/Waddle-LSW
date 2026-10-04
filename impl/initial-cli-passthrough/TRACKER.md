@@ -388,9 +388,13 @@
   - **Task Impact**: 0% across TODO #6 and #7; verification pending
   - **Summary**: The native AF_UNIX duplex transfer advances only about 100 KiB/s with 100 ms readiness intervals. Retry at 1 ms while preserving nonblocking I/O, bounded buffers, failure observation and cancellation.
 
-- **Commit `HEAD`**: `docs(cli): record measured verification and remaining guest gates`
+- **Commit `015ce22`**: `docs(cli): record measured verification and remaining guest gates`
   - **Task Impact**: 0% across #1–#8; correct verification evidence
   - **Summary**: Replace stale verification counts with measured sanitizer and coverage results; specify bounded socket retries and distinguish native handle checks from unsupported Windows LeakSanitizer and untested real VM acceptance.
+
+- **Commit `HEAD`**: `test(guest): allow bounded output-first duplex backpressure`
+  - **Task Impact**: 0% across TODO #6 and #7; native verification pending
+  - **Summary**: Native output progresses through 3 MiB stdout and into stderr; the deliberate 6 MiB output-before-input phase exceeds the original 15-second writer deadline. Use 60-second frame deadlines, a 180-second independent watchdog and a five-minute CI step without relaxing byte checks.
 
 ## Verification snapshot
 

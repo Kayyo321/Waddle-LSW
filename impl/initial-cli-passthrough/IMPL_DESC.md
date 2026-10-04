@@ -870,7 +870,12 @@ disconnect (including a blocked stdin writer), ConPTY resize/merged output, and
 32 repeat sessions with stable listener handle counts. Child/helper buffers,
 worker handles, observer process handles, fixture directories and socket paths
 are released before a successful fixture exit. Test failures terminate the
-listener and report the failing boundary rather than asserting success.
+listener and report the failing boundary rather than asserting success. Native
+frame transfers permit 60 seconds of backpressure: the duplex fixture produces
+6 MiB of output before reading stdin, which exceeds a 15-second writer deadline
+on Windows AF_UNIX. A separate 180-second watchdog bounds the complete fixture;
+CI bounds the runtime step at five minutes. These are correctness deadlines,
+not latency or throughput acceptance claims.
 
 ### 10.3 Windows VM acceptance gate
 

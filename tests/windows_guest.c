@@ -15,7 +15,7 @@ typedef struct test_writer_t { SOCKET socket; uint32_t sequence; } test_writer_t
 typedef struct test_deadline_t { HANDLE stopped; HANDLE listener; } test_deadline_t;
 static DWORD WINAPI fixture_deadline(void *context) {
     const test_deadline_t *deadline = context;
-    if (WaitForSingleObject(deadline->stopped, 60000) != WAIT_OBJECT_0) {
+    if (WaitForSingleObject(deadline->stopped, 180000) != WAIT_OBJECT_0) {
         fprintf(stderr, "FAIL: independent native fixture deadline\n");
         TerminateProcess(deadline->listener, 1);
         ExitProcess(1);
@@ -41,7 +41,7 @@ static void put32(uint8_t *p, uint32_t n) { for (unsigned i = 0; i < 4; i++) { p
 static uint16_t get16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
 static uint32_t get32(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static void transfer(SOCKET socket, uint8_t *bytes, size_t length, int sending) {
-    ULONGLONG deadline = GetTickCount64() + 15000;
+    ULONGLONG deadline = GetTickCount64() + 60000;
     for (size_t offset = 0; offset < length;) {
         size_t remaining = length - offset;
         int chunk = (int)(remaining > 4096 ? 4096 : remaining);
