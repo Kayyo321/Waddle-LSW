@@ -132,6 +132,10 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add logo.png to top right of title and trim the verbose CLI PoC section into a concise 3-command overview linking to feature implementation documents.
 
+- **Commit `e8ee173`**: `docs(readme): enlarge logo and wrap intro text below heading line`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Increase logo dimensions to 180x180 (1.5x), place below H1 heading to eliminate line cutoff, and wrap introductory text cleanly with float clearing.
+
 ## Verification snapshot
 
 - **Strict Naming Invariants**: All constants in `PascalCase` (`WaddleCliMagic`, `WaddleMsgSpawnReq`, `WaddleMaxPayloadSize`), types end in `_t` (`waddle_cli_msg_header_t`, `queue_t`, `decoder_t`, `mock_process_t`), default identifiers in `snake_case`, and zero `camelCase`.
