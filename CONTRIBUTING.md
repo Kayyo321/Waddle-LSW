@@ -33,8 +33,9 @@ This guide provides comprehensive instructions for developers, engineers, and AI
    - [Build System Integration](#build-system-integration)
    - [CI/CD Pipeline & Automated Verification](#cicd-pipeline--automated-verification)
 6. [Coding Standards & Architectural Conventions](#6-coding-standards--architectural-conventions)
-   - [C++20 Coding Standards](#c20-coding-standards)
-   - [Rust Coding Standards](#rust-coding-standards)
+   - [Language Selection Policy](#language-selection-policy)
+   - [Code Beauty & Naming Invariants](#code-beauty--naming-invariants)
+   - [Documentation Enforcement Standards](#documentation-enforcement-standards)
    - [Shared Memory (IVSHMEM) & Concurrency Rules](#shared-memory-ivshmem--concurrency-rules)
    - [IPC Protocol & Struct Serialization](#ipc-protocol--struct-serialization)
    - [Wayland Client Best Practices](#wayland-client-best-practices)
@@ -42,6 +43,8 @@ This guide provides comprehensive instructions for developers, engineers, and AI
    - [Error Handling & Resilience](#error-handling--resilience)
 7. [Testing, Sanitizers & Performance Verification](#7-testing-sanitizers--performance-verification)
    - [Unit & Integration Testing](#unit--integration-testing)
+   - [Zig Built-in Test Harness & Specifications](#zig-built-in-test-harness--specifications)
+   - [Code Coverage Enforcement](#code-coverage-enforcement)
    - [Sanitizers (ASan, TSan, UBSan)](#sanitizers-asan-tsan-ubsan)
    - [Performance & Latency Benchmarks](#performance--latency-benchmarks)
 8. [Commit Standards & Hygiene](#8-commit-standards--hygiene)
@@ -585,37 +588,69 @@ To guarantee that submodules do not break automated builds, the CI configuration
 
 ## 6. Coding Standards & Architectural Conventions
 
-### C++20 Coding Standards
+### Language Selection Policy
 
-Both the host compositor client and guest capture agent adhere to modern C++20 standards.
+Waddle-LSW enforces a strict, tiered language strategy designed for maximum performance, minimal binary footprint, deterministic latency, and first-class memory safety:
 
-1. **Language Standard**: ISO C++20 (`-std=c++20` or `/std:c++20`).
-2. **Memory Safety & Ownership**:
-   - Never use raw `new` or `delete`. Prefer standard RAII containers (`std::unique_ptr`, `std::shared_ptr`, `std::vector`).
-   - Use `std::span<const uint8_t>` for non-owning buffer views instead of raw pointer/length pairs.
-   - For C API interop (Wayland, Win32), wrap handles in custom RAII deleters (e.g., `unique_hwnd`, `unique_wl_surface`).
-3. **Naming Conventions**:
-   - Types, Classes, Structs: `PascalCase` (e.g., `WindowSlotManager`, `FrameDescriptor`).
-   - Functions and Methods: `camelCase` (e.g., `attachBuffer()`, `processPendingEvents()`).
-   - Member Variables: `camelCase` with trailing underscore (e.g., `windowId_`, `slotIndex_`).
-   - Constants & Enums: `ALL_CAPS_SNAKE` or scoped enums `enum class WindowState : uint32_t`.
-4. **Formatting**:
-   - Enforce formatting using `.clang-format` based on LLVM style (4-space indent, 100-character line limit).
-   - Run `clang-format -i <file>` before committing.
+1. **C Code Usually (Primary & Default)**:
+   - **C (C11/C17/C23)** is the primary, default programming language across the entire codebase.
+   - Used for the host compositor client, guest tracking agent, IPC wire protocols, shared memory (IVSHMEM) descriptors, and CLI passthrough utilities.
+   - Provides zero runtime overhead, direct manual control over memory layout and cache alignment, and a universal, stable C ABI.
+2. **Zig Where Memory Safety is Needed**:
+   - **Zig (0.13+)** is explicitly mandated and utilized for components requiring high assurance, spatial and temporal memory safety, robust slice and buffer bounds validation, compile-time generation (`comptime`), safe allocators, and untrusted input parsing.
+   - Delivers modern memory safety without garbage collection, hidden runtimes, or unexpected compiler overhead.
+   - Interoperates directly with C headers and C ABI structures with zero impedance.
+3. **C++ Strictly Where Compatibility is Required**:
+   - **C++ (C++20/C++23)** serves solely as an upper-bound compatibility layer.
+   - Its usage is strictly restricted to scenarios where external vendor SDKs or specific Windows/guest frameworks (such as direct DirectX 11/12, Windows Runtime / WinRT, or COM APIs) expose exclusively C++ interfaces without viable C or Zig bindings.
+   - Higher-level managed or garbage-collected runtimes (and other heavy language ecosystems such as Rust or Go) are strictly disallowed.
 
 ---
 
-### Rust Coding Standards
+### Code Beauty & Naming Invariants
 
-For components developed in Rust:
+To maintain pristine aesthetic consistency and seamless interoperability across C, Zig, and C++, all code committed to Waddle-LSW must strictly conform to these naming rules:
 
-1. **Edition**: Rust 2021 Edition.
-2. **Clippy & Formatting**:
-   - Code must pass `cargo clippy --all-targets -- -D warnings` with zero warnings.
-   - Code must be formatted with `cargo fmt`.
-3. **Unsafe Hygiene**:
-   - Every `unsafe` block must be accompanied by an explicit `// SAFETY:` comment justifying why the invariants are upheld.
-   - Minimize the surface area of `unsafe` by encapsulating it in safe abstraction boundaries.
+1. **Default-Case: `snake_case`**:
+   - All standard identifiers must use `snake_case`. This includes:
+     - Function and method names (e.g., `attach_buffer()`, `process_pending_events()`, `read_wire_frame()`).
+     - Local and global variable names (e.g., `window_count`, `active_slot_index`, `bytes_written`).
+     - Struct, union, and class member fields (e.g., `payload_len`, `session_id`, `frame_sequence`).
+     - Function and callback parameters (e.g., `const char *socket_path`, `size_t buffer_len`).
+     - Source file and directory names (e.g., `cli_protocol.h`, `session_manager.c`, `mock_guest.zig`).
+2. **Constants: `PascalCase`**:
+   - All constant identifiers must use `PascalCase`. This includes:
+     - Compile-time constants and `const` variables (e.g., `MaxBufferSize`, `DefaultVsockPort`, `QueueCapacity`).
+     - Scoped and unscoped enumeration values (e.g., `SlotReady`, `SlotWriting`, `SlotConsuming`).
+     - Constant macro definitions representing values or capacities (e.g., `MagicHeaderValue`, `IpcTimeoutMs`).
+3. **Strict Prohibition: Never `camelCase`**:
+   - `camelCase` (e.g., `windowCount`, `attachBuffer`, `slotIndex`, `parseMessage`) is **strictly and unconditionally forbidden** everywhere in the codebase. Any PR or commit introducing camelCase will be rejected.
+4. **Types: `type_name_t`**:
+   - All types must use `snake_case` and end with the mandatory `_t` suffix. This includes:
+     - `struct`, `union`, and `enum` tag names and typedefs (e.g., `window_slot_header_t`, `cli_message_header_t`, `surface_descriptor_t`).
+     - C++ classes and structs (where C++ compatibility is required) (e.g., `dxgi_capture_session_t`, `winrt_composition_surface_t`).
+     - Type aliases and opaque pointer types (e.g., `waddle_session_t`, `ipc_endpoint_t`).
+5. **Formatting**:
+   - C/C++ code must be formatted using `.clang-format` based on LLVM style (4-space indent, 100-character line limit).
+   - Zig code must be formatted using `zig fmt`.
+
+---
+
+### Documentation Enforcement Standards
+
+Documentation is strictly enforced across every file and interface in Waddle-LSW. Undocumented or ambiguously documented interfaces are not permitted:
+
+1. **Structured Documentation Comments**:
+   - In C and C++, use Doxygen-style structured block comments (`/** ... */`) for all exported functions, structs, enums, and macros.
+   - In Zig, use doc comments (`///`) immediately preceding symbols and declarations.
+2. **Mandatory Documentation Fields for Functions**:
+   - `@brief`: Concise single-sentence summary of what the function accomplishes.
+   - `@param[in/out]`: Description of each parameter, including nullability, valid ranges, and unit of measurement (e.g., nanoseconds, bytes).
+   - `@return`: Detailed explanation of return values and status codes.
+   - `@note` / Preconditions: Ownership lifecycle of pointers (who frees what), threading/concurrency guarantees (thread-safe, main-thread-only, lock-free), and error handling behavior.
+3. **Mandatory Documentation for Data Structures**:
+   - Every struct and union must document its purpose, memory alignment constraints (e.g., 64-byte cache line alignment), and field-level invariants.
+   - All padding fields must be documented with their explicit purpose (e.g., cache line alignment, cross-compiler ABI stability).
 
 ---
 
@@ -634,8 +669,14 @@ The shared memory layer bridges Windows guest and Linux host without kernel inte
 4. **Padding & Field Packing**:
    - Always define explicit padding fields so that the layout is identical across MSVC and GCC/Clang:
    ```cpp
-   struct alignas(64) WindowSlotHeader {
-       std::atomic<uint32_t> slot_state;   // READY, WRITING, CONSUMING
+   enum class slot_state_t : uint32_t {
+       SlotReady = 0,
+       SlotWriting = 1,
+       SlotConsuming = 2,
+   };
+
+   struct alignas(64) window_slot_header_t {
+       std::atomic<uint32_t> slot_state;   // slot_state_t: SlotReady, SlotWriting, SlotConsuming
        uint32_t buffer_index;              // Active buffer index (0 or 1)
        uint64_t frame_sequence;            // Monotonically increasing frame index
        uint64_t timestamp_ns;              // Frame capture timestamp in nanoseconds
@@ -645,7 +686,7 @@ The shared memory layer bridges Windows guest and Linux host without kernel inte
        uint32_t format;                    // DRM FourCC format code
        uint8_t reserved[24];               // Explicit padding to 64 bytes
    };
-   static_assert(sizeof(WindowSlotHeader) == 64, "WindowSlotHeader must be exactly 64 bytes");
+   static_assert(sizeof(window_slot_header_t) == 64, "window_slot_header_t must be exactly 64 bytes");
    ```
 
 ---
@@ -659,7 +700,7 @@ The shared memory layer bridges Windows guest and Linux host without kernel inte
 3. **Packet Structure**:
    - Every IPC message must start with a standardized 8-byte header:
    ```cpp
-   struct alignas(4) IpcHeader {
+   struct alignas(4) ipc_header_t {
        uint16_t magic;      // 0x574C ('WL')
        uint16_t msg_type;   // Message ID enum
        uint32_t payload_len;// Length of payload following header
@@ -708,25 +749,93 @@ The shared memory layer bridges Windows guest and Linux host without kernel inte
 
 ### Unit & Integration Testing
 
-All contributions must include comprehensive automated tests.
+All contributions must include comprehensive automated tests covering both positive execution paths and failure/corruption edge cases.
 
 #### Building and Running Tests
 ```bash
-# In the build directory:
+# Using GNU Make:
+make test
+
+# Using CMake and CTest:
 cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Debug -DENABLE_TESTS=ON
 ninja -C build
 ctest --test-dir build --output-on-failure
 ```
 
-#### Test Coverage Requirements
-- Any new parser or protocol serializer must achieve 100% unit test coverage for valid, corrupted, and truncated packets.
-- Concurrency structures (e.g., ring buffers) must include multi-threaded stress tests verifying absence of race conditions and memory leaks.
+---
+
+### Zig Built-in Test Harness & Specifications
+
+Waddle-LSW supports and encourages authoring tests using **Zig's native built-in test specifications**. Zig's test runner requires zero external dependencies, features built-in memory leak detection, and compiles C headers directly via `@cImport`.
+
+#### 1. Writing Tests with Zig Test Specifications
+Tests are defined using top-level `test "description"` blocks and standard assertions from `std.testing`:
+
+```zig
+const std = @import("std");
+const testing = std.testing;
+
+// Direct C ABI import without external wrapper libraries
+const c = @cImport({
+    @cInclude("waddle/cli_protocol.h");
+});
+
+test "wire header size and magic alignment" {
+    // Assert struct packing and byte alignment
+    try testing.expectEqual(@as(usize, 32), @sizeOf(c.waddle_cli_msg_header_t));
+    try testing.expectEqual(@as(u32, 0x57444c43), c.WADDLE_CLI_MAGIC);
+}
+
+test "endian conversion roundtrip" {
+    var buffer: [8]u8 = undefined;
+    const test_val: u64 = 0x0123456789abcdef;
+    c.waddle_put64(&buffer, test_val);
+
+    try testing.expectEqual(@as(u8, 0xef), buffer[0]);
+    try testing.expectEqual(@as(u8, 0x01), buffer[7]);
+    try testing.expectEqual(test_val, c.waddle_get64(&buffer));
+}
+```
+
+#### 2. Executing Zig Tests
+Run tests directly with the Zig compiler:
+
+```bash
+# Run unit tests against C headers and libraries
+zig test tests/unit_test.zig -Iinclude -Isrc src/protocol.c -lc
+
+# Run with LeakSanitizer / safe allocator checks
+zig test tests/unit_test.zig -Iinclude -Isrc src/protocol.c -lc -fsanitize=address
+```
+
+---
+
+### Code Coverage Enforcement
+
+Test coverage is strictly enforced across Waddle-LSW. PRs that reduce coverage or introduce untested public functions and branches will be blocked:
+
+1. **Coverage Target**:
+   - Minimum **90% branch and statement coverage** for all wire protocol decoders, serializers, and shared memory data structures.
+   - 100% coverage of error recovery and timeout paths.
+2. **Generating Coverage Reports (GCC/Clang `gcov` & `lcov`)**:
+   ```bash
+   # Build with coverage instrumentation
+   make clean
+   make CFLAGS="-O0 -g --coverage -std=c11 -Wall -Wextra -Werror" LDFLAGS="--coverage" test
+
+   # Capture and generate HTML report
+   lcov --capture --directory . --output-file coverage.info
+   lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file filtered_coverage.info
+   genhtml filtered_coverage.info --output-directory coverage_html
+   ```
+3. **CI Coverage Gates**:
+   - The CI pipeline automatically computes line and branch coverage diffs on every pull request. Drops below the required thresholds will trigger a build failure.
 
 ---
 
 ### Sanitizers (ASan, TSan, UBSan)
 
-All C++ test suites must pass clean runs under LLVM sanitizers:
+All C and C++ test suites must pass clean runs under LLVM sanitizers:
 
 ```bash
 # Build with AddressSanitizer and UndefinedBehaviorSanitizer
