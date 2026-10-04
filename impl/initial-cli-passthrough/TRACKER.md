@@ -396,9 +396,13 @@
   - **Task Impact**: 0% across TODO #6 and #7; native verification pending
   - **Summary**: Native output progresses through 3 MiB stdout and into stderr; the deliberate 6 MiB output-before-input phase exceeds the original 15-second writer deadline. Use 60-second frame deadlines, a 180-second independent watchdog and a five-minute CI step without relaxing byte checks.
 
-- **Commit `HEAD`**: `docs(tracker): record passing native Windows and Linux verification`
+- **Commit `cde9154`**: `docs(tracker): record passing native Windows and Linux verification`
   - **Task Impact**: +10% to #6 (+2% overall), +10% to #7 (+1% overall); total 98.5%
   - **Summary**: Record successful 47-scenario Windows execution with 77-to-77 handles and passing Linux sanitizer/coverage CI. Move to Review while retaining real VM/Viosock/export and Windows heap merge gates.
+
+- **Commit `HEAD`**: `test(guest): instrument native Windows session heap ownership`
+  - **Task Impact**: 0% to #6 and #7 (0% overall; execution pending).
+  - **Summary**: Add MSVC debug-heap client-allocation checkpoints across all native sessions and three detector negative controls; wire the native CI audit without claiming results before execution.
 
 ## Verification snapshot
 

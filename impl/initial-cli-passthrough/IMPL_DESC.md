@@ -929,3 +929,26 @@ and `std.testing.allocator`. The Zig 0.13 x86_64-windows-gnu compiler rejects
 this toolchain. Native repeated-session handle counts check HANDLE ownership,
 but do not certify heap leak freedom. Windows heap instrumentation remains a
 separate merge verification gate alongside real Viosock/VM acceptance.
+
+### 10.6 Native Windows debug-heap acceptance
+
+`tests/windows_heap.ps1` builds the same guest C sources against the system MSVC
+C11 debug CRT, with a Zig codec compiled for the MSVC ABI. A test-only forced
+header routes all guest malloc/calloc/realloc/free calls to tracked CRT client
+blocks, retaining their source locations. The listener's accept boundary checks
+the previous session after its workers have joined and its socket has closed.
+Each checkpoint requires zero live client allocations and zero live client bytes.
+CRT allocation-boundary checks run at every allocation/deallocation; freed blocks
+remain poisoned and are checked for writes. CRT reports terminate the listener
+with exit 86, so an instrumentation failure cannot silently pass the fixture.
+
+Three isolated negative controls intentionally leak, overrun, and write after free;
+each must exit 86. The native 47-scenario fixture then runs unchanged against the
+instrumented guest. CI requires exactly 47 successful checkpoint records in
+`build/windows_heap.log`. Records flush before the next accept; the existing
+fixture's final stabilization delay precedes terminating the listener. CRT and
+system-library internal allocations are not labeled as guest-owned client blocks.
+This audit measures every explicit dynamic allocation in the guest C sources;
+Zig parsing remains allocation-free. It complements Linux ASan/LSan and Zig's
+testing allocator rather than claiming LeakSanitizer support on Windows. The
+header is never included in production builds, and no external SDK is vendored.

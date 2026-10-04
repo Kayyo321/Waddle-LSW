@@ -47,3 +47,7 @@ jobs:
         run: |
           ./build/windows_guest_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Audit native guest allocations with the Windows debug heap
+        shell: pwsh
+        timeout-minutes: 5
+        run: ./tests/windows_heap.ps1
