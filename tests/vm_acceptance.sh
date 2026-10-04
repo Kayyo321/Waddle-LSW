@@ -40,7 +40,8 @@ cat "$work_dir/input" >> "$work_dir/expected"; cmp "$work_dir/expected" "$work_d
 head -c 3145728 /dev/zero | tr '\000' E > "$work_dir/expected"; cmp "$work_dir/expected" "$work_dir/err"
 # Deadline/disconnect must cancel a guest stdin worker blocked on a sleeping child.
 status=0
-"${base[@]}" --timeout 1 -- "$fixture" --child sleep < "$work_dir/input" > "$work_dir/out" 2> "$work_dir/err" || status=$?
+head -c 1048576 "$work_dir/input" > "$work_dir/blocked-input"
+"${base[@]}" --timeout 1 -- "$fixture" --child sleep < "$work_dir/blocked-input" > "$work_dir/out" 2> "$work_dir/err" || status=$?
 test "$status" -eq 124
 grep -q READY "$work_dir/out"
 grep -q 'session timed out' "$work_dir/err"
