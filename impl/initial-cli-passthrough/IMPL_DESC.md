@@ -735,3 +735,153 @@ unexecuted checks remain explicitly recorded in TRACKER.md and block merge.
 Protocol/parser coverage must reach 90%; sanitizers apply to executable Linux C
 suites, and native Windows resource tests audit process/handle cleanup. No claim
 of Windows execution is made based solely on a cross-build.
+
+## 10. Implemented source boundaries and reproducible verification
+
+### 10.1 Modules and ownership
+
+`src/path_rules.zig` owns UTF-8/export component validation and bounded mapping.
+`src/path_rules.h` exposes borrowed rule strings and caller-owned output storage.
+`waddle_translate_rules` in `src/arguments.c` validates at most 64 rules, selects
+one longest component-boundary prefix, allocates its result with `malloc`, and
+frees that result before returning an error. `src/host.c` owns copied rule source
+strings; targets borrow argv storage. Normalized duplicate sources fail with CLI
+status 2. Unmatched translated argv/cwd fails with status 125 before connection.
+A rule never rewrites environment values or embedded option strings. Root fallback
+requires no explicit rules; explicit rules replace that fallback.
+
+`src/guest_codec.zig` exposes a C ABI through `src/guest_codec.h`. The production
+parser allocates no memory and has no global mutable state. It validates headers,
+spawn views, canonical arguments, controls and listener ports. All pointer inputs
+are nonnull readable buffers whose byte counts are supplied separately; sentinel
+port strings come from CRT argv. Output buffers must not alias input. A spawn
+result borrows the retained frame and contains cwd/command/environment pointers,
+three u32 lengths, two u16 dimensions and one u32 interactive flag; its x64 C ABI
+size is 48 bytes. A frame result has u32 length, u32 CRC and u16 type, with native
+ABI padding to 12 bytes. Neither result is a wire struct. The immutable frame
+payload retains the 24-byte little-endian spawn prefix, NUL-terminated cwd and
+command strings, then exactly env_len bytes of NUL-delimited entries. Cwd must be
+nonempty. Exported validators return zero on success and minus one on invalid
+input; failed output values are unspecified. Exact control payload lengths are
+8+data_len for stdin (data_len <=16384), four for stdin EOF and signals, eight for
+resize, and zero for ping. Data after EOF and duplicate EOF abort the session.
+
+`src/guest_environment.c` converts validated bytes with strict UTF-8 conversion,
+allocates writable UTF-16 command/executable/cwd strings, and creates a sorted,
+double-NUL child environment. Inherited entries are copied, never modified in
+place. Keys compare with Windows ordinal case-insensitive comparison; final
+explicit override wins. Drive-current-directory entries inherited from Windows
+are preserved. Environment copying is bounded to one million inherited UTF-16
+units and two million final units. Every temporary entry is freed after final
+block creation or failure; the launcher frees the returned block after spawn.
+
+`src/guest_process.c` owns the process, job, input writer, output readers and
+optional HPCON. Temporary child pipe endpoints, startup attribute list, thread
+handle and UTF-16 strings are released before launch returns. Bare executable
+names are resolved through `SearchPathW` before passing an explicit application
+name to `CreateProcessW`; explicit paths retain their spelling. Search uses the
+listener's search environment, not the child's overridden PATH. Command storage
+including terminator must fit 32767 UTF-16 units. Failed launches kill any created
+child even if job assignment failed. Child processes never inherit listener,
+transport, event, job or worker handles. Raw children inherit only their three
+standard endpoints. ConPTY startup uses its pseudo-console attribute and disables
+ordinary handle inheritance. Closing a process record resets every owned handle;
+no record may be reused while any worker borrows it.
+
+`src/guest_wire.c` owns a send critical section and failure event; the connected
+socket is borrowed from the listener. One input owner receives headers and bodies
+and advances the receive sequence. Senders hold the lock across complete header
+and body writes and sequence assignment. Fixed headers are validated before the
+session allocates spawn storage. Header sequences start at one and use unsigned
+wrap. Socket failure sets the event and shuts down both directions. Orderly input
+cancellation uses an atomic stopping flag and receive-half shutdown so output
+remains usable. The lock/event are destroyed only after all worker handles join.
+
+`src/guest_input.c` owns stdin writes and closure. Its stack frame buffer has
+16392 bytes; a larger post-spawn frame is rejected before receipt. A child may
+close stdin early: broken-pipe writes close the local writer and later valid
+stdin data is discarded until host EOF. EOF closes the input handle exactly once.
+Resize remains valid after EOF. ConPTY interrupts after EOF have no open input
+writer and therefore cannot inject ETX. Raw interrupts use CTRL_BREAK on the
+child's private process group. SIGTERM/SIGKILL terminate the entire job using
+128+signal as the Windows exit code and set termination status one. Other normal
+child exit codes are preserved as all 32 bits on the wire; Linux shell status
+continues to use the existing low eight bits. Exit 259 is valid when the process
+handle is signaled, independently of the Win32 STILL_ACTIVE constant.
+
+`src/guest_output.c` borrows one pipe per reader, uses one fixed 16392-byte stack
+buffer, and emits at most 16384 data bytes per stream frame. Raw outputs remain
+independent; a ConPTY stderr reader has no pipe and immediately sends EOF. Readers
+continue draining and discarding after socket failure until native pipe teardown,
+so `ClosePseudoConsole` can emit its final screen update without blocking forever
+on an undrained pipe. Unusual pipe read errors mark failure and prevent success.
+
+`src/guest_session.c` owns worker contexts and thread handles. Success response is
+sent before workers start. Main waits for child/failure in 50 ms intervals and
+checks exceptional socket conditions with `WSAPoll` without consuming framed
+input. This detects closure when stdin's synchronous pipe write is blocked. On
+child exit or failure, descendants are terminated, input receives are canceled,
+`CancelSynchronousIo` repeats while waiting for input join, and ConPTY closes while
+its reader drains. If no reader started, or the reader already failed, its output
+handle closes before ConPTY. All readers join before a process-exit frame; any
+failure event suppresses that frame. Partial worker startup follows the same
+teardown. The socket remains open until the listener regains ownership.
+
+`src/guest_listener.c` owns Winsock startup and the listening socket. Sessions are
+sequential; one listener never executes two child jobs concurrently. Accepted
+sockets are noninheritable and have a 30-second receive timeout during spawn. The
+timeout is removed after success; subsequent inactivity is bounded by host timeout
+or disconnect, not an unsolicited guest deadline. Socket paths are nonempty and
+shorter than 108 bytes; bind failure never deletes an existing socket path. No
+vendor source/header is copied into the repository, and no dependency submodule
+is needed. Viosock ABI values were checked against the
+[upstream device interface](https://github.com/virtio-win/kvm-guest-drivers-windows/blob/master/viosock/inc/vio_sockets.h).
+ConPTY drainage follows the
+[Microsoft session lifecycle](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session).
+
+### 10.2 Commands and automated gates
+
+- `make test` builds/runs Linux unit, integration, CLI option and native Zig tests.
+- `make test-sanitizers` rebuilds executable C suites with ASan, LSan and UBSan;
+  Zig uses safe-mode bounds checks and its testing allocator.
+- `make coverage` requires base-system GCC/gcov and kcov, resets prior counters,
+  and enforces 90% implementation line coverage for protocol.c, arguments.c,
+  guest_codec.zig and path_rules.zig. Zig test bodies are excluded.
+- `make windows` cross-builds `build/waddle-guest-exec.exe` with Zig 0.13 and system
+  Win32/Winsock declarations. C owns native resource management; Zig owns parsing.
+- `make windows-test` additionally builds and executes the native fixture on a
+  Windows host. `.github/workflows/guest_windows.yml` runs equivalent commands on
+  Windows 2022 using a checksum-verified Zig 0.13 distribution.
+
+The native fixture starts a real AF_UNIX listener in its own console, then checks
+separate streams, exit 259, Unicode/escaped/empty argv, Unicode cwd, last-wins
+case-insensitive environment, missing executables, bare executable lookup,
+16 MiB binary duplex backpressure, raw console interrupts, job termination,
+disconnect (including a blocked stdin writer), ConPTY resize/merged output, and
+32 repeat sessions with stable listener handle counts. Child/helper buffers,
+worker handles, observer process handles, fixture directories and socket paths
+are released before a successful fixture exit. Test failures terminate the
+listener and report the failing boundary rather than asserting success.
+
+### 10.3 Windows VM acceptance gate
+
+For real Linux-to-Windows operation, install the VM's Viosock driver and export
+mounts independently. Run `waddle-guest-exec.exe --vsock-port 5242` in the Windows
+user console. From Linux, execute for example:
+
+```sh
+./build/waddle exec --pipe --vsock-cid 3 --cwd 'C:\' -- cmd.exe /c ver
+./build/waddle exec --tty --vsock-cid 3 --cwd 'C:\' -- powershell.exe -NoProfile
+./build/waddle exec --pipe --vsock-cid 3 \
+  --path-map '/home/dev/project=X:\project' --cwd /home/dev/project \
+  -- cmd.exe /c dir
+```
+
+Use the VM's actual CID and already-mounted export target. Without translation,
+cwd is transmitted unchanged; callers must supply a Windows cwd for this guest.
+Validate interactive input, resize, interrupts, exported-file access, timeout and
+reconnect in that VM. Native AF_UNIX CI and a successful cross-build cannot certify
+the installed Viosock provider or VirtIO-FS mapping. Those checks remain a merge
+acceptance gate until their actual results are recorded in TRACKER.md. No
+sub-millisecond performance or cross-hypervisor compatibility claim is inferred
+from unit tests or loopback execution.

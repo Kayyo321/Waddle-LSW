@@ -280,9 +280,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add make coverage using gcov and base-package kcov; reset counters, exclude native test bodies and fail below 90%. Measured protocol 92.50%, arguments 93.18%, guest parsing 98.02% and path parsing 100%.
 
-- **Commit `HEAD`**: `fix(ci): use native Windows paths for Zig archive emission`
+- **Commit `96cc34e`**: `fix(ci): use native Windows paths for Zig archive emission`
   - **Task Impact**: 0% across #1–#8 (0% overall; native rerun pending).
   - **Summary**: Use quoted native separator paths at Windows compiler output/input boundaries and enable linker diagnostics to resolve native archive emission errors; Linux cross-builds remain passing.
+
+- **Commit `HEAD`**: `docs(cli): document implemented guest ownership and verification boundaries`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Specify actual module ownership, native ABI sizes, cancellation and EOF semantics, executable lookup, environment bounds, reproducible test/coverage commands and real VSOCK VM acceptance steps.
 
 ## Verification snapshot
 
