@@ -344,9 +344,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: After spawn, wait for read readiness in 100 ms slices and check the atomic stopping flag before recv. Initial handshake keeps its 30-second receive timeout; orderly input join no longer depends on AF_UNIX shutdown waking an existing blocked recv.
 
-- **Commit `HEAD`**: `chore(ci): enforce Linux sanitizer and parser coverage gates`
+- **Commit `4d9b330`**: `chore(ci): enforce Linux sanitizer and parser coverage gates`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add Linux CI with checksum-verified Zig, base-package kcov, ASan/LSan/UBSan and native allocator tests, 90% implementation coverage enforcement and complete Windows cross-builds.
+
+- **Commit `HEAD`**: `fix(ci): use Debian base coverage packages in Linux verification`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Ubuntu 24.04 has no kcov package in its configured archive. Run the Linux job in Debian trixie with base build/coverage packages and ptrace permission; this matches the verified local kcov toolchain.
 
 ## Verification snapshot
 
