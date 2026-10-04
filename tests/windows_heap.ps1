@@ -25,9 +25,13 @@ foreach ($mode in @('leak', 'overrun', 'freed-write')) {
     & ./build/windows_heap_probe.exe $mode
     if ($LASTEXITCODE -ne 86) { throw "Heap detector missed negative control: $mode" }
 }
-Remove-Item build/windows_heap.log -ErrorAction SilentlyContinue
+Remove-Item build/windows_heap.log, build/windows_heap_errors.log -ErrorAction SilentlyContinue
 & ./build/windows_guest_test.exe
-if ($LASTEXITCODE -ne 0) { throw 'Instrumented native regression failed' }
+if ($LASTEXITCODE -ne 0) {
+    Get-Content build/windows_heap_errors.log -ErrorAction SilentlyContinue
+    Get-Content build/windows_heap.log -ErrorAction SilentlyContinue
+    throw 'Instrumented native regression failed'
+}
 $checks = @(Get-Content build/windows_heap.log)
 if ($checks.Count -ne 47) { throw "Expected 47 heap checkpoints, got $($checks.Count)" }
 foreach ($line in $checks) {

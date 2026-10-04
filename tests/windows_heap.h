@@ -15,10 +15,12 @@
 #endif
 #ifdef GuestHeapListener
 static int __cdecl heap_report(int kind, char *message, int *result) {
-    (void)kind; (void)result;
+    (void)result;
     fputs(message, stderr);
+    FILE *report = fopen("build/windows_heap_errors.log", "a");
+    if (report != NULL) { fputs(message, report); fclose(report); }
     fflush(stderr);
-    ExitProcess(86);
+    if (kind != _CRT_WARN) { ExitProcess(86); }
     return TRUE;
 }
 static void heap_start(void) {
@@ -31,6 +33,12 @@ static void heap_check(void) {
     _CrtMemCheckpoint(&state);
     if (!_CrtCheckMemory() || state.lCounts[_CLIENT_BLOCK] != 0 ||
         state.lSizes[_CLIENT_BLOCK] != 0) {
+        FILE *report = fopen("build/windows_heap_errors.log", "a");
+        if (report != NULL) {
+            fprintf(report, "client blocks=%zu bytes=%zu\n",
+                    state.lCounts[_CLIENT_BLOCK], state.lSizes[_CLIENT_BLOCK]);
+            fclose(report);
+        }
         _CrtMemDumpAllObjectsSince(NULL);
         fputs("FAIL: guest heap integrity or retained client allocation\n", stderr);
         ExitProcess(86);

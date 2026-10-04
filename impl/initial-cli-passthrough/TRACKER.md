@@ -416,9 +416,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
   - **Summary**: Add deterministic guest child modes for actual exported-file read/write and interactive console input, dimensions, merged stderr, and Ctrl-C across Viosock.
 
-- **Commit `HEAD`**: `test(cli): automate real Viosock and export acceptance`
+- **Commit `c255d59`**: `test(cli): automate real Viosock and export acceptance`
   - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
   - **Summary**: Add explicit real-VM acceptance for host/guest streams, mapped file access, 16 MiB duplex, reconnects, and bounded C PTY input/resize/interrupt/restoration checks.
+
+- **Commit `HEAD`**: `test(guest): retain heap failure diagnostics in native CI`
+  - **Task Impact**: 0% to #6 (0% overall).
+  - **Summary**: All detector controls fire; the first instrumented session needs a diagnostic report. Preserve client counts and allocation dump output before fatal termination and print it when the fixture fails.
 
 ## Verification snapshot
 
