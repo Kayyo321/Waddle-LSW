@@ -40,6 +40,12 @@ This document defines the strict operating standards, branching models, implemen
    - Code coverage thresholds (minimum 90% for protocol and memory structures) must be strictly maintained and verified.
    - **Zig Built-in Test Specification**: Tests may be authored in Zig using its native built-in test specifications (`test "..." { ... }`), native `std.testing` assertions, and direct C ABI interop (`@cImport`) without external test framework overhead.
 
+8. **Zero-Leak Memory Safety Enforcement**:
+   - Zero tolerance for memory leaks, use-after-free conditions, double frees, and buffer overruns across all normal, error, and cancellation execution paths.
+   - Every dynamic allocation must have an explicit, documented owner and a deterministically proven deallocation site.
+   - Symmetric lifecycle functions (`init`/`free` or `create`/`destroy`), defensive NULLing of freed pointers, and bounded buffer passing are mandatory in C.
+   - All test suites must execute under AddressSanitizer and LeakSanitizer (`-fsanitize=address,leak`) and Zig's `std.testing.allocator` with **zero bytes leaked**. A single leaked byte is considered a critical test and PR failure.
+
 ---
 
 ## 2. Branching & Git Workflow
@@ -234,4 +240,5 @@ Before any feature branch is merged into the standard branch:
 - [ ] Language selection adheres strictly to policy: C by default, Zig for memory safety, C++ solely for compatibility boundaries.
 - [ ] Documentation is complete, structured, and enforced across all public interfaces and structs with zero ambiguity.
 - [ ] Automated tests pass and code coverage thresholds are met (including Zig built-in tests where applicable).
+- [ ] Zero memory leaks verified under AddressSanitizer/LeakSanitizer (`-fsanitize=address,leak`) and Zig testing allocator with zero bytes lost.
 - [ ] Pull Request is opened with links to `IMPL_DESC.md` and `TRACKER.md`.
