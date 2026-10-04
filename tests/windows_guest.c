@@ -265,6 +265,40 @@ static int child(int argc, wchar_t **argv) {
         SetConsoleCtrlHandler(interrupt_handler, TRUE);
         write_bytes(output, (const uint8_t *)"READY\n", 6); Sleep(INFINITE); return 1;
     }
+    if (wcscmp(argv[2], L"interactive") == 0) {
+        HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+        check(SetConsoleCtrlHandler(interrupt_handler, TRUE), "interactive interrupt handler");
+        check(SetConsoleMode(input, ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT),
+              "interactive input mode");
+        write_bytes(output, (const uint8_t *)"READY\n", 6);
+        char line[80]; DWORD received = 0;
+        check(ReadFile(input, line, sizeof(line), &received, NULL) && received >= 2 &&
+              line[0] == 'g' && line[1] == 'o', "interactive line input");
+        CONSOLE_SCREEN_BUFFER_INFO dimensions;
+        check(GetConsoleScreenBufferInfo(output, &dimensions), "interactive dimensions");
+        char report[100];
+        int length = snprintf(report, sizeof(report), "SIZE %d %d\n", dimensions.dwSize.Y, dimensions.dwSize.X);
+        check(length > 0 && (size_t)length < sizeof(report), "interactive report bound");
+        write_bytes(output, (const uint8_t *)report, (DWORD)length);
+        write_bytes(error, (const uint8_t *)"MERGED\n", 7);
+        Sleep(INFINITE); return 1;
+    }
+    if (wcscmp(argv[2], L"files") == 0) {
+        check(argc == 5, "mapped file argument count");
+        HANDLE file = CreateFileW(argv[3], GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        check(file != INVALID_HANDLE_VALUE, "open exported input");
+        uint8_t bytes[100]; DWORD received = 0;
+        check(ReadFile(file, bytes, sizeof(bytes), &received, NULL) && received == 19 &&
+              memcmp(bytes, "export read marker\n", 19) == 0, "read exported input");
+        CloseHandle(file);
+        file = CreateFileW(argv[4], GENERIC_WRITE, FILE_SHARE_READ, NULL, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+        check(file != INVALID_HANDLE_VALUE, "create exported output");
+        write_bytes(file, (const uint8_t *)"guest export write\n", 19);
+        CloseHandle(file);
+        write_bytes(output, (const uint8_t *)"files ok\n", 9); return 0;
+    }
     if (wcscmp(argv[2], L"large") == 0) {
         uint8_t bytes[16384]; memset(bytes, 'O', sizeof(bytes));
         for (unsigned i = 0; i < 192; i++) { write_bytes(output, bytes, sizeof(bytes)); }

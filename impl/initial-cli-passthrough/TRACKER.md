@@ -408,9 +408,13 @@
   - **Task Impact**: 0% to #6 (0% overall).
   - **Summary**: The first native audit exposed MSVC forced-include lookup relative to the source unit; add the test header directory explicitly and request its basename.
 
-- **Commit `HEAD`**: `fix(test): link Zig safe-mode Windows runtime imports`
+- **Commit `29cdbba`**: `fix(test): link Zig safe-mode Windows runtime imports`
   - **Task Impact**: 0% to #6 (0% overall).
   - **Summary**: Link the system ntdll import library explicitly when MSVC links the safe-mode Zig codec, matching imports otherwise supplied by Zig cc.
+
+- **Commit `HEAD`**: `test(guest): expose file and console fixtures for VM acceptance`
+  - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
+  - **Summary**: Add deterministic guest child modes for actual exported-file read/write and interactive console input, dimensions, merged stderr, and Ctrl-C across Viosock.
 
 ## Verification snapshot
 

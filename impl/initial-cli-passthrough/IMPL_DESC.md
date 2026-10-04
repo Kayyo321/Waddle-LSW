@@ -952,3 +952,12 @@ This audit measures every explicit dynamic allocation in the guest C sources;
 Zig parsing remains allocation-free. It complements Linux ASan/LSan and Zig's
 testing allocator rather than claiming LeakSanitizer support on Windows. The
 header is never included in production builds, and no external SDK is vendored.
+
+The native fixture also exposes VM-only child modes. `files` requires two mapped
+file arguments, reads an exact 19-byte host marker, and writes a 19-byte result
+back through the mounted export. `interactive` installs a console interrupt
+handler, reads a `go` line from the actual console input handle, reports console
+buffer rows/columns, writes a stderr marker for merged-output verification, and
+waits for Ctrl-C (exit 130). These modes let the Linux host validate mapped argv,
+export read/write semantics, interactive input, actual resize dimensions, and
+interrupt delivery across Viosock rather than inferring them from loopback.
