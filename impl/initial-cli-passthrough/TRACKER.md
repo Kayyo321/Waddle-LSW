@@ -208,9 +208,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Validate decimal listener ports without C string-to-integer parsing; reject zero, signs, whitespace and overflow. Native tests cover the full unsigned boundary.
 
-- **Commit `HEAD`**: `feat(guest): listen on native Viosock and Windows UNIX sockets`
+- **Commit `3f37428`**: `feat(guest): listen on native Viosock and Windows UNIX sockets`
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Query the installed Viosock family through its device IOCTL, bind the independently declared 12-byte native ABI, provide AF_UNIX local testing, and dispatch sequential sessions with noninheritable sockets and handshake deadlines. Strict Windows object build passes.
+
+- **Commit `HEAD`**: `fix(guest): preserve a completed child exit code of 259`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Use process-handle signaled state to distinguish running children instead of treating STILL_ACTIVE as a forbidden exit code; completed Windows exit 259 remains valid.
 
 ## Verification snapshot
 

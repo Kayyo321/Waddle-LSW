@@ -63,7 +63,8 @@ int guest_session(SOCKET socket) {
     if (wait != WAIT_OBJECT_0) { guest_wire_fail(&wire); }
 finish: {
     DWORD exit_code = 126;
-    if (!GetExitCodeProcess(process.process, &exit_code) || exit_code == STILL_ACTIVE) { guest_wire_fail(&wire); }
+    if (WaitForSingleObject(process.process, 0) != WAIT_OBJECT_0 ||
+        !GetExitCodeProcess(process.process, &exit_code)) { guest_wire_fail(&wire); }
     // Kill descendants after natural exit so inherited pipe writers cannot hold EOF.
     TerminateJobObject(process.job, 137);
     join_input(&wire, input);
