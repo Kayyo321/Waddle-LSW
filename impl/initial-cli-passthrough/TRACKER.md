@@ -300,9 +300,33 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Report Windows compiler and runtime phases as distinct CI steps and bound the regression execution to three minutes; keep the existing whole-job build deadline.
 
-- **Commit `HEAD`**: `fix(cli): report rejected path mappings on stderr`
+- **Commit `11b7fac`**: `fix(cli): report rejected path mappings on stderr`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Route argument/cwd translation errors through the existing local-error diagnostic and cleanup instead of silently returning 125; path option regression statuses remain passing.
+
+- **Commit `7951443`**: `docs(impl): synchronize IMPL_DESC and TRACKER with coding standards and test coverage`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: - Update protocol data structures and constants in IMPL_DESC.md to PascalCase. - Add section 8.6 to IMPL_DESC.md covering documentation, Zig tests, and zero-leak gating. - Update TRACKER.md task #8 to 100% completion (advancing overall feature completion to 64.0%). - Record all atomic refactoring and testing commits in TRACKER.md commit history log. - Document verified 92.5% protocol line coverage, 17 Zig native tests, and zero memory leaks.
+
+- **Commit `da1c447`**: `Added "logo.png"`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Historical documentation/asset change predating this completion pass; no implementation task progress.
+
+- **Commit `871951c`**: `docs(tracker): log README rule and documentation refinement commits`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: - Record commit c488c7f (AGENTS.md README maintenance and anti-vibe-coding rule). - Record commit f15c561 (README.md logo and PoC section streamlining).
+
+- **Commit `c8ab9a4`**: `docs(tracker): record README logo layout and wrap enhancement commit`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Historical documentation/asset change predating this completion pass; no implementation task progress.
+
+- **Commit `d5ff661`**: `Updated "README.md"`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Historical documentation/asset change predating this completion pass; no implementation task progress.
+
+- **Commit `HEAD`**: `docs(tracker): audit omitted historical feature commits`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Record five prior documentation/asset/tracker commits missing from the branch history log, with explicit zero implementation progress impact; no README changes made in this completion pass.
 
 ## Verification snapshot
 
