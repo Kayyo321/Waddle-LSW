@@ -296,9 +296,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Apply Zig 0.13 canonical formatting to the feature parser sources; guest and path native suites remain passing.
 
-- **Commit `HEAD`**: `chore(ci): separate native compilation from runtime verification`
+- **Commit `37382c0`**: `chore(ci): separate native compilation from runtime verification`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Report Windows compiler and runtime phases as distinct CI steps and bound the regression execution to three minutes; keep the existing whole-job build deadline.
+
+- **Commit `HEAD`**: `fix(cli): report rejected path mappings on stderr`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Route argument/cwd translation errors through the existing local-error diagnostic and cleanup instead of silently returning 125; path option regression statuses remain passing.
 
 ## Verification snapshot
 

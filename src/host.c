@@ -291,7 +291,7 @@ int main(int argc, char **argv) {
         args[i - start] = translate ? waddle_translate_rules(argv[i], rules, rule_count) : strdup(argv[i]);
         if (args[i - start] == NULL) {
             result = 125;
-            goto done;
+            goto local_error;
         }
     }
 
@@ -299,7 +299,7 @@ int main(int argc, char **argv) {
         char *mapped = waddle_translate_rules(cwd, rules, rule_count);
         if (mapped == NULL) {
             result = 125;
-            goto done;
+            goto local_error;
         }
         free(cwd);
         cwd = mapped;
