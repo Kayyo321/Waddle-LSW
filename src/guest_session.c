@@ -59,8 +59,19 @@ int guest_session(SOCKET socket) {
     input = CreateThread(NULL, 0, guest_input_thread, &input_context, 0, NULL);
     if (input == NULL || readers[0] == NULL || readers[1] == NULL) { guest_wire_fail(&wire); goto finish; }
     HANDLE waits[2] = {process.process, wire.failure};
-    DWORD wait = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-    if (wait != WAIT_OBJECT_0) { guest_wire_fail(&wire); }
+    for (;;) {
+        DWORD wait = WaitForMultipleObjects(2, waits, FALSE, 50);
+        if (wait == WAIT_OBJECT_0) { break; }
+        if (wait != WAIT_TIMEOUT) { guest_wire_fail(&wire); break; }
+        // A pipe writer can block before the receive worker observes socket EOF.
+        // Poll only exceptional socket conditions; never consume its framed data.
+        WSAPOLLFD peer = {socket, 0, 0};
+        int status = WSAPoll(&peer, 1, 0);
+        if (status < 0 || (peer.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+            guest_wire_fail(&wire);
+            break;
+        }
+    }
 finish: {
     DWORD exit_code = 126;
     if (WaitForSingleObject(process.process, 0) != WAIT_OBJECT_0 ||

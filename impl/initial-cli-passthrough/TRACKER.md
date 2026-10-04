@@ -252,9 +252,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; first CI run pending).
   - **Summary**: Add Windows 2022 CI with a checksum-pinned Zig 0.13 toolchain, strict guest/fixture builds, native parser allocator tests and AF_UNIX regressions; initialize any repository submodules recursively.
 
-- **Commit `HEAD`**: `fix(build): link Windows compiler runtime at the executable boundary`
+- **Commit `ed016d5`**: `fix(build): link Windows compiler runtime at the executable boundary`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Native Windows CI exposed Zig 0.13 COFF build-obj inability to merge compiler-runtime objects. Disable object-level runtime emission and let zig cc provide it at final link; complete Linux-to-Windows cross-build passes.
+
+- **Commit `HEAD`**: `fix(guest): detect disconnect while stdin is backpressured`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Monitor exceptional socket conditions in the main child wait loop without consuming input frames, so pipe writes cannot hide peer disconnection; session failure cancels blocked stdin and kills the child tree.
 
 ## Verification snapshot
 
