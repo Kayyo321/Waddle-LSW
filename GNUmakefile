@@ -45,6 +45,7 @@ zig-test: build/path_rules.o
 test: all build/unit build/integration zig-test
 	./build/unit
 	./build/integration
+	sh tests/path_options.sh
 
 test-sanitizers: clean
 	$(MAKE) test \
