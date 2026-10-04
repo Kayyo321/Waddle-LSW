@@ -24,6 +24,6 @@
 
 ## Commit History & Progress Log
 
-- **Commit `TBD`**: `docs(impl): add detailed implementation description and tracker for subsystem daemon manager`
+- **Commit `01adf3e`**: `docs(impl): add detailed implementation description and tracker for subsystem daemon manager`
   - **Task Impact**: 0% progress impact (specification and tracking baseline established for tasks #1 through #8)
   - **Summary**: Created comprehensive implementation description covering QEMU lifecycle, VirtIO-FS integration, daemon control protocol, CLI commands, state machines, and testing plan.
