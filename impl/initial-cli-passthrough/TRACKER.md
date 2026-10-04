@@ -452,9 +452,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: The guest returns wire spawn status 2, which the existing host CLI deliberately maps to shell status 127. Assert the user-visible status in VM acceptance.
 
-- **Commit `HEAD`**: `fix(guest): dispatch peer readiness through Viosock provider`
+- **Commit `8907a89`**: `fix(guest): dispatch peer readiness through Viosock provider`
   - **Task Impact**: 0% to #6 and #7 (0% overall; VM rerun pending).
   - **Summary**: Real Viosock 0.1.302 returns WSAENOTSOCK from WSAPoll on a valid socket after 32 KiB duplex output. Use provider-dispatched select for monitor readiness, with bounded numeric diagnostics.
+
+- **Commit `HEAD`**: `fix(guest): keep a single Viosock receive owner`
+  - **Task Impact**: 0% to #6 and #7 (0% overall; cancellation acceptance pending).
+  - **Summary**: Use a session-owned provider close event instead of concurrent receive peeks for Viosock. The actual VM now passes exact 16 MiB duplex; queued-input timeout recovery remains under investigation.
 
 ## Verification snapshot
 

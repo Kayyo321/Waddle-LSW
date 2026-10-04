@@ -1016,3 +1016,13 @@ causing a previously hidden loopback-only transport failure during duplex output
 The monitor therefore uses the same provider-dispatched readiness interface as
 its input/output workers. A nonblocking MSG_PEEK distinguishes EOF without stealing
 framed input; WSAEWOULDBLOCK is tolerated if the input worker wins the read race.
+
+Viosock sessions additionally register a session-owned WSAEVENT for FD_CLOSE after
+switching to nonblocking mode and before starting workers. The main thread waits
+on child, failure, and close handles and enumerates close notifications; the input
+worker remains the sole socket receiver. The event is disabled and closed after
+all workers join. AF_UNIX retains its tested select/peek monitor because its event
+API support differs. This avoids concurrent Viosock receive/peek requests: that
+path triggered a WDF_VIOLATION 0x10D/4 kernel crash with the installed 0.1.302 driver.
+With close events, exact 16 MiB duplex acceptance passes in the VM; blocked-input
+cancellation/reconnect is still being investigated and is not yet accepted.

@@ -28,6 +28,7 @@ int guest_session(SOCKET socket) {
     guest_spawn_t spawn;
     guest_process_t process = {0};
     HANDLE input = NULL, readers[2] = {NULL, NULL};
+    WSAEVENT peer_close = WSA_INVALID_EVENT;
     guest_pump_t input_context = {&wire, &process, 0, 0};
     guest_pump_t output_context[2] = {{&wire, &process, 1, 0}, {&wire, &process, 2, 0}};
     if (guest_receive_header(&wire, &frame) != 0 || frame.type != 1 || frame.length < 26) { goto done; }
@@ -56,16 +57,34 @@ int guest_session(SOCKET socket) {
     if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) != 0) { goto done; }
     u_long nonblocking = 1;
     if (ioctlsocket(socket, FIONBIO, &nonblocking) != 0) { goto done; }
+    struct sockaddr_storage address;
+    int address_length = sizeof(address);
+    if (getsockname(socket, (struct sockaddr *)&address, &address_length) != 0) { goto done; }
+    if (address.ss_family != AF_UNIX) {
+        peer_close = WSACreateEvent();
+        if (peer_close == WSA_INVALID_EVENT || WSAEventSelect(socket, peer_close, FD_CLOSE) != 0) { goto done; }
+    }
     wire.cancellable = 1;
     readers[0] = CreateThread(NULL, 0, guest_output_thread, &output_context[0], 0, NULL);
     readers[1] = CreateThread(NULL, 0, guest_output_thread, &output_context[1], 0, NULL);
     input = CreateThread(NULL, 0, guest_input_thread, &input_context, 0, NULL);
     if (input == NULL || readers[0] == NULL || readers[1] == NULL) { guest_wire_fail(&wire); goto finish; }
-    HANDLE waits[2] = {process.process, wire.failure};
+    HANDLE waits[3] = {process.process, wire.failure, peer_close};
+    DWORD wait_count = peer_close == WSA_INVALID_EVENT ? 2 : 3;
     for (;;) {
-        DWORD wait = WaitForMultipleObjects(2, waits, FALSE, 50);
+        DWORD wait = WaitForMultipleObjects(wait_count, waits, FALSE, 50);
+        if (peer_close != WSA_INVALID_EVENT && wait == WAIT_OBJECT_0 + 2) {
+            WSANETWORKEVENTS events;
+            if (WSAEnumNetworkEvents(socket, peer_close, &events) != 0 || (events.lNetworkEvents & FD_CLOSE) != 0) {
+                guest_wire_fail(&wire);
+                break;
+            }
+            continue;
+        }
         if (wait == WAIT_OBJECT_0) { break; }
         if (wait != WAIT_TIMEOUT) { guest_wire_fail(&wire); break; }
+        // Viosock close events preserve a single receiver, including blocked stdin.
+        if (peer_close != WSA_INVALID_EVENT) { continue; }
         // A pipe writer can block before the receive worker observes socket EOF.
         // Poll only exceptional socket conditions; never consume its framed data.
         fd_set readable, exceptional;
@@ -124,6 +143,11 @@ done:
     guest_process_close(&process);
     free(body); body = NULL;
     free(executable); executable = NULL;
+    if (peer_close != WSA_INVALID_EVENT) {
+        WSAEventSelect(socket, NULL, 0);
+        WSACloseEvent(peer_close);
+        peer_close = WSA_INVALID_EVENT;
+    }
     guest_wire_close(&wire);
     return result;
 }
