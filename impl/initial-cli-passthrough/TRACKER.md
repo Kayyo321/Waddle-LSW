@@ -18,9 +18,9 @@
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 40% | Single root-export mapping implemented; configurable rules pending. Rule-based POSIX to Windows path mapping |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Pending | 10% | 0% | Multi-threaded I/O forwarding and exit code retrieval |
-| #8      | Build loopback mock test harness, unit tests, and integration test suite | In Progress | 10% | 20% | Mock subprocess/PTY launcher compiled; relay and end-to-end verification pending. End-to-end verification via UNIX domain socket mock |
+| #8      | Build loopback mock test harness, unit tests, and integration test suite | In Progress | 10% | 40% | Single-session mock relay works; adversarial/TTY integration suite pending. End-to-end verification via UNIX domain socket mock |
 
-**Total Feature Completion**: `47.0%`
+**Total Feature Completion**: `49.0%`
 
 ## Commit History & Progress Log
 
@@ -56,6 +56,10 @@
   - **Task Impact**: +40% to #3 (+6% overall); +6% overall.
   - **Summary**: Add option parsing, explicit environment overrides, cwd and path mapping, framed spawn construction, nonblocking connection setup, and integration of terminal/session modules. Host builds, help works, missing socket returns 125. Guest end-to-end and PTY verification remain pending.
 
-- **Commit `HEAD`**: `feat(mock): launch isolated pipe and PTY subprocesses`
+- **Commit `fc2265d`**: `feat(mock): launch isolated pipe and PTY subprocesses`
   - **Task Impact**: +20% to #8 (+2% overall); +2% overall.
   - **Summary**: Validate spawn payload strings/environment/flags, decode canonical arguments, execute Linux children with cwd and explicit environment, report exec errors through a close-on-exec pipe, and own process-group cleanup. Mock launcher compiles; Windows task #6 stays pending.
+
+- **Commit `HEAD`**: `feat(mock): relay framed I/O through a private UNIX listener`
+  - **Task Impact**: +20% to #8 (+2% overall); +2% overall.
+  - **Summary**: Add single-session private UNIX listener, bounded nonblocking pipe/PTY relay, stdin EOF, resize/signals, output EOF and exit ordering, and disconnect cleanup. A real shell command produced separate stdout/stderr and exit 42 end to end; mock exited 0. Windows transport task #7 stays pending.

@@ -12,8 +12,8 @@ build/unit: tests/unit.c $(COMMON) include/waddle/cli_protocol.h src/common.h | 
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/unit.c $(COMMON) $(LDFLAGS) -o $@
 build/waddle: src/host.c src/session.c src/terminal.c src/session.h src/terminal.h $(COMMON) include/waddle/cli_protocol.h src/common.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/host.c src/session.c src/terminal.c $(COMMON) $(LDFLAGS) -o $@
-build/waddle-mock-guest: src/mock_guest.c $(COMMON) include/waddle/cli_protocol.h src/common.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/mock_guest.c $(COMMON) $(LDFLAGS) -lutil -o $@
+build/waddle-mock-guest: src/mock_guest.c src/mock_process.c src/mock_process.h $(COMMON) include/waddle/cli_protocol.h src/common.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/mock_guest.c src/mock_process.c $(COMMON) $(LDFLAGS) -lutil -o $@
 test: all build/unit build/integration
 	./build/unit
 	./build/integration
