@@ -13,14 +13,14 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Define shared C wire protocol header (`include/waddle/cli_protocol.h`) | Done | 10% | 100% | Packed structs, magic 'WDLC', 32-byte header |
 | #2      | Implement Win32 `CommandLineToArgvW` inverse escaping generator and unit tests | Done | 10% | 100% | Deterministic escaping for spaces, quotes, backslashes |
-| #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | In Progress | 15% | 80% | CLI/terminal integration complete; PTY tests pending. SIGWINCH and SIGINT via self-pipe trick |
-| #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | In Progress | 15% | 60% | Bounded event loop compiled; end-to-end validation pending. Multiplex STDIN, demux STDOUT and STDERR |
+| #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests. SIGWINCH and SIGINT via self-pipe trick |
+| #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded stream loop validated under binary duplex and slow output readers. Multiplex STDIN, demux STDOUT and STDERR |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 40% | Single root-export mapping implemented; configurable rules pending. Rule-based POSIX to Windows path mapping |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Pending | 10% | 0% | Multi-threaded I/O forwarding and exit code retrieval |
-| #8      | Build loopback mock test harness, unit tests, and integration test suite | In Progress | 10% | 40% | Single-session mock relay works; adversarial/TTY integration suite pending. End-to-end verification via UNIX domain socket mock |
+| #8      | Build loopback mock test harness, unit tests, and integration test suite | In Progress | 10% | 80% | 15 Linux integration scenarios pass; Windows and benchmark verification pending. End-to-end verification via UNIX domain socket mock |
 
-**Total Feature Completion**: `49.0%`
+**Total Feature Completion**: `62.0%`
 
 ## Commit History & Progress Log
 
@@ -60,6 +60,10 @@
   - **Task Impact**: +20% to #8 (+2% overall); +2% overall.
   - **Summary**: Validate spawn payload strings/environment/flags, decode canonical arguments, execute Linux children with cwd and explicit environment, report exec errors through a close-on-exec pipe, and own process-group cleanup. Mock launcher compiles; Windows task #6 stays pending.
 
-- **Commit `HEAD`**: `feat(mock): relay framed I/O through a private UNIX listener`
+- **Commit `ee88c1b`**: `feat(mock): relay framed I/O through a private UNIX listener`
   - **Task Impact**: +20% to #8 (+2% overall); +2% overall.
   - **Summary**: Add single-session private UNIX listener, bounded nonblocking pipe/PTY relay, stdin EOF, resize/signals, output EOF and exit ordering, and disconnect cleanup. A real shell command produced separate stdout/stderr and exit 42 end to end; mock exited 0. Windows transport task #7 stays pending.
+
+- **Commit `HEAD`**: `test(cli): verify duplex streams and terminal lifecycle end to end`
+  - **Task Impact**: +20% to #3 (+3% overall), +40% to #4 (+6% overall), +40% to #8 (+4% overall); +13% overall.
+  - **Summary**: All 15 C integration scenarios pass: outputs/exit status, exact arguments, cwd/environment, missing executable, 16 MiB duplex with slow readers, SIGINT/SIGTERM, timeout, adversarial peers, PTY resize/Ctrl-C, disconnect, and termios restoration. Host tasks complete for the PoC contract; Windows validation and performance targets remain unverified.
