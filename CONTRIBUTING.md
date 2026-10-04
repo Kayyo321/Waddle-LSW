@@ -24,7 +24,15 @@ This guide provides comprehensive instructions for developers, engineers, and AI
    - [Feature Implementation Lifecycle (`impl/`)](#feature-implementation-lifecycle-impl)
    - [Authoring `IMPL_DESC.md`](#authoring-impl_descmd)
    - [Maintaining `TRACKER.md`](#maintaining-trackermd)
-5. [Coding Standards & Architectural Conventions](#5-coding-standards--architectural-conventions)
+5. [Git Submodules & External Dependency Management](#5-git-submodules--external-dependency-management)
+   - [Submodule Architecture & Directory Conventions](#submodule-architecture--directory-conventions)
+   - [Step-by-Step Guide: Adding a Git Submodule](#step-by-step-guide-adding-a-git-submodule)
+   - [Handling Submodules in Feature Branches](#handling-submodules-in-feature-branches)
+   - [Bumping and Updating an Existing Submodule](#bumping-and-updating-an-existing-submodule)
+   - [Safely Removing a Submodule](#safely-removing-a-submodule)
+   - [Build System Integration](#build-system-integration)
+   - [CI/CD Pipeline & Automated Verification](#cicd-pipeline--automated-verification)
+6. [Coding Standards & Architectural Conventions](#6-coding-standards--architectural-conventions)
    - [C++20 Coding Standards](#c20-coding-standards)
    - [Rust Coding Standards](#rust-coding-standards)
    - [Shared Memory (IVSHMEM) & Concurrency Rules](#shared-memory-ivshmem--concurrency-rules)
@@ -32,13 +40,13 @@ This guide provides comprehensive instructions for developers, engineers, and AI
    - [Wayland Client Best Practices](#wayland-client-best-practices)
    - [Win32 & DirectX Best Practices](#win32--directx-best-practices)
    - [Error Handling & Resilience](#error-handling--resilience)
-6. [Testing, Sanitizers & Performance Verification](#6-testing-sanitizers--performance-verification)
+7. [Testing, Sanitizers & Performance Verification](#7-testing-sanitizers--performance-verification)
    - [Unit & Integration Testing](#unit--integration-testing)
    - [Sanitizers (ASan, TSan, UBSan)](#sanitizers-asan-tsan-ubsan)
    - [Performance & Latency Benchmarks](#performance--latency-benchmarks)
-7. [Commit Standards & Hygiene](#7-commit-standards--hygiene)
-8. [Pull Request (PR) & Merging Process](#8-pull-request-pr--merging-process)
-9. [Security & Vulnerability Disclosure](#9-security--vulnerability-disclosure)
+8. [Commit Standards & Hygiene](#8-commit-standards--hygiene)
+9. [Pull Request (PR) & Merging Process](#9-pull-request-pr--merging-process)
+10. [Security & Vulnerability Disclosure](#10-security--vulnerability-disclosure)
 
 ---
 
@@ -241,7 +249,9 @@ Waddle-LSW enforces a strict branching model as defined in [AGENTS.md](file:///h
 |:---------------|:--------------|:----------------------|:-----------------------|
 | **Refactoring** (No behavior changes, code cleanup, formatting) | Standard (`origin` / `main`) | None | No (Direct commits on standard branch) |
 | **Maintenance & Docs** (Documentation, build scripts, CI fixes) | Standard (`origin` / `main`) | None | No (Direct commits on standard branch) |
+| **Global Submodule Bumps** (Updating existing shared submodule on standard branch) | Standard (`origin` / `main`) | None | No (Direct commits on standard branch) |
 | **New Feature** (Adding new capability, protocol, or subsystem) | Feature (`feature/<feature-name>`) | `impl/<feature-title>/` | **Yes** (Strict review checklist) |
+| **Feature Submodule Addition** (Adding new external library required for feature) | Feature (`feature/<feature-name>`) | `impl/<feature-title>/` | **Yes** (Strict review checklist) |
 | **Feature Removal** (Deprecating and removing existing capability) | Feature (`feature/remove-<name>`) | `impl/<feature-title>/` | **Yes** (Strict review checklist) |
 
 ---
@@ -335,7 +345,245 @@ touch impl/guest-window-tracker/TRACKER.md
 
 ---
 
-## 5. Coding Standards & Architectural Conventions
+## 5. Git Submodules & External Dependency Management
+
+To guarantee fully reproducible, deterministic, and hermetic builds without hidden network dependencies, Waddle-LSW mandates that **all external third-party libraries, vendor SDKs, protocols, and headers not supplied by host/guest base OS packages must be included as Git submodules**.
+
+### Submodule Architecture & Directory Conventions
+
+- **Dedicated Location**: All submodules reside strictly under the top-level `submodules/` directory:
+  ```
+  submodules/
+  ├── <library-name>/         # Git submodule root
+  ```
+- **Zero Loose Vendoring**: Dropping loose source trees, headers, or precompiled archives directly into the repository without Git submodule tracking is strictly forbidden.
+- **Hermetic & Offline Builds**: Dynamic runtime fetching during the build configuration phase (e.g., unpinned `curl` downloads, CMake `FetchContent` pulling from remote URLs at configure time without offline verification) is disallowed. Builds must be completely offline-capable from a cloned tree.
+- **Immutable Commit Pinning**: Every submodule must be pinned to an explicit, immutable commit SHA (or release tag commit SHA). Tracking floating branch heads (`main`, `master`, `HEAD`, `dev`) in committed trees is prohibited.
+- **Protocol & Remote Access**: All submodule remote URLs in `.gitmodules` must use public HTTPS (`https://github.com/...`) rather than SSH (`git@github.com:...`). This ensures unauthenticated builds succeed in CI runners, containers, and development environments.
+- **License Compatibility**: Any external library must be audited for license compatibility with Waddle-LSW (GPL, LGPL, MIT, Apache 2.0, BSD) prior to addition. Document license terms in `IMPL_DESC.md`.
+
+---
+
+### Step-by-Step Guide: Adding a Git Submodule
+
+When adding an external dependency to the project:
+
+#### 1. Add Submodule via Public HTTPS
+From the repository root, add the submodule into `submodules/<library-name>`:
+```bash
+git submodule add https://github.com/<owner>/<repo>.git submodules/<library-name>
+```
+
+#### 2. Pin to an Immutable Release Tag or Commit SHA
+Never leave the submodule tracking an arbitrary branch head. Pin to a verified release:
+```bash
+cd submodules/<library-name>
+git fetch --tags
+git checkout <tag-or-commit-sha>
+cd ../..
+```
+
+#### 3. Configure Shallow Clones (For Large Repositories)
+For exceptionally large external dependencies (e.g., Mesa, QEMU, WinFsp) where full commit history is unnecessary:
+```bash
+git config -f .gitmodules submodule.submodules/<library-name>.shallow true
+```
+
+#### 4. Stage and Commit Atomically
+Stage both `.gitmodules` and the submodule directory pointer (gitlink):
+```bash
+git add .gitmodules submodules/<library-name>
+git commit -m "chore(deps): add <library-name> as git submodule pinned to <version> (<sha>)
+
+- Track upstream https://github.com/<owner>/<repo>.git under submodules/<library-name>.
+- Pinned to immutable commit <sha> (release <version>).
+- Required for <subsystem/purpose>.
+- License: <License Name> (audited and compatible)."
+```
+
+---
+
+### Handling Submodules in Feature Branches
+
+Adding or altering submodules inside feature branches requires strict coordination to avoid dirty working trees, broken CI pipelines, and merge conflicts.
+
+#### 1. Add Directly on the Feature Branch
+- If a new feature introduces an external library, the submodule **must be added on that feature branch** (`feature/<feature-name>`), never directly on the standard branch.
+- Document the dependency in `impl/<feature-title>/IMPL_DESC.md` (architecture, interface boundaries, licensing).
+- Allocate a dedicated task in `impl/<feature-title>/TRACKER.md` (e.g., `#X: Integrate and verify <lib> submodule`) and attribute the `chore(deps):` commit to it.
+
+#### 2. Branch Switching & The "Ghost Submodule" Problem
+Git does not automatically remove or initialize submodule directories when switching branches:
+
+- **Switching into a Feature Branch with Submodules**:
+  When checking out a feature branch that introduces a submodule, the directory will initially exist but may be completely empty. You must initialize it:
+  ```bash
+  git checkout feature/<feature-name>
+  git submodule update --init --recursive
+  ```
+- **Automating Submodule Recurse (Recommended)**:
+  Enable Git's built-in submodule recursion so branch checkouts automatically update submodule state:
+  ```bash
+  git config submodule.recurse true
+  ```
+- **Switching Back to a Branch Without the Submodule**:
+  When switching from a feature branch back to `origin` (or another branch where the submodule does not exist), Git will leave `submodules/<library-name>` behind as an untracked directory. This can cause untracked file warnings or prevent future branch checkouts.
+  To cleanly remove the residual submodule directory:
+  ```bash
+  # 1. Deinitialize the submodule so git stops tracking its state
+  git submodule deinit -f submodules/<library-name>
+  # 2. Clean out the untracked residual directory
+  git clean -dff submodules/
+  ```
+
+#### 3. Rebasing Feature Branches with Submodules
+When rebasing your feature branch against the latest standard branch (`origin` / `main`):
+```bash
+git checkout feature/<feature-name>
+git fetch origin
+git rebase origin
+# Immediately synchronize submodule state to match the rebased commit pointers:
+git submodule update --init --recursive
+```
+
+#### 4. Resolving Merge Conflicts with Submodules
+Merge conflicts with submodules typically fall into two categories:
+
+1. **Text Conflict in `.gitmodules`**:
+   - Occurs when both the feature branch and upstream added or modified entries in `.gitmodules`.
+   - Open `.gitmodules`, inspect the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`), and ensure all valid submodule sections are preserved with correct `path` and `url` declarations.
+   - Stage the resolved file: `git add .gitmodules`.
+
+2. **Gitlink (Pointer) Conflict**:
+   - Occurs when two branches point the same submodule to different commit SHAs.
+   - Git marks the submodule with `CONFLICT (submodule): Merge conflict in submodules/<library-name>`.
+   - To resolve:
+     ```bash
+     cd submodules/<library-name>
+     # Inspect the differing commits
+     git log --oneline <our-sha>..<their-sha>
+     # Check out the authoritative, desired commit
+     git checkout <chosen-sha>
+     cd ../..
+     # Stage the resolved gitlink pointer
+     git add submodules/<library-name>
+     ```
+   - Verify resolution with `git submodule status` and complete the rebase/merge.
+
+---
+
+### Bumping and Updating an Existing Submodule
+
+To update a submodule to a newer release or bugfix commit:
+
+```bash
+cd submodules/<library-name>
+git fetch --all --tags
+git checkout <new-tag-or-sha>
+cd ../..
+git add submodules/<library-name>
+git commit -m "chore(deps): bump <library-name> to <new-tag> (<new-sha>)
+
+- Update <library-name> to upstream release <new-tag>.
+- Incorporates bugfixes for <issue/reason>.
+- Verified test suite passes under host and guest."
+```
+
+---
+
+### Safely Removing a Submodule
+
+To completely remove a submodule without leaving orphaned cache files or corrupted git pointers, execute the following 5-step sequence:
+
+```bash
+# 1. Deinitialize the submodule from .git/config
+git submodule deinit -f submodules/<library-name>
+
+# 2. Remove the submodule from working tree and .gitmodules
+git rm -f submodules/<library-name>
+
+# 3. Clean up the internal module cache in .git
+rm -rf .git/modules/submodules/<library-name>
+
+# 4. Remove residual .gitmodules stanza if remaining
+# (git rm typically removes it; verify .gitmodules is clean)
+
+# 5. Commit the removal atomically
+git commit -m "chore(deps): remove <library-name> submodule
+
+- Deprecate and remove <library-name> dependency.
+- Remove submodule configuration and gitlink."
+```
+
+---
+
+### Build System Integration
+
+#### CMake Integration (`CMakeLists.txt`)
+Submodules providing CMake targets should be integrated using `add_subdirectory()` with `EXCLUDE_FROM_ALL` to avoid polluting default build targets:
+
+```cmake
+# Ensure submodule is initialized before building
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/submodules/foo/CMakeLists.txt")
+    message(FATAL_ERROR "Submodule 'submodules/foo' is not initialized! Please run: git submodule update --init --recursive")
+endif()
+
+# Include submodule without adding its internal tests or install targets to default build
+add_subdirectory(submodules/foo EXCLUDE_FROM_ALL)
+target_link_libraries(waddle_host PRIVATE foo)
+```
+
+#### Zig Integration (`build.zig`)
+Submodules providing C sources or headers are incorporated directly into the Zig compilation graph:
+
+```zig
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const exe = b.addExecutable(.{
+        .name = "waddle-cli",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const lib_path = "submodules/c-proto";
+    exe.addIncludePath(b.path(lib_path ++ "/include"));
+    exe.addCSourceFiles(.{
+        .root = b.path(lib_path ++ "/src"),
+        .files = &.{ "protocol.c" },
+        .flags = &.{ "-std=c11", "-O3" },
+    });
+
+    b.installArtifact(exe);
+}
+```
+
+---
+
+### CI/CD Pipeline & Automated Verification
+
+To guarantee that submodules do not break automated builds, the CI configuration must:
+
+1. **Clone Submodules Recursively**:
+   ```yaml
+   - name: Checkout Repository with Submodules
+     uses: actions/checkout@v4
+     with:
+       submodules: recursive
+       fetch-depth: 0
+   ```
+2. **Validate Upstream Reachability**:
+   CI ensures all pinned commit SHAs are present in upstream remotes and rejects pull requests containing local-only or unpushed submodule commits.
+3. **Verify HTTPS URLs**:
+   CI audits `.gitmodules` to ensure no private or SSH protocols are used.
+
+---
+
+## 6. Coding Standards & Architectural Conventions
 
 ### C++20 Coding Standards
 
@@ -456,7 +704,7 @@ The shared memory layer bridges Windows guest and Linux host without kernel inte
 
 ---
 
-## 6. Testing, Sanitizers & Performance Verification
+## 7. Testing, Sanitizers & Performance Verification
 
 ### Unit & Integration Testing
 
@@ -511,7 +759,7 @@ Run the latency benchmarking harness in `tests/benchmarks/latency_bench` before 
 
 ---
 
-## 7. Commit Standards & Hygiene
+## 8. Commit Standards & Hygiene
 
 Waddle-LSW strictly enforces **atomic commits** and conventional commit messages.
 
@@ -546,13 +794,24 @@ feat(host-wayland): implement viewporter protocol fractional scaling
 Affects TODO: #3 (+25% progress)
 ```
 
+```
+chore(deps): add mylib as git submodule pinned to v1.2.3 (abc1234)
+
+- Track upstream https://github.com/example/mylib.git under submodules/mylib.
+- Pinned to tagged release v1.2.3 commit SHA abc1234.
+- Required for DXGI surface transformation pipeline in guest agent.
+- Audited license: MIT (compatible with Waddle-LSW).
+
+Affects TODO: #2 (+15% progress)
+```
+
 #### Commit Hygiene Rules:
 - **Never batch unrelated changes**: Do not combine a bugfix in the IPC layer with a formatting cleanup in the Wayland client.
 - **Ensure clean compilation**: Every commit should build cleanly and pass existing test suites.
 
 ---
 
-## 8. Pull Request (PR) & Merging Process
+## 9. Pull Request (PR) & Merging Process
 
 Before opening a Pull Request to merge a feature branch into `origin` or `main`, verify the following checklist:
 
@@ -564,6 +823,11 @@ Before opening a Pull Request to merge a feature branch into `origin` or `main`,
 - [ ] All unit and integration tests pass cleanly.
 - [ ] Sanitizer builds (ASan, TSan, UBSan) complete with zero errors.
 - [ ] No regression in latency or memory benchmarks.
+- [ ] All external dependencies are tracked as Git submodules under `submodules/` (no loose source trees).
+- [ ] Submodule remote URLs use public HTTPS protocol (no private or SSH-only URLs).
+- [ ] Pinned submodule commit SHAs exist on the upstream remote repositories.
+- [ ] `.gitmodules` contains clean, valid stanzas without merge conflict markers.
+- [ ] CI pipeline and local builds execute `git submodule update --init --recursive` cleanly.
 
 ### PR Description Template
 ```markdown
@@ -578,11 +842,12 @@ Concise summary of what this feature introduces.
 - [x] Host unit tests pass
 - [x] ASan / TSan verification clean
 - [x] Tested with sample test VM / mock frame generator
+- [x] Git submodules verified (HTTPS URLs, pinned commit SHAs, clean .gitmodules)
 ```
 
 ---
 
-## 9. Security & Vulnerability Disclosure
+## 10. Security & Vulnerability Disclosure
 
 Given that Waddle-LSW handles cross-domain shared memory and hypervisor-level IPC, security is paramount:
 
