@@ -17,7 +17,7 @@ foreach ($source in $guest_sources) {
 cl @compiler_flags /DGuestHeapListener /c src/guest_listener.c /Fobuild/guest_listener.obj
 if ($LASTEXITCODE -ne 0) { throw 'Heap listener build failed' }
 $guest_objects = @('build/guest_listener.obj') + @($guest_sources | ForEach-Object { "build/$_.obj" })
-link /nologo /debug @guest_objects build/guest_heap_codec.lib ws2_32.lib /out:build/waddle-guest-exec.exe
+link /nologo /debug @guest_objects build/guest_heap_codec.lib ws2_32.lib ntdll.lib /out:build/waddle-guest-exec.exe
 if ($LASTEXITCODE -ne 0) { throw 'Heap guest link failed' }
 cl /nologo /std:c11 /MDd /Od /Zi /D_DEBUG /D_CRT_SECURE_NO_WARNINGS tests/windows_heap_probe.c /Febuild/windows_heap_probe.exe /link ws2_32.lib
 if ($LASTEXITCODE -ne 0) { throw 'Heap detector probe build failed' }

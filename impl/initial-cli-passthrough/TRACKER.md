@@ -404,9 +404,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall; execution pending).
   - **Summary**: Add MSVC debug-heap client-allocation checkpoints across all native sessions and three detector negative controls; wire the native CI audit without claiming results before execution.
 
-- **Commit `HEAD`**: `fix(test): resolve forced heap header through MSVC include path`
+- **Commit `4b1342a`**: `fix(test): resolve forced heap header through MSVC include path`
   - **Task Impact**: 0% to #6 (0% overall).
   - **Summary**: The first native audit exposed MSVC forced-include lookup relative to the source unit; add the test header directory explicitly and request its basename.
+
+- **Commit `HEAD`**: `fix(test): link Zig safe-mode Windows runtime imports`
+  - **Task Impact**: 0% to #6 (0% overall).
+  - **Summary**: Link the system ntdll import library explicitly when MSVC links the safe-mode Zig codec, matching imports otherwise supplied by Zig cc.
 
 ## Verification snapshot
 
