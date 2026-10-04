@@ -27,6 +27,19 @@ Unlike traditional virtual machine viewers that trap Windows within a single mon
   - Its usage is strictly restricted to scenarios where external vendor SDKs or specific Windows/guest frameworks (such as direct DirectX/WinRT APIs) expose exclusively C++ interfaces without viable C/Zig bindings.
   - Higher-level managed or garbage-collected runtimes (and other heavy language ecosystems) are strictly disallowed.
 
+### 2.2 External Dependency & Git Submodule Policy
+- **Mandatory Git Submodule Architecture**:
+  - All external third-party libraries, vendor SDKs, protocols, and header collections not provided by standard host/guest base system packages must be vendored as **Git submodules** residing under the dedicated `submodules/` directory (e.g., `submodules/<library-name>`).
+  - Loose source vendoring directly into the repository tree without submodule tracking is strictly prohibited.
+  - Dynamic dependency fetching during the build phase (such as unpinned runtime network downloads, remote script execution, or unverified CMake `FetchContent` network calls at configure time) is prohibited; all builds must remain fully deterministic, offline-capable, and hermetic.
+- **Commit Pinning & Release Hygiene**:
+  - Every submodule must be pinned to an explicit, immutable commit SHA or verified release tag. Tracking dynamic branch heads (e.g., `HEAD`, `main`, or `master`) in production commits is strictly forbidden.
+  - Submodules must be licensed compatibly with Waddle-LSW (GPL/LGPL/MIT/Apache/BSD compatibility) and audited prior to inclusion.
+  - All submodule remote URLs must use public HTTPS (`https://github.com/...`) to ensure unauthenticated clones in CI environments and developer setups.
+- **Subsystem & Boundary Isolation**:
+  - External submodules are integrated into the build systems (CMake / Zig `build.zig`) via strictly scoped targets or headers, ensuring external headers do not pollute global include namespaces or violate C ABI stability invariants.
+  - Feature branches that introduce new external dependencies must document them in the feature's `IMPL_DESC.md` and track integration progress in `TRACKER.md`.
+
 ```
 +---------------------------------------------------------------------------------+
 |                                 LINUX HOST                                      |
