@@ -44,4 +44,14 @@ typedef struct guest_spawn_t {
  * @return 0 success, -1 malformed input or insufficient capacity. */
 int guest_spawn_validate(const uint8_t *body, size_t length, guest_spawn_t *spawn,
                          uint8_t *executable, size_t capacity);
+/** @brief Validate a post-spawn host control/data frame; no allocation, thread-safe.
+ * @param[in] type Previously validated host frame type.
+ * @param[in] body Nonnull borrowed length-byte payload.
+ * @param[in] length Payload byte count.
+ * @param[in] interactive One for ConPTY, zero for raw pipes.
+ * @param[in] input_eof One if stdin EOF was already received.
+ * @return 0 valid, -1 invalid type/state/reserved bytes/length/signal/dimensions.
+ * @note No state mutation; caller records stdin EOF only after success. */
+int guest_control_validate(uint16_t type, const uint8_t *body, size_t length,
+                           int interactive, int input_eof);
 #endif

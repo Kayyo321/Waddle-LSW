@@ -219,3 +219,60 @@ test "reject noncanonical commands and preserve executable selection" {
     try std.testing.expectEqualStrings("C:\\Program Files\\app.exe", std.mem.sliceTo(&executable, 0));
     try std.testing.expect(!command_validate("\"cmd\"", executable[0..0]));
 }
+
+/// in: validated type, borrowed nonnull body[length], mode and stdin EOF state.
+/// Returns 0 valid, -1 malformed or invalid transition. Caller updates EOF after
+/// validation. No mutation, allocation or globals; safe for concurrent sessions.
+export fn guest_control_validate(kind: u16, body: [*]const u8, length: usize,
+    interactive: c_int, input_eof: c_int) c_int {
+    const bytes = body[0..length];
+    const valid = switch (kind) {
+        3 => length >= 8 and length <= 16392 and input_eof == 0 and
+            get32(bytes) == 0 and get32(bytes[4..]) == length - 8,
+        4 => length == 8 and interactive != 0 and get16(bytes) > 0 and
+            get16(bytes) <= 32767 and get16(bytes[2..]) > 0 and get16(bytes[2..]) <= 32767,
+        5 => length == 4 and switch (get32(bytes)) { 2, 3, 9, 15 => true, else => false },
+        7 => length == 0,
+        9 => length == 4 and input_eof == 0 and get32(bytes) == 0,
+        else => false,
+    };
+    return if (valid) 0 else -1;
+}
+
+test "stream controls enforce payload and state boundaries" {
+    var bytes = [_]u8{0} ** 16393;
+    try std.testing.expectEqual(@as(c_int, 0), guest_control_validate(3, &bytes, 8, 0, 0));
+    for (0..8) |size| try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(3, &bytes, size, 0, 0));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(3, &bytes, 8, 0, 1));
+    for (0..4) |offset| {
+        bytes[offset] = 1;
+        try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(3, &bytes, 8, 0, 0));
+        bytes[offset] = 0;
+    }
+    std.mem.writeInt(u32, bytes[4..8], 16384, .little);
+    try std.testing.expectEqual(@as(c_int, 0), guest_control_validate(3, &bytes, 16392, 0, 0));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(3, &bytes, 16393, 0, 0));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(3, &bytes, 8, 0, 0));
+    @memset(&bytes, 0);
+    try std.testing.expectEqual(@as(c_int, 0), guest_control_validate(9, &bytes, 4, 0, 0));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(9, &bytes, 4, 0, 1));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(9, &bytes, 3, 0, 0));
+    bytes[0] = 1;
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(9, &bytes, 4, 0, 0));
+    std.mem.writeInt(u16, bytes[0..2], 24, .little);
+    std.mem.writeInt(u16, bytes[2..4], 80, .little);
+    try std.testing.expectEqual(@as(c_int, 0), guest_control_validate(4, &bytes, 8, 1, 0));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(4, &bytes, 8, 0, 0));
+    for ([_]u16{ 0, 32768, 65535 }) |dimension| {
+        std.mem.writeInt(u16, bytes[0..2], dimension, .little);
+        try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(4, &bytes, 8, 1, 0));
+    }
+    for ([_]u32{ 2, 3, 9, 15, 1, 0, 255 }) |signal| {
+        std.mem.writeInt(u32, bytes[0..4], signal, .little);
+        try std.testing.expectEqual(@as(c_int, if (signal == 2 or signal == 3 or signal == 9 or signal == 15) 0 else -1), guest_control_validate(5, &bytes, 4, 0, 0));
+    }
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(5, &bytes, 3, 0, 0));
+    try std.testing.expectEqual(@as(c_int, 0), guest_control_validate(7, &bytes, 0, 0, 0));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(7, &bytes, 1, 0, 0));
+    try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(1, &bytes, 0, 0, 0));
+}
