@@ -5,7 +5,7 @@
 - **Time Ended**: TBD
 - **Feature Branch**: feature/initial-cli-passthrough
 - **Target Merge Branch**: origin
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Review
 
 ## Tasks & Progress
 
@@ -16,11 +16,11 @@
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
-| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 85% | Raw/ConPTY process lifecycle implemented; native Windows verification pending |
-| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 85% | Viosock/AF_UNIX listener and session pumps implemented; native Windows/VSOCK verification pending |
+| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 95% | 47 native Windows scenarios pass; real VM interactive acceptance and Windows heap instrumentation remain |
+| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 95% | Native duplex/cancellation/handle stress pass; real Linux-to-Windows Viosock/export acceptance remains |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `95.5%`
+**Total Feature Completion**: `98.5%`
 
 ## Commit History & Progress Log
 
@@ -392,15 +392,19 @@
   - **Task Impact**: 0% across #1–#8; correct verification evidence
   - **Summary**: Replace stale verification counts with measured sanitizer and coverage results; specify bounded socket retries and distinguish native handle checks from unsupported Windows LeakSanitizer and untested real VM acceptance.
 
-- **Commit `HEAD`**: `test(guest): allow bounded output-first duplex backpressure`
+- **Commit `e96b3bb`**: `test(guest): allow bounded output-first duplex backpressure`
   - **Task Impact**: 0% across TODO #6 and #7; native verification pending
   - **Summary**: Native output progresses through 3 MiB stdout and into stderr; the deliberate 6 MiB output-before-input phase exceeds the original 15-second writer deadline. Use 60-second frame deadlines, a 180-second independent watchdog and a five-minute CI step without relaxing byte checks.
+
+- **Commit `HEAD`**: `docs(tracker): record passing native Windows and Linux verification`
+  - **Task Impact**: +10% to #6 (+2% overall), +10% to #7 (+1% overall); total 98.5%
+  - **Summary**: Record successful 47-scenario Windows execution with 77-to-77 handles and passing Linux sanitizer/coverage CI. Move to Review while retaining real VM/Viosock/export and Windows heap merge gates.
 
 ## Verification snapshot
 
 - Linux `make test-sanitizers` passes: C unit cases, 16 integration scenarios, nine path-option cases and 25 Zig tests. ASan/LSan/UBSan report no errors; Zig allocator tests report no leaks.
 - `make coverage` passes implementation line coverage gates: protocol.c 92.50% (185/200), arguments.c 93.18% (123/132), guest_codec.zig 98.56% (137/139), path_rules.zig 100% (50/50).
-- `make windows build/windows_guest_test.exe` passes strict Windows x86_64 cross-compilation. Native Windows CI builds and passes the first six process/argument/context/cmd scenarios; large duplex verification is still under investigation. Remaining native signal, cancellation, ConPTY and handle stress results are not yet claimed.
+- `make windows build/windows_guest_test.exe` passes strict Windows x86_64 cross-compilation. [Native Windows CI run 37239865276](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37239865276) passes all 47 scenarios, including 16 MiB duplex, signals, malformed handshakes, blocked-input cancellation, ConPTY and 32 repeated sessions. Listener handle counts remain 77 → 77. [Linux CI run 37239865243](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37239865243) passes sanitizer, allocator, coverage and cross-build gates.
 - Real Linux-to-Windows Viosock, interactive VM operation and mounted export access remain unverified. See IMPL_DESC.md section 10.3 for concrete acceptance commands.
 - Zig 0.13 x86_64-windows-gnu does not support LeakSanitizer. Native handle stress cannot replace Windows heap instrumentation; this remains a merge verification gate.
 - New owned public interfaces have structured ownership/bounds/error/thread documentation. Existing repository-wide naming and documentation claims have not been extended into an unaudited universal assertion.
