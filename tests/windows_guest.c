@@ -261,6 +261,7 @@ int wmain(int argc, wchar_t **argv) {
     socket = spawn_command(command, cwd_path, "", 0, 0, 0, &pid);
     HANDLE child_process = OpenProcess(SYNCHRONIZE, FALSE, pid); check(child_process != NULL, "observe disconnect child");
     closesocket(socket); check(WaitForSingleObject(child_process, 15000) == WAIT_OBJECT_0, "disconnect kills child"); CloseHandle(child_process); scenarios++;
+    run_case("streams", NULL, NULL, 42, 0, 1);
     TerminateProcess(listener_process, 0); WaitForSingleObject(listener_process, 5000); CloseHandle(listener_process); listener_process = NULL;
     DeleteFileA(socket_path); WSACleanup();
     printf("windows guest: %u pipe scenarios passed\n", scenarios);

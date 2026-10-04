@@ -232,9 +232,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Add a concurrent 5 MiB stdin writer while the child emits 6 MiB before consuming input; verify all 16 MiB of raw binary streams and EOF ordering. Fixture cross-build passes.
 
-- **Commit `HEAD`**: `test(guest): verify raw signals and disconnect cleanup`
+- **Commit `b03db3e`**: `test(guest): verify raw signals and disconnect cleanup`
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Exercise CTRL_BREAK interrupt handling, whole-job SIGTERM and disconnect while a child is running; observe child process handles to require actual termination before repeat sessions.
+
+- **Commit `HEAD`**: `test(guest): exercise native ConPTY resize and merged output`
+  - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
+  - **Summary**: Launch a real ConPTY child, send terminal resize and stdin EOF, require merged stdout and stderr EOF before the exit frame. Strict native fixture cross-build passes.
 
 ## Verification snapshot
 
