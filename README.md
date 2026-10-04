@@ -46,16 +46,3 @@ git config submodule.recurse true
 - **[CONTRIBUTING.md](file:///home/dev/Waddle-LSW/CONTRIBUTING.md)**: Comprehensive contributor guidelines, toolchain setups, deterministic memory architecture, testing with Zig built-in test specifications, code coverage, LeakSanitizer zero-leak gating, in-depth Git submodule management, and PR review checklists.
 
 ---
-
-## Initial CLI Passthrough PoC
-
-A working proof of concept demonstrating host-to-guest command execution and framed I/O streaming over UNIX sockets and VSOCK:
-
-```bash
-make
-make demo
-make test
-```
-
-- Run `./build/waddle --help` for command options and syntax.
-- Implementation details and status are tracked in [IMPL_DESC.md](impl/initial-cli-passthrough/IMPL_DESC.md) and [TRACKER.md](impl/initial-cli-passthrough/TRACKER.md).
