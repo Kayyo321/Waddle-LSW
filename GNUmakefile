@@ -21,3 +21,6 @@ clean:
 	rm -rf build
 build/integration: tests/integration.c $(COMMON) include/waddle/cli_protocol.h src/common.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/integration.c $(COMMON) $(LDFLAGS) -lutil -o $@
+
+build/terminal.o: src/terminal.c src/terminal.h src/common.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/terminal.c -o $@
