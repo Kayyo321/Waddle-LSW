@@ -54,6 +54,7 @@ int guest_session(SOCKET socket) {
     if (guest_send(&wire, 2, response, sizeof(response)) != 0) { goto done; }
     DWORD timeout = 0;
     if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) != 0) { goto done; }
+    wire.cancellable = 1;
     readers[0] = CreateThread(NULL, 0, guest_output_thread, &output_context[0], 0, NULL);
     readers[1] = CreateThread(NULL, 0, guest_output_thread, &output_context[1], 0, NULL);
     input = CreateThread(NULL, 0, guest_input_thread, &input_context, 0, NULL);

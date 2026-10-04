@@ -336,9 +336,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Native compilation passes but runtime stalls; emit unbuffered spawn/completion stages and include scenario number in errors so the blocking boundary is visible in CI logs.
 
-- **Commit `HEAD`**: `test(guest): bound native regression hangs independently of sockets`
+- **Commit `41bf2ce`**: `test(guest): bound native regression hangs independently of sockets`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add a 60-second watchdog event/thread with explicit join and handle cleanup on success; timeout terminates listener and fixture even if a Windows AF_UNIX operation does not honor socket timeout.
+
+- **Commit `HEAD`**: `fix(guest): make receive cancellation independent of socket shutdown`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: After spawn, wait for read readiness in 100 ms slices and check the atomic stopping flag before recv. Initial handshake keeps its 30-second receive timeout; orderly input join no longer depends on AF_UNIX shutdown waking an existing blocked recv.
 
 ## Verification snapshot
 

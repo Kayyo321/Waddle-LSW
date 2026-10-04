@@ -11,6 +11,7 @@ typedef struct guest_wire_t {
     SOCKET socket; /**< Borrowed connected socket, shutdown on failure. */
     HANDLE failure; /**< Owned manual-reset failure event. */
     CRITICAL_SECTION send_lock; /**< Owned send serialization lock. */
+    int cancellable; /**< Main enables before workers start; receive waits check cancellation. */
     volatile LONG stopping; /**< Atomic receive cancellation flag, main sets before shutdown. */
     uint32_t incoming; /**< Receive-thread-only sequence, starts at one. */
     uint32_t outgoing; /**< Send-lock-protected sequence, starts at one. */

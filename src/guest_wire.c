@@ -38,6 +38,19 @@ void guest_wire_stop_input(guest_wire_t *wire) {
 static int receive_exact(guest_wire_t *wire, uint8_t *bytes, size_t length) {
     size_t offset = 0;
     while (offset < length) {
+        if (wire->cancellable) {
+            if (InterlockedCompareExchange(&wire->stopping, 0, 0) != 0) { return -1; }
+            fd_set readable;
+            FD_ZERO(&readable);
+            FD_SET(wire->socket, &readable);
+            struct timeval interval = {0, 100000};
+            int ready = select(0, &readable, NULL, NULL, &interval);
+            if (ready == 0) { continue; }
+            if (ready < 0) {
+                if (InterlockedCompareExchange(&wire->stopping, 0, 0) == 0) { guest_wire_fail(wire); }
+                return -1;
+            }
+        }
         int received = recv(wire->socket, (char *)bytes + offset, (int)(length - offset), 0);
         if (received <= 0) {
             if (InterlockedCompareExchange(&wire->stopping, 0, 0) == 0) { guest_wire_fail(wire); }
