@@ -16,11 +16,11 @@
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
-| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
+| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 20% | Bounded spawn parser complete; Win32 lifecycle pending |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 15% | Bounded guest wire header parser complete; listener and pump pending |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `71.5%`
+**Total Feature Completion**: `75.5%`
 
 ## Commit History & Progress Log
 
@@ -160,9 +160,13 @@
   - **Task Impact**: +10% to #5 (+1% overall).
   - **Summary**: Verify longest-prefix selection, component boundaries, root fallback, missing exports, NULL pointers, invalid syntax, rule limits and relative-path preservation.
 
-- **Commit `HEAD`**: `feat(guest): validate bounded wire headers in Zig`
+- **Commit `34edd4d`**: `feat(guest): validate bounded wire headers in Zig`
   - **Task Impact**: +15% to #7 (+1.5% overall).
   - **Summary**: Add allocation-free header validation before payload allocation, enforce direction/session/sequence/size, and provide CRC verification; native adversarial header tests pass.
+
+- **Commit `HEAD`**: `feat(guest): validate spawn views and executable selection`
+  - **Task Impact**: +20% to #6 (+4% overall).
+  - **Summary**: Add allocation-free UTF-8 spawn validation, canonical quoted argument grammar, explicit argv[0] extraction, environment entry checks and ConPTY dimension bounds; truncation and malformed-input tests pass.
 
 ## Verification snapshot
 

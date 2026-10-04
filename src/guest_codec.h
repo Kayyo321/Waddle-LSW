@@ -22,4 +22,26 @@ int guest_header_validate(const uint8_t *header, size_t length, uint32_t sequenc
  * @param[in] length Buffer byte count.
  * @return IEEE CRC-32; no ownership transfer or errors. */
 uint32_t guest_crc32(const uint8_t *data, size_t length);
+/** @brief Borrowed spawn views, valid until the input frame is released; immutable.
+ * @note No allocations; caller owns this result and serializes mutation. */
+typedef struct guest_spawn_t {
+    const uint8_t *cwd; /**< Borrowed NUL-terminated UTF-8 working directory. */
+    const uint8_t *command; /**< Borrowed canonical UTF-8 command line. */
+    const uint8_t *environment; /**< Borrowed NUL-delimited KEY=VALUE entries. */
+    uint32_t cwd_length; /**< Working directory bytes excluding NUL. */
+    uint32_t command_length; /**< Command bytes excluding NUL. */
+    uint32_t environment_length; /**< Environment bytes including entry terminators. */
+    uint16_t rows; /**< Positive signed-16-bit terminal rows in interactive mode. */
+    uint16_t cols; /**< Positive signed-16-bit terminal columns in interactive mode. */
+    uint32_t interactive; /**< One for ConPTY, zero for raw pipes. */
+} guest_spawn_t;
+/** @brief Validate an untrusted spawn frame without allocation; thread-safe.
+ * @param[in] body Nonnull borrowed length-byte buffer, retained through use of spawn.
+ * @param[in] length Payload byte count, at most 1 MiB.
+ * @param[out] spawn Nonnull caller-owned views; unspecified on failure.
+ * @param[out] executable Nonnull writable caller-owned buffer, disjoint from body.
+ * @param[in] capacity Executable buffer bytes including terminator.
+ * @return 0 success, -1 malformed input or insufficient capacity. */
+int guest_spawn_validate(const uint8_t *body, size_t length, guest_spawn_t *spawn,
+                         uint8_t *executable, size_t capacity);
 #endif
