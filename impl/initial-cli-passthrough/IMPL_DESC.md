@@ -888,7 +888,7 @@ user console. From Linux, execute for example:
 ./build/waddle exec --tty --vsock-cid 3 --cwd 'C:\' -- powershell.exe -NoProfile
 ./build/waddle exec --pipe --vsock-cid 3 \
   --path-map '/home/dev/project=X:\project' --cwd /home/dev/project \
-  -- cmd.exe /c dir
+  -- powershell.exe -NoProfile -Command Get-ChildItem
 ```
 
 Use the VM's actual CID and already-mounted export target. Without translation,
@@ -1000,3 +1000,11 @@ A separate sleeping session must report readiness within 20 seconds; the harness
 then kills its Linux frontend, reaps it, and reconnects. A listener stuck during
 peer-loss teardown makes the next bounded command fail. These checks exercise the
 installed Viosock provider's disconnect readiness and cancellation behavior.
+
+When explicit path rules are enabled, every argv token beginning `/` is treated
+as a POSIX absolute path and must match a rule. Windows slash switches such as
+`cmd.exe /c` therefore use a command without translation and a literal Windows
+cwd. PowerShell dash switches work with export translation. This preserves the
+existing strict unmatched-path contract instead of guessing whether `/c` names
+a host path or a Windows switch. VM acceptance tests cmd switches separately
+from mapped native-program arguments.

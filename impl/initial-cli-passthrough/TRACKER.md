@@ -440,9 +440,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
   - **Summary**: Extend real acceptance with a blocked-stdin deadline and a killed frontend, requiring successful reconnect after each installed-provider cleanup path.
 
-- **Commit `HEAD`**: `test(cli): bound blocked-input fixture to its specified size`
+- **Commit `bb6a4cb`**: `test(cli): bound blocked-input fixture to its specified size`
   - **Task Impact**: 0% to #7 (0% overall).
   - **Summary**: Extract the specified 1 MiB blocked-stdin input from the duplex fixture, preserving exact acceptance documentation.
+
+- **Commit `HEAD`**: `fix(test): honor explicit path mapping grammar in VM cmd case`
+  - **Task Impact**: 0% to #6 and #7 (0% overall).
+  - **Summary**: Real Viosock stream, exit, and argv cases pass. Run cmd slash-switch acceptance without export translation, whose documented strict grammar treats slash-prefixed tokens as POSIX paths; correct the manual export example.
 
 ## Verification snapshot
 
