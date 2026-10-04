@@ -432,9 +432,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: Send FIN after successful completion and boundedly discard in-flight host stdin/EOF before closing, preserving terminal responses for fast child exits.
 
-- **Commit `HEAD`**: `docs(tracker): record passing native Windows heap audit`
+- **Commit `8cefbfc`**: `docs(tracker): record passing native Windows heap audit`
   - **Task Impact**: +2.5% to #6 (+0.5% overall; 98.5% → 99.0%).
   - **Summary**: Record all 47 native debug-heap checkpoints at zero retained bytes, three successful defect controls, stable handles, and passing Linux sanitizers. Real VM acceptance remains pending.
+
+- **Commit `HEAD`**: `test(cli): verify VM timeout and peer-loss recovery`
+  - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
+  - **Summary**: Extend real acceptance with a blocked-stdin deadline and a killed frontend, requiring successful reconnect after each installed-provider cleanup path.
 
 ## Verification snapshot
 

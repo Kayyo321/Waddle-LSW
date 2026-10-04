@@ -992,3 +992,11 @@ No discarded bytes are parsed, allocated, or executed. The listener owns and
 closes the socket after that bounded drain. Failed sessions retain immediate
 `SD_BOTH` cancellation. A client that never closes cannot block later acceptance
 beyond the one-second drain bound.
+
+VM acceptance also sends 1 MiB to a sleeping guest with a one-second host deadline,
+requires status 124 and its timeout diagnostic, then reconnects successfully. This
+checks cancellation while the guest's synchronous stdin pipe writer is blocked.
+A separate sleeping session must report readiness within 20 seconds; the harness
+then kills its Linux frontend, reaps it, and reconnects. A listener stuck during
+peer-loss teardown makes the next bounded command fail. These checks exercise the
+installed Viosock provider's disconnect readiness and cancellation behavior.

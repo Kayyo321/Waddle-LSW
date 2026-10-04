@@ -38,6 +38,26 @@ test "$(wc -c < "$work_dir/err")" -eq 3145728
 head -c 3145728 /dev/zero | tr '\000' O > "$work_dir/expected"
 cat "$work_dir/input" >> "$work_dir/expected"; cmp "$work_dir/expected" "$work_dir/out"
 head -c 3145728 /dev/zero | tr '\000' E > "$work_dir/expected"; cmp "$work_dir/expected" "$work_dir/err"
+# Deadline/disconnect must cancel a guest stdin worker blocked on a sleeping child.
+status=0
+"${base[@]}" --timeout 1 -- "$fixture" --child sleep < "$work_dir/input" > "$work_dir/out" 2> "$work_dir/err" || status=$?
+test "$status" -eq 124
+grep -q READY "$work_dir/out"
+grep -q 'session timed out' "$work_dir/err"
+run_status 3 "$fixture" --child exit259
+# Kill a live frontend to exercise peer-loss cleanup over the installed provider.
+"${base[@]}" -- "$fixture" --child sleep < /dev/null > "$work_dir/out" 2> "$work_dir/err" &
+frontend_pid=$!
+ready=0
+for attempt in $(seq 1 400); do
+    if grep -q READY "$work_dir/out"; then ready=1; break; fi
+    if ! kill -0 "$frontend_pid" 2>/dev/null; then break; fi
+    sleep 0.05
+done
+if test "$ready" -ne 1; then kill -KILL "$frontend_pid" 2>/dev/null || true; wait "$frontend_pid" || true; exit 1; fi
+kill -KILL "$frontend_pid"
+wait "$frontend_pid" 2>/dev/null || true
+run_status 3 "$fixture" --child exit259
 ./build/vm_terminal ./build/waddle "$WADDLE_VSOCK_CID" "$source_path"
 for iteration in $(seq 1 32); do run_status 3 "$fixture" --child exit259; done
-printf 'VM acceptance: streams, status, argv, cwd/env, export read/write, 16 MiB duplex, interactive console, 32 reconnects passed\n'
+printf 'VM acceptance: streams, status, argv, cwd/env, export read/write, 16 MiB duplex, timeout/peer-loss cleanup, interactive console, 32 reconnects passed\n'
