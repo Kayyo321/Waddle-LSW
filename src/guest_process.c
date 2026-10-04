@@ -27,6 +27,7 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
                          const uint8_t *executable) {
     memset(process, 0, sizeof(*process));
     wchar_t *cwd = NULL, *command = NULL, *application = NULL, *environment = NULL;
+    uint8_t *compatible = NULL;
     STARTUPINFOEXW startup = {0};
     PROCESS_INFORMATION child = {0};
     HANDLE child_input = NULL, child_output = NULL, child_error = NULL;
@@ -34,8 +35,6 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
     int initialized = 0, result = -1;
     cwd = guest_utf16(spawn->cwd, spawn->cwd_length);
     if (cwd == NULL) { goto native_error; }
-    command = guest_utf16(spawn->command, spawn->command_length);
-    if (command == NULL) { goto native_error; }
     application = guest_utf16(executable, strlen((const char *)executable));
     if (application == NULL) { goto native_error; }
     // Resolve a bare executable before passing an explicit application name.
@@ -56,6 +55,25 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
         free(application);
         application = resolved;
     }
+    const wchar_t *base = application;
+    const wchar_t *separator = wcsrchr(application, L'\\');
+    if (separator != NULL) { base = separator + 1; }
+    separator = wcsrchr(application, L'/');
+    if (separator != NULL && separator + 1 > base) { base = separator + 1; }
+    if (CompareStringOrdinal(base, -1, L"cmd.exe", -1, TRUE) == CSTR_EQUAL) {
+        compatible = malloc((size_t)spawn->command_length + 1);
+        if (compatible == NULL) { error = ERROR_NOT_ENOUGH_MEMORY; goto done; }
+        if (guest_cmd_commandline(spawn->command, spawn->command_length, compatible,
+                                  (size_t)spawn->command_length + 1) != 0) {
+            error = ERROR_INVALID_DATA;
+            goto done;
+        }
+        command = guest_utf16(compatible, strlen((const char *)compatible));
+    } else {
+        command = guest_utf16(spawn->command, spawn->command_length);
+    }
+    if (command == NULL) { goto native_error; }
+    free(compatible); compatible = NULL;
     environment = guest_environment(spawn);
     if (environment == NULL) { goto native_error; }
     if (wcslen(command) + 1 > 32767) { error = ERROR_BAD_LENGTH; goto done; }
@@ -114,6 +132,7 @@ done:
     if (initialized) { DeleteProcThreadAttributeList(startup.lpAttributeList); }
     free(startup.lpAttributeList);
     startup.lpAttributeList = NULL;
+    free(compatible); compatible = NULL;
     free(cwd); cwd = NULL;
     free(command); command = NULL;
     free(application); application = NULL;

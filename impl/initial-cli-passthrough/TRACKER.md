@@ -352,9 +352,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Ubuntu 24.04 has no kcov package in its configured archive. Run the Linux job in Debian trixie with base build/coverage packages and ptrace permission; this matches the verified local kcov toolchain.
 
-- **Commit `HEAD`**: `feat(guest): adapt cmd.exe switches with a bounded Zig serializer`
+- **Commit `bc43aee`**: `feat(guest): adapt cmd.exe switches with a bounded Zig serializer`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Specify and implement allocation-free unquoting of recognized leading cmd.exe switches, stop at /c or /k and preserve all later shell bytes. Native tests cover switch cases, quoting, unknown options and capacity.
+
+- **Commit `HEAD`**: `fix(guest): launch cmd.exe with recognized native switches`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Use the bounded compatibility serializer only when the resolved executable basename is cmd.exe; convert and free temporary UTF-8 storage before process launch, preserving explicit application selection. Strict cross-build passes.
 
 ## Verification snapshot
 
