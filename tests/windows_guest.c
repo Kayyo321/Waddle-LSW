@@ -261,6 +261,14 @@ int wmain(int argc, wchar_t **argv) {
     socket = spawn_command(command, cwd_path, "", 0, 0, 0, &pid);
     HANDLE child_process = OpenProcess(SYNCHRONIZE, FALSE, pid); check(child_process != NULL, "observe disconnect child");
     closesocket(socket); check(WaitForSingleObject(child_process, 15000) == WAIT_OBJECT_0, "disconnect kills child"); CloseHandle(child_process); scenarios++;
+    socket = spawn_command(command, cwd_path, "", 0, 0, 0, &pid);
+    child_process = OpenProcess(SYNCHRONIZE, FALSE, pid);
+    check(child_process != NULL, "observe blocked-input child");
+    uint8_t blocked_input[16392] = {0}; put32(blocked_input + 4, 16384);
+    sequence = 2; send_frame(socket, &sequence, 3, blocked_input, sizeof(blocked_input));
+    Sleep(100); closesocket(socket);
+    check(WaitForSingleObject(child_process, 15000) == WAIT_OBJECT_0, "disconnect cancels blocked stdin");
+    CloseHandle(child_process); scenarios++;
     run_case("streams", NULL, NULL, 42, 0, 1);
     DWORD before, after;
     Sleep(100); check(GetProcessHandleCount(listener_process, &before), "initial handle count");

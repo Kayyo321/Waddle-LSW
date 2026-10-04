@@ -260,9 +260,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Monitor exceptional socket conditions in the main child wait loop without consuming input frames, so pipe writes cannot hide peer disconnection; session failure cancels blocked stdin and kills the child tree.
 
-- **Commit `HEAD`**: `fix(build): package the Windows Zig codec as a static library`
+- **Commit `28e970f`**: `fix(build): package the Windows Zig codec as a static library`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Zig 0.13 native COFF still emits multiple objects with libc despite disabling compiler runtime; package the parser using build-lib -static, which supports the native archive boundary. Cross-linked guest and fixture pass.
+
+- **Commit `HEAD`**: `test(guest): disconnect while the child refuses stdin`
+  - **Task Impact**: 0% across #1–#8 (0% overall; native CI pending).
+  - **Summary**: Fill a sleeping child stdin pipe with a complete 16 KiB frame, then close transport and require the child wait handle to signal within 15 seconds; verifies main socket monitoring and synchronous-I/O cancellation.
 
 ## Verification snapshot
 
