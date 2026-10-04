@@ -982,3 +982,13 @@ checks that flag at 1 ms readiness intervals; a synchronous pipe write is cancel
 by the joining main thread. Keeping the receive half open avoids a native socket
 reset when a fast-exiting child races with the host's final stdin/EOF frame.
 Failure cancellation still shuts down both socket halves.
+
+After a successful session's terminal response, the listener sends a socket FIN
+(`SD_SEND`), switches receives to nonblocking mode, and discards trailing host
+bytes in a fixed 4096-byte stack buffer for at most one second or until peer close.
+This allows the peer to consume all output/exit bytes and close while queued
+stdin/EOF bytes are drained; it avoids reset-on-close dropping the terminal frame.
+No discarded bytes are parsed, allocated, or executed. The listener owns and
+closes the socket after that bounded drain. Failed sessions retain immediate
+`SD_BOTH` cancellation. A client that never closes cannot block later acceptance
+beyond the one-second drain bound.

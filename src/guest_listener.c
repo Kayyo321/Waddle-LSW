@@ -31,6 +31,25 @@ static int vsock_family(void) {
     return (int)family;
 }
 
+/* Successful sessions have already sent their terminal frame. Send FIN before
+ * boundedly discarding trailing host stdin/EOF bytes, avoiding reset-on-close.
+ * The caller retains/then closes the socket; no parsing or allocation occurs. */
+static void finish_peer(SOCKET peer) {
+    u_long nonblocking = 1;
+    if (ioctlsocket(peer, FIONBIO, &nonblocking) != 0 || shutdown(peer, SD_SEND) != 0) { return; }
+    ULONGLONG deadline = GetTickCount64() + 1000;
+    char discarded[4096];
+    while (GetTickCount64() < deadline) {
+        int received = recv(peer, discarded, sizeof(discarded), 0);
+        if (received > 0) { continue; }
+        if (received == 0 || WSAGetLastError() != WSAEWOULDBLOCK) { break; }
+        fd_set readable;
+        FD_ZERO(&readable); FD_SET(peer, &readable);
+        struct timeval interval = {0, 1000};
+        if (select(0, &readable, NULL, NULL, &interval) < 0) { break; }
+    }
+}
+
 /** @brief Standalone guest entry point, owns Winsock and listener lifetime.
  * @param[in] argc CRT argument count. @param[in] argv Nonnull borrowed CRT argv,
  * NUL-terminated strings retained for the entire process lifetime.
@@ -84,8 +103,12 @@ int main(int argc, char **argv) {
             closesocket(peer);
             continue;
         }
-        if (guest_session(peer) != 0) { fprintf(stderr, "guest: session aborted\n"); }
-        shutdown(peer, SD_BOTH);
+        if (guest_session(peer) != 0) {
+            fprintf(stderr, "guest: session aborted\n");
+            shutdown(peer, SD_BOTH);
+        } else {
+            finish_peer(peer);
+        }
         closesocket(peer);
     }
 socket_error:

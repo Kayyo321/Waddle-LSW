@@ -424,9 +424,13 @@
   - **Task Impact**: 0% to #6 (0% overall).
   - **Summary**: All detector controls fire; the first instrumented session needs a diagnostic report. Preserve client counts and allocation dump output before fatal termination and print it when the fixture fails.
 
-- **Commit `HEAD`**: `fix(guest): cancel receives without premature socket shutdown`
+- **Commit `2f6f91d`**: `fix(guest): cancel receives without premature socket shutdown`
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: The debug-heap listener retains zero bytes after its first session, but a fast child races with the host EOF frame. Keep the receive half open during atomic cancellation; nonblocking receives already observe the stop flag.
+
+- **Commit `HEAD`**: `fix(guest): drain trailing input after terminal response`
+  - **Task Impact**: 0% to #6 and #7 (0% overall).
+  - **Summary**: Send FIN after successful completion and boundedly discard in-flight host stdin/EOF before closing, preserving terminal responses for fast child exits.
 
 ## Verification snapshot
 
