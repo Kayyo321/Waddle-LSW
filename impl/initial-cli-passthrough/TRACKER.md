@@ -15,12 +15,12 @@
 | #2      | Implement Win32 `CommandLineToArgvW` inverse escaping generator and unit tests | Done | 10% | 100% | Deterministic escaping for spaces, quotes, backslashes; 91.9% coverage |
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
-| #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 40% | Single root-export mapping implemented; configurable rules pending |
+| #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 60% | Zig export validation and bounded translation implemented; CLI integration pending |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Pending | 10% | 0% | Multi-threaded I/O forwarding and exit code retrieval |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `64.0%`
+**Total Feature Completion**: `66.0%`
 
 ## Commit History & Progress Log
 
@@ -136,9 +136,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Increase logo dimensions to 180x180 (1.5x), place below H1 heading to eliminate line cutoff, and wrap introductory text cleanly with float clearing.
 
-- **Commit `HEAD`**: `docs(cli): specify Windows guest and configurable export completion`
+- **Commit `ccda5f1`**: `docs(cli): specify Windows guest and configurable export completion`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Define Win32 ownership, bounded Zig parsing, device ABI, path rules, and native verification gates.
+
+- **Commit `HEAD`**: `feat(paths): add allocation-free Zig export validator`
+  - **Task Impact**: +20% to #5 (+2% overall).
+  - **Summary**: Define the borrowed rule ABI and bounds-checked UTF-8, component, drive-root and capacity validation. Native tests exercise parser failures and Unicode normalization. HEAD refers to the commit containing this entry and is resolved in the next commit.
 
 ## Verification snapshot
 
