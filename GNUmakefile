@@ -24,3 +24,6 @@ build/integration: tests/integration.c $(COMMON) include/waddle/cli_protocol.h s
 
 build/terminal.o: src/terminal.c src/terminal.h src/common.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/terminal.c -o $@
+
+build/session.o: src/session.c src/session.h src/terminal.h src/common.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/session.c -o $@

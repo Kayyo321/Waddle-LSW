@@ -14,13 +14,13 @@
 | #1      | Define shared C wire protocol header (`include/waddle/cli_protocol.h`) | Done | 10% | 100% | Packed structs, magic 'WDLC', 32-byte header |
 | #2      | Implement Win32 `CommandLineToArgvW` inverse escaping generator and unit tests | Done | 10% | 100% | Deterministic escaping for spaces, quotes, backslashes |
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | In Progress | 15% | 40% | Terminal/signal module compiled; CLI integration and PTY tests pending. SIGWINCH and SIGINT via self-pipe trick |
-| #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Pending | 15% | 0% | Multiplex STDIN, demux STDOUT and STDERR |
+| #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | In Progress | 15% | 60% | Bounded event loop compiled; end-to-end validation pending. Multiplex STDIN, demux STDOUT and STDERR |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 40% | Single root-export mapping implemented; configurable rules pending. Rule-based POSIX to Windows path mapping |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Pending | 10% | 0% | Multi-threaded I/O forwarding and exit code retrieval |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Pending | 10% | 0% | End-to-end verification via UNIX domain socket mock |
 
-**Total Feature Completion**: `30.0%`
+**Total Feature Completion**: `39.0%`
 
 ## Commit History & Progress Log
 
@@ -44,6 +44,10 @@
   - **Task Impact**: +100% to #1 (+10% overall), +100% to #2 (+10% overall), +40% to #5 (+4% overall); +24% overall.
   - **Summary**: Explicit LE codec, CRC, bounded incremental decoder/queues, packed shared ABI, quoting and canonical mock decoder, opt-in root mapping. Unit tests pass with 7,776 quote round trips and fragmented/corrupt frame cases. Configurable export mapping remains pending.
 
-- **Commit `HEAD`**: `feat(cli): add terminal restoration and signal wakeups`
+- **Commit `129a36a`**: `feat(cli): add terminal restoration and signal wakeups`
   - **Task Impact**: +40% to #3 (+6% overall); +6% overall.
   - **Summary**: Isolate raw terminal ownership, standard descriptor flag restoration, and pending signal/self-pipe handling. Module compiles with warnings as errors; CLI integration and behavioral checks remain pending.
+
+- **Commit `HEAD`**: `feat(cli): add the bounded host stream multiplexer`
+  - **Task Impact**: +60% to #4 (+9% overall); +9% overall.
+  - **Summary**: Implement poll-driven socket/stdin/output queues, response and stream state validation, EOF ordering, output drain, signals, and monotonic session deadlines. Module compiles with warnings as errors; real transport integration remains pending.
