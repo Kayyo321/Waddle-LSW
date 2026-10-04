@@ -163,6 +163,7 @@ static void send_eof(SOCKET socket, uint32_t *sequence) {
 }
 static void drain(SOCKET socket, const char *out, const char *err, uint32_t code, int signal, int large, int interactive) {
     uint32_t incoming = 2, outgoing = 3;
+    char console_bytes[4096] = {0};
     size_t received[2] = {0, 0}; int eof[2] = {0, 0}, signaled = 0;
     for (;;) {
         uint8_t body[16392]; size_t length;
@@ -185,6 +186,10 @@ static void drain(SOCKET socket, const char *out, const char *err, uint32_t code
             if (large && received[index] == 0) {
                 printf("duplex: first stream %u frame (%zu bytes)\n", index + 1, length - 8);
             }
+            if (interactive && index == 0) {
+                check(received[0] + length - 8 < sizeof(console_bytes), "bounded console capture");
+                memcpy(console_bytes + received[0], body + 8, length - 8);
+            }
             size_t previous = received[index];
             received[index] += length - 8;
             if (large && previous / 1048576 != received[index] / 1048576) {
@@ -205,7 +210,8 @@ static void drain(SOCKET socket, const char *out, const char *err, uint32_t code
     }
     if (large) { check(received[0] == 8 * 1048576 && received[1] == 3 * 1048576, "16 MiB duplex lengths"); }
     else if (!interactive) { check(received[0] == strlen(out) && received[1] == strlen(err), "output lengths"); }
-    else { check(received[0] > 0 && received[1] == 0, "merged ConPTY output"); }
+    else { check(received[1] == 0 && strstr(console_bytes, "stdout") != NULL &&
+                 strstr(console_bytes, "stderr") != NULL, "merged ConPTY child output"); }
     closesocket(socket);
     scenarios++;
     printf("scenario %u: drained and exited\n", scenarios);
@@ -329,8 +335,22 @@ int wmain(int argc, wchar_t **argv) {
     snprintf(socket_path, sizeof(socket_path), "waddle_guest_test_%lu.sock", (unsigned long)GetCurrentProcessId());
     wchar_t listener_command[512];
     swprintf(listener_command, 512, L"build\\waddle-guest-exec.exe --socket-path waddle_guest_test_%lu.sock", (unsigned long)GetCurrentProcessId());
+    SECURITY_ATTRIBUTES redirection = {sizeof(redirection), NULL, TRUE};
+    HANDLE listener_input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                        &redirection, OPEN_EXISTING, 0, NULL);
+    HANDLE listener_output = CreateFileW(L"build\\windows_listener.log", GENERIC_WRITE,
+                                         FILE_SHARE_READ | FILE_SHARE_WRITE, &redirection,
+                                         CREATE_ALWAYS, 0, NULL);
+    check(listener_input != INVALID_HANDLE_VALUE && listener_output != INVALID_HANDLE_VALUE,
+          "listener redirection handles");
     STARTUPINFOW info = {0}; info.cb = sizeof(info); PROCESS_INFORMATION listener = {0};
-    check(CreateProcessW(NULL, listener_command, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &info, &listener), "start listener");
+    info.dwFlags = STARTF_USESTDHANDLES;
+    info.hStdInput = listener_input; info.hStdOutput = listener_output; info.hStdError = listener_output;
+    BOOL started = CreateProcessW(NULL, listener_command, NULL, NULL, TRUE, CREATE_NEW_CONSOLE,
+                                  NULL, NULL, &info, &listener);
+    CloseHandle(listener_input); listener_input = NULL;
+    CloseHandle(listener_output); listener_output = NULL;
+    check(started, "start redirected listener");
     listener_process = listener.hProcess; CloseHandle(listener.hThread);
     test_deadline_t deadline = {CreateEventW(NULL, TRUE, FALSE, NULL), listener_process};
     check(deadline.stopped != NULL, "watchdog event");

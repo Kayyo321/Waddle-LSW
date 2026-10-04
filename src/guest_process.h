@@ -22,7 +22,9 @@ typedef struct guest_process_t {
  * @param[in] executable Nonnull validated UTF-8 argv[0], borrowed.
  * @return 0 success, -1 failure with GetLastError preserved; failures release all
  * allocations/handles and kill any child. Caller must guest_process_close on success.
- * @note Single caller; output must be drained concurrently after success. */
+ * @note Listener main only, before workers start. Temporarily clears/restores the
+ * process standard-handle table for ConPTY creation; no concurrent launch or
+ * standard-handle mutation is allowed. Output drains concurrently after success. */
 int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
                          const uint8_t *executable);
 /** @brief Kill child tree, wait and release all remaining owned resources.

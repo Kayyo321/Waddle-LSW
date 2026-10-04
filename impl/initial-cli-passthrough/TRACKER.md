@@ -464,9 +464,13 @@
   - **Task Impact**: 0% to #7 (0% overall; full acceptance pending).
   - **Summary**: VM traces prove input/readers and session resources are released after transport reset. Retry cancellation reconnects within a bounded window to accommodate Linux VSOCK graceful-close linger, retaining strict normal reconnect stress.
 
-- **Commit `HEAD`**: `fix(guest): observe Viosock EOF without readiness gating`
+- **Commit `0c3cae1`**: `fix(guest): observe Viosock EOF without readiness gating`
   - **Task Impact**: 0% to #6/#7; real VM verification remains pending
   - **Summary**: The single nonblocking receiver retries would-block with a one-millisecond cancellation check. Direct recv observes graceful provider closure which select and FD_CLOSE can miss; reconnect probes retain a bounded 20-second command allowance.
+
+- **Commit `HEAD`**: `fix(guest): isolate ConPTY children from listener redirection`
+  - **Task Impact**: 0% to #6; redirected-listener regression added and VM console passes
+  - **Summary**: Temporarily clear and restore the borrowed process standard-handle table during serialized ConPTY launch. Redirect the native fixture listener and require actual merged child output rather than accepting control sequences alone.
 
 ## Verification snapshot
 

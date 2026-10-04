@@ -1043,3 +1043,15 @@ empty-queue graceful shutdown without signaling FD_CLOSE or readable readiness.
 A direct recv observes that closure and sets the failure event, allowing the main
 thread to terminate descendants and cancel/join workers. Queued-input closure
 continues to use the session FD_CLOSE event without a competing socket receiver.
+
+For ConPTY child creation, the listener main saves its three process standard
+handles, temporarily sets the standard-handle table to NULL, creates the suspended
+child with its pseudoconsole attribute, and restores all three handles before any
+session worker starts or diagnostics are emitted. This prevents a listener started
+with redirected stdout/stderr from passing those file handles to its interactive
+child. The handles are borrowed, never closed; CreateProcess failure also restores
+them. A restoration failure kills/releases an already-created child. No concurrent
+process creation or standard-handle-table mutation is permitted. The native
+fixture now starts its listener with redirected handles and requires actual
+`stdout` and `stderr` child text in the merged ConPTY stream, including fragmented
+frames; ConPTY startup escape sequences alone cannot satisfy the assertion.

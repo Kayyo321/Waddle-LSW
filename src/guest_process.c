@@ -113,11 +113,34 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
     if (process->job == NULL || !SetInformationJobObject(process->job,
         JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { goto native_error; }
     process->started = GetTickCount64();
-    if (!CreateProcessW(application, command, NULL, NULL, !spawn->interactive,
+    // No session workers exist yet; suppress inherited listener redirection so
+    // the child obtains its standard handles from the attached pseudo console.
+    DWORD standard_ids[3] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    HANDLE standard_handles[3] = {NULL, NULL, NULL};
+    if (spawn->interactive) {
+        for (unsigned i = 0; i < 3; i++) {
+            standard_handles[i] = GetStdHandle(standard_ids[i]);
+            if (!SetStdHandle(standard_ids[i], NULL)) {
+                error = GetLastError();
+                for (unsigned j = 0; j < i; j++) { SetStdHandle(standard_ids[j], standard_handles[j]); }
+                goto done;
+            }
+        }
+    }
+    BOOL created = CreateProcessW(application, command, NULL, NULL, !spawn->interactive,
         CREATE_SUSPENDED | (spawn->interactive ? 0 : CREATE_NEW_PROCESS_GROUP) | CREATE_UNICODE_ENVIRONMENT |
-        EXTENDED_STARTUPINFO_PRESENT, environment, cwd, &startup.StartupInfo, &child)) { goto native_error; }
-    process->process = child.hProcess;
-    process->pid = child.dwProcessId;
+        EXTENDED_STARTUPINFO_PRESENT, environment, cwd, &startup.StartupInfo, &child);
+    error = GetLastError();
+    if (created) { process->process = child.hProcess; process->pid = child.dwProcessId; }
+    int restored = 1;
+    if (spawn->interactive) {
+        for (unsigned i = 0; i < 3; i++) {
+            if (!SetStdHandle(standard_ids[i], standard_handles[i])) {
+                error = GetLastError(); restored = 0;
+            }
+        }
+    }
+    if (!created || !restored) { goto done; }
     if (!AssignProcessToJobObject(process->job, process->process) ||
         ResumeThread(child.hThread) == (DWORD)-1) { goto native_error; }
     result = 0;
