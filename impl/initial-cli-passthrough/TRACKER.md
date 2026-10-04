@@ -24,10 +24,10 @@
 
 ## Commit History & Progress Log
 
-- **Commit `23388f1`**: `docs(impl): add detailed implementation description for initial CLI passthrough`
+- **Commit `2b7f20f`**: `docs(impl): add detailed implementation description for initial CLI passthrough`
   - **Task Impact**: 0% progress impact (specification foundation established for tasks #1 through #8)
   - **Summary**: Created comprehensive implementation description covering scope, architecture, ConPTY, C ABI protocol structures, concurrency model, and testing criteria.
 
-- **Commit `ea90a3f`**: `docs(impl): initialize feature tracker for initial CLI passthrough`
+- **Commit `43ed06b`**: `docs(impl): initialize feature tracker for initial CLI passthrough`
   - **Task Impact**: 0% progress impact (initialized task tracking framework)
   - **Summary**: Defined 8 discrete implementation tasks totaling 100% weight, baseline status, and attribution schema.
