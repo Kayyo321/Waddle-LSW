@@ -268,9 +268,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; native CI pending).
   - **Summary**: Fill a sleeping child stdin pipe with a complete 16 KiB frame, then close transport and require the child wait handle to signal within 15 seconds; verifies main socket monitoring and synchronous-I/O cancellation.
 
-- **Commit `HEAD`**: `test(cli): verify path option grammar and cleanup`
+- **Commit `69f1664`**: `test(cli): verify path option grammar and cleanup`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Exercise missing/invalid mappings, duplicate normalized sources, 65-rule rejection, unmatched argv/cwd and valid mapping through connection setup. Run in make test, including sanitizer builds; all cases pass.
+
+- **Commit `HEAD`**: `fix(build): keep libc out of the pure Zig Windows archive`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: The allocation-free Windows parser uses no C library symbols; defer libc entirely to final C executable linking, preventing native Zig from adding imported libraries to its parser archive. Strict cross-build passes; native rerun pending.
 
 ## Verification snapshot
 
