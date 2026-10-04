@@ -542,12 +542,14 @@ int main(int argc, char **argv) {
 
     assert(getcwd(root, sizeof(root)) != NULL);
     assert(strlen(root) + 24 < sizeof(self_path));
-    snprintf(self_path, sizeof(self_path), "%s/build/integration", root);
+    strcpy(self_path, root);
+    strcat(self_path, "/build/integration");
 
-    snprintf(directory, sizeof(directory), "%s", "/tmp/waddle-test-XXXXXX");
+    strcpy(directory, "/tmp/waddle-test-XXXXXX");
     assert(mkdtemp(directory) != NULL);
     assert(strlen(directory) + 12 < sizeof(socket_path));
-    snprintf(socket_path, sizeof(socket_path), "%s/guest.sock", directory);
+    strcpy(socket_path, directory);
+    strcat(socket_path, "/guest.sock");
 
     char *streams[] = {self_path, "--child", "streams", NULL};
     test_case_t t = {
