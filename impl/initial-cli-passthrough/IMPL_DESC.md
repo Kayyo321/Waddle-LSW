@@ -796,8 +796,9 @@ session allocates spawn storage. Header sequences start at one and use unsigned
 wrap. Socket failure sets the event and shuts down both directions. Orderly input
 cancellation uses an atomic stopping flag and receive-half shutdown so output
 remains usable. After the spawn response, the socket becomes nonblocking. Receive readiness and
-would-block send readiness use 100 ms select intervals; both preserve partial
-frame offsets, and sends observe the failure event. Producer workers still block
+would-block send readiness use 1 ms select intervals; both preserve partial
+frame offsets, and sends observe the failure event. Each native send request is
+at most 4096 bytes; protocol stream frames retain the 16384-byte data limit. Producer workers still block
 under backpressure without allocating queues, while full duplex remains possible
 on Windows AF_UNIX providers. The lock/event are destroyed only after all worker
 handles join.
@@ -823,8 +824,11 @@ on an undrained pipe. Unusual pipe read errors mark failure and prevent success.
 
 `src/guest_session.c` owns worker contexts and thread handles. Success response is
 sent before workers start. Main waits for child/failure in 50 ms intervals and
-checks exceptional socket conditions with `WSAPoll` without consuming framed
-input. This detects closure when stdin's synchronous pipe write is blocked. On
+checks exceptional and readable socket conditions with `WSAPoll`. A nonblocking
+one-byte `MSG_PEEK` distinguishes EOF from pending framed data without consuming
+it. Exceptional closure can be detected while a synchronous stdin write blocks;
+graceful EOF behind queued bytes remains observable only after those bytes are
+consumed. Host session deadlines therefore remain necessary for stalled children. On
 child exit or failure, descendants are terminated, input receives are canceled,
 `CancelSynchronousIo` repeats while waiting for input join, and ConPTY closes while
 its reader drains. If no reader started, or the reader already failed, its output
@@ -911,3 +915,12 @@ promise that cmd interprets shell command tokens as a native argv array. The
 compatibility output is at most input_length+1 including NUL, has no parser-owned
 allocation, and is released by C immediately after UTF-16 conversion. Invalid
 canonical input or insufficient capacity returns minus one before process launch.
+
+### 10.5 Sanitizer boundary
+
+Linux executable tests use ASan/LSan/UBSan and Zig tests use safe bounds checks
+and `std.testing.allocator`. The Zig 0.13 x86_64-windows-gnu compiler rejects
+`-fsanitize=leak`; native Windows C execution has no LeakSanitizer result from
+this toolchain. Native repeated-session handle counts check HANDLE ownership,
+but do not certify heap leak freedom. Windows heap instrumentation remains a
+separate merge verification gate alongside real Viosock/VM acceptance.

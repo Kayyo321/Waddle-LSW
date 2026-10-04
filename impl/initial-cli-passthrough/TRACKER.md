@@ -384,16 +384,20 @@
   - **Task Impact**: 0% across TODO #3 and #8; existing behavior corrected
   - **Summary**: Collect pending terminal events after reading ready stdin and before framing its bytes, closing the signal-arrival race after poll. All Linux sanitizer, allocator and integration tests pass.
 
-- **Commit `HEAD`**: `fix(guest): shorten native socket readiness retry intervals`
+- **Commit `4c45f17`**: `fix(guest): shorten native socket readiness retry intervals`
   - **Task Impact**: 0% across TODO #6 and #7; verification pending
   - **Summary**: The native AF_UNIX duplex transfer advances only about 100 KiB/s with 100 ms readiness intervals. Retry at 1 ms while preserving nonblocking I/O, bounded buffers, failure observation and cancellation.
 
+- **Commit `HEAD`**: `docs(cli): record measured verification and remaining guest gates`
+  - **Task Impact**: 0% across #1–#8; correct verification evidence
+  - **Summary**: Replace stale verification counts with measured sanitizer and coverage results; specify bounded socket retries and distinguish native handle checks from unsupported Windows LeakSanitizer and untested real VM acceptance.
+
 ## Verification snapshot
 
-- **Strict Naming Invariants**: All constants in `PascalCase` (`WaddleCliMagic`, `WaddleMsgSpawnReq`, `WaddleMaxPayloadSize`), types end in `_t` (`waddle_cli_msg_header_t`, `queue_t`, `decoder_t`, `mock_process_t`), default identifiers in `snake_case`, and zero `camelCase`.
-- **Mandatory Documentation**: Complete structured Doxygen documentation (`/** ... */`) across all headers, structs, enums, macros, and public functions with parameter directions (`in`/`out`), nullability, memory ownership annotations, and thread safety invariants.
-- **Zig Native Test Specifications**: `tests/test_cli.zig` implements 17 automated tests using native `test "..."` specifications, `@cImport`, and `std.testing` assertions. Tests pass cleanly with zero external framework dependencies.
-- **Enforced Code Coverage**: Line coverage for protocol codecs and arguments exceeds the mandatory 90% threshold: `protocol.c` achieves 92.50% line coverage and 93.10% branch coverage; `arguments.c` achieves 91.87% line coverage and 100.00% branch coverage.
-- **Zero Memory Leaks**: Symmetric alloc/free lifecycle functions with defensive pointer nulling (`free(p); p = NULL;`). Verified with zero bytes leaked under `std.testing.allocator` and under full test runs with LLVM AddressSanitizer and LeakSanitizer (`-fsanitize=address,leak,undefined`).
-- **Integration Test Suite**: All 16 C integration scenarios pass, including 16 MiB duplex streaming, terminal resize, signal traps, error recovery, adversarial peers, and termios restoration.
-- **Runnable Demo**: `make demo` runs the mock passthrough demonstration cleanly.
+- Linux `make test-sanitizers` passes: C unit cases, 16 integration scenarios, nine path-option cases and 25 Zig tests. ASan/LSan/UBSan report no errors; Zig allocator tests report no leaks.
+- `make coverage` passes implementation line coverage gates: protocol.c 92.50% (185/200), arguments.c 93.18% (123/132), guest_codec.zig 98.56% (137/139), path_rules.zig 100% (50/50).
+- `make windows build/windows_guest_test.exe` passes strict Windows x86_64 cross-compilation. Native Windows CI builds and passes the first six process/argument/context/cmd scenarios; large duplex verification is still under investigation. Remaining native signal, cancellation, ConPTY and handle stress results are not yet claimed.
+- Real Linux-to-Windows Viosock, interactive VM operation and mounted export access remain unverified. See IMPL_DESC.md section 10.3 for concrete acceptance commands.
+- Zig 0.13 x86_64-windows-gnu does not support LeakSanitizer. Native handle stress cannot replace Windows heap instrumentation; this remains a merge verification gate.
+- New owned public interfaces have structured ownership/bounds/error/thread documentation. Existing repository-wide naming and documentation claims have not been extended into an unaudited universal assertion.
+- No README change or dependency addition was made in this completion pass.
