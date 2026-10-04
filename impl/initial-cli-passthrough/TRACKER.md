@@ -200,9 +200,13 @@
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Add one fixed-buffer reader per output pipe, separate raw streams and immediate merged-mode stderr EOF. Continue draining after transport failure so ConPTY shutdown cannot deadlock on its final output. Strict Windows object build passes.
 
-- **Commit `HEAD`**: `feat(guest): order spawn, worker teardown and exit notifications`
+- **Commit `f2831d8`**: `feat(guest): order spawn, worker teardown and exit notifications`
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Dispatch one validated spawn, send success before workers, monitor child/failure, terminate descendants, cancel and join input, close ConPTY while output drains, join readers, then send exit. Release session resources on every path; strict cross-build passes.
+
+- **Commit `HEAD`**: `feat(guest): parse listener ports with bounds-checked Zig`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Validate decimal listener ports without C string-to-integer parsing; reject zero, signs, whitespace and overflow. Native tests cover the full unsigned boundary.
 
 ## Verification snapshot
 

@@ -54,4 +54,9 @@ int guest_spawn_validate(const uint8_t *body, size_t length, guest_spawn_t *spaw
  * @note No state mutation; caller records stdin EOF only after success. */
 int guest_control_validate(uint16_t type, const uint8_t *body, size_t length,
                            int interactive, int input_eof);
+/** @brief Parse a bounded listener port; allocation-free and thread-safe.
+ * @param[in] text Nonnull borrowed NUL-terminated decimal ASCII.
+ * @param[out] port Nonnull caller-owned result, unchanged on failure.
+ * @return 0 valid 1..UINT32_MAX, -1 invalid/overflow. */
+int guest_port_parse(const char *text, uint32_t *port);
 #endif

@@ -276,3 +276,28 @@ test "stream controls enforce payload and state boundaries" {
     try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(7, &bytes, 1, 0, 0));
     try std.testing.expectEqual(@as(c_int, -1), guest_control_validate(1, &bytes, 0, 0, 0));
 }
+
+/// in: borrowed nonnull NUL-terminated ASCII decimal; out: caller-owned port.
+/// Returns 0 for 1..UINT32_MAX, -1 invalid/overflow. No allocation; thread-safe.
+export fn guest_port_parse(text: [*:0]const u8, port: *u32) c_int {
+    const bytes = std.mem.span(text);
+    if (bytes.len == 0 or bytes.len > 10) return -1;
+    var value: u64 = 0;
+    for (bytes) |digit| {
+        if (digit < '0' or digit > '9') return -1;
+        value = value * 10 + digit - '0';
+    }
+    if (value == 0 or value > std.math.maxInt(u32)) return -1;
+    port.* = @intCast(value);
+    return 0;
+}
+
+test "listener port parsing rejects overflow and signs" {
+    var port: u32 = 0;
+    for ([_][:0]const u8{ "", "0", "-1", "+1", " 1", "1x", "4294967296", "99999999999" }) |text|
+        try std.testing.expectEqual(@as(c_int, -1), guest_port_parse(text, &port));
+    try std.testing.expectEqual(@as(c_int, 0), guest_port_parse("4294967295", &port));
+    try std.testing.expectEqual(std.math.maxInt(u32), port);
+    try std.testing.expectEqual(@as(c_int, 0), guest_port_parse("5242", &port));
+    try std.testing.expectEqual(@as(u32, 5242), port);
+}
