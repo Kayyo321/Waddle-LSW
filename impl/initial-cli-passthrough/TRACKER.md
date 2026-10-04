@@ -1,6 +1,6 @@
 # Feature Tracker: Initial CLI Passthrough
 
-- **Contributors / Agents**: Antigravity Agent
+- **Contributors / Agents**: Antigravity Agent, Codex
 - **Time Started**: 2026-10-04T18:15:38Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/initial-cli-passthrough
@@ -31,3 +31,11 @@
 - **Commit `43ed06b`**: `docs(impl): initialize feature tracker for initial CLI passthrough`
   - **Task Impact**: 0% progress impact (initialized task tracking framework)
   - **Summary**: Defined 8 discrete implementation tasks totaling 100% weight, baseline status, and attribution schema.
+
+- **Commit `1f331b0`**: `docs(tracker): update rebased commit hashes in feature tracker`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Existing tracker hash audit, recorded during PoC planning.
+
+- **Commit `HEAD`**: `docs(cli): specify the executable Linux proof of concept`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Define wire validation, bounded queues, CLI options, mock process ownership, verification, and explicit Windows limitations. HEAD resolves this commit until the next tracker update records its hash.

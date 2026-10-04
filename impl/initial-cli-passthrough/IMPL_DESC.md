@@ -499,3 +499,115 @@ typedef struct {
 - **Startup Latency**: Time from `waddle exec` invocation to first byte received from guest process < 15ms.
 - **Throughput**: Sustained data transfer rate > 100 MB/s for piped data streams (`waddle exec -- type large_file.bin | wc -c`).
 - **CPU Utilization**: Host CLI CPU utilization < 1% during active terminal streaming.
+
+## 8. Executable PoC contract (authoritative for this increment)
+
+This increment implements a C11 Linux host and a Linux mock guest. It does not
+claim Windows execution, ConPTY support, VirtIO-Serial support, authentication,
+performance targets, or a production-ready service. The mock launches actual
+Linux programs; the same framing and host client are intended for the future
+Windows guest. No third-party dependency is added. Build with the base-system C
+compiler and Make; Linux pseudo-terminal support comes from base-system libutil.
+The existing feature branch is retained without rewriting its divergent history.
+
+### 8.1 Framing and layouts
+
+The 32-byte header has offsets: magic u32 at 0, version u16 at 4, type u16 at 6,
+session u64 at 8, payload length u32 at 16, flags u32 at 20, sequence u32 at 24,
+CRC32 u32 at 28. All integers are explicitly encoded little-endian; packed C
+structures are layout documentation, never dereferenced from unaligned input.
+Magic remains numeric 0x57444c43 (wire bytes `43 4c 44 57`, not the text `WDLC`).
+Version is 1, flags must be zero. CRC-32/ISO-HDLC is mandatory in this PoC,
+including when its computed value is zero. Each direction starts sequence at 1,
+advances modulo 2^32, and keeps the session fixed at 1 for its single connection.
+Payloads are capped at 1 MiB before allocation. Unknown types, invalid sizes,
+flags, session, sequence, CRC, and truncated frames terminate the connection.
+EOF is a 4-byte stream ID (u32). Resize is exactly 8 bytes; signal exactly 4;
+exit exactly 16. Spawn response is 12 bytes plus error text, without a terminator.
+Spawn request is 24 bytes followed by cwd including its NUL, command including
+its NUL, and environment bytes. Length fields exclude cwd/command terminators.
+Environment is a sequence of NUL-terminated UTF-8 KEY=VALUE entries; zero length
+means no overrides. Embedded NULs in cwd/command and malformed environments fail.
+No heartbeat is emitted; unexpected message types fail rather than being ignored.
+
+### 8.2 CLI and quoting boundary
+
+`build/waddle exec|run [options] -- program [arguments...]` is the interface.
+`--socket-path PATH` selects the mock UNIX socket; otherwise CID 3 / port 5242
+select Linux AF_VSOCK. `--vsock-cid N`, `--vsock-port N`, `--cwd PATH`, repeatable
+`--env KEY=VALUE` / `-e`, `--pipe` / `-P`, `--interactive` / `-i` / `--tty` / `-t`,
+`--timeout SECONDS`, and `--translate-path` are supported. Numbers are decimal,
+range-checked; timeout is a total monotonic deadline including connect and spawn,
+zero means disabled. Timeout returns 124; malformed protocol/transport/local I/O
+returns 125; spawn ENOENT returns 127, other spawn errors 126; usage returns 2.
+Guest exit codes are retained as u32 on wire and mapped to the low eight bits on
+Linux, because POSIX shells cannot represent an arbitrary Windows DWORD.
+
+Arguments are always individually quoted using Microsoft CRT backslash/quote
+rules, including empty strings and trailing backslashes. This promises ordinary
+CRT argv parsing, not arbitrary cmd.exe/PowerShell shell grammar or argv[0]
+special-case behavior. The mock decodes this canonical representation without
+using a shell. Explicit `sh -c ...` is available for intentional Linux shell use.
+Default cwd is getcwd(). Guest environment is retained with only explicit
+`--env` overrides; host PATH/display variables are not implicitly copied.
+Opt-in path translation maps absolute POSIX paths to `Z:\\...` and changes slash
+to backslash; relative arguments are retained. Parent traversal and backslashes
+in absolute POSIX paths are rejected to avoid ambiguous guest mapping. This is
+one root-export rule, not discovery of mounted exports. The mock cannot resolve
+Windows paths; use translation only with the future Windows peer.
+
+### 8.3 Ownership, I/O, lifecycle, and bounds
+
+One host poll loop owns the socket, decoder, transmit queue, and stdout/stderr
+queues. All watched descriptors are nonblocking, with original standard stream
+flags restored on normal exits. Each queue is bounded to 2 MiB, uses explicit
+compaction, and pauses producers when insufficient room remains. Socket reads
+assemble a header then a bounded payload across arbitrary fragmentation. Socket
+writes and local writes retain unsent tails across short writes/EAGAIN/EINTR.
+Stream chunks are at most 16 KiB. Control messages are queued in wire order.
+The client waits for a successful spawn response before sending stdin. It sends
+stdin EOF once, continues receiving until both output EOFs and process exit,
+then drains local output before returning. Exit received before output EOF is a
+protocol error. Output after stream EOF is a protocol error. Slow local outputs
+backpressure the socket, bounding memory. A transport close is successful only
+after the final exit and output EOFs. Broken local pipes return 125.
+
+Interactive mode defaults to both stdin and stdout being TTYs; forced interactive
+requires both. The host saves termios and uses cfmakeraw, restores via atexit,
+and forwards SIGWINCH, SIGINT, SIGQUIT, and SIGTERM through a nonblocking self
+pipe. Signal handlers only preserve errno, set sig_atomic_t pending flags, and
+write a wake byte; a full pipe cannot lose the pending signal. SIGPIPE is ignored.
+Raw Ctrl-C is forwarded as an input byte for terminal processing. SIGKILL and
+catastrophic runtime corruption cannot guarantee terminal restoration.
+
+The mock is a single-session UNIX listener, refuses existing socket paths, uses
+umask 077, and unlinks only its own socket on normal teardown. Raw sessions use
+three pipes; interactive sessions use forkpty and merged terminal output (stderr
+EOF is sent immediately). Its child owns a new process group/session. A
+close-on-exec error pipe reports chdir/environment/exec failure before spawn
+success. The mock poll loop relays bounded queues, resize via TIOCSWINSZ and
+SIGWINCH, and signals via the child's process group. Pipe EOF closes child stdin
+only after queued input drains; PTY EOF injects Ctrl-D (terminal semantics, not a
+binary half-close). It drains output before exit, monitors waitpid(WNOHANG), and
+reports 128+signal for signaled children. After child exit it kills remaining
+members of the child group so inherited pipe handles cannot hang teardown.
+Disconnect, timeout, or protocol error kills and reaps the mock child group.
+The mock is development-only, with no privilege elevation or network listener.
+
+### 8.4 Verification and remaining work
+
+Unit tests check layouts, CRC known vector, canonical quote/decode round trips,
+path boundaries, fragmented frames, corrupted CRC, and oversized headers.
+Integration tests use private temporary UNIX sockets and real subprocesses for
+separate stdout/stderr, explicit environments/cwd, empty and quoted arguments,
+exit 42, missing command, large binary streams with simultaneous input/output,
+TTY restoration/resizing, forwarded signals, timeout, and disconnect behavior.
+Tests are C11 and shell; sanitizers are opt-in Make flags. Windows tasks #6/#7
+remain at 0%. Host tasks are credited only for implemented behavior; #5 and #8
+remain partial until export-rule configuration and real Windows verification.
+Performance targets remain unmeasured. This PoC is not ready for feature merge.
+
+Tracker entries use the actual preceding commit hashes. The newest entry uses
+`HEAD` as a resolvable Git reference until the next atomic commit records its
+hash; embedding a commit's own hash in its contents is mathematically circular.
+Earlier feature documentation commits are retained with zero progress impact.
