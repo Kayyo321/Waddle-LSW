@@ -81,7 +81,9 @@ static int send_exact(guest_wire_t *wire, const uint8_t *bytes, size_t length) {
     size_t offset = 0;
     while (offset < length) {
         if (WaitForSingleObject(wire->failure, 0) == WAIT_OBJECT_0) { return -1; }
-        int sent = send(wire->socket, (const char *)bytes + offset, (int)(length - offset), 0);
+        size_t remaining = length - offset;
+        int chunk = (int)(remaining > 4096 ? 4096 : remaining);
+        int sent = send(wire->socket, (const char *)bytes + offset, chunk, 0);
         if (sent < 0 && WSAGetLastError() == WSAEWOULDBLOCK) {
             fd_set writable;
             FD_ZERO(&writable);

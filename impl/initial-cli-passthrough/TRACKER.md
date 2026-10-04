@@ -372,9 +372,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Poll read readiness as well as exceptional socket state and use a bounded nonblocking peek to distinguish graceful EOF from queued data; tolerate a concurrent receive worker consuming readiness before the peek.
 
-- **Commit `HEAD`**: `test(guest): locate duplex stalls with bounded progress output`
+- **Commit `29f459f`**: `test(guest): locate duplex stalls with bounded progress output`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Report the first stream/input chunk and one message per MiB during the native duplex fixture so provider stalls are attributed to a direction and byte boundary.
+
+- **Commit `HEAD`**: `fix(guest): bound native socket transfer chunks`
+  - **Task Impact**: 0% across TODO #6 and #7; verification pending
+  - **Summary**: Limit individual send requests to 4096 bytes while retaining frame serialization and partial-transfer offsets; exercise the same limit in the native peer.
 
 ## Verification snapshot
 

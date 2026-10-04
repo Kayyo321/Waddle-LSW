@@ -43,8 +43,10 @@ static uint32_t get32(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (u
 static void transfer(SOCKET socket, uint8_t *bytes, size_t length, int sending) {
     ULONGLONG deadline = GetTickCount64() + 15000;
     for (size_t offset = 0; offset < length;) {
-        int n = sending ? send(socket, (const char *)bytes + offset, (int)(length - offset), 0)
-                        : recv(socket, (char *)bytes + offset, (int)(length - offset), 0);
+        size_t remaining = length - offset;
+        int chunk = (int)(remaining > 4096 ? 4096 : remaining);
+        int n = sending ? send(socket, (const char *)bytes + offset, chunk, 0)
+                        : recv(socket, (char *)bytes + offset, chunk, 0);
         if (n == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
             check(GetTickCount64() < deadline, "socket readiness deadline");
             fd_set ready;
