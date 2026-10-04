@@ -36,6 +36,7 @@ This guide provides comprehensive instructions for developers, engineers, and AI
    - [Language Selection Policy](#language-selection-policy)
    - [Code Beauty & Naming Invariants](#code-beauty--naming-invariants)
    - [Documentation Enforcement Standards](#documentation-enforcement-standards)
+   - [Memory Safety & Zero-Leak Architecture](#memory-safety--zero-leak-architecture)
    - [Shared Memory (IVSHMEM) & Concurrency Rules](#shared-memory-ivshmem--concurrency-rules)
    - [IPC Protocol & Struct Serialization](#ipc-protocol--struct-serialization)
    - [Wayland Client Best Practices](#wayland-client-best-practices)
@@ -45,7 +46,7 @@ This guide provides comprehensive instructions for developers, engineers, and AI
    - [Unit & Integration Testing](#unit--integration-testing)
    - [Zig Built-in Test Harness & Specifications](#zig-built-in-test-harness--specifications)
    - [Code Coverage Enforcement](#code-coverage-enforcement)
-   - [Sanitizers (ASan, TSan, UBSan)](#sanitizers-asan-tsan-ubsan)
+   - [Sanitizers & LeakSanitizer Zero-Leak Gating](#sanitizers--leaksanitizer-zero-leak-gating)
    - [Performance & Latency Benchmarks](#performance--latency-benchmarks)
 8. [Commit Standards & Hygiene](#8-commit-standards--hygiene)
 9. [Pull Request (PR) & Merging Process](#9-pull-request-pr--merging-process)
@@ -654,6 +655,36 @@ Documentation is strictly enforced across every file and interface in Waddle-LSW
 
 ---
 
+### Memory Safety & Zero-Leak Architecture
+
+Waddle-LSW mandates that all code must be completely free of memory leaks, use-after-free conditions, double-free bugs, and unverified buffer overflows. Memory leaks are treated as critical software defects. Contributors and agents must adhere to the following memory invariants:
+
+1. **Deterministic C Memory Management**:
+   - **Symmetric Allocation/Deallocation Pairs**: Any module, subsystem, or struct allocating dynamic heap memory must provide symmetric lifecycle functions (e.g., `waddle_session_create()` and `waddle_session_destroy()`, or `queue_init()` and `queue_free()`).
+   - **Explicit Ownership Annotations**: Every function returning dynamically allocated memory must document ownership transfer using `@note Caller takes ownership and must free via <free_function>()`.
+   - **Defensive Pointer Nulling**: Immediately set pointers to `NULL` upon freeing to prevent dangling pointers and double frees:
+     ```c
+     free(ptr);
+     ptr = NULL;
+     ```
+   - **Mandatory Buffer Bounds Passing**: Never pass raw pointer buffers without explicit capacity or length limits. Unbounded string operations (`strcpy`, `strcat`, `sprintf`, `gets`) are strictly forbidden; always use bounded alternatives (`snprintf`, `memcpy` with verified bounds).
+   - **Unified Cleanup Exit Path ("Goto Fail" Pattern)**: In complex C functions allocating multiple resources, use a single cleanup exit label (`cleanup:` or `fail:`) to guarantee all allocated memory and descriptors are reliably freed on every error path.
+
+2. **Zig Memory Safety Invariants**:
+   - **Explicit Allocator Parameters**: Functions that allocate heap memory must accept an explicit `std.mem.Allocator` parameter.
+   - **Immediate Defer Cleanup**: Always defer deallocation immediately following a successful allocation:
+     ```zig
+     const buffer = try allocator.alloc(u8, size);
+     defer allocator.free(buffer);
+     ```
+   - **Mandatory Testing Allocator**: All Zig test suites must allocate using `std.testing.allocator`, which automatically asserts that zero bytes remain un-freed when the test exits.
+
+3. **C++ RAII Invariants (Compatibility Boundaries Only)**:
+   - Raw `new` and `delete` are strictly banned. All dynamic allocations must be managed by standard RAII types (`std::unique_ptr`, `std::vector`, `std::string_view`, `std::span`).
+   - Win32, COM, and Wayland handles must be managed via RAII smart pointers with custom deleters.
+
+---
+
 ### Shared Memory (IVSHMEM) & Concurrency Rules
 
 The shared memory layer bridges Windows guest and Linux host without kernel intervention. To prevent race conditions, cache tearing, and cross-architecture inconsistencies:
@@ -833,25 +864,51 @@ Test coverage is strictly enforced across Waddle-LSW. PRs that reduce coverage o
 
 ---
 
-### Sanitizers (ASan, TSan, UBSan)
+### Sanitizers & LeakSanitizer Zero-Leak Gating
 
-All C and C++ test suites must pass clean runs under LLVM sanitizers:
+To guarantee zero memory leaks and protect against memory corruption, all test suites must pass clean runs under LLVM AddressSanitizer (ASan), LeakSanitizer (LSan), and UndefinedBehaviorSanitizer (UBSan).
 
+#### 1. Zero-Tolerance Leak Policy
+- **Zero Bytes Tolerated**: If even a single byte of memory is leaked during test execution, the build will fail immediately.
+- **Environment Flags**: All tests executed under ASan must have leak detection enabled:
+  ```bash
+  export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1"
+  export LSAN_OPTIONS="abort_on_error=1"
+  ```
+
+#### 2. Building and Testing with Sanitizers (GNU Make)
 ```bash
-# Build with AddressSanitizer and UndefinedBehaviorSanitizer
+# Build and run the complete test suite with ASan + LSan + UBSan
+make clean
+make test \
+    CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" \
+    LDFLAGS="-fsanitize=address,leak,undefined"
+```
+
+#### 3. Building and Testing with Sanitizers (CMake & Ninja)
+```bash
+# Build with ASan, LSan, and UBSan
 cmake -B build-asan -GNinja \
     -DCMAKE_BUILD_TYPE=Debug \
     -DENABLE_SANITY_CHECKS=ON \
-    -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+    -DCMAKE_C_FLAGS="-fsanitize=address,leak,undefined -fno-omit-frame-pointer" \
+    -DCMAKE_CXX_FLAGS="-fsanitize=address,leak,undefined -fno-omit-frame-pointer"
 ninja -C build-asan
-ctest --test-dir build-asan
+ctest --test-dir build-asan --output-on-failure
 
-# Build with ThreadSanitizer (for concurrency and lock-free rings)
+# Build with ThreadSanitizer (TSan) for lock-free ring buffers and IPC queues
 cmake -B build-tsan -GNinja \
     -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
     -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer"
 ninja -C build-tsan
-ctest --test-dir build-tsan
+ctest --test-dir build-tsan --output-on-failure
+```
+
+#### 4. Zig Leak Verification
+Zig tests running with `std.testing.allocator` automatically verify that all allocated memory blocks are returned:
+```bash
+zig test tests/unit_test.zig -Iinclude -Isrc src/protocol.c -lc -fsanitize=address
 ```
 
 ---
