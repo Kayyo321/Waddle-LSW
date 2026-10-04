@@ -272,9 +272,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Exercise missing/invalid mappings, duplicate normalized sources, 65-rule rejection, unmatched argv/cwd and valid mapping through connection setup. Run in make test, including sanitizer builds; all cases pass.
 
-- **Commit `HEAD`**: `fix(build): keep libc out of the pure Zig Windows archive`
+- **Commit `02ece7d`**: `fix(build): keep libc out of the pure Zig Windows archive`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: The allocation-free Windows parser uses no C library symbols; defer libc entirely to final C executable linking, preventing native Zig from adding imported libraries to its parser archive. Strict cross-build passes; native rerun pending.
+
+- **Commit `HEAD`**: `test(coverage): enforce implementation coverage for C and Zig parsers`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Add make coverage using gcov and base-package kcov; reset counters, exclude native test bodies and fail below 90%. Measured protocol 92.50%, arguments 93.18%, guest parsing 98.02% and path parsing 100%.
 
 ## Verification snapshot
 

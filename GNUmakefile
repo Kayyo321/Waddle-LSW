@@ -6,7 +6,7 @@ CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Werror
 LDFLAGS ?=
 COMMON = src/protocol.c src/arguments.c build/path_rules.o
 
-.PHONY: all test clean zig-test test-sanitizers demo windows windows-test
+.PHONY: all test clean zig-test test-sanitizers demo windows windows-test coverage
 
 all: build/waddle build/waddle-mock-guest
 
@@ -76,3 +76,6 @@ build/windows_guest_test.exe: tests/windows_guest.c src/guest_codec.h build/gues
 
 windows-test: windows build/windows_guest_test.exe
 	./build/windows_guest_test.exe
+
+coverage: build/path_rules.o
+	sh tests/coverage.sh
