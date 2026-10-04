@@ -11,10 +11,21 @@ Unlike traditional virtual machine viewers that trap Windows within a single mon
 - **Near-Native Graphics & Compute Performance**: Utilize GPU partitioning / paravirtualization (GPU-PV/vGPU slicing) so Windows workloads access direct hardware acceleration.
 - **Unified Filesystem Access**: High-performance shared filesystem bridge bridging Linux paths and Windows guest drives via VirtIO-FS and WinFsp.
 - **Low-Latency Compositing**: Sub-millisecond frame blitting using Looking Glass-inspired shared memory techniques and DMA-BUF imports directly into Wayland subsurfaces.
+- **Bidirectional CLI & Process Passthrough**: Execute Windows binaries, CLI utilities, and shells transparently from the Linux terminal with high-performance I/O streaming, ConPTY terminal handling, signal forwarding, and exit code propagation.
 
 ---
 
-## 2. Core Architectural Pillars
+## 2. Core Architectural Pillars & Language Policy
+
+### 2.1 Language Strategy & Toolchain Architecture
+- **Primary Languages: C (C11/C17/C23) & Zig (0.13+)**:
+  - The entire core codebase of Waddle-LSW is explicitly designed and required to be implemented in **C and Zig** wherever possible.
+  - **Zero Runtime Overhead & Deterministic Memory**: Both C and Zig provide complete manual control over memory layout, cache-line alignment, lock-free primitives, and kernel/hypervisor interfaces without hidden garbage collection, bulky runtimes, or unexpected compiler overhead.
+  - **First-Class C ABI**: All shared data models (IVSHMEM registries, ring buffer descriptors, control socket protocol headers) are defined as strict C ABI structures with explicit integer widths and memory packing. Zig compiles directly against and exposes native C headers with zero friction.
+- **Language Ceiling: C++ (C++20/C++23) as Upper Bound**:
+  - C++ represents the absolute highest level of abstraction permitted in any part of the project.
+  - Its usage is strictly restricted to scenarios where external vendor SDKs or specific Windows/guest frameworks (such as direct DirectX/WinRT APIs) expose exclusively C++ interfaces without viable C/Zig bindings.
+  - Higher-level managed or garbage-collected runtimes (and other heavy language ecosystems) are strictly disallowed.
 
 ```
 +---------------------------------------------------------------------------------+
@@ -87,15 +98,21 @@ Unlike traditional virtual machine viewers that trap Windows within a single mon
 - **Borderless Windowed Capture**: Rather than capturing the entire monolithic Windows desktop framebuffer, the guest agent identifies individual top-level Win32/UWP window surfaces, their bounding rectangles, transparent regions (DWM non-client rendering, alpha blending), and damage rects.
 - **Wayland Subsurface Blitting**: Host compositor client blits each captured surface into a corresponding Wayland `wl_surface` / `wl_subsurface` or imports shared DMA-BUFs directly into the Wayland scene graph.
 
+### Requirement 4: Interactive CLI Passthrough & Process Launching
+- **Transparent Terminal Command Execution**: Allow launching Windows CLI tools (`cmd.exe`, `powershell.exe`, compilers, CLI dev tools) directly from the Linux shell via `waddle run <cmd>` or `waddle exec <cmd>`.
+- **ConPTY & VT100 Terminal Streaming**: Provide complete ANSI escape code passthrough, terminal window resizing (`SIGWINCH`), and raw mode TTY management.
+- **Bidirectional I/O Streaming**: Stream `stdin`, `stdout`, and `stderr` over multiplexed `AF_VSOCK` channels with sub-millisecond latency.
+- **Lifecycle & Exit Codes**: Accurate process exit code forwarding, signal translation (Linux `SIGINT`/`SIGTERM` to Windows console control events), and clean resource teardown.
+
 ---
 
 ## 4. Subsystems to Build
 
-The engineering effort for Waddle-LSW is split into three primary software components:
+The engineering effort for Waddle-LSW is split into four primary software components:
 
 ### Component 1: Guest-Side Window Tracking & Capture Agent
 **Target Platform**: Windows 10/11 64-bit (Guest VM)  
-**Language / Tech**: Modern C++20 / Rust, Win32 API, DirectX (D3D11 / D3D12), DXGI, DWM APIs.
+**Language / Tech**: C (C11/C23) / Zig (0.13+) (preferred), with C++20 strictly as an upper ceiling only where direct WinRT/DirectX C++ abstractions are unavoidable; Win32 API, DirectX (D3D11 / D3D12), DXGI, DWM APIs.
 
 #### Responsibilities:
 1. **Window Lifecycle & Topology Tracking**:
@@ -117,17 +134,18 @@ The engineering effort for Waddle-LSW is split into three primary software compo
 
 ### Component 2: IPC & Buffer Transport Layer
 **Target Platform**: Host Linux & Guest Windows Cross-Domain Transport  
-**Language / Tech**: C++20 / C / Rust, KVM/QEMU IVSHMEM (`/dev/kvmfr*` or `/dev/uio*` / Win32 IVSHMEM driver), Linux `AF_VSOCK` / VirtIO-Serial.
+**Language / Tech**: C (C11/C23) / Zig (0.13+), KVM/QEMU IVSHMEM (`/dev/kvmfr*` or `/dev/uio*` / Win32 IVSHMEM driver), Linux `AF_VSOCK` / VirtIO-Serial; strict C ABI header definitions.
 
 #### Responsibilities:
 1. **Control Channel (Bidirectional IPC)**:
    - Ultra-low latency, deterministic message passing between guest agent and host client via `AF_VSOCK` or VirtIO-Serial.
-   - Serialization protocol: High-performance binary protocol (Cap'n Proto / FlatBuffers) or lightweight schema-enforced JSON-RPC.
+   - Serialization protocol: High-performance binary protocol with explicit C ABI structs or lightweight schema-enforced messaging.
    - Message categories:
      - `WINDOW_ANNOUNCE`, `WINDOW_DESTROY`, `WINDOW_METADATA_UPDATE` (position, size, title, state).
      - `FRAME_AVAILABLE` (window ID, slot index, sequence number, damage rects).
      - `INPUT_EVENT` (pointer movement, button states, keyboard scancodes, focus request).
      - `CLIPBOARD_SYNC` (data offer, MIME types, payload transfer).
+     - `PROCESS_SPAWN`, `PROCESS_STDIN`, `PROCESS_STDOUT`, `PROCESS_STDERR`, `PROCESS_SIGNAL`, `PROCESS_EXIT`.
 2. **Data Channel (Shared Memory Frame Buffer)**:
    - Partitioned IVSHMEM ring buffer layout supporting multiple concurrent active windows.
    - Memory layout architecture:
@@ -139,7 +157,7 @@ The engineering effort for Waddle-LSW is split into three primary software compo
 
 ### Component 3: Host-Side Wayland Compositor Client
 **Target Platform**: Linux Host (Wayland)  
-**Language / Tech**: Modern C++20 / Rust, `libwayland-client`, `wayland-protocols`, `libxkbcommon`, `libepoxy` / OpenGL / Vulkan, DMA-BUF extensions.
+**Language / Tech**: C (C11/C23) / Zig (0.13+) (preferred), with C++20 as upper ceiling only if strictly mandated by external dependencies; `libwayland-client`, `wayland-protocols`, `libxkbcommon`, `libepoxy` / OpenGL / Vulkan, DMA-BUF extensions.
 
 #### Responsibilities:
 1. **Wayland Shell Integration**:
@@ -158,6 +176,24 @@ The engineering effort for Waddle-LSW is split into three primary software compo
    - Handle pointer entry, exit, relative pointer motion (for gaming/3D apps), and pointer constraints.
 4. **Clipboard Integration**:
    - Implement `wl_data_device_manager` to synchronize clipboard contents (plain text, HTML, PNG images) seamlessly between host and guest.
+
+---
+
+### Component 4: CLI Passthrough & Process Execution Bridge
+**Target Platform**: Linux Host CLI & Windows Guest Execution Agent  
+**Language / Tech**: C (C11/C23) / Zig (0.13+) (preferred), POSIX termios, Win32 ConPTY (Pseudo Console) API, Linux `AF_VSOCK` / VirtIO-Serial.
+
+#### Responsibilities:
+1. **Host-Side CLI (`waddle` / `waddle-cli`)**:
+   - Command line argument parsing and Windows-style argument quoting/escaping (`CommandLineToArgvW` semantics).
+   - Raw terminal mode management (`termios`) and terminal window resize signal (`SIGWINCH`) forwarding.
+   - Multiplexed standard I/O streaming (stdin, stdout, stderr) over low-latency VSOCK.
+   - Accurate exit code propagation matching guest process termination.
+2. **Guest-Side Console Agent (`waddle-guest-exec`)**:
+   - Process spawning via `CreateProcessW` with standard Win32 pipes for non-interactive execution, or Windows Pseudo Console (`CreatePseudoConsole`) for full interactive terminal sessions (e.g. PowerShell, CMD, interactive development tools).
+   - Asynchronous I/O multiplexing between Windows console pipes and VSOCK IPC.
+   - Environment variable passing and path translation (e.g., mapping host Linux paths to guest VirtIO-FS drives).
+   - Signal handling: mapping Linux `SIGINT`/`SIGTERM` to Windows `GenerateConsoleCtrlEvent` (`CTRL_C_EVENT`).
 
 ---
 
@@ -195,27 +231,35 @@ Messages transferred over VirtIO-Serial / VSOCK:
 - `MsgFrameReady`: `{ uint64_t window_id, uint32_t buffer_slot, uint64_t frame_index, Rect damage }`
 - `MsgInputPointer`: `{ uint64_t window_id, uint32_t event_type, int32_t x, int32_t y, uint32_t buttons, int32_t wheel_delta }`
 - `MsgInputKeyboard`: `{ uint64_t window_id, uint32_t key_action, uint32_t vk_code, uint32_t scan_code, uint32_t modifiers }`
+- `MsgProcessSpawn`: `{ uint64_t request_id, uint32_t flags (INTERACTIVE_CONPTY, PIPE_STREAMS), uint16_t rows, uint16_t cols, char cwd[1024], char cmdline[4096], char env[4096] }`
+- `MsgProcessIo`: `{ uint64_t session_id, uint8_t stream_type (STDIN, STDOUT, STDERR), uint32_t length, uint8_t payload[] }`
+- `MsgProcessSignal`: `{ uint64_t session_id, uint32_t signal_code (CTRL_C, CTRL_BREAK, TERMINATE), uint16_t rows, uint16_t cols }`
+- `MsgProcessExit`: `{ uint64_t session_id, uint32_t exit_code, uint32_t error_status }`
 
 ---
 
 ## 6. Implementation Phasing & Milestones
 
 1. **Phase 1: Transport & Prototype Compositor (Host Client)**
-   - Setup IVSHMEM reader on Linux host.
+   - Setup IVSHMEM reader on Linux host in C/Zig.
    - Implement Wayland client rendering a test pattern from shared memory via `wl_shm` and `linux_dmabuf`.
    - Setup bidirectional VSOCK / serial control socket.
-2. **Phase 2: Windows Window Tracking & DXGI Capture (Guest Agent)**
+2. **Phase 2: CLI Passthrough & Process Launching Bridge**
+   - Implement host CLI utility (`waddle` / `waddle-cli`) in C/Zig with termios raw mode and VT100/ANSI passthrough.
+   - Implement guest console agent (`waddle-guest-exec`) in C/Zig with Win32 `CreateProcessW` and ConPTY support.
+   - Multiplex stdin/stdout/stderr streaming and exit code propagation over VSOCK.
+3. **Phase 3: Windows Window Tracking & DXGI Capture (Guest Agent)**
    - Implement Win32 window event hooks to detect application open/close/move.
    - Implement DXGI desktop / window capture pipeline capturing per-window pixel surfaces.
    - Blit captured surfaces into IVSHMEM memory regions with atomic locking.
-3. **Phase 3: Multi-Window Composition & Wayland Subsurfaces**
+4. **Phase 4: Multi-Window Composition & Wayland Subsurfaces**
    - Host client dynamically instantiates and tears down Wayland surfaces corresponding to guest windows.
    - Implement window movement, resizing, damage tracking, and DPI scaling.
-4. **Phase 4: Input Injection, Mouse/Keyboard, & Focus Management**
+5. **Phase 5: Input Injection, Mouse/Keyboard, & Focus Management**
    - Forward pointer and keyboard events from Wayland to guest agent.
    - Implement mouse cursor tracking, shape sync, and proper focus synchronization.
    - Bidirectional clipboard integration.
-5. **Phase 5: Subsystem Integrations & Packaging**
+6. **Phase 6: Subsystem Integrations & Packaging**
    - VirtIO-FS configuration templates, WinFsp mounting automations.
    - vGPU / GPU-PV configuration documentation, setup scripts, and driver installation guides.
    - Daemon management, systemd user services, and complete error handling.
