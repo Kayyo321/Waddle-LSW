@@ -328,9 +328,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Record five prior documentation/asset/tracker commits missing from the branch history log, with explicit zero implementation progress impact; no README changes made in this completion pass.
 
-- **Commit `HEAD`**: `test(guest): reject corrupt handshakes on native transport`
+- **Commit `c4f7f26`**: `test(guest): reject corrupt handshakes on native transport`
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Send bad magic, a payload above 1 MiB and a corrupt CRC to the real listener; require connection closure before subsequent valid sessions. Native fixture cross-build passes.
+
+- **Commit `HEAD`**: `test(guest): report native regression stages as they execute`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Native compilation passes but runtime stalls; emit unbuffered spawn/completion stages and include scenario number in errors so the blocking boundary is visible in CI logs.
 
 ## Verification snapshot
 

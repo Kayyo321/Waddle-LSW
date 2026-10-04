@@ -19,7 +19,7 @@ static unsigned scenarios;
 
 static void check(int valid, const char *message) {
     if (valid) { return; }
-    fprintf(stderr, "FAIL: %s (Win32 %lu / Winsock %d)\n", message,
+    fprintf(stderr, "FAIL at scenario %u: %s (Win32 %lu / Winsock %d)\n", scenarios + 1, message,
             (unsigned long)GetLastError(), WSAGetLastError());
     if (listener_process != NULL) { TerminateProcess(listener_process, 1); WaitForSingleObject(listener_process, 5000); }
     DeleteFileA(socket_path);
@@ -76,6 +76,7 @@ static SOCKET connect_guest(void) {
 }
 static SOCKET spawn_command(const char *command, const char *cwd, const char *environment,
                             size_t env_length, int interactive, uint32_t expected_status, DWORD *pid) {
+    printf("scenario %u: spawn %s\n", scenarios + 1, command);
     SOCKET socket = connect_guest();
     size_t cwd_length = strlen(cwd), command_length = strlen(command);
     size_t total = 26 + cwd_length + command_length + env_length;
@@ -164,6 +165,7 @@ static void drain(SOCKET socket, const char *out, const char *err, uint32_t code
     else { check(received[0] > 0 && received[1] == 0, "merged ConPTY output"); }
     closesocket(socket);
     scenarios++;
+    printf("scenario %u: drained and exited\n", scenarios);
 }
 static void run_case(const char *mode, const char *out, const char *err, uint32_t code, int signal, int interactive) {
     char command[8192]; command_for(command, sizeof(command), mode);
@@ -238,6 +240,7 @@ static int child(int argc, wchar_t **argv) {
  * @note Main thread only; test workers are joined before their state is released. */
 int wmain(int argc, wchar_t **argv) {
     if (argc >= 3 && wcscmp(argv[1], L"--child") == 0) { return child(argc, argv); }
+    setvbuf(stdout, NULL, _IONBF, 0);
     WSADATA startup; check(WSAStartup(MAKEWORD(2, 2), &startup) == 0, "Winsock startup");
     wchar_t self[4096], cwd[4096];
     check(GetModuleFileNameW(NULL, self, 4096) > 0 && GetCurrentDirectoryW(4096, cwd) > 0, "fixture paths");
