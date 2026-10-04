@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Antigravity Agent, Codex
 - **Time Started**: 2026-10-04T18:15:38Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-04T23:24:42Z
 - **Feature Branch**: feature/initial-cli-passthrough
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -16,67 +16,67 @@
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
-| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 97.5% | Native 47-session debug-heap audit passes with zero bytes retained; real VM interactive acceptance remains |
-| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 95% | Native duplex/cancellation/handle stress pass; real Linux-to-Windows Viosock/export acceptance remains |
+| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Done | 20% | 100% | Native 47-session debug-heap audit passes with zero bytes retained; real VM ConPTY input/resize/merged stderr/Ctrl-C acceptance passes |
+| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Done | 10% | 100% | Native duplex/cancellation/handle stress and real Linux-to-Windows Viosock/export acceptance pass |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `99.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
 
-- **Commit `2b7f20f`**: `docs(impl): add detailed implementation description for initial CLI passthrough`
+- **Commit `9eddf1d`**: `docs(impl): add detailed implementation description for initial CLI passthrough`
   - **Task Impact**: 0% progress impact (specification foundation established for tasks #1 through #8)
   - **Summary**: Created comprehensive implementation description covering scope, architecture, ConPTY, C ABI protocol structures, concurrency model, and testing criteria.
 
-- **Commit `43ed06b`**: `docs(impl): initialize feature tracker for initial CLI passthrough`
+- **Commit `a179125`**: `docs(impl): initialize feature tracker for initial CLI passthrough`
   - **Task Impact**: 0% progress impact (initialized task tracking framework)
   - **Summary**: Defined 8 discrete implementation tasks totaling 100% weight, baseline status, and attribution schema.
 
-- **Commit `1f331b0`**: `docs(tracker): update rebased commit hashes in feature tracker`
+- **Commit `f06ffc3`**: `docs(tracker): update rebased commit hashes in feature tracker`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Existing tracker hash audit, recorded during PoC planning.
 
-- **Commit `a289e29`**: `docs(cli): specify the executable Linux proof of concept`
+- **Commit `1b8267f`**: `docs(cli): specify the executable Linux proof of concept`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Define wire validation, bounded queues, CLI options, mock process ownership, verification, and explicit Windows limitations.
 
-- **Commit `79cd5b7`**: `feat(cli): implement framing and Windows argument serialization`
+- **Commit `04d288b`**: `feat(cli): implement framing and Windows argument serialization`
   - **Task Impact**: +100% to #1 (+10% overall), +100% to #2 (+10% overall), +40% to #5 (+4% overall); +24% overall.
   - **Summary**: Explicit LE codec, CRC, bounded incremental decoder/queues, packed shared ABI, quoting and canonical mock decoder, opt-in root mapping.
 
-- **Commit `129a36a`**: `feat(cli): add terminal restoration and signal wakeups`
+- **Commit `df4b5e9`**: `feat(cli): add terminal restoration and signal wakeups`
   - **Task Impact**: +40% to #3 (+6% overall); +6% overall.
   - **Summary**: Isolate raw terminal ownership, standard descriptor flag restoration, and pending signal/self-pipe handling.
 
-- **Commit `482ce5c`**: `feat(cli): add the bounded host stream multiplexer`
+- **Commit `9220167`**: `feat(cli): add the bounded host stream multiplexer`
   - **Task Impact**: +60% to #4 (+9% overall); +9% overall.
   - **Summary**: Implement poll-driven socket/stdin/output queues, response and stream state validation, EOF ordering, output drain, signals, and monotonic session deadlines.
 
-- **Commit `f593228`**: `feat(cli): expose host execution over UNIX sockets and VSOCK`
+- **Commit `57741f0`**: `feat(cli): expose host execution over UNIX sockets and VSOCK`
   - **Task Impact**: +40% to #3 (+6% overall); +6% overall.
   - **Summary**: Add option parsing, explicit environment overrides, cwd and path mapping, framed spawn construction, nonblocking connection setup, and integration of terminal/session modules.
 
-- **Commit `fc2265d`**: `feat(mock): launch isolated pipe and PTY subprocesses`
+- **Commit `f82e0f2`**: `feat(mock): launch isolated pipe and PTY subprocesses`
   - **Task Impact**: +20% to #8 (+2% overall); +2% overall.
   - **Summary**: Validate spawn payload strings/environment/flags, decode canonical arguments, execute Linux children with cwd and explicit environment, and report exec errors.
 
-- **Commit `ee88c1b`**: `feat(mock): relay framed I/O through a private UNIX listener`
+- **Commit `7945911`**: `feat(mock): relay framed I/O through a private UNIX listener`
   - **Task Impact**: +20% to #8 (+2% overall); +2% overall.
   - **Summary**: Add single-session private UNIX listener, bounded nonblocking pipe/PTY relay, stdin EOF, resize/signals, output EOF and exit ordering, and disconnect cleanup.
 
-- **Commit `3a6de9b`**: `test(cli): verify duplex streams and terminal lifecycle end to end`
+- **Commit `7795772`**: `test(cli): verify duplex streams and terminal lifecycle end to end`
   - **Task Impact**: +20% to #3 (+3% overall), +40% to #4 (+6% overall), +40% to #8 (+4% overall); +13% overall.
   - **Summary**: All 15 C integration scenarios pass: outputs/exit status, exact arguments, cwd/environment, missing executable, 16 MiB duplex, signals, timeout, and termios restoration.
 
-- **Commit `6eb81df`**: `test(cli): make fixture path bounds explicit`
+- **Commit `0d512bc`**: `test(cli): make fixture path bounds explicit`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add an explicit socket-path capacity assertion before concatenation.
 
-- **Commit `4ae2c21`**: `docs(cli): provide a runnable mock passthrough demonstration`
+- **Commit `66ea7ba`**: `docs(cli): provide a runnable mock passthrough demonstration`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add make demo and documented manual/interactive commands.
 
-- **Commit `7b8ddaf`**: `fix(cli): default unknown terminal dimensions independently`
+- **Commit `9bc0985`**: `fix(cli): default unknown terminal dimensions independently`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Use 24 rows/80 columns when terminal ioctl reports zero, on both spawn and resize.
 
@@ -468,24 +468,33 @@
   - **Task Impact**: 0% to #6/#7; real VM verification remains pending
   - **Summary**: The single nonblocking receiver retries would-block with a one-millisecond cancellation check. Direct recv observes graceful provider closure which select and FD_CLOSE can miss; reconnect probes retain a bounded 20-second command allowance.
 
-- **Commit `HEAD`**: `fix(guest): isolate ConPTY children from listener redirection`
+- **Commit `14765be`**: `fix(guest): isolate ConPTY children from listener redirection`
   - **Task Impact**: 0% to #6; redirected-listener regression added and VM console passes
   - **Summary**: Temporarily clear and restore the borrowed process standard-handle table during serialized ConPTY launch. Redirect the native fixture listener and require actual merged child output rather than accepting control sequences alone.
+
+- **Commit `HEAD`**: `docs(tracker): close initial CLI passthrough verification`
+  - **Task Impact**: +2.5% to #6 (+0.5% overall), +5% to #7 (+0.5% overall); total 100.0%.
+  - **Summary**: Record final source CI, native Windows heap instrumentation, real QEMU/KVM Viosock/export acceptance, and completion metadata. Resolve rebased historical commit hashes in the tracker.
 
 ## Verification snapshot
 
 - Linux `make test-sanitizers` passes: C unit cases, 16 integration scenarios, nine path-option cases and 25 Zig tests. ASan/LSan/UBSan report no errors; Zig allocator tests report no leaks.
 - `make coverage` passes implementation line coverage gates: protocol.c 92.50% (185/200), arguments.c 93.18% (123/132), guest_codec.zig 98.56% (137/139), path_rules.zig 100% (50/50).
-- `make windows build/windows_guest_test.exe` passes strict Windows x86_64 cross-compilation. [Native Windows CI run 37239865276](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37239865276) passes all 47 scenarios, including 16 MiB duplex, signals, malformed handshakes, blocked-input cancellation, ConPTY and 32 repeated sessions. Listener handle counts remain 77 → 77. [Linux CI run 37239865243](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37239865243) passes sanitizer, allocator, coverage and cross-build gates.
-- Real Linux-to-Windows Viosock, interactive VM operation and mounted export access remain unverified. See IMPL_DESC.md section 10.3 for concrete acceptance commands.
-- Zig 0.13 x86_64-windows-gnu does not support LeakSanitizer. Native handle stress cannot replace Windows heap instrumentation; this remains a merge verification gate.
+- `make windows build/windows_guest_test.exe` passes strict Windows x86_64 cross-compilation. [Native Windows PR run 37243291132](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37243291132) passes all 47 scenarios on the final source commit `14765be`, including 16 MiB duplex, signals, malformed handshakes, blocked-input cancellation, ConPTY and 32 repeated sessions. Listener handle counts remain 90 -> 90 in the normal run and 84 -> 84 in the instrumented run. [Linux PR run 37243291133](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37243291133) passes sanitizer, allocator, coverage and cross-build gates on the same source commit.
+- Real Linux-to-Windows QEMU/KVM Viosock acceptance passes on Windows Server 2025 Evaluation with CID 53 and the dedicated VirtIO-FS export mounted as `X:\`. The suite verifies separate streams/status, status 259 mapping, escaped and Unicode argv, `cmd.exe /c`, missing-program status, Unicode cwd/environment, bidirectional export file access, exact 16 MiB duplex transfer, blocked-input timeout recovery, killed-frontend peer-loss recovery, actual ConPTY input, 39x101 resize, merged stderr, Ctrl-C exit 130 and 32 normal reconnects.
+- Zig 0.13 x86_64-windows-gnu does not support LeakSanitizer. The native Windows debug-heap gate supplies the Windows heap verification instead: all 47 instrumented sessions report zero live client allocations, zero live client bytes and intact heap, while leak, overrun and freed-write negative controls each fail with exit 86.
 - New owned public interfaces have structured ownership/bounds/error/thread documentation. Existing repository-wide naming and documentation claims have not been extended into an unaudited universal assertion.
 - No README change or dependency addition was made in this completion pass.
 
 ### Native Windows heap verification (2026-10-04)
 
-- Commit `823f84e`: [Windows run 37241206421](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37241206421) passes the original 47 native scenarios (handles 77 → 77) and all 47 instrumented scenarios (handles 71 → 71).
+- Commit `14765be`: [Windows run 37243291132](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37243291132) passes the original 47 native scenarios (handles 90 -> 90) and all 47 instrumented scenarios (handles 84 -> 84).
 - Every session checkpoint reports 0 live client allocations, 0 live client bytes, and an intact debug heap. Leak, overrun, and freed-write negative controls each exit 86 as required.
 - Local Linux ASan/LSan/UBSan tests pass after the socket teardown fixes.
 - The audit exposed a fast-exit/socket-EOF race; commits `2f6f91d` and `823f84e` fix orderly receive cancellation and bounded close draining.
-- Real VM provisioning is underway: Windows Server evaluation media, QEMU/KVM, CID 53, and a dedicated VirtIO-FS export. No VM acceptance pass is claimed yet.
+
+### Real VM acceptance verification (2026-10-04)
+
+- Source commit `14765be` passes the real VM suite from Linux host to Windows guest over Viosock CID 53 with `/home/dev/.local/share/waddle-vm-validation/export` mounted as `X:\`.
+- The accepted output is: `VM terminal: input, 39x101 resize, merged stderr, Ctrl-C, restoration passed` and `VM acceptance: streams, status, argv, cwd/env, export read/write, 16 MiB duplex, timeout/peer-loss cleanup, interactive console, 32 reconnects passed`.
+- Listener handle count remains 70 -> 70 across the full VM matrix; no Windows fixture child remains afterward and the guest does not reboot during acceptance.

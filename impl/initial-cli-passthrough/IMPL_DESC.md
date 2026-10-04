@@ -597,7 +597,7 @@ members of the child group so inherited pipe handles cannot hang teardown.
 Disconnect, timeout, or protocol error kills and reaps the mock child group.
 The mock is development-only, with no privilege elevation or network listener.
 
-### 8.4 Verification and remaining work
+### 8.4 PoC verification history
 
 Unit tests check layouts, CRC known vector, canonical quote/decode round trips,
 path boundaries, fragmented frames, corrupted CRC, and oversized headers.
@@ -605,10 +605,10 @@ Integration tests use private temporary UNIX sockets and real subprocesses for
 separate stdout/stderr, explicit environments/cwd, empty and quoted arguments,
 exit 42, missing command, large binary streams with simultaneous input/output,
 TTY restoration/resizing, forwarded signals, timeout, and disconnect behavior.
-Tests are C11 and shell; sanitizers are opt-in Make flags. Windows tasks #6/#7
-remain at 0%. Host tasks are credited only for implemented behavior; #5 and #8
-remain partial until export-rule configuration and real Windows verification.
-Performance targets remain unmeasured. This PoC is not ready for feature merge.
+Tests are C11 and shell; sanitizers are opt-in Make flags. This describes the
+original host/mock checkpoint. Sections 9 and 10 supersede its guest and export
+limitations; TRACKER.md records the current verified completion. Performance
+certification remains explicitly outside the initial guest increment.
 
 Tracker entries use the actual preceding commit hashes. The newest entry uses
 `HEAD` as a resolvable Git reference until the next atomic commit records its
@@ -794,10 +794,10 @@ and advances the receive sequence. Senders hold the lock across complete header
 and body writes and sequence assignment. Fixed headers are validated before the
 session allocates spawn storage. Header sequences start at one and use unsigned
 wrap. Socket failure sets the event and shuts down both directions. Orderly input
-cancellation uses an atomic stopping flag and receive-half shutdown so output
-remains usable. After the spawn response, the socket becomes nonblocking. Receive readiness and
-would-block send readiness use 1 ms select intervals; both preserve partial
-frame offsets, and sends observe the failure event. Each native send request is
+cancellation uses an atomic stopping flag, preserving outgoing drains. After the
+spawn response, the socket becomes nonblocking. The sole receiver tries recv
+directly and sleeps 1 ms on would-block; send readiness uses 1 ms select
+intervals. Both preserve partial frame offsets, and sends observe the failure event. Each native send request is
 at most 4096 bytes; protocol stream frames retain the 16384-byte data limit. Producer workers still block
 under backpressure without allocating queues, while full duplex remains possible
 on Windows AF_UNIX providers. The lock/event are destroyed only after all worker
@@ -823,10 +823,10 @@ so `ClosePseudoConsole` can emit its final screen update without blocking foreve
 on an undrained pipe. Unusual pipe read errors mark failure and prevent success.
 
 `src/guest_session.c` owns worker contexts and thread handles. Success response is
-sent before workers start. Main waits for child/failure in 50 ms intervals and
-checks exceptional and readable socket conditions with `WSAPoll`. A nonblocking
-one-byte `MSG_PEEK` distinguishes EOF from pending framed data without consuming
-it. Exceptional closure can be detected while a synchronous stdin write blocks;
+sent before workers start. Main waits for child/failure in 50 ms intervals. Viosock additionally waits for
+its owned FD_CLOSE event without a competing receiver. AF_UNIX uses select and
+a nonblocking one-byte MSG_PEEK to distinguish EOF from framed data. Exceptional
+closure can be detected while a synchronous stdin write blocks;
 graceful EOF behind queued bytes remains observable only after those bytes are
 consumed. Host session deadlines therefore remain necessary for stalled children. On
 child exit or failure, descendants are terminated, input receives are canceled,
@@ -895,10 +895,10 @@ Use the VM's actual CID and already-mounted export target. Without translation,
 cwd is transmitted unchanged; callers must supply a Windows cwd for this guest.
 Validate interactive input, resize, interrupts, exported-file access, timeout and
 reconnect in that VM. Native AF_UNIX CI and a successful cross-build cannot certify
-the installed Viosock provider or VirtIO-FS mapping. Those checks remain a merge
-acceptance gate until their actual results are recorded in TRACKER.md. No
+the installed Viosock provider or VirtIO-FS mapping. Section 10.8 records the
+accepted QEMU/KVM, Viosock, and VirtIO-FS result for this feature branch. No
 sub-millisecond performance or cross-hypervisor compatibility claim is inferred
-from unit tests or loopback execution.
+from unit tests, loopback execution, or the accepted single-provider VM suite.
 
 ### 10.4 cmd.exe switch boundary
 
@@ -1009,13 +1009,13 @@ existing strict unmatched-path contract instead of guessing whether `/c` names
 a host path or a Windows switch. VM acceptance tests cmd switches separately
 from mapped native-program arguments.
 
-The child monitor uses Winsock `select` through the installed provider's WSPSelect
-entry point for zero-timeout readable/exceptional readiness checks. Real VirtIO
+AF_UNIX child monitoring uses Winsock select for zero-timeout readable and
+exceptional checks; Viosock monitoring uses a session FD_CLOSE event. Real VirtIO
 Viosock 0.1.302 returned WSAENOTSOCK (10038) from WSAPoll for a valid provider socket,
 causing a previously hidden loopback-only transport failure during duplex output.
-The monitor therefore uses the same provider-dispatched readiness interface as
-its input/output workers. A nonblocking MSG_PEEK distinguishes EOF without stealing
-framed input; WSAEWOULDBLOCK is tolerated if the input worker wins the read race.
+Provider-dispatched select remains used for send readiness. AF_UNIX-only
+nonblocking MSG_PEEK distinguishes EOF without consuming framed input;
+WSAEWOULDBLOCK is tolerated if its input worker wins the read race.
 
 Viosock sessions additionally register a session-owned WSAEVENT for FD_CLOSE after
 switching to nonblocking mode and before starting workers. The main thread waits
@@ -1024,8 +1024,8 @@ worker remains the sole socket receiver. The event is disabled and closed after
 all workers join. AF_UNIX retains its tested select/peek monitor because its event
 API support differs. This avoids concurrent Viosock receive/peek requests: that
 path triggered a WDF_VIOLATION 0x10D/4 kernel crash with the installed 0.1.302 driver.
-With close events, exact 16 MiB duplex acceptance passes in the VM; blocked-input
-cancellation/reconnect is still being investigated and is not yet accepted.
+Close events preserve bounded-input cancellation; direct nonblocking receives
+observe empty-queue graceful closure. Both paths are exercised by VM acceptance.
 
 Cancellation reconnect probes use 20-second command deadlines within a
 20-second retry-start window (at most 40 seconds including the final command).
@@ -1055,3 +1055,51 @@ process creation or standard-handle-table mutation is permitted. The native
 fixture now starts its listener with redirected handles and requires actual
 `stdout` and `stderr` child text in the merged ConPTY stream, including fragmented
 frames; ConPTY startup escape sequences alone cannot satisfy the assertion.
+
+### 10.8 Real VM acceptance evidence (2026-10-04)
+
+The complete `make vm-test` equivalent (`tests/vm_acceptance.sh`) passes with
+`WADDLE_VSOCK_CID=53` and
+`WADDLE_EXPORT_SOURCE=/home/dev/.local/share/waddle-vm-validation/export` mounted
+as `X:\`. This is QEMU 10.0.13/KVM with UEFI, four vCPUs and 6 GiB shared memory;
+Windows Server 2025 Standard Evaluation 10.0.26100.32230; VirtIO Socket Driver
+100.103.104.30200 (virtio-win 0.1.302); virtiofsd 1.13.2; WinFsp 2.1.25156.
+The listener runs in the interactive administrator session with stdout/stderr
+redirected to guest log files. VM media, credentials and disk remain outside Git.
+
+Actual terminal output:
+
+```text
+VM terminal: input, 39x101 resize, merged stderr, Ctrl-C, restoration passed
+VM acceptance: streams, status, argv, cwd/env, export read/write, 16 MiB duplex, timeout/peer-loss cleanup, interactive console, 32 reconnects passed
+```
+
+The host client and Linux PTY helper were built with ASan/LSan/UBSan. No sanitizer
+error or leak appeared. Exact output comparison validates 5 MiB stdin, 8 MiB
+stdout (including stdin echo), and 3 MiB stderr. Mapped input is read from the
+export and mapped output is written by the Windows child and compared on Linux.
+The sleeping-child timeout returns 124; killed-frontend recovery launches a fresh
+command successfully. Interactive Ctrl-C returns 130 and original termios flags
+and control characters are restored. Listener process 3208 retains 70 handles
+before and after the whole matrix; no fixture child remains afterward. The guest
+does not reboot during acceptance. These results certify this tested device/OS
+combination, while future provider versions must pass the same suite.
+
+Executable SHA-256 values for the accepted build:
+
+- Host: `6c40258feb49f0b0e1581b93a097517fb6ef7f9d50048ebf06c589c9751e8031`.
+- Guest: `6b18e2867b0b47e94e4637f8364004c992944cb7086076782b411a20db31d166`.
+- Fixture: `97e7764e883d0147e8b4a64d7593605664cdbf2115431a492963b446779e2ecd`.
+
+Provisioning media came from the Microsoft Windows Server evaluation download,
+Fedora virtio-win stable distribution, and upstream WinFsp 2.1 release. SHA-256:
+
+- Windows ISO: `7b052573ba7894c9924e3e87ba732ccd354d18cb75a883efa9b900ea125bfd51`.
+- virtio-win ISO: `303f7ae40dad495d6ae474fdc571df58958a4dbc5c37a522d80f9a203867949d`.
+- WinFsp MSI: `073a70e00f77423e34bed98b86e600def93393ba5822204fac57a29324db9f7a`.
+
+This VM gate complements the separate native MSVC debug-heap audit: every guest
+C allocation is tracked as a client block, checked after all workers join, and
+required to leave zero allocations and zero bytes. Native heap negative controls
+must detect a leak, overrun and freed-block write. Windows sanitizer limitations
+are handled by that explicit instrumented gate rather than cross-build claims.
