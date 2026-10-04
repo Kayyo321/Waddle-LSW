@@ -420,9 +420,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
   - **Summary**: Add explicit real-VM acceptance for host/guest streams, mapped file access, 16 MiB duplex, reconnects, and bounded C PTY input/resize/interrupt/restoration checks.
 
-- **Commit `HEAD`**: `test(guest): retain heap failure diagnostics in native CI`
+- **Commit `ccf0adf`**: `test(guest): retain heap failure diagnostics in native CI`
   - **Task Impact**: 0% to #6 (0% overall).
   - **Summary**: All detector controls fire; the first instrumented session needs a diagnostic report. Preserve client counts and allocation dump output before fatal termination and print it when the fixture fails.
+
+- **Commit `HEAD`**: `fix(guest): cancel receives without premature socket shutdown`
+  - **Task Impact**: 0% to #6 and #7 (0% overall).
+  - **Summary**: The debug-heap listener retains zero bytes after its first session, but a fast child races with the host EOF frame. Keep the receive half open during atomic cancellation; nonblocking receives already observe the stop flag.
 
 ## Verification snapshot
 

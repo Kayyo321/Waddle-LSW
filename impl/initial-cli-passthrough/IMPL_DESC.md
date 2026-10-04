@@ -975,3 +975,10 @@ to verify termios restoration, bounds console capture to 32 KiB, and uses monoto
 20-second phase deadlines. Its guest must report 39 rows/101 columns after resize,
 accept a line of input, merge stderr, and exit 130 after terminal Ctrl-C. No mock
 socket fallback is permitted. VM transport failure makes this suite fail.
+
+Orderly input cancellation sets the atomic stop flag without shutting down the
+socket receive half. The established socket is nonblocking and its receive worker
+checks that flag at 1 ms readiness intervals; a synchronous pipe write is canceled
+by the joining main thread. Keeping the receive half open avoids a native socket
+reset when a fast-exiting child races with the host's final stdin/EOF frame.
+Failure cancellation still shuts down both socket halves.

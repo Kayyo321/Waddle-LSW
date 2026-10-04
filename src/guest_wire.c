@@ -32,7 +32,6 @@ void guest_wire_fail(guest_wire_t *wire) {
 
 void guest_wire_stop_input(guest_wire_t *wire) {
     InterlockedExchange(&wire->stopping, 1);
-    shutdown(wire->socket, SD_RECEIVE);
 }
 
 static int receive_exact(guest_wire_t *wire, uint8_t *bytes, size_t length) {
