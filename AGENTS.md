@@ -35,6 +35,37 @@ This document defines the strict operating standards, branching models, implemen
   - All implementation work, commits, and implementation documentation for that feature must reside strictly within this feature branch.
   - Feature branches are integrated into the standard branch exclusively via **Pull Requests (PRs)** once all tasks in the feature tracker reach 100% completion and verification passes.
 
+### 2.3 External Dependencies & Git Submodule Workflow
+- **Mandatory Submodule Architecture**:
+  - All third-party libraries, vendor SDKs, protocols, and headers not provided by base system packages must be vendored as **Git submodules** under `submodules/<library-name>`.
+  - Loose source vendoring directly into the repository tree is strictly forbidden.
+- **Submodules Introduced in Feature Branches**:
+  - If a feature requires an external library, the submodule must be added **directly on the feature branch**, never prematurely on the standard branch.
+  - The feature's `IMPL_DESC.md` must document the library rationale, license compatibility, architectural boundary, and exact commit SHA.
+  - The feature's `TRACKER.md` must allocate a dedicated task for submodule addition, configuration, and verification.
+  - Submodule additions or version bumps must be isolated in dedicated atomic commits prefixed with `chore(deps):`.
+- **Branch Switching & Submodule Hygiene**:
+  - Switching between branches that have different submodules or different submodule commits requires synchronizing the working tree:
+    ```bash
+    git submodule update --init --recursive
+    ```
+  - Contributors are encouraged to configure Git to recurse submodules automatically:
+    ```bash
+    git config submodule.recurse true
+    ```
+  - **Handling Residual Directories**: When switching from a feature branch that added a submodule back to a branch where it does not exist, Git leaves the submodule directory untracked. To prevent ghost directories and build artifacts from polluting the workspace, deinitialize and clean residual directories:
+    ```bash
+    git submodule deinit -f submodules/<library-name>
+    git clean -dff submodules/
+    ```
+- **Rebase & Merge Conflict Resolution**:
+  - When rebasing a feature branch onto the standard branch, run `git submodule update --init --recursive` immediately after rebasing.
+  - **Textual Conflicts in `.gitmodules`**: Resolve by retaining valid configuration blocks for all required submodules; ensure `path` and `url` directives are correct.
+  - **Gitlink (Commit Pointer) Conflicts**: Resolve by inspecting the conflicting commit SHAs within `submodules/<library-name>`, checking out the agreed-upon commit SHA, and staging the submodule pointer with `git add submodules/<library-name>`.
+- **Commit Pinning & Remote Availability**:
+  - Submodule pointers must always reference an explicit, immutable commit SHA (or release tag) that exists on the upstream public remote repository. Never commit pointers to local unpushed commits or ephemeral development branches.
+  - Submodule URLs in `.gitmodules` must use public HTTPS (`https://github.com/...`) to ensure unauthenticated clones in CI environments and developer setups.
+
 ---
 
 ## 3. Feature Implementation Requirements (`impl/`)
@@ -148,6 +179,16 @@ Directly below the table, record every commit made to the feature branch. Each c
 
      Affects TODO: #2 (+15% progress)
      ```
+     ```
+     chore(deps): add mylib as git submodule pinned to v1.2.3 (abc1234)
+
+     - Track upstream repository https://github.com/example/mylib.git under submodules/mylib.
+     - Pin commit SHA abc1234 corresponding to tagged release v1.2.3.
+     - Required for DXGI surface transformation pipeline in guest agent.
+     - Audited license: MIT (compatible with Waddle-LSW).
+
+     Affects TODO: #3 (+10% progress)
+     ```
 2. **One Small Change Per Commit**:
    - Do not bundle multi-file sweeping edits unless strictly required by a signature refactor.
    - Ensure the codebase builds or passes verification checks at each commit point whenever feasible.
@@ -162,4 +203,9 @@ Before any feature branch is merged into the standard branch:
 - [ ] `TRACKER.md` header has a concrete `Time Ended` timestamp recorded.
 - [ ] All commits in the feature branch are documented in `TRACKER.md` with their task impact.
 - [ ] Feature tests pass on both host and guest environments where applicable.
+- [ ] All external dependencies are tracked as Git submodules under `submodules/` (no loose source trees).
+- [ ] Submodule remote URLs use public HTTPS protocol (no private or SSH-only URLs).
+- [ ] Pinned submodule commit SHAs exist on the upstream remote repositories.
+- [ ] `.gitmodules` contains clean, valid stanzas without merge conflict markers.
+- [ ] CI pipeline and local builds execute `git submodule update --init --recursive` cleanly.
 - [ ] Pull Request is opened with links to `IMPL_DESC.md` and `TRACKER.md`.
