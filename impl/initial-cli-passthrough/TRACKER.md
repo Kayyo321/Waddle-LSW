@@ -324,9 +324,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Historical documentation/asset change predating this completion pass; no implementation task progress.
 
-- **Commit `HEAD`**: `docs(tracker): audit omitted historical feature commits`
+- **Commit `b8dcd69`**: `docs(tracker): audit omitted historical feature commits`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Record five prior documentation/asset/tracker commits missing from the branch history log, with explicit zero implementation progress impact; no README changes made in this completion pass.
+
+- **Commit `HEAD`**: `test(guest): reject corrupt handshakes on native transport`
+  - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
+  - **Summary**: Send bad magic, a payload above 1 MiB and a corrupt CRC to the real listener; require connection closure before subsequent valid sessions. Native fixture cross-build passes.
 
 ## Verification snapshot
 

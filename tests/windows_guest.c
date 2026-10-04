@@ -101,6 +101,22 @@ static SOCKET spawn_command(const char *command, const char *cwd, const char *en
     }
     return socket;
 }
+static void reject_handshake(unsigned mode) {
+    SOCKET socket = connect_guest();
+    uint8_t header[32] = {0}, body[26] = {0};
+    put32(header, mode == 0 ? 0 : 0x57444c43);
+    put16(header + 4, 1); put16(header + 6, 1); header[8] = 1;
+    put32(header + 24, 1);
+    put32(header + 16, mode == 1 ? 1048577 : sizeof(body));
+    put32(header + 28, 1); // Deliberately wrong CRC for the third case.
+    transfer(socket, header, sizeof(header), 1);
+    if (mode == 2) { transfer(socket, body, sizeof(body), 1); }
+    uint8_t byte;
+    int received = recv(socket, (char *)&byte, 1, 0);
+    check(received == 0 || (received == SOCKET_ERROR && WSAGetLastError() == WSAECONNRESET),
+          "malformed handshake closes connection");
+    closesocket(socket); scenarios++;
+}
 static void command_for(char *command, size_t capacity, const char *mode) {
     int n = snprintf(command, capacity, "\"%s\" \"--child\" \"%s\"", self_path, mode);
     check(n > 0 && (size_t)n < capacity, "command capacity");
@@ -269,6 +285,7 @@ int wmain(int argc, wchar_t **argv) {
     Sleep(100); closesocket(socket);
     check(WaitForSingleObject(child_process, 15000) == WAIT_OBJECT_0, "disconnect cancels blocked stdin");
     CloseHandle(child_process); scenarios++;
+    for (unsigned mode = 0; mode < 3; mode++) { reject_handshake(mode); }
     run_case("streams", NULL, NULL, 42, 0, 1);
     DWORD before, after;
     Sleep(100); check(GetProcessHandleCount(listener_process, &before), "initial handle count");
