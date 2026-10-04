@@ -11,6 +11,17 @@
 typedef struct test_address_t { uint16_t family; char path[108]; } test_address_t;
 /** @brief Writer-thread borrowed socket state; retained until join. */
 typedef struct test_writer_t { SOCKET socket; uint32_t sequence; } test_writer_t;
+/** @brief Immutable watchdog handles borrowed until the watchdog joins. */
+typedef struct test_deadline_t { HANDLE stopped; HANDLE listener; } test_deadline_t;
+static DWORD WINAPI fixture_deadline(void *context) {
+    const test_deadline_t *deadline = context;
+    if (WaitForSingleObject(deadline->stopped, 60000) != WAIT_OBJECT_0) {
+        fprintf(stderr, "FAIL: independent native fixture deadline\n");
+        TerminateProcess(deadline->listener, 1);
+        ExitProcess(1);
+    }
+    return 0;
+}
 static HANDLE listener_process;
 static char socket_path[108];
 static char self_path[4096];
@@ -252,6 +263,10 @@ int wmain(int argc, wchar_t **argv) {
     STARTUPINFOW info = {0}; info.cb = sizeof(info); PROCESS_INFORMATION listener = {0};
     check(CreateProcessW(NULL, listener_command, NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &info, &listener), "start listener");
     listener_process = listener.hProcess; CloseHandle(listener.hThread);
+    test_deadline_t deadline = {CreateEventW(NULL, TRUE, FALSE, NULL), listener_process};
+    check(deadline.stopped != NULL, "watchdog event");
+    HANDLE watchdog = CreateThread(NULL, 0, fixture_deadline, &deadline, 0, NULL);
+    check(watchdog != NULL, "watchdog thread");
     run_case("streams", "stdout\n", "stderr\n", 42, 0, 0);
     run_case("exit259", "", "", 259, 0, 0);
     char command[8192]; command_for(command, sizeof(command), "args");
@@ -294,6 +309,8 @@ int wmain(int argc, wchar_t **argv) {
     Sleep(100); check(GetProcessHandleCount(listener_process, &before), "initial handle count");
     for (unsigned i = 0; i < 32; i++) { run_case("exit259", "", "", 259, 0, 0); }
     Sleep(100); check(GetProcessHandleCount(listener_process, &after) && after <= before + 1, "repeated session handle stability");
+    SetEvent(deadline.stopped); WaitForSingleObject(watchdog, INFINITE);
+    CloseHandle(watchdog); CloseHandle(deadline.stopped);
     TerminateProcess(listener_process, 0); WaitForSingleObject(listener_process, 5000); CloseHandle(listener_process); listener_process = NULL;
     DeleteFileA(socket_path); WSACleanup();
     printf("windows guest: %u scenarios passed; handles %lu -> %lu\n", scenarios, (unsigned long)before, (unsigned long)after);
