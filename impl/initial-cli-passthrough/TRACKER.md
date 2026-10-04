@@ -212,9 +212,13 @@
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Query the installed Viosock family through its device IOCTL, bind the independently declared 12-byte native ABI, provide AF_UNIX local testing, and dispatch sequential sessions with noninheritable sockets and handshake deadlines. Strict Windows object build passes.
 
-- **Commit `HEAD`**: `fix(guest): preserve a completed child exit code of 259`
+- **Commit `25893ed`**: `fix(guest): preserve a completed child exit code of 259`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Use process-handle signaled state to distinguish running children instead of treating STILL_ACTIVE as a forbidden exit code; completed Windows exit 259 remains valid.
+
+- **Commit `HEAD`**: `chore(build): add the standalone Windows guest target`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Build the complete x86_64 Windows guest from C native modules and a ReleaseSafe Zig codec with strict warnings and system Winsock imports. Include guest parser tests in make zig-test. Full Windows executable cross-link passes.
 
 ## Verification snapshot
 

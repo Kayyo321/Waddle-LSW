@@ -6,7 +6,7 @@ CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Werror
 LDFLAGS ?=
 COMMON = src/protocol.c src/arguments.c build/path_rules.o
 
-.PHONY: all test clean zig-test test-sanitizers demo
+.PHONY: all test clean zig-test test-sanitizers demo windows windows-test
 
 all: build/waddle build/waddle-mock-guest
 
@@ -40,6 +40,7 @@ build/mock_process.o: src/mock_process.c src/mock_process.h src/common.h | build
 zig-test: build/path_rules.o
 	$(ZIG) test tests/test_cli.zig -Iinclude -Isrc src/protocol.c src/arguments.c build/path_rules.o -lc
 	$(ZIG) test src/path_rules.zig
+	$(ZIG) test src/guest_codec.zig
 
 test: all build/unit build/integration zig-test
 	./build/unit
@@ -55,3 +56,16 @@ demo: all
 
 clean:
 	rm -rf build
+
+# Windows 10 1809 system declarations; C owns native APIs, Zig owns wire parsing.
+WindowsFlags = -target x86_64-windows-gnu -U_WIN32_WINNT -D_WIN32_WINNT=0x0A00 -DNTDDI_VERSION=0x0A000006 -std=c11 -Wall -Wextra -Wpedantic -Werror -Isrc
+GuestSources = src/guest_listener.c src/guest_session.c src/guest_wire.c src/guest_input.c src/guest_output.c src/guest_process.c src/guest_environment.c
+GuestHeaders = src/guest_session.h src/guest_wire.h src/guest_pump.h src/guest_process.h src/guest_environment.h src/guest_codec.h
+
+build/guest_codec.obj: src/guest_codec.zig | build
+	$(ZIG) build-obj $< -target x86_64-windows-gnu -O ReleaseSafe -lc -fcompiler-rt -femit-bin=$@
+
+build/waddle-guest-exec.exe: $(GuestSources) $(GuestHeaders) build/guest_codec.obj | build
+	$(ZIG) cc $(WindowsFlags) $(GuestSources) build/guest_codec.obj -lws2_32 -o $@
+
+windows: build/waddle-guest-exec.exe
