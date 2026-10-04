@@ -795,7 +795,12 @@ and body writes and sequence assignment. Fixed headers are validated before the
 session allocates spawn storage. Header sequences start at one and use unsigned
 wrap. Socket failure sets the event and shuts down both directions. Orderly input
 cancellation uses an atomic stopping flag and receive-half shutdown so output
-remains usable. The lock/event are destroyed only after all worker handles join.
+remains usable. After the spawn response, the socket becomes nonblocking. Receive readiness and
+would-block send readiness use 100 ms select intervals; both preserve partial
+frame offsets, and sends observe the failure event. Producer workers still block
+under backpressure without allocating queues, while full duplex remains possible
+on Windows AF_UNIX providers. The lock/event are destroyed only after all worker
+handles join.
 
 `src/guest_input.c` owns stdin writes and closure. Its stack frame buffer has
 16392 bytes; a larger post-spawn frame is rejected before receipt. A child may

@@ -52,6 +52,7 @@ static int receive_exact(guest_wire_t *wire, uint8_t *bytes, size_t length) {
             }
         }
         int received = recv(wire->socket, (char *)bytes + offset, (int)(length - offset), 0);
+        if (received < 0 && WSAGetLastError() == WSAEWOULDBLOCK) { continue; }
         if (received <= 0) {
             if (InterlockedCompareExchange(&wire->stopping, 0, 0) == 0) { guest_wire_fail(wire); }
             return -1;
@@ -79,7 +80,15 @@ int guest_receive_body(guest_wire_t *wire, const guest_frame_t *frame, uint8_t *
 static int send_exact(guest_wire_t *wire, const uint8_t *bytes, size_t length) {
     size_t offset = 0;
     while (offset < length) {
+        if (WaitForSingleObject(wire->failure, 0) == WAIT_OBJECT_0) { return -1; }
         int sent = send(wire->socket, (const char *)bytes + offset, (int)(length - offset), 0);
+        if (sent < 0 && WSAGetLastError() == WSAEWOULDBLOCK) {
+            fd_set writable;
+            FD_ZERO(&writable);
+            FD_SET(wire->socket, &writable);
+            struct timeval interval = {0, 100000};
+            if (select(0, NULL, &writable, NULL, &interval) >= 0) { continue; }
+        }
         if (sent <= 0) { guest_wire_fail(wire); return -1; }
         offset += (size_t)sent;
     }

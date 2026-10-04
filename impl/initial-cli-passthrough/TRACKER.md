@@ -356,9 +356,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Specify and implement allocation-free unquoting of recognized leading cmd.exe switches, stop at /c or /k and preserve all later shell bytes. Native tests cover switch cases, quoting, unknown options and capacity.
 
-- **Commit `HEAD`**: `fix(guest): launch cmd.exe with recognized native switches`
+- **Commit `9184c70`**: `fix(guest): launch cmd.exe with recognized native switches`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Use the bounded compatibility serializer only when the resolved executable basename is cmd.exe; convert and free temporary UTF-8 storage before process launch, preserving explicit application selection. Strict cross-build passes.
+
+- **Commit `HEAD`**: `fix(guest): relay duplex streams with nonblocking socket readiness`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Windows native large-duplex testing exposed blocking socket stalls. Enable nonblocking established transport, preserve partial frame offsets, handle would-block through bounded select waits and wake failed sends without growing queues; cross-build passes.
 
 ## Verification snapshot
 
