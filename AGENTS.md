@@ -18,6 +18,28 @@ This document defines the strict operating standards, branching models, implemen
 3. **Strict Progress Auditing**:
    - All feature work must maintain a synchronized progress tracker that quantifies progress on a per-task basis and attributes progress changes directly to specific commits.
 
+4. **Language Strategy & Ceiling**:
+   - **C Code Usually**: Primary, default implementation language across host client, guest tracking agent, IPC wire protocols, shared memory, and CLI utilities.
+   - **Zig Where Memory Safety is Needed**: Mandated for components requiring spatial/temporal memory safety, bounds-checked buffers, allocators, `comptime` validation, and untrusted input parsing.
+   - **C++ Strictly Where Compatibility is Required**: Absolute upper ceiling, strictly limited to vendor SDKs or Windows/guest frameworks (DirectX, WinRT, COM) with exclusively C++ interfaces.
+   - Heavyweight or managed runtimes (including Rust and Go) are strictly disallowed.
+
+5. **Code Beauty & Strict Naming Invariants**:
+   - **Default-Case (`snake_case`)**: All functions, methods, local/global variables, parameters, struct/union/class members, and file names must use `snake_case`.
+   - **Constants (`PascalCase`)**: All constants, compile-time values, enum members, and constant macros must use `PascalCase` (e.g., `MaxBufferSize`, `DefaultVsockPort`, `SlotReady`).
+   - **Strict Prohibition of Camel Case**: `camelCase` is **strictly and unconditionally forbidden** across all languages, components, and files.
+   - **Types (`type_name_t`)**: All types (structs, unions, enums, typedefs, classes, aliases) must end with `_t` in `snake_case` (e.g., `window_slot_header_t`, `cli_message_t`).
+
+6. **Mandatory Documentation Enforcement**:
+   - Documentation is strictly enforced across all files, headers, and interfaces.
+   - All public functions, structs, enums, constants, and macros must have structured documentation comments (Doxygen in C/C++, `///` in Zig) specifying parameter directions (`in`/`out`), nullability, memory ownership/lifetime, return values, error codes, and thread safety.
+   - Zero undocumented public symbols permitted.
+
+7. **Enforced Testing & Code Coverage**:
+   - Automated unit, integration, and stress tests are required for all modules, codecs, and state machines.
+   - Code coverage thresholds (minimum 90% for protocol and memory structures) must be strictly maintained and verified.
+   - **Zig Built-in Test Specification**: Tests may be authored in Zig using its native built-in test specifications (`test "..." { ... }`), native `std.testing` assertions, and direct C ABI interop (`@cImport`) without external test framework overhead.
+
 ---
 
 ## 2. Branching & Git Workflow
@@ -208,4 +230,8 @@ Before any feature branch is merged into the standard branch:
 - [ ] Pinned submodule commit SHAs exist on the upstream remote repositories.
 - [ ] `.gitmodules` contains clean, valid stanzas without merge conflict markers.
 - [ ] CI pipeline and local builds execute `git submodule update --init --recursive` cleanly.
+- [ ] Code strictly conforms to naming invariants: `snake_case` default identifiers, `PascalCase` constants, `type_name_t` types, and **zero** `camelCase`.
+- [ ] Language selection adheres strictly to policy: C by default, Zig for memory safety, C++ solely for compatibility boundaries.
+- [ ] Documentation is complete, structured, and enforced across all public interfaces and structs with zero ambiguity.
+- [ ] Automated tests pass and code coverage thresholds are met (including Zig built-in tests where applicable).
 - [ ] Pull Request is opened with links to `IMPL_DESC.md` and `TRACKER.md`.
