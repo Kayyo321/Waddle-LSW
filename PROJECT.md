@@ -17,17 +17,50 @@ Unlike traditional virtual machine viewers that trap Windows within a single mon
 
 ## 2. Core Architectural Pillars & Language Policy
 
-### 2.1 Language Strategy & Toolchain Architecture
-- **Primary Languages: C (C11/C17/C23) & Zig (0.13+)**:
-  - The entire core codebase of Waddle-LSW is explicitly designed and required to be implemented in **C and Zig** wherever possible.
-  - **Zero Runtime Overhead & Deterministic Memory**: Both C and Zig provide complete manual control over memory layout, cache-line alignment, lock-free primitives, and kernel/hypervisor interfaces without hidden garbage collection, bulky runtimes, or unexpected compiler overhead.
-  - **First-Class C ABI**: All shared data models (IVSHMEM registries, ring buffer descriptors, control socket protocol headers) are defined as strict C ABI structures with explicit integer widths and memory packing. Zig compiles directly against and exposes native C headers with zero friction.
-- **Language Ceiling: C++ (C++20/C++23) as Upper Bound**:
-  - C++ represents the absolute highest level of abstraction permitted in any part of the project.
-  - Its usage is strictly restricted to scenarios where external vendor SDKs or specific Windows/guest frameworks (such as direct DirectX/WinRT APIs) expose exclusively C++ interfaces without viable C/Zig bindings.
-  - Higher-level managed or garbage-collected runtimes (and other heavy language ecosystems) are strictly disallowed.
+### 2.1 Language Strategy & Selection Hierarchy
+- **C as Default Language ("C Code Usually")**:
+  - The primary, default implementation language for Waddle-LSW is **C (C11/C17/C23)**.
+  - C is used across the host compositor client, guest tracking agent, IPC serialization, shared memory layouts, and CLI passthrough utilities.
+  - Ensures a minimal footprint, zero runtime overhead, deterministic low-latency execution, immediate portability across Linux and Windows NT, and a universal C ABI baseline.
+- **Zig Where Memory Safety is Needed**:
+  - **Zig (0.13+)** is explicitly mandated and utilized for components requiring high assurance, spatial and temporal memory safety, robust slice/buffer bounds checking, compile-time validation (`comptime`), allocators, and untrusted input parsing.
+  - Delivers complete manual memory control and safety guarantees without garbage collection, large runtime baggage, or unexpected compiler overhead.
+  - Interoperates directly with C headers and C ABI structures with zero abstraction cost.
+- **C++ Strictly Where Compatibility is Required**:
+  - **C++ (C++20/C++23)** represents the absolute upper ceiling of abstraction permitted in Waddle-LSW.
+  - Its usage is strictly restricted to scenarios where external vendor SDKs or specific Windows/guest frameworks (such as direct DirectX 11/12, Windows Runtime / WinRT, or COM APIs) expose exclusively C++ interfaces without viable C or Zig bindings.
+  - Higher-level managed or garbage-collected runtimes (and other heavy language ecosystems such as Rust or Go) are strictly disallowed.
 
-### 2.2 External Dependency & Git Submodule Policy
+### 2.2 Code Beauty & Naming Convention Specification
+To ensure strict consistency, aesthetic elegance, and seamless cross-language interoperability (C, Zig, and C++), all code must strictly follow these naming standards:
+- **Default-Case: `snake_case`**:
+  - All standard identifiers—including variables, function names, method names, struct/union/class members, function parameters, and source file names—must use `snake_case`.
+  - Examples: `window_count`, `parse_message()`, `slot_index`, `session_id`.
+- **Constants: `PascalCase`**:
+  - All constants—including compile-time constants, global read-only variables, enum members, and macro definitions representing constant values—must use `PascalCase`.
+  - Examples: `MaxBufferSize`, `DefaultVsockPort`, `MagicHeaderValue`, `IpcTimeoutMs`.
+- **Prohibition: Never `camelCase`**:
+  - `camelCase` (e.g., `windowCount`, `parseMessage`, `slotIndex`) is **strictly and unconditionally forbidden** across all languages, files, and subsystems in Waddle-LSW.
+- **Types: `type_name_t`**:
+  - All types—including structs, unions, enums, typedefs, class names, and type aliases—must use `snake_case` with a mandatory trailing `_t` suffix.
+  - Examples: `window_slot_header_t`, `cli_message_header_t`, `surface_descriptor_t`, `ipc_status_t`.
+
+### 2.3 Documentation Enforcement Policy
+- **Comprehensive Documentation Mandatory**: Documentation is strictly enforced across every file and interface in Waddle-LSW.
+- **Structured Symbol Comments**: Every public function, struct, union, enum, typedef, constant, and macro must be documented using structured documentation comments (e.g., Doxygen-style `/** ... */` in C/C++, `///` in Zig).
+- **Required Contract Details**:
+  - Function documentation must clearly specify parameter directions (`in`, `out`, `inout`), valid value ranges, nullability, memory ownership/allocation lifetimes, error codes, and thread-safety invariants.
+  - Data structure documentation must detail field meanings, byte packing, alignment constraints (e.g., 64-byte cache line alignment), and concurrency access rules.
+- **Zero Ambiguity Rule**: Undocumented public symbols or ambiguous interface boundaries are prohibited and will be rejected in review.
+
+### 2.4 Testing & Code Coverage Specification
+- **Rigorous Automated Testing**: Automated unit, integration, and stress tests are required for all modules, codecs, protocols, and state machines.
+- **Enforced Code Coverage**: Code coverage metrics must be tracked and enforced (via `gcov`/`lcov` or sanitizer instrumentation). Boundary conditions, error branches, corrupted payload handling, and timeout recovery paths must be thoroughly exercised.
+- **Zig Built-in Test Specification**:
+  - Tests may be authored in Zig using its native, built-in test specifications (`test "..." { ... }`).
+  - Leverages Zig's native test runner (`zig test`), standard testing assertions (`std.testing.expect`, `std.testing.expectEqual`), and zero-overhead C interop (`@cImport`) to test C ABI libraries, Zig components, and system interfaces natively without external test framework dependencies.
+
+### 2.5 External Dependency & Git Submodule Policy
 - **Mandatory Git Submodule Architecture**:
   - All external third-party libraries, vendor SDKs, protocols, and header collections not provided by standard host/guest base system packages must be vendored as **Git submodules** residing under the dedicated `submodules/` directory (e.g., `submodules/<library-name>`).
   - Loose source vendoring directly into the repository tree without submodule tracking is strictly prohibited.
