@@ -38,6 +38,24 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
     if (command == NULL) { goto native_error; }
     application = guest_utf16(executable, strlen((const char *)executable));
     if (application == NULL) { goto native_error; }
+    // Resolve a bare executable before passing an explicit application name.
+    // CreateProcessW with nonnull lpApplicationName does not search PATH.
+    if (wcschr(application, L'\\') == NULL && wcschr(application, L'/') == NULL &&
+        wcschr(application, L':') == NULL) {
+        DWORD needed = SearchPathW(NULL, application, L".exe", 0, NULL, NULL);
+        if (needed == 0) { goto native_error; }
+        if (needed > 32767) { error = ERROR_BAD_LENGTH; goto done; }
+        wchar_t *resolved = calloc((size_t)needed + 1, sizeof(*resolved));
+        if (resolved == NULL) { error = ERROR_NOT_ENOUGH_MEMORY; goto done; }
+        DWORD written = SearchPathW(NULL, application, L".exe", needed + 1, resolved, NULL);
+        if (written == 0 || written > needed) {
+            error = written == 0 ? GetLastError() : ERROR_BAD_LENGTH;
+            free(resolved); resolved = NULL;
+            goto done;
+        }
+        free(application);
+        application = resolved;
+    }
     environment = guest_environment(spawn);
     if (environment == NULL) { goto native_error; }
     if (wcslen(command) + 1 > 32767) { error = ERROR_BAD_LENGTH; goto done; }

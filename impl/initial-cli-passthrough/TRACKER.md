@@ -216,9 +216,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Use process-handle signaled state to distinguish running children instead of treating STILL_ACTIVE as a forbidden exit code; completed Windows exit 259 remains valid.
 
-- **Commit `HEAD`**: `chore(build): add the standalone Windows guest target`
+- **Commit `7f64ef8`**: `chore(build): add the standalone Windows guest target`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Build the complete x86_64 Windows guest from C native modules and a ReleaseSafe Zig codec with strict warnings and system Winsock imports. Include guest parser tests in make zig-test. Full Windows executable cross-link passes.
+
+- **Commit `HEAD`**: `fix(guest): resolve bare executable names before process creation`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Resolve bare argv[0] through SearchPathW before passing a nonnull application name to CreateProcessW; preserve explicit application selection and release the owned resolution buffer on errors.
 
 ## Verification snapshot
 
