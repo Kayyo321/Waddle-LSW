@@ -68,6 +68,19 @@
   - **Task Impact**: +20% to #3 (+3% overall), +40% to #4 (+6% overall), +40% to #8 (+4% overall); +13% overall.
   - **Summary**: All 15 C integration scenarios pass: outputs/exit status, exact arguments, cwd/environment, missing executable, 16 MiB duplex with slow readers, SIGINT/SIGTERM, timeout, adversarial peers, PTY resize/Ctrl-C, disconnect, and termios restoration. Host tasks complete for the PoC contract; Windows validation and performance targets remain unverified.
 
-- **Commit `HEAD`**: `test(cli): make fixture path bounds explicit`
+- **Commit `6eb81df`**: `test(cli): make fixture path bounds explicit`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add an explicit socket-path capacity assertion before concatenation, resolving the optimization-dependent format-truncation warning found by the sanitizer build.
+
+- **Commit `HEAD`**: `docs(cli): provide a runnable mock passthrough demonstration`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Add make demo and documented manual/interactive commands, build/test/sanitizer instructions, cleanup behavior, and explicit mock/Windows boundaries. AddressSanitizer + UndefinedBehaviorSanitizer unit and all 15 integration scenarios passed. No performance benchmark or Windows validation is claimed.
+
+## Verification snapshot
+
+- Linux C11 host and single-session mock PoC: implemented and verified.
+- Unit suite: packed layouts, explicit LE access, CRC known vector, 7,776 quote cases, paths, fragmented/corrupt/truncated frames pass.
+- Integration suite: 15 scenarios pass, including 16 MiB duplex with slow consumers, process exits, cwd/env, signals, timeout, invalid peers, PTY resize/Ctrl-C, disconnect, and termios restoration.
+- AddressSanitizer and UndefinedBehaviorSanitizer: same unit/integration suites pass with no diagnostics.
+- Windows ConPTY/raw-pipe agent, guest transport, configurable export mappings, and real host/guest benchmarks: pending. Time Ended remains TBD because the complete feature is unfinished.
+- Commits are retained on feature/initial-cli-passthrough; no merge or history rewrite performed. The latest HEAD tracker reference is intentional (see implementation section 8.4).

@@ -30,3 +30,7 @@ build/session.o: src/session.c src/session.h src/terminal.h src/common.h | build
 
 build/mock_process.o: src/mock_process.c src/mock_process.h src/common.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/mock_process.c -o $@
+
+.PHONY: demo
+demo: all
+	sh tests/demo.sh
