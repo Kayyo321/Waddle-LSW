@@ -631,3 +631,107 @@ In accordance with Waddle-LSW development standards:
 - **Zero-Leak Memory Safety**: Dynamic allocations in C provide symmetric lifecycle functions (`queue_init`/`queue_free`, `wire_read`/`wire_destroy`), with defensive pointer nulling immediately following deallocation. All test suites pass clean runs under AddressSanitizer and LeakSanitizer (`-fsanitize=address,leak,undefined`) with zero bytes leaked.
 - **Native Zig Test Specifications**: The test suite includes `tests/test_cli.zig`, which natively imports C headers via `@cImport` and exercises wire packing, CRC32, endian codecs, queue bounds/compaction, stream framing, Win32 quoting roundtrips, and path translation using `std.testing.allocator` with 100% leak verification.
 - **Code Coverage Target**: C unit test suites exceed the required 90% statement coverage threshold for protocol codecs and argument parsers (`protocol.c` 92.5%, `arguments.c` 91.9%).
+
+## 9. Windows guest completion contract (supersedes PoC limitations)
+
+### 9.1 Scope and transport
+
+The initial guest is a standalone, sequential, single-session-at-a-time Windows
+10 1809+ executable. C owns Win32 process/handle/thread interactions; Zig 0.13
+owns bounded untrusted frame/spawn/control parsing. No C++ or third-party library
+is required. Win32 and Winsock declarations come from Zig's bundled system SDK.
+VirtIO viosock must already be installed in the VM: query `\\.\Viosock` through
+IOCTL 0x0801300c for its registered Winsock address family. The native address
+has u16 family/reserved and u32 port/CID, total 12 bytes, native byte order. This
+is an independently defined device ABI, not a vendored driver header. Bind CID
+UINT32_MAX and port 5242 (configurable `--vsock-port N`). AF_HYPERV has a different
+address format and is not treated as VSOCK. `--socket-path PATH` instead uses
+Windows AF_UNIX for local Windows regression tests. VirtIO-Serial, service
+installation, export discovery, authentication, and performance certification
+are outside this initial increment. Run the listener only within a trusted VM;
+each connection can execute programs with the listener user's privileges.
+
+### 9.2 Configurable path rules
+
+Repeatable `--path-map /host/root=X:\guest\root` implies `--translate-path`.
+At most 64 rules are accepted. Sources are absolute POSIX paths with no empty,
+`.` or `..` components; trailing slash is permitted and removed except for `/`.
+Destinations are drive-absolute Windows paths using backslashes with no parent
+components, forward slashes, or reserved filename punctuation. Longest matching
+source wins at a component boundary; equal sources are rejected. Rule order does
+not affect selection. An absolute POSIX argument without a match fails rather
+than silently pointing at a different export. With no explicit rules, translation
+retains the existing `/=Z:\` fallback. Relative arguments and existing Windows
+paths are copied unchanged. Translation applies to argv and cwd, never arbitrary
+embedded option values or environment values. Slash-separated absolute paths
+must reject traversal and Windows-reserved punctuation; repeated slashes and
+`.` components are normalized. Caller owns returned malloc storage, freed along
+with the existing argument array. Rules borrow command-line storage until main
+returns; there is no mutable global rule registry or filesystem probing.
+
+### 9.3 Guest parsing and process creation
+
+Zig validates every 32-byte header before allocation: magic, version, flags=0,
+session=1, sequence starting at 1 with wrap, known host message type, and <=1 MiB.
+It checks CRC and exact payload shape, UTF-8 validity, embedded NULs, length sums,
+mode bits, environment KEY=VALUE entries, canonical CRT quoting, nonempty argv[0],
+and positive signed-16-bit ConPTY dimensions. Spawn bytes remain owned by the C
+session until conversion into caller-owned UTF-16 buffers completes. Command
+lines above Windows' 32767 UTF-16-unit limit fail with spawn status 126. Guest
+inherited environment is copied into a fresh sorted UTF-16 block, replacing keys
+case-insensitively with explicit overrides (last override wins). Agent environment
+is never mutated. CreateProcessW receives an explicit executable parsed from the
+first canonical argument so argv[0] cannot redirect executable selection. Command
+line storage is writable and freed after CreateProcessW returns.
+
+Raw mode uses three anonymous pipes and an explicit inherited-handle list, with
+only child ends inheritable. ConPTY uses two noninheritable pipe pairs and a
+pseudo-console startup attribute, with merged stdout and immediate stderr EOF.
+Children start suspended and are assigned to a kill-on-close Job Object before
+ResumeThread; assignment/resume failure kills the suspended child. Descendants
+remain in the job. Process/job/pipe/pseudo-console/startup allocations each have
+one session owner and are released on all error paths. Spawn failures send a
+12-byte response plus bounded UTF-8 diagnostic and no success/exit messages.
+Status 2 denotes missing file/path; other native failures map to 126 on the host.
+
+### 9.4 Pump and teardown
+
+The session main thread watches the child. One input thread reads and validates
+socket frames, then writes stdin or handles resize/signals. One reader per output
+pipe reads <=16 KiB and sends stream frames. A critical section serializes entire
+header+body writes and sequence assignment; worker buffers are fixed-size and
+socket/pipe backpressure blocks producers without allocating more queues. Spawn
+success is sent before workers start. EOF is emitted once per output pipe; exit
+is sent only after both readers have joined. Input EOF closes raw stdin; for
+ConPTY it closes the input pipe (there is no POSIX binary half-close guarantee).
+SIGINT/SIGQUIT become ETX for ConPTY and CTRL_BREAK_EVENT for a raw child process
+group in the listener's console. SIGTERM/SIGKILL terminate the entire job. Unknown
+signals and noninteractive resize are protocol errors.
+
+Transport/worker failure sets a manual-reset failure event and shuts down the
+socket, waking blocked send/recv. Main terminates the job, cancels synchronous
+input I/O, joins input before closing its pipe, and closes ConPTY while output
+readers are still draining, avoiding the documented ClosePseudoConsole deadlock.
+After natural child exit, descendants are terminated to release inherited pipes.
+Reader errors prevent a successful exit frame. Thread handles are joined and
+closed before session buffers, critical section, pipes, and socket are freed.
+The sequential listener then accepts another session. Startup/handshake receives
+have a 30-second socket deadline. Established sessions rely on host timeout or
+transport closure; continuous blocked legitimate output uses transport flow
+control. The process main owns WSAStartup/WSACleanup and the listener socket.
+
+### 9.5 Verification and review gates
+
+Linux tests cover unchanged host/mock behavior plus mapping longest-prefix,
+boundaries, duplicate/invalid rules, Unicode, root mapping, traversal and output
+capacity. Native Zig tests exercise malformed/truncated/corrupt frame and spawn
+input, UTF-8, lengths, environments, dimensions and control-state validation;
+std.testing.allocator verifies ownership with zero leaks. The guest is cross-built
+with Zig for x86_64-windows-gnu, including strict C warnings. Windows CI builds and
+runs AF_UNIX guest regression tests for pipe streams, binary duplex, environment,
+Unicode argv/cwd, exit codes, failures, signals, disconnect and repeat sessions.
+ConPTY and real Linux-to-Windows VSOCK require a Windows VM/manual verification;
+unexecuted checks remain explicitly recorded in TRACKER.md and block merge.
+Protocol/parser coverage must reach 90%; sanitizers apply to executable Linux C
+suites, and native Windows resource tests audit process/handle cleanup. No claim
+of Windows execution is made based solely on a cross-build.

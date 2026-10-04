@@ -136,6 +136,10 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Increase logo dimensions to 180x180 (1.5x), place below H1 heading to eliminate line cutoff, and wrap introductory text cleanly with float clearing.
 
+- **Commit `HEAD`**: `docs(cli): specify Windows guest and configurable export completion`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Define Win32 ownership, bounded Zig parsing, device ABI, path rules, and native verification gates.
+
 ## Verification snapshot
 
 - **Strict Naming Invariants**: All constants in `PascalCase` (`WaddleCliMagic`, `WaddleMsgSpawnReq`, `WaddleMaxPayloadSize`), types end in `_t` (`waddle_cli_msg_header_t`, `queue_t`, `decoder_t`, `mock_process_t`), default identifiers in `snake_case`, and zero `camelCase`.
