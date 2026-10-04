@@ -4,6 +4,7 @@
  */
 
 #include "waddle/cli_protocol.h"
+#include "path_rules.h"
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -145,48 +146,54 @@ invalid:
     return NULL;
 }
 
-char *waddle_translate_path(const char *path) {
-    if (path == NULL) {
+char *waddle_translate_rules(const char *path, const path_rule_t *rules, size_t count) {
+    if (path == NULL || count > 64 || (count != 0 && rules == NULL)) {
         errno = EINVAL;
+        return NULL;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (rules[i].source == NULL || rules[i].target == NULL ||
+            !waddle_path_rule_valid(rules[i].source, rules[i].target)) {
+            errno = EINVAL;
+            return NULL;
+        }
+    }
+    if (strlen(path) > WaddleMaxPayloadSize) {
+        errno = E2BIG;
         return NULL;
     }
     if (path[0] != '/') {
         return strdup(path);
     }
-    if (strchr(path, '\\') != NULL) {
+    const char *source = "/";
+    const char *target = "Z:\\";
+    size_t longest = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t n = strlen(rules[i].source);
+        while (n > 1 && rules[i].source[n - 1] == '/') { n--; }
+        if (n > longest && strncmp(path, rules[i].source, n) == 0 &&
+            (n == 1 || path[n] == '\0' || path[n] == '/')) {
+            longest = n;
+            source = rules[i].source;
+            target = rules[i].target;
+        }
+    }
+    if (count != 0 && longest == 0) {
         errno = EINVAL;
         return NULL;
     }
-
-    for (const char *p = path; *p != '\0';) {
-        while (*p == '/') {
-            p++;
-        }
-        const char *start = p;
-        while (*p != '\0' && *p != '/') {
-            p++;
-        }
-        if (p - start == 2 && start[0] == '.' && start[1] == '.') {
-            errno = EINVAL;
-            return NULL;
-        }
+    size_t capacity = strlen(path) + strlen(target) + 4;
+    char *output = malloc(capacity);
+    if (output == NULL) { return NULL; }
+    int status = waddle_path_rule_apply(path, source, target, (unsigned char *)output, capacity);
+    if (status != 0) {
+        free(output);
+        output = NULL;
+        errno = status == -2 ? E2BIG : EINVAL;
     }
+    return output;
+}
 
-    size_t n = strlen(path);
-    if (n > WaddleMaxPayloadSize - 3) {
-        errno = E2BIG;
-        return NULL;
-    }
-
-    char *out = (char *)malloc(n + 3);
-    if (out == NULL) {
-        return NULL;
-    }
-
-    out[0] = 'Z';
-    out[1] = ':';
-    for (size_t i = 0; i <= n; i++) {
-        out[i + 2] = (path[i] == '/') ? '\\' : path[i];
-    }
-    return out;
+char *waddle_translate_path(const char *path) {
+    return waddle_translate_rules(path, NULL, 0);
 }

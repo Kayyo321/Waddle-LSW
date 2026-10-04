@@ -15,12 +15,12 @@
 | #2      | Implement Win32 `CommandLineToArgvW` inverse escaping generator and unit tests | Done | 10% | 100% | Deterministic escaping for spaces, quotes, backslashes; 91.9% coverage |
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
-| #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 60% | Zig export validation and bounded translation implemented; CLI integration pending |
+| #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 80% | Rule selection and owned C mapping API implemented; CLI tests pending |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Pending | 10% | 0% | Multi-threaded I/O forwarding and exit code retrieval |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `66.0%`
+**Total Feature Completion**: `68.0%`
 
 ## Commit History & Progress Log
 
@@ -140,9 +140,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Define Win32 ownership, bounded Zig parsing, device ABI, path rules, and native verification gates.
 
-- **Commit `HEAD`**: `feat(paths): add allocation-free Zig export validator`
+- **Commit `b46475c`**: `feat(paths): add allocation-free Zig export validator`
   - **Task Impact**: +20% to #5 (+2% overall).
   - **Summary**: Define the borrowed rule ABI and bounds-checked UTF-8, component, drive-root and capacity validation. Native tests exercise parser failures and Unicode normalization. HEAD refers to the commit containing this entry and is resolved in the next commit.
+
+- **Commit `HEAD`**: `feat(paths): select exports through the host mapping API`
+  - **Task Impact**: +20% to #5 (+2% overall).
+  - **Summary**: Select longest component-boundary prefix, validate public rule inputs, preserve relative arguments, allocate and free output on failure, and link the Zig object into host targets. C unit suite passes; integration output failure is under investigation.
 
 ## Verification snapshot
 
