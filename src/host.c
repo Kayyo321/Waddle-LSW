@@ -93,7 +93,7 @@ int main(int argc, char **argv) {
     size_t total=cwd_len+cmd_len+env.len+26; spawn=calloc(total,1); if(!spawn) { result=125; goto done; }
     waddle_put32(spawn,interactive ? WADDLE_SPAWN_FLAG_INTERACTIVE : WADDLE_SPAWN_FLAG_RAW_PIPES);
     if(translate) waddle_put32(spawn,waddle_get32(spawn)|WADDLE_SPAWN_FLAG_TRANSLATE_PATH);
-    struct winsize ws={.ws_row=24,.ws_col=80}; if(interactive && ioctl(0,TIOCGWINSZ,&ws)) { result=125; goto local_error; }
+    struct winsize ws={.ws_row=24,.ws_col=80}; if(interactive && waddle_terminal_size(&ws)) { result=125; goto local_error; }
     waddle_put16(spawn+4,ws.ws_row); waddle_put16(spawn+6,ws.ws_col); waddle_put16(spawn+8,ws.ws_xpixel); waddle_put16(spawn+10,ws.ws_ypixel);
     waddle_put32(spawn+12,(uint32_t)cwd_len); waddle_put32(spawn+16,(uint32_t)cmd_len); waddle_put32(spawn+20,(uint32_t)env.len);
     memcpy(spawn+24,cwd,cwd_len+1); memcpy(spawn+25+cwd_len,command,cmd_len+1); memcpy(spawn+26+cwd_len+cmd_len,env.data,env.len);

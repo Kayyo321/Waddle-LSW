@@ -47,7 +47,7 @@ int waddle_send_pending(queue *tx, uint32_t *seq, int interactive) {
         uint8_t b[8]={0};
         if(sig==SIGWINCH) {
             if(!interactive) continue;
-            struct winsize ws={0}; if(ioctl(0,TIOCGWINSZ,&ws)) return -1;
+            struct winsize ws={0}; if(waddle_terminal_size(&ws)) return -1;
             waddle_put16(b,ws.ws_row); waddle_put16(b+2,ws.ws_col);
             waddle_put16(b+4,ws.ws_xpixel); waddle_put16(b+6,ws.ws_ypixel);
             if(wire_send(tx,seq,WADDLE_MSG_TERMINAL_RESIZE,b,8)) return -1;
@@ -82,4 +82,11 @@ int waddle_standard_nonblock(void) {
 void waddle_terminal_close(void) {
     waddle_restore();
     for(int i=0;i<2;i++) if(signal_pipe[i]>=0) { close(signal_pipe[i]); signal_pipe[i]=-1; }
+}
+
+int waddle_terminal_size(struct winsize *size) {
+    if(ioctl(0,TIOCGWINSZ,size)) return -1;
+    if(!size->ws_row) size->ws_row=24;
+    if(!size->ws_col) size->ws_col=80;
+    return 0;
 }

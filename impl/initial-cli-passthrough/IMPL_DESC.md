@@ -611,3 +611,11 @@ Tracker entries use the actual preceding commit hashes. The newest entry uses
 `HEAD` as a resolvable Git reference until the next atomic commit records its
 hash; embedding a commit's own hash in its contents is mathematically circular.
 Earlier feature documentation commits are retained with zero progress impact.
+
+### 8.5 Unknown terminal dimensions
+
+Initial terminal size and resize messages use 24 rows / 80 columns independently
+for any zero field reported by TIOCGWINSZ. Zero means the emulator has not supplied
+a usable dimension; it must not make an otherwise valid interactive session fail.
+A real PTY test starts with both dimensions zero and verifies the guest receives
+24x80, later receives 39x101, handles raw Ctrl-C, and restores host termios.

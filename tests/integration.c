@@ -117,8 +117,9 @@ static void run_case(test_case *t) {
     if(t->signal_number) assert(signal_sent);
     assert(access(socket_path,F_OK)<0); tests++; printf("integration: %s passed\n",t->name);
 }
-static void tty_case(int disconnect) {
-    pid_t mock=peer(0); int master, slave, errors[2]; struct winsize size={.ws_row=24,.ws_col=80};
+static void tty_case(int mode) {
+    int disconnect=mode==1;
+    pid_t mock=peer(0); int master, slave, errors[2]; struct winsize size={.ws_row=mode==2 ? 0 : 24,.ws_col=mode==2 ? 0 : 80};
     assert(!openpty(&master,&slave,NULL,NULL,&size)); assert(!pipe2(errors,O_CLOEXEC));
     assert(!fcntl(master,F_SETFD,FD_CLOEXEC)); assert(!fcntl(slave,F_SETFD,FD_CLOEXEC));
     struct termios before; assert(!tcgetattr(slave,&before));
@@ -155,7 +156,7 @@ static void tty_case(int disconnect) {
     assert(before.c_iflag==after.c_iflag && before.c_oflag==after.c_oflag && before.c_cflag==after.c_cflag && before.c_lflag==after.c_lflag);
     assert(!memcmp(before.c_cc,after.c_cc,sizeof(before.c_cc)));
     close(master); close(slave); close(errors[0]); int peer_status=wait_status(mock); if(!disconnect) assert(peer_status==0);
-    tests++; printf("integration: PTY %s and restoration passed\n",disconnect ? "disconnect" : "resize/Ctrl-C");
+    tests++; printf("integration: PTY %s and restoration passed\n",disconnect ? "disconnect" : mode==2 ? "unknown dimensions/resize/Ctrl-C" : "resize/Ctrl-C");
 }
 static int child(int argc, char **argv) {
     assert(argc>=3); const char *mode=argv[2];
@@ -169,7 +170,9 @@ static int child(int argc, char **argv) {
         for(;;) { ssize_t n=read(0,b,sizeof(b)); if(n<0 && errno==EINTR) continue; assert(n>=0); if(!n) break; full_write(1,b,(size_t)n); } return 0;
     }
     if(!strcmp(mode,"tty")) {
-        assert(isatty(0) && isatty(1)); full_write(1,"READY\n",6);
+        assert(isatty(0) && isatty(1));
+        struct winsize initial; assert(!ioctl(0,TIOCGWINSZ,&initial)); assert(initial.ws_row==24 && initial.ws_col==80);
+        full_write(1,"READY\n",6);
         char b[64]; ssize_t n=read(0,b,sizeof(b)); assert(n>0);
         /* Resize and input frames are ordered, so this read sees the new size. */
         struct winsize ws; assert(!ioctl(0,TIOCGWINSZ,&ws));
@@ -197,6 +200,6 @@ int main(int argc, char **argv) {
     t=(test_case){.name="SIGTERM forwarding",.guest=sleep_args,.signal_number=SIGTERM,.expected=143,.out="READY\n",.err=""}; run_case(&t);
     t=(test_case){.name="total session deadline returns 124",.guest=sleep_args,.timeout=1,.expected=124,.out="READY\n"}; run_case(&t);
     for(int mode=1;mode<=5;mode++) { t=(test_case){.name="disconnect/corrupt CRC/early exit/oversize/truncated peer",.guest=streams,.fake=mode,.expected=125,.out=""}; run_case(&t); }
-    tty_case(0); tty_case(1);
+    tty_case(0); tty_case(1); tty_case(2);
     assert(!rmdir(directory)); printf("integration: all %u scenarios passed\n",tests); return 0;
 }

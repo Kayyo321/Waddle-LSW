@@ -72,7 +72,7 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add an explicit socket-path capacity assertion before concatenation, resolving the optimization-dependent format-truncation warning found by the sanitizer build.
 
-- **Commit `HEAD`**: `docs(cli): provide a runnable mock passthrough demonstration`
+- **Commit `4ae2c21`**: `docs(cli): provide a runnable mock passthrough demonstration`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add make demo and documented manual/interactive commands, build/test/sanitizer instructions, cleanup behavior, and explicit mock/Windows boundaries. AddressSanitizer + UndefinedBehaviorSanitizer unit and all 15 integration scenarios passed. No performance benchmark or Windows validation is claimed.
 
@@ -84,3 +84,7 @@
 - AddressSanitizer and UndefinedBehaviorSanitizer: same unit/integration suites pass with no diagnostics.
 - Windows ConPTY/raw-pipe agent, guest transport, configurable export mappings, and real host/guest benchmarks: pending. Time Ended remains TBD because the complete feature is unfinished.
 - Commits are retained on feature/initial-cli-passthrough; no merge or history rewrite performed. The latest HEAD tracker reference is intentional (see implementation section 8.4).
+
+- **Commit `HEAD`**: `fix(cli): default unknown terminal dimensions independently`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Use 24 rows/80 columns when terminal ioctl reports zero, on both spawn and resize. Add a real PTY regression for zero initial dimensions, subsequent resizing, Ctrl-C, and restoration. Integration suite now has 16 scenarios.

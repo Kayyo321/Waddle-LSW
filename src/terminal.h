@@ -1,6 +1,8 @@
 #ifndef WADDLE_TERMINAL_H
 #define WADDLE_TERMINAL_H
 #include "common.h"
+struct winsize;
+int waddle_terminal_size(struct winsize *size);
 int waddle_terminal_init(int interactive);
 int waddle_standard_nonblock(void);
 void waddle_restore(void);
