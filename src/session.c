@@ -124,6 +124,10 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
             uint8_t b[WaddleChunkSize];
             ssize_t got = read(STDIN_FILENO, b, sizeof(b));
             if (got > 0) {
+                /* A signal may arrive after poll returned its readiness snapshot. */
+                if (waddle_send_pending(tx, &seq, interactive) != 0) {
+                    goto error;
+                }
                 if (wire_stream(tx, &seq, (unsigned int)WaddleStreamStdin, b, (size_t)got) != 0) {
                     goto error;
                 }

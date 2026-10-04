@@ -376,9 +376,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Report the first stream/input chunk and one message per MiB during the native duplex fixture so provider stalls are attributed to a direction and byte boundary.
 
-- **Commit `HEAD`**: `fix(guest): bound native socket transfer chunks`
+- **Commit `b7cb8c7`**: `fix(guest): bound native socket transfer chunks`
   - **Task Impact**: 0% across TODO #6 and #7; verification pending
   - **Summary**: Limit individual send requests to 4096 bytes while retaining frame serialization and partial-transfer offsets; exercise the same limit in the native peer.
+
+- **Commit `HEAD`**: `fix(cli): order late resize signals before stdin frames`
+  - **Task Impact**: 0% across TODO #3 and #8; existing behavior corrected
+  - **Summary**: Collect pending terminal events after reading ready stdin and before framing its bytes, closing the signal-arrival race after poll. All Linux sanitizer, allocator and integration tests pass.
 
 ## Verification snapshot
 
