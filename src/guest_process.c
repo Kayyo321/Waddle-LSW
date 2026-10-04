@@ -1,4 +1,4 @@
-/** @file guest_process.c @brief Restricted raw-pipe process creation and cleanup. */
+/** @file guest_process.c @brief Raw-pipe and ConPTY process creation and cleanup. */
 #include "guest_process.h"
 #include <stdlib.h>
 #include <string.h>
@@ -41,16 +41,21 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
     environment = guest_environment(spawn);
     if (environment == NULL) { goto native_error; }
     if (wcslen(command) + 1 > 32767) { error = ERROR_BAD_LENGTH; goto done; }
-    if (spawn->interactive) { error = ERROR_NOT_SUPPORTED; goto done; }
-    SECURITY_ATTRIBUTES security = {sizeof(security), NULL, TRUE};
+    process->interactive = spawn->interactive;
+    SECURITY_ATTRIBUTES security = {sizeof(security), NULL, !spawn->interactive};
     if (!CreatePipe(&child_input, &process->input, &security, 0) ||
         !CreatePipe(&process->output[0], &child_output, &security, 0) ||
-        !CreatePipe(&process->output[1], &child_error, &security, 0) ||
+        (!spawn->interactive && !CreatePipe(&process->output[1], &child_error, &security, 0)) ||
         !SetHandleInformation(process->input, HANDLE_FLAG_INHERIT, 0) ||
         !SetHandleInformation(process->output[0], HANDLE_FLAG_INHERIT, 0) ||
-        !SetHandleInformation(process->output[1], HANDLE_FLAG_INHERIT, 0)) { goto native_error; }
+        (!spawn->interactive && !SetHandleInformation(process->output[1], HANDLE_FLAG_INHERIT, 0))) { goto native_error; }
     startup.StartupInfo.cb = sizeof(startup);
-    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    if (spawn->interactive) {
+        COORD dimensions = {(SHORT)spawn->cols, (SHORT)spawn->rows};
+        HRESULT status = CreatePseudoConsole(dimensions, child_input, child_output, 0, &process->console);
+        if (FAILED(status)) { error = (DWORD)status; goto done; }
+    }
+    startup.StartupInfo.dwFlags = spawn->interactive ? 0 : STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = child_input;
     startup.StartupInfo.hStdOutput = child_output;
     startup.StartupInfo.hStdError = child_error;
@@ -61,7 +66,10 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
     if (!InitializeProcThreadAttributeList(startup.lpAttributeList, 1, 0, &attribute_size)) { goto native_error; }
     initialized = 1;
     HANDLE inherited[] = {child_input, child_output, child_error};
-    if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    if (spawn->interactive) {
+        if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                                        process->console, sizeof(process->console), NULL, NULL)) { goto native_error; }
+    } else if (!UpdateProcThreadAttribute(startup.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
                                     inherited, sizeof(inherited), NULL, NULL)) { goto native_error; }
     process->job = CreateJobObjectW(NULL, NULL);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
@@ -69,8 +77,8 @@ int guest_process_launch(guest_process_t *process, const guest_spawn_t *spawn,
     if (process->job == NULL || !SetInformationJobObject(process->job,
         JobObjectExtendedLimitInformation, &limits, sizeof(limits))) { goto native_error; }
     process->started = GetTickCount64();
-    if (!CreateProcessW(application, command, NULL, NULL, TRUE,
-        CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT |
+    if (!CreateProcessW(application, command, NULL, NULL, !spawn->interactive,
+        CREATE_SUSPENDED | (spawn->interactive ? 0 : CREATE_NEW_PROCESS_GROUP) | CREATE_UNICODE_ENVIRONMENT |
         EXTENDED_STARTUPINFO_PRESENT, environment, cwd, &startup.StartupInfo, &child)) { goto native_error; }
     process->process = child.hProcess;
     process->pid = child.dwProcessId;

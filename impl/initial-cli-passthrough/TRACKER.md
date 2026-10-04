@@ -16,11 +16,11 @@
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
-| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 60% | Raw pipe launch and job ownership complete; ConPTY and native verification pending |
+| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 85% | Raw/ConPTY process lifecycle implemented; native Windows verification pending |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 15% | Bounded guest wire header parser complete; listener and pump pending |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `83.5%`
+**Total Feature Completion**: `88.5%`
 
 ## Commit History & Progress Log
 
@@ -172,9 +172,13 @@
   - **Task Impact**: +15% to #6 (+3% overall).
   - **Summary**: Convert UTF-8 to owned UTF-16 and copy inherited environment into a sorted child-only block with case-insensitive last-wins overrides. Strict Windows cross-compilation passes; native execution pending.
 
-- **Commit `HEAD`**: `feat(guest): launch raw pipe children with restricted inheritance`
+- **Commit `f8e5a05`**: `feat(guest): launch raw pipe children with restricted inheritance`
   - **Task Impact**: +25% to #6 (+5% overall).
   - **Summary**: Create separate child streams with an explicit handle list, launch suspended, assign a kill-on-close job before resume, and release all handles and allocations on failure. Strict Windows cross-compilation passes.
+
+- **Commit `HEAD`**: `feat(guest): attach interactive children to ConPTY`
+  - **Task Impact**: +25% to #6 (+5% overall).
+  - **Summary**: Add noninheritable ConPTY communication pipes and pseudoconsole startup attribute; retain merged stdout, disable raw handle inheritance, and close pseudoconsole resources on failed launch. Strict Windows object build passes.
 
 ## Verification snapshot
 
