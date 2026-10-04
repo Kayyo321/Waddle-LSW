@@ -460,9 +460,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall; cancellation acceptance pending).
   - **Summary**: Use a session-owned provider close event instead of concurrent receive peeks for Viosock. The actual VM now passes exact 16 MiB duplex; queued-input timeout recovery remains under investigation.
 
-- **Commit `HEAD`**: `test(cli): bound recovery across Viosock close timeout`
+- **Commit `2f43a41`**: `test(cli): bound recovery across Viosock close timeout`
   - **Task Impact**: 0% to #7 (0% overall; full acceptance pending).
   - **Summary**: VM traces prove input/readers and session resources are released after transport reset. Retry cancellation reconnects within a bounded window to accommodate Linux VSOCK graceful-close linger, retaining strict normal reconnect stress.
+
+- **Commit `HEAD`**: `fix(guest): observe Viosock EOF without readiness gating`
+  - **Task Impact**: 0% to #6/#7; real VM verification remains pending
+  - **Summary**: The single nonblocking receiver retries would-block with a one-millisecond cancellation check. Direct recv observes graceful provider closure which select and FD_CLOSE can miss; reconnect probes retain a bounded 20-second command allowance.
 
 ## Verification snapshot
 

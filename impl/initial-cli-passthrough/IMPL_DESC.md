@@ -1027,12 +1027,19 @@ path triggered a WDF_VIOLATION 0x10D/4 kernel crash with the installed 0.1.302 d
 With close events, exact 16 MiB duplex acceptance passes in the VM; blocked-input
 cancellation/reconnect is still being investigated and is not yet accepted.
 
-Cancellation reconnect probes retry with two-second command deadlines for a
-20-second retry window (at most 24 seconds including the final connect/command).
-Linux VSOCK graceful close can leave queued incoming bytes until its transport
-close timeout sends a reset. The installed provider posts FD_CLOSE for that reset;
+Cancellation reconnect probes use 20-second command deadlines within a
+20-second retry-start window (at most 40 seconds including the final command).
+Linux VSOCK graceful close can leave queued incoming bytes until its eight-second
+transport close timeout sends a reset. The provider posts FD_CLOSE for that reset;
 only then can a guest pipe writer blocked behind unread stdin be canceled. A
-single immediate two-second connection attempt is therefore not a valid recovery
-oracle. The bounded retry must eventually receive the exact exit status from a
-fresh command; an unreleased session still fails this gate. Normal 32-session
-reconnect stress does not use retry masking.
+single immediate connection can hit the kernel's connection timeout before the
+listener is available. Recovery must return the exact fresh-command exit status;
+32 normal sessions do not retry.
+
+The sole receive worker calls nonblocking recv directly. WSAEWOULDBLOCK sleeps
+one millisecond before checking cancellation and retrying. It does not gate recv
+on select readability: the installed provider can transition to closed during an
+empty-queue graceful shutdown without signaling FD_CLOSE or readable readiness.
+A direct recv observes that closure and sets the failure event, allowing the main
+thread to terminate descendants and cancel/join workers. Queued-input closure
+continues to use the session FD_CLOSE event without a competing socket receiver.

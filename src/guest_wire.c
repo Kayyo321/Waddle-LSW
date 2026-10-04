@@ -39,19 +39,12 @@ static int receive_exact(guest_wire_t *wire, uint8_t *bytes, size_t length) {
     while (offset < length) {
         if (wire->cancellable) {
             if (InterlockedCompareExchange(&wire->stopping, 0, 0) != 0) { return -1; }
-            fd_set readable;
-            FD_ZERO(&readable);
-            FD_SET(wire->socket, &readable);
-            struct timeval interval = {0, 1000};
-            int ready = select(0, &readable, NULL, NULL, &interval);
-            if (ready == 0) { continue; }
-            if (ready < 0) {
-                if (InterlockedCompareExchange(&wire->stopping, 0, 0) == 0) { guest_wire_fail(wire); }
-                return -1;
-            }
         }
         int received = recv(wire->socket, (char *)bytes + offset, (int)(length - offset), 0);
-        if (received < 0 && WSAGetLastError() == WSAEWOULDBLOCK) { continue; }
+        if (received < 0 && WSAGetLastError() == WSAEWOULDBLOCK) {
+            Sleep(1);
+            continue;
+        }
         if (received <= 0) {
             if (InterlockedCompareExchange(&wire->stopping, 0, 0) == 0) { guest_wire_fail(wire); }
             return -1;

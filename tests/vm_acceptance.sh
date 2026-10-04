@@ -19,7 +19,7 @@ recover_guest() {
     local deadline=$((SECONDS + 20)) status
     while ((SECONDS < deadline)); do
         status=0
-        "${base[@]}" --timeout 2 -- "$fixture" --child exit259 > "$work_dir/out" 2> "$work_dir/err" || status=$?
+        "${base[@]}" --timeout 20 -- "$fixture" --child exit259 > "$work_dir/out" 2> "$work_dir/err" || status=$?
         if test "$status" -eq 3; then return 0; fi
         sleep 0.1
     done
