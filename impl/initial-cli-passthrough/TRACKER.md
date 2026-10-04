@@ -16,11 +16,11 @@
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
-| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 95% | 47 native Windows scenarios pass; real VM interactive acceptance and Windows heap instrumentation remain |
+| #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 97.5% | Native 47-session debug-heap audit passes with zero bytes retained; real VM interactive acceptance remains |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 95% | Native duplex/cancellation/handle stress pass; real Linux-to-Windows Viosock/export acceptance remains |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `98.5%`
+**Total Feature Completion**: `99.0%`
 
 ## Commit History & Progress Log
 
@@ -428,9 +428,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: The debug-heap listener retains zero bytes after its first session, but a fast child races with the host EOF frame. Keep the receive half open during atomic cancellation; nonblocking receives already observe the stop flag.
 
-- **Commit `HEAD`**: `fix(guest): drain trailing input after terminal response`
+- **Commit `823f84e`**: `fix(guest): drain trailing input after terminal response`
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: Send FIN after successful completion and boundedly discard in-flight host stdin/EOF before closing, preserving terminal responses for fast child exits.
+
+- **Commit `HEAD`**: `docs(tracker): record passing native Windows heap audit`
+  - **Task Impact**: +2.5% to #6 (+0.5% overall; 98.5% → 99.0%).
+  - **Summary**: Record all 47 native debug-heap checkpoints at zero retained bytes, three successful defect controls, stable handles, and passing Linux sanitizers. Real VM acceptance remains pending.
 
 ## Verification snapshot
 
@@ -441,3 +445,11 @@
 - Zig 0.13 x86_64-windows-gnu does not support LeakSanitizer. Native handle stress cannot replace Windows heap instrumentation; this remains a merge verification gate.
 - New owned public interfaces have structured ownership/bounds/error/thread documentation. Existing repository-wide naming and documentation claims have not been extended into an unaudited universal assertion.
 - No README change or dependency addition was made in this completion pass.
+
+### Native Windows heap verification (2026-10-04)
+
+- Commit `823f84e`: [Windows run 37241206421](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37241206421) passes the original 47 native scenarios (handles 77 → 77) and all 47 instrumented scenarios (handles 71 → 71).
+- Every session checkpoint reports 0 live client allocations, 0 live client bytes, and an intact debug heap. Leak, overrun, and freed-write negative controls each exit 86 as required.
+- Local Linux ASan/LSan/UBSan tests pass after the socket teardown fixes.
+- The audit exposed a fast-exit/socket-EOF race; commits `2f6f91d` and `823f84e` fix orderly receive cancellation and bounded close draining.
+- Real VM provisioning is underway: Windows Server evaluation media, QEMU/KVM, CID 53, and a dedicated VirtIO-FS export. No VM acceptance pass is claimed yet.

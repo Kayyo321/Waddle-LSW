@@ -927,8 +927,8 @@ Linux executable tests use ASan/LSan/UBSan and Zig tests use safe bounds checks
 and `std.testing.allocator`. The Zig 0.13 x86_64-windows-gnu compiler rejects
 `-fsanitize=leak`; native Windows C execution has no LeakSanitizer result from
 this toolchain. Native repeated-session handle counts check HANDLE ownership,
-but do not certify heap leak freedom. Windows heap instrumentation remains a
-separate merge verification gate alongside real Viosock/VM acceptance.
+but do not certify heap leak freedom. Windows heap instrumentation is verified separately with the native CRT debug-heap
+audit in section 10.6; real Viosock/VM acceptance remains an independent gate.
 
 ### 10.6 Native Windows debug-heap acceptance
 
