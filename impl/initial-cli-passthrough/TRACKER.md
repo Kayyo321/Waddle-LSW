@@ -240,9 +240,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Launch a real ConPTY child, send terminal resize and stdin EOF, require merged stdout and stderr EOF before the exit frame. Strict native fixture cross-build passes.
 
-- **Commit `HEAD`**: `test(guest): audit repeated session handle stability`
+- **Commit `614031d`**: `test(guest): audit repeated session handle stability`
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Run 32 additional sessions against the same listener and require native process handle counts to remain stable after teardown; strict fixture cross-build passes.
+
+- **Commit `HEAD`**: `chore(test): expose the native Windows regression target`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Add make windows-test for native execution of the cross-buildable AF_UNIX regression suite, with strict test compilation and explicit dependencies.
 
 ## Verification snapshot
 

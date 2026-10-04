@@ -69,3 +69,9 @@ build/waddle-guest-exec.exe: $(GuestSources) $(GuestHeaders) build/guest_codec.o
 	$(ZIG) cc $(WindowsFlags) $(GuestSources) build/guest_codec.obj -lws2_32 -o $@
 
 windows: build/waddle-guest-exec.exe
+
+build/windows_guest_test.exe: tests/windows_guest.c src/guest_codec.h build/guest_codec.obj | build
+	$(ZIG) cc $(WindowsFlags) tests/windows_guest.c build/guest_codec.obj -lws2_32 -municode -o $@
+
+windows-test: windows build/windows_guest_test.exe
+	./build/windows_guest_test.exe
