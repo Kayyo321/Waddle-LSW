@@ -160,6 +160,17 @@ static void run_case(const char *mode, const char *out, const char *err, uint32_
     send_eof(socket, &sequence);
     drain(socket, out, err, code, signal, 0, interactive);
 }
+static DWORD WINAPI binary_writer(void *context) {
+    test_writer_t *writer = context;
+    uint8_t body[16392] = {0};
+    put32(body + 4, 16384);
+    for (size_t offset = 0; offset < 5 * 1048576; offset += 16384) {
+        for (size_t i = 0; i < 16384; i++) { body[i + 8] = (uint8_t)((offset + i) % 251); }
+        send_frame(writer->socket, &writer->sequence, 3, body, sizeof(body));
+    }
+    send_eof(writer->socket, &writer->sequence);
+    return 0;
+}
 static void write_bytes(HANDLE output, const uint8_t *bytes, DWORD length) {
     DWORD offset = 0;
     while (offset < length) { DWORD n = 0; check(WriteFile(output, bytes + offset, length - offset, &n, NULL) && n > 0, "child output"); offset += n; }
@@ -181,6 +192,18 @@ static int child(int argc, wchar_t **argv) {
         check(GetEnvironmentVariableW(L"WADDLE_TEST", value, 100) > 0 && wcscmp(value, L"日本語") == 0, "case-insensitive environment override");
         check(GetCurrentDirectoryW(4096, cwd) > 0 && wcsstr(cwd, L"日本語") != NULL, "Unicode cwd");
         write_bytes(output, (const uint8_t *)"context ok\n", 11); return 0;
+    }
+    if (wcscmp(argv[2], L"large") == 0) {
+        uint8_t bytes[16384]; memset(bytes, 'O', sizeof(bytes));
+        for (unsigned i = 0; i < 192; i++) { write_bytes(output, bytes, sizeof(bytes)); }
+        memset(bytes, 'E', sizeof(bytes));
+        for (unsigned i = 0; i < 192; i++) { write_bytes(error, bytes, sizeof(bytes)); }
+        for (;;) {
+            DWORD n = 0;
+            if (!ReadFile(GetStdHandle(STD_INPUT_HANDLE), bytes, sizeof(bytes), &n, NULL)) { check(GetLastError() == ERROR_BROKEN_PIPE, "child stdin read"); break; }
+            if (n == 0) { break; } write_bytes(output, bytes, n);
+        }
+        return 0;
     }
     return 2;
 }
@@ -219,6 +242,11 @@ int wmain(int argc, wchar_t **argv) {
     (void)spawn_command("\"no-such-waddle-executable-987654321.exe\"", cwd_path, "", 0, 0, 2, NULL); scenarios++;
     socket = spawn_command("\"cmd.exe\" \"/c\" \"exit 37\"", cwd_path, "", 0, 0, 0, NULL); sequence = 2;
     send_eof(socket, &sequence); drain(socket, "", "", 37, 0, 0, 0);
+    command_for(command, sizeof(command), "large");
+    socket = spawn_command(command, cwd_path, "", 0, 0, 0, NULL);
+    test_writer_t writer = {socket, 2}; HANDLE thread = CreateThread(NULL, 0, binary_writer, &writer, 0, NULL);
+    check(thread != NULL, "duplex writer"); drain(socket, "", "", 0, 0, 1, 0);
+    check(WaitForSingleObject(thread, 15000) == WAIT_OBJECT_0, "join duplex writer"); CloseHandle(thread);
     TerminateProcess(listener_process, 0); WaitForSingleObject(listener_process, 5000); CloseHandle(listener_process); listener_process = NULL;
     DeleteFileA(socket_path); WSACleanup();
     printf("windows guest: %u pipe scenarios passed\n", scenarios);

@@ -224,9 +224,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Resolve bare argv[0] through SearchPathW before passing a nonnull application name to CreateProcessW; preserve explicit application selection and release the owned resolution buffer on errors.
 
-- **Commit `HEAD`**: `test(guest): add native Windows pipe regressions`
+- **Commit `36d0312`**: `test(guest): add native Windows pipe regressions`
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Add a native Windows AF_UNIX fixture validating separate streams, full exit codes, canonical Unicode argv, Unicode cwd, last-wins environment, missing programs and executable search. The fixture cross-builds; runtime execution remains pending.
+
+- **Commit `HEAD`**: `test(guest): stress Windows binary duplex backpressure`
+  - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
+  - **Summary**: Add a concurrent 5 MiB stdin writer while the child emits 6 MiB before consuming input; verify all 16 MiB of raw binary streams and EOF ordering. Fixture cross-build passes.
 
 ## Verification snapshot
 
