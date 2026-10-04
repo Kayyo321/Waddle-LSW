@@ -46,6 +46,11 @@ This document defines the strict operating standards, branching models, implemen
    - Symmetric lifecycle functions (`init`/`free` or `create`/`destroy`), defensive NULLing of freed pointers, and bounded buffer passing are mandatory in C.
    - All test suites must execute under AddressSanitizer and LeakSanitizer (`-fsanitize=address,leak`) and Zig's `std.testing.allocator` with **zero bytes leaked**. A single leaked byte is considered a critical test and PR failure.
 
+9. **README Invariant & Anti-Vibe-Coding Policy**:
+   - **Explicit User Request Only**: Never modify, rewrite, or append to `README.md` unless the user explicitly and directly requests changes to it. Feature branches, bugfixes, and refactors must leave `README.md` untouched by default.
+   - **Keep it Short and Sweet**: `README.md` is a clean, minimal entry point and high-level project summary. Keep it concise, punchy, and readable in under two minutes. Detailed architectural blueprints belong in `PROJECT.md`, contributor workflows in `CONTRIBUTING.md`, and task-level specifications in `impl/<feature>/`.
+   - **Zero "Vibe Coding"**: Fluffy, generic AI marketing prose, hype, buzzwords, bloated filler lists, and speculative hand-waving are strictly forbidden. Content must be direct, technically accurate, grounded in actual code, and free of filler.
+
 ---
 
 ## 2. Branching & Git Workflow
@@ -241,4 +246,5 @@ Before any feature branch is merged into the standard branch:
 - [ ] Documentation is complete, structured, and enforced across all public interfaces and structs with zero ambiguity.
 - [ ] Automated tests pass and code coverage thresholds are met (including Zig built-in tests where applicable).
 - [ ] Zero memory leaks verified under AddressSanitizer/LeakSanitizer (`-fsanitize=address,leak`) and Zig testing allocator with zero bytes lost.
+- [ ] `README.md` was not modified unless explicitly requested by the user, and adheres to the short-and-sweet, anti-vibe-coding policy.
 - [ ] Pull Request is opened with links to `IMPL_DESC.md` and `TRACKER.md`.
