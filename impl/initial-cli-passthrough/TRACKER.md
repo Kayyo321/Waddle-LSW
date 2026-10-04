@@ -17,10 +17,10 @@
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 85% | Raw/ConPTY process lifecycle implemented; native Windows verification pending |
-| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 65% | Concurrent input/output pumps implemented; session orchestration and listener pending |
+| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 75% | Session dispatch and ordered teardown implemented; listener and native verification pending |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `93.5%`
+**Total Feature Completion**: `94.5%`
 
 ## Commit History & Progress Log
 
@@ -196,9 +196,13 @@
   - **Task Impact**: +15% to #7 (+1.5% overall).
   - **Summary**: Implement a fixed-buffer input worker for stdin EOF, signed ConPTY resize, ETX/CTRL_BREAK interrupts, job termination and heartbeat replies. Treat child stdin closure and orderly cancellation separately from failures. Strict Windows object build passes.
 
-- **Commit `HEAD`**: `feat(guest): drain bounded output streams before EOF`
+- **Commit `ff19f3e`**: `feat(guest): drain bounded output streams before EOF`
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Add one fixed-buffer reader per output pipe, separate raw streams and immediate merged-mode stderr EOF. Continue draining after transport failure so ConPTY shutdown cannot deadlock on its final output. Strict Windows object build passes.
+
+- **Commit `HEAD`**: `feat(guest): order spawn, worker teardown and exit notifications`
+  - **Task Impact**: +10% to #7 (+1% overall).
+  - **Summary**: Dispatch one validated spawn, send success before workers, monitor child/failure, terminate descendants, cancel and join input, close ConPTY while output drains, join readers, then send exit. Release session resources on every path; strict cross-build passes.
 
 ## Verification snapshot
 
