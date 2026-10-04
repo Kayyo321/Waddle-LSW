@@ -364,9 +364,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Windows native large-duplex testing exposed blocking socket stalls. Enable nonblocking established transport, preserve partial frame offsets, handle would-block through bounded select waits and wake failed sends without growing queues; cross-build passes.
 
-- **Commit `HEAD`**: `test(guest): use a nonblocking full-duplex native client`
+- **Commit `cf8f0dd`**: `test(guest): use a nonblocking full-duplex native client`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Make the native fixture socket nonblocking too; handle partial transfers with readiness waits and explicit deadlines, and wait for expected closure without racing would-block. Prevent client-side blocking calls from masking server duplex behavior.
+
+- **Commit `HEAD`**: `fix(guest): observe graceful EOF without consuming input frames`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Poll read readiness as well as exceptional socket state and use a bounded nonblocking peek to distinguish graceful EOF from queued data; tolerate a concurrent receive worker consuming readiness before the peek.
 
 ## Verification snapshot
 

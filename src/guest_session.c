@@ -68,11 +68,19 @@ int guest_session(SOCKET socket) {
         if (wait != WAIT_TIMEOUT) { guest_wire_fail(&wire); break; }
         // A pipe writer can block before the receive worker observes socket EOF.
         // Poll only exceptional socket conditions; never consume its framed data.
-        WSAPOLLFD peer = {socket, 0, 0};
+        WSAPOLLFD peer = {socket, POLLRDNORM, 0};
         int status = WSAPoll(&peer, 1, 0);
         if (status < 0 || (peer.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
             guest_wire_fail(&wire);
             break;
+        }
+        if (status > 0 && (peer.revents & POLLRDNORM) != 0) {
+            char byte;
+            int available = recv(socket, &byte, 1, MSG_PEEK);
+            if (available == 0 || (available < 0 && WSAGetLastError() != WSAEWOULDBLOCK)) {
+                guest_wire_fail(&wire);
+                break;
+            }
         }
     }
 finish: {
