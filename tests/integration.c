@@ -183,7 +183,7 @@ int main(int argc, char **argv) {
     alarm(90); signal(SIGPIPE,SIG_IGN); setvbuf(stdout,NULL,_IOLBF,0);
     assert(getcwd(root,sizeof(root))); assert(strlen(root)+24<sizeof(self_path));
     strcpy(self_path,root); strcat(self_path,"/build/integration");
-    strcpy(directory,"/tmp/waddle-test-XXXXXX"); assert(mkdtemp(directory)); snprintf(socket_path,sizeof(socket_path),"%s/guest.sock",directory);
+    strcpy(directory,"/tmp/waddle-test-XXXXXX"); assert(mkdtemp(directory)); assert(strlen(directory)+12<sizeof(socket_path)); strcpy(socket_path,directory); strcat(socket_path,"/guest.sock");
     char *streams[]={self_path,"--child","streams",NULL};
     test_case t={.name="separate outputs and exit 42",.guest=streams,.expected=42,.out="stdout\n",.err="stderr\n"}; run_case(&t);
     char *args[]={self_path,"--child","args","","a b","foo\"bar","C:\\Program Files\\","日本語",NULL};

@@ -64,6 +64,10 @@
   - **Task Impact**: +20% to #8 (+2% overall); +2% overall.
   - **Summary**: Add single-session private UNIX listener, bounded nonblocking pipe/PTY relay, stdin EOF, resize/signals, output EOF and exit ordering, and disconnect cleanup. A real shell command produced separate stdout/stderr and exit 42 end to end; mock exited 0. Windows transport task #7 stays pending.
 
-- **Commit `HEAD`**: `test(cli): verify duplex streams and terminal lifecycle end to end`
+- **Commit `3a6de9b`**: `test(cli): verify duplex streams and terminal lifecycle end to end`
   - **Task Impact**: +20% to #3 (+3% overall), +40% to #4 (+6% overall), +40% to #8 (+4% overall); +13% overall.
   - **Summary**: All 15 C integration scenarios pass: outputs/exit status, exact arguments, cwd/environment, missing executable, 16 MiB duplex with slow readers, SIGINT/SIGTERM, timeout, adversarial peers, PTY resize/Ctrl-C, disconnect, and termios restoration. Host tasks complete for the PoC contract; Windows validation and performance targets remain unverified.
+
+- **Commit `HEAD`**: `test(cli): make fixture path bounds explicit`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Add an explicit socket-path capacity assertion before concatenation, resolving the optimization-dependent format-truncation warning found by the sanitizer build.
