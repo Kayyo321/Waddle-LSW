@@ -30,11 +30,19 @@ void guest_wire_fail(guest_wire_t *wire) {
     shutdown(wire->socket, SD_BOTH);
 }
 
+void guest_wire_stop_input(guest_wire_t *wire) {
+    InterlockedExchange(&wire->stopping, 1);
+    shutdown(wire->socket, SD_RECEIVE);
+}
+
 static int receive_exact(guest_wire_t *wire, uint8_t *bytes, size_t length) {
     size_t offset = 0;
     while (offset < length) {
         int received = recv(wire->socket, (char *)bytes + offset, (int)(length - offset), 0);
-        if (received <= 0) { guest_wire_fail(wire); return -1; }
+        if (received <= 0) {
+            if (InterlockedCompareExchange(&wire->stopping, 0, 0) == 0) { guest_wire_fail(wire); }
+            return -1;
+        }
         offset += (size_t)received;
     }
     return 0;

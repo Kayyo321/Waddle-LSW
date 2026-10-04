@@ -184,9 +184,13 @@
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Validate reserved bytes, exact payload lengths, stream chunk bounds, EOF ordering, supported signals and signed terminal resize dimensions without allocation; native state tests pass.
 
-- **Commit `HEAD`**: `feat(guest): serialize framed Winsock transport`
+- **Commit `14c0954`**: `feat(guest): serialize framed Winsock transport`
   - **Task Impact**: +15% to #7 (+1.5% overall).
   - **Summary**: Add bounded exact receives with preallocation header validation and CRC, serialized header/body sends with wraparound sequence assignment, and a failure event that shuts down blocked socket operations. Strict Windows object build passes.
+
+- **Commit `HEAD`**: `feat(guest): preserve output while cancelling input receives`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Introduce atomic orderly-input cancellation and receive-half shutdown so normal child teardown can wake input without marking transport failure or interrupting output drains.
 
 ## Verification snapshot
 

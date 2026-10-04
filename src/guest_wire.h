@@ -10,6 +10,7 @@ typedef struct guest_wire_t {
     SOCKET socket; /**< Borrowed connected socket, shutdown on failure. */
     HANDLE failure; /**< Owned manual-reset failure event. */
     CRITICAL_SECTION send_lock; /**< Owned send serialization lock. */
+    volatile LONG stopping; /**< Atomic receive cancellation flag, main sets before shutdown. */
     uint32_t incoming; /**< Receive-thread-only sequence, starts at one. */
     uint32_t outgoing; /**< Send-lock-protected sequence, starts at one. */
 } guest_wire_t;
@@ -24,6 +25,9 @@ void guest_wire_close(guest_wire_t *wire);
 /** @brief Signal session failure and wake blocked socket operations; thread-safe.
  * @param[in,out] wire Nonnull initialized session; no ownership transfer. */
 void guest_wire_fail(guest_wire_t *wire);
+/** @brief Cancel receives during orderly teardown, preserving outgoing drains.
+ * @param[in,out] wire Nonnull initialized session; thread-safe and idempotent. */
+void guest_wire_stop_input(guest_wire_t *wire);
 /** @brief Receive and validate a header before payload allocation; sole receive thread.
  * @param[in,out] wire Nonnull initialized session.
  * @param[out] frame Nonnull caller-owned validated result.
