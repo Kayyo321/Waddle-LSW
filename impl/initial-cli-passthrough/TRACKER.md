@@ -292,9 +292,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Complete structured entry-point argument/lifetime/status documentation and document new public include-guard macros; strict Windows build passes.
 
-- **Commit `HEAD`**: `chore(style): format the new bounded Zig parsers`
+- **Commit `70b5e6d`**: `chore(style): format the new bounded Zig parsers`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Apply Zig 0.13 canonical formatting to the feature parser sources; guest and path native suites remain passing.
+
+- **Commit `HEAD`**: `chore(ci): separate native compilation from runtime verification`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Report Windows compiler and runtime phases as distinct CI steps and bound the regression execution to three minutes; keep the existing whole-job build deadline.
 
 ## Verification snapshot
 

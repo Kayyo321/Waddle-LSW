@@ -29,7 +29,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/path_rules.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Build and run native AF_UNIX regressions
+      - name: Build native guest and fixture
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build | Out-Null
@@ -41,5 +41,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc @compiler_flags tests/windows_guest.c 'build\guest_codec.lib' -lws2_32 -municode -o 'build\windows_guest_test.exe'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run native AF_UNIX regressions
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
           ./build/windows_guest_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
