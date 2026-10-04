@@ -8,7 +8,7 @@ Import-Module $dev_module
 Enter-VsDevShell -VsInstallPath $vs_path -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
 zig build-lib src/guest_codec.zig -static -target x86_64-windows-msvc -O ReleaseSafe -fno-compiler-rt '-femit-bin=build\guest_heap_codec.lib'
 if ($LASTEXITCODE -ne 0) { throw 'MSVC ABI codec build failed' }
-$compiler_flags = @('/nologo', '/std:c11', '/MDd', '/Od', '/Zi', '/D_DEBUG', '/D_WIN32_WINNT=0x0A00', '/DNTDDI_VERSION=0x0A000006', '/D_CRT_SECURE_NO_WARNINGS', '/Isrc', '/FItests/windows_heap.h')
+$compiler_flags = @('/nologo', '/std:c11', '/MDd', '/Od', '/Zi', '/D_DEBUG', '/D_WIN32_WINNT=0x0A00', '/DNTDDI_VERSION=0x0A000006', '/D_CRT_SECURE_NO_WARNINGS', '/Isrc', '/Itests', '/FIwindows_heap.h')
 $guest_sources = @('guest_session', 'guest_wire', 'guest_input', 'guest_output', 'guest_process', 'guest_environment')
 foreach ($source in $guest_sources) {
     cl @compiler_flags /c "src/$source.c" "/Fobuild/$source.obj"

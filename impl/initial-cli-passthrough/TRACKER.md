@@ -400,9 +400,13 @@
   - **Task Impact**: +10% to #6 (+2% overall), +10% to #7 (+1% overall); total 98.5%
   - **Summary**: Record successful 47-scenario Windows execution with 77-to-77 handles and passing Linux sanitizer/coverage CI. Move to Review while retaining real VM/Viosock/export and Windows heap merge gates.
 
-- **Commit `HEAD`**: `test(guest): instrument native Windows session heap ownership`
+- **Commit `5cd1232`**: `test(guest): instrument native Windows session heap ownership`
   - **Task Impact**: 0% to #6 and #7 (0% overall; execution pending).
   - **Summary**: Add MSVC debug-heap client-allocation checkpoints across all native sessions and three detector negative controls; wire the native CI audit without claiming results before execution.
+
+- **Commit `HEAD`**: `fix(test): resolve forced heap header through MSVC include path`
+  - **Task Impact**: 0% to #6 (0% overall).
+  - **Summary**: The first native audit exposed MSVC forced-include lookup relative to the source unit; add the test header directory explicitly and request its basename.
 
 ## Verification snapshot
 
