@@ -37,6 +37,6 @@ git config submodule.recurse true
 
 ## Core Documentation
 
-- **[PROJECT.md](file:///home/dev/Waddle-LSW/PROJECT.md)**: Architectural pillars, subsystem responsibilities (Host Compositor Client, Transport Layer, Guest Agent, CLI Passthrough), IVSHMEM layouts, and language policies (C/Zig with C++ ceiling).
-- **[AGENTS.md](file:///home/dev/Waddle-LSW/AGENTS.md)**: Authoritative developer and agent workflow rules, atomic commit standards, branching models, submodule policies, and `impl/` tracker specifications.
-- **[CONTRIBUTING.md](file:///home/dev/Waddle-LSW/CONTRIBUTING.md)**: Comprehensive contributor guidelines, toolchain setups, testing and sanitizer harnesses, in-depth Git submodule management, and PR review checklists.
+- **[PROJECT.md](file:///home/dev/Waddle-LSW/PROJECT.md)**: Architectural pillars, subsystem responsibilities (Host Compositor Client, Transport Layer, Guest Agent, CLI Passthrough), IVSHMEM layouts, language policies (C default, Zig for memory safety, C++ solely for compatibility), code beauty naming invariants (`snake_case`, `PascalCase` constants, `type_name_t`, zero `camelCase`), documentation enforcement, and Zig built-in test specifications.
+- **[AGENTS.md](file:///home/dev/Waddle-LSW/AGENTS.md)**: Authoritative developer and agent workflow rules, atomic commit standards, branching models, submodule policies, `impl/` tracker specifications, and code beauty / quality PR merge checklists.
+- **[CONTRIBUTING.md](file:///home/dev/Waddle-LSW/CONTRIBUTING.md)**: Comprehensive contributor guidelines, toolchain setups, testing with Zig built-in test specifications and code coverage enforcement, sanitizer harnesses, in-depth Git submodule management, and PR review checklists.
