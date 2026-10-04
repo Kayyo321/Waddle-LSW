@@ -1008,3 +1008,11 @@ cwd. PowerShell dash switches work with export translation. This preserves the
 existing strict unmatched-path contract instead of guessing whether `/c` names
 a host path or a Windows switch. VM acceptance tests cmd switches separately
 from mapped native-program arguments.
+
+The child monitor uses Winsock `select` through the installed provider's WSPSelect
+entry point for zero-timeout readable/exceptional readiness checks. Real VirtIO
+Viosock 0.1.302 returned WSAENOTSOCK (10038) from WSAPoll for a valid provider socket,
+causing a previously hidden loopback-only transport failure during duplex output.
+The monitor therefore uses the same provider-dispatched readiness interface as
+its input/output workers. A nonblocking MSG_PEEK distinguishes EOF without stealing
+framed input; WSAEWOULDBLOCK is tolerated if the input worker wins the read race.

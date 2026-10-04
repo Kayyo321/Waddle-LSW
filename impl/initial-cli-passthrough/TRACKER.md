@@ -448,9 +448,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: Real Viosock stream, exit, and argv cases pass. Run cmd slash-switch acceptance without export translation, whose documented strict grammar treats slash-prefixed tokens as POSIX paths; correct the manual export example.
 
-- **Commit `HEAD`**: `fix(test): expect CLI status for missing guest programs`
+- **Commit `968c439`**: `fix(test): expect CLI status for missing guest programs`
   - **Task Impact**: 0% to #6 and #7 (0% overall).
   - **Summary**: The guest returns wire spawn status 2, which the existing host CLI deliberately maps to shell status 127. Assert the user-visible status in VM acceptance.
+
+- **Commit `HEAD`**: `fix(guest): dispatch peer readiness through Viosock provider`
+  - **Task Impact**: 0% to #6 and #7 (0% overall; VM rerun pending).
+  - **Summary**: Real Viosock 0.1.302 returns WSAENOTSOCK from WSAPoll on a valid socket after 32 KiB duplex output. Use provider-dispatched select for monitor readiness, with bounded numeric diagnostics.
 
 ## Verification snapshot
 
