@@ -236,9 +236,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Exercise CTRL_BREAK interrupt handling, whole-job SIGTERM and disconnect while a child is running; observe child process handles to require actual termination before repeat sessions.
 
-- **Commit `HEAD`**: `test(guest): exercise native ConPTY resize and merged output`
+- **Commit `99049ce`**: `test(guest): exercise native ConPTY resize and merged output`
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Launch a real ConPTY child, send terminal resize and stdin EOF, require merged stdout and stderr EOF before the exit frame. Strict native fixture cross-build passes.
+
+- **Commit `HEAD`**: `test(guest): audit repeated session handle stability`
+  - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
+  - **Summary**: Run 32 additional sessions against the same listener and require native process handle counts to remain stable after teardown; strict fixture cross-build passes.
 
 ## Verification snapshot
 

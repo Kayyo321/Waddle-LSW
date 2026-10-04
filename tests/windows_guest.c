@@ -262,8 +262,12 @@ int wmain(int argc, wchar_t **argv) {
     HANDLE child_process = OpenProcess(SYNCHRONIZE, FALSE, pid); check(child_process != NULL, "observe disconnect child");
     closesocket(socket); check(WaitForSingleObject(child_process, 15000) == WAIT_OBJECT_0, "disconnect kills child"); CloseHandle(child_process); scenarios++;
     run_case("streams", NULL, NULL, 42, 0, 1);
+    DWORD before, after;
+    Sleep(100); check(GetProcessHandleCount(listener_process, &before), "initial handle count");
+    for (unsigned i = 0; i < 32; i++) { run_case("exit259", "", "", 259, 0, 0); }
+    Sleep(100); check(GetProcessHandleCount(listener_process, &after) && after <= before + 1, "repeated session handle stability");
     TerminateProcess(listener_process, 0); WaitForSingleObject(listener_process, 5000); CloseHandle(listener_process); listener_process = NULL;
     DeleteFileA(socket_path); WSACleanup();
-    printf("windows guest: %u pipe scenarios passed\n", scenarios);
+    printf("windows guest: %u scenarios passed; handles %lu -> %lu\n", scenarios, (unsigned long)before, (unsigned long)after);
     return 0;
 }
