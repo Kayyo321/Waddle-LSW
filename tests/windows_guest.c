@@ -41,9 +41,19 @@ static void put32(uint8_t *p, uint32_t n) { for (unsigned i = 0; i < 4; i++) { p
 static uint16_t get16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
 static uint32_t get32(const uint8_t *p) { return p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static void transfer(SOCKET socket, uint8_t *bytes, size_t length, int sending) {
+    ULONGLONG deadline = GetTickCount64() + 15000;
     for (size_t offset = 0; offset < length;) {
         int n = sending ? send(socket, (const char *)bytes + offset, (int)(length - offset), 0)
                         : recv(socket, (char *)bytes + offset, (int)(length - offset), 0);
+        if (n == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
+            check(GetTickCount64() < deadline, "socket readiness deadline");
+            fd_set ready;
+            FD_ZERO(&ready); FD_SET(socket, &ready);
+            struct timeval interval = {0, 100000};
+            check(select(0, sending ? NULL : &ready, sending ? &ready : NULL, NULL, &interval) >= 0,
+                  "socket readiness wait");
+            continue;
+        }
         check(n > 0, "socket transfer");
         offset += (size_t)n;
     }
@@ -77,6 +87,8 @@ static SOCKET connect_guest(void) {
             DWORD timeout = 15000;
             check(setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) == 0, "receive timeout");
             check(setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout, sizeof(timeout)) == 0, "send timeout");
+            u_long nonblocking = 1;
+            check(ioctlsocket(socket, FIONBIO, &nonblocking) == 0, "nonblocking duplex client");
             return socket;
         }
         closesocket(socket);
@@ -84,6 +96,21 @@ static SOCKET connect_guest(void) {
     }
     check(0, "connect guest deadline");
     return INVALID_SOCKET;
+}
+static void expect_closed(SOCKET socket) {
+    ULONGLONG deadline = GetTickCount64() + 15000;
+    for (;;) {
+        uint8_t byte;
+        int received = recv(socket, (char *)&byte, 1, 0);
+        if (received == SOCKET_ERROR && WSAGetLastError() == WSAEWOULDBLOCK) {
+            check(GetTickCount64() < deadline, "closure deadline");
+            Sleep(10);
+            continue;
+        }
+        check(received == 0 || (received == SOCKET_ERROR && WSAGetLastError() == WSAECONNRESET),
+              "connection closes without more messages");
+        return;
+    }
 }
 static SOCKET spawn_command(const char *command, const char *cwd, const char *environment,
                             size_t env_length, int interactive, uint32_t expected_status, DWORD *pid) {
@@ -106,8 +133,7 @@ static SOCKET spawn_command(const char *command, const char *cwd, const char *en
     check(get32(response) == expected_status && get32(response + 8) == length - 12, "spawn status");
     if (pid != NULL) { *pid = get32(response + 4); }
     if (expected_status != 0) {
-        uint8_t byte;
-        check(recv(socket, (char *)&byte, 1, 0) == 0, "spawn failure closes without exit");
+        expect_closed(socket);
         closesocket(socket);
         return INVALID_SOCKET;
     }
@@ -123,10 +149,7 @@ static void reject_handshake(unsigned mode) {
     put32(header + 28, 1); // Deliberately wrong CRC for the third case.
     transfer(socket, header, sizeof(header), 1);
     if (mode == 2) { transfer(socket, body, sizeof(body), 1); }
-    uint8_t byte;
-    int received = recv(socket, (char *)&byte, 1, 0);
-    check(received == 0 || (received == SOCKET_ERROR && WSAGetLastError() == WSAECONNRESET),
-          "malformed handshake closes connection");
+    expect_closed(socket);
     closesocket(socket); scenarios++;
 }
 static void command_for(char *command, size_t capacity, const char *mode) {

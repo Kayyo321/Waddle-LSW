@@ -360,9 +360,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Use the bounded compatibility serializer only when the resolved executable basename is cmd.exe; convert and free temporary UTF-8 storage before process launch, preserving explicit application selection. Strict cross-build passes.
 
-- **Commit `HEAD`**: `fix(guest): relay duplex streams with nonblocking socket readiness`
+- **Commit `3da51da`**: `fix(guest): relay duplex streams with nonblocking socket readiness`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Windows native large-duplex testing exposed blocking socket stalls. Enable nonblocking established transport, preserve partial frame offsets, handle would-block through bounded select waits and wake failed sends without growing queues; cross-build passes.
+
+- **Commit `HEAD`**: `test(guest): use a nonblocking full-duplex native client`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Make the native fixture socket nonblocking too; handle partial transfers with readiness waits and explicit deadlines, and wait for expected closure without racing would-block. Prevent client-side blocking calls from masking server duplex behavior.
 
 ## Verification snapshot
 
