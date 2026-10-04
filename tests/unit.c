@@ -4,6 +4,7 @@
  */
 
 #include "common.h"
+#include "path_rules.h"
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
@@ -11,6 +12,31 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+static void test_path_rules(void) {
+    const path_rule_t rules[] = {{"/", "Z:\\"}, {"/home", "X:\\Users"}, {"/home/dev", "Y:\\work"}};
+    char *mapped = waddle_translate_rules("/home/dev/file", rules, 3);
+    assert(mapped && strcmp(mapped, "Y:\\work\\file") == 0);
+    free(mapped);
+    mapped = waddle_translate_rules("/home/device", rules, 3);
+    assert(mapped && strcmp(mapped, "X:\\Users\\device") == 0);
+    free(mapped);
+    mapped = waddle_translate_rules("/other", rules, 3);
+    assert(mapped && strcmp(mapped, "Z:\\other") == 0);
+    free(mapped);
+    assert(waddle_translate_rules("/other", rules + 1, 2) == NULL);
+    assert(waddle_translate_rules(NULL, NULL, 0) == NULL);
+    assert(waddle_translate_rules("/x", NULL, 1) == NULL);
+    const path_rule_t invalid[] = {{NULL, "Z:\\"}, {"/", NULL}, {"bad", "Z:\\"}};
+    for (size_t i = 0; i < 3; i++) {
+        assert(waddle_translate_rules("/x", invalid + i, 1) == NULL);
+        assert(errno == EINVAL);
+    }
+    assert(waddle_translate_rules("/x", rules, 65) == NULL);
+    mapped = waddle_translate_rules("relative", rules, 3);
+    assert(mapped && strcmp(mapped, "relative") == 0);
+    free(mapped);
+}
 
 static void test_quoting(void) {
     /* Test null and empty argument edge cases */
@@ -222,6 +248,7 @@ static void test_frames(void) {
 }
 
 int main(void) {
+    test_path_rules();
     assert(waddle_crc32("123456789", 9) == UINT32_C(0xcbf43926));
     assert(waddle_crc32(NULL, 0) == 0);
 
