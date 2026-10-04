@@ -1,10 +1,12 @@
-<img align="right" width="120" height="120" alt="Waddle-LSW Logo" src="imgs/logo.png">
-
 # Waddle-LSW (Waddle Linux Subsystem for Windows)
+
+<img align="right" width="180" height="180" alt="Waddle-LSW Logo" src="imgs/logo.png">
 
 **Waddle-LSW** is an open-source compatibility layer and subsystem architecture designed to deliver seamless, borderless integration of Microsoft Windows applications directly into Linux Wayland desktop environments.
 
 Unlike traditional full-screen virtual machine viewers, Waddle-LSW tracks individual Windows application windows inside a lightweight guest VM, captures their surfaces with hardware acceleration, transfers frames across domain boundaries via high-throughput IVSHMEM shared memory, and composes them as native Wayland surfaces alongside your Linux applications.
+
+<br clear="right" />
 
 ---
 
