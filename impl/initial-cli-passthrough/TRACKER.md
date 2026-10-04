@@ -288,9 +288,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Specify actual module ownership, native ABI sizes, cancellation and EOF semantics, executable lookup, environment bounds, reproducible test/coverage commands and real VSOCK VM acceptance steps.
 
-- **Commit `HEAD`**: `docs(guest): document entry-point ownership and include guards`
+- **Commit `1ac04f1`**: `docs(guest): document entry-point ownership and include guards`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Complete structured entry-point argument/lifetime/status documentation and document new public include-guard macros; strict Windows build passes.
+
+- **Commit `HEAD`**: `chore(style): format the new bounded Zig parsers`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Apply Zig 0.13 canonical formatting to the feature parser sources; guest and path native suites remain passing.
 
 ## Verification snapshot
 

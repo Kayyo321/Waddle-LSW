@@ -63,8 +63,7 @@ fn translate(path: []const u8, source_arg: []const u8, target: []const u8, outpu
 /// Translate borrowed NUL-terminated path/rule into caller-owned output[capacity].
 /// Returns 0 on success, -1 for invalid/unmapped input, -2 for capacity failure.
 /// No allocation or shared state; output may be partial on failure.
-export fn waddle_path_rule_apply(path: [*:0]const u8, source: [*:0]const u8,
-    target: [*:0]const u8, output: [*]u8, capacity: usize) c_int {
+export fn waddle_path_rule_apply(path: [*:0]const u8, source: [*:0]const u8, target: [*:0]const u8, output: [*]u8, capacity: usize) c_int {
     _ = translate(std.mem.span(path), std.mem.span(source), std.mem.span(target), output[0..capacity]) catch |err| {
         return if (err == error.Capacity) -2 else -1;
     };

@@ -19,8 +19,7 @@ fn get64(bytes: []const u8) u64 {
 
 /// in: borrowed nonnull header[length], expected sequence; out: caller-owned frame.
 /// Returns 0 for valid 32-byte header, -1 otherwise. No allocation; thread-safe.
-export fn guest_header_validate(header: [*]const u8, length: usize, sequence: u32,
-    frame: *guest_frame_t) c_int {
+export fn guest_header_validate(header: [*]const u8, length: usize, sequence: u32, frame: *guest_frame_t) c_int {
     if (length != 32) return -1;
     const bytes = header[0..length];
     if (get32(bytes) != 0x57444c43 or get16(bytes[4..]) != 1 or
@@ -153,9 +152,14 @@ fn spawn_validate(bytes: []const u8, spawn: *guest_spawn_t, executable: []u8) bo
     const cols = get16(bytes[6..]);
     if (flags & 1 != 0 and (rows == 0 or cols == 0 or rows > 32767 or cols > 32767)) return false;
     spawn.* = .{
-        .cwd = cwd.ptr, .command = command.ptr, .environment = environment.ptr,
-        .cwd_length = @intCast(cwd_len), .command_length = @intCast(cmd_len),
-        .environment_length = @intCast(env_len), .rows = rows, .cols = cols,
+        .cwd = cwd.ptr,
+        .command = command.ptr,
+        .environment = environment.ptr,
+        .cwd_length = @intCast(cwd_len),
+        .command_length = @intCast(cmd_len),
+        .environment_length = @intCast(env_len),
+        .rows = rows,
+        .cols = cols,
         .interactive = flags & 1,
     };
     return true;
@@ -164,8 +168,7 @@ fn spawn_validate(bytes: []const u8, spawn: *guest_spawn_t, executable: []u8) bo
 /// in: borrowed nonnull body[length], retained for spawn views. out: caller-owned
 /// spawn and executable[capacity], disjoint from body. Returns 0 success, -1
 /// malformed input/capacity. Output unspecified on failure; allocation-free and thread-safe.
-export fn guest_spawn_validate(body: [*]const u8, length: usize, spawn: *guest_spawn_t,
-    executable: [*]u8, capacity: usize) c_int {
+export fn guest_spawn_validate(body: [*]const u8, length: usize, spawn: *guest_spawn_t, executable: [*]u8, capacity: usize) c_int {
     return if (spawn_validate(body[0..length], spawn, executable[0..capacity])) 0 else -1;
 }
 
@@ -223,15 +226,17 @@ test "reject noncanonical commands and preserve executable selection" {
 /// in: validated type, borrowed nonnull body[length], mode and stdin EOF state.
 /// Returns 0 valid, -1 malformed or invalid transition. Caller updates EOF after
 /// validation. No mutation, allocation or globals; safe for concurrent sessions.
-export fn guest_control_validate(kind: u16, body: [*]const u8, length: usize,
-    interactive: c_int, input_eof: c_int) c_int {
+export fn guest_control_validate(kind: u16, body: [*]const u8, length: usize, interactive: c_int, input_eof: c_int) c_int {
     const bytes = body[0..length];
     const valid = switch (kind) {
         3 => length >= 8 and length <= 16392 and input_eof == 0 and
             get32(bytes) == 0 and get32(bytes[4..]) == length - 8,
         4 => length == 8 and interactive != 0 and get16(bytes) > 0 and
             get16(bytes) <= 32767 and get16(bytes[2..]) > 0 and get16(bytes[2..]) <= 32767,
-        5 => length == 4 and switch (get32(bytes)) { 2, 3, 9, 15 => true, else => false },
+        5 => length == 4 and switch (get32(bytes)) {
+            2, 3, 9, 15 => true,
+            else => false,
+        },
         7 => length == 0,
         9 => length == 4 and input_eof == 0 and get32(bytes) == 0,
         else => false,
