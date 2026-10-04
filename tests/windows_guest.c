@@ -175,6 +175,10 @@ static void write_bytes(HANDLE output, const uint8_t *bytes, DWORD length) {
     DWORD offset = 0;
     while (offset < length) { DWORD n = 0; check(WriteFile(output, bytes + offset, length - offset, &n, NULL) && n > 0, "child output"); offset += n; }
 }
+static BOOL WINAPI interrupt_handler(DWORD event) {
+    if (event == CTRL_BREAK_EVENT || event == CTRL_C_EVENT) { ExitProcess(130); }
+    return FALSE;
+}
 static int child(int argc, wchar_t **argv) {
     HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE), error = GetStdHandle(STD_ERROR_HANDLE);
     if (wcscmp(argv[2], L"streams") == 0) {
@@ -192,6 +196,10 @@ static int child(int argc, wchar_t **argv) {
         check(GetEnvironmentVariableW(L"WADDLE_TEST", value, 100) > 0 && wcscmp(value, L"日本語") == 0, "case-insensitive environment override");
         check(GetCurrentDirectoryW(4096, cwd) > 0 && wcsstr(cwd, L"日本語") != NULL, "Unicode cwd");
         write_bytes(output, (const uint8_t *)"context ok\n", 11); return 0;
+    }
+    if (wcscmp(argv[2], L"sleep") == 0) {
+        SetConsoleCtrlHandler(interrupt_handler, TRUE);
+        write_bytes(output, (const uint8_t *)"READY\n", 6); Sleep(INFINITE); return 1;
     }
     if (wcscmp(argv[2], L"large") == 0) {
         uint8_t bytes[16384]; memset(bytes, 'O', sizeof(bytes));
@@ -247,6 +255,12 @@ int wmain(int argc, wchar_t **argv) {
     test_writer_t writer = {socket, 2}; HANDLE thread = CreateThread(NULL, 0, binary_writer, &writer, 0, NULL);
     check(thread != NULL, "duplex writer"); drain(socket, "", "", 0, 0, 1, 0);
     check(WaitForSingleObject(thread, 15000) == WAIT_OBJECT_0, "join duplex writer"); CloseHandle(thread);
+    run_case("sleep", "READY\n", "", 143, 15, 0);
+    run_case("sleep", "READY\n", "", 130, 2, 0);
+    command_for(command, sizeof(command), "sleep"); DWORD pid;
+    socket = spawn_command(command, cwd_path, "", 0, 0, 0, &pid);
+    HANDLE child_process = OpenProcess(SYNCHRONIZE, FALSE, pid); check(child_process != NULL, "observe disconnect child");
+    closesocket(socket); check(WaitForSingleObject(child_process, 15000) == WAIT_OBJECT_0, "disconnect kills child"); CloseHandle(child_process); scenarios++;
     TerminateProcess(listener_process, 0); WaitForSingleObject(listener_process, 5000); CloseHandle(listener_process); listener_process = NULL;
     DeleteFileA(socket_path); WSACleanup();
     printf("windows guest: %u pipe scenarios passed\n", scenarios);

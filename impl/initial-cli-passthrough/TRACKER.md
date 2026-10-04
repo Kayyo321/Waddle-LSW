@@ -228,9 +228,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Add a native Windows AF_UNIX fixture validating separate streams, full exit codes, canonical Unicode argv, Unicode cwd, last-wins environment, missing programs and executable search. The fixture cross-builds; runtime execution remains pending.
 
-- **Commit `HEAD`**: `test(guest): stress Windows binary duplex backpressure`
+- **Commit `2ca555e`**: `test(guest): stress Windows binary duplex backpressure`
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Add a concurrent 5 MiB stdin writer while the child emits 6 MiB before consuming input; verify all 16 MiB of raw binary streams and EOF ordering. Fixture cross-build passes.
+
+- **Commit `HEAD`**: `test(guest): verify raw signals and disconnect cleanup`
+  - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
+  - **Summary**: Exercise CTRL_BREAK interrupt handling, whole-job SIGTERM and disconnect while a child is running; observe child process handles to require actual termination before repeat sessions.
 
 ## Verification snapshot
 
