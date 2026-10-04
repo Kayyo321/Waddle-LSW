@@ -340,9 +340,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add a 60-second watchdog event/thread with explicit join and handle cleanup on success; timeout terminates listener and fixture even if a Windows AF_UNIX operation does not honor socket timeout.
 
-- **Commit `HEAD`**: `fix(guest): make receive cancellation independent of socket shutdown`
+- **Commit `6b108e3`**: `fix(guest): make receive cancellation independent of socket shutdown`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: After spawn, wait for read readiness in 100 ms slices and check the atomic stopping flag before recv. Initial handshake keeps its 30-second receive timeout; orderly input join no longer depends on AF_UNIX shutdown waking an existing blocked recv.
+
+- **Commit `HEAD`**: `chore(ci): enforce Linux sanitizer and parser coverage gates`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Add Linux CI with checksum-verified Zig, base-package kcov, ASan/LSan/UBSan and native allocator tests, 90% implementation coverage enforcement and complete Windows cross-builds.
 
 ## Verification snapshot
 
