@@ -1,5 +1,6 @@
 /** @file guest_environment.h @brief Owned Win32 Unicode and environment conversion. */
 #ifndef WaddleGuestEnvironmentH
+/** @brief Include guard; compile-time marker with no storage or ownership. */
 #define WaddleGuestEnvironmentH
 #include "guest_codec.h"
 #include <windows.h>

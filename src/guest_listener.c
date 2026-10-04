@@ -31,6 +31,11 @@ static int vsock_family(void) {
     return (int)family;
 }
 
+/** @brief Standalone guest entry point, owns Winsock and listener lifetime.
+ * @param[in] argc CRT argument count. @param[in] argv Nonnull borrowed CRT argv,
+ * NUL-terminated strings retained for the entire process lifetime.
+ * @return 0 help, 2 invalid options, 1 native startup/listener failure.
+ * @note Main thread dispatches sessions sequentially; workers join before reuse. */
 int main(int argc, char **argv) {
     const char *path = NULL;
     uint32_t port = 5242;

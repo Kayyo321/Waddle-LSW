@@ -1,5 +1,6 @@
 /** @file guest_pump.h @brief Borrowed worker contexts and pipe pumps. */
 #ifndef WaddleGuestPumpH
+/** @brief Include guard; compile-time marker with no storage or ownership. */
 #define WaddleGuestPumpH
 #include "guest_wire.h"
 #include "guest_process.h"

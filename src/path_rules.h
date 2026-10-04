@@ -1,5 +1,6 @@
 /** @file path_rules.h @brief Bounded, allocation-free Zig path rule boundary. */
 #ifndef WaddlePathRulesH
+/** @brief Include guard; compile-time marker with no storage or ownership. */
 #define WaddlePathRulesH
 #include <stddef.h>
 /** @brief Borrowed immutable export rule; strings live through the calling session.

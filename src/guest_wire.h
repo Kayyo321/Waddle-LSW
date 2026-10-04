@@ -1,5 +1,6 @@
 /** @file guest_wire.h @brief Serialized Winsock frame transport. */
 #ifndef WaddleGuestWireH
+/** @brief Include guard; compile-time marker with no storage or ownership. */
 #define WaddleGuestWireH
 #include <winsock2.h>
 #include <windows.h>

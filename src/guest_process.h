@@ -1,5 +1,6 @@
 /** @file guest_process.h @brief Win32 session process and handle ownership. */
 #ifndef WaddleGuestProcessH
+/** @brief Include guard; compile-time marker with no storage or ownership. */
 #define WaddleGuestProcessH
 #include "guest_environment.h"
 /** @brief One session's owned Win32 resources; zero-initialize before launch.

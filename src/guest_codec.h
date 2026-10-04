@@ -1,5 +1,6 @@
 /** @file guest_codec.h @brief Allocation-free, bounds-checked guest wire ABI. */
 #ifndef WaddleGuestCodecH
+/** @brief Include guard; compile-time marker with no storage or ownership. */
 #define WaddleGuestCodecH
 #include <stddef.h>
 #include <stdint.h>

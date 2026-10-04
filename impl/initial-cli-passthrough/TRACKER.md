@@ -284,9 +284,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; native rerun pending).
   - **Summary**: Use quoted native separator paths at Windows compiler output/input boundaries and enable linker diagnostics to resolve native archive emission errors; Linux cross-builds remain passing.
 
-- **Commit `HEAD`**: `docs(cli): document implemented guest ownership and verification boundaries`
+- **Commit `6f52f6d`**: `docs(cli): document implemented guest ownership and verification boundaries`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Specify actual module ownership, native ABI sizes, cancellation and EOF semantics, executable lookup, environment bounds, reproducible test/coverage commands and real VSOCK VM acceptance steps.
+
+- **Commit `HEAD`**: `docs(guest): document entry-point ownership and include guards`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Complete structured entry-point argument/lifetime/status documentation and document new public include-guard macros; strict Windows build passes.
 
 ## Verification snapshot
 

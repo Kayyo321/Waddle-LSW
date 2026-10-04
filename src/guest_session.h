@@ -1,5 +1,6 @@
 /** @file guest_session.h @brief Sequential guest session dispatch. */
 #ifndef WaddleGuestSessionH
+/** @brief Include guard; compile-time marker with no storage or ownership. */
 #define WaddleGuestSessionH
 #include "guest_wire.h"
 /** @brief Run exactly one guest command and release its child tree and workers.
