@@ -124,6 +124,14 @@
   - **Task Impact**: +10% to #8 (+1% overall); +1% overall.
   - **Summary**: Add tests/test_cli.zig implementing 17 automated tests using native Zig test specs, checking wire layouts, endian codecs, CRC32, queues, quoting roundtrips, and std.testing.allocator zero-leak verification. Integrate zig-test into make test.
 
+- **Commit `c488c7f`**: `docs(agents): enforce README maintenance and anti-vibe-coding policy`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Add explicit rule prohibiting README modification without direct user request, enforcing short and sweet format, and forbidding vibe-coded marketing prose.
+
+- **Commit `f15c561`**: `docs(readme): add logo and streamline initial CLI passthrough PoC section`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Add logo.png to top right of title and trim the verbose CLI PoC section into a concise 3-command overview linking to feature implementation documents.
+
 ## Verification snapshot
 
 - **Strict Naming Invariants**: All constants in `PascalCase` (`WaddleCliMagic`, `WaddleMsgSpawnReq`, `WaddleMaxPayloadSize`), types end in `_t` (`waddle_cli_msg_header_t`, `queue_t`, `decoder_t`, `mock_process_t`), default identifiers in `snake_case`, and zero `camelCase`.
