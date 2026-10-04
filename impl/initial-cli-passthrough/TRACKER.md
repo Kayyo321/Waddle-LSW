@@ -17,10 +17,10 @@
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 85% | Raw/ConPTY process lifecycle implemented; native Windows verification pending |
-| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 25% | Guest header/spawn/control parsers complete; listener and pump pending |
+| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 40% | Guest parsers and framed Winsock transport complete; listener and pump pending |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `89.5%`
+**Total Feature Completion**: `91.0%`
 
 ## Commit History & Progress Log
 
@@ -180,9 +180,13 @@
   - **Task Impact**: +25% to #6 (+5% overall).
   - **Summary**: Add noninheritable ConPTY communication pipes and pseudoconsole startup attribute; retain merged stdout, disable raw handle inheritance, and close pseudoconsole resources on failed launch. Strict Windows object build passes.
 
-- **Commit `HEAD`**: `feat(guest): validate stream controls and stdin EOF state`
+- **Commit `e4e1a1d`**: `feat(guest): validate stream controls and stdin EOF state`
   - **Task Impact**: +10% to #7 (+1% overall).
   - **Summary**: Validate reserved bytes, exact payload lengths, stream chunk bounds, EOF ordering, supported signals and signed terminal resize dimensions without allocation; native state tests pass.
+
+- **Commit `HEAD`**: `feat(guest): serialize framed Winsock transport`
+  - **Task Impact**: +15% to #7 (+1.5% overall).
+  - **Summary**: Add bounded exact receives with preallocation header validation and CRC, serialized header/body sends with wraparound sequence assignment, and a failure event that shuts down blocked socket operations. Strict Windows object build passes.
 
 ## Verification snapshot
 
