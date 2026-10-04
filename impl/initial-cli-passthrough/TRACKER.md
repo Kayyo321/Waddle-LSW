@@ -456,9 +456,13 @@
   - **Task Impact**: 0% to #6 and #7 (0% overall; VM rerun pending).
   - **Summary**: Real Viosock 0.1.302 returns WSAENOTSOCK from WSAPoll on a valid socket after 32 KiB duplex output. Use provider-dispatched select for monitor readiness, with bounded numeric diagnostics.
 
-- **Commit `HEAD`**: `fix(guest): keep a single Viosock receive owner`
+- **Commit `cd541d4`**: `fix(guest): keep a single Viosock receive owner`
   - **Task Impact**: 0% to #6 and #7 (0% overall; cancellation acceptance pending).
   - **Summary**: Use a session-owned provider close event instead of concurrent receive peeks for Viosock. The actual VM now passes exact 16 MiB duplex; queued-input timeout recovery remains under investigation.
+
+- **Commit `HEAD`**: `test(cli): bound recovery across Viosock close timeout`
+  - **Task Impact**: 0% to #7 (0% overall; full acceptance pending).
+  - **Summary**: VM traces prove input/readers and session resources are released after transport reset. Retry cancellation reconnects within a bounded window to accommodate Linux VSOCK graceful-close linger, retaining strict normal reconnect stress.
 
 ## Verification snapshot
 

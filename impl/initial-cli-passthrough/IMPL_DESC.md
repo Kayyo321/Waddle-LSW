@@ -1026,3 +1026,13 @@ API support differs. This avoids concurrent Viosock receive/peek requests: that
 path triggered a WDF_VIOLATION 0x10D/4 kernel crash with the installed 0.1.302 driver.
 With close events, exact 16 MiB duplex acceptance passes in the VM; blocked-input
 cancellation/reconnect is still being investigated and is not yet accepted.
+
+Cancellation reconnect probes retry with two-second command deadlines for a
+20-second retry window (at most 24 seconds including the final connect/command).
+Linux VSOCK graceful close can leave queued incoming bytes until its transport
+close timeout sends a reset. The installed provider posts FD_CLOSE for that reset;
+only then can a guest pipe writer blocked behind unread stdin be canceled. A
+single immediate two-second connection attempt is therefore not a valid recovery
+oracle. The bounded retry must eventually receive the exact exit status from a
+fresh command; an unreleased session still fails this gate. Normal 32-session
+reconnect stress does not use retry masking.

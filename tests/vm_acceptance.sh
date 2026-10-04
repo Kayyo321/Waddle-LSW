@@ -15,6 +15,17 @@ run_status() {
     "${base[@]}" -- "$@" > "$work_dir/out" 2> "$work_dir/err" || status=$?
     test "$status" -eq "$expected"
 }
+recover_guest() {
+    local deadline=$((SECONDS + 20)) status
+    while ((SECONDS < deadline)); do
+        status=0
+        "${base[@]}" --timeout 2 -- "$fixture" --child exit259 > "$work_dir/out" 2> "$work_dir/err" || status=$?
+        if test "$status" -eq 3; then return 0; fi
+        sleep 0.1
+    done
+    cat "$work_dir/err" >&2
+    return 1
+}
 run_status 42 "$fixture" --child streams
 printf 'stdout\n' > "$work_dir/expected"; cmp "$work_dir/expected" "$work_dir/out"
 printf 'stderr\n' > "$work_dir/expected"; cmp "$work_dir/expected" "$work_dir/err"
@@ -48,7 +59,7 @@ head -c 1048576 "$work_dir/input" > "$work_dir/blocked-input"
 test "$status" -eq 124
 grep -q READY "$work_dir/out"
 grep -q 'session timed out' "$work_dir/err"
-run_status 3 "$fixture" --child exit259
+recover_guest
 # Kill a live frontend to exercise peer-loss cleanup over the installed provider.
 "${base[@]}" -- "$fixture" --child sleep < /dev/null > "$work_dir/out" 2> "$work_dir/err" &
 frontend_pid=$!
@@ -61,7 +72,7 @@ done
 if test "$ready" -ne 1; then kill -KILL "$frontend_pid" 2>/dev/null || true; wait "$frontend_pid" || true; exit 1; fi
 kill -KILL "$frontend_pid"
 wait "$frontend_pid" 2>/dev/null || true
-run_status 3 "$fixture" --child exit259
+recover_guest
 ./build/vm_terminal ./build/waddle "$WADDLE_VSOCK_CID" "$source_path"
 for iteration in $(seq 1 32); do run_status 3 "$fixture" --child exit259; done
 printf 'VM acceptance: streams, status, argv, cwd/env, export read/write, 16 MiB duplex, timeout/peer-loss cleanup, interactive console, 32 reconnects passed\n'
