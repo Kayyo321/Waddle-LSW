@@ -244,9 +244,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall; runtime verification pending).
   - **Summary**: Run 32 additional sessions against the same listener and require native process handle counts to remain stable after teardown; strict fixture cross-build passes.
 
-- **Commit `HEAD`**: `chore(test): expose the native Windows regression target`
+- **Commit `3e33cfa`**: `chore(test): expose the native Windows regression target`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add make windows-test for native execution of the cross-buildable AF_UNIX regression suite, with strict test compilation and explicit dependencies.
+
+- **Commit `HEAD`**: `ci(guest): run regressions on a native Windows runner`
+  - **Task Impact**: 0% across #1–#8 (0% overall; first CI run pending).
+  - **Summary**: Add Windows 2022 CI with a checksum-pinned Zig 0.13 toolchain, strict guest/fixture builds, native parser allocator tests and AF_UNIX regressions; initialize any repository submodules recursively.
 
 ## Verification snapshot
 
