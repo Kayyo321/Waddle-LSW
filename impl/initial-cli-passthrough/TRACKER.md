@@ -412,9 +412,13 @@
   - **Task Impact**: 0% to #6 (0% overall).
   - **Summary**: Link the system ntdll import library explicitly when MSVC links the safe-mode Zig codec, matching imports otherwise supplied by Zig cc.
 
-- **Commit `HEAD`**: `test(guest): expose file and console fixtures for VM acceptance`
+- **Commit `90f3b3e`**: `test(guest): expose file and console fixtures for VM acceptance`
   - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
   - **Summary**: Add deterministic guest child modes for actual exported-file read/write and interactive console input, dimensions, merged stderr, and Ctrl-C across Viosock.
+
+- **Commit `HEAD`**: `test(cli): automate real Viosock and export acceptance`
+  - **Task Impact**: 0% to #6 and #7 (0% overall; VM execution pending).
+  - **Summary**: Add explicit real-VM acceptance for host/guest streams, mapped file access, 16 MiB duplex, reconnects, and bounded C PTY input/resize/interrupt/restoration checks.
 
 ## Verification snapshot
 

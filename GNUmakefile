@@ -79,3 +79,11 @@ windows-test: windows build/windows_guest_test.exe
 
 coverage: build/path_rules.o
 	sh tests/coverage.sh
+
+# Explicit real VM gate; never silently substituted with the mock transport.
+build/vm_terminal: tests/vm_terminal.c | build
+	$(CC) $(CFLAGS) $< $(LDFLAGS) -lutil -o $@
+
+.PHONY: vm-test
+vm-test: build/waddle build/windows_guest_test.exe build/vm_terminal
+	bash tests/vm_acceptance.sh

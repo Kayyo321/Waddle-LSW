@@ -961,3 +961,17 @@ buffer rows/columns, writes a stderr marker for merged-output verification, and
 waits for Ctrl-C (exit 130). These modes let the Linux host validate mapped argv,
 export read/write semantics, interactive input, actual resize dimensions, and
 interrupt delivery across Viosock rather than inferring them from loopback.
+
+`WADDLE_VSOCK_CID=<cid> WADDLE_EXPORT_SOURCE=<dedicated-directory> make vm-test`
+runs the real acceptance suite. Copy `build/windows_guest_test.exe` into the
+export root first; the mounted drive must be `X:`. The suite creates/removes its
+own `marker.txt`, `result.txt`, and `waddle_日本語` directory, so use a dedicated
+export without those names. It checks separate streams/status, exit 259's POSIX
+status 3, escaped/Unicode argv, cmd switches, missing-program status, Unicode
+cwd/environment, mapped file arguments and bidirectional export access, exact
+16 MiB duplex bytes, 32 sequential reconnects, and actual ConPTY interaction.
+The Linux C PTY helper owns/reaps one frontend, keeps an observer slave descriptor
+to verify termios restoration, bounds console capture to 32 KiB, and uses monotonic
+20-second phase deadlines. Its guest must report 39 rows/101 columns after resize,
+accept a line of input, merge stderr, and exit 130 after terminal Ctrl-C. No mock
+socket fallback is permitted. VM transport failure makes this suite fail.
