@@ -27,3 +27,6 @@ build/terminal.o: src/terminal.c src/terminal.h src/common.h | build
 
 build/session.o: src/session.c src/session.h src/terminal.h src/common.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/session.c -o $@
+
+build/mock_process.o: src/mock_process.c src/mock_process.h src/common.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/mock_process.c -o $@
