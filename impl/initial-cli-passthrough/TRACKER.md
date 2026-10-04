@@ -144,9 +144,13 @@
   - **Task Impact**: +20% to #5 (+2% overall).
   - **Summary**: Define the borrowed rule ABI and bounds-checked UTF-8, component, drive-root and capacity validation. Native tests exercise parser failures and Unicode normalization. HEAD refers to the commit containing this entry and is resolved in the next commit.
 
-- **Commit `HEAD`**: `feat(paths): select exports through the host mapping API`
+- **Commit `cc62e84`**: `feat(paths): select exports through the host mapping API`
   - **Task Impact**: +20% to #5 (+2% overall).
   - **Summary**: Select longest component-boundary prefix, validate public rule inputs, preserve relative arguments, allocate and free output on failure, and link the Zig object into host targets. C unit suite passes; integration output failure is under investigation.
+
+- **Commit `HEAD`**: `fix(build): link the Zig path object against libc`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Declare libc ownership to Zig so its runtime does not override the C process environment; all 16 Linux integration scenarios pass again.
 
 ## Verification snapshot
 

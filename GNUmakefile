@@ -14,7 +14,7 @@ build:
 	mkdir -p $@
 
 build/path_rules.o: src/path_rules.zig | build
-	$(ZIG) build-obj src/path_rules.zig -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+	$(ZIG) build-obj src/path_rules.zig -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
 build/unit: tests/unit.c $(COMMON) include/waddle/cli_protocol.h src/common.h src/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/unit.c $(COMMON) $(LDFLAGS) -o $@
