@@ -15,12 +15,12 @@
 | #2      | Implement Win32 `CommandLineToArgvW` inverse escaping generator and unit tests | Done | 10% | 100% | Deterministic escaping for spaces, quotes, backslashes; 91.9% coverage |
 | #3      | Implement host CLI argument parser, `termios` raw mode manager, and signal trap | Done | 15% | 100% | Host CLI and terminal behavior verified by integration/PTY tests |
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
-| #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 80% | Rule selection and owned C mapping API implemented; CLI tests pending |
+| #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | In Progress | 10% | 90% | CLI rule parsing complete; final mapping regressions pending |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | Pending | 20% | 0% | `CreatePseudoConsole` & raw `CreatePipe` modes |
 | #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | Pending | 10% | 0% | Multi-threaded I/O forwarding and exit code retrieval |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `68.0%`
+**Total Feature Completion**: `69.0%`
 
 ## Commit History & Progress Log
 
@@ -148,9 +148,13 @@
   - **Task Impact**: +20% to #5 (+2% overall).
   - **Summary**: Select longest component-boundary prefix, validate public rule inputs, preserve relative arguments, allocate and free output on failure, and link the Zig object into host targets. C unit suite passes; integration output failure is under investigation.
 
-- **Commit `HEAD`**: `fix(build): link the Zig path object against libc`
+- **Commit `15ea478`**: `fix(build): link the Zig path object against libc`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Declare libc ownership to Zig so its runtime does not override the C process environment; all 16 Linux integration scenarios pass again.
+
+- **Commit `HEAD`**: `feat(cli): accept repeatable export mapping options`
+  - **Task Impact**: +10% to #5 (+1% overall).
+  - **Summary**: Accept at most 64 validated source=drive rules; reject normalized duplicate sources; map argv and cwd and free every owned source on all exits.
 
 ## Verification snapshot
 

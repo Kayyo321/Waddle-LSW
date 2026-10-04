@@ -4,6 +4,7 @@
  */
 
 #include "session.h"
+#include "path_rules.h"
 #include "terminal.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -60,6 +61,7 @@ static void usage(FILE *f) {
             "  --cwd PATH                     working directory in guest\n"
             "  --env|-e KEY=VALUE             set environment variable\n"
             "  --translate-path               map Linux paths to guest VirtIO-FS drives\n"
+            "  --path-map SOURCE=DESTINATION   repeatable export rule; implies translation\n"
             "  --timeout SECONDS              total session deadline; 0 disables\n");
 }
 
@@ -161,6 +163,8 @@ int main(int argc, char **argv) {
     uint32_t timeout = 0;
     int interactive = -1;
     int translate = 0;
+    path_rule_t rules[64] = {0};
+    size_t rule_count = 0;
     int start = 0;
     int result = 2;
     int fd = -1;
@@ -220,6 +224,19 @@ int main(int argc, char **argv) {
         const char *val = argv[++i];
         if (strcmp(opt, "--socket-path") == 0) {
             socket_path = val;
+        } else if (strcmp(opt, "--path-map") == 0) {
+            const char *equal = strchr(val, '=');
+            if (equal == NULL || rule_count == 64) { goto usage_error; }
+            char *source = strndup(val, (size_t)(equal - val));
+            if (source == NULL) { result = 125; goto done; }
+            if (!waddle_path_rule_valid(source, equal + 1)) { free(source); goto usage_error; }
+            size_t source_len = strlen(source);
+            while (source_len > 1 && source[source_len - 1] == '/') { source[--source_len] = '\0'; }
+            for (size_t j = 0; j < rule_count; j++) {
+                if (strcmp(rules[j].source, source) == 0) { free(source); goto usage_error; }
+            }
+            rules[rule_count++] = (path_rule_t){source, equal + 1};
+            translate = 1;
         } else if (strcmp(opt, "--cwd") == 0) {
             cwd_arg = val;
         } else if (strcmp(opt, "--vsock-cid") == 0) {
@@ -271,7 +288,7 @@ int main(int argc, char **argv) {
     }
 
     for (int i = start; i < argc; i++) {
-        args[i - start] = translate ? waddle_translate_path(argv[i]) : strdup(argv[i]);
+        args[i - start] = translate ? waddle_translate_rules(argv[i], rules, rule_count) : strdup(argv[i]);
         if (args[i - start] == NULL) {
             result = 125;
             goto done;
@@ -279,7 +296,7 @@ int main(int argc, char **argv) {
     }
 
     if (translate) {
-        char *mapped = waddle_translate_path(cwd);
+        char *mapped = waddle_translate_rules(cwd, rules, rule_count);
         if (mapped == NULL) {
             result = 125;
             goto done;
@@ -369,6 +386,7 @@ local_error:
     fprintf(stderr, "waddle: %s\n", strerror(errno));
 
 done:
+    for (size_t i = 0; i < rule_count; i++) { free((void *)rules[i].source); rules[i].source = NULL; }
     waddle_terminal_close();
     if (fd >= 0) {
         close(fd);
