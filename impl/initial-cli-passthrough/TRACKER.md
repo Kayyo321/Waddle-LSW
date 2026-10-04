@@ -380,9 +380,13 @@
   - **Task Impact**: 0% across TODO #6 and #7; verification pending
   - **Summary**: Limit individual send requests to 4096 bytes while retaining frame serialization and partial-transfer offsets; exercise the same limit in the native peer.
 
-- **Commit `HEAD`**: `fix(cli): order late resize signals before stdin frames`
+- **Commit `b1fc46d`**: `fix(cli): order late resize signals before stdin frames`
   - **Task Impact**: 0% across TODO #3 and #8; existing behavior corrected
   - **Summary**: Collect pending terminal events after reading ready stdin and before framing its bytes, closing the signal-arrival race after poll. All Linux sanitizer, allocator and integration tests pass.
+
+- **Commit `HEAD`**: `fix(guest): shorten native socket readiness retry intervals`
+  - **Task Impact**: 0% across TODO #6 and #7; verification pending
+  - **Summary**: The native AF_UNIX duplex transfer advances only about 100 KiB/s with 100 ms readiness intervals. Retry at 1 ms while preserving nonblocking I/O, bounded buffers, failure observation and cancellation.
 
 ## Verification snapshot
 

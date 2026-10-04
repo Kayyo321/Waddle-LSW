@@ -43,7 +43,7 @@ static int receive_exact(guest_wire_t *wire, uint8_t *bytes, size_t length) {
             fd_set readable;
             FD_ZERO(&readable);
             FD_SET(wire->socket, &readable);
-            struct timeval interval = {0, 100000};
+            struct timeval interval = {0, 1000};
             int ready = select(0, &readable, NULL, NULL, &interval);
             if (ready == 0) { continue; }
             if (ready < 0) {
@@ -88,7 +88,7 @@ static int send_exact(guest_wire_t *wire, const uint8_t *bytes, size_t length) {
             fd_set writable;
             FD_ZERO(&writable);
             FD_SET(wire->socket, &writable);
-            struct timeval interval = {0, 100000};
+            struct timeval interval = {0, 1000};
             if (select(0, NULL, &writable, NULL, &interval) >= 0) { continue; }
         }
         if (sent <= 0) { guest_wire_fail(wire); return -1; }

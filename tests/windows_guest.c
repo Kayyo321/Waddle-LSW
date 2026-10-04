@@ -51,7 +51,7 @@ static void transfer(SOCKET socket, uint8_t *bytes, size_t length, int sending) 
             check(GetTickCount64() < deadline, "socket readiness deadline");
             fd_set ready;
             FD_ZERO(&ready); FD_SET(socket, &ready);
-            struct timeval interval = {0, 100000};
+            struct timeval interval = {0, 1000};
             check(select(0, sending ? NULL : &ready, sending ? &ready : NULL, NULL, &interval) >= 0,
                   "socket readiness wait");
             continue;
