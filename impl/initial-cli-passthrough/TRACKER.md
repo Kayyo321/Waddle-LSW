@@ -17,10 +17,10 @@
 | #4      | Implement host non-blocking multiplexer event loop (`poll`) and stream handlers | Done | 15% | 100% | Bounded queue_t stream loop, decoder_t, zero leak verification |
 | #5      | Implement path translation engine (Linux host paths to guest VirtIO-FS drives) | Done | 10% | 100% | Zig path rules and C mapping regressions pass |
 | #6      | Implement Windows guest console execution agent with ConPTY and pipe support | In Progress | 20% | 85% | Raw/ConPTY process lifecycle implemented; native Windows verification pending |
-| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 40% | Guest parsers and framed Winsock transport complete; listener and pump pending |
+| #7      | Implement guest asynchronous I/O pump and VSOCK listener/dispatcher | In Progress | 10% | 55% | Input forwarding implemented; output, session orchestration and listener pending |
 | #8      | Build loopback mock test harness, unit tests, and integration test suite | Done | 10% | 100% | 16 C integration scenarios, 17 Zig native tests, >90% coverage, ASan/LSan clean |
 
-**Total Feature Completion**: `91.0%`
+**Total Feature Completion**: `92.5%`
 
 ## Commit History & Progress Log
 
@@ -188,9 +188,13 @@
   - **Task Impact**: +15% to #7 (+1.5% overall).
   - **Summary**: Add bounded exact receives with preallocation header validation and CRC, serialized header/body sends with wraparound sequence assignment, and a failure event that shuts down blocked socket operations. Strict Windows object build passes.
 
-- **Commit `HEAD`**: `feat(guest): preserve output while cancelling input receives`
+- **Commit `8edc3bc`**: `feat(guest): preserve output while cancelling input receives`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Introduce atomic orderly-input cancellation and receive-half shutdown so normal child teardown can wake input without marking transport failure or interrupting output drains.
+
+- **Commit `HEAD`**: `feat(guest): forward stdin and process controls`
+  - **Task Impact**: +15% to #7 (+1.5% overall).
+  - **Summary**: Implement a fixed-buffer input worker for stdin EOF, signed ConPTY resize, ETX/CTRL_BREAK interrupts, job termination and heartbeat replies. Treat child stdin closure and orderly cancellation separately from failures. Strict Windows object build passes.
 
 ## Verification snapshot
 
