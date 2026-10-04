@@ -306,3 +306,71 @@ test "listener port parsing rejects overflow and signs" {
     try std.testing.expectEqual(@as(c_int, 0), guest_port_parse("5242", &port));
     try std.testing.expectEqual(@as(u32, 5242), port);
 }
+
+/// in: borrowed nonnull command[length]; out: disjoint caller-owned
+/// output[capacity]. Returns 0 success, -1 invalid/capacity; no allocations or
+/// shared state. Only leading recognized cmd.exe switches are unquoted.
+export fn guest_cmd_commandline(command_ptr: [*]const u8, length: usize, output_ptr: [*]u8, capacity: usize) c_int {
+    const command = command_ptr[0..length];
+    const output = output_ptr[0..capacity];
+    if (length > 1048576 or length >= capacity or !valid_text(command) or
+        !command_validate(command, output)) return -1;
+    var offset: usize = 0;
+    var written: usize = 0;
+    var first = true;
+    var switches = true;
+    while (offset < command.len) {
+        const start = offset;
+        offset += 1; // Canonical argument starts with a quote.
+        while (true) {
+            var slashes: usize = 0;
+            while (command[offset] == '\\') : (offset += 1) slashes += 1;
+            if (command[offset] == '"' and slashes % 2 == 0) break;
+            offset += 1;
+        }
+        const token = command[start + 1 .. offset];
+        offset += 1;
+        var strip = false;
+        if (!first and switches) {
+            for ([_][]const u8{ "/c", "/k", "/d", "/s", "/q", "/a", "/u", "/e:on", "/e:off", "/f:on", "/f:off", "/v:on", "/v:off" }) |option| {
+                if (std.ascii.eqlIgnoreCase(token, option)) {
+                    strip = true;
+                    break;
+                }
+            }
+            if (std.ascii.eqlIgnoreCase(token, "/c") or std.ascii.eqlIgnoreCase(token, "/k")) switches = false;
+        }
+        const bytes = if (strip) token else command[start..offset];
+        if (!first) {
+            output[written] = ' ';
+            written += 1;
+        }
+        @memcpy(output[written..][0..bytes.len], bytes);
+        written += bytes.len;
+        first = false;
+        if (offset < command.len) offset += 1;
+    }
+    output[written] = 0;
+    return 0;
+}
+
+test "cmd switches stop rewriting at the shell command" {
+    var output: [256]u8 = undefined;
+    const command = "\"cmd.exe\" \"/D\" \"/s\" \"/c\" \"exit 37\" \"/q\"";
+    try std.testing.expectEqual(@as(c_int, 0), guest_cmd_commandline(command, command.len, &output, output.len));
+    try std.testing.expectEqualStrings("\"cmd.exe\" /D /s /c \"exit 37\" \"/q\"", std.mem.sliceTo(&output, 0));
+    const keep = "\"cmd.exe\" \"/unknown\" \"a&b\"";
+    try std.testing.expectEqual(@as(c_int, 0), guest_cmd_commandline(keep, keep.len, &output, output.len));
+    try std.testing.expectEqualStrings(keep, std.mem.sliceTo(&output, 0));
+    const escaped = "\"C:\\Windows\\cmd.exe\" \"/k\" \"a\\\"b\" \"C:\\x\\\\\"";
+    try std.testing.expectEqual(@as(c_int, 0), guest_cmd_commandline(escaped, escaped.len, &output, output.len));
+    try std.testing.expectEqualStrings("\"C:\\Windows\\cmd.exe\" /k \"a\\\"b\" \"C:\\x\\\\\"", std.mem.sliceTo(&output, 0));
+    for ([_][]const u8{ "/q", "/a", "/u", "/e:on", "/e:off", "/f:on", "/f:off", "/v:on", "/v:off" }) |option| {
+        var input: [80]u8 = undefined;
+        const bytes = try std.fmt.bufPrint(&input, "\"cmd.exe\" \"{s}\"", .{option});
+        try std.testing.expectEqual(@as(c_int, 0), guest_cmd_commandline(bytes.ptr, bytes.len, &output, output.len));
+        try std.testing.expect(std.mem.endsWith(u8, std.mem.sliceTo(&output, 0), option));
+    }
+    try std.testing.expectEqual(@as(c_int, -1), guest_cmd_commandline(command, command.len, &output, command.len));
+    try std.testing.expectEqual(@as(c_int, -1), guest_cmd_commandline("bad", 3, &output, output.len));
+}

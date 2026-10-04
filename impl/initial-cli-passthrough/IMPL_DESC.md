@@ -885,3 +885,24 @@ the installed Viosock provider or VirtIO-FS mapping. Those checks remain a merge
 acceptance gate until their actual results are recorded in TRACKER.md. No
 sub-millisecond performance or cross-hypervisor compatibility claim is inferred
 from unit tests or loopback execution.
+
+### 10.4 cmd.exe switch boundary
+
+`cmd.exe` has a distinct shell command-line grammar and does not recognize a
+CRT-quoted `/c` as its command switch. For a selected executable whose final path
+component compares ordinal case-insensitively equal to `cmd.exe`, Zig copies the
+validated canonical command into bounded caller-owned UTF-8 storage. It removes
+only the surrounding quotes on recognized leading switches: `/c`, `/k`, `/d`,
+`/s`, `/q`, `/a`, `/u`, `/e:on`, `/e:off`, `/f:on`, `/f:off`, `/v:on`, `/v:off`.
+Processing switches stops after `/c` or `/k`; all later command bytes, including
+their original canonical quoting, remain unchanged. No punctuation is unescaped,
+no environment expansion is performed by Waddle, and no switch normalization
+applies to any other executable. The chosen executable remains the separately
+validated/resolved argv[0], never inferred from the rewritten command.
+
+This makes `cmd.exe /c "exit 37"` and a single shell command string work. Complex
+cmd shell expressions remain subject to cmd's own grammar; CRT quoting is not a
+promise that cmd interprets shell command tokens as a native argv array. The
+compatibility output is at most input_length+1 including NUL, has no parser-owned
+allocation, and is released by C immediately after UTF-16 conversion. Invalid
+canonical input or insufficient capacity returns minus one before process launch.

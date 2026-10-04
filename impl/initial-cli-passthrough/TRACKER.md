@@ -348,9 +348,13 @@
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Add Linux CI with checksum-verified Zig, base-package kcov, ASan/LSan/UBSan and native allocator tests, 90% implementation coverage enforcement and complete Windows cross-builds.
 
-- **Commit `HEAD`**: `fix(ci): use Debian base coverage packages in Linux verification`
+- **Commit `661bef6`**: `fix(ci): use Debian base coverage packages in Linux verification`
   - **Task Impact**: 0% across #1–#8 (0% overall).
   - **Summary**: Ubuntu 24.04 has no kcov package in its configured archive. Run the Linux job in Debian trixie with base build/coverage packages and ptrace permission; this matches the verified local kcov toolchain.
+
+- **Commit `HEAD`**: `feat(guest): adapt cmd.exe switches with a bounded Zig serializer`
+  - **Task Impact**: 0% across #1–#8 (0% overall).
+  - **Summary**: Specify and implement allocation-free unquoting of recognized leading cmd.exe switches, stop at /c or /k and preserve all later shell bytes. Native tests cover switch cases, quoting, unknown options and capacity.
 
 ## Verification snapshot
 

@@ -60,4 +60,14 @@ int guest_control_validate(uint16_t type, const uint8_t *body, size_t length,
  * @param[out] port Nonnull caller-owned result, unchanged on failure.
  * @return 0 valid 1..UINT32_MAX, -1 invalid/overflow. */
 int guest_port_parse(const char *text, uint32_t *port);
+/** @brief Adapt canonical CRT quoting to leading cmd.exe switches; thread-safe.
+ * @param[in] command Nonnull borrowed length-byte validated UTF-8 command.
+ * @param[in] length Byte count excluding terminator.
+ * @param[out] output Nonnull caller-owned writable buffer, disjoint from command.
+ * @param[in] capacity Buffer bytes including NUL; length+1 always suffices.
+ * @return 0 success, -1 invalid canonical input or insufficient capacity.
+ * @note Allocation-free; output unspecified on failure. Only recognized leading
+ * switches are unquoted; command bytes after /c or /k remain unchanged. */
+int guest_cmd_commandline(const uint8_t *command, size_t length,
+                          uint8_t *output, size_t capacity);
 #endif
