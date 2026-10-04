@@ -1,0 +1,53 @@
+name: Native Windows guest
+on:
+  push:
+    branches: [feature/initial-cli-passthrough]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  guest:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: recursive
+      - name: Install verified Zig 0.13 toolchain
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip -OutFile "$env:RUNNER_TEMP/zig.zip"
+          $archive_sha = (Get-FileHash "$env:RUNNER_TEMP/zig.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($archive_sha -ne 'd859994725ef9402381e557c60bb57497215682e355204d754ee3df75ee3c158') { throw 'Zig checksum mismatch' }
+          Expand-Archive "$env:RUNNER_TEMP/zig.zip" "$env:RUNNER_TEMP/zig"
+          "$env:RUNNER_TEMP/zig/zig-windows-x86_64-0.13.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Test guest parsers with the testing allocator
+        shell: pwsh
+        run: |
+          zig test src/guest_codec.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/path_rules.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build native guest and fixture
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          zig build-lib src/guest_codec.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build\guest_codec.lib' --verbose-link
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $compiler_flags = @('-target', 'x86_64-windows-gnu', '-U_WIN32_WINNT', '-D_WIN32_WINNT=0x0A00', '-DNTDDI_VERSION=0x0A000006', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror', '-Isrc')
+          $guest_sources = @('src/guest_listener.c', 'src/guest_session.c', 'src/guest_wire.c', 'src/guest_input.c', 'src/guest_output.c', 'src/guest_process.c', 'src/guest_environment.c')
+          zig cc @compiler_flags @guest_sources 'build\guest_codec.lib' -lws2_32 -o 'build\waddle-guest-exec.exe'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc @compiler_flags tests/windows_guest.c 'build\guest_codec.lib' -lws2_32 -municode -o 'build\windows_guest_test.exe'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run native AF_UNIX regressions
+        shell: pwsh
+        timeout-minutes: 5
+        run: |
+          ./build/windows_guest_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Audit native guest allocations with the Windows debug heap
+        shell: pwsh
+        timeout-minutes: 5
+        run: ./tests/windows_heap.ps1

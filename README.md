@@ -1,8 +1,12 @@
 # Waddle-LSW (Waddle Linux Subsystem for Windows)
 
+<img align="right" width="180" height="180" alt="Waddle-LSW Logo" src="imgs/logo.png">
+
 **Waddle-LSW** is an open-source compatibility layer and subsystem architecture designed to deliver seamless, borderless integration of Microsoft Windows applications directly into Linux Wayland desktop environments.
 
 Unlike traditional full-screen virtual machine viewers, Waddle-LSW tracks individual Windows application windows inside a lightweight guest VM, captures their surfaces with hardware acceleration, transfers frames across domain boundaries via high-throughput IVSHMEM shared memory, and composes them as native Wayland surfaces alongside your Linux applications.
+
+<br clear="right" />
 
 ---
 
@@ -40,3 +44,5 @@ git config submodule.recurse true
 - **[PROJECT.md](file:///home/dev/Waddle-LSW/PROJECT.md)**: Architectural pillars, subsystem responsibilities (Host Compositor Client, Transport Layer, Guest Agent, CLI Passthrough), IVSHMEM layouts, language policies (C default, Zig for memory safety, C++ solely for compatibility), code beauty naming invariants (`snake_case`, `PascalCase` constants, `type_name_t`, zero `camelCase`), documentation enforcement, zero-leak memory safety policy, and Zig built-in test specifications.
 - **[AGENTS.md](file:///home/dev/Waddle-LSW/AGENTS.md)**: Authoritative developer and agent workflow rules, atomic commit standards, branching models, submodule policies, `impl/` tracker specifications, and code beauty / zero-leak quality PR merge checklists.
 - **[CONTRIBUTING.md](file:///home/dev/Waddle-LSW/CONTRIBUTING.md)**: Comprehensive contributor guidelines, toolchain setups, deterministic memory architecture, testing with Zig built-in test specifications, code coverage, LeakSanitizer zero-leak gating, in-depth Git submodule management, and PR review checklists.
+
+---
