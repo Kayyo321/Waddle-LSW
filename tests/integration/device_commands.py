@@ -149,25 +149,28 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     assert not Path(env["XDG_RUNTIME_DIR"]).exists(), "read commands must never spawn or create runtime files"
 print("device_commands: isolated JSON, selection, inspection, malformed and raw-transport cases passed")
 
-# Text confirmation is cancellable without waiting for another line/TTY EOF.
-with tempfile.TemporaryDirectory(prefix='wd-confirm-') as temporary:
-    root=Path(temporary)
-    env=dict(os.environ, HOME=str(root), XDG_CONFIG_HOME=str(root/'config'),
-             XDG_STATE_HOME=str(root/'state'), XDG_RUNTIME_DIR=str(root/'run'))
-    executable=str(Path('build/waddle').resolve())
-    subprocess.run([executable,'device','init','confirmed','--blank-disk','1M'],env=env,check=True,capture_output=True)
-    master,slave=pty.openpty()
-    process=subprocess.Popen([executable,'device','remove','confirmed'],env=env,stdin=slave,
-                             stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    try:
-        assert select.select([process.stdout],[],[],10)[0], 'confirmation prompt missing'
-        assert 'Type the exact name' in os.read(process.stdout.fileno(),4096).decode()
-        process.send_signal(signal.SIGINT)
-        output,diagnostics=process.communicate(timeout=5)
-        assert process.returncode==130,(process.returncode,output,diagnostics)
-        assert (root/'config/waddle/devices/confirmed.ini').is_file()
-        assert (root/'state/waddle/devices/confirmed/disk.qcow2').is_file()
-    finally:
-        if process.poll() is None: process.kill();process.wait()
-        os.close(master);os.close(slave)
-print('device confirmation: SIGINT returns 130 promptly and preserves device')
+# Text confirmation is cancellable, exact-name only and never applies on mismatch.
+for mode in ('cancel','confirm','mismatch','overlong'):
+    with tempfile.TemporaryDirectory(prefix='wd-confirm-') as temporary:
+        root=Path(temporary)
+        env=dict(os.environ, HOME=str(root), XDG_CONFIG_HOME=str(root/'config'),
+                 XDG_STATE_HOME=str(root/'state'), XDG_RUNTIME_DIR=str(root/'run'))
+        native_executable=str(Path('build/waddle').resolve())
+        driver=native_executable if mode=='cancel' else os.environ.get('WADDLE_TEST_EXECUTABLE',native_executable)
+        subprocess.run([driver,'device','init','confirmed','--blank-disk','1M'],env=env,check=True,capture_output=True)
+        master,slave=pty.openpty()
+        process=subprocess.Popen([driver,'device','remove','confirmed'],env=env,stdin=slave,
+                                 stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        try:
+            assert select.select([process.stdout],[],[],10)[0], 'confirmation prompt missing'
+            assert 'Type the exact name' in os.read(process.stdout.fileno(),4096).decode()
+            if mode=='cancel': process.send_signal(signal.SIGINT)
+            else: os.write(master, {'confirm':b'confirmed\n','mismatch':b'wrong\n','overlong':b'x'*80+b'\n'}[mode])
+            output,diagnostics=process.communicate(timeout=10)
+            assert process.returncode==(0 if mode=='confirm' else 130),(mode,process.returncode,output,diagnostics)
+            assert (root/'config/waddle/devices/confirmed.ini').is_file()==(mode!='confirm')
+            assert (root/'state/waddle/devices/confirmed/disk.qcow2').is_file()==(mode!='confirm')
+        finally:
+            if process.poll() is None: process.kill();process.wait()
+            os.close(master);os.close(slave)
+print('device confirmation: exact name removes; SIGINT/mismatch/overlong cancel and preserve device')

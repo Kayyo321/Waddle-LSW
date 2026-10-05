@@ -191,6 +191,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +0% to TODO #10; retain 95.5% pending final verification.
   - **Summary**: Scope staged clone/init/import/export image handles with defer so chmod/fsync errors close descriptors before rollback. Include staged disk fsync in ordinal failure injection. This audit fix receives full fault/sanitizer/coverage reruns before completion.
 
-- **Commit `:/allow SIGINT to cancel device removal confirmation`**: `fix(cli): allow SIGINT to cancel device removal confirmation`
+- **Commit `6d3f15b`**: `fix(cli): allow SIGINT to cancel device removal confirmation`
   - **Task Impact**: +0% to TODO #10; retain 95.5% pending final verification.
   - **Summary**: Read the bounded TTY confirmation through cancellable poll/read instead of a standard reader that retries EINTR. PTY acceptance proves immediate exit 130 without waiting for newline/EOF and preserves config/disk. Updated CLI acceptance passes under ASan/LSan/UBSan; the full storage matrix now covers 360 boundaries.
+
+- **Commit `:/cover device confirmation acceptance and refusal paths`**: `test(cli): cover device confirmation acceptance and refusal paths`
+  - **Task Impact**: +0% to TODO #10; retain 95.5% pending final verification.
+  - **Summary**: Extend PTY tests to exact-name confirmation, mismatched input and bounded overlong rejection alongside SIGINT cancellation. Trace normal prompt paths through kcov while signal tests retain direct child ownership. CLI implementation line coverage is 93.89% (446/475), registry 92.34%, storage 93.64%; no coverage threshold is relaxed.
