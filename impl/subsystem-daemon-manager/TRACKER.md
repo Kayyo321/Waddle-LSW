@@ -11,7 +11,7 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Define shared C daemon control wire protocol (`include/waddle/daemon_protocol.h`) and status data structures | Pending | 10% | 0% | Packed structs, Little-Endian, PascalCase constants, type_name_t naming |
+| #1      | Define shared C daemon control wire protocol (`include/waddle/daemon_protocol.h`) and status data structures | Done | 10% | 100% | Packed structs, Little-Endian, PascalCase constants, socket framing verified |
 | #2      | Implement daemon configuration subsystem in Zig (`src/daemon_config.zig` / `src/daemon_config.h`) for parsing VM specs, exports, and paths | Pending | 10% | 0% | Memory safe, bounds checked, no leaks |
 | #3      | Implement QEMU process manager and QMP (QEMU Machine Protocol) JSON-RPC client in C (`src/daemon_qemu.c`, `src/daemon_qmp.c`) | Pending | 15% | 0% | Command-line builder, QMP capabilities handshake, ACPI shutdown |
 | #4      | Implement VirtIO-FS (`virtiofsd`) lifecycle manager and multi-export filesystem bridge (`src/daemon_fs.c`, `src/daemon_fs.h`) | Pending | 15% | 0% | vhost-user socket setup, sandbox/cache flags, multi-export mapping |
@@ -20,9 +20,13 @@
 | #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Pending | 10% | 0% | Primary goal: 'waddle' drops into ConPTY, resolves Linux CWD -> Z:\... |
 | #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Pending | 10% | 0% | Primary goal: live dir/mkdir test verifying instant folder appearance on Linux desktop |
 
-**Total Feature Completion**: `0.0%`
+**Total Feature Completion**: `10.0%`
 
 ## Commit History & Progress Log
+
+- **Commit `effab6e`**: `feat(daemon): define daemon control wire protocol and data structures`
+  - **Task Impact**: +100% to TODO: #1 (+10.0% overall feature completion)
+  - **Summary**: Implemented daemon wire header, message types, states, start/stop/status/fs payloads, validation, socket framing, and unit test suite in C.
 
 - **Commit `01adf3e`**: `docs(impl): add detailed implementation description and tracker for subsystem daemon manager`
   - **Task Impact**: 0% progress impact (specification and tracking baseline established for tasks #1 through #8)
