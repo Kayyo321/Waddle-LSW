@@ -34,8 +34,10 @@ static int set_nonblock(int fd) {
  * @param[in]     client_fd Connected client socket descriptor.
  * @param[in]     hdr       Received frame header.
  * @param[in]     payload   Received payload bytes.
+ * @return One after successfully replying to an idle shutdown, otherwise zero.
+ * @note Single event-loop thread; borrowed inputs; no retained memory.
  */
-static void handle_client_message(daemon_state_t *state,
+static int handle_client_message(daemon_state_t *state,
                                   int client_fd,
                                   const waddle_daemon_header_t *hdr,
                                   const uint8_t *payload) {
@@ -72,6 +74,21 @@ static void handle_client_message(daemon_state_t *state,
         }
         (void)waddle_daemon_send_msg(client_fd, DaemonMsgStopResp, hdr->sequence, &resp, sizeof(resp));
         break;
+    }
+
+    case DaemonMsgShutdownReq: {
+        waddle_daemon_result_resp_t resp = {0};
+        daemon_state_reap_children(state);
+        resp.subsystem_state = (uint32_t)state->state;
+        if (hdr->payload_len != 0) {
+            resp.status_code = EINVAL;
+        } else if ((state->state != SubsystemStateStopped && state->state != SubsystemStateFailed) ||
+                   state->qemu.pid != 0 || state->virtiofs.pid != 0) {
+            resp.status_code = EBUSY;
+        }
+        int sent = waddle_daemon_send_msg(client_fd, DaemonMsgShutdownResp,
+                                         hdr->sequence, &resp, sizeof(resp));
+        return resp.status_code == 0 && sent == 0;
     }
 
     case DaemonMsgStatusReq: {
@@ -133,6 +150,7 @@ static void handle_client_message(daemon_state_t *state,
         break;
     }
     }
+    return 0;
 }
 
 int daemon_server_run(const char *custom_runtime_dir, volatile sig_atomic_t *stop_flag) {
@@ -189,8 +207,9 @@ int daemon_server_run(const char *custom_runtime_dir, volatile sig_atomic_t *sto
         client_fds[i] = -1;
     }
 
+    int shutdown_requested = 0;
     /* Main non-blocking event loop */
-    while (stop_flag == NULL || *stop_flag == 0) {
+    while (!shutdown_requested && (stop_flag == NULL || *stop_flag == 0)) {
         daemon_state_reap_children(&state);
 
         struct pollfd pfd[1 + DaemonMaxClients];
@@ -243,6 +262,9 @@ int daemon_server_run(const char *custom_runtime_dir, volatile sig_atomic_t *sto
         nfds_t cur_idx = 1;
         for (size_t i = 0; i < DaemonMaxClients; i++) {
             if (client_fds[i] < 0) continue;
+            if (cur_idx >= nfds) break;
+            /* Newly accepted clients are not in this poll snapshot. */
+            if (pfd[cur_idx].fd != client_fds[i]) continue;
 
             if (pfd[cur_idx].revents & (POLLIN | POLLHUP | POLLERR)) {
                 waddle_daemon_header_t hdr;
@@ -251,7 +273,10 @@ int daemon_server_run(const char *custom_runtime_dir, volatile sig_atomic_t *sto
 
                 int r = waddle_daemon_recv_msg(client_fds[i], &hdr, payload, sizeof(payload), 50);
                 if (r == 0) {
-                    handle_client_message(&state, client_fds[i], &hdr, payload);
+                    if (handle_client_message(&state, client_fds[i], &hdr, payload)) {
+                        shutdown_requested = 1;
+                        break;
+                    }
                 } else if (r == -2 || (r == -1 && errno != EAGAIN && errno != EWOULDBLOCK && errno != ETIMEDOUT)) {
                     /* EOF or client disconnect */
                     close(client_fds[i]);

@@ -14,16 +14,16 @@
 | #1 | Fix VirtIO-FS readiness probing and stabilize startup | Done | 10% | 100% | Existing stat-based fix; final VM acceptance remains #10 |
 | #2 | Implement registry discovery, storage paths, and device metadata | Done | 10% | 100% | Existing baseline; hardening/recovery tracked in #7 |
 | #3 | Implement init and aliases with valid QCOW2 creation | In Progress | 10% | 60% | Placeholder fallback removed; transactional publication and expanded grammar remain |
-| #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | In Progress | 10% | 65% | Default precedence and explicit transport bypass delivered; batch grammar, authoritative state and supervisor exit remain |
-| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 40% | Registry plus isolated JSON/default/inspection/raw-transport acceptance pass; complete creation/lifecycle matrix remains |
+| #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | In Progress | 10% | 75% | Default precedence, transport bypass, supervisor shutdown/wait delivered; batch grammar and complete state observations remain |
+| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 50% | Registry/CLI selection plus shutdown busy/malformed/idle regressions pass; complete creation/lifecycle matrix remains |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
-| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 15% | Pure discovery, no-follow traversal, stable lock and overflow checks delivered; mutations/recovery remain |
+| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 20% | Registry hardening and stable OFD supervisor leases delivered; startup handoff, orphan auditing and offline transactions remain |
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 30% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
 | #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
 | #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `53.5%`
+**Total Feature Completion**: `56.0%`
 
 ## Commit History & Progress Log
 
@@ -139,6 +139,11 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Summary**: Add bounded Zig CLI parsing, typed list/show/default/config-get commands, duplicate/contextual option checks, filters and proper JSON escaping in the v1 envelope. Query the daemon status protocol without spawning a supervisor; unreachable existing sockets remain unknown. Arena ownership and testing allocator tests cover result storage. Complete backing-chain/ownership observation and config/doctor mutations remain pending.
 
 
-- **Commit `:/apply explicit default and sole device target precedence`**: `feat(cli): apply explicit default and sole device target precedence`
+- **Commit `83d61e3`**: `feat(cli): apply explicit default and sole device target precedence`
   - **Task Impact**: +15% to TODO #4 (+1.5% overall), +20% to TODO #5 (+2.0% overall); total 53.5%.
   - **Summary**: Resolve explicit/default/sole selection consistently, reject missing and dangling defaults and ambiguous registries, remove implicit multi-device status, preserve selected config for shell execution, and bypass inference for explicit raw transports. Add isolated JSON and target-selection acceptance, and give path-option tests an explicit mock transport. Filesystem mock demonstration now initializes an isolated profile/export instead of relying on developer devices. Broad suite detected the outdated implicit-global expectation in path tests; this commit updates that fixture contract.
+
+
+- **Commit `:/shut down idle supervisors before releasing device leases`**: `feat(daemon): shut down idle supervisors before releasing device leases`
+  - **Task Impact**: +10% to TODO #4 (+1.0% overall), +10% to TODO #5 (+1.0% overall), +5% to TODO #7 (+0.5% overall); total 56.0%.
+  - **Summary**: Add v1 shutdown request/response, reject malformed/busy requests, reply before server teardown, retain a stable private OFD lease until children and sockets are cleaned, and wait for lease release in stop/kill/restart. Remove unsafe lock-file unlinking and abort restart on failed stop. Handle newly accepted clients outside the current poll snapshot. Server/client regressions and full make test pass; standalone server suite passes ThreadSanitizer. Orphan process audit, startup registry handoff and full lifecycle/VM matrix remain pending.

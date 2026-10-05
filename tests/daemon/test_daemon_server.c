@@ -86,6 +86,7 @@ static void test_server_ipc(void) {
     memset(&ctx, 0, sizeof(ctx));
     snprintf(ctx.runtime_dir, sizeof(ctx.runtime_dir), "/tmp/waddle_test_srv_%d", (int)getpid());
 
+    assert(setenv("WADDLE_MOCK_GUEST_SOCK", "/dev/null", 1) == 0);
     assert(pthread_create(&ctx.thread, NULL, server_thread_func, &ctx) == 0);
 
     /* Wait for daemon.sock to appear */
@@ -134,6 +135,17 @@ static void test_server_ipc(void) {
     assert(fs_resp.mount_count >= 1);
     assert(strcmp(fs_resp.mounts[0].guest_drive, "Z:\\") == 0);
 
+    /* Running mock state refuses shutdown even with no child PID. */
+    waddle_daemon_start_req_t start_req = {0};
+    waddle_daemon_result_resp_t result;
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgStartReq, 120, &start_req, sizeof(start_req)) == 0);
+    assert(waddle_daemon_recv_msg(client_fd, &hdr, &result, sizeof(result), 2000) == 0);
+    assert(result.status_code == 0 && result.subsystem_state == SubsystemStateRunning);
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgShutdownReq, 121, NULL, 0) == 0);
+    assert(waddle_daemon_recv_msg(client_fd, &hdr, &result, sizeof(result), 2000) == 0);
+    assert(hdr.msg_type == DaemonMsgShutdownResp && hdr.sequence == 121);
+    assert(result.status_code == EBUSY);
+
     /* 3. Kill Request */
     assert(waddle_daemon_send_msg(client_fd, DaemonMsgKillReq, 103, NULL, 0) == 0);
     waddle_daemon_result_resp_t kill_resp;
@@ -143,11 +155,18 @@ static void test_server_ipc(void) {
     assert(kill_resp.status_code == 0);
     assert(kill_resp.subsystem_state == SubsystemStateStopped);
 
+    /* Malformed shutdown stays connected; idle shutdown replies before exiting. */
+    uint8_t unexpected = 1;
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgShutdownReq, 122, &unexpected, 1) == 0);
+    assert(waddle_daemon_recv_msg(client_fd, &hdr, &result, sizeof(result), 2000) == 0);
+    assert(result.status_code == EINVAL);
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgShutdownReq, 123, NULL, 0) == 0);
+    assert(waddle_daemon_recv_msg(client_fd, &hdr, &result, sizeof(result), 2000) == 0);
+    assert(hdr.msg_type == DaemonMsgShutdownResp && hdr.sequence == 123 && result.status_code == 0);
     close(client_fd);
-
-    /* Stop server */
-    ctx.stop_flag = 1;
     pthread_join(ctx.thread, NULL);
+    assert(access(sock_path, F_OK) != 0);
+    unsetenv("WADDLE_MOCK_GUEST_SOCK");
 }
 
 int main(void) {

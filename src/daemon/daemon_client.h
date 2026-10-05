@@ -130,6 +130,16 @@ int waddle_client_stop(int fd,
 int waddle_client_status(int fd, waddle_daemon_status_resp_t *resp);
 
 /**
+ * @brief Request supervisor exit after all subsystem children are stopped and reaped.
+ * @param[in] fd Borrowed connected socket, nonnegative; caller closes it.
+ * @param[out] resp Non-null borrowed result destination; status_code may be EBUSY.
+ * @return 0 for a complete validated response, -1 with errno for transport/protocol error.
+ * @note No allocation; single caller per socket. Reply precedes disconnect and lease release.
+ * Older supervisors may return ENOTSUP; callers must leave their lease intact.
+ */
+int waddle_client_shutdown(int fd, waddle_daemon_result_resp_t *resp);
+
+/**
  * @brief Sends a Kill request to the daemon to force-terminate all processes.
  *
  * @param[in]  fd   Connected daemon client socket descriptor.

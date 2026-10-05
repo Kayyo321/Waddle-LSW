@@ -366,7 +366,8 @@ diagnostics never turn a shared read into an implicit write. Stable lock files
 are opened with close-on-exec and no-follow, ownership checked; child utilities
 cannot inherit locks. Blocked acquisition observes SIGINT and exits 130.
 
-Supervisor lifetime uses a separate per-device lease held by waddled until all
+Supervisor lifetime uses a separate per-device open-file-description (OFD) lease
+(`F_OFD_SETLK`, Linux) held by waddled until all
 children are reaped and it exits. Registry mutations acquire registry lock first,
 then try the device lease without waiting: busy returns `EBUSY`. Supervisors must
 never acquire registry lock while holding their lifetime lease; startup receives
@@ -502,3 +503,18 @@ final show contract. Default single-file persistence uses a 0600 staging file,
 file fsync, atomic rename and parent fsync; post-rename fsync failure reports I/O
 with uncertain durability. Rename/remove default changes still require the
 multi-operation journal described in section 5.
+
+
+### Implementation evidence: supervisor exit and stable leases
+
+Shutdown v1 IDs 0x000D/0x000E are implemented. The event loop reaps children,
+requires stopped/failed state with both child PIDs zero, rejects a nonempty payload
+with EINVAL, and sends the result before exiting. Stop and kill request shutdown
+and wait for the socket to disappear and the stable private `waddle.lock` OFD
+lease to become available. Restart stops on any failed stop/shutdown and no longer
+uses a fixed sleep as proof of teardown. The lease inode is never unlinked by
+these client commands. OFD locks prevent another fd close in the same process
+(e.g. threaded native tests) from accidentally dropping a supervisor's lease.
+Teardown unlinks owned sockets while still holding the lease, then releases it.
+Legacy supervisors rejecting shutdown remain blocked rather than guessed dead.
+Startup serialization and orphan QEMU/virtiofsd auditing remain required in #7.

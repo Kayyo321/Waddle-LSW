@@ -46,6 +46,8 @@ static void test_client_offline(void) {
     assert(waddle_client_cmd_status(bogus_sock, 0) == 0);
     assert(waddle_client_cmd_status(bogus_sock, 1) == 0);
 
+    assert(waddle_client_shutdown(-1, NULL) == -1 && errno == EINVAL);
+
     /* Offline stop should report already stopped */
     assert(waddle_client_cmd_stop(bogus_sock, 0, 5) == 0);
 }

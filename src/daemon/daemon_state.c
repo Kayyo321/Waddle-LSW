@@ -166,7 +166,7 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
         return 0; /* Already held */
     }
 
-    int fd = open(s->lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    int fd = open(s->lock_path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) {
         return -1;
     }
@@ -178,7 +178,7 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
     fl.l_start = 0;
     fl.l_len = 0;
 
-    if (fcntl(fd, F_SETLK, &fl) != 0) {
+    if (fcntl(fd, F_OFD_SETLK, &fl) != 0) {
         int saved_errno = errno;
         close(fd);
         if (saved_errno == EACCES || saved_errno == EAGAIN) {
@@ -186,6 +186,14 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
         } else {
             errno = saved_errno;
         }
+        return -1;
+    }
+
+    struct stat lock_stat;
+    if (fstat(fd, &lock_stat) != 0 || !S_ISREG(lock_stat.st_mode) ||
+        lock_stat.st_uid != getuid() || (lock_stat.st_mode & 077) != 0) {
+        close(fd);
+        errno = EACCES;
         return -1;
     }
 
@@ -212,7 +220,7 @@ void daemon_state_release_lock(daemon_state_t *s) {
     fl.l_start = 0;
     fl.l_len = 0;
 
-    (void)fcntl(s->lock_fd, F_SETLK, &fl);
+    (void)fcntl(s->lock_fd, F_OFD_SETLK, &fl);
     close(s->lock_fd);
     s->lock_fd = -1;
 }
@@ -468,9 +476,8 @@ void daemon_state_cleanup(daemon_state_t *s) {
 
     qemu_cleanup(&s->qemu);
     daemon_fs_cleanup(&s->virtiofs);
-    daemon_state_release_lock(s);
-
     unlink(s->daemon_sock_path);
     unlink(s->qmp_sock_path);
     unlink(s->virtiofsd_sock_path);
+    daemon_state_release_lock(s);
 }
