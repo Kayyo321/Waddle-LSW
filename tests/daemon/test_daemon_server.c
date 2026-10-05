@@ -90,6 +90,12 @@ static void test_lockfile_concurrency(void) {
     daemon_state_t s1;
     assert(daemon_state_init(&s1, runtime_dir) == 0);
     assert(daemon_state_acquire_lock(&s1) == 0);
+    int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    assert(listener >= 0);
+    struct sockaddr_un address = {.sun_family = AF_UNIX};
+    assert(strlen(s1.daemon_sock_path) < sizeof(address.sun_path));
+    memcpy(address.sun_path, s1.daemon_sock_path, strlen(s1.daemon_sock_path) + 1);
+    assert(bind(listener, (struct sockaddr *)&address, sizeof(address)) == 0);
 
     /* Second instance in a separate process must fail to acquire the lock */
     pid_t child = fork();
@@ -101,6 +107,7 @@ static void test_lockfile_concurrency(void) {
         }
         int r = daemon_state_acquire_lock(&s2);
         if (r == -1 && errno == EADDRINUSE) {
+            daemon_state_cleanup(&s2);
             _exit(42); /* Expected collision */
         }
         _exit(2);
@@ -109,6 +116,9 @@ static void test_lockfile_concurrency(void) {
     int status = 0;
     waitpid(child, &status, 0);
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 42);
+    assert(access(s1.daemon_sock_path, F_OK) == 0);
+    close(listener);
+    assert(unlink(s1.daemon_sock_path) == 0);
 
     /* After releasing s1, a new process can acquire */
     daemon_state_release_lock(&s1);

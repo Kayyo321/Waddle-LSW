@@ -154,6 +154,11 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Summary**: Add an allocation-free bounded Zig editor for the six mutable settings. Validate all changes before rendering, preserve unknown keys/comments/exports and line endings, replace duplicate effective key occurrences consistently, and reparse the full candidate. Eight Zig tests and native configuration regressions pass, including malformed/duplicate inputs, integer bounds, UTF-8, insufficient capacity and reset preservation.
 
 
-- **Commit `:/serialize named configuration handoff with registry writers`**: `fix(device): serialize named configuration handoff with registry writers`
+- **Commit `2af8ad5`**: `fix(device): serialize named configuration handoff with registry writers`
   - **Task Impact**: +0% to TODO #7 pending complete offline transactions and orphan auditing.
   - **Summary**: Use OFD registry locks so nested readers cannot release an outer handoff lease. Named supervisors reload and validate their registration under a registry read lock, acquire their lifetime lease, then release the registry lock. Reject disappeared profiles rather than starting with stale defaults. Native server and registry suites pass, including deterministic nested-lock, changed-config and missing-profile regressions.
+
+
+- **Commit `:/preserve active sockets when competing startup loses its lease`**: `fix(daemon): preserve active sockets when competing startup loses its lease`
+  - **Task Impact**: +0% to TODO #7; regression correction for existing ownership cleanup.
+  - **Summary**: Only unlink supervisor/QMP/VirtIO-FS socket names while owning the lifetime lease. Previously a losing second supervisor invoked cleanup and could disconnect the active device by unlinking its socket. The native fork/collision test now binds a real Unix socket, cleans the losing instance, and proves the original socket survives.

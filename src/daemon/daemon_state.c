@@ -509,8 +509,11 @@ void daemon_state_cleanup(daemon_state_t *s) {
 
     qemu_cleanup(&s->qemu);
     daemon_fs_cleanup(&s->virtiofs);
-    unlink(s->daemon_sock_path);
-    unlink(s->qmp_sock_path);
-    unlink(s->virtiofsd_sock_path);
-    daemon_state_release_lock(s);
+    /* A failed competing startup owns none of these socket names. */
+    if (s->lock_fd >= 0) {
+        unlink(s->daemon_sock_path);
+        unlink(s->qmp_sock_path);
+        unlink(s->virtiofsd_sock_path);
+        daemon_state_release_lock(s);
+    }
 }

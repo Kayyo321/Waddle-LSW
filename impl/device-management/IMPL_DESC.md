@@ -548,3 +548,8 @@ startup or an occupied lease after startup. Nested discovery read locks do not
 release the outer OFD lock. No registry lock is acquired while a lifetime lease
 is already held. Tests verify nested-reader exclusion, config changes between
 initialization and acquisition, and disappearance before acquisition.
+
+Cleanup after failed lease acquisition never unlinks named supervisor/QMP/VirtIO-FS
+sockets: that instance has not established ownership. A collision regression binds
+an actual Unix socket, runs competing acquisition/cleanup in another process, and
+verifies that the original socket pathname survives.
