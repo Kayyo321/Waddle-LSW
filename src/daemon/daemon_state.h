@@ -10,6 +10,7 @@
 #define WADDLE_DAEMON_STATE_H
 
 #include "daemon_config.h"
+#include "../av/av_environment.h"
 #include "daemon_fs.h"
 #include "daemon_qemu.h"
 #include "waddle/daemon_protocol.h"
@@ -32,6 +33,8 @@ typedef struct daemon_state_t {
     qemu_process_t qemu;
     /** @brief VirtIO-FS daemon process manager handle. */
     virtiofs_process_t virtiofs;
+    /** @brief Owned AV mapping, prepared before QEMU and released after stop. */
+    av_environment_t av_environment;
 
     /** @brief Path to isolated runtime directory ($XDG_RUNTIME_DIR/waddle). */
     char runtime_dir[WaddleMaxPathLen];

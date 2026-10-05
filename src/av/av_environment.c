@@ -41,8 +41,12 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
         return -1;
     }
     error[0] = '\0';
-    if (daemon_config_validate(config) != 0 || !config->av_enabled || environment->fd >= 0 ||
-        environment->mapping) {
+    if (environment->fd >= 0 || environment->mapping) {
+        errno = EBUSY;
+        snprintf(error, capacity, "AV resource already active");
+        return -1;
+    }
+    if (daemon_config_validate(config) != 0 || !config->av_enabled) {
         errno = EINVAL;
         return fail(environment, error, capacity, "configuration");
     }

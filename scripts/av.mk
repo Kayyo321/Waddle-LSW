@@ -42,3 +42,6 @@ build/linux_dmabuf_protocol.c: /usr/share/wayland-protocols/stable/linux-dmabuf/
 
 build/av_environment_test: tests/av/environment.c src/av/av_environment.c build/av_layout.o build/daemon_config.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -o $@
+
+build/av_environment.o: src/av/av_environment.c src/av/av_environment.h src/av/av_layout.h src/daemon/daemon_config.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) -c $< -o $@

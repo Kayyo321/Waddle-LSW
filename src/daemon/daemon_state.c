@@ -50,6 +50,7 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
     memset(s, 0, sizeof(*s));
     s->state = SubsystemStateStopped;
     s->lock_fd = -1;
+    s->av_environment.fd = -1;
     s->qemu.pid = 0;
     s->qemu.log_fd = -1;
     s->qemu.qmp.socket_fd = -1;
@@ -308,6 +309,14 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
         }
     }
 
+    /* Prepare IVSHMEM as part of this managed startup, before QEMU opens it. */
+    if (s->config.av_enabled && av_environment_prepare(&s->av_environment, &s->config,
+                                                       s->last_error, sizeof(s->last_error)) != 0) {
+        if (s->virtiofs.is_running) daemon_fs_stop(&s->virtiofs, 1000);
+        s->state = SubsystemStateFailed;
+        return -1;
+    }
+
     /* Step 2: QEMU hypervisor */
     s->state = SubsystemStateStartingQemu;
     const char *vfs_sock = (s->virtiofs.is_running) ? s->virtiofsd_sock_path : NULL;
@@ -322,6 +331,7 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
         if (s->virtiofs.is_running) {
             daemon_fs_stop(&s->virtiofs, 1000);
         }
+        av_environment_free(&s->av_environment);
         s->state = SubsystemStateFailed;
         return -1;
     }
@@ -430,6 +440,8 @@ int daemon_state_stop_subsystem(daemon_state_t *s, uint32_t force, uint32_t time
         (void)daemon_fs_stop(&s->virtiofs, 2000);
     }
 
+    av_environment_free(&s->av_environment);
+
     /* Unlink runtime sockets */
     unlink(s->qmp_sock_path);
     unlink(s->virtiofsd_sock_path);
@@ -452,6 +464,8 @@ int daemon_state_kill_subsystem(daemon_state_t *s) {
     if (s->virtiofs.pid > 0) {
         (void)daemon_fs_stop(&s->virtiofs, 0);
     }
+
+    av_environment_free(&s->av_environment);
 
     unlink(s->qmp_sock_path);
     unlink(s->virtiofsd_sock_path);
@@ -494,6 +508,7 @@ void daemon_state_reap_children(daemon_state_t *s) {
 
     if (s->qemu.pid > 0) {
         if (qemu_poll_status(&s->qemu) == 0) {
+            av_environment_free(&s->av_environment);
             if (s->state == SubsystemStateRunning) {
                 s->state = SubsystemStateStopped;
                 s->running_since_sec = 0;
@@ -513,6 +528,7 @@ void daemon_state_cleanup(daemon_state_t *s) {
         (void)daemon_state_kill_subsystem(s);
     }
 
+    av_environment_free(&s->av_environment);
     qemu_cleanup(&s->qemu);
     daemon_fs_cleanup(&s->virtiofs);
     /* A failed competing startup owns none of these socket names. */
