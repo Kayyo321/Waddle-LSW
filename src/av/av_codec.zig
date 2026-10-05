@@ -126,3 +126,27 @@ test "canonical endian lifecycle and frame validation" {
     message.title[0] = @bitCast(@as(u8, 0xff));
     try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 328));
 }
+
+/// in: borrowed decimal bytes[length]; out: value unchanged on failure. Returns
+/// 0/-1 for bounded nonzero u32, no allocation, pure/thread-safe.
+export fn av_number_parse(bytes: [*]const u8, length: usize, value: *u32) c_int {
+    if (length == 0 or length > 10) return -1;
+    var result: u64 = 0;
+    for (bytes[0..length]) |digit| {
+        if (digit < '0' or digit > '9') return -1;
+        result = result * 10 + digit - '0';
+        if (result > std.math.maxInt(u32)) return -1;
+    }
+    if (result == 0) return -1;
+    value.* = @intCast(result);
+    return 0;
+}
+test "bounded native session numbers" {
+    var value: u32 = 99;
+    for ([_][]const u8{ "", "0", "-1", "+1", "1x", "4294967296", "00000000001" }) |invalid| {
+        try std.testing.expectEqual(@as(c_int, -1), av_number_parse(invalid.ptr, invalid.len, &value));
+        try std.testing.expectEqual(@as(u32, 99), value);
+    }
+    try std.testing.expectEqual(@as(c_int, 0), av_number_parse("4294967295", 10, &value));
+    try std.testing.expectEqual(std.math.maxInt(u32), value);
+}

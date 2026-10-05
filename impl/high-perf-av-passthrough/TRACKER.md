@@ -158,6 +158,10 @@
   - **Task Impact**: +30% to #10.2 (+1.50% overall)
   - **Summary**: Build the pinned driver through an argv-only child process against running-kernel headers, expose an administrator-only load step and preserve incompatible live devices. Bundle source/license from the submodule in ignored build outputs; build succeeds on the current kernel.
 
-- **Commit `HEAD`**: `feat(av): stream bounded control frames with nonblocking backpressure`
+- **Commit `ab7b72843c44`**: `feat(av): stream bounded control frames with nonblocking backpressure`
   - **Task Impact**: +25% to #3.4 (+0.60% overall)
   - **Summary**: Add an allocation-free single-event-thread peer queue handling partial sends and receives, bounded lifecycle bursts and codec rejection. Verify byte-fragmented socket frames, full queues, corruption and peer EOF through a real socketpair fixture.
+
+- **Commit `HEAD`**: `feat(av): validate native session process and CID arguments in Zig`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Add bounded nonzero decimal argument parsing for native AV entry points, rejecting overflow, signs and trailing bytes without mutating the caller result. Keep command-line parsing inside the memory-safe codec boundary.

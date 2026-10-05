@@ -60,4 +60,11 @@ int av_control_decode(const uint8_t *bytes, size_t length, av_message_t *message
  * @note Pure/thread-safe; no allocation; no overlap between arguments.
  */
 int av_control_encode(const av_message_t *message, uint8_t *bytes, size_t capacity);
+/** @brief Parse a bounded nonzero decimal process/CID argument.
+ * @param[in] bytes Nonnull borrowed input[length], 1..10 decimal bytes.
+ * @param[in] length Accessible input bytes, excludes NUL terminator.
+ * @param[out] value Nonnull caller-owned result, unchanged on failure.
+ * @return 0 success, -1 invalid/zero/overflow. Pure/thread-safe, no allocation.
+ */
+int av_number_parse(const char *bytes, size_t length, uint32_t *value);
 #endif
