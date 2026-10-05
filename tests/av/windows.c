@@ -10,6 +10,45 @@
 #include <string.h>
 static uint64_t target_id;
 static unsigned creates, geometries, destroys;
+static unsigned captured_frames;
+static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == WM_PAINT && (uint64_t)(uintptr_t)window == target_id) {
+        PAINTSTRUCT paint;
+        HDC dc = BeginPaint(window, &paint);
+        HBRUSH brush = CreateSolidBrush(RGB(63, 127, 191));
+        FillRect(dc, &paint.rcPaint, brush);
+        DeleteObject(brush); EndPaint(window, &paint);
+        return 0;
+    }
+    return DefWindowProcW(window, message, wparam, lparam);
+}
+static HRESULT captured_pixels(const uint8_t *pixels, size_t length, uint32_t stride,
+                               uint32_t width, uint32_t height, uint64_t timestamp_ns,
+                               void *context) {
+    (void)context;
+    assert(width > 100 && height > 100 && timestamp_ns);
+    assert(stride >= width * 4 && length >= (size_t)stride * height);
+    const uint8_t *center = pixels + (size_t)(height / 2) * stride + (width / 2) * 4;
+    assert(center[0] == 191 && center[1] == 127 && center[2] == 63);
+    ++captured_frames;
+    return S_OK;
+}
+static void capture_until_frame(av_wgc_t *capture, av_wgc_read_t read_frame) {
+    unsigned before = captured_frames;
+    ULONGLONG deadline = GetTickCount64() + 5000;
+    while (captured_frames == before && GetTickCount64() < deadline) {
+        MSG message;
+        while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message); DispatchMessageW(&message);
+        }
+        HRESULT result = read_frame(capture, captured_pixels, NULL);
+        assert(SUCCEEDED(result));
+        InvalidateRect((HWND)(uintptr_t)target_id, NULL, FALSE);
+        Sleep(1);
+    }
+    fprintf(stderr, "Native WGC frames: %u -> %u\n", before, captured_frames);
+    assert(captured_frames > before);
+}
 static int notification(const av_message_t *message, void *context) {
     (void)context;
     assert(message->window_id == target_id);
@@ -29,12 +68,13 @@ static void pump(void) {
         Sleep(1);
     } while (GetTickCount64() < deadline);
 }
-int main(void) {
+int main(int argc, char **argv) {
+    int native_capture = argc == 2 && !strcmp(argv[1], "--capture");
     assert(av_guest_setup("relative") == 2);
     assert(av_guest_setup("C:\\bad\"path") == 2);
 
     assert(SUCCEEDED(CoInitializeEx(NULL, COINIT_MULTITHREADED)));
-    WNDCLASSW window_class = {.lpfnWndProc = DefWindowProcW, .hInstance = GetModuleHandleW(NULL),
+    WNDCLASSW window_class = {.lpfnWndProc = fixture_window_proc, .hInstance = GetModuleHandleW(NULL),
                               .lpszClassName = L"WaddleAvFixture"};
     assert(RegisterClassW(&window_class));
     HWND target = CreateWindowExW(0, window_class.lpszClassName, L"Waddle AV 日本語",
@@ -65,6 +105,25 @@ int main(void) {
     av_wgc_t *capture = NULL;
     assert(create(NULL, &capture) == E_INVALIDARG && !capture);
     destroy(&capture);
+    if (native_capture) {
+        HDC dc = GetDC(target);
+        RECT client;
+        assert(dc && GetClientRect(target, &client));
+        HBRUSH brush = CreateSolidBrush(RGB(63, 127, 191));
+        assert(brush && FillRect(dc, &client, brush));
+        DeleteObject(brush); ReleaseDC(target, dc);
+        HRESULT status = create(target, &capture);
+        fprintf(stderr, "Native WGC creation: 0x%08lx\n", (unsigned long)status);
+        assert(SUCCEEDED(status) && capture);
+        av_wgc_read_t read_frame = (av_wgc_read_t)GetProcAddress(library, "av_wgc_read");
+        assert(read_frame);
+        capture_until_frame(capture, read_frame);
+        assert(SetWindowPos(tool, HWND_TOPMOST, 100, 100, 700, 500, SWP_SHOWWINDOW));
+        capture_until_frame(capture, read_frame);
+        destroy(&capture);
+        assert(!capture);
+        puts("Native WGC: exact center pixels survive an occluding window");
+    }
     FreeLibrary(library);
     assert(DestroyWindow(target)); pump();
     assert(destroys == 1);

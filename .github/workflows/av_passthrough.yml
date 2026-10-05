@@ -67,7 +67,7 @@ jobs:
           $flags = @('-target','x86_64-windows-gnu','-U_WIN32_WINNT','-D_WIN32_WINNT=0x0A00','-DNTDDI_VERSION=0x0A000006','-std=c11','-Wall','-Wextra','-Wpedantic','-Werror','-Iinclude','-Isrc/av','-Isubmodules/looking_glass/vendor/ivshmem')
           $sources = @('src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
           $libraries = @('build/av_audio_windows.lib','build/av_codec_windows.lib','build/av_layout_windows.lib','-luser32','-ldwmapi','-ld3d11','-ldxgi','-lmmdevapi','-lavrt','-lole32','-luuid','-lsetupapi')
-          zig cc @flags tests/av/windows.c @sources @libraries -o build/av_windows_test.exe
+          zig cc @flags tests/av/windows.c @sources @libraries -lgdi32 -o build/av_windows_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc @flags src/av/av_guest.c src/av/av_peer.c @sources @libraries -lws2_32 -o build/waddle-guest-av.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
