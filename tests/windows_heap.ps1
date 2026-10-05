@@ -6,15 +6,15 @@ if (!$vs_path) { throw 'MSVC installation unavailable' }
 $dev_module = Join-Path $vs_path 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
 Import-Module $dev_module
 Enter-VsDevShell -VsInstallPath $vs_path -SkipAutomaticLocation -DevCmdArguments '-arch=x64 -host_arch=x64'
-zig build-lib src/guest_codec.zig -static -target x86_64-windows-msvc -O ReleaseSafe -fno-compiler-rt '-femit-bin=build\guest_heap_codec.lib'
+zig build-lib src/guest/guest_codec.zig -static -target x86_64-windows-msvc -O ReleaseSafe -fno-compiler-rt '-femit-bin=build\guest_heap_codec.lib'
 if ($LASTEXITCODE -ne 0) { throw 'MSVC ABI codec build failed' }
-$compiler_flags = @('/nologo', '/std:c11', '/MDd', '/Od', '/Zi', '/D_DEBUG', '/D_WIN32_WINNT=0x0A00', '/DNTDDI_VERSION=0x0A000006', '/D_CRT_SECURE_NO_WARNINGS', '/Isrc', '/Itests', '/FIwindows_heap.h')
+$compiler_flags = @('/nologo', '/std:c11', '/MDd', '/Od', '/Zi', '/D_DEBUG', '/D_WIN32_WINNT=0x0A00', '/DNTDDI_VERSION=0x0A000006', '/D_CRT_SECURE_NO_WARNINGS', '/Iinclude', '/Isrc', '/Isrc/common', '/Isrc/guest', '/Itests', '/FIwindows_heap.h')
 $guest_sources = @('guest_session', 'guest_wire', 'guest_input', 'guest_output', 'guest_process', 'guest_environment')
 foreach ($source in $guest_sources) {
-    cl @compiler_flags /c "src/$source.c" "/Fobuild/$source.obj"
+    cl @compiler_flags /c "src/guest/$source.c" "/Fobuild/$source.obj"
     if ($LASTEXITCODE -ne 0) { throw "Heap build failed: $source" }
 }
-cl @compiler_flags /DGuestHeapListener /c src/guest_listener.c /Fobuild/guest_listener.obj
+cl @compiler_flags /DGuestHeapListener /c src/guest/guest_listener.c /Fobuild/guest_listener.obj
 if ($LASTEXITCODE -ne 0) { throw 'Heap listener build failed' }
 $guest_objects = @('build/guest_listener.obj') + @($guest_sources | ForEach-Object { "build/$_.obj" })
 link /nologo /debug @guest_objects build/guest_heap_codec.lib ws2_32.lib ntdll.lib /out:build/waddle-guest-exec.exe
