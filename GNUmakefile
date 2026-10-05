@@ -52,8 +52,8 @@ build/path_rules.o: src/common/path_rules.zig | build
 build/unit: tests/unit/unit.c $(COMMON) include/waddle/cli_protocol.h src/common/common.h src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/unit/unit.c $(COMMON) $(LDFLAGS) -o $@
 
-build/waddle: src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_protocol.c build/daemon_config.o $(COMMON) $(LDFLAGS) -o $@
+build/waddle: src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h src/daemon/daemon_device.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c src/daemon/daemon_protocol.c build/daemon_config.o $(COMMON) $(LDFLAGS) -o $@
 
 build/waddle-mock-guest: src/mock/mock_guest.c src/mock/mock_process.c src/mock/mock_process.h $(COMMON) include/waddle/cli_protocol.h src/common/common.h src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/mock/mock_guest.c src/mock/mock_process.c $(COMMON) $(LDFLAGS) -lutil -o $@
@@ -91,7 +91,10 @@ build/test_daemon_qemu: tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c
 build/test_daemon_fs: tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o src/daemon/daemon_fs.h src/daemon/daemon_config.h src/common/path_rules.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o $(LDFLAGS) -o $@
 
-DAEMON_COMMON = src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o
+build/test_daemon_device: tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/daemon_config.o src/daemon/daemon_device.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/daemon_config.o $(LDFLAGS) -o $@
+
+DAEMON_COMMON = src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c build/daemon_config.o build/path_rules.o
 
 build/waddled: src/daemon/daemon_main.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_main.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
@@ -105,13 +108,14 @@ build/test_daemon_client: tests/daemon/test_daemon_client.c src/daemon/daemon_cl
 build/test_auto_terminal: tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
 
-test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
+test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_device build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
 	./build/unit
 	./build/integration
 	./build/test_daemon_protocol
 	./build/test_daemon_config
 	./build/test_daemon_qemu
 	./build/test_daemon_fs
+	./build/test_daemon_device
 	./build/test_daemon_server
 	./build/test_daemon_client
 	./build/test_auto_terminal
