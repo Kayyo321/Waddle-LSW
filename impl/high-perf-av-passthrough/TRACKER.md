@@ -1,6 +1,6 @@
 # Feature Tracker: High-Performance Audio/Video Passthrough for Gaming
 
-- **Contributors / Agents**: Antigravity, Codex
+- **Contributors / Agents**: Antigravity, Codex, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
@@ -12,8 +12,8 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | **1**   | **Memory & Protocol Definitions** | | | | |
-| #1.1    | Define C structs for IVSHMEM window slot header (64-byte aligned, atomic flags) | Pending | 2% | 0% | - |
-| #1.2    | Define C structs for IVSHMEM audio ring buffer (lockless SPSC, 48kHz 16-bit) | Pending | 2% | 0% | - |
+| #1.1 | Define C structs for IVSHMEM window slot header (64-byte aligned, atomic flags) | Done | 2% | 100% | Define C11 lock-free ownership states, stable offsets and bounded fixed-format audio metadata; verify layout on Linux and cross-build Windows. |
+| #1.2 | Define C structs for IVSHMEM audio ring buffer (lockless SPSC, 48kHz 16-bit) | Done | 2% | 100% | Define C11 lock-free ownership states, stable offsets and bounded fixed-format audio metadata; verify layout on Linux and cross-build Windows. |
 | #1.3    | Update VSOCK IPC control messages to include full geometries & lifecycle events | Pending | 3% | 0% | - |
 | **2**   | **Guest Window Tracking Agent** | | | | |
 | #2.1    | Register `SetWinEventHook` for CREATE, DESTROY, LOCATIONCHANGE, MINIMIZE | Pending | 5% | 0% | - |
@@ -41,7 +41,7 @@
 | #7.1    | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | Pending | 2% | 0% | - |
 | #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
 
-**Total Feature Completion**: `0.00%`
+**Total Feature Completion**: `4.00%`
 
 ## Commit History & Progress Log
 
@@ -57,6 +57,10 @@
   - **Task Impact**: 0% overall; planning baseline.
   - **Summary**: Defined the requested scope and task breakdown before implementation.
 
-- **Commit `HEAD`**: `docs(av): specify buffer ownership and platform constraints`
+- **Commit `f6504ce62f66`**: `docs(av): specify buffer ownership and platform constraints`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Resolve cursor ownership, compositor placement, native audio requirements and honest hardware verification boundaries.
+
+- **Commit `HEAD`**: `feat(av): define cache-line aligned video and audio ABI`
+  - **Task Impact**: +100% to #1.1 (+2.00% overall); +100% to #1.2 (+2.00% overall)
+  - **Summary**: Define C11 lock-free ownership states, stable offsets and bounded fixed-format audio metadata; verify layout on Linux and cross-build Windows.
