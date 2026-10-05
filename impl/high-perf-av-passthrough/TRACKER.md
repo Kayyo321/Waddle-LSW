@@ -311,6 +311,10 @@
   - **Task Impact**: +5% to #10.4 (+0.15% overall)
   - **Summary**: Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application.
 
-- **Commit `HEAD`**: `fix(av): retain and monitor the actual game process lifetime`
+- **Commit `9b40ca28b739`**: `fix(av): retain and monitor the actual game process lifetime`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Reject nonexistent or exited target PIDs before listener readiness and retain a non-inheritable process synchronization handle until teardown. End normally when that process exits, avoiding silent audio-only success for a stale PID; close the handle on mapping, Winsock and session failure paths.
+
+- **Commit `HEAD`**: `fix(av): verify readiness after already-current driver installation`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Treat PnPUtil ERROR_NO_MORE_ITEMS as an idempotent installation outcome, then require the actual mapped-driver and endpoint capability probe. Native repeat setup reports an already-present signed package and current device driver rather than a deployment failure.

@@ -115,7 +115,9 @@ int av_guest_setup(const char *directory) {
         fputs("AV setup: driver installed; restart the managed guest then run av probe\n", stderr);
         return 3;
     }
-    if (status != 0) {
+    /* PnPUtil returns ERROR_NO_MORE_ITEMS when the signed package is already
+     * current. Readiness still requires the actual driver mapping probe. */
+    if (status != 0 && status != ERROR_NO_MORE_ITEMS) {
         fprintf(stderr, "AV setup: Windows rejected driver installation (%lu)\n", (unsigned long)status);
         return 1;
     }
