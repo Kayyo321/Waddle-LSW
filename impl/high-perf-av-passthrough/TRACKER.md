@@ -46,11 +46,11 @@
 | **10** | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 65% | Add native pnputil deployment with bounded paths, child timeout/reaping and explicit reboot status. Probe actual OS build, mapped IVSHMEM ABI, D3D11/WARP, sibling WinRT adapter and enabled audio endpoint before declaring readiness; cross-linked guest and invalid-path fixture pass. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
-| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 80% | Extend the bounded configuration editor with AV enable, shared-memory path and explicit GPU assignment. Validate the complete patch before replacing a quiescent device configuration, preserve unrelated bytes and cover incomplete, malformed and reset requests. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 45% | Add native pnputil deployment with bounded paths, child timeout/reaping and explicit reboot status. Probe actual OS build, mapped IVSHMEM ABI, D3D11/WARP, sibling WinRT adapter and enabled audio endpoint before declaring readiness; cross-linked guest and invalid-path fixture pass. |
+| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 90% | Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 65% | Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `84.38%`
+**Total Feature Completion**: `85.48%`
 
 ## Commit History & Progress Log
 
@@ -222,6 +222,10 @@
   - **Task Impact**: +20% to #10.4 (+0.60% overall)
   - **Summary**: Download the pinned Looking Glass binary distribution over HTTPS, verify its exact SHA-256 before extraction and bundle only the signed IVSHMEM package and license in ignored distribution outputs. Preserve the existing submodule architecture and avoid installing the third-party capture service.
 
-- **Commit `HEAD`**: `feat(av): install signed guest driver and probe native readiness`
+- **Commit `3700ddb0cf2d`**: `feat(av): install signed guest driver and probe native readiness`
   - **Task Impact**: +15% to #10.1 (+0.75% overall); +25% to #10.4 (+0.75% overall)
   - **Summary**: Add native pnputil deployment with bounded paths, child timeout/reaping and explicit reboot status. Probe actual OS build, mapped IVSHMEM ABI, D3D11/WARP, sibling WinRT adapter and enabled audio endpoint before declaring readiness; cross-linked guest and invalid-path fixture pass.
+
+- **Commit `HEAD`**: `feat(av): integrate provisioning and readiness into managed CLI`
+  - **Task Impact**: +10% to #10.3 (+0.50% overall); +20% to #10.4 (+0.60% overall)
+  - **Summary**: Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation.
