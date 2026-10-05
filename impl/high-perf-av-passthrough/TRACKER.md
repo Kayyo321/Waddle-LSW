@@ -478,6 +478,10 @@ gates; this branch is in Review and does not claim those gates passed.
   - **Task Impact**: +100% to #11.3 (+4% overall).
   - **Summary**: Generate exact vfio-pci sysfsdev/display=off arguments in daemon_qemu.c, where QEMU provisioning actually lives. Preserve silent HDA, IVSHMEM and boot VGA; reject BDF-only assignment. Native QEMU argument/lifecycle tests pass for UUID with/without optional parent and verify absence of host=BDF.
 
-- **Commit `HEAD`**: `fix(av): remove guest WGC timing dependencies from diagnostics`
+- **Commit `6f75bd0e9421`**: `fix(av): remove guest WGC timing dependencies from diagnostics`
   - **Task Impact**: +100% to #11.4 (+4% overall).
   - **Summary**: Reuse the existing host CLOCK_MONOTONIC color challenge and compositor sync RTT. Remove all timestamp-based fixture acceptance, uniqueness and ordering; count pixel-validated delivered frames for throughput. Warn at benchmark/RTT startup when primary 1080p144 mode is absent. Windows fixture and agent cross-builds pass; live VDD/vGPU/RTT remain external gates.
+
+- **Commit `HEAD`**: `test(av): stress repeated mediated-device capability discovery`
+  - **Task Impact**: 0% to #11.5 (+0% overall); final verification still pending.
+  - **Summary**: Repeat registered-parent and type-API discovery 1000 times with the host NVIDIA driver still present, exercising deterministic directory and FILE teardown under the AV sanitizer gate.

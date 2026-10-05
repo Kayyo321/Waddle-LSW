@@ -80,6 +80,10 @@ int main(void) {
     make_link("bus/mdev/devices/12345678-1234-5678-9abc-123456789abc/mdev_type", device);
     assert(av_gpu_mdev_probe(root, "", uuid, error, sizeof(error)) == 0);
     assert(av_gpu_mdev_probe(root, "0000:01:00.0", uuid, error, sizeof(error)) == 0);
+    /* Repeated parent discovery exercises directory/FILE ownership with an
+     * active host driver; sanitizers cover every iteration and final cleanup. */
+    for (unsigned iteration = 0; iteration < 1000; ++iteration)
+        assert(av_gpu_mdev_probe(root, "", uuid, error, sizeof(error)) == 0);
     assert(av_gpu_mdev_probe(root, "0000:01:00.1", uuid, error, sizeof(error)) == -1);
     file = fopen(path, "w"); assert(file); assert(fputs("vfio-ccw\n", file) >= 0); assert(!fclose(file));
     assert(av_gpu_mdev_probe(root, "", uuid, error, sizeof(error)) == -1 && errno == ENOTSUP);
