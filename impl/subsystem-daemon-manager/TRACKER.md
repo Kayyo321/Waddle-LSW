@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Antigravity Agent, Koyak
 - **Time Started**: 2026-10-04T19:40:00Z
-- **Time Ended**: 2026-10-04T21:00:00Z
+- **Time Ended**: TBD
 - **Feature Branch**: feature/subsystem-daemon-manager
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Completed
+- **Current Overall Status**: In Progress
 
 ## Tasks & Progress
 
@@ -13,14 +13,16 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Define shared C daemon control wire protocol (`include/waddle/daemon_protocol.h`) and status data structures | Done | 10% | 100% | Packed structs, Little-Endian, PascalCase constants, socket framing verified |
 | #2      | Implement daemon configuration subsystem in Zig (`src/daemon_config.zig` / `src/daemon_config.h`) for parsing VM specs, exports, and paths | Done | 10% | 100% | Bounds checked, multi-export & INI parsing verified in Zig & C |
-| #3      | Implement QEMU process manager and QMP (QEMU Machine Protocol) JSON-RPC client in C (`src/daemon_qemu.c`, `src/daemon_qmp.c`) | Done | 15% | 100% | CLI builder, mock QMP server/client, and process lifecycle verified |
-| #4      | Implement VirtIO-FS (`virtiofsd`) lifecycle manager and multi-export filesystem bridge (`src/daemon_fs.c`, `src/daemon_fs.h`) | Done | 15% | 100% | vhost-user socket setup, sandbox/cache flags, and path mapping verified |
-| #5      | Implement Waddle background daemon supervisor core (`src/daemon_main.c`, `src/daemon_state.c`) with non-blocking event loop and readiness prober | Done | 15% | 100% | Lockfile, state machine, child reaper & multiplexed server verified |
-| #6      | Implement host CLI lifecycle commands (`--start`, `--stop`, `--restart`, `--status`, `--kill`, `--logs`, `fs`) and daemon client library in C | Done | 15% | 100% | Client IPC, socket resolution, lifecycle commands, and unit tests verified |
+| #3      | Implement QEMU process manager and QMP (QEMU Machine Protocol) JSON-RPC client in C (`src/daemon_qemu.c`, `src/daemon_qmp.c`) | Done | 10% | 100% | CLI builder, mock QMP server/client, and process lifecycle verified |
+| #4      | Implement VirtIO-FS (`virtiofsd`) lifecycle manager and multi-export filesystem bridge (`src/daemon_fs.c`, `src/daemon_fs.h`) | Done | 10% | 100% | vhost-user socket setup, sandbox/cache flags, and path mapping verified |
+| #5      | Implement Waddle background daemon supervisor core (`src/daemon_main.c`, `src/daemon_state.c`) with non-blocking event loop and readiness prober | Done | 10% | 100% | Lockfile, state machine, child reaper & multiplexed server verified |
+| #6      | Implement host CLI lifecycle commands (`--start`, `--stop`, `--restart`, `--status`, `--kill`, `--logs`, `fs`) and daemon client library in C | Done | 10% | 100% | Client IPC, socket resolution, lifecycle commands, and unit tests verified |
 | #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Done | 10% | 100% | Interactive launcher, auto-start, export mount auto-loading & root fallback verified |
 | #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Done | 10% | 100% | Live VirtIO-FS directory/file creation and instant host visibility verified |
+| #9      | Vendor QEMU upstream Git repository as submodule (`submodules/qemu`) pinned to stable release commit | Pending | 10% | 0% | Tracked via public HTTPS, shallow clone configured per AGENTS.md |
+| #10     | Integrate QEMU build target into build system and refactor daemon binary discovery for bundled vendor binaries | Pending | 10% | 0% | Minimal softmmu build target in GNUmakefile and relative binary resolution |
 
-**Total Feature Completion**: `100.0%`
+**Total Feature Completion**: `80.0%`
 
 ## Commit History & Progress Log
 
