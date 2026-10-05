@@ -47,13 +47,44 @@ export fn av_layout_pixels(pool: u32, index: u32) u64 {
 test "mapping bounds and immutable ABI validation" {
     const bytes = try std.testing.allocator.alignedAlloc(u8, 64, 65536);
     defer std.testing.allocator.free(bytes);
-    try std.testing.expectEqual(@as(c_int, -1), av_layout_init(bytes.ptr, bytes.len));
-    try std.testing.expectEqual(@as(c_int, -1), av_layout_validate(bytes.ptr, bytes.len));
-    try std.testing.expect(av_layout_slot(bytes.ptr, MappingBytes, 15, 2) != null);
-    try std.testing.expect(av_layout_slot(bytes.ptr, MappingBytes, 16, 2) == null);
-    try std.testing.expect(av_layout_slot(bytes.ptr, MappingBytes, 15, 3) == null);
-    try std.testing.expect(av_layout_slot(bytes.ptr, MappingBytes - 1, 0, 0) == null);
-    try std.testing.expectEqual(@as(u64, 0), av_layout_pixels(16, 0));
-    try std.testing.expectEqual(@as(u64, 0), av_layout_pixels(0, 3));
-    try std.testing.expectEqual(@as(u64, UsedBytes), av_layout_pixels(15, 2) + 33554432);
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_layout_init, .{ bytes.ptr, bytes.len }));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_layout_validate, .{ bytes.ptr, bytes.len }));
+    try std.testing.expect(@call(.never_inline, av_layout_slot, .{ bytes.ptr, MappingBytes, 15, 2 }) != null);
+    try std.testing.expect(@call(.never_inline, av_layout_slot, .{ bytes.ptr, MappingBytes, 16, 2 }) == null);
+    try std.testing.expect(@call(.never_inline, av_layout_slot, .{ bytes.ptr, MappingBytes, 15, 3 }) == null);
+    try std.testing.expect(@call(.never_inline, av_layout_slot, .{ bytes.ptr, MappingBytes - 1, 0, 0 }) == null);
+    try std.testing.expectEqual(@as(u64, 0), @call(.never_inline, av_layout_pixels, .{ 16, 0 }));
+    try std.testing.expectEqual(@as(u64, 0), @call(.never_inline, av_layout_pixels, .{ 0, 3 }));
+    try std.testing.expectEqual(@as(u64, UsedBytes), @call(.never_inline, av_layout_pixels, .{ 15, 2 }) + 33554432);
+}
+
+test "full sparse mapping initializes and rejects each ABI identity mismatch" {
+    const builtin = @import("builtin");
+    const platform = @cImport({
+        if (builtin.os.tag == .windows) {
+            @cInclude("windows.h");
+        } else {
+            @cInclude("sys/mman.h");
+        }
+    });
+    const mapping = if (builtin.os.tag == .windows)
+        platform.VirtualAlloc(null, MappingBytes, platform.MEM_RESERVE | platform.MEM_COMMIT, platform.PAGE_READWRITE)
+    else
+        platform.mmap(null, MappingBytes, platform.PROT_READ | platform.PROT_WRITE, platform.MAP_PRIVATE | platform.MAP_ANONYMOUS, -1, 0);
+    try std.testing.expect(mapping != null);
+    if (builtin.os.tag != .windows) try std.testing.expect(mapping != platform.MAP_FAILED);
+    defer {
+        if (builtin.os.tag == .windows) {
+            std.debug.assert(platform.VirtualFree(mapping, 0, platform.MEM_RELEASE) != 0);
+        } else std.debug.assert(platform.munmap(mapping, MappingBytes) == 0);
+    }
+    const bytes: [*]align(64) u8 = @ptrCast(@alignCast(mapping.?));
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_layout_init, .{ bytes, MappingBytes }));
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_layout_validate, .{ bytes, MappingBytes }));
+    for ([_]usize{ 0, 4, 8 }) |offset| {
+        bytes[offset] ^= 0x01;
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_layout_validate, .{ bytes, MappingBytes }));
+        bytes[offset] ^= 0x01;
+    }
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_layout_validate, .{ bytes, MappingBytes }));
 }

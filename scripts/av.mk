@@ -24,13 +24,16 @@ av-test: build/av_transport_test build/av_environment_test build/av_peer_test
 	./build/av_transport_test
 	$(ZIG) test src/av/av_audio.zig
 	$(ZIG) test src/av/av_codec.zig -Iinclude
-	$(ZIG) test src/av/av_layout.zig
+	$(ZIG) test src/av/av_layout.zig -lc
 av-sanitizers:
-	$(MAKE) -B build/av_transport_test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/av_transport_test
-	$(ZIG) test src/av/av_audio.zig
-	$(ZIG) test src/av/av_codec.zig -Iinclude
-	$(ZIG) test src/av/av_layout.zig
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B av-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+
+.PHONY: av-coverage
+av-coverage: build/av_audio.o build/av_layout.o
+	python3 tests/av/coverage.py av_audio
+	python3 tests/av/coverage.py av_codec
+	python3 tests/av/coverage.py av_layout
+	python3 tests/av/coverage.py av_video
 
 build/xdg_shell_client.h: /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml | build
 	wayland-scanner client-header $< $@

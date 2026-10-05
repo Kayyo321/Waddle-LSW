@@ -346,3 +346,19 @@ profiles retain the existing VirtIO storage behavior. This controls disk attachm
 not disk contents; it does not migrate or overwrite partitions. The chosen firmware
 and controller must match the installed image; native acceptance boots the managed
 copy-on-write image with the same inbox storage path used during OS installation.
+
+
+### Coverage gate accounting
+
+`make av-coverage` requires at least 90% production source lines and conditional/
+switch branches separately for each bounded audio/copy, control codec, layout and
+C video state module. The Zig gate instruments ReleaseSafe LLVM IR using source
+function debug scopes, excludes compiler-generated panic guards and test bodies,
+and records every matching CFG location for a source line. Unit calls to exported
+functions use `@call(.never_inline, ...)` so constant inputs cannot fold validation
+out of the executable test. Sparse two-GiB OS mappings exercise successful layout
+initialization without touching pixel payloads. C state transitions use gcov's
+source counters with all ownership states and concurrent stress. Reports persist
+under `build/coverage/av`; no subsystem is averaged with another to hide a failure.
+ASan/LSan/UBSan executes every native AV unit suite; Zig tests use its leak-checking
+allocator for all owned dynamic buffers and deterministically release OS mappings.

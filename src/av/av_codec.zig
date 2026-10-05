@@ -15,7 +15,7 @@ fn valid(message: *const c.av_message_t) bool {
     if (!std.unicode.utf8ValidateSlice(title[0..end])) return false;
     if (message.type == 2 or message.type == 5) return true;
     if (message.width == 0 or message.height == 0 or message.width > 8192 or message.height > 8192 or message.dpi < 48 or message.dpi > 768) return false;
-    if (message.type == 1 and message.process_id == 0) return false;
+    if (message.type == 1 and (message.process_id == 0 or message.buffer_index >= 16)) return false;
     if (message.type == 4) {
         if (message.buffer_index >= 3 or message.sequence == 0 or message.damage_x < 0 or message.damage_y < 0 or message.damage_width == 0 or message.damage_height == 0) return false;
         if (@as(u64, @intCast(message.damage_x)) + message.damage_width > message.width or @as(u64, @intCast(message.damage_y)) + message.damage_height > message.height) return false;
@@ -93,38 +93,38 @@ test "canonical endian lifecycle and frame validation" {
         message.sequence = 1;
         message.damage_width = 640;
         message.damage_height = 480;
-        try std.testing.expectEqual(@as(c_int, 0), av_control_encode(&message, &bytes, bytes.len));
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
         try std.testing.expectEqual(@as(u8, 0xf0), bytes[8]);
-        try std.testing.expectEqual(@as(c_int, 0), av_control_decode(&bytes, bytes.len, &decoded));
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_decode, .{ &bytes, bytes.len, &decoded }));
         try std.testing.expectEqual(message.x, decoded.x);
         try std.testing.expectEqual(message.window_id, decoded.window_id);
     }
-    try std.testing.expectEqual(@as(c_int, -1), av_control_decode(&bytes, 327, &decoded));
-    try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 327));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_decode, .{ &bytes, 327, &decoded }));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, 327 }));
     for ([_]usize{ 0, 2, 4 }) |offset| {
         bytes[offset] ^= 0xff;
-        try std.testing.expectEqual(@as(c_int, -1), av_control_decode(&bytes, 328, &decoded));
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_decode, .{ &bytes, 328, &decoded }));
         bytes[offset] ^= 0xff;
     }
     message.type = 4;
     for ([_]u32{ 0, 8193 }) |width| {
         message.width = width;
-        try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 328));
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, 328 }));
     }
     message.width = 640;
     message.buffer_index = 3;
-    try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 328));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, 328 }));
     message.buffer_index = 0;
     message.damage_x = -1;
-    try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 328));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, 328 }));
     message.damage_x = 1;
-    try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 328));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, 328 }));
     message.damage_x = 0;
     message.title = .{1} ** 256;
-    try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 328));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, 328 }));
     message.title = .{0} ** 256;
     message.title[0] = @bitCast(@as(u8, 0xff));
-    try std.testing.expectEqual(@as(c_int, -1), av_control_encode(&message, &bytes, 328));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, 328 }));
 }
 
 /// in: borrowed decimal bytes[length]; out: value unchanged on failure. Returns
@@ -144,9 +144,48 @@ export fn av_number_parse(bytes: [*]const u8, length: usize, value: *u32) c_int 
 test "bounded native session numbers" {
     var value: u32 = 99;
     for ([_][]const u8{ "", "0", "-1", "+1", "1x", "4294967296", "00000000001" }) |invalid| {
-        try std.testing.expectEqual(@as(c_int, -1), av_number_parse(invalid.ptr, invalid.len, &value));
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_number_parse, .{ invalid.ptr, invalid.len, &value }));
         try std.testing.expectEqual(@as(u32, 99), value);
     }
-    try std.testing.expectEqual(@as(c_int, 0), av_number_parse("4294967295", 10, &value));
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_number_parse, .{ "4294967295", 10, &value }));
     try std.testing.expectEqual(std.math.maxInt(u32), value);
+}
+
+test "invalid lifecycle and frame fields never alter encoded output" {
+    const valid_frame: c.av_message_t = .{ .type = 4, .window_id = 42, .x = 0, .y = 0, .width = 640, .height = 480, .flags = 0, .dpi = 96, .process_id = 123, .buffer_index = 0, .sequence = 1, .damage_x = 0, .damage_y = 0, .damage_width = 640, .damage_height = 480, .title = .{0} ** 256 };
+    for (0..20) |index| {
+        var message = valid_frame;
+        switch (index) {
+            0 => message.window_id = 0,
+            1 => message.type = 0,
+            2 => message.type = 6,
+            3 => message.flags = 4,
+            4 => message.height = 0,
+            5 => message.height = 8193,
+            6 => message.dpi = 47,
+            7 => message.dpi = 769,
+            8 => {
+                message.type = 1;
+                message.process_id = 0;
+            },
+            9 => message.sequence = 0,
+            10 => message.damage_y = -1,
+            11 => message.damage_width = 0,
+            12 => message.damage_height = 0,
+            13 => message.damage_y = 1,
+            14 => message.width = 0,
+            15 => message.width = 8193,
+            16 => message.damage_x = -1,
+            17 => message.damage_x = 2147483647,
+            18 => message.buffer_index = 3,
+            19 => {
+                message.type = 1;
+                message.buffer_index = 16;
+            },
+            else => unreachable,
+        }
+        var bytes = [_]u8{0xa5} ** 328;
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
+        try std.testing.expectEqualSlices(u8, &([_]u8{0xa5} ** 328), &bytes);
+    }
 }

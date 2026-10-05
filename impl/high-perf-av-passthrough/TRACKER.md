@@ -38,8 +38,8 @@
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 4.8% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #6.3 | Feed audio frames into PipeWire playback buffer callback | In Progress | 3.2% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | **7**   | **Testing & CI Verification** | | | | |
-| #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 1.6% | 75% | Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks. |
-| #7.2 | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | In Progress | 1.6% | 60% | Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks. |
+| #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 1.6% | 95% | Gate production lines and branches independently at ninety percent for audio, control, layout and video; current results are one hundred percent in each module. Prevent constant-folded test calls, cover real sparse mapping initialization and invalid pool/metadata fields, and run all native AV suites under ASan/LSan/UBSan with leak-checking Zig tests. |
+| #7.2 | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | In Progress | 1.6% | 85% | Gate production lines and branches independently at ninety percent for audio, control, layout and video; current results are one hundred percent in each module. Prevent constant-folded test calls, cover real sparse mapping initialization and invalid pool/metadata fields, and run all native AV suites under ASan/LSan/UBSan with leak-checking Zig tests. |
 
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 75% | Launch the deployed target-PID agent through the existing bridge, await its exact bounded readiness line with a deadline and start native playback for the configured CID/mapping. Cancel and reap only owned execution children on failure or playback exit; preserve the user game process. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `88.05%`
+**Total Feature Completion**: `88.77%`
 
 ## Commit History & Progress Log
 
@@ -271,6 +271,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Attach UEFI AV system disks through q35 AHCI so installed Windows images can boot before any optimized VirtIO storage driver is deployed. Preserve BIOS profile behavior and disk contents; QEMU lifecycle and argument regressions pass.
 
-- **Commit `HEAD`**: `fix(av): prioritize the managed UEFI system disk at boot`
+- **Commit `9f4794f26913`**: `fix(av): prioritize the managed UEFI system disk at boot`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Specify strict disk-first firmware boot order for UEFI AV profiles, preventing unrelated virtual network/filesystem boot candidates from preceding the managed Windows disk. Preserve the persistent variables and existing BIOS defaults; QEMU regressions pass.
+
+- **Commit `HEAD`**: `test(av): enforce per-module coverage and complete sanitizer gates`
+  - **Task Impact**: +20% to #7.1 (+0.32% overall); +25% to #7.2 (+0.40% overall)
+  - **Summary**: Gate production lines and branches independently at ninety percent for audio, control, layout and video; current results are one hundred percent in each module. Prevent constant-folded test calls, cover real sparse mapping initialization and invalid pool/metadata fields, and run all native AV suites under ASan/LSan/UBSan with leak-checking Zig tests.

@@ -80,42 +80,42 @@ test "bounded audio wrap, overflow, silence and corrupt metadata" {
     defer std.testing.allocator.free(pcm);
     const input = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
     var output: [24]u8 = undefined;
-    try std.testing.expectEqual(@as(i64, 4), av_audio_write(&ring, pcm.ptr, pcm.len, &input, input.len));
+    try std.testing.expectEqual(@as(i64, 4), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, pcm.len, &input, input.len }));
     try std.testing.expectEqual(@as(u32, 1), ring.overrun_frames);
-    try std.testing.expectEqual(@as(i64, 0), av_audio_write(&ring, pcm.ptr, pcm.len, &input, 4));
-    try std.testing.expectEqual(@as(i64, 4), av_audio_read(&ring, pcm.ptr, pcm.len, &output, output.len, 0));
+    try std.testing.expectEqual(@as(i64, 0), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, pcm.len, &input, 4 }));
+    try std.testing.expectEqual(@as(i64, 4), @call(.never_inline, av_audio_read, .{ &ring, pcm.ptr, pcm.len, &output, output.len, 0 }));
     try std.testing.expectEqualSlices(u8, input[0..16], output[0..16]);
     try std.testing.expectEqualSlices(u8, &(.{0} ** 8), output[16..]);
-    try std.testing.expectEqual(@as(i64, 4), av_audio_write(&ring, pcm.ptr, pcm.len, &input, 16));
-    try std.testing.expectEqual(@as(i64, 2), av_audio_read(&ring, pcm.ptr, pcm.len, &output, 8, 2));
+    try std.testing.expectEqual(@as(i64, 4), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, pcm.len, &input, 16 }));
+    try std.testing.expectEqual(@as(i64, 2), @call(.never_inline, av_audio_read, .{ &ring, pcm.ptr, pcm.len, &output, 8, 2 }));
     try std.testing.expectEqualSlices(u8, input[8..16], output[0..8]);
-    try std.testing.expectEqual(@as(i64, -1), av_audio_write(&ring, pcm.ptr, 15, &input, 4));
-    try std.testing.expectEqual(@as(i64, -1), av_audio_read(&ring, pcm.ptr, 15, &output, 8, 0));
-    try std.testing.expectEqual(@as(i64, -1), av_audio_write(&ring, pcm.ptr, 16, &input, 3));
-    try std.testing.expectEqual(@as(i64, -1), av_audio_read(&ring, pcm.ptr, 16, &output, 3, 0));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, 15, &input, 4 }));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_read, .{ &ring, pcm.ptr, 15, &output, 8, 0 }));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, 16, &input, 3 }));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_read, .{ &ring, pcm.ptr, 16, &output, 3, 0 }));
     ring.write_head = ring.read_head +% 5;
-    try std.testing.expectEqual(@as(i64, -1), av_audio_write(&ring, pcm.ptr, 16, &input, 4));
-    try std.testing.expectEqual(@as(i64, -1), av_audio_read(&ring, pcm.ptr, 16, &output, 4, 0));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, 16, &input, 4 }));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_read, .{ &ring, pcm.ptr, 16, &output, 4, 0 }));
     ring.write_head = ring.read_head;
     for ([_]u32{ 0, 1, 3, 1048577 }) |capacity| {
         ring.capacity_frames = capacity;
-        try std.testing.expectEqual(@as(i64, -1), av_audio_write(&ring, pcm.ptr, 16, &input, 4));
+        try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, 16, &input, 4 }));
     }
     ring.capacity_frames = 4;
     ring.sample_rate = 44100;
-    try std.testing.expectEqual(@as(i64, -1), av_audio_write(&ring, pcm.ptr, 16, &input, 4));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, 16, &input, 4 }));
     ring.sample_rate = 48000;
     ring.channels = 1;
-    try std.testing.expectEqual(@as(i64, -1), av_audio_write(&ring, pcm.ptr, 16, &input, 4));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, 16, &input, 4 }));
     ring.channels = 2;
     ring.format = 2;
-    try std.testing.expectEqual(@as(i64, -1), av_audio_write(&ring, pcm.ptr, 16, &input, 4));
+    try std.testing.expectEqual(@as(i64, -1), @call(.never_inline, av_audio_write, .{ &ring, pcm.ptr, 16, &input, 4 }));
 }
 
 test "pixel validation prevents overflow and zero dimensions" {
-    try std.testing.expectEqual(@as(u64, 16), av_video_size(2, 2, 8, 16));
+    try std.testing.expectEqual(@as(u64, 16), @call(.never_inline, av_video_size, .{ 2, 2, 8, 16 }));
     for ([_][4]u64{ .{ 0, 1, 4, 16 }, .{ 1, 0, 4, 16 }, .{ 2, 2, 7, 16 }, .{ 2, 2, 8, 15 }, .{ 0xffffffff, 2, 0xffffffff, 0xffffffffffffffff } }) |args| {
-        try std.testing.expectEqual(@as(u64, 0), av_video_size(@intCast(args[0]), @intCast(args[1]), @intCast(args[2]), args[3]));
+        try std.testing.expectEqual(@as(u64, 0), @call(.never_inline, av_video_size, .{ @as(u32, @intCast(args[0])), @as(u32, @intCast(args[1])), @as(u32, @intCast(args[2])), args[3] }));
     }
 }
 
@@ -134,9 +134,9 @@ export fn av_copy_bgra(source: [*]const u8, source_len: usize, source_stride: u3
 test "padded BGRA rows copy without touching destination tail" {
     const source = [_]u8{ 1, 2, 3, 4, 99, 99, 99, 99, 5, 6, 7, 8, 99, 99, 99, 99 };
     var output = [_]u8{0xaa} ** 12;
-    try std.testing.expectEqual(@as(c_int, 0), av_copy_bgra(&source, source.len, 8, &output, output.len, 1, 2));
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_copy_bgra, .{ &source, source.len, 8, &output, output.len, 1, 2 }));
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 }, output[0..8]);
     try std.testing.expectEqual(@as(u8, 0xaa), output[8]);
-    try std.testing.expectEqual(@as(c_int, -1), av_copy_bgra(&source, 15, 8, &output, 12, 1, 2));
-    try std.testing.expectEqual(@as(c_int, -1), av_copy_bgra(&source, 16, 8, &output, 7, 1, 2));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_copy_bgra, .{ &source, 15, 8, &output, 12, 1, 2 }));
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_copy_bgra, .{ &source, 16, 8, &output, 7, 1, 2 }));
 }
