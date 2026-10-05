@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 94% | Native stream handoff/waits verified on Linux and cross-linked for Windows; Windows execution and cross-VM test pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 95% | Native Linux/Windows streams, handoff and waits verified; real cross-VM signed-driver test pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 10% | Scoped public renderer/context/reply owner and real CPU dispatch verified; resource/session/GPU integration pending |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `21.1%`
+**Total Feature Completion**: `21.25%`
 
 ## Commit History & Progress Log
 
@@ -219,7 +219,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Reviewed against session readiness and ring exact-transfer
     contracts; native implementation and runtime validation remain pending.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): hand off native lifecycle streams with deadlines`
+- **Commit `c20e8bb`**: `feat(vgpu): hand off native lifecycle streams with deadlines`
   - **Task Impact**: +2% to TODO: #1 (+0.3% overall).
   - **Summary**: Added borrowed native Linux stream/Windows overlapped adapters,
     complete readiness delivery, private partial framing, atomic cancellation,
@@ -232,3 +232,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Real Linux two-peer handshake, one-byte framing, full-ring progress, partial
     EOF, final Stop, cancellation during waits and deadline shutdown passed.
     Native Windows execution and the real cross-VM signed-driver gate are pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): record native overlapped stream verification`
+  - **Task Impact**: +1% to TODO: #1 (+0.15% overall).
+  - **Summary**: Credited the Windows stream-adapter execution milestone after
+    actual overlapped named-pipe handshake, fragmented control, pending cancellation,
+    deadline/partial EOF and event cleanup tests passed on native Windows.
+  - **Verification**: Both jobs passed at `c20e8bb` in
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37390952834 .
+    Named-pipe fixtures exercise Windows completion APIs, not a VirtIO driver;
+    actual cross-VM signed IVSHMEM/VirtIO-Serial driver validation remains 5%.
