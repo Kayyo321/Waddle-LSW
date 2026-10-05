@@ -12,8 +12,10 @@
 #define AvPcmOffset 16384u
 /** @brief Audio capacity in frames; caller may trim to eight milliseconds. */
 #define AvAudioCapacity 4096u
-/** @brief Full fixed mapping size, below wl_shm signed-32-bit size ceiling. */
-#define AvMappingBytes (UINT64_C(65536) + UINT64_C(48) * AvSlotCapacity)
+/** @brief Used bytes within the mapping; below wl_shm INT32_MAX pool ceiling. */
+#define AvUsedBytes (UINT64_C(65536) + UINT64_C(48) * AvSlotCapacity)
+/** @brief Power-of-two PCI BAR size required by ivshmem-plain (2 GiB). */
+#define AvMappingBytes UINT64_C(2147483648)
 /** @brief Initialize metadata only in a quiescent caller-owned aligned mapping.
  * @param[in,out] mapping Nonnull 64-byte aligned mapping[length], caller-owned.
  * @param[in] length Accessible bytes, at least AvMappingBytes.

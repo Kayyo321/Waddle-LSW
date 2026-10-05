@@ -150,8 +150,9 @@ the session must reconnect with the shm path rather than reuse consumed pixels.
 
 ### Fixed pool layout
 
-The initial mapping is 1,610,678,272 bytes (64 KiB metadata plus 48 * 32 MiB
-pixel regions). Metadata: magic 0x57415631 at 0, version 1 at 4, total bytes as
+The PCI mapping is 2 GiB (2147483648 bytes), a power-of-two BAR as required by
+ivshmem-plain. Used bytes are 1,610,678,272 (64 KiB metadata plus 48 * 32 MiB
+pixel regions). wl_shm pools cover only the used region, below INT32_MAX. Metadata: magic 0x57415631 at 0, version 1 at 4, total bytes as
 LE u64 at 8, audio header at 128, 48 video headers at 4096 + slot * 64, PCM at
 16384 (4096 frames * 4 bytes). Pixels start at 65536 + slot * 33554432. Each
 window has three slots; global slot = window_pool * 3 + local_buffer_index.

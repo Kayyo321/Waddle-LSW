@@ -1,5 +1,6 @@
 const std = @import("std");
-const MappingBytes: usize = 65536 + 48 * 33554432;
+const MappingBytes: usize = 2147483648;
+const UsedBytes: usize = 65536 + 48 * 33554432;
 fn write(comptime T: type, bytes: []u8, offset: usize, value: T) void {
     std.mem.writeInt(T, bytes[offset..][0..@sizeOf(T)], value, .little);
 }
@@ -54,5 +55,5 @@ test "mapping bounds and immutable ABI validation" {
     try std.testing.expect(av_layout_slot(bytes.ptr, MappingBytes - 1, 0, 0) == null);
     try std.testing.expectEqual(@as(u64, 0), av_layout_pixels(16, 0));
     try std.testing.expectEqual(@as(u64, 0), av_layout_pixels(0, 3));
-    try std.testing.expectEqual(@as(u64, MappingBytes), av_layout_pixels(15, 2) + 33554432);
+    try std.testing.expectEqual(@as(u64, UsedBytes), av_layout_pixels(15, 2) + 33554432);
 }

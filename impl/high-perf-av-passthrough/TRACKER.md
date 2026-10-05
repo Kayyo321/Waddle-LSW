@@ -126,6 +126,10 @@
   - **Task Impact**: +40% to #7.1 (+0.80% overall); +60% to #7.2 (+1.20% overall)
   - **Summary**: Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks.
 
-- **Commit `HEAD`**: `docs(av): include all-in-one environment provisioning in feature scope`
+- **Commit `d5d343189ca4`**: `docs(av): include all-in-one environment provisioning in feature scope`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Add the user-required host module, managed VM devices, signed guest driver deployment, readiness probing and provisioned-session verification tasks. Rescale prior tasks to 80 percent and reserve 20 percent for provisioning without assuming an external AV test environment.
+
+- **Commit `HEAD`**: `fix(av): align shared mapping size to IVSHMEM PCI BAR requirements`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Reserve a 2 GiB power-of-two mapping for QEMU ivshmem-plain while keeping the used pixel region below the wl_shm signed size limit. Update mapping validation and native sparse-map tests; transport suites pass.

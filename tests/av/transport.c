@@ -106,7 +106,7 @@ int main(void) {
     assert(av_layout_init(mapping, AvMappingBytes) == 0);
     assert(av_layout_validate(mapping, AvMappingBytes) == 0);
     assert(av_layout_slot(mapping, AvMappingBytes, 15, 2)->buffer_index == 2);
-    assert(av_layout_pixels(15, 2) + AvSlotCapacity == AvMappingBytes);
+    assert(av_layout_pixels(15, 2) + AvSlotCapacity == AvUsedBytes);
     assert(av_layout_validate(mapping, 64) == -1);
     assert(munmap(mapping, AvMappingBytes) == 0);
     int regular = open("/dev/null", O_RDONLY | O_CLOEXEC);
