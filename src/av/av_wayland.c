@@ -121,8 +121,6 @@ static void registry_global(void *context, struct wl_registry *registry, uint32_
             zwp_linux_dmabuf_v1_add_listener(client->dmabuf, &DmabufEvents, client);
     } else if (!strcmp(interface_name, "xdg_wm_base") && !client->shell) {
         client->shell = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
-        if (client->dmabuf)
-            zwp_linux_dmabuf_v1_destroy(client->dmabuf);
         if (client->shell)
             xdg_wm_base_add_listener(client->shell, &ShellEvents, client);
     }
