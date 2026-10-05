@@ -128,7 +128,7 @@ int main(int argc, char **argv) {
         }
         struct pollfd descriptors[2] = {
             {peer, POLLIN | (host.peer.head != host.peer.tail ? POLLOUT : 0), 0},
-            {av_wayland_fd(host.video), POLLIN, 0}};
+            {av_wayland_fd(host.video), POLLIN | (av_wayland_writable(host.video) ? POLLOUT : 0), 0}};
         int ready = poll(descriptors, 2, 1000);
         if (ready < 0) {
             if (errno == EINTR)
@@ -143,6 +143,10 @@ int main(int argc, char **argv) {
             break;
         }
         if (descriptors[1].revents & POLLIN && av_wayland_dispatch(host.video) != 0) {
+            result = 1;
+            break;
+        }
+        if (av_wayland_flush(host.video) != 0) {
             result = 1;
             break;
         }

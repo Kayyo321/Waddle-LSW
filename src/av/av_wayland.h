@@ -47,6 +47,17 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message);
  * @note Event thread only; blocks unless caller poll indicates readable FD.
  */
 int av_wayland_dispatch(av_wayland_t *client);
+/** @brief Flush outgoing protocol bytes without blocking.
+ * @param[in,out] client Nonnull event-thread-owned instance.
+ * @return 0 flushed/would-block, -1 display error; no ownership transfer.
+ * @note Event thread; writable() reports whether POLLOUT must be requested.
+ */
+int av_wayland_flush(av_wayland_t *client);
+/** @brief Query outgoing display backpressure.
+ * @param[in] client Nonnull borrowed instance.
+ * @return 1 poll POLLOUT, 0 no pending flush; event thread, allocation-free.
+ */
+int av_wayland_writable(const av_wayland_t *client);
 /** @brief Return a borrowed display FD for caller poll integration.
  * @param[in] client Nonnull initialized client.
  * @return Nonnegative borrowed FD; caller must not close it.
@@ -56,7 +67,8 @@ int av_wayland_fd(av_wayland_t *client);
 /** @brief Disconnect display and release all owned protocol objects/context.
  * @param[in,out] client Nonnull pointer to owned instance, NULL accepted as value.
  * @note Event thread only; sets *client NULL; mapping retained by caller until
- * compositor/guest are quiescent. No slot is reset while presentation is pending.
+ * compositor/guest are quiescent. Retires surfaces and drains releases for at most
+ * two seconds. Unreleased slots remain consumed on compositor error/timeout.
  */
 void av_wayland_free(av_wayland_t **client);
 #endif

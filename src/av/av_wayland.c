@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
+#include <time.h>
 
 /** @brief One retained compositor buffer; event thread owns protocol reference. */
 typedef struct video_buffer_t {
@@ -42,6 +44,7 @@ struct av_wayland_t {
     av_host_request_t request;
     void *request_context;
     int delivery_failed;
+    int writable;
 };
 static void buffer_release(void *context, struct wl_buffer *buffer) {
     (void)buffer;
@@ -166,10 +169,12 @@ static video_window_t *find_window(av_wayland_t *client, uint64_t id) {
             return &client->windows[i];
     return NULL;
 }
+static void drain_buffers(av_wayland_t *client);
 void av_wayland_free(av_wayland_t **client_pointer) {
     av_wayland_t *client = *client_pointer;
     if (!client)
         return;
+    drain_buffers(client);
     for (unsigned i = 0; i < AvMaxWindows; ++i)
         free_window(&client->windows[i]);
     if (client->dmabuf)
@@ -259,7 +264,7 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
         window->buffers[i].offset = offsets[i];
     }
     wl_surface_commit(window->surface);
-    return wl_display_flush(client->display) < 0 && errno != EAGAIN ? -1 : 0;
+    return av_wayland_flush(client);
 fail:
     free_window(window);
     return -1;
@@ -290,16 +295,18 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
         if (video->busy || !av_video_begin_read(video->slot))
             return 0;
         window_slot_header_t *slot = video->slot;
+        /* Snapshot metadata once before validating untrusted shared storage. */
+        const uint32_t width = slot->width, height = slot->height, stride = slot->stride;
         if (!window->configured || slot->frame_sequence != message->sequence ||
-            slot->width != message->width || slot->height != message->height ||
+            width != message->width || height != message->height ||
             slot->format != AvPixelFormat || slot->buffer_index != message->buffer_index ||
-            !av_video_size(slot->width, slot->height, slot->stride, window->capacity) ||
-            slot->stride > INT32_MAX) {
+            !av_video_size(width, height, stride, window->capacity) ||
+            stride > INT32_MAX) {
             av_video_release(slot);
             return 0;
         }
-        if (video->buffer && (video->width != slot->width || video->height != slot->height ||
-                              video->stride != slot->stride)) {
+        if (video->buffer && (video->width != width || video->height != height ||
+                              video->stride != stride)) {
             wl_buffer_destroy(video->buffer);
             video->buffer = NULL;
         }
@@ -310,9 +317,9 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
                     struct zwp_linux_buffer_params_v1 *params =
                         zwp_linux_dmabuf_v1_create_params(client->dmabuf);
                     if (params) {
-                        zwp_linux_buffer_params_v1_add(params, exported, 0, 0, slot->stride, 0, 0);
+                        zwp_linux_buffer_params_v1_add(params, exported, 0, 0, stride, 0, 0);
                         video->buffer = zwp_linux_buffer_params_v1_create_immed(
-                            params, (int32_t)slot->width, (int32_t)slot->height, AvPixelFormat, 0);
+                            params, (int32_t)width, (int32_t)height, AvPixelFormat, 0);
                         zwp_linux_buffer_params_v1_destroy(params);
                     }
                     close(exported);
@@ -320,28 +327,28 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
             }
             if (!video->buffer) {
                 video->buffer = wl_shm_pool_create_buffer(
-                    window->pool, (int32_t)video->offset, (int32_t)slot->width,
-                    (int32_t)slot->height, (int32_t)slot->stride, WL_SHM_FORMAT_ARGB8888);
+                    window->pool, (int32_t)video->offset, (int32_t)width,
+                    (int32_t)height, (int32_t)stride, WL_SHM_FORMAT_ARGB8888);
             }
             if (!video->buffer) {
                 av_video_release(slot);
                 return -1;
             }
-            video->width = slot->width;
-            video->height = slot->height;
-            video->stride = slot->stride;
+            video->width = width;
+            video->height = height;
+            video->stride = stride;
             wl_buffer_add_listener(video->buffer, &BufferEvents, video);
         }
         video->busy = 1;
         wl_surface_attach(window->surface, video->buffer, 0, 0);
         wl_surface_damage_buffer(window->surface, message->damage_x, message->damage_y,
                                  (int32_t)message->damage_width, (int32_t)message->damage_height);
-        xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, (int32_t)slot->width,
-                                        (int32_t)slot->height);
+        xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, (int32_t)width,
+                                        (int32_t)height);
         wl_surface_commit(window->surface);
     } else
         return -1;
-    return wl_display_flush(client->display) < 0 && errno != EAGAIN ? -1 : 0;
+    return av_wayland_flush(client);
 }
 int av_wayland_dispatch(av_wayland_t *client) {
     if (wl_display_dispatch(client->display) < 0 || client->delivery_failed)
@@ -349,3 +356,32 @@ int av_wayland_dispatch(av_wayland_t *client) {
     return 0;
 }
 int av_wayland_fd(av_wayland_t *client) { return wl_display_get_fd(client->display); }
+int av_wayland_flush(av_wayland_t *client) {
+    int result = wl_display_flush(client->display);
+    client->writable = result < 0 && errno == EAGAIN;
+    return result < 0 && !client->writable ? -1 : 0;
+}
+int av_wayland_writable(const av_wayland_t *client) { return client->writable; }
+static int64_t monotonic_ms(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+static void drain_buffers(av_wayland_t *client) {
+    if (!client->display) return;
+    for (unsigned i = 0; i < AvMaxWindows; ++i) retire_window(&client->windows[i]);
+    int64_t deadline = monotonic_ms() + 2000;
+    for (;;) {
+        if (wl_display_dispatch_pending(client->display) < 0 || av_wayland_flush(client) != 0)
+            break;
+        int pending = 0;
+        for (unsigned i = 0; i < AvMaxWindows; ++i) pending |= busy(&client->windows[i]);
+        int64_t remaining = deadline - monotonic_ms();
+        if (!pending || remaining <= 0) break;
+        struct pollfd display = {av_wayland_fd(client), POLLIN | (client->writable ? POLLOUT : 0), 0};
+        int ready = poll(&display, 1, (int)remaining);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready <= 0 || display.revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+        if (display.revents & POLLIN && wl_display_dispatch(client->display) < 0) break;
+    }
+}
