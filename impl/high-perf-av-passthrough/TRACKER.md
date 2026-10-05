@@ -279,6 +279,10 @@
   - **Task Impact**: +20% to #7.1 (+0.32% overall); +25% to #7.2 (+0.40% overall)
   - **Summary**: Gate production lines and branches independently at ninety percent for audio, control, layout and video; current results are one hundred percent in each module. Prevent constant-folded test calls, cover real sparse mapping initialization and invalid pool/metadata fields, and run all native AV suites under ASan/LSan/UBSan with leak-checking Zig tests.
 
-- **Commit `HEAD`**: `feat(av): import companion firmware metadata for installed images`
+- **Commit `8960b856330e`**: `feat(av): import companion firmware metadata for installed images`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Allow an explicit bounded firmware metadata path during setup, imply UEFI and stage the supplied image companion atomically under a quiescent device lease. Preserve the source and reject active-device imports; normal restart still retains the owned firmware store.
+
+- **Commit `HEAD`**: `fix(av): reuse live managed runtime after readiness timeout`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Retry guest readiness against the existing QEMU child without remapping shared memory or replacing the filesystem worker. Reap stale children before clean startup and prove live retries retain their PID and mapping with a supervisor regression.

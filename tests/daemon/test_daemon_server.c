@@ -263,7 +263,34 @@ static void test_reaped_av_cleanup(void) {
     assert(access(state.config.av_shm_path, F_OK) != 0);
     rmdir(root);
 }
+static void test_live_readiness_retry(void) {
+    daemon_state_t state = {0};
+    state.av_environment.fd = -1;
+    daemon_config_init_defaults(&state.config);
+    state.config.av_enabled = 1;
+    char root[] = "/tmp/waddle-av-retry-XXXXXX";
+    assert(mkdtemp(root));
+    snprintf(state.config.av_shm_path, sizeof(state.config.av_shm_path), "%s/memory", root);
+    char error[256];
+    assert(av_environment_prepare(&state.av_environment, &state.config, error, sizeof(error)) == 0);
+    void *mapping = state.av_environment.mapping;
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) { for (;;) pause(); }
+    state.qemu.pid = child;
+    state.qemu.is_running = 1;
+    state.state = SubsystemStateFailed;
+    assert(daemon_state_start_subsystem(&state, 0, 1) == 0);
+    assert(state.qemu.pid == child && state.av_environment.mapping == mapping);
+    assert(state.state == SubsystemStateRunning);
+    assert(kill(child, SIGTERM) == 0);
+    assert(waitpid(child, NULL, 0) == child);
+    state.qemu.is_running = 0;
+    av_environment_free(&state.av_environment);
+    assert(rmdir(root) == 0);
+}
 int main(void) {
+    test_live_readiness_retry();
     test_reaped_av_cleanup();
     test_named_startup_handoff();
     test_lockfile_concurrency();

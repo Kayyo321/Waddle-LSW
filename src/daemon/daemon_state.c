@@ -292,6 +292,16 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
         goto probe_readiness;
     }
 
+    /* A readiness timeout does not terminate the VM. Reuse its owned mappings
+     * and filesystem process instead of spawning a second runtime on retry. */
+    if (s->qemu.is_running) {
+        int alive = qemu_poll_status(&s->qemu);
+        if (alive > 0) goto probe_readiness;
+        if (alive < 0) return -1;
+        av_environment_free(&s->av_environment);
+        if (s->virtiofs.is_running) daemon_fs_stop(&s->virtiofs, 1000);
+    }
+
     /* Step 1: VirtIO-FS host daemon */
     s->state = SubsystemStateStartingVirtiofs;
     if (s->config.mount_count > 0 && s->config.mounts[0].host_path[0] != '\0') {
