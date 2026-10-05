@@ -55,9 +55,13 @@
   - **Task Impact**: +0% to TODO: #11 pending successful checks; +0% implementation completion.
   - **Summary**: Follow reorganized guest/common/test paths on Windows and install Linux vendor-build prerequisites and real qemu-img. Preserve native heap, allocator, sanitizer, coverage, and cross-build gates.
 
-- **Commit `:/enable long paths for native guest checkout`**: `chore(ci): enable long paths for native guest checkout`
+- **Commit `bf14c42`**: `chore(ci): enable long paths for native guest checkout`
   - **Task Impact**: +0% to TODO: #11 pending rerun.
   - **Summary**: Initial native CI failed while checking out deep QEMU/EDK2 cryptography submodule paths. Enable Git long-path support before recursive checkout without skipping dependencies.
+
+- **Commit `:/isolate vendor configuration from application flags`**: `fix(build): isolate vendor configuration from application flags`
+  - **Task Impact**: +0% to TODO: #11 pending rerun; no new device implementation progress.
+  - **Summary**: Fresh Linux CI exposed application pedantic/Werror flags leaking into QEMU/DTC configuration. Clear application CFLAGS/CPPFLAGS/LDFLAGS only at vendor configure; retain strict flags and sanitizers for every Waddle target.
 
 ## Audit conventions and specification review
 

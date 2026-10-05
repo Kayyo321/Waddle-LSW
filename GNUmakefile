@@ -22,7 +22,7 @@ build/vendor: | build
 	mkdir -p $@
 
 $(QEMU_BUILD_DIR)/config-host.mak: $(QEMU_DIR)/configure
-	cd $(QEMU_DIR) && ./configure --target-list=x86_64-softmmu --enable-kvm --disable-docs --disable-gtk --disable-sdl --disable-vnc
+	cd $(QEMU_DIR) && env -u CFLAGS -u CPPFLAGS -u LDFLAGS ./configure --target-list=x86_64-softmmu --enable-kvm --disable-docs --disable-gtk --disable-sdl --disable-vnc
 
 $(QEMU_SYSTEM_X86): $(QEMU_BUILD_DIR)/config-host.mak
 	ninja -C $(QEMU_BUILD_DIR) qemu-system-x86_64
