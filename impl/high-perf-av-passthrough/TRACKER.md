@@ -51,6 +51,24 @@
 
 **Total Feature Completion**: `96.97%`
 
+## Outstanding acceptance evidence
+
+- The 2026-10-05 program-provisioned Windows display reports 1920x1080 at 64 Hz.
+  The validated native benchmark recorded 113 unique frames in 3002.042 ms
+  (37.64 FPS), zero duplicates and 12 future WGC timestamps. Capture-age timing
+  is invalid; neither video <7 ms at 144 Hz nor audio <10 ms is measured.
+- Both host GPUs retain active desktop/render clients. No eligible GPU has been
+  detached. Automatic preparation and recovery for a safe explicit GPU remains
+  unfinished; a pre-bound vfio-pci requirement does not complete provisioning.
+- A driver-install reboot-required result remains incomplete setup. Automated
+  restart/re-probe through the managed lifecycle is not implemented yet.
+- Complete archive assembly and required-input failure checks pass locally. The
+  new same-run CI transfer and final-commit checks still require remote evidence.
+- Live host/guest setup passes; an unavailable Wayland socket fails publication
+  and preserves the previous deployment selector. AV and repository-wide native
+  sanitizers pass; each measured AV protocol/memory module has 100% line/branch
+  coverage. These results do not satisfy the missing performance acceptance.
+
 ## Commit History & Progress Log
 
 - **Commit `3923dd5`**: `docs(tracker): initialize implementation plan and tracker`
@@ -383,6 +401,10 @@
   - **Task Impact**: +2% to #10.2 (+0.10% overall)
   - **Summary**: Validate SUDO_UID and grant a specific-user ACL even when the privileged helper can already open a compatible live KVMFR device. Preserve its ownership and active mappings, fail on an invalid identity or grant failure, and add syscall-isolated tests that never mutate kernel devices. The extended AV sanitizer suite and real compatible-device reuse pass.
 
-- **Commit `HEAD`**: `fix(av): forward fullscreen state from zero-size Wayland configure`
+- **Commit `bed28222608c`**: `fix(av): forward fullscreen state from zero-size Wayland configure`
   - **Task Impact**: +3% to #5.4 (+0.12% overall)
   - **Summary**: Treat xdg-shell zero dimensions as client-selected size while still forwarding changed fullscreen state. Preserve guest dimensions, avoid unchanged echoes, and propagate delivery failures. Add isolated callback regressions for zero-size entry/exit, valid resizing, invalid sizes and callback failure; the extended AV sanitizers and real Wayland/PipeWire platform gate pass.
+
+- **Commit `HEAD`**: `docs(av): align architecture and acceptance claims with observed behavior`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Replace stale conceptual C++ ABI and zero-copy/input/reconnect claims with the implemented C/Zig interfaces, exact layouts, startup/teardown ownership and drop-new audio policy. Document observed 64-Hz/37.64-FPS capture with invalid WGC age timing, active desktop GPUs, pending automatic GPU recovery and driver reboot handling. Preserve incomplete tracker status and acceptance thresholds.

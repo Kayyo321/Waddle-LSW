@@ -1,72 +1,175 @@
 # Implementation Description: High-Performance Audio/Video Passthrough for Gaming
 
 ## 1. Title & High-Level Scope
-- **Title**: High-Performance Audio/Video Passthrough for Gaming
-- **Scope**: Implements near-bare-metal latency and FPS for Windows gaming by tracking game window lifecycle (move, resize, minimize, fullscreen, close), capturing the entire window exactly as it appears (including native Windows title bars and menu bars) using DXGI Desktop Duplication / Windows Graphics Capture, capturing game audio using WASAPI Application Loopback, and transporting both video and audio to the Linux host via IVSHMEM lockless ring buffers.
-- **Out of Scope**: General full-desktop capturing. Virtual audio devices (we rely on WASAPI loopback combined with a QEMU `-audiodev none` configuration to prevent double audio without requiring custom drivers). Server-side Wayland decorations (we capture the native Windows decorations for 100% fidelity).
+
+This feature presents the visible top-level windows of one selected Windows process
+as native Linux Wayland toplevels and plays that process tree's audio through
+PipeWire. Windows Graphics Capture (WGC) retains the window's native decorations,
+BGRA alpha and content through occlusion; explicit DXGI Desktop Duplication fallback
+captures only a visible monitor crop. Setup provisions managed QEMU AV devices,
+shared-memory resources, host access and guest AV driver/adapter deployment through
+the existing execution bridge. It preserves the caller's licensed OS disk.
+
+The performance acceptance targets remain below 7 ms video latency at actual
+144-Hz operation and below 10 ms audio latency. They are requirements, not claims
+established by compilation or by the current native acceptance evidence. General
+input forwarding, clipboard integration, arbitrary host toplevel positioning,
+GPU virtualization implementation, Windows installation/licensing and full desktop
+capture are outside this AV implementation. A silent emulated render endpoint is
+in scope; a custom virtual audio driver is not required. Rootless capture does not
+provide host compositor decorations or synthesize GPU hardware capabilities.
 
 ## 2. Architecture & Inter-Component Interactions
-- **Guest Agent**: Uses `SetWinEventHook` to track window state (move, resize, minimize, fullscreen, close). Hooks into DXGI for video. Audio is captured via **per-process WASAPI Application Loopback** to isolate game audio from system sounds.
-- **IPC Layer**:
-  - Control channel (VSOCK): Transmits window state changes, geometry updates, and input events.
-  - Video channel (IVSHMEM): Zero-copy DXGI surface blitting.
-  - Audio channel (IVSHMEM): Low-latency audio stream using a lockless circular buffer for PCM data. The format is hardcoded to a standard gaming format (48kHz, 16-bit, Stereo) to avoid dynamic negotiation overhead.
-- **Host Client**: Reads video frames via DMA-BUF and presents using Wayland `xdg_toplevel` (displaying the captured Windows decorations). Reads audio from IVSHMEM and plays back via PipeWire/PulseAudio.
+
+```text
+managed Linux CLI -> daemon -> QEMU (KVM, IVSHMEM, VSOCK, silent HDA)
+        |                       |            |
+        | existing execution    |            | two-GiB shared memory
+        | bridge deployment     |            | video slots + PCM ring
+        v                       v            v
+Windows AV agent <---- VSOCK AV port 5001 ----> Linux AV host
+  WinEvent/WGC/               lifecycle,          Wayland + DMA-BUF/wl_shm
+  WASAPI process loopback     geometry, frames    PipeWire PCM callbacks
+```
+
+C owns OS handles, sockets, native threads and process lifetimes. Zig validates
+bounded control serialization, numeric commands, mapping layouts and PCM/pixel
+copies. C++ is confined to the first-party Windows SDK WinRT DLL. Capture uses
+GPU-to-staging and CPU-to-IVSHMEM copies; DMA-BUF avoids a separate host pixel
+copy when the compositor accepts the actual KVMFR export. This is not zero-copy
+from the Windows GPU to the compositor. Audio is fixed stereo 48-kHz S16LE.
+The AV control channel carries create/destroy/geometry/frame/close only; general
+pointer and keyboard messages are not implemented here. PulseAudio is not a
+second playback implementation. The original CLI protocol/port stays separate.
 
 ## 3. Data Structures, Protocols & Memory Layouts
-- **Window Slot Header** (IVSHMEM):
-  ```c
-  struct alignas(64) window_slot_header_t {
-      std::atomic<uint32_t> slot_state; // SlotReady, SlotWriting, SlotConsuming
-      uint32_t buffer_index;
-      uint64_t frame_sequence;
-      uint64_t timestamp_ns;
-      uint32_t width;
-      uint32_t height;
-      uint32_t stride;
-      uint32_t format;
-      uint8_t reserved[24];
-  };
-  ```
-- **Audio Ring Buffer** (IVSHMEM):
-  ```c
-  struct alignas(64) audio_ring_header_t {
-      std::atomic<uint32_t> write_head;
-      std::atomic<uint32_t> read_head;
-      uint32_t sample_rate;
-      uint32_t channels;
-      uint32_t format; // PCM 16-bit, 24-bit, Float32
-      uint8_t reserved[44];
-  };
-  ```
-- **Control Messages** (VSOCK):
-  `MsgWindowGeometry` updated to include fullscreen and minimize states.
+
+The exact source ABI is in include/waddle/av_memory.h. Both C structs are 64-byte
+aligned and exactly 64 bytes, with lock-free C11 uint32 atomics. The target is
+x86-64 little endian on both peers. No pointer is serialized.
+
+| Video header offset | Type | Field |
+|---|---|---|
+| 0 | atomic uint32 | slot_state: Free=0, Writing=1, Ready=2, Consuming=3 |
+| 4 | uint32 | immutable local buffer_index, 0..2 |
+| 8 | uint64 | nonzero frame_sequence |
+| 16 | uint64 | guest capture timestamp_ns; not host clock time |
+| 24 / 28 / 32 / 36 | uint32 each | width / height / stride / BGRA format |
+| 40..63 | byte[24] | zero reserved padding |
+
+| Audio header offset | Type | Field |
+|---|---|---|
+| 0 / 4 | atomic uint32 each | write_head / read_head, modular frame cursors |
+| 8 / 12 / 16 / 20 | uint32 each | rate=48000 / channels=2 / format=1 / capacity=4096 |
+| 24 | atomic uint32 | cumulative producer overrun_frames |
+| 28..63 | byte[36] | zero reserved padding |
+
+Mapping identity, video pool offsets, byte capacities and all 328 control wire
+bytes are specified in section 8 below. Sixteen pools of three buffers are fixed;
+no dynamic shared-memory allocator runs during capture. Zig bounds checks every
+row and payload offset. The control decoder writes output only after validation.
 
 ## 4. Step-by-Step Execution Sequence
-1. **Initialization**: Guest agent starts, connects to VSOCK, maps IVSHMEM. Host client initializes Wayland and PipeWire.
-2. **Window Open**: Guest detects `EVENT_OBJECT_CREATE`. If it's a game/target window, allocates IVSHMEM slots for video and audio.
-3. **Capture Loop**: Guest captures DXGI frame -> writes to IVSHMEM -> fences -> sends `MsgFrameReady` via VSOCK. WASAPI captures audio -> writes to IVSHMEM audio ring buffer -> updates `write_head`.
-4. **Presentation**: Host receives `MsgFrameReady`, imports DMA-BUF, calls `wl_surface_damage_buffer`, commits. Host audio thread polls or waits on eventfd for audio data, writes to PipeWire.
-5. **Window Management**: Host user moves Wayland window -> sends `MsgWindowGeometry` -> Guest calls `SetWindowPos`. Same for resizing, minimizing, and closing (`WM_CLOSE`).
+
+1. Managed setup resolves the selected device, obtains its AV command lease and
+   validates/updates AV settings only when configuration changes are quiescent.
+   It prepares KVM/VSOCK access and optionally builds/loads compatible pinned KVMFR.
+2. Daemon startup takes the device/runtime memory leases, prepares persistent
+   firmware and initializes the shared-memory ABI before starting QEMU. Existing
+   occupied slots or a different ABI fail before initialization.
+3. The existing bridge executes native guest setup from an immutable deployment.
+   Signed IVSHMEM installation and the guest probe must succeed. Native host
+   mapping, Wayland and ready PipeWire probes must then succeed before publishing
+   the deployment selector. Reboot-required driver status remains an explicit
+   incomplete setup result rather than a false ready state.
+4. Run validates a live selected process object, starts its guest agent via the
+   existing bridge and waits for the exact listener-ready line. The guest listens;
+   the native Linux host connects to guest CID and AV port 5001.
+5. The guest maps IVSHMEM, starts an event-signalled WASAPI audio worker, registers
+   WinEvent hooks and enumerates visible windows on its message/capture thread.
+   Deferred window admissions retry every 250 ms when a complete pool is free.
+6. Each successful capture claims a Free slot, copies bounded BGRA rows, publishes
+   Ready with release ordering and sends a bounded frame notification. The host
+   claims Consuming, validates metadata and waits for initial surface configuration.
+   It asynchronously imports KVMFR DMA-BUF or uses wl_shm, attaches, damages and
+   commits stable pixels. Only compositor release permits reuse after attachment.
+7. The PipeWire callback reads the SPSC PCM ring directly, trims excess backlog,
+   fills underrun silence and queues its output buffer; it allocates nothing.
+8. Guest geometry updates retain metadata and apply host fullscreen/minimize
+   requests where xdg-shell permits them. Host configure requests resize/restore
+   the guest HWND; close translates to WM_CLOSE. Host placement remains owned by
+   the compositor, so moving a host window does not transmit a global position.
+9. Process exit, disconnect, cancellation or failure stops capture and joins audio.
+   Managed CLI cancels/reaps only its owned agent/playback children. Guest original
+   styles are restored; host retires surfaces and drains compositor leases before
+   native clients and mappings are released. Persistent OS disks/firmware survive.
 
 ## 5. Concurrency, Threading & Synchronization
-- Video ring buffer uses acquire-release atomic fences (`std::memory_order_release` after writing, `std::memory_order_acquire` before reading).
-- Lock-free SPSC (Single Producer Single Consumer) queue for audio PCM data.
-- Guest capture loop runs on a dedicated high-priority multimedia thread (`AvSetMmThreadCharacteristics`).
+
+The guest message/capture thread is an MTA and owns hooks, WGC sessions, DXGI
+handles, video producer state and VSOCK control. An owned high-resolution 1-ms
+timer drives capture polling. MMCSS is requested for the capture/audio threads.
+The separate guest audio worker initializes its own COM apartment and waits on
+stop and WASAPI events. Activation callback state owns its asynchronous lifetime
+through COM reference counts; an activation timeout cannot free a live callback.
+
+The host event thread owns Wayland objects, video consumption and VSOCK state.
+The PipeWire worker is the only PCM consumer. Acquire/release transitions transfer
+slot ownership; audio cursors order PCM publication/consumption. There is no
+cross-VM mutex and no forced reuse of a compositor-held slot. Per-device command
+leases and daemon-held memory leases cover idle/audio-only sessions as well as
+video. The mapping outlives every worker, pending import and retained buffer.
 
 ## 6. Error Handling & Failure Modes
-- Disconnect: If VSOCK disconnects, guest agent releases WASAPI and DXGI resources and attempts reconnect. Host destroys Wayland surfaces.
-- Buffer Overrun: If audio `write_head` catches up to `read_head`, guest drops oldest frames and increments an overrun counter.
-- DXGI Lost: If surface is lost, guest re-initializes DXGI capture pipeline seamlessly.
+
+A failed or closed VSOCK session tears down its owned clients; it does not run an
+unbounded automatic reconnect loop. The managed startup path retries readiness
+within its documented deadlines and preserves an already running VM on bridge
+timeout. Cancellation never terminates the selected pre-existing application.
+Audio overrun drops new incoming frames, increments its counter and preserves
+unread bytes. Only the consumer trims backlog. Underrun emits silence. WASAPI
+activation/render-endpoint failure is reported independently of video capability.
+
+Capture device/output loss releases that capture session and retries initialization
+on the next tick. Invalid dimensions/capacity fail bounded copies. An unsent frame
+notification cancels only producer-owned Writing/Ready state. DMA-BUF rejection
+falls back asynchronously to wl_shm for that window. Retired windows retain pending
+callback context until import/release completes. Teardown is bounded; unknown
+outstanding compositor leases remain Consuming after display failure/timeout.
+
+Setup never unloads an active module or detaches an unspecified GPU. Existing
+non-VFIO GPU bindings fail without modification. Both acceptance-host GPUs have
+active desktop users, so neither can be reassigned for performance verification.
+Automatic preparation/recovery of a safely eligible explicit GPU is still
+unfinished; a pre-bound GPU requirement is not recorded as fully provisioned.
+Secure Boot restrictions, missing running-kernel headers, guest logon/bridge
+bootstrap, driver reboot-required status and incompatible live modules produce
+explicit failures. Setup does not bypass signatures or overwrite the licensed OS.
 
 ## 7. Verification & Testing Criteria
-- **Latency**: End-to-end video latency from DXGI present to Wayland commit must be < 7ms at 144Hz. Audio latency < 10ms.
-- **LeakSanitizer**: Zero leaked bytes across all tests.
-- **Coverage**: 90% coverage for audio and video ring buffer logic.
+
+`make av-test` covers production video ownership, SPSC overflow/wrap/trimming,
+bounded BGRA copies, malformed control fields, sparse full layouts, resource
+leases, host setup reuse and xdg-shell state-only configure events. Packaging tests
+verify all required payloads/checksums and preservation of prior archives on every
+missing-input failure. `make av-sanitizers` runs native tests with ASan/LSan/UBSan
+and Zig's testing allocator; zero leaked bytes are required. `make av-coverage`
+gates each protocol/memory module's production line and branch coverage separately
+at 90%; the current measured modules are each at 100%.
+
+Native gates require actual Windows WGC occlusion pixels, process-tree loopback
+PCM, KVMFR DMA-BUF aliasing, compositor attachment/release, PipeWire callbacks and
+managed startup/cancellation. Hardware-independent mocks establish neither native
+fidelity nor latency. Full performance acceptance additionally requires real
+144-Hz operation and timestamped video presentation/audio delivery. A backlog
+counter, Wayland commit, WGC-to-CPU age or guest-only FPS diagnostic cannot substitute
+for that end-to-end evidence. The native benchmark currently finds a 64-Hz Windows
+mode and invalid future WGC timestamps; task #10.5 remains incomplete. Every
+applicable GitHub check must pass on the final source commit before completion.
 
 ## 8. Binding implementation refinements
 
-The sketches above are conceptual, not compilable ABI definitions. The C ABI is
+The source ABI and tables above agree; no C++ atomic layout is used. The C ABI is
 x86-64 little-endian only, with lock-free 32-bit atomics and explicit padding.
 C owns platform handles; Zig owns control decoding, length/offset validation and
 bounded PCM/pixel copies. AV uses a separate control connection on port 5001;
@@ -134,7 +237,8 @@ submodules/looking_glass, public HTTPS upstream https://github.com/gnif/LookingG
 Only module/kvmfr.h and vendor/ivshmem/ivshmem.h define driver ABI boundaries;
 no upstream application implementation is linked or loosely copied. The KVMFR header carries a GPL-2.0-or-later notice; the IVSHMEM header
 is distributed within the same GPL-2.0-or-later project, compatible with this repository's GPL-3.0.
-Kernel driver installation remains an operator task, not an automatic build step.
+Managed setup builds/loads the bundled patched module when requested; installing
+base running-kernel headers and satisfying signature policy remain host prerequisites.
 Host uses KVMFR_DMABUF_GETSIZE/CREATE; guest uses the signed Red Hat IVSHMEM
 interface GUID and map/unmap ioctls. No nested vendor sources are used.
 
@@ -145,8 +249,8 @@ ARGB8888. Each slot exports its page-aligned payload offset/capacity using the
 pinned KVMFR ioctl ABI. GETSIZE bounds-checks the region before CREATE. Returned
 CLOEXEC FD is closed immediately after the protocol duplicates it. A regular
 file fails GETSIZE and selects wl_shm. The compositor owns the buffer import
-until wl_buffer.release. Immediate DMA-BUF import rejection is a display error;
-the session must reconnect with the shm path rather than reuse consumed pixels.
+until wl_buffer.release. Asynchronous DMA-BUF rejection selects wl_shm for the same stable pixels and
+disables further DMA-BUF attempts for that window; callback ownership is retained.
 
 ### Fixed pool layout
 
