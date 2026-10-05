@@ -1,6 +1,6 @@
 # Feature Tracker: Subsystem Daemon Manager
 
-- **Contributors / Agents**: Antigravity Agent, Koyak
+- **Contributors / Agents**: Antigravity Agent, Koyak, Codex (/root)
 - **Time Started**: 2026-10-04T19:40:00Z
 - **Time Ended**: 2026-10-05T02:05:00Z
 - **Feature Branch**: feature/subsystem-daemon-manager
@@ -122,3 +122,14 @@
   - **Task Impact**: 0% progress impact (tree hygiene & organization)
   - **Summary**: Reorganized `tests/` into `unit/`, `integration/`, `daemon/`, `acceptance/`, and `windows/` subdirectories and updated build recipes and test scripts.
 
+
+- **Commit `0142b89`**: `chore(ci): repair native Windows verification paths for daemon PR`
+  - **Task Impact**: +0% to TODO: #8 (maintenance; feature task remains 100%).
+  - **Summary**: Fix parser, source, include, native fixture, and heap-audit paths after src/test reorganization. Preserve native regression and zero-allocation heap gates. CI rerun required at the PR head.
+
+Current-commit audit entries use Git's unique message revision selector (`:/...`),
+resolvable with `git rev-parse`, because a commit cannot embed its own hash.
+
+- **Commit `:/avoid persisted checkout credentials in contribution CI`**: `chore(ci): avoid persisted checkout credentials in contribution CI`
+  - **Task Impact**: +0% to TODO: #8 (CI hardening; no implementation progress change).
+  - **Summary**: Set persist-credentials false in both read-only pull_request workflows so tested contribution code cannot read an authentication token from Git config. Retain SHA-pinned checkout, hosted runners, and existing gates; no pull_request_target execution is introduced.
