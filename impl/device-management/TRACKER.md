@@ -21,9 +21,9 @@
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | Pending | 10% | 0% | Typed validation, preservation of exports, no live changes, bounded repairs |
 | #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
-| #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Isolated sanitizer/allocator suites and Windows cross-build pass; final native CI pending |
+| #11 | Verify specification revision and PR CI at final head | Done | 5% | 100% | Linux and Windows checks passed at af829ec; final tracker-only audit recheck required before handoff |
 
-**Total Feature Completion**: `42.5%`
+**Total Feature Completion**: `45.0%`
 
 ## Commit History & Progress Log
 
@@ -63,9 +63,13 @@
   - **Task Impact**: +0% to TODO: #11 pending rerun; no new device implementation progress.
   - **Summary**: Fresh Linux CI exposed application pedantic/Werror flags leaking into QEMU/DTC configuration. Clear application CFLAGS/CPPFLAGS/LDFLAGS only at vendor configure; retain strict flags and sanitizers for every Waddle target.
 
-- **Commit `:/record local specification verification and journal ordering`**: `docs(device): record local specification verification and journal ordering`
+- **Commit `af829ec`**: `docs(device): record local specification verification and journal ordering`
   - **Task Impact**: +50% to TODO: #11 (+2.5% overall); +0% to completed TODO: #6.
   - **Summary**: Record isolated ASan/LSan/UBSan and Zig allocator suite success and Windows guest/fixture cross-build. Specify durable journal intent before allocating staged disk copies and safe recovery of not-yet-created paths. Native CI remains pending.
+
+- **Commit `:/record passing device specification CI evidence`**: `docs(tracker): record passing device specification CI evidence`
+  - **Task Impact**: +50% to TODO: #11 (+2.5% overall); overall completion 45.0%. All remaining implementation tasks are unchanged.
+  - **Summary**: Record successful Linux sanitizer/allocator/coverage/cross-build and native Windows regression/heap gates at af829ec. The final audit changes only this tracker; verify its PR-head rerun before reporting completion of this request.
 
 ## Audit conventions and specification review
 
@@ -84,7 +88,7 @@ is awarded merely for a documentation or CI maintenance commit.
 
 - `git diff --check` passed; README has no diff against target branch.
 - Command inventory contains all 13 device subcommands; seven required sections
-  are present; tracker weights sum to 100 and the weighted total is 42.5%.
+  are present; tracker weights sum to 100 and the weighted total is 45.0%.
 - `make test-sanitizers` passed with isolated temporary XDG config/state/runtime
   roots and explicit `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1`
   and `LSAN_OPTIONS=abort_on_error=1`. Existing C, Zig allocator, daemon, CLI,
@@ -93,4 +97,19 @@ is awarded merely for a documentation or CI maintenance commit.
 - Draft PR: https://github.com/Kayyo321/Waddle-LSW/pull/3 (target `origin`).
 - Initial remote attempts exposed Windows long-path checkout and fresh vendor
   compiler-flag inheritance failures; dedicated maintenance commits address them.
-  Final native CI, coverage, and heap-audit evidence is pending rerun.
+  Both rerun workflows passed at `af829ec`; the final tracker-only commit receives
+  another CI run before handoff.
+
+### Successful remote checks at `af829ec`
+
+- Linux CLI verification: [run 37256632667](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37256632667), success.
+  Sanitizer and allocator suites, coverage gate, Windows cross-build all pass.
+  Measured existing implementation line coverage: protocol.c 92.50%, arguments.c
+  93.18%, guest_codec.zig 98.56%, path_rules.zig 100.00%. This does not establish
+  branch coverage or coverage for the planned registry transaction implementation.
+- Native Windows guest: [run 37256632581](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37256632581), success.
+  Parser allocator tests, native build, AF_UNIX regressions, and MSVC debug heap
+  audit pass. All 47 heap checkpoints report zero allocations, zero bytes, intact
+  heap; negative controls detect leak, overrun, and freed-write defects.
+- No real Windows VM acceptance for expanded device-management commands is claimed.
+  Feature Time Ended remains TBD and PR remains draft pending #3–#5 and #7–#10.
