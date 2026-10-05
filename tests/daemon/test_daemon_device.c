@@ -14,6 +14,14 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
+/** @brief Create explicit small blank test fixtures; no developer base required. */
+static int init_fixture(const char *name, const char *base, device_info_t *info) {
+    device_request_t request = { .operation = DeviceInit, .name = name, .argument = base ? base : "8M", .blank = base == NULL };
+    char output[WaddleMaxPathLen];
+    if (daemon_device_mutate(&request, output) != 0) return -1;
+    return info ? daemon_device_find(name, info) : 0;
+}
+
 static void test_device_name_validation(void) {
     /* Valid names */
     assert(daemon_device_validate_name("win11") == 0);
@@ -105,14 +113,14 @@ static void test_device_init_and_registry(void) {
 
     /* Initialize first device */
     device_info_t dev1;
-    assert(daemon_device_init("alpha", NULL, &dev1) == 0);
+    assert(init_fixture("alpha", NULL, &dev1) == 0);
     assert(strcmp(dev1.name, "alpha") == 0);
     assert(dev1.vsock_cid == BaseVsockCid);
     assert(access(dev1.config_path, R_OK) == 0);
     assert(access(dev1.disk_image, R_OK) == 0);
 
     /* Duplicate device must fail with EEXIST */
-    assert(daemon_device_init("alpha", NULL, NULL) == -1);
+    assert(init_fixture("alpha", NULL, NULL) == -1);
     assert(errno == EEXIST);
 
     /* Find dev1 */
@@ -127,7 +135,7 @@ static void test_device_init_and_registry(void) {
 
     /* Initialize second device */
     device_info_t dev2;
-    assert(daemon_device_init("beta", NULL, &dev2) == 0);
+    assert(init_fixture("beta", NULL, &dev2) == 0);
     assert(strcmp(dev2.name, "beta") == 0);
     assert(dev2.vsock_cid == BaseVsockCid + 1);
 
@@ -148,11 +156,11 @@ static void test_device_init_and_registry(void) {
     assert(list.devices[0].config_valid == 1);
 
     /* Fail closed on an explicit missing base and on a missing utility. */
-    assert(daemon_device_init("missing", "/nonexistent/waddle-base.qcow2", NULL) == -1);
+    assert(init_fixture("missing", "/nonexistent/waddle-base.qcow2", NULL) == -1);
     char *original_path = strdup(getenv("PATH"));
     assert(original_path != NULL);
     setenv("PATH", "/nonexistent", 1);
-    assert(daemon_device_init("tool-failure", NULL, NULL) == -1);
+    assert(init_fixture("tool-failure", NULL, NULL) == -1);
     assert(errno == ENOENT);
     setenv("PATH", original_path, 1);
     free(original_path);
@@ -162,8 +170,8 @@ static void test_device_init_and_registry(void) {
     /* Concurrent writers must serialize CID reservation. */
     pid_t child = fork();
     assert(child >= 0);
-    if (child == 0) _exit(daemon_device_init("gamma", NULL, NULL) == 0 ? 0 : 1);
-    assert(daemon_device_init("delta", NULL, NULL) == 0);
+    if (child == 0) _exit(init_fixture("gamma", NULL, NULL) == 0 ? 0 : 1);
+    assert(init_fixture("delta", NULL, NULL) == 0);
     int status;
     assert(waitpid(child, &status, 0) == child);
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
@@ -192,7 +200,7 @@ static void test_device_init_and_registry(void) {
     assert(symlink(dev1.config_path, link_path) == 0);
     assert(daemon_device_find("linked", &found) == 0);
     assert(found.config_valid == 0);
-    assert(daemon_device_init("blocked", NULL, NULL) == -1);
+    assert(init_fixture("blocked", NULL, NULL) == -1);
     assert(errno == EINVAL);
     assert(unlink(link_path) == 0);
 

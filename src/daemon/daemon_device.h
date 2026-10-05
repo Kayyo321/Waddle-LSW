@@ -190,6 +190,55 @@ int daemon_device_default_set(const char *name);
 int daemon_device_config_update(const char *name, const char *const *changes,
                                 size_t count, int reset, int dry_run);
 
+/** @brief Storage operation identifiers; host-only, no wire representation. */
+typedef enum device_operation_t { DeviceInit, DeviceRename, DeviceRemove, DeviceClone, DeviceExport, DeviceImport } device_operation_t;
+/** @brief Borrowed mutation request; valid only for a synchronous call, no retained pointers.
+ * Natural C alignment; caller initializes every field. Names non-null; argument is
+ * optional base/size/new name/backup directory according to operation. Settings
+ * apply to init; zero memory/vcpus select defaults. No concurrent environment edits.
+ */
+typedef struct device_request_t {
+    device_operation_t operation; /**< Requested offline operation. */
+    const char *name; /**< Source/target name, non-null ASCII. */
+    const char *argument; /**< Optional borrowed operation argument. */
+    const char *shell; /**< Optional UTF-8 init shell, at most 255 bytes. */
+    uint32_t memory_mb; /**< Init RAM or zero default. */
+    uint32_t vcpus; /**< Init CPUs or zero default. */
+    int blank; /**< Init argument is explicit blank size. */
+    int dry_run; /**< Nonzero forbids filesystem writes. */
+    int keep_data; /**< Remove retains owned state and original configuration. */
+} device_request_t;
+/** @brief Execute validated offline transaction.
+ * @param[in] request Non-null borrowed initialized operation.
+ * @param[out] output Non-null 1024-byte buffer receiving retention/export path or empty.
+ * @return 0 success, -1 errno EINVAL/ENOENT/EEXIST/EBUSY/EACCES/ENOSPC/EIO.
+ * @note Owns temporary allocator/fds until return. Serializes registry before
+ * runtime leases; rollback/commit journals survive interruption. Single-thread CLI.
+ */
+int daemon_device_mutate(const device_request_t *request, char output[WaddleMaxPathLen]);
+/** @brief Recover journals under an already-held registry lock.
+ * @param[in] repair Nonzero recovers; zero only checks and returns EUCLEAN if pending.
+ * @return 0 clean/recovered; -1 errno. No retained memory; caller serializes writers.
+ */
+int daemon_device_recover(int repair);
+/** @brief Scan under caller-held registry lock into non-null borrowed output.
+ * @param[out] list Inline owned result.
+ * @return Count or -1 errno; no allocation, no writes, no nested locks.
+ */
+int daemon_device_scan_locked(device_list_t *list);
+/** @brief Open absolute no-follow directory components.
+ * @param[in] path Non-null borrowed absolute path without dot components.
+ * @param[in] create Nonzero creates absent 0700 components.
+ * @return Owned CLOEXEC fd or -1 errno; caller closes. No retained pointers.
+ */
+int daemon_device_open_directory(const char *path, int create);
+/** @brief Verify stopped ownership under caller-held registry lock.
+ * @param[in] info Non-null healthy borrowed device descriptor.
+ * @param[out] lease_fd Non-null receives owned lifetime fd or -1 if runtime absent.
+ * @return 0 quiescent, -1 errno; caller closes even on failure. No runtime writes.
+ */
+int daemon_device_lock_quiescent(const device_info_t *info, int *lease_fd);
+
 #ifdef __cplusplus
 }
 #endif

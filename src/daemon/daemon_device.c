@@ -23,7 +23,7 @@
  * @param[in] create Nonzero creates absent components with mode 0700.
  * @return Owned CLOEXEC directory fd, or -1 with errno. Caller closes; thread-safe.
  */
-static int open_directory(const char *path, int create) {
+int daemon_device_open_directory(const char *path, int create) {
     if (path == NULL || path[0] != '/' || strlen(path) >= WaddleMaxPathLen) {
         errno = EINVAL;
         return -1;
@@ -40,7 +40,11 @@ static int open_directory(const char *path, int create) {
             errno = EINVAL;
             return -1;
         }
-        if (create && mkdirat(fd, part, 0700) != 0 && errno != EEXIST) {
+        int created = create ? mkdirat(fd, part, 0700) : -1;
+        if (created == 0 && fsync(fd) != 0) {
+            int saved = errno; close(fd); errno = saved; return -1;
+        }
+        if (create && created != 0 && errno != EEXIST) {
             int saved = errno;
             close(fd);
             errno = saved;
@@ -53,22 +57,6 @@ static int open_directory(const char *path, int create) {
         fd = next;
     }
     return fd;
-}
-
-/** @brief Ensure a private directory tree exists; borrow path, retain no memory. */
-static int recursive_mkdir(const char *path) {
-    int fd = open_directory(path, 1);
-    if (fd < 0) return -1;
-    struct stat st;
-    int result = fstat(fd, &st);
-    if (result == 0 && (st.st_uid != getuid() || (st.st_mode & 077) != 0)) {
-        errno = EACCES;
-        result = -1;
-    }
-    int saved = errno;
-    close(fd);
-    errno = saved;
-    return result;
 }
 
 /** @brief Resolve an XDG root without touching disk; reject relative or missing roots. */
@@ -216,11 +204,11 @@ static int compare_devices(const void *left, const void *right) {
 }
 
 /** @brief Scan while caller owns registry lock; never create paths or probe sockets. */
-static int list_unlocked(device_list_t *list) {
+int daemon_device_scan_locked(device_list_t *list) {
     memset(list, 0, sizeof(*list));
     char config_dir[WaddleMaxPathLen];
     if (daemon_device_get_config_dir(config_dir, sizeof(config_dir)) != 0) return -1;
-    int dir_fd = open_directory(config_dir, 0);
+    int dir_fd = daemon_device_open_directory(config_dir, 0);
     if (dir_fd < 0) return errno == ENOENT ? 0 : -1;
     DIR *dir = fdopendir(dir_fd);
     if (dir == NULL) { int saved = errno; close(dir_fd); errno = saved; return -1; }
@@ -278,7 +266,7 @@ int daemon_device_registry_lock(int exclusive) {
     if (daemon_device_get_config_dir(path, sizeof(path)) != 0) return -1;
     char *slash = strrchr(path, '/');
     *slash = '\0';
-    int dir_fd = open_directory(path, exclusive);
+    int dir_fd = daemon_device_open_directory(path, exclusive);
     if (dir_fd < 0) return -1;
     int fd = openat(dir_fd, "registry.lock", O_RDWR | O_CLOEXEC | O_NOFOLLOW |
                     (exclusive ? O_CREAT : 0), 0600);
@@ -291,6 +279,9 @@ int daemon_device_registry_lock(int exclusive) {
     }
     struct flock lock = { .l_type = exclusive ? F_WRLCK : F_RDLCK, .l_whence = SEEK_SET };
     if (fcntl(fd, F_OFD_SETLKW, &lock) != 0) { saved = errno; close(fd); errno = saved; return -1; }
+    if (daemon_device_recover(exclusive) != 0) {
+        saved = errno; close(fd); errno = saved; return -1;
+    }
     return fd;
 }
 
@@ -298,7 +289,7 @@ int daemon_device_list(device_list_t *list) {
     if (list == NULL) { errno = EINVAL; return -1; }
     int fd = daemon_device_registry_lock(0);
     if (fd < 0 && errno != ENOENT) return -1;
-    int result = list_unlocked(list);
+    int result = daemon_device_scan_locked(list);
     int saved = errno;
     if (fd >= 0) close(fd);
     errno = saved;
@@ -327,161 +318,11 @@ int daemon_device_find(const char *name, device_info_t *out_info) {
     return -1;
 }
 
-static int init_unlocked(const char *name, const char *custom_base_disk, device_info_t *out_info) {
-    if (daemon_device_validate_name(name) != 0) {
-        return -1;
-    }
-
-    device_list_t registry;
-    if (list_unlocked(&registry) < 0) return -1;
-    if (registry.count == MaxDeviceCount) { errno = ENOSPC; return -1; }
-    for (size_t i = 0; i < registry.count; i++) {
-        if (strcmp(name, registry.devices[i].name) == 0) { errno = EEXIST; return -1; }
-        if (!registry.devices[i].config_valid) { errno = EINVAL; return -1; }
-    }
-
-    char config_dir[WaddleMaxPathLen];
-    if (daemon_device_get_config_dir(config_dir, sizeof(config_dir)) != 0) {
-        return -1;
-    }
-
-    char state_dir[WaddleMaxPathLen];
-    if (daemon_device_get_state_dir(name, state_dir, sizeof(state_dir)) != 0) {
-        return -1;
-    }
-
-    if (recursive_mkdir(config_dir) != 0 || recursive_mkdir(state_dir) != 0) return -1;
-
-    /* Determine base disk */
-    char base_disk[WaddleMaxPathLen];
-    int has_base = 0;
-    if (custom_base_disk != NULL && custom_base_disk[0] != '\0') {
-        char *resolved = realpath(custom_base_disk, NULL);
-        if (resolved == NULL) return -1;
-        if (strlen(resolved) >= sizeof(base_disk)) {
-            free(resolved); resolved = NULL; errno = ENAMETOOLONG; return -1;
-        }
-        memcpy(base_disk, resolved, strlen(resolved) + 1);
-        free(resolved); resolved = NULL;
-        has_base = 1;
-    }
-    if (!has_base) {
-        if (daemon_device_find_base_disk(base_disk, sizeof(base_disk)) == 0) {
-            has_base = 1;
-        }
-    }
-
-    /* Allocate disk path */
-    char disk_path[WaddleMaxPathLen + 64];
-    snprintf(disk_path, sizeof(disk_path), "%.900s/disk.qcow2", state_dir);
-
-    /* Create QCOW2 overlay disk if base exists, or standalone QCOW2 */
-    if (access(disk_path, F_OK) != 0) {
-        pid_t pid = fork();
-        if (pid == 0) {
-            /* Redirect stdout/stderr to /dev/null */
-            int devnull = open("/dev/null", O_WRONLY);
-            if (devnull >= 0) {
-                dup2(devnull, STDOUT_FILENO);
-                dup2(devnull, STDERR_FILENO);
-                close(devnull);
-            }
-            if (has_base) {
-                execlp("qemu-img", "qemu-img", "create", "-f", "qcow2",
-                       "-b", base_disk, "-F", "qcow2", disk_path, (char *)NULL);
-            } else {
-                execlp("qemu-img", "qemu-img", "create", "-f", "qcow2",
-                       disk_path, "64G", (char *)NULL);
-            }
-            _exit(127);
-        } else if (pid > 0) {
-            int status = 0;
-            pid_t waited;
-            do { waited = waitpid(pid, &status, 0); } while (waited < 0 && errno == EINTR);
-            if (waited < 0) return -1;
-            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-                unlink(disk_path);
-                rmdir(state_dir);
-                errno = WIFEXITED(status) && WEXITSTATUS(status) == 127 ? ENOENT : EIO;
-                return -1;
-            }
-        } else {
-            rmdir(state_dir);
-            return -1;
-        }
-    }
-
-    /* Query existing devices to allocate a unique CID */
-    device_list_t list;
-    if (list_unlocked(&list) < 0) return -1;
-    uint32_t cid = daemon_device_allocate_cid(&list);
-    if (cid == 0) return -1;
-
-    /* Generate configuration file */
-    char config_path[WaddleMaxPathLen + 64];
-    snprintf(config_path, sizeof(config_path), "%.900s/%.64s.ini", config_dir, name);
-
-    const char *home = getenv("HOME");
-    if (home == NULL) home = "/home/dev";
-
-    int config_fd = open(config_path, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, 0600);
-    FILE *f = config_fd < 0 ? NULL : fdopen(config_fd, "w");
-    if (f == NULL) {
-        return -1;
-    }
-
-    fprintf(f, "# Waddle Subsystem Configuration: %s\n", name);
-    fprintf(f, "[subsystem]\n");
-    fprintf(f, "name = %s\n", name);
-    fprintf(f, "memory_mb = %u\n", (unsigned)DefaultDeviceMemoryMb);
-    fprintf(f, "vcpus = %u\n", (unsigned)DefaultDeviceVcpus);
-    fprintf(f, "disk_image = %s\n", disk_path);
-    fprintf(f, "vsock_cid = %u\n", (unsigned)cid);
-    fprintf(f, "vsock_port = %u\n", (unsigned)WaddleDefaultVsockPortVal);
-    fprintf(f, "default_shell = powershell.exe\n\n");
-
-    fprintf(f, "[filesystem]\n");
-    fprintf(f, "mount = %s:Z:\\:rw\n\n", home);
-
-    fprintf(f, "[timeouts]\n");
-    fprintf(f, "start_timeout = %u\n", (unsigned)ConfigDefaultStartTimeoutSec);
-    fprintf(f, "stop_timeout = %u\n", (unsigned)ConfigDefaultStopTimeoutSec);
-
-    int result = fflush(f);
-    if (result == 0) result = fsync(fileno(f));
-    int saved = errno;
-    if (fclose(f) != 0 && result == 0) { result = -1; saved = errno; }
-    if (result != 0) { unlink(config_path); errno = saved; return -1; }
-
-    if (out_info != NULL) {
-        memset(out_info, 0, sizeof(*out_info));
-        snprintf(out_info->name, sizeof(out_info->name), "%.63s", name);
-        snprintf(out_info->config_path, sizeof(out_info->config_path), "%.1023s", config_path);
-        snprintf(out_info->state_dir, sizeof(out_info->state_dir), "%.1023s", state_dir);
-        snprintf(out_info->disk_image, sizeof(out_info->disk_image), "%.1023s", disk_path);
-        daemon_device_get_socket_path(name, out_info->socket_path, sizeof(out_info->socket_path));
-        out_info->vsock_cid = cid;
-        out_info->vsock_port = WaddleDefaultVsockPortVal;
-        out_info->memory_mb = DefaultDeviceMemoryMb;
-        out_info->vcpus = DefaultDeviceVcpus;
-        out_info->is_running = 0;
-        out_info->config_valid = 1;
-    }
-
-    return 0;
-}
-
 int daemon_device_init(const char *name, const char *custom_base_disk, device_info_t *out_info) {
-    if (daemon_device_validate_name(name) != 0) return -1;
-    int fd = daemon_device_registry_lock(1);
-    if (fd < 0) return -1;
-    mode_t previous = umask(0077);
-    int result = init_unlocked(name, custom_base_disk, out_info);
-    int saved = errno;
-    umask(previous);
-    close(fd);
-    errno = saved;
-    return result;
+    device_request_t request = { .operation = DeviceInit, .name = name, .argument = custom_base_disk };
+    char output[WaddleMaxPathLen];
+    if (daemon_device_mutate(&request, output) != 0) return -1;
+    return out_info == NULL ? 0 : daemon_device_find(name, out_info);
 }
 
 /** @brief Open private registry parent; caller closes owned fd. Never follows links. */
@@ -489,7 +330,7 @@ static int open_registry_parent(int create) {
     char path[WaddleMaxPathLen];
     if (daemon_device_get_config_dir(path, sizeof(path)) != 0) return -1;
     *strrchr(path, '/') = '\0';
-    int fd = open_directory(path, create);
+    int fd = daemon_device_open_directory(path, create);
     if (fd < 0) return -1;
     struct stat st;
     if (fstat(fd, &st) != 0 || st.st_uid != getuid() || (st.st_mode & 077) != 0) {
@@ -550,7 +391,7 @@ int daemon_device_default_set(const char *name) {
     char stage[80] = {0};
     device_list_t list;
     if (name != NULL) {
-        if (list_unlocked(&list) < 0) goto cleanup;
+        if (daemon_device_scan_locked(&list) < 0) goto cleanup;
         size_t i;
         for (i = 0; i < list.count; i++) {
             if (strcmp(name, list.devices[i].name) == 0) break;
@@ -650,12 +491,12 @@ cleanup:
  * No runtime paths are created. Socket names remain conservatively busy even if
  * their supervisor disappeared; a later diagnostic recovery must establish ownership.
  */
-static int lock_quiescent(const device_info_t *info, int *lease_fd) {
+int daemon_device_lock_quiescent(const device_info_t *info, int *lease_fd) {
     *lease_fd = -1;
     char runtime[WaddleMaxPathLen];
     memcpy(runtime, info->socket_path, strlen(info->socket_path) + 1);
     *strrchr(runtime, '/') = '\0';
-    int dir_fd = open_directory(runtime, 0);
+    int dir_fd = daemon_device_open_directory(runtime, 0);
     if (dir_fd < 0 && errno != ENOENT) return -1;
     if (dir_fd >= 0) {
         struct stat st;
@@ -714,7 +555,7 @@ int daemon_device_config_update(const char *name, const char *const *changes,
     int result = -1, lease_fd = -1, dir_fd = -1, input_fd = -1, output_fd = -1;
     char stage[80] = {0};
     device_list_t list;
-    if (list_unlocked(&list) < 0) goto cleanup;
+    if (daemon_device_scan_locked(&list) < 0) goto cleanup;
     device_info_t *info = NULL;
     for (size_t i = 0; i < list.count; i++) {
         if (strcmp(list.devices[i].name, name) == 0) { info = &list.devices[i]; break; }
@@ -723,7 +564,7 @@ int daemon_device_config_update(const char *name, const char *const *changes,
     if (!info->config_valid) { errno = EINVAL; goto cleanup; }
     char directory[WaddleMaxPathLen];
     if (daemon_device_get_config_dir(directory, sizeof(directory)) != 0) goto cleanup;
-    dir_fd = open_directory(directory, 0);
+    dir_fd = daemon_device_open_directory(directory, 0);
     if (dir_fd < 0) goto cleanup;
     char filename[WaddleMaxDeviceNameLen + 4];
     snprintf(filename, sizeof(filename), "%s.ini", name);
@@ -745,7 +586,7 @@ int daemon_device_config_update(const char *name, const char *const *changes,
                                                          output, sizeof(output), &output_length) != 0) {
         errno = EINVAL; goto cleanup;
     }
-    if (lock_quiescent(info, &lease_fd) != 0) goto cleanup;
+    if (daemon_device_lock_quiescent(info, &lease_fd) != 0) goto cleanup;
     if (dry_run) { result = 0; goto cleanup; }
     for (unsigned i = 0; i < 100; i++) {
         snprintf(stage, sizeof(stage), ".config-%ld-%u", (long)getpid(), i);

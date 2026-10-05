@@ -57,11 +57,14 @@ build/path_rules.o: src/common/path_rules.zig | build
 build/unit: tests/unit/unit.c $(COMMON) include/waddle/cli_protocol.h src/common/common.h src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/unit/unit.c $(COMMON) $(LDFLAGS) -o $@
 
+build/device_storage.o: src/daemon/device_storage.zig src/daemon/daemon_device.h src/daemon/daemon_config.h | build
+	$(ZIG) build-obj $< -D_GNU_SOURCE -Iinclude -Isrc/daemon -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
 build/device_commands.o: src/cli/device_commands.zig src/cli/device_commands.h src/daemon/daemon_device.h | build
 	$(ZIG) build-obj $< -Iinclude -Isrc/daemon -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
-build/waddle: build/device_commands.o src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h src/daemon/daemon_device.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c src/daemon/daemon_protocol.c build/daemon_config.o build/device_commands.o $(COMMON) $(LDFLAGS) -o $@
+build/waddle: build/device_commands.o src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h src/daemon/daemon_device.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o build/device_commands.o $(COMMON) $(LDFLAGS) -o $@
 
 build/waddle-mock-guest: src/mock/mock_guest.c src/mock/mock_process.c src/mock/mock_process.h $(COMMON) include/waddle/cli_protocol.h src/common/common.h src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/mock/mock_guest.c src/mock/mock_process.c $(COMMON) $(LDFLAGS) -lutil -o $@
@@ -84,12 +87,13 @@ build/daemon_config.o: src/daemon/daemon_config.zig src/daemon/daemon_config.h i
 build/test_daemon_config: tests/daemon/test_daemon_config.c build/daemon_config.o src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_config.c build/daemon_config.o $(LDFLAGS) -o $@
 
-zig-test: build/path_rules.o
+zig-test: build/path_rules.o build/device_storage.o
 	$(ZIG) test tests/unit/test_cli.zig -Iinclude -Isrc/common -Isrc/cli src/common/protocol.c src/common/arguments.c build/path_rules.o -lc
 	$(ZIG) test src/common/path_rules.zig
 	$(ZIG) test src/guest/guest_codec.zig
 	$(ZIG) test src/daemon/daemon_config.zig -Iinclude -Isrc/daemon -lc
-	$(ZIG) test src/cli/device_commands.zig -D_GNU_SOURCE -Iinclude -Isrc/daemon src/daemon/daemon_device.c src/daemon/daemon_client.c src/daemon/daemon_protocol.c build/daemon_config.o -lc
+	$(ZIG) test src/daemon/device_storage.zig -D_GNU_SOURCE -Iinclude -Isrc/daemon src/daemon/daemon_device.c build/daemon_config.o -lc
+	$(ZIG) test src/cli/device_commands.zig -D_GNU_SOURCE -Iinclude -Isrc/daemon src/daemon/daemon_device.c src/daemon/daemon_client.c src/daemon/daemon_protocol.c build/device_storage.o build/daemon_config.o -lc
 
 build/test_daemon_protocol: tests/daemon/test_daemon_protocol.c src/daemon/daemon_protocol.c include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_protocol.c src/daemon/daemon_protocol.c $(LDFLAGS) -o $@
@@ -100,10 +104,10 @@ build/test_daemon_qemu: tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c
 build/test_daemon_fs: tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o src/daemon/daemon_fs.h src/daemon/daemon_config.h src/common/path_rules.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o $(LDFLAGS) -o $@
 
-build/test_daemon_device: tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/daemon_config.o src/daemon/daemon_device.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/daemon_config.o $(LDFLAGS) -o $@
+build/test_daemon_device: tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o src/daemon/daemon_device.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o $(LDFLAGS) -o $@
 
-DAEMON_COMMON = src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c build/daemon_config.o build/path_rules.o
+DAEMON_COMMON = src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c build/device_storage.o build/daemon_config.o build/path_rules.o
 
 build/waddled: src/daemon/daemon_main.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_main.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
@@ -129,6 +133,7 @@ test: all build/unit build/integration build/test_daemon_protocol build/test_dae
 	./build/test_daemon_client
 	./build/test_auto_terminal
 	python3 tests/integration/device_commands.py
+	python3 tests/integration/device_storage.py
 	sh tests/integration/path_options.sh
 	sh tests/acceptance/demo_fs.sh
 

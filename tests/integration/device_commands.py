@@ -37,8 +37,8 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     run("device", "list", "--running", "--stopped", expected=2)
     run("device", "show", "--clear", "alpha", expected=2)
     run("device", "config", "get", "alpha", "bogus", expected=2)
-    run("init", "beta")
-    run("init", "alpha")
+    run("init", "beta", "--blank-disk", "64M")
+    run("init", "alpha", "--blank-disk", "64M")
     listed = run("devices", "--json", structured=True)["results"]
     assert [entry["name"] for entry in listed] == ["alpha", "beta"]
     assert all(entry["data"]["config_valid"] for entry in listed)

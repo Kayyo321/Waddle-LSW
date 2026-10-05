@@ -19,13 +19,26 @@ const command_t = struct {
     running: bool = false,
     stopped: bool = false,
     dry_run: bool = false,
+    yes: bool = false,
+    keep_data: bool = false,
+    all: bool = false,
+    repair: bool = false,
+    base_disk: ?[]const u8 = null,
+    blank_disk: ?[]const u8 = null,
+    memory_mb: ?[]const u8 = null,
+    vcpus: ?[]const u8 = null,
+    shell: ?[]const u8 = null,
+    input: ?[]const u8 = null,
+    output: ?[]const u8 = null,
 };
 
 /// Parse bounded UTF-8 argument slices; duplicate singleton flags fail before I/O.
 fn parse(args: []const []const u8) !command_t {
     var command = command_t{};
     var literal = false;
-    for (args) |arg| {
+    var index: usize = 0;
+    while (index < args.len) : (index += 1) {
+        const arg = args[index];
         if (arg.len > 4096 or !std.unicode.utf8ValidateSlice(arg)) return error.Usage;
         if (!literal and std.mem.eql(u8, arg, "--")) {
             literal = true;
@@ -38,6 +51,16 @@ fn parse(args: []const []const u8) !command_t {
         } else if (!literal and std.mem.eql(u8, arg, "--dry-run")) {
             if (command.dry_run) return error.Usage;
             command.dry_run = true;
+        } else if (!literal and (std.mem.eql(u8, arg, "--yes") or std.mem.eql(u8, arg, "--keep-data") or std.mem.eql(u8, arg, "--all") or std.mem.eql(u8, arg, "--repair"))) {
+            const field = if (std.mem.eql(u8, arg, "--yes")) &command.yes else if (std.mem.eql(u8, arg, "--keep-data")) &command.keep_data else if (std.mem.eql(u8, arg, "--all")) &command.all else &command.repair;
+            if (field.*) return error.Usage;
+            field.* = true;
+        } else if (!literal and (std.mem.eql(u8, arg, "--base-disk") or std.mem.eql(u8, arg, "--disk") or std.mem.eql(u8, arg, "--blank-disk") or std.mem.eql(u8, arg, "--memory-mb") or std.mem.eql(u8, arg, "--vcpus") or std.mem.eql(u8, arg, "--shell") or std.mem.eql(u8, arg, "--input") or std.mem.eql(u8, arg, "--output"))) {
+            const field = if (std.mem.eql(u8, arg, "--base-disk") or std.mem.eql(u8, arg, "--disk")) &command.base_disk else if (std.mem.eql(u8, arg, "--blank-disk")) &command.blank_disk else if (std.mem.eql(u8, arg, "--memory-mb")) &command.memory_mb else if (std.mem.eql(u8, arg, "--vcpus")) &command.vcpus else if (std.mem.eql(u8, arg, "--shell")) &command.shell else if (std.mem.eql(u8, arg, "--input")) &command.input else &command.output;
+            if (field.* != null or index + 1 >= args.len) return error.Usage;
+            index += 1;
+            if (args[index].len == 0 or args[index].len > 1023 or !std.unicode.utf8ValidateSlice(args[index])) return error.Usage;
+            field.* = args[index];
         } else if (!literal and std.mem.eql(u8, arg, "--clear")) {
             if (command.clear) return error.Usage;
             command.clear = true;
@@ -147,8 +170,54 @@ fn registry_error() anyerror {
         c.EACCES, c.EPERM, c.ELOOP => error.PermissionDenied,
         c.EINTR => error.Cancelled,
         c.EBUSY => error.Busy,
+        c.EUCLEAN => error.RecoveryRequired,
         else => error.IoError,
     };
+}
+
+/// Validate storage grammar and require explicit destructive confirmation.
+fn execute_mutation(allocator: std.mem.Allocator, command: command_t, results: *std.json.Value) !void {
+    const op = command.operands[0];
+    const operation: c.device_operation_t = if (std.mem.eql(u8, op, "init")) c.DeviceInit else if (std.mem.eql(u8, op, "rename")) c.DeviceRename else if (std.mem.eql(u8, op, "remove")) c.DeviceRemove else if (std.mem.eql(u8, op, "clone")) c.DeviceClone else if (std.mem.eql(u8, op, "export")) c.DeviceExport else c.DeviceImport;
+    const two_names = operation == c.DeviceRename or operation == c.DeviceClone;
+    if (command.count != (if (two_names) @as(usize, 3) else 2)) return error.Usage;
+    if (command.clear or command.running or command.stopped or command.all or command.repair) return error.Usage;
+    if ((command.yes or command.keep_data) and operation != c.DeviceRemove) return error.Usage;
+    if ((command.base_disk != null or command.blank_disk != null or command.memory_mb != null or command.vcpus != null or command.shell != null) and operation != c.DeviceInit) return error.Usage;
+    if (command.base_disk != null and command.blank_disk != null) return error.Usage;
+    if ((command.input != null) != (operation == c.DeviceImport) or (command.output != null) != (operation == c.DeviceExport)) return error.Usage;
+    const name = command.operands[1];
+    if (!name_valid(name) or (two_names and !name_valid(command.operands[2]))) return error.InvalidName;
+    if (operation == c.DeviceRemove and !command.yes and !command.dry_run) {
+        if (command.json or c.isatty(c.STDIN_FILENO) == 0) return error.Usage;
+        var info: c.device_info_t = undefined;
+        const terminated = try allocator.dupeZ(u8, name);
+        if (c.daemon_device_find(terminated, &info) != 0) return registry_error();
+        try std.io.getStdOut().writer().print("Remove {s}? Config: {s}; owned state: {s}; keep data: {}. Type the exact name: ", .{ name, c_text(&info.config_path), c_text(&info.state_dir), command.keep_data });
+        var input_buffer: [65]u8 = undefined;
+        const answer = try std.io.getStdIn().reader().readUntilDelimiterOrEof(&input_buffer, '\n');
+        if (answer == null or !std.mem.eql(u8, answer.?, name)) return error.Cancelled;
+    }
+    const argument = if (two_names) command.operands[2] else if (operation == c.DeviceInit) command.base_disk orelse command.blank_disk else if (operation == c.DeviceExport) command.output else command.input;
+    const terminated_arg = if (argument) |arg| try allocator.dupeZ(u8, arg) else null;
+    const shell = if (command.shell) |value| try allocator.dupeZ(u8, value) else null;
+    var request = c.device_request_t{
+        .operation = operation, .name = (try allocator.dupeZ(u8, name)).ptr,
+        .argument = if (terminated_arg) |arg| arg.ptr else null,
+        .shell = if (shell) |value| value.ptr else null,
+        .memory_mb = if (command.memory_mb) |value| std.fmt.parseInt(u32, value, 10) catch return error.Usage else 0,
+        .vcpus = if (command.vcpus) |value| std.fmt.parseInt(u32, value, 10) catch return error.Usage else 0,
+        .blank = @intFromBool(command.blank_disk != null), .dry_run = @intFromBool(command.dry_run), .keep_data = @intFromBool(command.keep_data),
+    };
+    if ((command.memory_mb != null and request.memory_mb == 0) or (command.vcpus != null and request.vcpus == 0)) return error.InvalidConfig;
+    var path: [1024]u8 = undefined;
+    if (c.daemon_device_mutate(&request, &path) != 0) return registry_error();
+    var data = object(allocator);
+    try put(&data, "dry_run", .{ .bool = command.dry_run });
+    try put(&data, "keep_data", .{ .bool = command.keep_data });
+    try put(&data, "path", if (path[0] == 0) .null else try text_value(allocator, c_text(&path)));
+    if (two_names) try put(&data, "new_name", try text_value(allocator, command.operands[2]));
+    try add_result(allocator, results, name, data);
 }
 
 /// Execute delivered commands. All operand/flag validation precedes registry operations.
@@ -159,7 +228,10 @@ fn execute(allocator: std.mem.Allocator, command: command_t, results: *std.json.
     const is_show = std.mem.eql(u8, op, "show");
     const is_default = std.mem.eql(u8, op, "default");
     const is_config = std.mem.eql(u8, op, "config");
+    const mutation = std.mem.eql(u8, op, "init") or std.mem.eql(u8, op, "rename") or std.mem.eql(u8, op, "remove") or std.mem.eql(u8, op, "clone") or std.mem.eql(u8, op, "export") or std.mem.eql(u8, op, "import");
+    if (mutation) return execute_mutation(allocator, command, results);
     if (!is_list and !is_show and !is_default and !is_config) return error.Usage;
+    if (command.yes or command.keep_data or command.all or command.repair or command.base_disk != null or command.blank_disk != null or command.memory_mb != null or command.vcpus != null or command.shell != null or command.input != null or command.output != null) return error.Usage;
     if (command.clear and !is_default) return error.Usage;
     if ((command.running or command.stopped) and !is_list) return error.Usage;
     if (is_list and command.count != 1) return error.Usage;
@@ -262,6 +334,7 @@ fn failure(err: anyerror) failure_t {
         error.Capacity => .{ .code = "capacity", .message = "Registry capacity exceeded.", .status = 2 },
         error.PermissionDenied => .{ .code = "permission_denied", .message = "Unsafe permissions or symlink path.", .status = 1 },
         error.Busy => .{ .code = "busy", .message = "Device has a runtime owner, open disk or unresolved runtime sockets.", .status = 1 },
+        error.RecoveryRequired => .{ .code = "recovery_required", .message = "Pending or unverifiable journal requires device doctor --repair.", .status = 1 },
         error.Cancelled => .{ .code = "cancelled", .message = "Operation interrupted.", .status = 130 },
         error.OutOfMemory => .{ .code = "resource_error", .message = "Allocation failed.", .status = 125 },
         else => .{ .code = "io_error", .message = "Registry I/O failed.", .status = 1 },
@@ -319,7 +392,15 @@ export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int
     };
     if (command.help or command.count == 0) {
         std.io.getStdOut().writer().writeAll(
-            "Usage: waddle device list [--running|--stopped] [--json]\n" ++
+            "Usage: waddle device init NAME [--base-disk PATH|--blank-disk SIZE] [--memory-mb N] [--vcpus N] [--shell COMMAND] [--dry-run] [--json]\n" ++
+                "       waddle device rename NAME NEW_NAME [--dry-run] [--json]\n" ++
+                "       waddle device remove NAME [--yes] [--keep-data] [--dry-run] [--json]\n" ++
+                "       waddle device clone SOURCE NEW_NAME [--dry-run] [--json]\n" ++
+                "       waddle device export NAME --output DIRECTORY [--dry-run] [--json]\n" ++
+                "       waddle device import NAME --input DIRECTORY [--dry-run] [--json]\n" ++
+                "Clone retains host exports; import disables them. Mutations require stopped devices.\n" ++
+                "Blank disk size: decimal M/G, 1 MiB..2 TiB; a blank disk has no Windows installation.\n" ++
+                "Usage: waddle device list [--running|--stopped] [--json]\n" ++
                 "       waddle device show NAME [--json]\n" ++
                 "       waddle device default [NAME|--clear] [--json]\n" ++
                 "       waddle device config get NAME [KEY] [--json]\n" ++

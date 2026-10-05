@@ -628,55 +628,6 @@ done:
 }
 
 /**
- * @brief Subcommand handler for `waddle init` / `waddle --init`.
- *
- * @param[in] argc Argument count.
- * @param[in] argv Argument vector.
- * @return 0 on success, or non-zero on failure.
- */
-static int cmd_init(int argc, char **argv) {
-    const char *device_name = NULL;
-    const char *custom_disk = NULL;
-
-    for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "--disk") == 0 && i + 1 < argc) {
-            custom_disk = argv[++i];
-        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
-            device_name = argv[++i];
-        } else if (argv[i][0] != '-' && device_name == NULL) {
-            device_name = argv[i];
-        } else {
-            fprintf(stderr, "waddle init: unknown option '%s'\n", argv[i]);
-            return 2;
-        }
-    }
-
-    if (device_name == NULL || device_name[0] == '\0') {
-        fprintf(stderr, "waddle init: device name required\n\nUsage: waddle init <device-name> [--disk <path>]\n");
-        return 2;
-    }
-
-    if (daemon_device_validate_name(device_name) != 0) {
-        fprintf(stderr, "waddle init: invalid device name '%s' (must be alphanumeric, hyphens, or underscores)\n", device_name);
-        return 2;
-    }
-
-    device_info_t info;
-    memset(&info, 0, sizeof(info));
-    if (daemon_device_init(device_name, custom_disk, &info) != 0) {
-        fprintf(stderr, "waddle init: failed to initialize device '%s': %s\n", device_name, strerror(errno));
-        return 1;
-    }
-
-    printf("[waddle] Initialized device '%s' successfully\n", info.name);
-    printf("  Configuration: %s\n", info.config_path);
-    printf("  State Dir:     %s\n", info.state_dir);
-    printf("  Disk Image:    %s\n", info.disk_image);
-    printf("  VSOCK CID:     %u\n", info.vsock_cid);
-    return 0;
-}
-
-/**
  * @brief Subcommand handler for `waddle start` / `waddle --start`.
  */
 static int cmd_start(int argc, char **argv) {
@@ -1134,7 +1085,8 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(cmd, "init") == 0 || strcmp(cmd, "--init") == 0) {
-        return cmd_init(argc, argv);
+        argv[1] = "init";
+        return waddle_device_command(argc - 1, argv + 1);
     }
 
     if (strcmp(cmd, "devices") == 0 || strcmp(cmd, "--devices") == 0 ||

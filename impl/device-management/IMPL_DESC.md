@@ -560,3 +560,26 @@ writer lock. Protected unrelated /proc entries cannot establish identity; the im
 lock supplies the independent live-QEMU check. A complete 0600 candidate is fsynced,
 renamed and its parent fsynced; dry-run creates no paths. Set/reset preserve mounts
 and unknown content through the bounded Zig editor.
+
+### Implementation evidence: offline storage transactions
+
+`device_storage.zig` owns bounded metadata parsing and one per-call arena. The
+journal is `transactions/<id>.json`; private staging trees reside at
+`transactions/<id>/` in config/state roots. Move entries record root-relative
+old/final locations and device/inode identities. Replacements are expressed as
+old-to-rollback then staged-to-final moves; the reserved replacements array is
+empty. Prepared rollback walks moves in reverse; committed recovery purges only
+staging trees. External export journals pin the parent device/inode and a random
+`.waddle-<id>` staging directory. Readers refuse pending journals; writers recover
+under the registry lock before new mutation. The test-only environment variable
+`WADDLE_DEVICE_TEST_CRASH` terminates at prepared/staged/move_N/committed boundaries
+with exit 99, allowing subprocess acceptance to verify repeated recovery.
+
+Creation validates options/base/size before allocating a name or CID. All new
+files inherit 0077 umask and directories are fsynced at creation. Clone/import
+convert to standalone QCOW2, and export stores the six portable settings with
+streamed SHA-256/size verification. Rename appends authoritative identity/settings
+sections without dropping original comments/unknown keys/exports. Removal checks
+managed-disk containment and registered backing dependencies. Retention returns
+the unique retained state directory with original.ini. No default is inferred for
+mutations; JSON removal requires --yes. Expanded acceptance remains tracked.

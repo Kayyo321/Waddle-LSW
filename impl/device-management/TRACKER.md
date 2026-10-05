@@ -13,17 +13,17 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1 | Fix VirtIO-FS readiness probing and stabilize startup | Done | 10% | 100% | Existing stat-based fix; final VM acceptance remains #10 |
 | #2 | Implement registry discovery, storage paths, and device metadata | Done | 10% | 100% | Existing baseline; hardening/recovery tracked in #7 |
-| #3 | Implement init and aliases with valid QCOW2 creation | In Progress | 10% | 60% | Placeholder fallback removed; transactional publication and expanded grammar remain |
+| #3 | Implement init and aliases with valid QCOW2 creation | In Progress | 10% | 90% | Transactional init, explicit blank/base modes and options pass; broader gates remain |
 | #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | In Progress | 10% | 75% | Default precedence, transport bypass, supervisor shutdown/wait delivered; batch grammar and complete state observations remain |
-| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 50% | Registry/CLI selection plus shutdown busy/malformed/idle regressions pass; complete creation/lifecycle matrix remains |
+| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 70% | Real-QCOW2 offline and eight rename crash boundaries pass; broader matrix remains |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
-| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 20% | Registry hardening and stable OFD supervisor leases delivered; startup handoff, orphan auditing and offline transactions remain |
+| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 65% | Rename/remove/retention and durable root-relative inode journals implemented; diagnostic repair and hardening remain |
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 50% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
-| #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
+| #9 | Implement independent clone and local export/import | In Progress | 10% | 70% | Standalone clone, manifest SHA-256 export/import and no-mount restore pass; expanded rejection matrix remains |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
 | #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `58.0%`
+**Total Feature Completion**: `74.5%`
 
 ## Commit History & Progress Log
 
@@ -163,6 +163,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +0% to TODO #7; regression correction for existing ownership cleanup.
   - **Summary**: Only unlink supervisor/QMP/VirtIO-FS socket names while owning the lifetime lease. Previously a losing second supervisor invoked cleanup and could disconnect the active device by unlinking its socket. The native fork/collision test now binds a real Unix socket, cleans the losing instance, and proves the original socket survives.
 
-- **Commit `:/persist validated offline device configuration edits`**: `feat(device): persist validated offline device configuration edits`
+- **Commit `f78275e`**: `feat(device): persist validated offline device configuration edits`
   - **Task Impact**: +20% to TODO #8 (+2.0% overall); total 58.0%.
   - **Summary**: Integrate set/reset/dry-run with validated complete INI replacement, registry and device leases, no-follow metadata, orphan descriptor audit and exclusive qemu-img check. Protected unrelated proc descriptors are covered by the independent image writer lock. Isolated CLI tests cover all-or-nothing validation, duplicate keys, dry-run, reset, mount preservation and open orphan disk refusal.
+
+- **Commit `:/add recoverable offline device storage transactions`**: `feat(device): add recoverable offline device storage transactions`
+  - **Task Impact**: +30% to TODO #3 (+3.0% overall), +20% to #5 (+2.0%), +45% to #7 (+4.5%), +70% to #9 (+7.0%); total 74.5%.
+  - **Summary**: Add bounded Zig storage/manifest/journal parsing, root-relative moves, inode-checked rollback and committed cleanup, transactional init/rename/remove/retention, flattened clone and SHA-256 local backup/import. Require explicit blank disks without a discovered base, preserve rename CID/default/config and clone mounts, disable import mounts. Real QCOW2 workflows and eight deterministic rename crash/recovery boundaries pass. Full make test passes; expanded safety/diagnostics/stress/VM/coverage gates remain.

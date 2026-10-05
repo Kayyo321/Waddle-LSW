@@ -25,7 +25,7 @@ export HOME="$host_shared"
 export XDG_CONFIG_HOME="$demo_dir/config"
 export XDG_STATE_HOME="$demo_dir/state"
 export XDG_RUNTIME_DIR="$demo_dir/runtime"
-./build/waddle init fs-demo >/dev/null
+./build/waddle init fs-demo --blank-disk 64M >/dev/null
 
 # Step 1: Run built-in CLI filesystem self-test
 echo "[Step 1] Running 'waddle fs test'..."
