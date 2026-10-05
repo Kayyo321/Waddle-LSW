@@ -45,12 +45,12 @@
 
 | **10** | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 40% | Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass. |
-| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 35% | Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass. |
+| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 65% | Build the pinned driver through an argv-only child process against running-kernel headers, expose an administrator-only load step and preserve incompatible live devices. Bundle source/license from the submodule in ignored build outputs; build succeeds on the current kernel. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 70% | Prepare AV memory before managed QEMU startup and release it on spawn failure, shutdown, kill, child exit and supervisor cleanup. Reject duplicate prepare without releasing a live resource; existing server/client lifecycle regressions pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `69.53%`
+**Total Feature Completion**: `71.03%`
 
 ## Commit History & Progress Log
 
@@ -150,6 +150,10 @@
   - **Task Impact**: +15% to #10.3 (+0.75% overall)
   - **Summary**: Prepare AV memory before managed QEMU startup and release it on spawn failure, shutdown, kill, child exit and supervisor cleanup. Reject duplicate prepare without releasing a live resource; existing server/client lifecycle regressions pass.
 
-- **Commit `HEAD`**: `fix(av): snapshot ring bounds and preserve foreign shared resources`
+- **Commit `0432c8e39a09`**: `fix(av): snapshot ring bounds and preserve foreign shared resources`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Use a single validated PCM capacity and bounded slices for all copies, reject KVMFR mappings with another ABI and remove only the inode created by this environment instance. Preserve live resources on duplicate prepare and report nonregular backing files accurately.
+
+- **Commit `HEAD`**: `feat(av): bundle pinned KVMFR module build and load helper`
+  - **Task Impact**: +30% to #10.2 (+1.50% overall)
+  - **Summary**: Build the pinned driver through an argv-only child process against running-kernel headers, expose an administrator-only load step and preserve incompatible live devices. Bundle source/license from the submodule in ignored build outputs; build succeeds on the current kernel.
