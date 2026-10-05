@@ -20,11 +20,15 @@
 | #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Done | 10% | 100% | Interactive launcher, auto-start, export mount auto-loading & root fallback verified |
 | #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Done | 10% | 100% | Live VirtIO-FS directory/file creation and instant host visibility verified |
 | #9      | Vendor QEMU upstream Git repository as submodule (`submodules/qemu`) pinned to stable release commit | Done | 10% | 100% | Tracked via public HTTPS, pinned to v9.2.4 (b2995afe), shallow clone configured |
-| #10     | Integrate QEMU build target into build system and refactor daemon binary discovery for bundled vendor binaries | Pending | 10% | 0% | Minimal softmmu build target in GNUmakefile and relative binary resolution |
+| #10     | Integrate QEMU build target into build system and refactor daemon binary discovery for bundled vendor binaries | In Progress | 10% | 50% | QEMU build target and vendor directory outputs integrated in GNUmakefile |
 
-**Total Feature Completion**: `90.0%`
+**Total Feature Completion**: `95.0%`
 
 ## Commit History & Progress Log
+
+- **Commit `d1afd2f`**: `feat(build): add QEMU submodule build target and vendor binary directory`
+  - **Task Impact**: +50% to TODO: #10 (+5.0% overall feature completion)
+  - **Summary**: Defined build/vendor target in GNUmakefile compiling QEMU x86_64-softmmu to build/vendor/qemu-system-x86_64 and populating build/vendor/virtiofsd.
 
 - **Commit `1cd611d`**: `chore(deps): add qemu as git submodule pinned to v9.2.4 (b2995afe)`
   - **Task Impact**: +100% to TODO: #9 (+10.0% overall feature completion)
