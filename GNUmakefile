@@ -42,9 +42,13 @@ zig-test: build/path_rules.o
 	$(ZIG) test src/path_rules.zig
 	$(ZIG) test src/guest_codec.zig
 
-test: all build/unit build/integration zig-test
+build/test_daemon_protocol: tests/test_daemon_protocol.c src/daemon_protocol.c include/waddle/daemon_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_protocol.c src/daemon_protocol.c $(LDFLAGS) -o $@
+
+test: all build/unit build/integration build/test_daemon_protocol zig-test
 	./build/unit
 	./build/integration
+	./build/test_daemon_protocol
 	sh tests/path_options.sh
 
 test-sanitizers: clean
