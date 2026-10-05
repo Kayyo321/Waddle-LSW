@@ -29,10 +29,10 @@
 | #4.2 | Implement lockless SPSC write loop from WASAPI buffers to IVSHMEM audio ring | Done | 8% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 4% | 60% | Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes. |
 | **5**   | **Host Wayland Client (Video)** | | | | |
-| #5.1    | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | Pending | 5% | 0% | - |
+| #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | In Progress | 5% | 70% | Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes. |
 | #5.2    | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | Pending | 6% | 0% | - |
-| #5.3    | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | Pending | 5% | 0% | - |
-| #5.4    | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | Pending | 5% | 0% | - |
+| #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 5% | 40% | Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes. |
+| #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 5% | 50% | Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes. |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
 | #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 5% | 75% | Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes. |
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 6% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
@@ -43,7 +43,7 @@
 
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 2% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
-**Total Feature Completion**: `60.80%`
+**Total Feature Completion**: `68.80%`
 
 ## Commit History & Progress Log
 
@@ -91,6 +91,10 @@
   - **Task Impact**: +75% to #6.1 (+3.75% overall); +75% to #6.3 (+3.00% overall)
   - **Summary**: Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes.
 
-- **Commit `HEAD`**: `chore(deps): pin Looking Glass B7 driver ABI headers`
+- **Commit `906bedc118f5`**: `chore(deps): pin Looking Glass B7 driver ABI headers`
   - **Task Impact**: +100% to #8.1 (+2.00% overall)
   - **Summary**: Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations.
+
+- **Commit `HEAD`**: `feat(av): present owned video slots through Wayland toplevels`
+  - **Task Impact**: +70% to #5.1 (+3.50% overall); +40% to #5.3 (+2.00% overall); +50% to #5.4 (+2.50% overall)
+  - **Summary**: Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes.
