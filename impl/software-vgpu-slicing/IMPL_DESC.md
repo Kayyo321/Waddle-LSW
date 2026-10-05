@@ -363,3 +363,81 @@ roles, every legal/illegal transition, stale IDs, extent/capacity mismatches,
 every wire-field/padding corruption, exact output preservation, terminal-state
 closure, zero-leak sanitizer tests, >=90% line/branch coverage, and native Windows
 execution. Mock handshakes do not establish real driver or GPU execution.
+
+### Host receiver bootstrap, private submission, and reply ownership
+
+Task #2 milestones: renderer/context/reply-owner bootstrap with real public-API
+verification 10%; bounded command/resource dispatch and allocation policy 30%;
+GPU timelines/fence and hang recovery 25%; negotiated session/guest integration
+and multi-context runtime execution 35%. Each milestone retains its own tests;
+CPU command dispatch alone does not complete GPU execution or the receiver.
+
+The initial `venus_receiver_t` is opaque and owns the renderer bootstrap, one
+Venus context (ID 1), one CPU reply blob (resource ID 1), one mapped reply extent,
+and one fixed private command scratch buffer. This is the bootstrap milestone;
+additional resources/contexts, guest capability negotiation, and DMA-BUF memory
+are subsequent milestones, not implied by this owner. libvirglrenderer is a
+process singleton; creation uses a process-local C11 atomic claim. A competing
+create returns RingAgain without modifying a live owner. The claim is released
+only after cleanup, including callbacks. The final runtime must route contexts
+through a single manager per process; it cannot create concurrent singleton
+owners. No global renderer API caller outside this owner may be active.
+
+Creation requires power-of-two command capacity 64..16777216 and reply bytes
+4096..16777216, a nonnull initially-null output, and a configured trusted render
+server executable (`RENDER_SERVER_EXEC_PATH` or the installed upstream path).
+The API never changes environment variables. It allocates a zero owner and a
+64-byte-aligned command scratch buffer, then initializes renderer callbacks
+(version three, stored in the owner) and the renderer with VENUS, NO_VIRGL,
+RENDER_SERVER, USE_EXTERNAL_BLOB, THREAD_SYNC, and ASYNC_FENCE_CB. The public ABI
+requires the render-server path for Venus contexts; directly linking private vkr
+symbols is forbidden. Capability set four must be version zero, exactly the
+pinned upstream 160-byte structure, and advertise blob ID zero support. The
+owner retains the 160 raw capability bytes for subsequent negotiated transport;
+no native struct is sent over IVSHMEM. It creates context one, then HOST3D blob
+one with blob ID zero and exactly USE_MAPPABLE (adding USE_SHAREABLE causes blob
+zero to be treated as device memory, not a CPU reply resource), and maps the
+requested extent. Creation failure destroys every partially acquired resource
+and leaves the output null. No host GPU is selected by this bootstrap operation.
+
+Submit accepts a borrowed immutable complete Venus command bundle, 8..scratch
+capacity bytes, length a multiple of four. Zig checks the bounds and copies it
+into aligned private scratch; the renderer never reads mutable guest pages.
+Venus command semantics and handles are decoded by the pinned upstream renderer,
+with its documented input validation boundary; Waddle validates its own envelope
+in Zig. The public submit call copies/sends scratch into the upstream worker.
+A monotonically increasing nonzero CPU timeline-zero fence follows every bundle.
+Only one bundle is in flight for this bootstrap owner. Before the next submit,
+call poll until the callback retires its fence; RingAgain denotes not retired.
+No blocking wait, unbounded retry, or undocumented implicit GPU completion occurs.
+
+The callback runs on upstream's fence thread, verifies context one/timeline zero,
+and release-publishes its fence ID to an atomic field. The session thread acquires
+this completion before reading replies or resubmitting. Timeline zero establishes
+CPU decoder/reply completion; it does not prove GPU queue completion. Fence ID
+exhaustion or public submit/fence failure poisons the owner (RingCorrupt); subsequent
+operations require destruction and a fresh session. Caller-owned deadline and
+cancellation waits remain mandatory at runtime. Reply copy requires completed
+submission and a valid bounded offset/length; Zig copies into private caller
+output. It does not guess encoded reply size or expose borrowed upstream memory.
+The caller must copy needed replies before the next submission reuses the stream.
+
+Destroy accepts a nullable pointer to an owner pointer, nulls it, destroys context
+one (joins fence callbacks and requests worker destruction), unmaps/unrefs the
+reply resource, cleans up the renderer/server, frees scratch then owner, and
+finally releases the singleton claim. It is session-thread-only, never concurrent
+with submit/poll/reply; it remains safe when a fence is pending. All stages are
+tracked explicitly for partial failure. The callback cookie outlives context
+teardown and upstream cleanup. This API owns no IVSHMEM mapping, control socket,
+Wayland object, or transferred DMA-BUF fd.
+
+Verification uses the real public renderer and configured render server: query
+capabilities, create/map blob zero, encode SetReplyCommandStreamMESA followed by
+EnumerateInstanceVersion, retire timeline zero, and decode a VK_SUCCESS reply
+with a nonzero Vulkan API version. The commands follow the pinned generated
+protocol, including u64 pointer-presence encoding. Run repeated create/submit/
+reply/destroy, bounded pending cancellation cleanup, invalid local bounds, and
+singleton ownership tests; fault fixtures cover every acquisition and error
+stage with >=90% owned production coverage and sanitizer gates. This real Vulkan
+loader call is a CPU dispatch test; hardware device/queue execution, Vulkan guest
+ICD compatibility, performance and zero-copy presentation remain required later.

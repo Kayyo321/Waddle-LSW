@@ -168,7 +168,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Reviewed against the existing bidirectional region and
     cancellable ring contract. No implementation credit is assigned yet.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): validate lifecycle readiness transitions`
+- **Commit `0474547`**: `feat(vgpu): validate lifecycle readiness transitions`
   - **Task Impact**: +1% to TODO: #1 (+0.15% overall).
   - **Summary**: Added bounded Zig little-endian control encoding/decoding and a
     C11 session state machine that gates readiness, snapshots layout/identity,
@@ -179,3 +179,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     passed locally. Session C line/branch coverage 100%; control Zig lines 100%,
     branches 93.75%; Zig allocator tests leak no bytes. Native Windows execution
     is not yet credited; OS stream adapters and actual cross-VM validation remain.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify public Venus receiver bootstrap`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Defined singleton/context/blob ownership, private bounded commands,
+    callback lifetime, CPU completion versus GPU completion, exact reply mapping,
+    failure teardown and receiver milestones after exercising the public API.
+  - **Verification**: A local exploratory public-ABI probe executed real Venus
+    EnumerateInstanceVersion and received VK_SUCCESS after timeline-zero retirement.
+    The probe is not production implementation or GPU-rendering evidence.
