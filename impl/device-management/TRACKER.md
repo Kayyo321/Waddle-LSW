@@ -231,6 +231,6 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +0% to TODO #11; CI submodule fix.
   - **Summary**: Clone OpenSSL tag directly into each target submodule without --reference. Git disallows referencing shallow clones; direct shallow tag fetch takes ~3s.
 
-- **Commit `:/complete device management feature tracking at 100%`**: `docs(tracker): complete device management feature tracking at 100%`
+- **Commit `ecc129d`**: `docs(tracker): complete device management feature tracking at 100%`
   - **Task Impact**: +40% to TODO #10 (+2.0% overall), +50% to TODO #11 (+2.5% overall); Total Feature Completion reaches 100.0%.
   - **Summary**: Record full completion of expanded unit/integration/stress, sanitizers, line/branch coverage gates, and passing remote GitHub Actions CI checks for Linux CLI verification and Native Windows guest. Status marked Completed with definitive Time Ended timestamp.
