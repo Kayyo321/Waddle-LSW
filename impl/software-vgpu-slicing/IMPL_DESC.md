@@ -174,3 +174,28 @@ least 90% statement and branch coverage in executable transport code. Threaded
 stress and independent-process shared mapping tests must verify byte-for-byte
 sequence ordering, no lost data, and bounded shutdown. Native guest/host tests
 remain necessary before declaring the dedicated IVSHMEM adapters complete.
+
+### Host renderer dependency and build boundary
+
+`submodules/virglrenderer` tracks public HTTPS upstream
+https://gitlab.freedesktop.org/virgl/virglrenderer.git, release 1.2.0, immutable
+commit `500b41d5c8638f9b80dd558f4044f3301c7457a4` (verified against the upstream
+annotated release tag). `COPYING` and Meson's project declaration identify MIT;
+its notice and license must accompany distributed library binaries. MIT is
+compatible with this repository's GPL-3.0 license. The upstream checkout includes
+its generated Venus protocol headers; those remain within the pinned submodule,
+never copied to the owned source tree. Waddle uses the upstream public C ABI,
+not vkr's private symbols. Vendor identifiers are confined to that API adapter.
+
+The dependency supplies Vulkan decoding/context/resource execution. Waddle owns
+shared-memory transport, lifecycle, resource-ID validation, cancellation,
+presentation integration, and per-guest policy. This library alone does not
+implement a Windows Vulkan ICD or WDDM device. Build with `venus=true`, no EGL/GLX
+platform selection, and no dynamic configure-time downloads; Vulkan/epoxy/DRM
+headers and libraries come from base system packages. Keep compiled outputs in
+ignored `build/vendor/virglrenderer`, never inside the dependency checkout.
+
+Dependency milestone #6: immutable pin/license/architecture audit 40%; offline
+configuration, native build, and CI dependency synchronization 60%. Its 5% weight
+is split from the previously 25%-weighted host receiver task, which remains
+unimplemented; the original feature scope and total 100% weight are preserved.

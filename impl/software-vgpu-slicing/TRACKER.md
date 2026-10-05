@@ -12,12 +12,14 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 65% | Stress, sanitizers, C and Zig coverage gates pass; native CI and adapters pending |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 25% | 0% | - |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 
-**Total Feature Completion**: `9.75%`
+| #6      | Pin, configure, build, and verify virglrenderer dependency | In Progress | 5% | 40% | Immutable 1.2.0 pin and MIT audit done; build and CI pending |
+
+**Total Feature Completion**: `11.75%`
 
 ## Commit History & Progress Log
 
@@ -69,9 +71,16 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: C production line/branch coverage 100%; Zig production
     line/branch coverage 100%. Native CI remains pending.
 
-- **Commit (current; resolve by subject)**: `chore(vgpu): verify transport on Linux and native Windows CI`
+- **Commit `63862ff`**: `chore(vgpu): verify transport on Linux and native Windows CI`
   - **Task Impact**: +0% to TODO: #1 (+0% overall); CI verification pending.
   - **Summary**: Added feature-branch Linux safety/stress/coverage and native
     Windows ABI/allocator jobs with pinned tools and bounded runtime.
     This verifies transport only; renderer, WDDM, presentation, and OpenCL
     integration remain required for feature completion.
+
+- **Commit (current; resolve by subject)**: `chore(deps): pin virglrenderer 1.2.0 for Venus execution`
+  - **Task Impact**: +40% to TODO: #6 (+2.0% overall).
+  - **Summary**: Added public HTTPS MIT-licensed renderer dependency at immutable
+    `500b41d5c8638f9b80dd558f4044f3301c7457a4`; allocated a dedicated dependency
+    task by splitting 5% from unimplemented TODO #2. No guest or GPU completion
+    is implied by the dependency pin.
