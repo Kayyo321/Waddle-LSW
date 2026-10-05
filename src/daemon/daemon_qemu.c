@@ -4,6 +4,7 @@
  */
 
 #include "daemon_qemu.h"
+#include "../av/av_layout.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -156,6 +157,34 @@ int qemu_build_args(const daemon_config_t *config,
     snprintf(drive_buf, sizeof(drive_buf), "file=%s,if=virtio,cache=writeback", config->disk_image);
     if (append_arg(argv, &argc, max_args, "-drive") != 0 ||
         append_arg(argv, &argc, max_args, drive_buf) != 0) goto fail;
+
+    /* AV devices are managed with the existing VM; no external AV VM assumed. */
+    if (config->av_enabled) {
+        if (daemon_config_validate(config) != 0) { errno = EINVAL; goto fail; }
+        char av_backend[WaddleMaxPathLen + 128];
+        int length = snprintf(av_backend, sizeof(av_backend),
+            "memory-backend-file,id=waddle_av,size=%llu,mem-path=%s,share=on",
+            (unsigned long long)AvMappingBytes, config->av_shm_path);
+        if (length < 0 || (size_t)length >= sizeof(av_backend)) { errno = E2BIG; goto fail; }
+        if (append_arg(argv, &argc, max_args, "-object") != 0 ||
+            append_arg(argv, &argc, max_args, av_backend) != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args, "ivshmem-plain,memdev=waddle_av") != 0 ||
+            append_arg(argv, &argc, max_args, "-audiodev") != 0 ||
+            append_arg(argv, &argc, max_args, "none,id=waddle_silent") != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args, "ich9-intel-hda") != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args, "hda-duplex,audiodev=waddle_silent") != 0) goto fail;
+        if (config->av_gpu_bdf[0]) {
+            char gpu_device[64];
+            snprintf(gpu_device, sizeof(gpu_device), "vfio-pci,host=%s", config->av_gpu_bdf);
+            if (append_arg(argv, &argc, max_args, "-device") != 0 ||
+                append_arg(argv, &argc, max_args, gpu_device) != 0 ||
+                append_arg(argv, &argc, max_args, "-vga") != 0 ||
+                append_arg(argv, &argc, max_args, "none") != 0) goto fail;
+        }
+    }
 
     /* Headless display */
     if (append_arg(argv, &argc, max_args, "-display") != 0 ||
