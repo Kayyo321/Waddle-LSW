@@ -6,7 +6,7 @@ task_root=$(pwd)
 mkdir -p build/coverage
 rm -f build/coverage/unit-*.gcda
 ${CC:-cc} -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O0 -g -std=c11 -Wall -Wextra -Wpedantic -Werror --coverage \
-    tests/unit.c src/common/protocol.c src/common/arguments.c build/path_rules.o -o build/coverage/unit
+    tests/unit/unit.c src/common/protocol.c src/common/arguments.c build/path_rules.o -o build/coverage/unit
 ./build/coverage/unit
 for source in protocol arguments; do
     ${GCOV:-gcov} -b -o "build/coverage/unit-$source.gcno" "src/common/$source.c"
