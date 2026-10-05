@@ -264,3 +264,20 @@ capacity out parameter with ordinary zero/-errno return. Application probes use
 this extension exclusively. Unpatched live modules fail ENOTTY and remain intact.
 Only a 64-bit Linux host is supported. Module load requests the constant positive
 2048 MiB size; external module parameters retain upstream semantics.
+
+### Signed IVSHMEM driver distribution
+
+`make av-drivers` obtains the Windows host artifact for the pinned Looking Glass
+B7 release from `https://looking-glass.io/artifact/B7/host`, verifies SHA-256
+`c2415a5a0c405f1d6aa936986bdd4b806c50574b4521747e113c3be2be047b1b`, and extracts
+only `ivshmem.inf`, `ivshmem.sys`, `ivshmem.cat` and `LICENSE.txt` into the ignored
+`build/vendor/av/ivshmem` distribution directory. No Looking Glass host service
+is installed or started. The signed kernel package matches the mapped-device
+ABI headers in the pinned git submodule; GPL license text accompanies the package.
+The host release package is the upstream binary distribution of that submodule,
+not a separately unpinned source dependency. A changed artifact fails the digest
+check; no execution or extraction occurs before verification. Build-time base
+packages `curl`, `sha256sum` and `7z` perform transfer/hash/archive extraction.
+The Windows driver store independently verifies catalog signatures via `pnputil`;
+test-signing and certificate bypass are never enabled. Viosock and VirtIO-FS remain
+the existing execution-bridge prerequisites and are checked before AV deployment.

@@ -47,10 +47,10 @@
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 50% | Parse setup, probe and PID run commands in Zig before side effects, copy fixed-size device/GPU selections and reject duplicate, traversal, malformed PCI and overflow inputs. Native allocator-free grammar tests pass. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 80% | Extend the bounded configuration editor with AV enable, shared-memory path and explicit GPU assignment. Validate the complete patch before replacing a quiescent device configuration, preserve unrelated bytes and cover incomplete, malformed and reset requests. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 20% | Download the pinned Looking Glass binary distribution over HTTPS, verify its exact SHA-256 before extraction and bundle only the signed IVSHMEM package and license in ignored distribution outputs. Preserve the existing submodule architecture and avoid installing the third-party capture service. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `82.28%`
+**Total Feature Completion**: `82.88%`
 
 ## Commit History & Progress Log
 
@@ -214,6 +214,10 @@
   - **Task Impact**: +10% to #5.2 (+0.48% overall)
   - **Summary**: Exercise the program-provisioned driver with a two-GiB capacity probe, CLOEXEC DMA-BUF export, bidirectional mmap aliasing, bounds rejection and refusal to reset a consumed slot. Verify teardown preserves the device; the explicit native gate passes on this host.
 
-- **Commit `HEAD`**: `feat(av): define bounded managed setup and run command grammar`
+- **Commit `9c770a540ec4`**: `feat(av): define bounded managed setup and run command grammar`
   - **Task Impact**: +10% to #10.1 (+0.50% overall)
   - **Summary**: Parse setup, probe and PID run commands in Zig before side effects, copy fixed-size device/GPU selections and reject duplicate, traversal, malformed PCI and overflow inputs. Native allocator-free grammar tests pass.
+
+- **Commit `HEAD`**: `chore(deps): bundle verified B7 signed IVSHMEM package`
+  - **Task Impact**: +20% to #10.4 (+0.60% overall)
+  - **Summary**: Download the pinned Looking Glass binary distribution over HTTPS, verify its exact SHA-256 before extraction and bundle only the signed IVSHMEM package and license in ignored distribution outputs. Preserve the existing submodule architecture and avoid installing the third-party capture service.

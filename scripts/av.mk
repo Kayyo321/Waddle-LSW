@@ -86,3 +86,14 @@ build/av_kvmfr_test: tests/av/kvmfr.c src/av/av_environment.c src/av/av_dmabuf.c
 .PHONY: av-native-kvmfr-test
 av-native-kvmfr-test: build/av_kvmfr_test
 	./build/av_kvmfr_test
+
+# The signed IVSHMEM package is supplied by the same immutable B7 dependency.
+# Only ignored build outputs contain extracted third-party binaries/licenses.
+build/vendor/av/ivshmem/ivshmem.inf: | build/vendor
+	mkdir -p build/vendor/av/download build/vendor/av/ivshmem
+	curl --fail --location --proto '=https' --tlsv1.2 https://looking-glass.io/artifact/B7/host -o build/vendor/av/download/looking_glass_b7.zip
+	echo 'c2415a5a0c405f1d6aa936986bdd4b806c50574b4521747e113c3be2be047b1b  build/vendor/av/download/looking_glass_b7.zip' | sha256sum --check
+	7z e -y -obuild/vendor/av/download build/vendor/av/download/looking_glass_b7.zip looking-glass-host-setup.exe
+	7z e -y -obuild/vendor/av/ivshmem build/vendor/av/download/looking-glass-host-setup.exe ivshmem.inf ivshmem.sys ivshmem.cat LICENSE.txt
+.PHONY: av-drivers
+av-drivers: build/vendor/av/ivshmem/ivshmem.inf
