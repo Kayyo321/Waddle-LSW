@@ -46,11 +46,11 @@
 | **10** | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | Pending | 5% | 0% | Added by user: program must set up its AV environment. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | Pending | 5% | 0% | Running-kernel headers/signing and privilege boundaries required. |
-| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | Pending | 5% | 0% | Must preserve CLI/device-management behavior. |
+| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 20% | Add transactional bounded AV configuration for shared-memory paths and explicit GPU PCI addresses, defaulting to disabled for existing CLI-only VMs. Reject malformed BDFs and QEMU-option-injecting paths; parser tests pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `62.28%`
+**Total Feature Completion**: `63.28%`
 
 ## Commit History & Progress Log
 
@@ -130,6 +130,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Add the user-required host module, managed VM devices, signed guest driver deployment, readiness probing and provisioned-session verification tasks. Rescale prior tasks to 80 percent and reserve 20 percent for provisioning without assuming an external AV test environment.
 
-- **Commit `HEAD`**: `fix(av): align shared mapping size to IVSHMEM PCI BAR requirements`
+- **Commit `2c51b3bb9651`**: `fix(av): align shared mapping size to IVSHMEM PCI BAR requirements`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Reserve a 2 GiB power-of-two mapping for QEMU ivshmem-plain while keeping the used pixel region below the wl_shm signed size limit. Update mapping validation and native sparse-map tests; transport suites pass.
+
+- **Commit `HEAD`**: `feat(av): parse managed VM audio-video device configuration`
+  - **Task Impact**: +20% to #10.3 (+1.00% overall)
+  - **Summary**: Add transactional bounded AV configuration for shared-memory paths and explicit GPU PCI addresses, defaulting to disabled for existing CLI-only VMs. Reject malformed BDFs and QEMU-option-injecting paths; parser tests pass.

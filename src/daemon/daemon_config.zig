@@ -175,7 +175,26 @@ export fn daemon_config_validate(config: ?*const c.daemon_config_t) c_int {
         if (m.guest_drive[0] == 0) return -1;
     }
 
+    if (cfg.av_enabled > 1 or cfg.av_reserved != 0) return -1;
+    const av_path_end = std.mem.indexOfScalar(u8, &cfg.av_shm_path, 0) orelse return -1;
+    const gpu_end = std.mem.indexOfScalar(u8, &cfg.av_gpu_bdf, 0) orelse return -1;
+    if (cfg.av_enabled != 0 and !av_path_valid(cfg.av_shm_path[0..av_path_end])) return -1;
+    if (!av_gpu_valid(cfg.av_gpu_bdf[0..gpu_end])) return -1;
+
     return 0;
+}
+
+fn av_path_valid(path: []const u8) bool {
+    return path.len > 0 and path[0] == '/' and std.unicode.utf8ValidateSlice(path) and
+        std.mem.indexOfAny(u8, path, ",\r\n") == null;
+}
+fn av_gpu_valid(value: []const u8) bool {
+    if (value.len == 0) return true;
+    if (value.len != 12 or value[4] != ':' or value[7] != ':' or value[10] != '.' or value[11] < '0' or value[11] > '7') return false;
+    for ([_]usize{ 0, 1, 2, 3, 5, 6, 8, 9 }) |index| {
+        if (!std.ascii.isHex(value[index])) return false;
+    }
+    return (std.fmt.parseInt(u8, value[8..10], 16) catch return false) <= 31;
 }
 
 /// Parses a single VirtIO-FS export string specification.
@@ -197,7 +216,7 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
     if (!std.unicode.utf8ValidateSlice(data) or std.mem.indexOfScalar(u8, data, 0) != null) return -1;
 
     var mounts_cleared = false;
-    var current_section: enum { none, subsystem, filesystem, timeouts } = .none;
+    var current_section: enum { none, subsystem, filesystem, timeouts, av } = .none;
 
     var line_iter = std.mem.splitScalar(u8, data, '\n');
     while (line_iter.next()) |raw_line| {
@@ -218,6 +237,8 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                     cfg.mount_count = 0;
                     mounts_cleared = true;
                 }
+            } else if (std.mem.eql(u8, sec_name, "av")) {
+                current_section = .av;
             } else if (std.mem.eql(u8, sec_name, "timeouts")) {
                 current_section = .timeouts;
             } else {
@@ -270,6 +291,19 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                 } else if (std.mem.eql(u8, key, "stop_timeout")) {
                     cfg.stop_timeout_sec = parse_u32(val) catch return -1;
                 }
+            },
+            .av => {
+                if (std.mem.eql(u8, key, "enabled")) {
+                    cfg.av_enabled = parse_u32(val) catch return -1;
+                } else if (std.mem.eql(u8, key, "shm_path")) {
+                    if (!av_path_valid(val) or val.len >= cfg.av_shm_path.len) return -1;
+                    @memset(&cfg.av_shm_path, 0);
+                    copy_to_c_buf(&cfg.av_shm_path, val);
+                } else if (std.mem.eql(u8, key, "gpu_bdf")) {
+                    if (!av_gpu_valid(val)) return -1;
+                    @memset(&cfg.av_gpu_bdf, 0);
+                    copy_to_c_buf(&cfg.av_gpu_bdf, val);
+                } else return -1;
             },
             .none => {},
         }
@@ -585,4 +619,22 @@ test "config editor rejects invalid complete requests and bounded output" {
     try std.testing.expectError(error.NoSpaceLeft, edit_config(source, &.{"vcpus=2"}, false, output[0..4]));
     const length = try edit_config(source, &.{ "vsock_port=4294967295", "default_shell=日本語.exe" }, false, &output);
     try std.testing.expect(std.mem.indexOf(u8, output[0..length], "日本語.exe") != null);
+}
+
+test "AV device configuration is bounded and transactional" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(u32, 0), cfg.av_enabled);
+    const valid = "[av]\nenabled=1\nshm_path=/dev/shm/waddle-private-av\ngpu_bdf=0000:0e:00.0\n";
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, valid.ptr, valid.len));
+    try std.testing.expectEqual(@as(u32, 1), cfg.av_enabled);
+    const before = cfg;
+    for ([_][]const u8{
+        "[av]\nenabled=2\n",            "[av]\nshm_path=relative\n",    "[av]\nshm_path=/tmp/x,share=off\n",
+        "[av]\ngpu_bdf=0000:0e:ff.0\n", "[av]\ngpu_bdf=0000:0e:00.8\n", "[av]\nunknown=1\n",
+        "[av]\ngpu_bdf=invalid\n",      "[av]\nshm_path=\n",
+    }) |invalid| {
+        try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, invalid.ptr, invalid.len));
+        try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&cfg));
+    }
 }

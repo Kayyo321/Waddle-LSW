@@ -73,6 +73,14 @@ typedef struct daemon_config_t {
     uint32_t reserved;
     /** @brief Array of VirtIO-FS directory export mappings. */
     waddle_daemon_fs_mount_t mounts[WaddleMaxMounts];
+    /** @brief AV devices enabled (0/1); default disabled preserves CLI-only VMs. */
+    uint32_t av_enabled;
+    /** @brief Reserved zero padding for future AV settings, no runtime semantics. */
+    uint32_t av_reserved;
+    /** @brief Absolute private AV shared-memory/KVMFR path, no comma/newline. */
+    char av_shm_path[WaddleMaxPathLen];
+    /** @brief Explicit VFIO GPU PCI address dddd:bb:ss.f; empty means no passthrough. */
+    char av_gpu_bdf[16];
 } daemon_config_t;
 
 /**
