@@ -144,6 +144,67 @@ static int cmd_av(int argc, char **argv) {
             "--", agent, "--probe", NULL};
         return cmd_exec(8, arguments, 2);
     }
-    fputs("waddle av: managed session orchestration is not yet available\n", stderr);
-    return 1;
+    char process_id[16], host_path[PATH_MAX], cid[16];
+    snprintf(process_id, sizeof(process_id), "%u", command.process_id);
+    snprintf(cid, sizeof(cid), "%u", config.vsock_cid);
+    if (av_bundle_path("waddle-av-host", host_path, sizeof(host_path)) != 0 || access(host_path, X_OK) != 0)
+        return 1;
+    int output[2];
+    if (pipe2(output, O_CLOEXEC) != 0) return 1;
+    pid_t guest = fork();
+    if (guest < 0) { close(output[0]); close(output[1]); return 1; }
+    if (!guest) {
+        close(output[0]);
+        if (dup2(output[1], STDOUT_FILENO) < 0) _exit(1);
+        close(output[1]);
+        char *arguments[] = {"waddle", "exec", "--device", device.name, "--translate-path",
+            "--", agent, process_id, NULL};
+        _exit(cmd_exec(8, arguments, 2));
+    }
+    close(output[1]);
+    char pending[256] = {0};
+    size_t length = 0;
+    int ready = 0;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int64_t deadline = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 + 90000;
+    while (!ready) {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        int64_t remaining = deadline - ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+        if (remaining <= 0) break;
+        struct pollfd descriptor = {output[0], POLLIN, 0};
+        int available = poll(&descriptor, 1, (int)remaining);
+        if (available < 0 && errno == EINTR) continue;
+        if (available <= 0) break;
+        char byte;
+        ssize_t count = read(output[0], &byte, 1);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        if (byte == '\n') {
+            pending[length] = '\0';
+            ready = !strcmp(pending, "AV guest: ready") || !strcmp(pending, "AV guest: ready\r");
+            length = 0;
+        } else if (length + 1 < sizeof(pending)) pending[length++] = byte;
+        else break;
+    }
+    int result = 1;
+    if (ready) {
+        char *arguments[] = {host_path, cid, config.av_shm_path, NULL};
+        result = av_run_helper(arguments);
+    } else fputs("waddle av: guest did not announce listener readiness before deadline\n", stderr);
+    close(output[0]);
+    /* The child owns only this execution session. Its cancellation closes the
+     * bridge job and agent; the user-selected game process is not owned here. */
+    if (kill(guest, SIGTERM) != 0 && errno != ESRCH) result = 1;
+    int status = 0;
+    for (unsigned attempt = 0; attempt < 50; ++attempt) {
+        pid_t waited = waitpid(guest, &status, WNOHANG);
+        if (waited == guest) return result;
+        if (waited < 0 && errno != EINTR) return 1;
+        struct timespec pause = {0, 20000000};
+        nanosleep(&pause, NULL);
+    }
+    kill(guest, SIGKILL);
+    av_child_wait(guest);
+    return result;
 }

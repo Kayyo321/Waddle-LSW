@@ -281,3 +281,17 @@ packages `curl`, `sha256sum` and `7z` perform transfer/hash/archive extraction.
 The Windows driver store independently verifies catalog signatures via `pnputil`;
 test-signing and certificate bypass are never enabled. Viosock and VirtIO-FS remain
 the existing execution-bridge prerequisites and are checked before AV deployment.
+
+
+### Managed CLI session ownership
+
+`waddle av run PROCESS_ID [--device NAME]` resolves a previously configured device,
+launches the deployed agent through the existing execution bridge, and waits at
+most 90 seconds for the exact bounded `AV guest: ready` line. The guest listens on
+AV port 5001; the host connects to that guest CID, rather than the inverse direction.
+The existing execution port remains separate. The CLI owns the execution child
+and native host playback child; no shell interprets their arguments. On playback
+exit/failure the CLI cancels and reaps its own execution child, escalating after
+one second. Cancellation targets the AV agent job, never the pre-existing game
+PID. A missing bundled executable, malformed readiness line or startup timeout
+fails the command and tears down its owned children.

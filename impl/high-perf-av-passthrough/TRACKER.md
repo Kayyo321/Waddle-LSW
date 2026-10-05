@@ -47,10 +47,10 @@
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 65% | Add native pnputil deployment with bounded paths, child timeout/reaping and explicit reboot status. Probe actual OS build, mapped IVSHMEM ABI, D3D11/WARP, sibling WinRT adapter and enabled audio endpoint before declaring readiness; cross-linked guest and invalid-path fixture pass. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 90% | Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 65% | Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 75% | Launch the deployed target-PID agent through the existing bridge, await its exact bounded readiness line with a deadline and start native playback for the configured CID/mapping. Cancel and reap only owned execution children on failure or playback exit; preserve the user game process. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `87.00%`
+**Total Feature Completion**: `87.30%`
 
 ## Commit History & Progress Log
 
@@ -238,6 +238,10 @@
   - **Task Impact**: +5% to #5.3 (+0.20% overall)
   - **Summary**: Retire surfaces and wait up to two seconds for real buffer release before destroying presentation contexts, preserving consumed slots on timeout. Poll display writability after EAGAIN and snapshot shared dimensions/stride once before validation and protocol submission.
 
-- **Commit `HEAD`**: `test(av): exercise actual compositor release and PCM playback`
+- **Commit `45091e110c3d`**: `test(av): exercise actual compositor release and PCM playback`
   - **Task Impact**: +10% to #5.1 (+0.40% overall); +5% to #5.3 (+0.20% overall); +5% to #6.1 (+0.20% overall); +10% to #6.3 (+0.32% overall)
   - **Summary**: Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples.
+
+- **Commit `HEAD`**: `feat(av): own managed guest and host session startup`
+  - **Task Impact**: +10% to #10.4 (+0.30% overall)
+  - **Summary**: Launch the deployed target-PID agent through the existing bridge, await its exact bounded readiness line with a deadline and start native playback for the configured CID/mapping. Cancel and reap only owned execution children on failure or playback exit; preserve the user game process.
