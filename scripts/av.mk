@@ -4,7 +4,7 @@ AvZigSources = src/av/av_audio.zig src/av/av_codec.zig src/av/av_layout.zig
 AvHostFlags = -Isrc/av -Ibuild $(shell pkg-config --cflags wayland-client libpipewire-0.3)
 AvDriverFlags = -Isubmodules/looking_glass/module
 AvWindowsFlags = $(WindowsFlags) -Isrc/av -Isubmodules/looking_glass/vendor/ivshmem
-AvWindowsSources = src/av/av_windows.c src/av/av_capture.c src/av/av_wasapi.c src/av/av_ivshmem.c src/av/av_video.c
+AvWindowsSources = src/av/av_guids.c src/av/av_windows.c src/av/av_capture.c src/av/av_wasapi.c src/av/av_ivshmem.c src/av/av_video.c
 AvWindowsLibraries = -luser32 -ldwmapi -ld3d11 -ldxgi -lmmdevapi -lavrt -lole32 -luuid -lsetupapi
 
 build/av_audio.o: src/av/av_audio.zig | build
@@ -59,3 +59,13 @@ av-module: build/waddle-av-setup
 
 build/av_peer_test: tests/av/peer.c src/av/av_peer.c build/av_codec.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -o $@
+
+build/av_audio_windows.lib: src/av/av_audio.zig | build
+	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+build/av_codec_windows.lib: src/av/av_codec.zig include/waddle/av_protocol.h | build
+	$(ZIG) build-lib $< -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+build/av_layout_windows.lib: src/av/av_layout.zig | build
+	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+build/waddle-guest-av.exe: src/av/av_guest.c src/av/av_peer.c $(AvWindowsSources) build/av_audio_windows.lib build/av_codec_windows.lib build/av_layout_windows.lib | build
+	$(ZIG) cc $(AvWindowsFlags) $^ $(AvWindowsLibraries) -lws2_32 -o $@
+av-windows: build/waddle-guest-av.exe
