@@ -12,6 +12,7 @@
 #include "device_commands.h"
 #include "av_commands.h"
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <sys/wait.h>
 #include <time.h>
 #include "waddle/daemon_protocol.h"

@@ -327,6 +327,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Replace the rounded seven-millisecond message wait with a one-millisecond high-resolution waitable timer so capture polling can service 144-Hz frames without changing the global timer resolution. Keep Windows messages and cancellation in the same wait; cancel and close the timer on all setup and session exits.
 
-- **Commit `HEAD`**: `fix(av): publish immutable guest agent and adapter bundles`
+- **Commit `dab6f31f6978`**: `fix(av): publish immutable guest agent and adapter bundles`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Deploy each complete agent/DLL pair under a fresh private version directory and select it atomically only after native setup/probe passes. Validate the selector before run/probe; native repeat setup now executes the new image and accepts the already-current signed driver instead of reusing a cached Windows image section.
+
+- **Commit `HEAD`**: `fix(av): serialize managed AV commands per device`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Acquire a private same-user no-symlink command lease for setup, probe and the full playback lifetime, releasing it on every command exit. A concurrent probe during genuine managed playback fails immediately while cancellation still reaps owned children; separate profiles retain independent leases.

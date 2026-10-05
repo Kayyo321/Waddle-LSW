@@ -147,21 +147,7 @@ fail:
     fprintf(stderr, "waddle av: bundled AV agent, native WinRT DLL or signed driver package is missing: %s\n", strerror(errno));
     return 1;
 }
-static int cmd_av(int argc, char **argv) {
-    av_command_t command;
-    int parsed = waddle_av_parse((size_t)(argc - 2), (const char *const *)(argv + 2), &command);
-    if (parsed != 0) {
-        FILE *stream = parsed == 1 ? stdout : stderr;
-        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi | --firmware-vars PATH] [--gpu PCI_BDF]\n"
-              "waddle av probe [--device NAME]\n"
-              "waddle av run PROCESS_ID [--device NAME]\n", stream);
-        return parsed == 1 ? 0 : 2;
-    }
-    device_info_t device;
-    char socket_path[WaddleMaxPathLen];
-    if (resolve_target_device(command.device[0] ? command.device : NULL, &device,
-                              socket_path, sizeof(socket_path), 1) != 0)
-        return 2;
+static int av_device_command(av_command_t command, device_info_t device) {
     daemon_config_t config;
     daemon_config_init_defaults(&config);
     if (daemon_config_load_file(&config, device.config_path) != 0) return 1;
@@ -308,5 +294,39 @@ complete:
     if (av_interrupted) result = 128 + av_interrupted;
     sigaction(SIGINT, &old_interrupt, NULL);
     sigaction(SIGTERM, &old_terminate, NULL);
+    return result;
+}
+
+static int cmd_av(int argc, char **argv) {
+    av_command_t command;
+    int parsed = waddle_av_parse((size_t)(argc - 2), (const char *const *)(argv + 2), &command);
+    if (parsed != 0) {
+        FILE *stream = parsed == 1 ? stdout : stderr;
+        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi | --firmware-vars PATH] [--gpu PCI_BDF]\n"
+              "waddle av probe [--device NAME]\n"
+              "waddle av run PROCESS_ID [--device NAME]\n", stream);
+        return parsed == 1 ? 0 : 2;
+    }
+    device_info_t device;
+    char socket_path[WaddleMaxPathLen];
+    if (resolve_target_device(command.device[0] ? command.device : NULL, &device,
+                              socket_path, sizeof(socket_path), 1) != 0)
+        return 2;
+    char state[WaddleMaxPathLen], directory[PATH_MAX], path[PATH_MAX];
+    if (daemon_device_get_state_dir(device.name, state, sizeof(state)) != 0 ||
+        snprintf(directory, sizeof(directory), "%s/av", state) >= (int)sizeof(directory) ||
+        av_private_directory(directory) != 0 ||
+        snprintf(path, sizeof(path), "%s/command.lock", directory) >= (int)sizeof(path)) return 1;
+    int lease = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (lease < 0) return 1;
+    struct stat status;
+    if (fstat(lease, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
+        (status.st_mode & 0077) || flock(lease, LOCK_EX | LOCK_NB) != 0) {
+        close(lease);
+        fputs("waddle av: device already has an AV command owner or an invalid lease file\n", stderr);
+        return 1;
+    }
+    int result = av_device_command(command, device);
+    close(lease);
     return result;
 }
