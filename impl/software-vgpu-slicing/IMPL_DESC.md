@@ -15,18 +15,104 @@
 - **Zero-Copy Presentation Flow**: Guest DX11/12 app -> DXVK translates to Vulkan -> Vulkan ICD serializes via Venus -> IVSHMEM -> Host Venus receiver executes -> Renders to Vulkan Image -> Exports as DMA-BUF -> Waddle-LSW Wayland client imports via `zwp_linux_dmabuf_v1` -> Displays as `wl_subsurface`.
 
 ## 3. Data Structures, Protocols & Memory Layouts
-- **Venus Ring Buffer**:
-  ```c
-  struct alignas(64) venus_ring_header_t {
-      std::atomic<uint32_t> head;
-      std::atomic<uint32_t> tail;
-      uint32_t capacity;
-      uint32_t flags;
-      uint8_t reserved[48];
-  };
-  ```
-- **Serialization Format**: Venus protocol binary wire format.
-- **Memory Alignment**: 64-byte cache line alignment strictly enforced for IVSHMEM synchronization primitives to prevent false sharing.
+
+### Task #1: IVSHMEM transport contract
+
+The Waddle transport is an opaque byte stream carrying serialized Venus commands.
+It is not the `VkRingCreateInfoMESA` resource ring consumed internally by vkr.
+Task #2 must negotiate Venus capabilities, create renderer contexts and resource
+IDs, attach resource backing, handle reply streams, and submit complete command
+bundles. A successful byte round trip alone does not establish Vulkan support.
+Reference: https://docs.mesa3d.org/drivers/venus.html .
+
+The initial transport supports little-endian x86-64 Linux hosts and x86-64 Windows
+guests with coherent, write-back IVSHMEM RAM. Device memory, noncoherent mappings,
+big-endian targets, 32-bit targets, and process-shared fallback atomic locks are
+unsupported. Reject incompatible builds or mappings instead of silently emulating.
+Host mapping ownership remains with the existing IVSHMEM lifecycle component.
+The transport borrows a subregion and never allocates, maps, closes, or unmaps it.
+It must not overwrite the existing AV region; allocation of a dedicated region and
+control-channel negotiation are later Task #1 milestones.
+
+### Exact version-one ABI
+
+`venus_ring_header_t` has size 192 and alignment 64. All fields use fixed-width C
+integers. The cursor and state fields are lock-free C11 `_Atomic uint32_t`, with
+compile-time size/alignment checks. The implementation uses C11 release/acquire
+operations and explicit fences, equivalent to the specification's C++ orders,
+without introducing a C++ compatibility boundary.
+
+| Offset | Bytes | Field | Meaning and writer |
+| ------ | ----- | ----- | ------------------ |
+| 0 | 4 | magic | `0x57565231`, immutable after host initialization |
+| 4 | 4 | version | 1, immutable |
+| 8 | 4 | capacity | Power of two, 64 through 16777216 bytes, immutable |
+| 12 | 4 | header_bytes | 192, immutable |
+| 16 | 4 | flags | Atomic flags; bit 0 means closed, all other bits invalid |
+| 20 | 44 | reserved | Zero, immutable ABI extension space |
+| 64 | 4 | tail | Guest producer's cumulative byte cursor |
+| 68 | 60 | producer_padding | Zero; separates writers into distinct cache lines |
+| 128 | 4 | head | Host consumer's cumulative byte cursor |
+| 132 | 60 | consumer_padding | Zero; isolates consumer writes |
+| 192 | capacity | payload | Opaque byte stream, wraps at capacity |
+
+Cursor arithmetic is unsigned modulo 2^32; occupied bytes are `tail - head`.
+This difference must never exceed the validated capacity. Equal cursors mean
+empty; difference equal to capacity means full, so no sentinel byte is lost.
+Physical position is `cursor & (capacity - 1)`. Cursors may wrap indefinitely;
+capacity below 2^31 makes the occupied interval unambiguous. Reserved fields
+must be zero at attachment. All metadata integers are little-endian. Payload
+byte order is determined by the Venus protocol, not transformed by this layer.
+
+The mapping base must be nonnull, 64-byte aligned, and have at least
+`192 + capacity` accessible bytes. Additional bytes belong to the caller and
+are never touched. The initializer writes only the header; payload is not
+cleared and is inaccessible to the consumer until published. A local endpoint
+stores borrowed header/payload pointers and a validated capacity snapshot;
+subsequent access never trusts the mutable peer's capacity or header size.
+
+### API and status contract
+
+Public names use snake_case, types end in `_t`, and constants and enumeration
+members use PascalCase. Every public declaration documents directions,
+nullability, bounds, ownership, lifetime, status values, and thread safety.
+
+- `venus_ring_init(mapping, mapping_bytes, capacity)` initializes a quiescent
+  caller-owned region. Invalid arguments leave the mapping untouched.
+- `venus_ring_attach(ring, mapping, mapping_bytes)` validates alignment and ABI
+  using Zig's bounded slices, then populates a caller-owned local endpoint. A
+  failed attachment leaves the output endpoint zeroed. Output must not overlap
+  the shared mapping. Attachment happens only after control-channel handoff.
+- `venus_ring_write(ring, data, length)` publishes exactly length bytes or none.
+  Full rings return `RingAgain`; a blocking guest adapter must wait for control
+  notifications or retry with cancellation and disconnect checks. Payload input
+  must not overlap the shared region or the local endpoint.
+- `venus_ring_read(ring, data, length)` consumes exactly length bytes or none.
+  Insufficient available bytes return `RingAgain`. Output must not overlap the
+  shared region or endpoint. The receiver owns the copied command bytes, which
+  are separately validated before renderer dispatch.
+- `venus_ring_close(ring)` atomically sets the closed flag, without resetting
+  cursors. Close is idempotent. Neither writes nor reads drain after closure.
+- `venus_ring_detach(ring)` zeroes only the local endpoint, after its operations
+  stop. This does not close or release the shared mapping.
+
+`RingOk` = 0; `RingAgain` = 1; `RingInvalid` = -1 for local arguments or ABI;
+`RingCorrupt` = -2 for unknown flags or cursor distance beyond capacity;
+`RingClosed` = -3 for peer/session shutdown. For read/write, length must be in
+1..capacity and data must be nonnull. Invalid, corrupt, closed, or unavailable
+operations never copy payload, change cursors, or modify the caller's buffer.
+There are no allocations, partial success, raw Vulkan handles, or transferred
+file descriptors in this API. Close can race with an already-started operation;
+that operation may finish. Lifecycle owners must join workers before unmapping.
+
+### Task #1 milestones
+
+- Transport contract and acceptance criteria: 10%.
+- C ABI, lock-free atomic operations, Zig bounds validation, and basic tests: 35%.
+- Wraparound, corruption, full/empty, threaded and shared-process stress;
+  sanitizer and >=90% branch/statement coverage gates: 25%.
+- Dedicated mapping allocation, host/guest adapters, cancellable backpressure,
+  control handoff, disconnect teardown, and native integration verification: 30%.
 
 ## 4. Step-by-Step Execution Sequence
 1. **Initialization**: Host proxy daemon allocates IVSHMEM segment. Guest driver loads, maps IVSHMEM, and registers the Vulkan ICD and OpenCL driver.
@@ -36,7 +122,7 @@
 
 ## 5. Concurrency, Threading & Synchronization
 - **Lock-Free Queue**: The Venus command ring buffer operates as a lock-free Single-Producer Single-Consumer (SPSC) queue.
-- **Atomic Operations**: `std::atomic_thread_fence` with `std::memory_order_release` and `std::memory_order_acquire` ensure cross-boundary memory visibility.
+- **Atomic Operations**: `atomic_thread_fence` with C11 `memory_order_release` and `memory_order_acquire` ensure cross-boundary memory visibility.
 - **Host Threading**: The host receiver uses dedicated threads per guest Venus context to maximize throughput and minimize latency for bare-metal performance.
 
 ## 6. Error Handling & Failure Modes
@@ -49,3 +135,42 @@
 - **Integration Tests**: Running `vkcube` and a basic DX12 application in the guest and verifying zero-copy DMA-BUF compositing on the host. Verifying OpenCL compute using `clinfo`.
 - **Performance Benchmarks**: End-to-end latency must be comparable to native host rendering. Target 144+ FPS for high-performance workloads (Adobe, gaming).
 - **Sanitizers**: All host components must pass AddressSanitizer and LeakSanitizer with zero memory leaks.
+
+### Detailed Task #1 operation ordering
+
+Initialization and reinitialization require both endpoints stopped. The host
+checks bounds before writing metadata, uses `atomic_init` for flags and cursors,
+and hands off readiness through the lifecycle channel only after initialization.
+Attach validates identity, version, size, capacity, and reserved bytes using Zig;
+C reads atomic flags only after the mapping has passed alignment and bounds checks.
+One producer thread owns tail; one consumer thread owns head per ring. Multiple
+application threads must serialize through their guest context before reaching
+this SPSC transport. Local endpoints must not be detached concurrently with use.
+
+Producer acquires its tail and peer head, rejects an impossible distance, checks
+space, copies at most two bounded spans, executes a release fence, and publishes
+tail with a release store. Consumer acquires its head and peer tail, rejects an
+impossible distance, checks availability, executes an acquire fence, copies at
+most two spans, then release-publishes head after all reads complete. No relaxed
+state loads, OS mutexes across VMs, pointers in shared metadata, or allocation
+occur. The host uses private validated capacity even if the guest changes shared
+metadata after attachment. Guest corruption of cursors produces a fatal session
+error rather than out-of-bounds access. Concurrent malicious writes to payload
+still require untrusted Venus decoding at the renderer boundary.
+
+### Task #1 verification acceptance
+
+Assert every ABI offset, size, alignment, atomic representation, and lock-free
+requirement in C compilation. Verify Linux and Windows-target compilation.
+Exercise minimum/maximum capacities, null/misaligned/short mappings, bad identity,
+version/header size, every reserved region, capacity overflow, invalid lengths,
+full/empty rings, exact-capacity transfers, split spans, 32-bit rollover, unknown
+flags, invalid cursor distances, close idempotence, and detach. Reject invalid
+inputs before any payload access, prove output remains untouched on failures,
+and preserve bytes beyond the borrowed region. Use `std.testing.allocator` for
+Zig tests with immediate deferred release. Run C tests under AddressSanitizer,
+LeakSanitizer, and UndefinedBehaviorSanitizer; require zero findings. Measure at
+least 90% statement and branch coverage in executable transport code. Threaded
+stress and independent-process shared mapping tests must verify byte-for-byte
+sequence ordering, no lost data, and bounded shutdown. Native guest/host tests
+remain necessary before declaring the dedicated IVSHMEM adapters complete.
