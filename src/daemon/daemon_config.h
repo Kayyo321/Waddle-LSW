@@ -59,7 +59,7 @@ typedef struct daemon_config_t {
     char disk_image[WaddleMaxPathLen];
     /** @brief VSOCK guest context ID (CID >= 3). */
     uint32_t vsock_cid;
-    /** @brief VSOCK guest agent listener port (1 - 65535). */
+    /** @brief VSOCK guest agent listener port (1 - UINT32_MAX). */
     uint32_t vsock_port;
     /** @brief Default shell binary spawned on zero-flag invocation (e.g. "powershell.exe"). */
     char default_shell[256];

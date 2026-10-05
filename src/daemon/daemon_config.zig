@@ -146,10 +146,10 @@ export fn daemon_config_validate(config: ?*const c.daemon_config_t) c_int {
     if (cfg.vcpus < c.ConfigMinVcpus or cfg.vcpus > c.ConfigMaxVcpus) {
         return -1;
     }
-    if (cfg.vsock_cid < 3) {
+    if (cfg.vsock_cid < 3 or cfg.vsock_cid == std.math.maxInt(u32)) {
         return -1;
     }
-    if (cfg.vsock_port < 1 or cfg.vsock_port > 65535) {
+    if (cfg.vsock_port < 1) {
         return -1;
     }
     if (cfg.start_timeout_sec < 1 or cfg.start_timeout_sec > c.ConfigMaxStartTimeoutSec) {
@@ -188,9 +188,13 @@ export fn daemon_config_parse_export(line: ?[*:0]const u8, mount: ?*c.waddle_dae
 
 /// Parses an INI configuration string and updates the configuration structure.
 export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]const u8, ini_len: usize) c_int {
-    const cfg = config orelse return -1;
+    const destination = config orelse return -1;
+    var candidate = destination.*;
+    const cfg = &candidate;
     if (ini_len == 0) return 0;
+    if (ini_len > 65536) return -1;
     const data = (ini_data orelse return -1)[0..ini_len];
+    if (!std.unicode.utf8ValidateSlice(data) or std.mem.indexOfScalar(u8, data, 0) != null) return -1;
 
     var mounts_cleared = false;
     var current_section: enum { none, subsystem, filesystem, timeouts } = .none;
@@ -210,6 +214,10 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                 current_section = .subsystem;
             } else if (std.mem.eql(u8, sec_name, "filesystem")) {
                 current_section = .filesystem;
+                if (!mounts_cleared) {
+                    cfg.mount_count = 0;
+                    mounts_cleared = true;
+                }
             } else if (std.mem.eql(u8, sec_name, "timeouts")) {
                 current_section = .timeouts;
             } else {
@@ -232,12 +240,14 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                 } else if (std.mem.eql(u8, key, "disk_image")) {
                     var tilde_buf: [c.WaddleMaxPathLen]u8 = undefined;
                     const resolved = expand_tilde(val, &tilde_buf);
+                    if (resolved.len == 0 or resolved.len >= cfg.disk_image.len) return -1;
                     copy_to_c_buf(&cfg.disk_image, resolved);
                 } else if (std.mem.eql(u8, key, "vsock_cid")) {
                     cfg.vsock_cid = parse_u32(val) catch return -1;
                 } else if (std.mem.eql(u8, key, "vsock_port")) {
                     cfg.vsock_port = parse_u32(val) catch return -1;
                 } else if (std.mem.eql(u8, key, "default_shell")) {
+                    if (val.len == 0 or val.len >= cfg.default_shell.len) return -1;
                     copy_to_c_buf(&cfg.default_shell, val);
                 }
             },
@@ -265,7 +275,9 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
         }
     }
 
-    return daemon_config_validate(cfg);
+    if (daemon_config_validate(cfg) != 0) return -1;
+    destination.* = candidate;
+    return 0;
 }
 
 /// Loads and parses a configuration file from the filesystem.
@@ -306,6 +318,8 @@ export fn daemon_config_load_file(config: ?*c.daemon_config_t, path: ?[*:0]const
         return -1;
     };
     defer file.close();
+
+    if ((file.stat() catch return -1).size > 65536) return -1;
 
     // Read up to 64 KiB
     var file_buf: [65536]u8 = undefined;
@@ -412,4 +426,39 @@ test "daemon_config: invalid configs rejected" {
     // Malformed INI syntax
     const bad_ini = "this is not ini";
     try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, bad_ini.ptr, bad_ini.len));
+}
+
+test "daemon_config: failed parse leaves every original byte unchanged" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    const original = cfg;
+    const inputs = [_][]const u8{
+        "[subsystem]\nmemory_mb = 8192\nvcpus = 0\n",
+        "[subsystem]\nvsock_cid = 4294967295\n",
+        "[subsystem]\ndefault_shell = a\x00b\n",
+        "[subsystem]\ndefault_shell = \xff\n",
+        "[subsystem]\nvsock_port = 4294967296\n",
+    };
+    for (inputs) |input| {
+        try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, input.ptr, input.len));
+        try std.testing.expectEqualSlices(u8, std.mem.asBytes(&original), std.mem.asBytes(&cfg));
+    }
+    const oversized = try std.testing.allocator.alloc(u8, 65537);
+    defer std.testing.allocator.free(oversized);
+    @memset(oversized, ' ');
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, oversized.ptr, oversized.len));
+    var long_shell: [300]u8 = undefined;
+    @memset(&long_shell, 'a');
+    const prefix = "[subsystem]\ndefault_shell = ";
+    @memcpy(long_shell[0..prefix.len], prefix);
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, &long_shell, long_shell.len));
+}
+
+test "daemon_config: full width vsock port and empty export section" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    const input = "[subsystem]\nvsock_port = 4294967295\n[filesystem]\n";
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, input.ptr, input.len));
+    try std.testing.expectEqual(@as(u32, 4294967295), cfg.vsock_port);
+    try std.testing.expectEqual(@as(u32, 0), cfg.mount_count);
 }

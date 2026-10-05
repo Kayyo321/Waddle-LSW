@@ -67,7 +67,7 @@
   - **Task Impact**: +50% to TODO: #11 (+2.5% overall); +0% to completed TODO: #6.
   - **Summary**: Record isolated ASan/LSan/UBSan and Zig allocator suite success and Windows guest/fixture cross-build. Specify durable journal intent before allocating staged disk copies and safe recovery of not-yet-created paths. Native CI remains pending.
 
-- **Commit `:/record passing device specification CI evidence`**: `docs(tracker): record passing device specification CI evidence`
+- **Commit `749a85c`**: `docs(tracker): record passing device specification CI evidence`
   - **Task Impact**: +50% to TODO: #11 (+2.5% overall); overall completion 45.0%. All remaining implementation tasks are unchanged.
   - **Summary**: Record successful Linux sanitizer/allocator/coverage/cross-build and native Windows regression/heap gates at af829ec. The final audit changes only this tracker; verify its PR-head rerun before reporting completion of this request.
 
@@ -113,3 +113,8 @@ is awarded merely for a documentation or CI maintenance commit.
   heap; negative controls detect leak, overrun, and freed-write defects.
 - No real Windows VM acceptance for expanded device-management commands is claimed.
   Feature Time Ended remains TBD and PR remains draft pending #3–#5 and #7–#10.
+
+
+- **Commit `:/harden device INI parsing against partial updates and truncation`**: `fix(device): harden device INI parsing against partial updates and truncation`
+  - **Task Impact**: +0% to TODO #7 pending complete registry/recovery acceptance.
+  - **Summary**: Parse into a private candidate, reject oversized/non-UTF-8/NUL metadata and truncated shell/disk fields, reject reserved CID UINT32_MAX, support full-width ports and explicitly empty exports. Regression tests verify byte-identical rollback and allocator cleanup.
