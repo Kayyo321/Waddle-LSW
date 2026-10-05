@@ -50,7 +50,7 @@ test "bounds reject truncated headers and wrapped spans preserve byte order" {
     const bytes = try std.testing.allocator.alloc(u8, HeaderBytes + MinCapacity);
     defer std.testing.allocator.free(bytes);
     @memset(bytes, 0);
-    try std.testing.expectEqual(@as(u32, 0), venus_bounds_capacity(bytes.ptr, HeaderBytes - 1));
+    try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_capacity, .{ bytes.ptr, HeaderBytes - 1 }));
     std.mem.writeInt(u32, bytes[0..4], 0x57565231, .little);
     std.mem.writeInt(u32, bytes[4..8], 1, .little);
     std.mem.writeInt(u32, bytes[8..12], MinCapacity, .little);
