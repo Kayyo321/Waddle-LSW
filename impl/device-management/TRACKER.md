@@ -20,10 +20,10 @@
 | #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | Done | 10% | 100% | All mutations recover complete state; SIGINT kills/reaps utility and rolls back; unsafe/live/dependent disks refused |
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | Done | 10% | 100% | Typed settings, backing/ownership/binary/CID inspection, orphan reporting and explicit limited repair implemented |
 | #9 | Implement independent clone and local export/import | Done | 10% | 100% | Portable round trip, flattened clone, fresh identities and malformed/extra/symlink/hash rejection verified |
-| #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
+| #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | In Progress | 5% | 60% | 1000 cycles, real two-VM/transport acceptance and >90% device line/codec branch gates pass; final sanitizer/TSan/cross-build reruns remain |
 | #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `92.5%`
+**Total Feature Completion**: `95.5%`
 
 ## Commit History & Progress Log
 
@@ -179,6 +179,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +25% to TODO #4 (+2.5% overall), +30% to #8 (+3.0%), +10% to #5 (+1.0%); total 85.5%.
   - **Summary**: Route lifecycle/logs/fs through strict shared parsing and v1 JSON; add sorted sequential batches with aggregate failure, authoritative nullable runtime fields and registry read-lock startup handoff. Add shell selectors/help, device-specific bounded log targets/follow and filesystem verification. Integrate doctor inspection/repair/orphan reporting. Persist named logs in owned state only after config-to-lease handoff; harden runtime/log directory traversal. Expanded native CLI cases and full make test pass.
 
-- **Commit `:/reap cancelled utilities and recover persisted journal phases`**: `fix(device): reap cancelled utilities and recover persisted journal phases`
+- **Commit `bcee3c2`**: `fix(device): reap cancelled utilities and recover persisted journal phases`
   - **Task Impact**: +10% to TODO #3 (+1.0% overall), +20% to #5 (+2.0%), +10% to #7 (+1.0%), +30% to #9 (+3.0%); total 92.5%.
   - **Summary**: Own utility children through every bounded-output/error/cancellation path, return SIGINT JSON/130, recheck import identity/hash after conversion, reject malformed manifests consistently, observe live backing chains without weakening offline locking, sort orphan diagnostics. Reread persisted journal phases after ambiguous durability failures; remove partial metadata safely. Real QCOW2 tests and 356 deterministic mutation/crash/I/O/utility failure boundaries pass with repeated recovery and no mixed state or journals.
+
+- **Commit `:/enforce device coverage stress and real VM acceptance`**: `test(device): enforce device coverage stress and real VM acceptance`
+  - **Task Impact**: +60% to TODO #10 (+3.0% overall); total 95.5%.
+  - **Summary**: Add reproducible 1000-cycle concurrent-reader stress, real two-device Windows acceptance, registry ABI negative cases, allocator-failure codec/reference tests, >90% kcov line gates and LLVM source conditional/switch edge gates. CLI branch coverage 100% (140/140), storage codec/reference coverage 92.93% (92/99); compiler panic guards are separately identified. Extend Linux CI with coverage prerequisites, explicit leak detection, full fault matrix and stress. Local final sanitizer/TSan/cross-build and final-head GitHub CI are still pending.

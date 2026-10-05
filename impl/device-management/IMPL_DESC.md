@@ -660,3 +660,50 @@ two repair passes and checks complete registrations/defaults, distinct CIDs,
 managed disks and empty staging/journal directories. The current matrix covers
 356 single failure/crash boundaries. These are deterministic boundary injections,
 not an assertion that every kernel/filesystem failure mechanism was reproduced.
+
+
+### Reproducible completion gates and real VM fixture
+
+`make test` includes device command/storage/failure integration. `make device-stress`
+performs 1000 init/clone/config/rename/remove cycles while a separate reader repeatedly
+checks sorted complete registry snapshots and distinct CIDs. The observed run
+completed 2641 concurrent snapshots and left no devices, journals or runtime files.
+`make coverage` retains the existing protocol/argument/guest/path line gates and
+adds aggregated kcov coverage for daemon_device.c, device_storage.zig and
+device_commands.zig. Native test bodies are excluded; implementation source lines
+from unit and isolated real-QCOW2 CLI tests are combined. Observed initial values
+were 92.34%, 94.36%, 92.22%; final-head reports supersede these values.
+
+`tests/device_branches.py [cli]` instruments ReleaseSafe LLVM IR source conditional
+and switch successors in the owned storage codecs (relative/name/blank/settings,
+bounded JSON wrapper, journal reference validator) and CLI argument/name parser.
+Innermost debug scopes must belong to the exact implementation file. Source sites
+are identified by function/line/column; optimized generic/inline copies contribute
+to that same source site. Standard-library branches and line-zero compiler blocks
+are outside the owned-source denominator; compiler-generated panic destinations
+are separately reported. Both gates enforce >=90% observed source outcomes and
+save branch metadata, hits and missed outcomes under build/coverage/branches.
+Allocation failure is independently enumerated with std.testing.checkAllAllocationFailures;
+all parser arenas/JSON/reference temporaries use std.testing.allocator and leak zero.
+The observed gates are storage 92/99 (92.93%) and CLI 140/140 (100%). This is source
+conditional/switch coverage for the named owned codecs, not a kcov branch-rate
+placeholder or coverage assertion for every standard-library/kernel instruction.
+
+`tests/acceptance/device_vm.py` requires an explicit opt-in, private /tmp/wdvm-* XDG
+roots and two prepared real guests. The local Windows Server fixture uses the
+existing immutable validation base, separate overlay disks, SYSTEM startup VSOCK
+listeners, QEMU/KVM and real virtiofsd. Its preinstalled drivers require an isolated
+launcher adapter for UEFI pflash variables, IDE boot disk and the existing export
+tag waddle_export. That adapter changes only fixture launch arguments and guest
+agent setup; device selection, supervisors, lifetime leases, VSOCK, ConPTY and
+QCOW2 transactions execute the real application. No mock transport substitutes
+for VM acceptance. Two devices use distinct CIDs and disks; independent persistent
+markers and exit codes 37/42 are verified. A named shell returns 23 and restores
+termios. Live mutation refuses, both devices stop, rename preserves disk bytes/CID,
+renamed and second guests reboot with startup listeners and unchanged markers,
+then sorted batch stop/removal leaves an empty registry. The complementary real
+transport suite verifies argv/cwd/environment, stream/exit status, 16 MiB duplex,
+timeout/peer loss, 39x101 PTY resizing/Ctrl-C/restoration and 32 reconnects.
+Temporary /dev/vhost-vsock ACL access is restored exactly from the saved ACL;
+fixtures never change the base or developer registrations. VM evidence is local;
+CI repeats native Windows guest regression/heap checks and Linux acceptance.

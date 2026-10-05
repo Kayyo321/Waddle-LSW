@@ -23,6 +23,17 @@ static int init_fixture(const char *name, const char *base, device_info_t *info)
 }
 
 static void test_device_name_validation(void) {
+    char output[WaddleMaxPathLen];
+    assert(daemon_device_get_config_dir(NULL, 10) == -1);
+    assert(daemon_device_get_config_dir(output, 1) == -1);
+    assert(daemon_device_get_state_dir(NULL, output, sizeof(output)) == -1);
+    assert(daemon_device_get_state_dir("ok", output, 1) == -1);
+    assert(daemon_device_get_socket_path("bad/path", output, sizeof(output)) == -1);
+    assert(daemon_device_get_socket_path("ok", output, 1) == -1);
+    assert(daemon_device_find_base_disk(NULL, 100) == -1);
+    assert(daemon_device_find_base_disk(output, 8) == -1);
+    assert(daemon_device_find(NULL, NULL) == -1);
+    assert(daemon_device_list(NULL) == -1);
     /* Valid names */
     assert(daemon_device_validate_name("win11") == 0);
     assert(daemon_device_validate_name("test-device") == 0);
@@ -133,6 +144,14 @@ static void test_device_init_and_registry(void) {
     assert(daemon_device_find("nonexistent", &found) == -1);
     assert(errno == ENOENT);
 
+    /* Public adapter must use transactional publication for explicit bases. */
+    device_info_t overlay;
+    assert(daemon_device_init("overlay", dev1.disk_image, &overlay) == 0);
+    assert(overlay.vsock_cid != dev1.vsock_cid);
+    device_request_t removal = { .operation = DeviceRemove, .name = "overlay" };
+    char operation_output[WaddleMaxPathLen];
+    assert(daemon_device_mutate(&removal, operation_output) == 0);
+    assert(daemon_device_find("overlay", &overlay) == -1 && errno == ENOENT);
     /* Initialize second device */
     device_info_t dev2;
     assert(init_fixture("beta", NULL, &dev2) == 0);

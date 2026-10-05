@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     env.update(HOME=str(root), XDG_CONFIG_HOME=str(root / 'config"日本語'),
                XDG_STATE_HOME=str(root / "state"), XDG_RUNTIME_DIR=str(root / "run"))
     env.pop("WADDLE_MOCK_GUEST_SOCK", None)
-    executable = str(Path("build/waddle").resolve())
+    executable = os.environ.get("WADDLE_TEST_EXECUTABLE", str(Path("build/waddle").resolve()))
 
     def run(*args, expected=0, structured=False):
         result = subprocess.run([executable, *args], env=env, capture_output=True, text=True)

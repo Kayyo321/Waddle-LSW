@@ -134,6 +134,7 @@ test: all build/unit build/integration build/test_daemon_protocol build/test_dae
 	./build/test_auto_terminal
 	python3 tests/integration/device_commands.py
 	python3 tests/integration/device_storage.py
+	python3 tests/integration/device_faults.py
 	sh tests/integration/path_options.sh
 	sh tests/acceptance/demo_fs.sh
 
@@ -167,8 +168,11 @@ build/windows_guest_test.exe: tests/windows/windows_guest.c src/guest/guest_code
 windows-test: windows build/windows_guest_test.exe
 	./build/windows_guest_test.exe
 
-coverage: build/path_rules.o
+coverage: all build/test_daemon_device build/path_rules.o
 	sh tests/coverage.sh
+	python3 tests/device_coverage.py
+	python3 tests/device_branches.py
+	python3 tests/device_branches.py cli
 
 # Explicit real VM gate; never silently substituted with the mock transport.
 build/vm_terminal: tests/acceptance/vm_terminal.c | build
@@ -177,3 +181,7 @@ build/vm_terminal: tests/acceptance/vm_terminal.c | build
 .PHONY: vm-test
 vm-test: build/waddle build/windows_guest_test.exe build/vm_terminal
 	bash tests/acceptance/vm_acceptance.sh
+
+.PHONY: device-stress
+device-stress: build/waddle
+	python3 tests/integration/device_stress.py

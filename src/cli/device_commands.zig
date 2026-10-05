@@ -702,7 +702,11 @@ fn render(allocator: std.mem.Allocator, command: []const u8, json: bool, results
     }
 }
 
-/// Run borrowed argv with one arena owning every result allocation; no memory retained.
+/// Run a bounded management command and render text or versioned JSON.
+/// [in] argc: 0..128; [in] argv: non-null borrowed array of non-null NUL strings.
+/// Returns 0 success, 1 I/O, 2 usage/validation, 125 resources, 130 cancellation.
+/// No argv/result storage retained; one arena owns and frees all allocations.
+/// Main-thread only (temporary SIGINT scope); registry/runtime locks serialize I/O.
 export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int {
     if (c.daemon_device_cancel_scope(1) != 0) return 125;
     defer _ = c.daemon_device_cancel_scope(0);
@@ -786,4 +790,28 @@ test "device JSON strings are owned, escaped and allocator-clean" {
     const decoded = try std.json.parseFromSlice(std.json.Value, allocator, serialized, .{});
     defer decoded.deinit();
     try std.testing.expectEqualStrings(owned.string, decoded.value.object.get("path").?.string);
+}
+
+test "every device option has bounded values and duplicate rejection" {
+    for ([_][]const u8{ "--json", "--help", "-h", "--dry-run", "--yes", "--keep-data", "--all", "--repair", "--follow", "--force", "-f", "--wait", "--no-wait", "--clear", "--running", "--stopped" }) |flag| {
+        _ = try @call(.never_inline, parse, .{&[_][]const u8{ "list", flag }});
+        try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{ "list", flag, flag }}));
+    }
+    for ([_][]const u8{ "--base-disk", "--disk", "--blank-disk", "--memory-mb", "--vcpus", "--shell", "--input", "--output", "--lines", "-n", "--target", "--device", "-d", "--timeout" }) |flag| {
+        _ = try @call(.never_inline, parse, .{&[_][]const u8{ "show", flag, "valid" }});
+        try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{ "show", flag }}));
+        try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{ "show", flag, "valid", flag, "duplicate" }}));
+    }
+    for ([_][]const u8{ "", "\xff", &([_]u8{'x'} ** 1024) }) |value| {
+        try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{ "init", "--base-disk", value }}));
+        try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{ "show", "--device", value }}));
+    }
+    _ = try @call(.never_inline, parse, .{&[_][]const u8{ "logs", "-f" }});
+    _ = try @call(.never_inline, parse, .{&[_][]const u8{ "show", "--", "--literal", "-x" }});
+    _ = try @call(.never_inline, parse, .{&[_][]const u8{}});
+    try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{ &([_]u8{'x'} ** 4097) }}));
+    const overflow = [_][]const u8{"operand"} ** 17;
+    try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&overflow}));
+    for ([_][]const u8{ "", "a/b", "\xff", &([_]u8{'x'} ** 64) }) |name| try std.testing.expect(!@call(.never_inline, name_valid, .{name}));
+    try std.testing.expect(@call(.never_inline, name_valid, .{"abc-XYZ_09"}));
 }

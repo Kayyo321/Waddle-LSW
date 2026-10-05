@@ -348,7 +348,10 @@ fn set_errno(err: anyerror) void {
         else => c.EIO,
     };
 }
-/// C ABI: caller holds registry lock; all allocations freed on every return.
+/// Recover bounded journals under a caller-held registry lock.
+/// [in] repair: nonzero requires exclusive lock and performs recovery; zero is read-only.
+/// Returns 0 or -1 with errno (EUCLEAN/validation/I/O/resource failure).
+/// No borrowed pointers; one call arena is freed on every path. Lock-serialized.
 export fn daemon_device_recover(repair: c_int) c_int {
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
@@ -753,7 +756,11 @@ fn fault(point: []const u8) void {
     if (std.mem.eql(u8, configured, point)) c._exit(99);
 }
 
-/// C ABI mutation entry: owned arena and locks are deterministically released.
+/// Execute one offline transaction; acquire registry before runtime lease.
+/// [in] request: non-null borrowed typed request, strings valid through return.
+/// [out] output: non-null caller-owned writable 1024-byte buffer, NUL-terminated.
+/// Returns 0 or -1 with errno; no pointers retained. Arena/fds/locks/children are
+/// released on every path. Concurrent callers serialize through the registry.
 export fn daemon_device_mutate(request: ?*const c.device_request_t, output: ?[*]u8) c_int {
     const input = request orelse { c.__errno_location().* = c.EINVAL; return -1; };
     const result = output orelse { c.__errno_location().* = c.EINVAL; return -1; };
@@ -783,6 +790,72 @@ test "bounded journal parsing rejects duplicates unknown fields and nesting" {
     try std.testing.expectError(error.DuplicateField, parse_json(settings_t, ctx, "{\"vcpus\":4,\"vcpus\":8}"));
     try std.testing.expectError(error.UnknownField, parse_json(settings_t, ctx, "{\"unexpected\":4}"));
     try std.testing.expectError(error.InvalidConfig, parse_json(std.json.Value, ctx, "[[[[[[[[[0]]]]]]]]]"));
+}
+
+fn parser_allocation_probe(allocator: std.mem.Allocator, bytes: []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const ctx = context_t{ .allocator = arena.allocator(), .config = "/tmp/config", .state = "/tmp/state" };
+    _ = parse_json(settings_t, ctx, bytes) catch |err| switch (err) { error.OutOfMemory => return err, else => return };
+}
+test "storage codec validators cover all field boundaries and allocation failures" {
+    const paths = [_][]const u8{ "", "/absolute", "a//b", "a/./b", "a/../b", "a\x00b" };
+    for (paths) |path| try std.testing.expectError(error.InvalidConfig, @call(.never_inline, relative_valid, .{path}));
+    try @call(.never_inline, relative_valid, .{"devices/valid_name.ini"});
+    try std.testing.expectError(error.InvalidConfig, @call(.never_inline, relative_valid, .{&([_]u8{'a'} ** 1024)}));
+    for ([_][]const u8{ "", "a/b", "\xff", &([_]u8{'a'} ** 64) }) |name| try std.testing.expect(!@call(.never_inline, name_valid, .{name}));
+    try std.testing.expect(@call(.never_inline, name_valid, .{"a-Z_09"}));
+    for ([_][]const u8{ "", "1", "1T", "xM", "0M", "2097153M" }) |size| try std.testing.expectError(error.InvalidConfig, @call(.never_inline, blank_size, .{size}));
+    try std.testing.expectEqual(@as(u64, 1 << 40), try @call(.never_inline, blank_size, .{"1024G"}));
+    const invalid = [_]settings_t{
+        .{ .memory_mb = 511 }, .{ .memory_mb = 65537 }, .{ .vcpus = 0 }, .{ .vcpus = 129 },
+        .{ .vsock_port = 0 }, .{ .start_timeout = 0 }, .{ .start_timeout = 601 },
+        .{ .stop_timeout = 0 }, .{ .stop_timeout = 301 }, .{ .default_shell = "" },
+        .{ .default_shell = &([_]u8{'a'} ** 256) }, .{ .default_shell = "\xff" },
+        .{ .default_shell = "bad\x00name" }, .{ .default_shell = "bad\rname" },
+    };
+    for (invalid) |value| try std.testing.expectError(error.InvalidConfig, @call(.never_inline, settings_valid, .{value}));
+    try settings_valid(.{ .memory_mb = 512, .vcpus = 128, .start_timeout = 600, .stop_timeout = 300 });
+    for ([_][]const u8{ "{}", "{\"vcpus\":8}", "{", "{\"vcpus\":4,\"vcpus\":8}", "{\"unknown\":8}", "[[[[[[[[[0]]]]]]]]]", "{\"vcpus\":\"bad\"}", "{\"vcpus\":-1}", "{\"vcpus\":4294967296}", "\xff" }) |bytes|
+        try std.testing.checkAllAllocationFailures(std.testing.allocator, parser_allocation_probe, .{bytes});
+}
+
+fn journal_reference_probe(allocator: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const ctx = context_t{ .allocator = arena.allocator(), .config = "/tmp/config", .state = "/tmp/state" };
+    const id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    var record = journal_t{ .transaction_id = id, .operation = "rename", .source_name = "source", .destination_name = "destination" };
+    const valid = [_]location_t{
+        .{ .root = "config", .path = "devices/source.ini" }, .{ .root = "config", .path = "devices/destination.ini" },
+        .{ .root = "config", .path = "default_device" }, .{ .root = "state", .path = "devices/source" },
+        .{ .root = "state", .path = "devices/destination" }, .{ .root = "config", .path = "transactions/" ++ id ++ "/old.ini" },
+        .{ .root = "state", .path = "transactions/" ++ id ++ "/new_state" },
+    };
+    for (valid) |location| try std.testing.expect(try journal_location_valid(ctx, record, location));
+    const invalid = [_]location_t{
+        .{ .root = "config", .path = "devices/foreign.ini" }, .{ .root = "state", .path = "devices/foreign" },
+        .{ .root = "other", .path = "devices/source" }, .{ .root = "other", .path = "transactions/" ++ id ++ "/x" },
+        .{ .root = "config", .path = "transactions/" ++ id ++ "/" }, .{ .root = "config", .path = "transactions/" ++ id ++ "/nested/file" },
+        .{ .root = "external", .path = "backup" }, .{ .root = "state", .path = "retained/" ++ id },
+    };
+    for (invalid) |location| try std.testing.expect(!try journal_location_valid(ctx, record, location));
+    record.operation = "remove";
+    try std.testing.expect(try journal_location_valid(ctx, record, .{ .root = "state", .path = "retained/" ++ id }));
+    try std.testing.expect(try journal_location_valid(ctx, record, .{ .root = "state", .path = "retained/" ++ id ++ "/original.ini" }));
+    try std.testing.expect(!try journal_location_valid(ctx, record, .{ .root = "state", .path = "retained/foreign" }));
+    record.source_name = null; record.destination_name = null; record.operation = "export";
+    try std.testing.expect(!try journal_location_valid(ctx, record, .{ .root = "config", .path = "default_device" }));
+    try std.testing.expect(!try journal_location_valid(ctx, record, .{ .root = "config", .path = "devices/source.ini" }));
+    try std.testing.expect(!try journal_location_valid(ctx, record, .{ .root = "state", .path = "devices/source" }));
+    record.external_parent = "/tmp/backup";
+    try std.testing.expect(try journal_location_valid(ctx, record, .{ .root = "external", .path = "backup" }));
+    try std.testing.expect(try journal_location_valid(ctx, record, .{ .root = "external", .path = ".waddle-" ++ id }));
+    try std.testing.expect(!try journal_location_valid(ctx, record, .{ .root = "external", .path = ".waddle-foreign" }));
+    try std.testing.expect(!try journal_location_valid(ctx, record, .{ .root = "external", .path = "backup/nested" }));
+}
+test "journal references remain inside declared identities under allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, journal_reference_probe, .{});
 }
 
 /// Device inspection schema; diagnostics do not mutate unless repair is explicit.
@@ -851,7 +924,12 @@ fn inspect(ctx: context_t, name: []const u8, repair: bool, dry_run: bool) !inspe
     result.healthy = findings.items.len == 0;
     return result;
 }
-/// C ABI inspection entry; owns one arena and output is copied before its release.
+/// Inspect one registration and optionally perform constrained offline repair.
+/// [in] name: non-null borrowed NUL-terminated ASCII identifier.
+/// [in] repair/dry_run: nonzero requests repair/forbids writes respectively.
+/// [out] output: non-null caller-owned buffer; [in] capacity includes trailing NUL.
+/// Returns 0 with JSON findings or -1 errno on validation/I/O/capacity failure.
+/// Per-call arena/locks/fds are released before return; registry-serialized.
 export fn daemon_device_inspect(name: ?[*:0]const u8, repair: c_int, dry_run: c_int, output: ?[*]u8, capacity: usize) c_int {
     const input = name orelse { c.__errno_location().* = c.EINVAL; return -1; };
     const out = output orelse { c.__errno_location().* = c.EINVAL; return -1; };
@@ -910,7 +988,11 @@ fn replace_locked(ctx: context_t, path: []const u8, bytes: ?[]const u8) !void {
     fault("committed");
     try cleanup_journal(ctx, record);
 }
-/// C ABI: borrowed data/path, no retained allocations; caller already holds locks.
+/// Replace validated metadata using a durable journal; caller holds write lock.
+/// [in] path: non-null borrowed absolute registration/default path.
+/// [in] data: borrowed length bytes, null removes; [in] length: 0..65536, null implies 0.
+/// Returns 0 or -1 errno on validation/I/O/resource failure; retain journal on
+/// uncertain recovery. No pointers retained; arena/fds freed; caller serializes.
 export fn daemon_device_replace_locked(path: ?[*:0]const u8, data: ?[*]const u8, length: usize) c_int {
     const input = path orelse { c.__errno_location().* = c.EINVAL; return -1; };
     if (length > 65536 or (data == null and length != 0)) { c.__errno_location().* = c.EINVAL; return -1; }
