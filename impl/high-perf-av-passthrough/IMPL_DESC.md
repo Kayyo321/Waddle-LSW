@@ -42,6 +42,62 @@ The AV control channel carries create/destroy/geometry/frame/close only; general
 pointer and keyboard messages are not implemented here. PulseAudio is not a
 second playback implementation. The original CLI protocol/port stays separate.
 
+### Mediated GPU architecture (supersedes physical VFIO eligibility)
+
+Linux host driver -> existing mdev GPU slice -> QEMU vfio-pci sysfsdev -> Windows
+vendor vGPU driver -> application rendering -> signed virtual display -> WGC.
+The physical GPU stays bound to its host driver. Waddle neither detaches PCI
+functions nor creates/removes slices, enables SR-IOV, installs a vGPU manager,
+patches kernels, or selects a VRAM quota. An administrator creates and licenses
+an appropriate slice beforehand. Direct SR-IOV VF assignment is outside this
+mdev path. Supported vendor hardware, matching host/guest drivers and licenses
+are prerequisites; enterprise branding alone does not establish support. Host
+native rendering alongside vGPU use is vendor/platform dependent and requires
+native acceptance; probing sysfs cannot guarantee it. Application GPU selection
+also requires guest configuration and is not guaranteed by a virtual display.
+
+Configuration adds `[av] gpu_mdev_uuid`, a 36-byte lowercase hexadecimal UUID
+in 8-4-4-4-12 form, stored in owned `char av_gpu_mdev_uuid[37]`. Empty selects no
+slice. `gpu_bdf` remains a validated optional parent PCI address, not an assigned
+physical device. Setup accepts `--gpu-mdev UUID` alongside optional `--gpu BDF`.
+No pointer or local struct is serialized; INI updates remain transactional. Null
+termination is mandatory; malformed/oversized values fail before filesystem use.
+The UUID is a sysfs name, not an authority token or hardware reservation.
+
+Read-only setup probes `/sys/class/mdev_bus` and the parent's
+`mdev_supported_types`, then validates the existing UUID under
+`/sys/bus/mdev/devices`. The selected device's `mdev_type` must resolve under a
+registered PCI parent's supported types and expose `device_api` equal to
+`vfio-pci`. An optional BDF must match that parent. Unsupported hosts return
+ENOTSUP and a specific mdev/vGPU prerequisite diagnostic; malformed input returns
+EINVAL; missing devices and filesystem failures retain their native errno.
+A BDF-only probe can report slicing support, but daemon preparation and QEMU
+argument generation require an existing UUID whenever a parent is configured.
+No full-device `vfio-pci,host=` fallback is permitted.
+
+QEMU receives `-device vfio-pci,sysfsdev=/sys/bus/mdev/devices/UUID,display=off`.
+IVSHMEM and silent HDA stay enabled. The boot VGA remains available until the
+manually installed signed IddSampleDriver-derived display is primary at
+1920x1080 @ 144 Hz. The existing display probe checks the active mode; it does
+not certify driver provenance. Guest fixture timing uses local clocks only for
+throughput/lifetime; host monotonic color injection and compositor commit sync
+supply both RTT endpoints. WGC SystemRelativeTime must not determine latency,
+frame acceptance or benchmark success. Commit RTT excludes physical scanout.
+
+One caller thread owns probe stack buffers and closes directory/file handles on
+all paths; no GPU state is written or retained. Probing is a snapshot: slice
+removal or competing QEMU ownership after probing fails at launch. VM teardown
+leaves the administrator-owned slice and host driver intact. Tests cover UUID
+syntax, transactional parser failures, registered/unsupported parents, missing
+UUIDs, wrong parent/API, preserved active host drivers, exact QEMU arguments,
+silent audio/IVSHMEM and absence of physical passthrough. Existing coverage,
+sanitation and distribution gates remain mandatory; real vGPU, VDD, Adobe
+acceleration and 144-Hz/latency acceptance remain external runtime gates.
+
+Primary references: [Linux mdev ABI](https://www.kernel.org/doc/html/v5.15/driver-api/vfio-mediated-device.html),
+[QEMU mdev sysfsdev](https://www.qemu.org/docs/master/devel/vfio-mdpy.html),
+[NVIDIA prerequisites](https://docs.nvidia.com/vgpu/latest/grid-vgpu-user-guide/installing-configuring-grid-vgpu.html).
+
 ## 3. Data Structures, Protocols & Memory Layouts
 
 The exact source ABI is in include/waddle/av_memory.h. Both C structs are 64-byte
