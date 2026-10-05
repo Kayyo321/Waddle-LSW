@@ -361,6 +361,8 @@ probe_readiness:
         uint64_t start = state_monotonic_ms();
         while (state_monotonic_ms() - start < wait_timeout * 1000) {
             if (qemu_poll_status(&s->qemu) == 0) {
+                av_environment_free(&s->av_environment);
+                if (s->virtiofs.is_running) daemon_fs_stop(&s->virtiofs, 1000);
                 snprintf(s->last_error, sizeof(s->last_error), "QEMU hypervisor exited prematurely");
                 s->state = SubsystemStateFailed;
                 return -1;
@@ -515,6 +517,9 @@ void daemon_state_reap_children(daemon_state_t *s) {
             }
         }
     }
+
+    /* Readiness probing may already have reaped an early QEMU exit. */
+    if (!s->qemu.is_running) av_environment_free(&s->av_environment);
 
     if (s->virtiofs.pid > 0) {
         (void)daemon_fs_poll_status(&s->virtiofs);

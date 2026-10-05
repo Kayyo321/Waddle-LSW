@@ -254,6 +254,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Create persistent OVMF variables through flushed staging files and non-overwriting publication, preventing partial stores after interrupted setup. Verify stable inode reuse and symlink preservation, and specify UEFI boot, package and lifecycle boundaries in the implementation description.
 
-- **Commit `HEAD`**: `feat(av): provision KVM and VSOCK access before managed startup`
+- **Commit `b4943111098f`**: `feat(av): provision KVM and VSOCK access before managed startup`
   - **Task Impact**: +10% to #10.1 (+0.50% overall)
   - **Summary**: Probe both host kernel devices and grant the validated invoking user a specific read/write ACL through the privileged bundled helper when needed. Preserve ownership/groups, use no world-write permissions and recheck actual access before boot; native access provisioning passes.
+
+- **Commit `HEAD`**: `fix(av): release mappings after early hypervisor exit`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Release AV mappings and stop the filesystem child when readiness polling reaps QEMU before the event loop. Add a reaper fallback for already-reaped children and a regression proving failed startup removes owned memory and permits a clean retry.
