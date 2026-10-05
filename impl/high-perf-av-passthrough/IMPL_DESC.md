@@ -249,3 +249,18 @@ reported as achieving the hardware gaming performance target.
 
 API contracts: [Microsoft CreateForWindow](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createforwindow)
 and [free-threaded frame pools](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframepool.createfreethreaded).
+
+
+### KVMFR two-GiB capacity correction
+
+The immutable B7 dependency uses signed `int` multiplication for
+`size_mb * 1024 * 1024`; 2048 MiB overflows before assignment to its unsigned-long
+capacity. The owned build tree applies `scripts/patches/kvmfr_capacity.patch`,
+which casts the first factor to `unsigned long` before multiplication. The gitlink
+remains pinned; no upstream source is copied into tracked application directories.
+Patch application fails if its exact source context no longer matches. Both libc and kernel ioctl dispatch truncate the legacy size return to `int`.
+The patch therefore adds `_IOR('u', 0x45, __u64)`: an eight-byte native-order
+capacity out parameter with ordinary zero/-errno return. Application probes use
+this extension exclusively. Unpatched live modules fail ENOTTY and remain intact.
+Only a 64-bit Linux host is supported. Module load requests the constant positive
+2048 MiB size; external module parameters retain upstream semantics.

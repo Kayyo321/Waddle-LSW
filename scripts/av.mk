@@ -47,10 +47,11 @@ build/av_environment_test: tests/av/environment.c src/av/av_environment.c build/
 build/av_environment.o: src/av/av_environment.c src/av/av_environment.h src/av/av_layout.h src/daemon/daemon_config.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) -c $< -o $@
 
-build/vendor/av/module/kvmfr.c: submodules/looking_glass/module/kvmfr.c submodules/looking_glass/module/kvmfr.h submodules/looking_glass/module/Makefile | build/vendor
+build/vendor/av/module/kvmfr.c: submodules/looking_glass/module/kvmfr.c submodules/looking_glass/module/kvmfr.h submodules/looking_glass/module/Makefile scripts/patches/kvmfr_capacity.patch | build/vendor
 	mkdir -p build/vendor/av/module
 	cp submodules/looking_glass/module/kvmfr.c submodules/looking_glass/module/kvmfr.h submodules/looking_glass/module/Makefile build/vendor/av/module/
 	cp submodules/looking_glass/LICENSE build/vendor/av/module/LICENSE
+	git apply --directory=build/vendor/av/module scripts/patches/kvmfr_capacity.patch
 build/waddle-av-setup: src/av/av_setup.c src/av/av_layout.h src/av/av_kvmfr.h build/av_codec.o build/vendor/av/module/kvmfr.c | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $< build/av_codec.o $(LDFLAGS) -o $@
 .PHONY: av-module

@@ -1,0 +1,24 @@
+--- a/kvmfr.c
++++ b/kvmfr.c
+@@ -288,6 +288,12 @@
+     case KVMFR_DMABUF_GETSIZE:
+       ret = kdev->size;
+       break;
++
++    case _IOR('u', 0x45, __u64):
++    {
++      __u64 size = kdev->size;
++      return copy_to_user((void __user *)arg, &size, sizeof(size)) ? -EFAULT : 0;
++    }
+ 
+     default:
+       return -ENOTTY;
+@@ -508,7 +514,7 @@
+   if (!kdev)
+     return -ENOMEM;
+ 
+-  kdev->size = size_mb * 1024 * 1024;
++  kdev->size = (unsigned long)size_mb * 1024UL * 1024UL;
+   kdev->type = KVMFR_TYPE_STATIC;
+   kdev->addr = vmalloc_user(kdev->size);
+   if (!kdev->addr)
