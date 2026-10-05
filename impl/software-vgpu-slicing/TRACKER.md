@@ -233,7 +233,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     EOF, final Stop, cancellation during waits and deadline shutdown passed.
     Native Windows execution and the real cross-VM signed-driver gate are pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record native overlapped stream verification`
+- **Commit `f966258`**: `docs(vgpu): record native overlapped stream verification`
   - **Task Impact**: +1% to TODO: #1 (+0.15% overall).
   - **Summary**: Credited the Windows stream-adapter execution milestone after
     actual overlapped named-pipe handshake, fragmented control, pending cancellation,
@@ -242,3 +242,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37390952834 .
     Named-pipe fixtures exercise Windows completion APIs, not a VirtIO driver;
     actual cross-VM signed IVSHMEM/VirtIO-Serial driver validation remains 5%.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): adopt authorized standalone validation scope`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall).
+  - **Summary**: Recorded the user's explicit mock-development direction and
+    delegation of physical cross-VM testing. Replaced the final development gate
+    with independently mapped processes, real UNIX control and CPU Venus dispatch,
+    preserving actual hardware validation as an unclaimed user follow-up.
+  - **Verification**: Existing native Windows fixtures remain required. New
+    integrated mock fixture is specified before implementation; no credit yet.

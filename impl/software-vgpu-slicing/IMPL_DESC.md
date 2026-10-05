@@ -516,3 +516,42 @@ handshake, deliberately fragmented frames, full-ring backpressure progress, EOF
 before/after partial frames, final Stop before EOF, stale/out-of-order frames,
 local cancellation before and during waits, bounded deadline shutdown, both
 native ownership/error paths and >=90% production line/branch coverage.
+
+### User-authorized standalone/mock validation scope
+
+The user confirmed no Windows VM image is provisioned here and explicitly
+requested Standalone & Mock Development Mode from CONTRIBUTING.md. Real physical
+hypervisor cross-VM validation is delegated to the user. For this development
+run, Task #1's final 5% gate is replaced with independent-process mapped-file
+IVSHMEM simulation, a real UNIX stream lifecycle handoff, and the existing native
+Windows ABI/driver/completion fixtures. This is an explicit acceptance-scope change,
+not evidence that a signed driver or physical hypervisor was tested. The mapping
+and channel APIs remain backing-agnostic; no mock-only cursor or protocol path is
+added to production. Hardware validation remains a documented follow-up and does
+not block subsequent implementation under the user's requested mode.
+
+The integrated fixture creates an exclusive temporary file in /dev/shm, sizes and
+maps it, initializes the dedicated region, and forks the guest before any renderer
+threads exist. The child maps the same fd at a distinct virtual address while the
+inherited mapping is still occupied, then drops the inherited view. Host and guest
+attach only through the public mapping/session/region contracts. An AF_UNIX
+SOCK_STREAM socket pair models the lifecycle channel. Each process owns only its
+local fd, mapping and endpoint records; only host may initialize shared headers.
+The parent owns the temporary pathname and unlinks it immediately after opening,
+so failure/timeout cannot leave a named mock segment behind. Both processes close
+all unused socket ends and their file descriptors, and join/stop all mapping users
+before unmapping. A thirty-second fixture watchdog prevents an unbounded CI hang.
+
+The fixture performs real readiness delivery, guest command publication, host
+private submission through the pinned public Venus renderer, CPU fence completion,
+reply publication and guest verification. Fixed known fixture requests include a
+sequence number plus the pinned SetReplyCommandStreamMESA/EnumerateInstanceVersion
+bundle; fixed replies include the matching sequence plus the real VK_SUCCESS/API
+version result. These fixed fixture envelopes are not the runtime's yet-unimplemented
+resource/command request protocol. Repeated transfers wrap both 64-byte rings and
+must preserve each sequence. Additional guest exits omit protocol teardown to
+simulate a crash: EOF with open shared flags must close both directions, while
+EOF after a partial control frame must be a protocol failure. Renderer callback
+joining, file/socket/mapping cleanup, sanitizer cleanliness, and native Windows CI
+fixtures are required. This proves transport plus real CPU Venus dispatch in mock
+mode; GPU device/queue execution and a complete guest ICD remain later tasks.
