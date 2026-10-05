@@ -485,3 +485,20 @@ create the lock with 0600 permissions and retain its fd through CID allocation
 and creation. These functions must not nest POSIX lock acquisition in one process.
 Creation currently fails utility errors without a placeholder. This foundation
 does not yet implement the durable journal/publication sequence specified above.
+
+
+### Implementation evidence: inspection and default command layer
+
+`src/cli/device_commands.zig` parses bounded UTF-8 arguments and owns temporary
+JSON through one per-call arena. C continues to own registry and socket operations.
+`device list`, aliases, `device show`, `device default`, and `device config get`
+use the schema v1 result envelope and typed six-key settings. List filters exclude
+invalid configurations from stopped results. A responding daemon supplies the
+observed state via the existing status protocol; an existing unreachable socket
+is unknown. A missing socket is provisionally stopped until child/lease auditing
+is completed in task #7. Show currently includes paths and effective settings;
+backing-chain and ownership expansion remains tracked, so it is not yet the entire
+final show contract. Default single-file persistence uses a 0600 staging file,
+file fsync, atomic rename and parent fsync; post-rename fsync failure reports I/O
+with uncertain durability. Rename/remove default changes still require the
+multi-operation journal described in section 5.

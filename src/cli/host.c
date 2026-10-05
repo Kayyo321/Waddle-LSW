@@ -9,6 +9,7 @@
 #include "daemon_client.h"
 #include "daemon_config.h"
 #include "daemon_device.h"
+#include "device_commands.h"
 #include "waddle/daemon_protocol.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -64,6 +65,8 @@ static void usage(FILE *f) {
             "                                 Auto-starts subsystem if not currently running.\n"
             "\n"
             "Device Management:\n"
+            "  device list/show/default/config  Inspect profiles and select persistent default\n"
+            "                                 Use device --help for command grammar and exit codes\n"
             "  init, --init <device-name>     Initialize a new isolated subsystem device\n"
             "                                 Options: --disk <path> (custom base disk)\n"
             "  devices, list                  List all configured devices and their status\n"
@@ -694,72 +697,6 @@ static int cmd_init(int argc, char **argv) {
 }
 
 /**
- * @brief Subcommand handler for `waddle devices` / `waddle list`.
- *
- * @param[in] argc Argument count.
- * @param[in] argv Argument vector.
- * @return 0 on success, or non-zero on failure.
- */
-static int cmd_devices(int argc, char **argv) {
-    int json_output = 0;
-    for (int i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "--json") == 0) {
-            json_output = 1;
-        } else {
-            fprintf(stderr, "waddle devices: unknown option '%s'\n", argv[i]);
-            return 2;
-        }
-    }
-
-    device_list_t list;
-    if (daemon_device_list(&list) < 0) {
-        fprintf(stderr, "waddle: failed to query device registry: %s\n", strerror(errno));
-        return 1;
-    }
-
-    if (list.count == 0) {
-        if (json_output) {
-            printf("[]\n");
-        } else {
-            printf("No devices configured. Run 'waddle init <device-name>' to initialize a device.\n");
-        }
-        return 0;
-    }
-
-    if (json_output) {
-        printf("[\n");
-        for (size_t i = 0; i < list.count; i++) {
-            char sock[WaddleMaxPathLen];
-            (void)daemon_device_get_socket_path(list.devices[i].name, sock, sizeof(sock));
-            int running = waddle_client_is_alive(sock);
-            printf("  {\"name\": \"%s\", \"cid\": %u, \"running\": %s, \"config\": \"%s\", \"disk\": \"%s\"}%s\n",
-                   list.devices[i].name,
-                   list.devices[i].vsock_cid,
-                   running ? "true" : "false",
-                   list.devices[i].config_path,
-                   list.devices[i].disk_image,
-                   (i + 1 < list.count) ? "," : "");
-        }
-        printf("]\n");
-    } else {
-        printf("Configured Devices (%zu):\n", list.count);
-        printf("%-16s %-6s %-10s %s\n", "NAME", "CID", "STATUS", "CONFIG");
-        printf("--------------------------------------------------------------------------------\n");
-        for (size_t i = 0; i < list.count; i++) {
-            char sock[WaddleMaxPathLen];
-            (void)daemon_device_get_socket_path(list.devices[i].name, sock, sizeof(sock));
-            int running = waddle_client_is_alive(sock);
-            printf("%-16s %-6u %-10s %s\n",
-                   list.devices[i].name,
-                   list.devices[i].vsock_cid,
-                   running ? "RUNNING" : "STOPPED",
-                   list.devices[i].config_path);
-        }
-    }
-    return 0;
-}
-
-/**
  * @brief Subcommand handler for `waddle start` / `waddle --start`.
  */
 static int cmd_start(int argc, char **argv) {
@@ -1260,13 +1197,18 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (strcmp(cmd, "device") == 0) {
+        return waddle_device_command(argc - 2, argv + 2);
+    }
+
     if (strcmp(cmd, "init") == 0 || strcmp(cmd, "--init") == 0) {
         return cmd_init(argc, argv);
     }
 
     if (strcmp(cmd, "devices") == 0 || strcmp(cmd, "--devices") == 0 ||
         strcmp(cmd, "list") == 0 || strcmp(cmd, "--list") == 0) {
-        return cmd_devices(argc, argv);
+        argv[1] = "list";
+        return waddle_device_command(argc - 1, argv + 1);
     }
 
     if (strcmp(cmd, "start") == 0 || strcmp(cmd, "--start") == 0) {

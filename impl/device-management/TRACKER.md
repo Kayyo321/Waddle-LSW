@@ -18,12 +18,12 @@
 | #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 20% | Registry failure/concurrency/CID/name/path tests pass; full CLI acceptance remains |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
 | #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 15% | Pure discovery, no-follow traversal, stable lock and overflow checks delivered; mutations/recovery remain |
-| #8 | Implement show/default/config get/set/reset and diagnostic doctor | Pending | 10% | 0% | Typed validation, preservation of exports, no live changes, bounded repairs |
+| #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 30% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
 | #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
-| #11 | Verify specification revision and PR CI at final head | Done | 5% | 100% | Linux and Windows checks passed at af829ec; final tracker-only audit recheck required before handoff |
+| #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `49.5%`
+**Total Feature Completion**: `50.0%`
 
 ## Commit History & Progress Log
 
@@ -129,6 +129,11 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +0% to TODO #11; no implementation completion awarded.
   - **Summary**: Incorporate remote PR #2 integration and checkout credential CI fixes, then synchronize recursive submodules without changing pins.
 
-- **Commit `:/persist and validate default device selection atomically`**: `feat(device): persist and validate default device selection atomically`
+- **Commit `e22e88b`**: `feat(device): persist and validate default device selection atomically`
   - **Task Impact**: +0% to TODO #8 pending command integration and full config/doctor acceptance.
   - **Summary**: Add bounded no-follow default reads and serialized selection/clear using private staging files, file fsync, atomic replacement and directory fsync. Invalid targets preserve the selected default; tests cover idempotent clear, missing selection, invalid targets and small output buffers. Single-file replacement is atomic; multi-operation journal recovery remains pending.
+
+
+- **Commit `:/add device inspection commands and versioned JSON results`**: `feat(cli): add device inspection commands and versioned JSON results`
+  - **Task Impact**: +30% to TODO #8 (+3.0% overall); -50% to TODO #11 (-2.5% overall) because final-head verification must rerun; total 50.0%.
+  - **Summary**: Add bounded Zig CLI parsing, typed list/show/default/config-get commands, duplicate/contextual option checks, filters and proper JSON escaping in the v1 envelope. Query the daemon status protocol without spawning a supervisor; unreachable existing sockets remain unknown. Arena ownership and testing allocator tests cover result storage. Complete backing-chain/ownership observation and config/doctor mutations remain pending.
