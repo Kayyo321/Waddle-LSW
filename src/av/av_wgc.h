@@ -3,6 +3,12 @@
 #include <windows.h>
 #include <stddef.h>
 #include <stdint.h>
+/** @brief DLL export annotation only while building the compatibility adapter. */
+#ifdef WaddleAvWgcExport
+#define AvWgcExport __declspec(dllexport)
+#else
+#define AvWgcExport
+#endif
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -25,7 +31,7 @@ typedef HRESULT (*av_wgc_copy_t)(const uint8_t *pixels, size_t length, uint32_t 
  * @return S_OK or HRESULT, no partially owned instance escapes.
  * @note Caller takes ownership until destroy; one MTA capture thread per instance.
  */
-HRESULT av_wgc_create(HWND window, av_wgc_t **capture);
+AvWgcExport HRESULT av_wgc_create(HWND window, av_wgc_t **capture);
 /** @brief Poll one per-window capture frame and invoke a bounded C copy callback.
  * @param[in,out] capture Nonnull initialized owned instance.
  * @param[in] copy Nonnull callback, not retained. @param[in,out] context Borrowed context.
@@ -33,12 +39,12 @@ HRESULT av_wgc_create(HWND window, av_wgc_t **capture);
  * @note Capture thread only; no raw ownership escapes; mapped texture is unmapped
  * and WinRT frame closed on every path before return.
  */
-HRESULT av_wgc_read(av_wgc_t *capture, av_wgc_copy_t copy, void *context);
+AvWgcExport HRESULT av_wgc_read(av_wgc_t *capture, av_wgc_copy_t copy, void *context);
 /** @brief Close capture session/pool and release opaque instance.
  * @param[in,out] capture Nonnull pointer to owned instance; NULL value accepted.
  * @note Creating capture thread only, idempotent; sets *capture NULL; no result.
  */
-void av_wgc_destroy(av_wgc_t **capture);
+AvWgcExport void av_wgc_destroy(av_wgc_t **capture);
 /** @brief C ABI procedure types used by the loader; DLL retained until destroy. */
 typedef HRESULT (*av_wgc_create_t)(HWND window, av_wgc_t **capture);
 /** @brief C ABI frame procedure type; pointers borrowed for each call. */

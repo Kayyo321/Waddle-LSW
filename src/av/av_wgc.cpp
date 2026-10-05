@@ -1,7 +1,10 @@
 /** @file av_wgc.cpp @brief C++ compatibility boundary for system C++/WinRT SDK.
  * OS SDK-generated WinRT interfaces require C++; all transport stays C/Zig.
  */
+/** @brief Select DLL export declarations for this implementation translation unit. */
+#define WaddleAvWgcExport
 #include "av_wgc.h"
+#include <roapi.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <memory>
@@ -47,7 +50,7 @@ struct mapped_texture_t {
     bool mapped = false;
     ~mapped_texture_t() noexcept { if (mapped) device_context->Unmap(texture.get(), 0); }
 };
-extern "C" __declspec(dllexport) HRESULT av_wgc_create(HWND window, av_wgc_t **result) {
+HRESULT av_wgc_create(HWND window, av_wgc_t **result) {
     if (!result) return E_POINTER;
     *result = nullptr;
     if (!window || !IsWindow(window)) return E_INVALIDARG;
@@ -82,7 +85,7 @@ extern "C" __declspec(dllexport) HRESULT av_wgc_create(HWND window, av_wgc_t **r
         return S_OK;
     } catch (...) { return winrt::to_hresult(); }
 }
-extern "C" __declspec(dllexport) HRESULT av_wgc_read(av_wgc_t *capture, av_wgc_copy_t copy, void *context) {
+HRESULT av_wgc_read(av_wgc_t *capture, av_wgc_copy_t copy, void *context) {
     if (!capture || !copy) return E_POINTER;
     try {
         auto frame = capture->pool.TryGetNextFrame();
@@ -101,7 +104,7 @@ extern "C" __declspec(dllexport) HRESULT av_wgc_read(av_wgc_t *capture, av_wgc_c
             capture->staging = nullptr;
             return S_FALSE;
         }
-        auto access = frame.Surface().as<IDirect3DDxgiInterfaceAccess>();
+        auto access = frame.Surface().as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
         winrt::com_ptr<ID3D11Texture2D> texture;
         winrt::check_hresult(access->GetInterface(__uuidof(ID3D11Texture2D), texture.put_void()));
         D3D11_TEXTURE2D_DESC description{};
@@ -129,7 +132,7 @@ extern "C" __declspec(dllexport) HRESULT av_wgc_read(av_wgc_t *capture, av_wgc_c
             timestamp > 0 ? static_cast<uint64_t>(timestamp) * 100 : 0, context);
     } catch (...) { return winrt::to_hresult(); }
 }
-extern "C" __declspec(dllexport) void av_wgc_destroy(av_wgc_t **capture) {
+void av_wgc_destroy(av_wgc_t **capture) {
     if (!capture) return;
     std::unique_ptr<av_wgc_t> owned(*capture);
     *capture = nullptr;

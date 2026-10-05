@@ -190,6 +190,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Return a separate orderly EOF result, reject truncated final frames and propagate protocol errors through host and guest exit status. Fragmented, burst, corruption and truncation tests and native/cross builds pass.
 
-- **Commit `HEAD`**: `feat(av): expose atomic AV settings through device configuration`
+- **Commit `4d689828c9db`**: `feat(av): expose atomic AV settings through device configuration`
   - **Task Impact**: +10% to #10.3 (+0.50% overall)
   - **Summary**: Extend the bounded configuration editor with AV enable, shared-memory path and explicit GPU assignment. Validate the complete patch before replacing a quiescent device configuration, preserve unrelated bytes and cover incomplete, malformed and reset requests.
+
+- **Commit `HEAD`**: `fix(av): match WinRT SDK namespace and DLL export linkage`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Resolve native MSVC diagnostics by including the apartment API, qualifying the SDK DXGI interface namespace and sharing C ABI export declarations between the adapter header and implementation. Native Windows CI will recompile the boundary with warnings treated as errors.
