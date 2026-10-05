@@ -30,8 +30,8 @@
 | #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 4% | 60% | Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes. |
 | **5**   | **Host Wayland Client (Video)** | | | | |
 | #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | In Progress | 5% | 70% | Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes. |
-| #5.2    | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | Pending | 6% | 0% | - |
-| #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 5% | 40% | Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes. |
+| #5.2 | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | In Progress | 6% | 70% | Validate page-aligned regions against driver-reported size, export CLOEXEC DMA-BUFs using pinned ioctls and import advertised linear ARGB slots. Close local export FDs after submission and retain compositor ownership; ordinary files select wl_shm. |
+| #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 5% | 65% | Validate page-aligned regions against driver-reported size, export CLOEXEC DMA-BUFs using pinned ioctls and import advertised linear ARGB slots. Close local export FDs after submission and retain compositor ownership; ordinary files select wl_shm. |
 | #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 5% | 50% | Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes. |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
 | #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 5% | 75% | Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes. |
@@ -43,7 +43,7 @@
 
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 2% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
-**Total Feature Completion**: `68.80%`
+**Total Feature Completion**: `74.25%`
 
 ## Commit History & Progress Log
 
@@ -95,6 +95,10 @@
   - **Task Impact**: +100% to #8.1 (+2.00% overall)
   - **Summary**: Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations.
 
-- **Commit `HEAD`**: `feat(av): present owned video slots through Wayland toplevels`
+- **Commit `22e96114e057`**: `feat(av): present owned video slots through Wayland toplevels`
   - **Task Impact**: +70% to #5.1 (+3.50% overall); +40% to #5.3 (+2.00% overall); +50% to #5.4 (+2.50% overall)
   - **Summary**: Bind xdg-shell and create captured-window toplevels with an explicit wl_shm fallback. Retain slots through compositor release, apply bounded damage and geometry requests, and keep retired buffer contexts alive until release; host compilation passes.
+
+- **Commit `HEAD`**: `feat(av): export KVMFR slots for linear Wayland DMA-BUF import`
+  - **Task Impact**: +70% to #5.2 (+4.20% overall); +25% to #5.3 (+1.25% overall)
+  - **Summary**: Validate page-aligned regions against driver-reported size, export CLOEXEC DMA-BUFs using pinned ioctls and import advertised linear ARGB slots. Close local export FDs after submission and retain compositor ownership; ordinary files select wl_shm.

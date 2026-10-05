@@ -132,8 +132,18 @@ and leave the output unchanged on error. No payload allocation is necessary.
 Looking Glass B7 is pinned at 27fe47cbe2a3a8da986d310ab866f0b646ed68f5 under
 submodules/looking_glass, public HTTPS upstream https://github.com/gnif/LookingGlass.git.
 Only module/kvmfr.h and vendor/ivshmem/ivshmem.h define driver ABI boundaries;
-no upstream application implementation is linked or loosely copied. Both files
-carry GPL-2.0-or-later notices, compatible with this repository's GPL-3.0.
+no upstream application implementation is linked or loosely copied. The KVMFR header carries a GPL-2.0-or-later notice; the IVSHMEM header
+is distributed within the same GPL-2.0-or-later project, compatible with this repository's GPL-3.0.
 Kernel driver installation remains an operator task, not an automatic build step.
 Host uses KVMFR_DMABUF_GETSIZE/CREATE; guest uses the signed Red Hat IVSHMEM
 interface GUID and map/unmap ioctls. No nested vendor sources are used.
+
+### DMA-BUF export ownership
+
+The host binds linux-dmabuf v3 only if present and requires advertised linear
+ARGB8888. Each slot exports its page-aligned payload offset/capacity using the
+pinned KVMFR ioctl ABI. GETSIZE bounds-checks the region before CREATE. Returned
+CLOEXEC FD is closed immediately after the protocol duplicates it. A regular
+file fails GETSIZE and selects wl_shm. The compositor owns the buffer import
+until wl_buffer.release. Immediate DMA-BUF import rejection is a display error;
+the session must reconnect with the shm path rather than reuse consumed pixels.

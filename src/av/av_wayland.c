@@ -1,9 +1,12 @@
 #include "av_wayland.h"
+#include "av_dmabuf.h"
+#include "linux_dmabuf_client.h"
 #include "xdg_shell_client.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /** @brief One retained compositor buffer; event thread owns protocol reference. */
 typedef struct video_buffer_t {
@@ -24,6 +27,7 @@ typedef struct video_window_t {
     video_buffer_t buffers[3];
     size_t capacity;
     int configured, retired;
+    int device_fd;
 } video_window_t;
 /** @brief Event-thread context; alloc/free are the sole ownership boundary. */
 struct av_wayland_t {
@@ -32,6 +36,8 @@ struct av_wayland_t {
     struct wl_compositor *compositor;
     struct wl_shm *shm;
     struct xdg_wm_base *shell;
+    struct zwp_linux_dmabuf_v1 *dmabuf;
+    int linear_argb;
     video_window_t windows[AvMaxWindows];
     av_host_request_t request;
     void *request_context;
@@ -88,6 +94,20 @@ static void shell_ping(void *context, struct xdg_wm_base *shell, uint32_t serial
     xdg_wm_base_pong(shell, serial);
 }
 static const struct xdg_wm_base_listener ShellEvents = {.ping = shell_ping};
+static void dmabuf_format(void *context, struct zwp_linux_dmabuf_v1 *dmabuf, uint32_t format) {
+    (void)context;
+    (void)dmabuf;
+    (void)format;
+}
+static void dmabuf_modifier(void *context, struct zwp_linux_dmabuf_v1 *dmabuf, uint32_t format,
+                            uint32_t high, uint32_t low) {
+    (void)dmabuf;
+    av_wayland_t *client = context;
+    if (format == AvPixelFormat && high == 0 && low == 0)
+        client->linear_argb = 1;
+}
+static const struct zwp_linux_dmabuf_v1_listener DmabufEvents = {.format = dmabuf_format,
+                                                                 .modifier = dmabuf_modifier};
 static void registry_global(void *context, struct wl_registry *registry, uint32_t name,
                             const char *interface_name, uint32_t version) {
     av_wayland_t *client = context;
@@ -95,8 +115,14 @@ static void registry_global(void *context, struct wl_registry *registry, uint32_
         client->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
     else if (!strcmp(interface_name, "wl_shm") && !client->shm)
         client->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
-    else if (!strcmp(interface_name, "xdg_wm_base") && !client->shell) {
+    else if (!strcmp(interface_name, "zwp_linux_dmabuf_v1") && version >= 3 && !client->dmabuf) {
+        client->dmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, 3);
+        if (client->dmabuf)
+            zwp_linux_dmabuf_v1_add_listener(client->dmabuf, &DmabufEvents, client);
+    } else if (!strcmp(interface_name, "xdg_wm_base") && !client->shell) {
         client->shell = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
+        if (client->dmabuf)
+            zwp_linux_dmabuf_v1_destroy(client->dmabuf);
         if (client->shell)
             xdg_wm_base_add_listener(client->shell, &ShellEvents, client);
     }
@@ -148,6 +174,8 @@ void av_wayland_free(av_wayland_t **client_pointer) {
         return;
     for (unsigned i = 0; i < AvMaxWindows; ++i)
         free_window(&client->windows[i]);
+    if (client->dmabuf)
+        zwp_linux_dmabuf_v1_destroy(client->dmabuf);
     if (client->shell)
         xdg_wm_base_destroy(client->shell);
     if (client->shm)
@@ -180,6 +208,8 @@ int av_wayland_init(av_wayland_t **client_pointer, av_host_request_t request, vo
         wl_display_roundtrip(client->display) < 0 || !client->compositor || !client->shm ||
         !client->shell)
         goto fail;
+    if (wl_display_roundtrip(client->display) < 0)
+        goto fail;
     return 0;
 fail:
     av_wayland_free(client_pointer);
@@ -211,6 +241,7 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
     window->client = client;
     window->geometry = *message;
     window->capacity = capacity;
+    window->device_fd = fd;
     window->pool = wl_shm_create_pool(client->shm, fd, (int32_t)mapping_size);
     window->surface = wl_compositor_create_surface(client->compositor);
     if (!window->pool || !window->surface)
@@ -275,9 +306,25 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
             video->buffer = NULL;
         }
         if (!video->buffer) {
-            video->buffer = wl_shm_pool_create_buffer(
-                window->pool, (int32_t)video->offset, (int32_t)slot->width, (int32_t)slot->height,
-                (int32_t)slot->stride, WL_SHM_FORMAT_ARGB8888);
+            if (client->dmabuf && client->linear_argb) {
+                int exported = av_dmabuf_export(window->device_fd, video->offset, window->capacity);
+                if (exported >= 0) {
+                    struct zwp_linux_buffer_params_v1 *params =
+                        zwp_linux_dmabuf_v1_create_params(client->dmabuf);
+                    if (params) {
+                        zwp_linux_buffer_params_v1_add(params, exported, 0, 0, slot->stride, 0, 0);
+                        video->buffer = zwp_linux_buffer_params_v1_create_immed(
+                            params, (int32_t)slot->width, (int32_t)slot->height, AvPixelFormat, 0);
+                        zwp_linux_buffer_params_v1_destroy(params);
+                    }
+                    close(exported);
+                }
+            }
+            if (!video->buffer) {
+                video->buffer = wl_shm_pool_create_buffer(
+                    window->pool, (int32_t)video->offset, (int32_t)slot->width,
+                    (int32_t)slot->height, (int32_t)slot->stride, WL_SHM_FORMAT_ARGB8888);
+            }
             if (!video->buffer) {
                 av_video_release(slot);
                 return -1;
