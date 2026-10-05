@@ -375,15 +375,19 @@ the race between start and remove/rename. No mutation may equate a dead supervis
 with dead children: verify tracked child identities/ownership as well; ambiguous
 or orphan live QEMU/virtiofsd means busy and requires explicit lifecycle recovery.
 
-Transaction sequence: create staged files/copies and journal `prepared`, fsync all
-staged files and journal and containing directories, perform recorded reversible
+Transaction sequence: write/fsync a `prepared` journal describing every planned
+staging path before allocating disk copies or moving existing files. Fsync its
+containing directory, create and fsync staged files and their directories, then
+perform recorded reversible
 moves/replacements, fsync affected directories, write/fsync `committed` journal,
 then purge rollback copies and journal and fsync directories. Before commitment,
 recovery rolls back to the old registry; after commitment, it finishes cleanup.
 Keep rollback copies until the durable commit point. Operations crossing config
 and state filesystems use staging on each filesystem; never rely on cross-device
 rename being atomic. Registry readers hold a shared lock and refuse an incomplete
-journal, so they never observe a partly renamed profile. Recovery is idempotent
+journal, so they never observe a partly renamed profile. Recovery treats not-yet-created staged paths as absent, never as permission to
+delete an unexpected replacement. Before moving existing data, persist its inode
+identity in the journal. Recovery is idempotent
 and validates device/inode identity and root containment before moving/deleting.
 
 No shared-memory transport layout or atomics change. Existing supervisor runtime

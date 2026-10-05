@@ -21,9 +21,9 @@
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | Pending | 10% | 0% | Typed validation, preservation of exports, no live changes, bounded repairs |
 | #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
-| #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 0% | Workflow paths and vendor build prerequisites repaired; checks pending |
+| #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Isolated sanitizer/allocator suites and Windows cross-build pass; final native CI pending |
 
-**Total Feature Completion**: `40.0%`
+**Total Feature Completion**: `42.5%`
 
 ## Commit History & Progress Log
 
@@ -59,9 +59,13 @@
   - **Task Impact**: +0% to TODO: #11 pending rerun.
   - **Summary**: Initial native CI failed while checking out deep QEMU/EDK2 cryptography submodule paths. Enable Git long-path support before recursive checkout without skipping dependencies.
 
-- **Commit `:/isolate vendor configuration from application flags`**: `fix(build): isolate vendor configuration from application flags`
+- **Commit `6292d09`**: `fix(build): isolate vendor configuration from application flags`
   - **Task Impact**: +0% to TODO: #11 pending rerun; no new device implementation progress.
   - **Summary**: Fresh Linux CI exposed application pedantic/Werror flags leaking into QEMU/DTC configuration. Clear application CFLAGS/CPPFLAGS/LDFLAGS only at vendor configure; retain strict flags and sanitizers for every Waddle target.
+
+- **Commit `:/record local specification verification and journal ordering`**: `docs(device): record local specification verification and journal ordering`
+  - **Task Impact**: +50% to TODO: #11 (+2.5% overall); +0% to completed TODO: #6.
+  - **Summary**: Record isolated ASan/LSan/UBSan and Zig allocator suite success and Windows guest/fixture cross-build. Specify durable journal intent before allocating staged disk copies and safe recovery of not-yet-created paths. Native CI remains pending.
 
 ## Audit conventions and specification review
 
@@ -75,3 +79,18 @@ A current commit cannot embed its own hash without changing that hash. Its log
 entry uses Git's exact-subject revision selector, resolvable with `git rev-parse`;
 a subsequent audit replaces it with the resulting hash. No implementation progress
 is awarded merely for a documentation or CI maintenance commit.
+
+## Verification evidence for the specification revision
+
+- `git diff --check` passed; README has no diff against target branch.
+- Command inventory contains all 13 device subcommands; seven required sections
+  are present; tracker weights sum to 100 and the weighted total is 42.5%.
+- `make test-sanitizers` passed with isolated temporary XDG config/state/runtime
+  roots and explicit `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1`
+  and `LSAN_OPTIONS=abort_on_error=1`. Existing C, Zig allocator, daemon, CLI,
+  and filesystem mock suites passed. Planned new device acceptance is not claimed.
+- `make windows build/windows_guest_test.exe` passed (cross-build only).
+- Draft PR: https://github.com/Kayyo321/Waddle-LSW/pull/3 (target `origin`).
+- Initial remote attempts exposed Windows long-path checkout and fresh vendor
+  compiler-flag inheritance failures; dedicated maintenance commits address them.
+  Final native CI, coverage, and heap-audit evidence is pending rerun.
