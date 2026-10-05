@@ -70,6 +70,19 @@ int qemu_build_args(const daemon_config_t *config,
 void qemu_free_args(char **argv, size_t argc);
 
 /**
+ * @brief Locates the QEMU emulator binary, checking relative vendor paths first.
+ *
+ * Resolves the directory of the currently running executable via /proc/self/exe
+ * and inspects the bundled vendor directory (<exe_dir>/vendor/qemu-system-x86_64)
+ * before falling back to system directories and PATH.
+ *
+ * @param[out] out_path Buffer of capacity at least WaddleMaxPathLen.
+ * @param[in]  path_cap Capacity of out_path buffer in bytes.
+ * @return 0 on success, or -1 if QEMU cannot be found.
+ */
+int qemu_find_binary(char *out_path, size_t path_cap);
+
+/**
  * @brief Spawns the QEMU hypervisor process.
  *
  * Redirects stdout and stderr to the specified log file.

@@ -61,6 +61,45 @@ int daemon_fs_find_binary(char *out_path, size_t path_cap) {
         return -1;
     }
 
+    char exe_dir[WaddleMaxPathLen];
+    ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+    if (len > 0) {
+        exe_dir[len] = '\0';
+        char *last_slash = strrchr(exe_dir, '/');
+        if (last_slash != NULL) {
+            *last_slash = '\0';
+        } else {
+            exe_dir[0] = '.';
+            exe_dir[1] = '\0';
+        }
+
+        /* Check relative vendor paths */
+        char candidate[WaddleMaxPathLen];
+        snprintf(candidate, sizeof(candidate), "%s/vendor/virtiofsd", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+
+        snprintf(candidate, sizeof(candidate), "%s/../build/vendor/virtiofsd", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+
+        snprintf(candidate, sizeof(candidate), "%s/virtiofsd", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+    }
+
+    /* Fallback to local build vendor directory */
+    if (access("build/vendor/virtiofsd", X_OK) == 0) {
+        snprintf(out_path, path_cap, "build/vendor/virtiofsd");
+        return 0;
+    }
+
     /* Standard known install locations */
     const char *candidates[] = {
         "/usr/libexec/virtiofsd",

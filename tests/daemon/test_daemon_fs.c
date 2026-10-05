@@ -90,7 +90,16 @@ static void test_invalid_spawn(void) {
     assert(errno == ENOENT);
 }
 
+static void test_daemon_fs_find_binary(void) {
+    char bin_path[WaddleMaxPathLen];
+    int res = daemon_fs_find_binary(bin_path, sizeof(bin_path));
+    assert(res == 0);
+    assert(strstr(bin_path, "virtiofsd") != NULL);
+    assert(access(bin_path, X_OK) == 0);
+}
+
 int main(void) {
+    test_daemon_fs_find_binary();
     test_build_args();
     test_mounts_to_rules();
     test_path_translation();

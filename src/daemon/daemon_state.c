@@ -242,7 +242,12 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
     /* Step 2: QEMU hypervisor */
     s->state = SubsystemStateStartingQemu;
     const char *vfs_sock = (s->virtiofs.is_running) ? s->virtiofsd_sock_path : NULL;
-    if (qemu_spawn(&s->qemu, &s->config, s->qmp_sock_path, vfs_sock, s->qemu_log_path, NULL) != 0) {
+    char qemu_bin[WaddleMaxPathLen];
+    const char *target_qemu_bin = NULL;
+    if (qemu_find_binary(qemu_bin, sizeof(qemu_bin)) == 0) {
+        target_qemu_bin = qemu_bin;
+    }
+    if (qemu_spawn(&s->qemu, &s->config, s->qmp_sock_path, vfs_sock, s->qemu_log_path, target_qemu_bin) != 0) {
         snprintf(s->last_error, sizeof(s->last_error),
                  "Failed to spawn QEMU hypervisor: %.150s", strerror(errno));
         if (s->virtiofs.is_running) {

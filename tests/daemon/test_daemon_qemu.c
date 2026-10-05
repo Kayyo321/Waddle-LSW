@@ -208,7 +208,16 @@ static void test_qemu_process_lifecycle(void) {
     unlink(log_path);
 }
 
+static void test_qemu_find_binary(void) {
+    char bin_path[WaddleMaxPathLen];
+    int res = qemu_find_binary(bin_path, sizeof(bin_path));
+    assert(res == 0);
+    assert(strstr(bin_path, "qemu-system-x86_64") != NULL);
+    assert(access(bin_path, X_OK) == 0);
+}
+
 int main(void) {
+    test_qemu_find_binary();
     test_qemu_build_args();
     test_qmp_client();
     test_qemu_process_lifecycle();

@@ -44,11 +44,13 @@ typedef struct virtiofs_process_t {
 /**
  * @brief Locates the virtiofsd binary on the host system.
  *
- * Checks standard system directories (/usr/libexec/virtiofsd, /usr/lib/qemu/virtiofsd, etc.)
- * or searches the PATH environment variable.
+ * Resolves the directory of the currently running executable via /proc/self/exe
+ * and checks the bundled vendor directory (<exe_dir>/vendor/virtiofsd) before
+ * falling back to standard system directories (/usr/libexec/virtiofsd,
+ * /usr/lib/qemu/virtiofsd, etc.) and searching the PATH environment variable.
  *
  * @param[out] out_path Buffer of capacity at least WaddleMaxPathLen.
- * @param[in]  path_cap Capacity of out_path buffer.
+ * @param[in]  path_cap Capacity of out_path buffer in bytes.
  * @return 0 on success, or -1 if virtiofsd cannot be found.
  */
 int daemon_fs_find_binary(char *out_path, size_t path_cap);
