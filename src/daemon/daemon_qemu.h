@@ -18,7 +18,7 @@ extern "C" {
 #endif
 
 /** @brief Maximum number of command-line arguments supported for QEMU invocation. */
-#define QemuMaxArgs 64U
+#define QemuMaxArgs 80U
 
 /**
  * @brief State structure for a managed QEMU process instance.

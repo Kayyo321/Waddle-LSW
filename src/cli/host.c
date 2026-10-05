@@ -10,6 +10,11 @@
 #include "daemon_config.h"
 #include "daemon_device.h"
 #include "device_commands.h"
+#include "av_commands.h"
+#include <sys/stat.h>
+#include <sys/file.h>
+#include <sys/wait.h>
+#include <time.h>
 #include "waddle/daemon_protocol.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -59,6 +64,7 @@ static int number(const char *s, uint32_t *out) {
 static void usage(FILE *f) {
     fprintf(f,
             "Usage: waddle [command|option] [parameters...]\n"
+            "  av setup|probe|run             Provision and use managed audio/video\n"
             "\n"
             "Default Action:\n"
             "  waddle [device-name]           Enter interactive Windows terminal (ConPTY)\n"
@@ -1084,6 +1090,8 @@ static int cmd_interactive_default(const char *target_device) {
     return cmd_exec(10, default_args, 2);
 }
 
+#include "av_managed.inc"
+
 int main(int argc, char **argv) {
     if (argc == 1) {
         return cmd_interactive_default(NULL);
@@ -1116,6 +1124,9 @@ int main(int argc, char **argv) {
             if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) { usage(stdout); return 0; }
         }
     }
+
+    if (strcmp(cmd, "av") == 0)
+        return cmd_av(argc, argv);
 
     if (strcmp(cmd, "device") == 0) {
         return waddle_device_command(argc - 2, argv + 2);

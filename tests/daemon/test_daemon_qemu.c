@@ -70,6 +70,48 @@ static void test_qemu_build_args(void) {
     qemu_free_args(argv, (size_t)argc);
 }
 
+static void test_av_args(void) {
+    daemon_config_t config;
+    daemon_config_init_defaults(&config);
+    config.av_enabled = 1;
+    strcpy(config.av_shm_path, "/dev/shm/waddle-av-test");
+    strcpy(config.av_gpu_bdf, "0000:0e:00.0");
+    strcpy(config.av_gpu_mdev_uuid, "12345678-1234-5678-9abc-123456789abc");
+    char *argv[QemuMaxArgs];
+    int count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0);
+    int ivshmem = 0, memory = 0, audio = 0, endpoint = 0, gpu = 0;
+    for (int i = 0; i < count; ++i) {
+        if (!strcmp(argv[i], "ivshmem-plain,memdev=waddle_av")) ivshmem = 1;
+        if (strstr(argv[i], "size=2147483648,mem-path=/dev/shm/waddle-av-test,share=on")) memory = 1;
+        if (!strcmp(argv[i], "none,id=waddle_silent")) audio = 1;
+        if (!strcmp(argv[i], "hda-duplex,audiodev=waddle_silent")) endpoint = 1;
+        if (!strcmp(argv[i], "vfio-pci,sysfsdev=/sys/bus/mdev/devices/12345678-1234-5678-9abc-123456789abc,display=off")) gpu = 1;
+        assert(!strstr(argv[i], "vfio-pci,host="));
+    }
+    assert(ivshmem && memory && audio && endpoint && gpu);
+    qemu_free_args(argv, (size_t)count);
+    config.av_gpu_bdf[0] = '\0';
+    count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0); /* UUID alone is a complete assignment. */
+    qemu_free_args(argv, (size_t)count);
+    config.av_gpu_mdev_uuid[0] = '\0';
+    strcpy(config.av_gpu_bdf, "0000:0e:00.0");
+    assert(qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs) == -1);
+    assert(argv[0] == NULL);
+    config.av_gpu_bdf[0] = '\0';
+    count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0);
+    int refresh = 0;
+    for (int i = 0; i < count; ++i)
+        if (!strcmp(argv[i], "VGA,refresh_rate=144,xres=1920,yres=1080,vgamem_mb=64")) refresh = 1;
+    assert(refresh);
+    qemu_free_args(argv, (size_t)count);
+    strcpy(config.av_shm_path, "/tmp/x,share=off");
+    assert(qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs) == -1);
+    assert(argv[0] == NULL);
+}
+
 typedef struct mock_qmp_server_t {
     int listen_fd;
     char sock_path[108];
@@ -219,6 +261,7 @@ static void test_qemu_find_binary(void) {
 int main(void) {
     test_qemu_find_binary();
     test_qemu_build_args();
+    test_av_args();
     test_qmp_client();
     test_qemu_process_lifecycle();
     printf("test_daemon_qemu: all QEMU argument builder, process lifecycle, and QMP client tests passed\n");

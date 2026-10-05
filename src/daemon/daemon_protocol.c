@@ -72,6 +72,8 @@ const char *waddle_daemon_msg_type_to_string(waddle_daemon_msg_type_t type) {
         return "start_resp";
     case DaemonMsgStopReq:
         return "stop_req";
+    case DaemonMsgStopGracefulReq:
+        return "stop_graceful_req";
     case DaemonMsgStopResp:
         return "stop_resp";
     case DaemonMsgStatusReq:

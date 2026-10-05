@@ -1,0 +1,393 @@
+#include "av/av_deploy.h"
+/* Managed AV orchestration shares the existing resolver and execution bridge.
+ * This include is private to host.c; no symbols or ownership cross its TU. */
+static volatile sig_atomic_t av_session_active;
+static volatile sig_atomic_t av_interrupted;
+static volatile sig_atomic_t av_playback_child;
+static void av_session_signal(int signal_number) {
+    av_interrupted = signal_number;
+    if (av_playback_child > 0) kill((pid_t)av_playback_child, SIGTERM);
+}
+static int av_child_wait(pid_t child) {
+    int status = 0;
+    pid_t waited;
+    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    return waited == child && WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+}
+static int av_run_helper(char *const arguments[]) {
+    pid_t child = fork();
+    if (child < 0) return 1;
+    if (!child) {
+        if (av_session_active) { signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL); }
+        execvp(arguments[0], arguments); _exit(127);
+    }
+    if (av_session_active) {
+        av_playback_child = child;
+        if (av_interrupted) kill(child, SIGTERM);
+    }
+    int result = av_child_wait(child);
+    av_playback_child = 0;
+    return result;
+}
+static int av_bundle_path(const char *relative, char *output, size_t capacity) {
+    char executable[PATH_MAX];
+    ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+    if (length <= 0) return -1;
+    executable[length] = '\0';
+    char *slash = strrchr(executable, '/');
+    if (!slash) return -1;
+    *slash = '\0';
+    return snprintf(output, capacity, "%s/%s", executable, relative) < (int)capacity ? 0 : -1;
+}
+/* Destination directory is private, same-user and never a symbolic link. */
+static int av_private_directory(const char *path) {
+    if (mkdir(path, 0700) != 0 && errno != EEXIST) return -1;
+    struct stat status;
+    if (lstat(path, &status) != 0 || !S_ISDIR(status.st_mode) || status.st_uid != geteuid() ||
+        (status.st_mode & 0077)) { errno = EACCES; return -1; }
+    return 0;
+}
+/* Atomic replacement of one owned deployment output; descriptors close on all paths. */
+static int av_stage_file(const char *relative, const char *directory, const char *name) {
+    char source[PATH_MAX], destination[PATH_MAX], temporary[PATH_MAX];
+    if ((relative[0] == '/' ? snprintf(source, sizeof(source), "%s", relative) >= (int)sizeof(source) : av_bundle_path(relative, source, sizeof(source)) != 0) ||
+        snprintf(destination, sizeof(destination), "%s/%s", directory, name) >= (int)sizeof(destination) ||
+        snprintf(temporary, sizeof(temporary), "%s/.av_stage_XXXXXX", directory) >= (int)sizeof(temporary))
+        return -1;
+    int input = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW), output = -1, result = -1;
+    if (input < 0) goto cleanup;
+    struct stat status;
+    if (fstat(input, &status) != 0 || !S_ISREG(status.st_mode) || status.st_size <= 0 || status.st_size > 16777216)
+        goto cleanup;
+    if (lstat(destination, &status) == 0) {
+        if (!S_ISREG(status.st_mode) || status.st_uid != geteuid()) { errno = EACCES; goto cleanup; }
+    } else if (errno != ENOENT) goto cleanup;
+    output = mkostemp(temporary, O_CLOEXEC);
+    if (output < 0) goto cleanup;
+    char bytes[65536];
+    for (;;) {
+        ssize_t count = read(input, bytes, sizeof(bytes));
+        if (count < 0) { if (errno == EINTR) continue; goto cleanup; }
+        if (!count) break;
+        ssize_t offset = 0;
+        while (offset < count) {
+            ssize_t written = write(output, bytes + offset, (size_t)(count - offset));
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) goto cleanup;
+            offset += written;
+        }
+    }
+    if (fsync(output) != 0 || rename(temporary, destination) != 0) goto cleanup;
+    result = 0;
+cleanup:
+    if (input >= 0) close(input);
+    if (output >= 0) { close(output); if (result) unlink(temporary); }
+    return result;
+}
+/* Publish a complete immutable deployment only after its guest probe succeeds. */
+static int av_current_bundle(const char *state, char *agent, size_t capacity) {
+    char path[PATH_MAX], name[32] = {0};
+    if (snprintf(path, sizeof(path), "%s/av/current_bundle", state) >= (int)sizeof(path)) return -1;
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    struct stat status;
+    ssize_t count = -1;
+    if (fstat(fd, &status) == 0 && S_ISREG(status.st_mode) && status.st_uid == geteuid() &&
+        !(status.st_mode & 0077) && status.st_size == 13)
+        count = read(fd, name, sizeof(name) - 1);
+    close(fd);
+    if (count != 13 || strncmp(name, "bundle_", 7)) return -1;
+    for (size_t i = 7; i < 13; ++i)
+        if (!((name[i] >= 'a' && name[i] <= 'z') || (name[i] >= 'A' && name[i] <= 'Z') ||
+              (name[i] >= '0' && name[i] <= '9'))) return -1;
+    return snprintf(agent, capacity, "%s/av/%s/waddle-guest-av.exe", state, name) < (int)capacity ? 0 : -1;
+}
+static int av_publish_bundle(const char *directory, const char *bundle) {
+    char temporary[PATH_MAX], destination[PATH_MAX];
+    if (snprintf(temporary, sizeof(temporary), "%s/.current_XXXXXX", directory) >= (int)sizeof(temporary) ||
+        snprintf(destination, sizeof(destination), "%s/current_bundle", directory) >= (int)sizeof(destination)) return -1;
+    struct stat status;
+    if (lstat(destination, &status) == 0) {
+        if (!S_ISREG(status.st_mode) || status.st_uid != geteuid()) return -1;
+    } else if (errno != ENOENT) return -1;
+    int fd = mkostemp(temporary, O_CLOEXEC);
+    if (fd < 0) return -1;
+    int result = write(fd, bundle, 13) == 13 && fsync(fd) == 0 && rename(temporary, destination) == 0 ? 0 : -1;
+    close(fd);
+    if (result) unlink(temporary);
+    return result;
+}
+/* Guest setup has initialized the mapping before this real host readiness gate. */
+static int av_host_probe(const daemon_config_t *config) {
+    char host[PATH_MAX];
+    if (av_bundle_path("waddle-av-host", host, sizeof(host)) != 0) return 1;
+    char *arguments[] = {host, "--probe", (char *)config->av_shm_path, NULL};
+    return av_run_helper(arguments);
+}
+/* Stack-owned deployment callbacks; nothing is retained beyond av_deploy. */
+typedef struct av_deploy_context_t {
+    const device_info_t *device;
+    const daemon_config_t *config;
+    char *agent;
+} av_deploy_context_t;
+static int av_deploy_restart(void *context) {
+    av_deploy_context_t *deployment = context;
+    device_info_t resolved;
+    char socket_path[WaddleMaxPathLen];
+    if (resolve_target_device(deployment->device->name, &resolved, socket_path,
+                              sizeof(socket_path), 1) != 0) return 1;
+    fputs("waddle av: signed driver requires a restart; restarting the selected managed guest\n", stderr);
+    /* Graceful ACPI shutdown only; a busy/nonresponsive VM is not force-killed. */
+    return waddle_client_cmd_restart(socket_path, WaddleStopGracefulOnly, 180);
+}
+static int av_deploy_guest_probe(void *context) {
+    av_deploy_context_t *deployment = context;
+    char *arguments[] = {"waddle", "exec", "--device", (char *)deployment->device->name,
+        "--translate-path", "--cwd", "C:\\Windows", "--", deployment->agent, "--probe", NULL};
+    return cmd_exec(10, arguments, 2);
+}
+static int av_deploy_host_probe(void *context) {
+    av_deploy_context_t *deployment = context;
+    return av_host_probe(deployment->config);
+}
+static int av_deploy(const device_info_t *device, const daemon_config_t *config,
+                     char *agent, size_t capacity) {
+    char state[WaddleMaxPathLen], directory[PATH_MAX], drivers[PATH_MAX], bundle[PATH_MAX];
+    if (daemon_device_get_state_dir(device->name, state, sizeof(state)) != 0 ||
+        snprintf(directory, sizeof(directory), "%s/av", state) >= (int)sizeof(directory) ||
+        snprintf(drivers, sizeof(drivers), "%s/ivshmem", directory) >= (int)sizeof(drivers) ||
+        av_private_directory(directory) != 0 || av_private_directory(drivers) != 0)
+        return 1;
+    const char *driver_files[] = {"ivshmem.inf", "ivshmem.sys", "ivshmem.cat", "LICENSE.txt"};
+    for (size_t i = 0; i < sizeof(driver_files) / sizeof(driver_files[0]); ++i) {
+        char source[128];
+        snprintf(source, sizeof(source), "vendor/av/ivshmem/%s", driver_files[i]);
+        /* The signed vendor INF names IVSHMEM.sys exactly. VirtIO-FS exports
+         * retain Linux case sensitivity even for Windows driver-store reads. */
+        const char *destination = !strcmp(driver_files[i], "ivshmem.sys") ? "IVSHMEM.sys" : driver_files[i];
+        if (av_stage_file(source, drivers, destination) != 0) goto fail;
+    }
+    if (snprintf(bundle, sizeof(bundle), "%s/bundle_XXXXXX", directory) >= (int)sizeof(bundle) ||
+        !mkdtemp(bundle)) goto fail;
+    if (av_stage_file("waddle-guest-av.exe", bundle, "waddle-guest-av.exe") != 0 ||
+        av_stage_file("av_wgc.dll", bundle, "av_wgc.dll") != 0 ||
+        snprintf(agent, capacity, "%s/waddle-guest-av.exe", bundle) >= (int)capacity)
+        goto fail;
+    char *arguments[] = {"waddle", "exec", "--device", (char *)device->name,
+        "--translate-path", "--cwd", "C:\\Windows", "--", agent, "--setup", drivers, NULL};
+    int result = cmd_exec(11, arguments, 2);
+    av_deploy_context_t deployment = {device, config, agent};
+    result = av_deploy_finish(result, av_deploy_restart, av_deploy_guest_probe,
+                              av_deploy_host_probe, &deployment);
+    if (result == 0 && av_publish_bundle(directory, strrchr(bundle, '/') + 1) != 0) return 1;
+    return result;
+fail:
+    fprintf(stderr, "waddle av: bundled AV agent, native WinRT DLL or signed driver package is missing: %s\n", strerror(errno));
+    return 1;
+}
+static int av_device_command(av_command_t command, device_info_t device) {
+    daemon_config_t config;
+    daemon_config_init_defaults(&config);
+    if (daemon_config_load_file(&config, device.config_path) != 0) return 1;
+    char state[WaddleMaxPathLen], agent[PATH_MAX];
+    if (daemon_device_get_state_dir(device.name, state, sizeof(state)) != 0)
+        return 1;
+    if (command.kind == AvSetup) {
+        if (command.gpu_bdf[0] || command.gpu_mdev_uuid[0]) {
+            char helper[PATH_MAX];
+            if (av_bundle_path("waddle-av-setup", helper, sizeof(helper)) != 0) return 1;
+            if (command.gpu_bdf[0]) {
+                char *arguments[] = {helper, "--probe-gpu", command.gpu_bdf, NULL};
+                if (av_run_helper(arguments) != 0) return 1;
+            }
+            if (!command.gpu_mdev_uuid[0]) {
+                fputs("waddle av: slicing requires an existing --gpu-mdev UUID; physical GPU remains attached\n", stderr);
+                return 1;
+            }
+            char *arguments[] = {helper, "--probe-mdev", command.gpu_mdev_uuid,
+                                  command.gpu_bdf[0] ? command.gpu_bdf : NULL, NULL};
+            if (av_run_helper(arguments) != 0) return 1;
+        }
+        if (access("/dev/kvm", R_OK | W_OK) != 0 || access("/dev/vhost-vsock", R_OK | W_OK) != 0) {
+            char helper[PATH_MAX];
+            if (av_bundle_path("waddle-av-setup", helper, sizeof(helper)) != 0) return 1;
+            char *arguments[] = {"sudo", "--", helper, "--prepare-host", NULL};
+            int result = av_run_helper(arguments);
+            if (result != 0 || access("/dev/kvm", R_OK | W_OK) != 0 ||
+                access("/dev/vhost-vsock", R_OK | W_OK) != 0) return 1;
+        }
+        char memory[WaddleMaxPathLen], setting[WaddleMaxPathLen + 16], gpu[32], mdev[64];
+        if (command.kvmfr) {
+            char helper[PATH_MAX];
+            if (av_bundle_path("waddle-av-setup", helper, sizeof(helper)) != 0) return 1;
+            char *arguments[] = {"sudo", "--", helper, "--load-module", NULL};
+            int result = av_run_helper(arguments);
+            if (result != 0) return result;
+            strcpy(memory, "/dev/kvmfr0");
+        } else if (snprintf(memory, sizeof(memory), "%s/av_shm", state) >= (int)sizeof(memory))
+            return 1;
+        snprintf(setting, sizeof(setting), "shm_path=%s", memory);
+        snprintf(gpu, sizeof(gpu), "gpu_bdf=%s", command.gpu_bdf);
+        snprintf(mdev, sizeof(mdev), "gpu_mdev_uuid=%s", command.gpu_mdev_uuid);
+        const char *changes[] = {"enabled=1", setting, gpu, mdev, command.uefi ? "uefi=1" : "uefi=0"};
+        if (!(config.av_enabled && !strcmp(config.av_shm_path, memory) &&
+              !strcmp(config.av_gpu_bdf, command.gpu_bdf) &&
+              !strcmp(config.av_gpu_mdev_uuid, command.gpu_mdev_uuid) && config.av_uefi == command.uefi) &&
+            daemon_device_config_update(device.name, changes, 5, 0, 0) != 0) {
+            fprintf(stderr, "waddle av: configuring AV requires a stopped device: %s\n", strerror(errno));
+            return 1;
+        }
+        if (command.firmware_vars[0]) {
+            int lease = -1;
+            if (daemon_device_lock_quiescent(&device, &lease) != 0) {
+                fputs("waddle av: firmware import requires a stopped device without runtime owners\n", stderr);
+                return 1;
+            }
+            char destination[PATH_MAX], directory[PATH_MAX];
+            if (snprintf(destination, sizeof(destination), "%s.av_uefi.fd", config.disk_image) >= (int)sizeof(destination)) {
+                close(lease); return 1;
+            }
+            snprintf(directory, sizeof(directory), "%s", destination);
+            char *slash = strrchr(directory, '/');
+            if (!slash) { close(lease); return 1; }
+            *slash = '\0';
+            int result = av_stage_file(command.firmware_vars, directory, slash + 1);
+            close(lease);
+            if (result != 0) return 1;
+        }
+        /* Reload committed AV settings; the pre-setup snapshot may be disabled
+         * or refer to a different mapping. Publication requires both probes. */
+        if (daemon_config_load_file(&config, device.config_path) != 0) return 1;
+        return av_deploy(&device, &config, agent, sizeof(agent));
+    }
+    if (!config.av_enabled || av_current_bundle(state, agent, sizeof(agent)) != 0 || access(agent, R_OK) != 0) {
+        fputs("waddle av: run av setup for this device first\n", stderr);
+        return 1;
+    }
+    if (command.kind == AvProbe) {
+        char *arguments[] = {"waddle", "exec", "--device", device.name, "--translate-path",
+            "--cwd", "C:\\Windows", "--", agent, "--probe", NULL};
+        int result = cmd_exec(10, arguments, 2);
+        if (result) return result;
+        return av_host_probe(&config);
+    }
+    char process_id[16], host_path[PATH_MAX], cid[16];
+    snprintf(process_id, sizeof(process_id), "%u", command.process_id);
+    snprintf(cid, sizeof(cid), "%u", config.vsock_cid);
+    if (av_bundle_path("waddle-av-host", host_path, sizeof(host_path)) != 0 || access(host_path, X_OK) != 0)
+        return 1;
+    int output[2];
+    if (pipe2(output, O_CLOEXEC) != 0) return 1;
+    struct sigaction handler = {.sa_handler = av_session_signal}, old_interrupt, old_terminate;
+    sigemptyset(&handler.sa_mask);
+    if (sigaction(SIGINT, &handler, &old_interrupt) != 0) {
+        close(output[0]); close(output[1]); return 1;
+    }
+    if (sigaction(SIGTERM, &handler, &old_terminate) != 0) {
+        sigaction(SIGINT, &old_interrupt, NULL);
+        close(output[0]); close(output[1]); return 1;
+    }
+    av_interrupted = 0;
+    av_session_active = 1;
+    pid_t guest = fork();
+    if (guest < 0) {
+        av_session_active = 0;
+        sigaction(SIGINT, &old_interrupt, NULL); sigaction(SIGTERM, &old_terminate, NULL);
+        close(output[0]); close(output[1]); return 1;
+    }
+    if (!guest) {
+        signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL);
+        close(output[0]);
+        if (dup2(output[1], STDOUT_FILENO) < 0) _exit(1);
+        close(output[1]);
+        char *arguments[] = {"waddle", "exec", "--device", device.name, "--translate-path",
+            "--cwd", "C:\\Windows", "--", agent, process_id, NULL};
+        _exit(cmd_exec(10, arguments, 2));
+    }
+    close(output[1]);
+    char pending[256] = {0};
+    size_t length = 0;
+    int ready = 0;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    int64_t deadline = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 + 90000;
+    while (!ready && !av_interrupted) {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        int64_t remaining = deadline - ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
+        if (remaining <= 0) break;
+        struct pollfd descriptor = {output[0], POLLIN, 0};
+        int available = poll(&descriptor, 1, (int)remaining);
+        if (available < 0 && errno == EINTR) continue;
+        if (available <= 0) break;
+        char byte;
+        ssize_t count = read(output[0], &byte, 1);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        if (byte == '\n') {
+            pending[length] = '\0';
+            ready = !strcmp(pending, "AV guest: ready") || !strcmp(pending, "AV guest: ready\r");
+            length = 0;
+        } else if (length + 1 < sizeof(pending)) pending[length++] = byte;
+        else break;
+    }
+    int result = 1;
+    if (ready && !av_interrupted) {
+        char *normal_arguments[] = {host_path, cid, config.av_shm_path, NULL};
+        char *latency_arguments[] = {host_path, "--latency", cid, config.av_shm_path, NULL};
+        result = av_run_helper(command.latency ? latency_arguments : normal_arguments);
+    } else fputs("waddle av: guest did not announce listener readiness before deadline\n", stderr);
+    close(output[0]);
+    /* The child owns only this execution session. Its cancellation closes the
+     * bridge job and agent; the user-selected game process is not owned here. */
+    if (kill(guest, SIGTERM) != 0 && errno != ESRCH) result = 1;
+    int status = 0;
+    for (unsigned attempt = 0; attempt < 50; ++attempt) {
+        pid_t waited = waitpid(guest, &status, WNOHANG);
+        if (waited == guest) goto complete;
+        if (waited < 0 && errno != EINTR) { result = 1; goto complete; }
+        struct timespec pause = {0, 20000000};
+        nanosleep(&pause, NULL);
+    }
+    kill(guest, SIGKILL);
+    av_child_wait(guest);
+complete:
+    av_session_active = 0;
+    if (av_interrupted) result = 128 + av_interrupted;
+    sigaction(SIGINT, &old_interrupt, NULL);
+    sigaction(SIGTERM, &old_terminate, NULL);
+    return result;
+}
+
+static int cmd_av(int argc, char **argv) {
+    av_command_t command;
+    int parsed = waddle_av_parse((size_t)(argc - 2), (const char *const *)(argv + 2), &command);
+    if (parsed != 0) {
+        FILE *stream = parsed == 1 ? stdout : stderr;
+        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi | --firmware-vars PATH] [--gpu PCI_BDF] [--gpu-mdev UUID]\n"
+              "waddle av probe [--device NAME]\n"
+              "waddle av run PROCESS_ID [--device NAME] [--latency]\n", stream);
+        return parsed == 1 ? 0 : 2;
+    }
+    device_info_t device;
+    char socket_path[WaddleMaxPathLen];
+    if (resolve_target_device(command.device[0] ? command.device : NULL, &device,
+                              socket_path, sizeof(socket_path), 1) != 0)
+        return 2;
+    char state[WaddleMaxPathLen], directory[PATH_MAX], path[PATH_MAX];
+    if (daemon_device_get_state_dir(device.name, state, sizeof(state)) != 0 ||
+        snprintf(directory, sizeof(directory), "%s/av", state) >= (int)sizeof(directory) ||
+        av_private_directory(directory) != 0 ||
+        snprintf(path, sizeof(path), "%s/command.lock", directory) >= (int)sizeof(path)) return 1;
+    int lease = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (lease < 0) return 1;
+    struct stat status;
+    if (fstat(lease, &status) != 0 || !S_ISREG(status.st_mode) || status.st_uid != geteuid() ||
+        (status.st_mode & 0077) || flock(lease, LOCK_EX | LOCK_NB) != 0) {
+        close(lease);
+        fputs("waddle av: device already has an AV command owner or an invalid lease file\n", stderr);
+        return 1;
+    }
+    int result = av_device_command(command, device);
+    close(lease);
+    return result;
+}

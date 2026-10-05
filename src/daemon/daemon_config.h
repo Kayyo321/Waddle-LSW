@@ -73,6 +73,18 @@ typedef struct daemon_config_t {
     uint32_t reserved;
     /** @brief Array of VirtIO-FS directory export mappings. */
     waddle_daemon_fs_mount_t mounts[WaddleMaxMounts];
+    /** @brief AV devices enabled (0/1); default disabled preserves CLI-only VMs. */
+    uint32_t av_enabled;
+    /** @brief Use managed persistent OVMF firmware (0/1); default retains BIOS boot. */
+    uint32_t av_uefi;
+    /** @brief Absolute private AV shared-memory/KVMFR path, no comma/newline. */
+    char av_shm_path[WaddleMaxPathLen];
+    /** @brief Optional mdev parent PCI address; never passed through as a physical GPU. */
+    char av_gpu_bdf[16];
+    /** @brief Owned NUL-terminated lowercase UUID[36] of administrator-created mdev.
+     * Empty means no GPU slice; lifetime is this config; no pointer transfer.
+     * Callers synchronize writes, validation is read-only and allocation-free. */
+    char av_gpu_mdev_uuid[37];
 } daemon_config_t;
 
 /**
@@ -141,7 +153,7 @@ int daemon_config_validate(const daemon_config_t *config);
  * @param[in] length Input byte count; embedded NUL is rejected.
  * @param[in] changes Non-null borrowed array of non-null NUL-terminated keys
  * (reset) or key=value assignments (set); unknown/duplicate keys are rejected.
- * @param[in] count Number of changes, 1 through 6.
+ * @param[in] count Number of changes, 1 through 10.
  * @param[in] reset Nonzero selects documented default values.
  * @param[out] output Non-null caller-owned buffer; must not alias data.
  * @param[in] capacity Output capacity; complete output is limited to 65536 bytes.

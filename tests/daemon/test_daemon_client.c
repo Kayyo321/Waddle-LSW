@@ -105,6 +105,17 @@ static void test_client_with_server(void) {
     memset(&stop_resp, 0, sizeof(stop_resp));
     assert(waddle_client_stop(client_fd, 0, 5, &stop_resp) == 0);
     assert(stop_resp.status_code == 0);
+    assert(waddle_client_stop(client_fd, WaddleStopGracefulOnly, 5, &stop_resp) == 0);
+    assert(stop_resp.status_code == 0);
+    /* The additive request requires the complete fixed stop payload. */
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgStopGracefulReq, 999, NULL, 0) == 0);
+    waddle_daemon_header_t invalid_header;
+    assert(waddle_daemon_recv_msg(client_fd, &invalid_header, &stop_resp, sizeof(stop_resp), 5000) == 0);
+    assert(invalid_header.msg_type == DaemonMsgStopResp && stop_resp.status_code == EINVAL);
+    waddle_daemon_stop_req_t malformed = {.force = 1, .timeout_sec = 5};
+    assert(waddle_daemon_send_msg(client_fd, DaemonMsgStopGracefulReq, 1000, &malformed, sizeof(malformed)) == 0);
+    assert(waddle_daemon_recv_msg(client_fd, &invalid_header, &stop_resp, sizeof(stop_resp), 5000) == 0);
+    assert(stop_resp.status_code == EINVAL);
 
     /* Kill command */
     waddle_daemon_result_resp_t kill_resp;

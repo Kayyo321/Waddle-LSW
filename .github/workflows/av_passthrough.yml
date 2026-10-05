@@ -1,0 +1,110 @@
+name: Native AV verification
+on:
+  push:
+    branches: [feature/high-perf-av-passthrough]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  transport:
+    needs: windows
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:trixie-slim
+      options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+    steps:
+      - name: Install base build and platform development packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential pkg-config libwayland-dev wayland-protocols libpipewire-0.3-dev clang-19 llvm-19 kcov python3 ovmf 7zip
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Check out pinned driver ABI dependency
+        run: git submodule update --init --depth 1 submodules/looking_glass
+      - name: Install verified Zig
+        run: |
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
+      - name: Test allocation-free transport and setup under sanitizers
+        run: make av-sanitizers
+      - name: Gate AV protocol and memory line/branch coverage
+        run: make av-coverage
+      - name: Build and link Linux platform clients and Windows guest
+        run: make av build/av_windows_test.exe
+      - name: Receive the matching native SDK-built guest bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-av-agent
+          path: build
+      - name: Assemble and verify the complete distributable bundle
+        run: |
+          make av-distribution
+          python3 tests/av/package.py
+          mkdir -p "$RUNNER_TEMP/av_bundle"
+          tar -xzf build/waddle_av.tar.gz -C "$RUNNER_TEMP/av_bundle"
+          cd "$RUNNER_TEMP/av_bundle/waddle_av"
+          sha256sum --check sha256sums.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: waddle-av-complete
+          path: build/waddle_av.tar.gz
+          if-no-files-found: error
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Check out pinned driver ABI dependency
+        run: git submodule update --init --depth 1 submodules/looking_glass
+      - name: Install verified Zig
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip -OutFile "$env:RUNNER_TEMP/zig.zip"
+          if ((Get-FileHash "$env:RUNNER_TEMP/zig.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd859994725ef9402381e557c60bb57497215682e355204d754ee3df75ee3c158') { throw 'Zig checksum mismatch' }
+          Expand-Archive "$env:RUNNER_TEMP/zig.zip" "$env:RUNNER_TEMP/zig"
+          "$env:RUNNER_TEMP/zig/zig-windows-x86_64-0.13.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Build WinRT compatibility DLL with system SDK
+        shell: cmd
+        run: scripts\build_wgc.cmd
+      - name: Build native C guest and lifecycle fixture
+        shell: pwsh
+        run: |
+          zig build-lib src/av/av_audio.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_audio_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/av/av_codec.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_codec_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/av/av_layout.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_layout_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $flags = @('-target','x86_64-windows-gnu','-U_WIN32_WINNT','-D_WIN32_WINNT=0x0A00','-DNTDDI_VERSION=0x0A000006','-std=c11','-Wall','-Wextra','-Wpedantic','-Werror','-Iinclude','-Isrc/av','-Isubmodules/looking_glass/vendor/ivshmem')
+          $sources = @('src/av/av_deploy.c','src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
+          $libraries = @('build/av_audio_windows.lib','build/av_codec_windows.lib','build/av_layout_windows.lib','-luser32','-ldwmapi','-ld3d11','-ldxgi','-lmmdevapi','-lavrt','-lole32','-luuid','-lsetupapi')
+          zig cc @flags tests/av/windows.c @sources @libraries -lgdi32 -lwinmm -o build/av_windows_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc @flags src/av/av_guest.c src/av/av_peer.c @sources @libraries -lws2_32 -o build/waddle-guest-av.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run native window lifecycle and allocator tests
+        shell: pwsh
+        run: |
+          ./build/av_windows_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/av/av_audio.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/av/av_codec.zig -Iinclude
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/av/av_layout.zig -lc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-av-agent
+          path: |
+            build/waddle-guest-av.exe
+            build/av_wgc.dll
+            build/av_windows_test.exe

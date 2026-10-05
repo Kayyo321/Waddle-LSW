@@ -110,7 +110,7 @@ int waddle_client_start(int fd,
  * @brief Sends a Stop request to the daemon and receives the result.
  *
  * @param[in]  fd          Connected daemon client socket descriptor.
- * @param[in]  force       1 for immediate SIGKILL termination, 0 for graceful ACPI shutdown.
+ * @param[in]  force       1 immediate SIGKILL, 0 ACPI with fallback, WaddleStopGracefulOnly ACPI without fallback.
  * @param[in]  timeout_sec Timeout in seconds before force kill fallback (0 for default).
  * @param[out] resp        Destination pointer for result response.
  * @return 0 on communication success, or -1 on socket or protocol failure (errno set).
@@ -198,9 +198,12 @@ int waddle_client_cmd_start(const char *socket_path, int wait_guest, uint32_t ti
  * @brief High-level CLI command implementation for `waddle stop` / `waddle --stop`.
  *
  * @param[in] socket_path Custom socket path, or NULL to use default.
- * @param[in] force       1 for immediate force kill, 0 for graceful ACPI shutdown.
+ * @param[in] force       1 force kill, 0 ACPI with fallback, WaddleStopGracefulOnly preserves VM on timeout.
  * @param[in] timeout_sec Timeout in seconds before force kill fallback.
- * @return 0 on successful stop, or non-zero POSIX exit code on error.
+ * @return 0 stopped, nonzero on communication/stop/supervisor failure; graceful-only
+ * timeout leaves the VM and its resources active and never proceeds to restart.
+ * @note Borrowed path, no retained data; caller thread owns/reaps any spawned
+ * supervisor through the existing lifecycle. Calls are serialized by the caller.
  */
 int waddle_client_cmd_stop(const char *socket_path, int force, uint32_t timeout_sec);
 
@@ -208,9 +211,11 @@ int waddle_client_cmd_stop(const char *socket_path, int force, uint32_t timeout_
  * @brief High-level CLI command implementation for `waddle restart` / `waddle --restart`.
  *
  * @param[in] socket_path Custom socket path, or NULL to use default.
- * @param[in] force       1 for immediate force kill during stop phase, 0 for graceful.
+ * @param[in] force       1 force kill, 0 ACPI with fallback, WaddleStopGracefulOnly preserves VM on timeout.
  * @param[in] timeout_sec Timeout in seconds.
- * @return 0 on successful restart, or non-zero POSIX exit code on error.
+ * @return 0 restarted and guest ready, nonzero on stop/start/readiness failure.
+ * @note Borrowed path, no retained data. Caller thread serializes lifecycle calls;
+ * graceful-only stop failure does not start another VM or free live resources.
  */
 int waddle_client_cmd_restart(const char *socket_path, int force, uint32_t timeout_sec);
 

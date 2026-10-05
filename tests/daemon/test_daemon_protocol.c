@@ -89,6 +89,7 @@ static void test_string_conversions(void) {
     assert(strcmp(waddle_daemon_msg_type_to_string(DaemonMsgStartReq), "start_req") == 0);
     assert(strcmp(waddle_daemon_msg_type_to_string(DaemonMsgStartResp), "start_resp") == 0);
     assert(strcmp(waddle_daemon_msg_type_to_string(DaemonMsgStopReq), "stop_req") == 0);
+    assert(strcmp(waddle_daemon_msg_type_to_string(DaemonMsgStopGracefulReq), "stop_graceful_req") == 0);
     assert(strcmp(waddle_daemon_msg_type_to_string(DaemonMsgStopResp), "stop_resp") == 0);
     assert(strcmp(waddle_daemon_msg_type_to_string(DaemonMsgStatusReq), "status_req") == 0);
     assert(strcmp(waddle_daemon_msg_type_to_string(DaemonMsgStatusResp), "status_resp") == 0);

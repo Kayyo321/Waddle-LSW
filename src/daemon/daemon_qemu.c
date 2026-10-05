@@ -4,6 +4,7 @@
  */
 
 #include "daemon_qemu.h"
+#include "../av/av_layout.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -153,9 +154,68 @@ int qemu_build_args(const daemon_config_t *config,
 
     /* Base disk image */
     char drive_buf[WaddleMaxPathLen + 64];
-    snprintf(drive_buf, sizeof(drive_buf), "file=%s,if=virtio,cache=writeback", config->disk_image);
+    snprintf(drive_buf, sizeof(drive_buf), "file=%s,if=%s,cache=writeback", config->disk_image,
+             config->av_enabled && config->av_uefi ? "ide" : "virtio");
     if (append_arg(argv, &argc, max_args, "-drive") != 0 ||
         append_arg(argv, &argc, max_args, drive_buf) != 0) goto fail;
+
+    if (config->av_enabled && config->av_uefi) {
+        char firmware_vars[WaddleMaxPathLen + 64];
+        int length = snprintf(firmware_vars, sizeof(firmware_vars),
+            "if=pflash,format=raw,file=%s.av_uefi.fd", config->disk_image);
+        if (length <= 0 || (size_t)length >= sizeof(firmware_vars) ||
+            append_arg(argv, &argc, max_args, "-machine") != 0 ||
+            append_arg(argv, &argc, max_args, "q35") != 0 ||
+            append_arg(argv, &argc, max_args, "-boot") != 0 ||
+            append_arg(argv, &argc, max_args, "order=c,strict=on") != 0 ||
+            append_arg(argv, &argc, max_args, "-drive") != 0 ||
+            append_arg(argv, &argc, max_args, "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd") != 0 ||
+            append_arg(argv, &argc, max_args, "-drive") != 0 ||
+            append_arg(argv, &argc, max_args, firmware_vars) != 0)
+            goto fail;
+    }
+
+    /* AV devices are managed with the existing VM; no external AV VM assumed. */
+    if (config->av_enabled) {
+        if (daemon_config_validate(config) != 0) { errno = EINVAL; goto fail; }
+        char av_backend[WaddleMaxPathLen + 128];
+        int length = snprintf(av_backend, sizeof(av_backend),
+            "memory-backend-file,id=waddle_av,size=%llu,mem-path=%s,share=on",
+            (unsigned long long)AvMappingBytes, config->av_shm_path);
+        if (length < 0 || (size_t)length >= sizeof(av_backend)) { errno = E2BIG; goto fail; }
+        if (append_arg(argv, &argc, max_args, "-object") != 0 ||
+            append_arg(argv, &argc, max_args, av_backend) != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args, "ivshmem-plain,memdev=waddle_av") != 0 ||
+            append_arg(argv, &argc, max_args, "-audiodev") != 0 ||
+            append_arg(argv, &argc, max_args, "none,id=waddle_silent") != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args, "ich9-intel-hda") != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args, "hda-duplex,audiodev=waddle_silent") != 0) goto fail;
+        /* A parent address is a capability constraint, never physical assignment. */
+        if (config->av_gpu_bdf[0] && !config->av_gpu_mdev_uuid[0]) {
+            errno = EINVAL; goto fail;
+        }
+        if (config->av_gpu_mdev_uuid[0]) {
+            char gpu_device[128];
+            int gpu_length = snprintf(gpu_device, sizeof(gpu_device),
+                "vfio-pci,sysfsdev=/sys/bus/mdev/devices/%s,display=off",
+                config->av_gpu_mdev_uuid);
+            if (gpu_length < 0 || (size_t)gpu_length >= sizeof(gpu_device)) {
+                errno = E2BIG; goto fail;
+            }
+            if (append_arg(argv, &argc, max_args, "-device") != 0 ||
+                append_arg(argv, &argc, max_args, gpu_device) != 0) goto fail;
+        }
+        /* Keep a boot display until the signed guest VDD is configured. EDID
+         * advertises a mode but does not certify 144-Hz composition/capture. */
+        if (append_arg(argv, &argc, max_args, "-vga") != 0 ||
+            append_arg(argv, &argc, max_args, "none") != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args,
+                       "VGA,refresh_rate=144,xres=1920,yres=1080,vgamem_mb=64") != 0) goto fail;
+    }
 
     /* Headless display */
     if (append_arg(argv, &argc, max_args, "-display") != 0 ||

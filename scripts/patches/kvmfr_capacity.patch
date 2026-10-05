@@ -1,0 +1,46 @@
+--- a/kvmfr.c
++++ b/kvmfr.c
+@@ -288,6 +288,12 @@
+     case KVMFR_DMABUF_GETSIZE:
+       ret = kdev->size;
+       break;
++
++    case _IOR('u', 0x45, __u64):
++    {
++      __u64 size = kdev->size;
++      return copy_to_user((void __user *)arg, &size, sizeof(size)) ? -EFAULT : 0;
++    }
+ 
+     default:
+       return -ENOTTY;
+@@ -361,11 +367,21 @@
+   }
+ }
+ 
++static loff_t device_llseek(struct file *filp, loff_t offset, int whence)
++{
++  struct kvmfr_dev *kdev;
++  kdev = (struct kvmfr_dev *)idr_find(&kvmfr_idr, iminor(filp->f_inode));
++  if (!kdev)
++    return -EINVAL;
++  return fixed_size_llseek(filp, offset, whence, kdev->size);
++}
++
+ static struct file_operations fops =
+ {
+   .owner          = THIS_MODULE,
+   .unlocked_ioctl = device_ioctl,
+   .mmap           = device_mmap,
++  .llseek         = device_llseek,
+ };
+ 
+ static int kvmfr_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
+@@ -508,7 +524,7 @@
+   if (!kdev)
+     return -ENOMEM;
+ 
+-  kdev->size = size_mb * 1024 * 1024;
++  kdev->size = (unsigned long)size_mb * 1024UL * 1024UL;
+   kdev->type = KVMFR_TYPE_STATIC;
+   kdev->addr = vmalloc_user(kdev->size);
+   if (!kdev->addr)

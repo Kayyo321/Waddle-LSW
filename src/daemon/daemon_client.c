@@ -266,13 +266,13 @@ int waddle_client_stop(int fd,
 
     waddle_daemon_stop_req_t req;
     memset(&req, 0, sizeof(req));
-    req.force = force;
+    req.force = force == WaddleStopGracefulOnly ? 0 : force;
     req.timeout_sec = timeout_sec;
 
     static uint32_t seq = 1;
     uint32_t current_seq = seq++;
 
-    if (waddle_daemon_send_msg(fd, DaemonMsgStopReq, current_seq, &req, sizeof(req)) != 0) {
+    if (waddle_daemon_send_msg(fd, force == WaddleStopGracefulOnly ? DaemonMsgStopGracefulReq : DaemonMsgStopReq, current_seq, &req, sizeof(req)) != 0) {
         return -1;
     }
 
@@ -519,7 +519,7 @@ int waddle_client_cmd_stop(const char *socket_path, int force, uint32_t timeout_
     }
 
     printf("[waddle] Stopping background subsystem (%s)...\n",
-           force ? "force SIGKILL" : "graceful ACPI");
+           force == WaddleStopGracefulOnly ? "graceful ACPI only" : force ? "force SIGKILL" : "graceful ACPI");
 
     waddle_daemon_result_resp_t resp;
     memset(&resp, 0, sizeof(resp));

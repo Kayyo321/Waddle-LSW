@@ -10,6 +10,7 @@
 #define WADDLE_DAEMON_STATE_H
 
 #include "daemon_config.h"
+#include "../av/av_environment.h"
 #include "daemon_fs.h"
 #include "daemon_qemu.h"
 #include "waddle/daemon_protocol.h"
@@ -32,6 +33,8 @@ typedef struct daemon_state_t {
     qemu_process_t qemu;
     /** @brief VirtIO-FS daemon process manager handle. */
     virtiofs_process_t virtiofs;
+    /** @brief Owned AV mapping, prepared before QEMU and released after stop. */
+    av_environment_t av_environment;
 
     /** @brief Path to isolated runtime directory ($XDG_RUNTIME_DIR/waddle). */
     char runtime_dir[WaddleMaxPathLen];
@@ -103,9 +106,12 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
  * @brief Orchestrates graceful or forceful subsystem shutdown.
  *
  * @param[in,out] s           Daemon supervisor state.
- * @param[in]     force       1 for immediate SIGKILL, 0 for graceful ACPI shutdown.
+ * @param[in]     force       1 immediate SIGKILL, 0 ACPI with fallback, WaddleStopGracefulOnly ACPI without fallback.
  * @param[in]     timeout_sec Timeout in seconds before force kill fallback.
- * @return 0 on success, or -1 on error.
+ * @return 0 stopped, -1 with errno on failure; ETIMEDOUT in graceful-only mode
+ * leaves prior state, children, sockets and mappings intact.
+ * @note Nonnull borrowed supervisor; its startup thread serializes calls. No
+ * ownership transfer. Resources are freed only after successful child teardown.
  */
 int daemon_state_stop_subsystem(daemon_state_t *s, uint32_t force, uint32_t timeout_sec);
 

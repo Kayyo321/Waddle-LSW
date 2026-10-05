@@ -41,6 +41,12 @@ extern "C" {
 /** @brief Default graceful shutdown timeout in seconds before force kill. */
 #define WaddleDefaultStopTimeoutSec UINT32_C(15)
 
+/** @brief Internal stop mode: ACPI only; timeout preserves VM/resources and returns ETIMEDOUT.
+ * Immutable, allocation-free. Serialized as a separate request ID with force=0
+ * so older daemons reject it rather than interpreting it as forced termination.
+ */
+#define WaddleStopGracefulOnly UINT32_C(2)
+
 /** @brief Default guest Context Identifier for VSOCK. */
 #define WaddleDefaultVsockCid UINT32_C(3)
 
@@ -89,6 +95,10 @@ typedef enum waddle_daemon_msg_type_t {
     DaemonMsgShutdownReq      = 0x000D,
     /** @brief Shutdown response using waddle_daemon_result_resp_t before disconnect. */
     DaemonMsgShutdownResp     = 0x000E,
+    /** @brief ACPI-only stop; eight-byte stop payload with force=0, StopResp reply.
+     * Timeout returns ETIMEDOUT without killing children or releasing mappings.
+     */
+    DaemonMsgStopGracefulReq   = 0x000F,
     DaemonMsgErrorResp        = 0x00FF
 } waddle_daemon_msg_type_t;
 
