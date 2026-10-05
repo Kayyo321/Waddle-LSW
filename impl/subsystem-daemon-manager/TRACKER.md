@@ -96,3 +96,7 @@
   - **Task Impact**: 0% progress impact (test tooling enhancement)
   - **Summary**: Added `--do-not-delete` flag and custom `--content` option parsing to `tests/desktop_write_test.sh`.
 
+- **Commit `344050c`**: `refactor(tests): organize test files into categorized subdirectories`
+  - **Task Impact**: 0% progress impact (tree hygiene & organization)
+  - **Summary**: Reorganized `tests/` into `unit/`, `integration/`, `daemon/`, `acceptance/`, and `windows/` subdirectories and updated build recipes and test scripts.
+
