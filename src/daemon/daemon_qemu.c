@@ -168,7 +168,7 @@ int qemu_find_binary(char *out_path, size_t path_cap) {
         }
 
         /* Check relative vendor paths */
-        char candidate[WaddleMaxPathLen];
+        char candidate[WaddleMaxPathLen + 64];
         snprintf(candidate, sizeof(candidate), "%s/vendor/qemu-system-x86_64", exe_dir);
         if (access(candidate, X_OK) == 0) {
             snprintf(out_path, path_cap, "%s", candidate);
@@ -215,7 +215,7 @@ int qemu_find_binary(char *out_path, size_t path_cap) {
         if (path_copy != NULL) {
             char *token = strtok(path_copy, ":");
             while (token != NULL) {
-                char candidate[WaddleMaxPathLen];
+                char candidate[WaddleMaxPathLen + 64];
                 snprintf(candidate, sizeof(candidate), "%s/qemu-system-x86_64", token);
                 if (access(candidate, X_OK) == 0) {
                     snprintf(out_path, path_cap, "%s", candidate);

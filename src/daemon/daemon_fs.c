@@ -74,7 +74,7 @@ int daemon_fs_find_binary(char *out_path, size_t path_cap) {
         }
 
         /* Check relative vendor paths */
-        char candidate[WaddleMaxPathLen];
+        char candidate[WaddleMaxPathLen + 64];
         snprintf(candidate, sizeof(candidate), "%s/vendor/virtiofsd", exe_dir);
         if (access(candidate, X_OK) == 0) {
             snprintf(out_path, path_cap, "%s", candidate);
@@ -123,7 +123,7 @@ int daemon_fs_find_binary(char *out_path, size_t path_cap) {
         if (path_copy != NULL) {
             char *token = strtok(path_copy, ":");
             while (token != NULL) {
-                char candidate[WaddleMaxPathLen];
+                char candidate[WaddleMaxPathLen + 64];
                 snprintf(candidate, sizeof(candidate), "%s/virtiofsd", token);
                 if (access(candidate, X_OK) == 0) {
                     snprintf(out_path, path_cap, "%s", candidate);
