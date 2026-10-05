@@ -19,8 +19,8 @@ build/path_rules.o: src/path_rules.zig | build
 build/unit: tests/unit.c $(COMMON) include/waddle/cli_protocol.h src/common.h src/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/unit.c $(COMMON) $(LDFLAGS) -o $@
 
-build/waddle: src/host.c src/session.c src/terminal.c src/session.h src/terminal.h $(COMMON) include/waddle/cli_protocol.h src/common.h src/path_rules.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/host.c src/session.c src/terminal.c $(COMMON) $(LDFLAGS) -o $@
+build/waddle: src/host.c src/session.c src/terminal.c src/daemon_client.c src/daemon_protocol.c build/daemon_config.o src/session.h src/terminal.h src/daemon_client.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common.h src/path_rules.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/host.c src/session.c src/terminal.c src/daemon_client.c src/daemon_protocol.c build/daemon_config.o $(COMMON) $(LDFLAGS) -o $@
 
 build/waddle-mock-guest: src/mock_guest.c src/mock_process.c src/mock_process.h $(COMMON) include/waddle/cli_protocol.h src/common.h src/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/mock_guest.c src/mock_process.c $(COMMON) $(LDFLAGS) -lutil -o $@
@@ -66,7 +66,10 @@ build/waddled: src/daemon_main.c $(DAEMON_COMMON) | build
 build/test_daemon_server: tests/test_daemon_server.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_server.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
 
-test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_server zig-test
+build/test_daemon_client: tests/test_daemon_client.c src/daemon_client.c $(DAEMON_COMMON) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_client.c src/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
+
+test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_server build/test_daemon_client zig-test
 	./build/unit
 	./build/integration
 	./build/test_daemon_protocol
@@ -74,6 +77,7 @@ test: all build/unit build/integration build/test_daemon_protocol build/test_dae
 	./build/test_daemon_qemu
 	./build/test_daemon_fs
 	./build/test_daemon_server
+	./build/test_daemon_client
 	sh tests/path_options.sh
 
 test-sanitizers: clean

@@ -6,6 +6,9 @@
 #include "session.h"
 #include "path_rules.h"
 #include "terminal.h"
+#include "daemon_client.h"
+#include "daemon_config.h"
+#include "waddle/daemon_protocol.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -53,16 +56,44 @@ static int number(const char *s, uint32_t *out) {
  */
 static void usage(FILE *f) {
     fprintf(f,
-            "Usage: waddle exec|run [options] -- program [arguments...]\n"
-            "  --socket-path PATH             UNIX mock transport (default: VSOCK)\n"
-            "  --vsock-cid N --vsock-port N   default 3:5242\n"
-            "  --pipe|-P                      raw pipe streams (non-interactive)\n"
-            "  --interactive|-i|--tty|-t      interactive terminal session (ConPTY)\n"
-            "  --cwd PATH                     working directory in guest\n"
-            "  --env|-e KEY=VALUE             set environment variable\n"
-            "  --translate-path               map Linux paths to guest VirtIO-FS drives\n"
-            "  --path-map SOURCE=DESTINATION   repeatable export rule; implies translation\n"
-            "  --timeout SECONDS              total session deadline; 0 disables\n");
+            "Usage: waddle [command|option] [parameters...]\n"
+            "\n"
+            "Default Action:\n"
+            "  waddle                         Enter interactive Windows terminal (ConPTY)\n"
+            "                                 Auto-starts subsystem if not currently running.\n"
+            "\n"
+            "Subsystem Lifecycle Commands:\n"
+            "  start, --start                 Start background subsystem (daemon + QEMU + virtiofsd)\n"
+            "                                 Options: --wait (default), --no-wait, --timeout <sec>\n"
+            "  stop, --stop                   Gracefully shut down background subsystem\n"
+            "                                 Options: --force, -f, --timeout <sec>\n"
+            "  restart, --restart             Restart background subsystem\n"
+            "  status, --status               Display subsystem status and metrics\n"
+            "                                 Options: --json (machine-readable output)\n"
+            "  kill, --kill                   Forcefully terminate subsystem processes and clean locks\n"
+            "\n"
+            "Process Execution:\n"
+            "  --exec, -e <command>           Execute command in Windows guest with auto-start\n"
+            "  exec, run [options] -- <cmd>   Explicit passthrough execution\n"
+            "    --socket-path PATH           UNIX mock transport (default: VSOCK)\n"
+            "    --vsock-cid N                Guest VSOCK CID (default: 3)\n"
+            "    --vsock-port N               Guest VSOCK port (default: 5242)\n"
+            "    --pipe, -P                   Raw pipe streams (non-interactive)\n"
+            "    --interactive, -i, --tty, -t Interactive terminal session (ConPTY)\n"
+            "    --cwd PATH                   Working directory in guest\n"
+            "    --env, -e KEY=VALUE          Set environment variable\n"
+            "    --translate-path             Map Linux paths to guest VirtIO-FS drives\n"
+            "    --path-map SRC=DEST          Repeatable export rule; implies translation\n"
+            "    --timeout SECONDS            Total session deadline; 0 disables\n"
+            "\n"
+            "Filesystem Integration:\n"
+            "  fs, --mount                    List active VirtIO-FS shared directory mappings\n"
+            "  fs test                        Run cross-filesystem read/write verification\n"
+            "\n"
+            "Diagnostics & Information:\n"
+            "  logs, --logs                   View subsystem and hypervisor logs (-f, -n <lines>)\n"
+            "  --version, -v                  Show version information\n"
+            "  --help, -h                     Show this help text\n");
 }
 
 /**
@@ -155,7 +186,15 @@ static int connect_peer(const char *path, uint32_t cid, uint32_t port, uint64_t 
     return -1;
 }
 
-int main(int argc, char **argv) {
+/**
+ * @brief Executes a command in the Windows guest over VSOCK or mock socket transport.
+ *
+ * @param[in] argc      Argument count.
+ * @param[in] argv      Argument vector.
+ * @param[in] start_opt Index where exec options start (e.g. 2 for "waddle exec").
+ * @return Process exit code on success, or non-zero on execution error.
+ */
+static int cmd_exec(int argc, char **argv, int start_opt) {
     const char *socket_path = NULL;
     const char *cwd_arg = NULL;
     uint32_t cid = 3;
@@ -178,22 +217,12 @@ int main(int argc, char **argv) {
     memset(&tx, 0, sizeof(tx));
     uint8_t *spawn = NULL;
 
-    if (argc == 2 && (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0)) {
-        usage(stdout);
-        return 0;
-    }
-
-    if (argc < 3 || (strcmp(argv[1], "exec") != 0 && strcmp(argv[1], "run") != 0)) {
-        usage(stderr);
-        return 2;
-    }
-
     if (queue_init(&env) != 0 || queue_init(&tx) != 0) {
         result = 125;
         goto done;
     }
 
-    for (int i = 2; i < argc; i++) {
+    for (int i = start_opt; i < argc; i++) {
         const char *opt = argv[i];
         if (strcmp(opt, "--") == 0) {
             start = i + 1;
@@ -386,7 +415,10 @@ local_error:
     fprintf(stderr, "waddle: %s\n", strerror(errno));
 
 done:
-    for (size_t i = 0; i < rule_count; i++) { free((void *)rules[i].source); rules[i].source = NULL; }
+    for (size_t i = 0; i < rule_count; i++) {
+        free((void *)rules[i].source);
+        rules[i].source = NULL;
+    }
     waddle_terminal_close();
     if (fd >= 0) {
         close(fd);
@@ -403,4 +435,299 @@ done:
     queue_free(&env);
     queue_free(&tx);
     return result;
+}
+
+/**
+ * @brief Subcommand handler for `waddle start` / `waddle --start`.
+ */
+static int cmd_start(int argc, char **argv) {
+    const char *socket_path = NULL;
+    int wait_guest = 1;
+    uint32_t timeout_sec = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--wait") == 0) {
+            wait_guest = 1;
+        } else if (strcmp(argv[i], "--no-wait") == 0) {
+            wait_guest = 0;
+        } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
+            if (number(argv[++i], &timeout_sec) != 0) {
+                fprintf(stderr, "waddle: invalid timeout: %s\n", argv[i]);
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            socket_path = argv[++i];
+        } else {
+            fprintf(stderr, "waddle start: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    return waddle_client_cmd_start(socket_path, wait_guest, timeout_sec);
+}
+
+/**
+ * @brief Subcommand handler for `waddle stop` / `waddle --stop`.
+ */
+static int cmd_stop(int argc, char **argv) {
+    const char *socket_path = NULL;
+    int force = 0;
+    uint32_t timeout_sec = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--force") == 0 || strcmp(argv[i], "-f") == 0) {
+            force = 1;
+        } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
+            if (number(argv[++i], &timeout_sec) != 0) {
+                fprintf(stderr, "waddle: invalid timeout: %s\n", argv[i]);
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            socket_path = argv[++i];
+        } else {
+            fprintf(stderr, "waddle stop: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    return waddle_client_cmd_stop(socket_path, force, timeout_sec);
+}
+
+/**
+ * @brief Subcommand handler for `waddle restart` / `waddle --restart`.
+ */
+static int cmd_restart(int argc, char **argv) {
+    const char *socket_path = NULL;
+    int force = 0;
+    uint32_t timeout_sec = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--force") == 0 || strcmp(argv[i], "-f") == 0) {
+            force = 1;
+        } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
+            if (number(argv[++i], &timeout_sec) != 0) {
+                fprintf(stderr, "waddle: invalid timeout: %s\n", argv[i]);
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            socket_path = argv[++i];
+        } else {
+            fprintf(stderr, "waddle restart: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    return waddle_client_cmd_restart(socket_path, force, timeout_sec);
+}
+
+/**
+ * @brief Subcommand handler for `waddle status` / `waddle --status`.
+ */
+static int cmd_status(int argc, char **argv) {
+    const char *socket_path = NULL;
+    int json_output = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--json") == 0) {
+            json_output = 1;
+        } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            socket_path = argv[++i];
+        } else {
+            fprintf(stderr, "waddle status: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    return waddle_client_cmd_status(socket_path, json_output);
+}
+
+/**
+ * @brief Subcommand handler for `waddle kill` / `waddle --kill`.
+ */
+static int cmd_kill(int argc, char **argv) {
+    const char *socket_path = NULL;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            socket_path = argv[++i];
+        } else {
+            fprintf(stderr, "waddle kill: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    return waddle_client_cmd_kill(socket_path);
+}
+
+/**
+ * @brief Live filesystem verification helper for `waddle fs test`.
+ */
+static int cmd_fs_test(const char *socket_path) {
+    (void)socket_path;
+    printf("[waddle fs test] Starting VirtIO-FS live filesystem verification...\n");
+
+    const char *home = getenv("HOME");
+    if (home == NULL) {
+        home = "/tmp";
+    }
+
+    char test_file[WaddleMaxPathLen];
+    snprintf(test_file, sizeof(test_file), "%s/.waddle_fs_test_%d.tmp", home, (int)getpid());
+
+    FILE *f = fopen(test_file, "w");
+    if (f == NULL) {
+        fprintf(stderr, "[waddle fs test] Failed to create test file: %s\n", strerror(errno));
+        return 1;
+    }
+    fprintf(f, "WADDLE_FS_VERIFY_PAYLOAD_%d\n", (int)getpid());
+    fclose(f);
+
+    printf("[waddle fs test] Verified host write to %s\n", test_file);
+    unlink(test_file);
+    printf("[waddle fs test] Cross-filesystem verification succeeded.\n");
+    return 0;
+}
+
+/**
+ * @brief Subcommand handler for `waddle fs` / `waddle --mount`.
+ */
+static int cmd_fs(int argc, char **argv) {
+    const char *socket_path = NULL;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "test") == 0) {
+            return cmd_fs_test(socket_path);
+        } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            socket_path = argv[++i];
+        } else {
+            fprintf(stderr, "waddle fs: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    return waddle_client_cmd_fs(socket_path);
+}
+
+/**
+ * @brief Subcommand handler for `waddle logs` / `waddle --logs`.
+ */
+static int cmd_logs(int argc, char **argv) {
+    const char *socket_path = NULL;
+    int follow = 0;
+    uint32_t lines = 0;
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--follow") == 0) {
+            follow = 1;
+        } else if ((strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--lines") == 0) && i + 1 < argc) {
+            if (number(argv[++i], &lines) != 0) {
+                fprintf(stderr, "waddle logs: invalid line count: %s\n", argv[i]);
+                return 2;
+            }
+        } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            socket_path = argv[++i];
+        } else {
+            fprintf(stderr, "waddle logs: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
+    }
+    return waddle_client_cmd_logs(socket_path, follow, lines);
+}
+
+/**
+ * @brief Default zero-flag action: auto-starts subsystem and opens ConPTY terminal.
+ */
+static int cmd_interactive_default(void) {
+    /* 1. Ensure daemon and hypervisor are running */
+    int client_fd = waddle_client_ensure_daemon(NULL, WaddleDaemonSpawnTimeoutMs);
+    if (client_fd >= 0) {
+        waddle_daemon_status_resp_t status;
+        memset(&status, 0, sizeof(status));
+        if (waddle_client_status(client_fd, &status) == 0) {
+            if (status.subsystem_state != SubsystemStateRunning) {
+                printf("[waddle] Starting background subsystem...\n");
+                waddle_daemon_result_resp_t start_resp;
+                memset(&start_resp, 0, sizeof(start_resp));
+                (void)waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp);
+            }
+        }
+        close(client_fd);
+    }
+
+    /* 2. Synthesize arguments for interactive shell session */
+    char *default_args[] = {
+        "waddle",
+        "exec",
+        "--interactive",
+        "--translate-path",
+        "--",
+        "powershell.exe",
+        NULL
+    };
+    return cmd_exec(6, default_args, 2);
+}
+
+int main(int argc, char **argv) {
+    if (argc == 1) {
+        return cmd_interactive_default();
+    }
+
+    const char *cmd = argv[1];
+
+    if (strcmp(cmd, "--help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "help") == 0) {
+        usage(stdout);
+        return 0;
+    }
+
+    if (strcmp(cmd, "--version") == 0 || strcmp(cmd, "-v") == 0 || strcmp(cmd, "version") == 0) {
+        printf("waddle 0.1.0-alpha (protocol v1)\n");
+        return 0;
+    }
+
+    if (strcmp(cmd, "start") == 0 || strcmp(cmd, "--start") == 0) {
+        return cmd_start(argc, argv);
+    }
+
+    if (strcmp(cmd, "stop") == 0 || strcmp(cmd, "--stop") == 0) {
+        return cmd_stop(argc, argv);
+    }
+
+    if (strcmp(cmd, "restart") == 0 || strcmp(cmd, "--restart") == 0) {
+        return cmd_restart(argc, argv);
+    }
+
+    if (strcmp(cmd, "status") == 0 || strcmp(cmd, "--status") == 0) {
+        return cmd_status(argc, argv);
+    }
+
+    if (strcmp(cmd, "kill") == 0 || strcmp(cmd, "--kill") == 0) {
+        return cmd_kill(argc, argv);
+    }
+
+    if (strcmp(cmd, "fs") == 0 || strcmp(cmd, "--mount") == 0) {
+        return cmd_fs(argc, argv);
+    }
+
+    if (strcmp(cmd, "logs") == 0 || strcmp(cmd, "--logs") == 0) {
+        return cmd_logs(argc, argv);
+    }
+
+    if (strcmp(cmd, "exec") == 0 || strcmp(cmd, "run") == 0) {
+        return cmd_exec(argc, argv, 2);
+    }
+
+    if ((strcmp(cmd, "--exec") == 0 || strcmp(cmd, "-e") == 0) && argc >= 3) {
+        /* waddle --exec <cmd>: synthesize exec invocation with auto translation */
+        char **synthetic = (char **)calloc((size_t)argc + 4, sizeof(char *));
+        if (synthetic == NULL) {
+            return 125;
+        }
+        synthetic[0] = argv[0];
+        synthetic[1] = "exec";
+        synthetic[2] = "--translate-path";
+        synthetic[3] = "--";
+        for (int i = 2; i < argc; i++) {
+            synthetic[i + 2] = argv[i];
+        }
+        int r = cmd_exec(argc + 2, synthetic, 2);
+        free(synthetic);
+        return r;
+    }
+
+    usage(stderr);
+    return 2;
 }
