@@ -593,7 +593,21 @@ int waddle_client_cmd_kill(const char *socket_path) {
 
     /* Clean runtime socket and lock files */
     char runtime_dir[WaddleMaxPathLen];
-    if (waddle_client_default_runtime_dir(runtime_dir, sizeof(runtime_dir)) == 0) {
+    int has_runtime_dir = 0;
+    if (socket_path != NULL && socket_path[0] != '\0') {
+        snprintf(runtime_dir, sizeof(runtime_dir), "%.1000s", socket_path);
+        char *slash = strrchr(runtime_dir, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            has_runtime_dir = 1;
+        }
+    }
+    if (!has_runtime_dir) {
+        if (waddle_client_default_runtime_dir(runtime_dir, sizeof(runtime_dir)) == 0) {
+            has_runtime_dir = 1;
+        }
+    }
+    if (has_runtime_dir) {
         char path[WaddleMaxPathLen];
         snprintf(path, sizeof(path), "%.900s/daemon.sock", runtime_dir);
         unlink(path);
@@ -648,15 +662,35 @@ int waddle_client_cmd_fs(const char *socket_path) {
 
 int waddle_client_cmd_logs(const char *socket_path, int follow, uint32_t lines) {
     char log_dir[WaddleMaxPathLen];
-    if (waddle_client_default_log_dir(log_dir, sizeof(log_dir)) != 0) {
-        fprintf(stderr, "waddle: failed to resolve log directory\n");
-        return 1;
+    int found_custom_dir = 0;
+    if (socket_path != NULL && socket_path[0] != '\0') {
+        char runtime_dir[WaddleMaxPathLen];
+        snprintf(runtime_dir, sizeof(runtime_dir), "%.1000s", socket_path);
+        char *slash = strrchr(runtime_dir, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            snprintf(log_dir, sizeof(log_dir), "%.900s/logs", runtime_dir);
+            struct stat st;
+            if (stat(log_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+                found_custom_dir = 1;
+            }
+        }
+    }
+    if (!found_custom_dir) {
+        if (waddle_client_default_log_dir(log_dir, sizeof(log_dir)) != 0) {
+            fprintf(stderr, "waddle: failed to resolve log directory\n");
+            return 1;
+        }
     }
 
     char daemon_log[WaddleMaxPathLen];
     snprintf(daemon_log, sizeof(daemon_log), "%.900s/daemon.log", log_dir);
 
     int log_fd = open(daemon_log, O_RDONLY);
+    if (log_fd < 0) {
+        snprintf(daemon_log, sizeof(daemon_log), "%.900s/qemu.log", log_dir);
+        log_fd = open(daemon_log, O_RDONLY);
+    }
     if (log_fd < 0) {
         /* Try querying daemon directly via IPC */
         int fd = waddle_client_connect(socket_path);

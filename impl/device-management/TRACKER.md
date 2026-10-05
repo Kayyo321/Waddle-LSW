@@ -33,6 +33,6 @@
   - **Task Impact**: +100% to TODO: #2 (+20.0% overall feature completion)
   - **Summary**: Implemented daemon_device.h and daemon_device.c providing device name validation, config/state path resolution, QCOW2 overlay disk creation, dynamic CID allocation, and registry enumeration.
 
-- **Commit `pending`**: `feat(daemon): wire device runtime directory isolation and configuration auto-loading`
+- **Commit `d701801`**: `feat(daemon): wire device runtime directory isolation and configuration auto-loading`
   - **Task Impact**: +50% to TODO: #3, +50% to TODO: #4 (+20.0% overall feature completion)
   - **Summary**: Updated daemon_client.c to extract device runtime paths when spawning waddled, and updated daemon_state.c to dynamically load device-specific INI profiles or auto-load single-device profiles.

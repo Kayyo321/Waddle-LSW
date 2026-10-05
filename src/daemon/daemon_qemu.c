@@ -55,6 +55,41 @@ int qemu_build_args(const daemon_config_t *config,
     /* Binary name */
     if (append_arg(argv, &argc, max_args, "qemu-system-x86_64") != 0) goto fail;
 
+    /* BIOS/firmware directory search */
+    char exe_dir[WaddleMaxPathLen] = {0};
+    ssize_t exelen = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+    if (exelen > 0) {
+        exe_dir[exelen] = '\0';
+        char *slash = strrchr(exe_dir, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+        }
+    }
+
+    char candidate1[WaddleMaxPathLen + 64];
+    char candidate2[WaddleMaxPathLen + 64];
+    snprintf(candidate1, sizeof(candidate1), "%.800s/vendor/pc-bios", exe_dir);
+    snprintf(candidate2, sizeof(candidate2), "%.800s/../submodules/qemu/pc-bios", exe_dir);
+
+    const char *bios_candidates[] = {
+        candidate1,
+        candidate2,
+        "build/vendor/pc-bios",
+        "submodules/qemu/pc-bios",
+        "/usr/share/seabios",
+        "/usr/share/qemu",
+        NULL
+    };
+    for (size_t b = 0; bios_candidates[b] != NULL; b++) {
+        char test_file[WaddleMaxPathLen + 64];
+        snprintf(test_file, sizeof(test_file), "%.900s/bios-256k.bin", bios_candidates[b]);
+        if (access(test_file, R_OK) == 0) {
+            if (append_arg(argv, &argc, max_args, "-L") != 0 ||
+                append_arg(argv, &argc, max_args, bios_candidates[b]) != 0) goto fail;
+            break;
+        }
+    }
+
     /* VM name */
     if (append_arg(argv, &argc, max_args, "-name") != 0 ||
         append_arg(argv, &argc, max_args, "waddle-lsw,debug-threads=on") != 0) goto fail;

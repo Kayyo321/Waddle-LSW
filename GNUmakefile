@@ -41,7 +41,12 @@ build/vendor/virtiofsd: | build/vendor
 	fi
 	@[ -f $@ ] && chmod +x $@ || true
 
-qemu-vendor: build/vendor/qemu-system-x86_64 build/vendor/virtiofsd
+build/vendor/pc-bios: | build/vendor
+	@if [ -d $(QEMU_DIR)/pc-bios ]; then \
+		rm -rf $@ && cp -r $(QEMU_DIR)/pc-bios $@; \
+	fi
+
+qemu-vendor: build/vendor/qemu-system-x86_64 build/vendor/virtiofsd build/vendor/pc-bios
 
 qemu-clean:
 	rm -rf $(QEMU_BUILD_DIR)
