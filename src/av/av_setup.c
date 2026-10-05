@@ -108,17 +108,19 @@ static int prepare_host(void) {
  * root. Does not unload a live module, alter GPUs, enroll keys or reset mapping.
  */
 int main(int argc, char **argv) {
-    if (argc == 3 && !strcmp(argv[1], "--probe-gpu")) {
+    if ((argc == 3 && !strcmp(argv[1], "--probe-gpu")) ||
+        ((argc == 3 || argc == 4) && !strcmp(argv[1], "--probe-mdev"))) {
         char error[512];
-        if (av_gpu_probe("/sys", argv[2], error, sizeof(error)) != 0) {
+        if (av_gpu_mdev_probe("/sys", !strcmp(argv[1], "--probe-gpu") ? argv[2] : (argc == 4 ? argv[3] : ""),
+                              !strcmp(argv[1], "--probe-mdev") ? argv[2] : "", error, sizeof(error)) != 0) {
             fprintf(stderr, "AV capability failure: %s\n", error);
             return 1;
         }
-        puts("AV GPU group eligible: vfio-pci or unbound; no driver changed");
+        puts("AV mdev capability ready; existing host driver preserved");
         return 0;
     }
     if (argc != 2 || !strcmp(argv[1], "--help")) {
-        puts("waddle-av-setup --build-module | --load-module | --prepare-host | --probe-gpu PCI_BDF\n"
+        puts("waddle-av-setup --build-module | --load-module | --prepare-host | --probe-gpu PCI_BDF | --probe-mdev UUID [PCI_BDF]\n"
              "Builds pinned KVMFR against the running kernel; load requires administrator "
              "privileges.");
         return argc == 2 ? 0 : 2;

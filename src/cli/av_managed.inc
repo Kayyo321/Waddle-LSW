@@ -193,6 +193,21 @@ static int av_device_command(av_command_t command, device_info_t device) {
     if (daemon_device_get_state_dir(device.name, state, sizeof(state)) != 0)
         return 1;
     if (command.kind == AvSetup) {
+        if (command.gpu_bdf[0] || command.gpu_mdev_uuid[0]) {
+            char helper[PATH_MAX];
+            if (av_bundle_path("waddle-av-setup", helper, sizeof(helper)) != 0) return 1;
+            if (command.gpu_bdf[0]) {
+                char *arguments[] = {helper, "--probe-gpu", command.gpu_bdf, NULL};
+                if (av_run_helper(arguments) != 0) return 1;
+            }
+            if (!command.gpu_mdev_uuid[0]) {
+                fputs("waddle av: slicing requires an existing --gpu-mdev UUID; physical GPU remains attached\n", stderr);
+                return 1;
+            }
+            char *arguments[] = {helper, "--probe-mdev", command.gpu_mdev_uuid,
+                                  command.gpu_bdf[0] ? command.gpu_bdf : NULL, NULL};
+            if (av_run_helper(arguments) != 0) return 1;
+        }
         if (access("/dev/kvm", R_OK | W_OK) != 0 || access("/dev/vhost-vsock", R_OK | W_OK) != 0) {
             char helper[PATH_MAX];
             if (av_bundle_path("waddle-av-setup", helper, sizeof(helper)) != 0) return 1;
@@ -201,7 +216,7 @@ static int av_device_command(av_command_t command, device_info_t device) {
             if (result != 0 || access("/dev/kvm", R_OK | W_OK) != 0 ||
                 access("/dev/vhost-vsock", R_OK | W_OK) != 0) return 1;
         }
-        char memory[WaddleMaxPathLen], setting[WaddleMaxPathLen + 16], gpu[32];
+        char memory[WaddleMaxPathLen], setting[WaddleMaxPathLen + 16], gpu[32], mdev[64];
         if (command.kvmfr) {
             char helper[PATH_MAX];
             if (av_bundle_path("waddle-av-setup", helper, sizeof(helper)) != 0) return 1;
@@ -213,10 +228,12 @@ static int av_device_command(av_command_t command, device_info_t device) {
             return 1;
         snprintf(setting, sizeof(setting), "shm_path=%s", memory);
         snprintf(gpu, sizeof(gpu), "gpu_bdf=%s", command.gpu_bdf);
-        const char *changes[] = {"enabled=1", setting, gpu, command.uefi ? "uefi=1" : "uefi=0"};
+        snprintf(mdev, sizeof(mdev), "gpu_mdev_uuid=%s", command.gpu_mdev_uuid);
+        const char *changes[] = {"enabled=1", setting, gpu, mdev, command.uefi ? "uefi=1" : "uefi=0"};
         if (!(config.av_enabled && !strcmp(config.av_shm_path, memory) &&
-              !strcmp(config.av_gpu_bdf, command.gpu_bdf) && config.av_uefi == command.uefi) &&
-            daemon_device_config_update(device.name, changes, 4, 0, 0) != 0) {
+              !strcmp(config.av_gpu_bdf, command.gpu_bdf) &&
+              !strcmp(config.av_gpu_mdev_uuid, command.gpu_mdev_uuid) && config.av_uefi == command.uefi) &&
+            daemon_device_config_update(device.name, changes, 5, 0, 0) != 0) {
             fprintf(stderr, "waddle av: configuring AV requires a stopped device: %s\n", strerror(errno));
             return 1;
         }
@@ -346,7 +363,7 @@ static int cmd_av(int argc, char **argv) {
     int parsed = waddle_av_parse((size_t)(argc - 2), (const char *const *)(argv + 2), &command);
     if (parsed != 0) {
         FILE *stream = parsed == 1 ? stdout : stderr;
-        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi | --firmware-vars PATH] [--gpu PCI_BDF]\n"
+        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi | --firmware-vars PATH] [--gpu PCI_BDF] [--gpu-mdev UUID]\n"
               "waddle av probe [--device NAME]\n"
               "waddle av run PROCESS_ID [--device NAME] [--latency]\n", stream);
         return parsed == 1 ? 0 : 2;

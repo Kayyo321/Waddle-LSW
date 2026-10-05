@@ -191,6 +191,25 @@ test "invalid lifecycle and frame fields never alter encoded output" {
     }
 }
 
+/// Validate canonical lowercase sysfs UUID bytes; borrowed slice, no allocation,
+/// output or ownership transfer. Pure and thread-safe; false means invalid syntax.
+fn av_uuid_valid(value: []const u8) bool {
+    if (value.len != 36) return false;
+    for (value, 0..) |byte, index| {
+        if (index == 8 or index == 13 or index == 18 or index == 23) {
+            if (byte != '-') return false;
+        } else if (!std.ascii.isHex(byte) or (byte >= 'A' and byte <= 'F')) return false;
+    }
+    return true;
+}
+
+/// in: nonnull borrowed bytes[length]; returns 0 valid canonical UUID, -1 invalid.
+/// Pure, thread-safe, allocation-free, no output or ownership transfer.
+export fn av_gpu_uuid_validate(bytes: [*]const u8, length: usize) c_int {
+    if (length != 36) return -1;
+    return if (av_uuid_valid(bytes[0..length])) 0 else -1;
+}
+
 /// in: borrowed bytes[length]; returns 0 valid PCI address, -1 invalid. Pure,
 /// thread-safe, allocation-free; no output or ownership transfer.
 export fn av_gpu_bdf_validate(bytes: [*]const u8, length: usize) c_int {
@@ -228,4 +247,16 @@ test "diagnostic tokens have bounded color and occlusion state" {
     message.sequence = 1;
     message.flags = 2;
     try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
+}
+
+test "mdev UUID validation rejects path and spelling ambiguity" {
+    const ValidUuid = "12345678-1234-5678-9abc-123456789abc";
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_gpu_uuid_validate, .{ ValidUuid, ValidUuid.len }));
+    for ([_][]const u8{ "", "../12345678-1234-5678-9abc-123456789abc", "12345678-1234-5678-9abc-123456789abC" }) |value|
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_gpu_uuid_validate, .{ value.ptr, value.len }));
+    for (0..36) |index| {
+        var value = ValidUuid.*;
+        value[index] = 'g';
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_gpu_uuid_validate, .{ &value, value.len }));
+    }
 }

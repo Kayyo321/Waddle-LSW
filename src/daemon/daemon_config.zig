@@ -180,8 +180,22 @@ export fn daemon_config_validate(config: ?*const c.daemon_config_t) c_int {
     const gpu_end = std.mem.indexOfScalar(u8, &cfg.av_gpu_bdf, 0) orelse return -1;
     if (cfg.av_enabled != 0 and !av_path_valid(cfg.av_shm_path[0..av_path_end])) return -1;
     if (!av_gpu_valid(cfg.av_gpu_bdf[0..gpu_end])) return -1;
+    const uuid_end = std.mem.indexOfScalar(u8, &cfg.av_gpu_mdev_uuid, 0) orelse return -1;
+    if (uuid_end != 0 and !av_uuid_valid(cfg.av_gpu_mdev_uuid[0..uuid_end])) return -1;
 
     return 0;
+}
+
+/// Validate canonical lowercase sysfs UUID bytes; borrowed slice, no allocation,
+/// output or ownership transfer. Pure and thread-safe; false means invalid syntax.
+fn av_uuid_valid(value: []const u8) bool {
+    if (value.len != 36) return false;
+    for (value, 0..) |byte, index| {
+        if (index == 8 or index == 13 or index == 18 or index == 23) {
+            if (byte != '-') return false;
+        } else if (!std.ascii.isHex(byte) or (byte >= 'A' and byte <= 'F')) return false;
+    }
+    return true;
 }
 
 fn av_path_valid(path: []const u8) bool {
@@ -304,6 +318,10 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                     if (!av_path_valid(val) or val.len >= cfg.av_shm_path.len) return -1;
                     @memset(&cfg.av_shm_path, 0);
                     copy_to_c_buf(&cfg.av_shm_path, val);
+                } else if (std.mem.eql(u8, key, "gpu_mdev_uuid")) {
+                    if (val.len != 0 and !av_uuid_valid(val)) return -1;
+                    @memset(&cfg.av_gpu_mdev_uuid, 0);
+                    copy_to_c_buf(&cfg.av_gpu_mdev_uuid, val);
                 } else if (std.mem.eql(u8, key, "gpu_bdf")) {
                     if (!av_gpu_valid(val)) return -1;
                     @memset(&cfg.av_gpu_bdf, 0);
@@ -504,7 +522,7 @@ test "daemon_config: full width vsock port and empty export section" {
 
 /// Mutable key schema; immutable storage borrowed by the editor.
 const edit_key_t = struct { name: []const u8, section: []const u8, default: []const u8 };
-/// The ten supported mutable settings and their exact reset representations.
+/// The supported mutable settings and their exact reset representations.
 const EditKeys = [_]edit_key_t{
     .{ .name = "memory_mb", .section = "subsystem", .default = "4096" },
     .{ .name = "vcpus", .section = "subsystem", .default = "4" },
@@ -516,6 +534,7 @@ const EditKeys = [_]edit_key_t{
     .{ .name = "uefi", .section = "av", .default = "0" },
     .{ .name = "shm_path", .section = "av", .default = "/dev/kvmfr0" },
     .{ .name = "gpu_bdf", .section = "av", .default = "" },
+    .{ .name = "gpu_mdev_uuid", .section = "av", .default = "" },
 };
 
 /// Bounded all-or-none validation; output remains caller-owned and is never allocated.
@@ -536,7 +555,7 @@ fn edit_config(data: []const u8, changes: []const []const u8, reset: bool, outpu
         const i = index orelse return error.Invalid;
         if (values[i] != null) return error.Invalid;
         const value = if (reset) EditKeys[i].default else change[eq.? + 1 ..];
-        if ((value.len == 0 and !std.mem.eql(u8, name, "gpu_bdf")) or
+        if ((value.len == 0 and !std.mem.eql(u8, name, "gpu_bdf") and !std.mem.eql(u8, name, "gpu_mdev_uuid")) or
             value.len > (if (std.mem.eql(u8, name, "shm_path")) @as(usize, 1023) else 255) or !std.unicode.utf8ValidateSlice(value) or
             std.mem.indexOfAny(u8, value, "\x00\r\n") != null or
             !std.mem.eql(u8, std.mem.trim(u8, value, " \t"), value)) return error.Invalid;
@@ -662,4 +681,34 @@ test "AV config edits enable only a complete bounded environment" {
     _ = try edit_config(output[0..length], &.{ "enabled", "shm_path", "gpu_bdf" }, true, &reset_output);
     try std.testing.expectError(error.Invalid, edit_config(original, &.{"shm_path=/tmp/x,share=off"}, false, &output));
     try std.testing.expectError(error.Invalid, edit_config(original, &.{"gpu_bdf=0000:00:20.0"}, false, &output));
+}
+
+test "mdev config validates UUID transactionally and requires bounded termination" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    const ini = "[av]\ngpu_mdev_uuid=12345678-1234-5678-9abc-123456789abc\ngpu_bdf=0000:01:00.0\n";
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, ini.ptr, ini.len));
+    const saved = cfg;
+    for ([_][]const u8{ "[av]\ngpu_mdev_uuid=../escape", "[av]\ngpu_mdev_uuid=12345678-1234-5678-9abc-123456789abC", "[av]\ngpu_mdev_uuid=12345678_1234-5678-9abc-123456789abc" }) |bad| {
+        try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, bad.ptr, bad.len));
+        try std.testing.expectEqualSlices(u8, std.mem.asBytes(&saved), std.mem.asBytes(&cfg));
+    }
+    @memset(&cfg.av_gpu_mdev_uuid, 'a');
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_validate(&cfg));
+    const clear = "[av]\ngpu_mdev_uuid=";
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, clear.ptr, clear.len));
+}
+
+test "managed config editor persists and resets slice identity" {
+    var output: [4096]u8 = undefined;
+    const length = try edit_config("[subsystem]\nmemory_mb=4096\n", &.{"gpu_mdev_uuid=12345678-1234-5678-9abc-123456789abc"}, false, &output);
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &output, length));
+    try std.testing.expectEqualStrings("12345678-1234-5678-9abc-123456789abc", std.mem.sliceTo(&cfg.av_gpu_mdev_uuid, 0));
+    var cleared: [4096]u8 = undefined;
+    const clear_length = try edit_config(output[0..length], &.{"gpu_mdev_uuid"}, true, &cleared);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &cleared, clear_length));
+    try std.testing.expectEqual(@as(u8, 0), cfg.av_gpu_mdev_uuid[0]);
+    try std.testing.expectError(error.Invalid, edit_config(output[0..length], &.{"gpu_mdev_uuid=../bad"}, false, &cleared));
 }

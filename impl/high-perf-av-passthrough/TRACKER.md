@@ -50,12 +50,12 @@
 | #10.5 | Complete host-clock latency/fidelity diagnostic framework | Done | 1.6% | 100% | Host RGB24 challenges, bounded Zig center-pixel verification and Wayland processing acknowledgements; 16 visible plus 16 occluded samples. Framework complete per revised request; physical 144-Hz, scanout and audio latency acceptance remain unmeasured. |
 
 | #11.1 | Specify mediated GPU architecture and prerequisites | Done | 4% | 100% | Existing host driver and administrator-owned slice. |
-| #11.2 | Validate UUID configuration, CLI and read-only mdev probing | Pending | 4% | 0% | No kernel or driver modification. |
+| #11.2 | Validate UUID configuration, CLI and read-only mdev probing | Done | 4% | 100% | No kernel or driver modification. |
 | #11.3 | Launch QEMU using mdev sysfsdev with audio and IVSHMEM | Pending | 4% | 0% | Reject physical passthrough fallback. |
 | #11.4 | Remove guest timestamp dependence; warn on display prerequisite | Pending | 4% | 0% | Reuse host-clock RTT framework. |
 | #11.5 | Verify coverage, sanitizers and final distribution | Pending | 4% | 0% | Runtime hardware acceptance remains external. |
 
-**Total Feature Completion**: `84.0%`
+**Total Feature Completion**: `88.0%`
 
 ## Completion scope
 
@@ -466,6 +466,10 @@ gates; this branch is in Review and does not claim those gates passed.
   - **Task Impact**: 0% to #5.4, #7.2, #10.1, #10.3, #10.4 and #10.5; final verification of 100% implementation completion (+0.00% overall).
   - **Summary**: Fresh make av-coverage, av-test, av-sanitizers, av-distribution and repository-wide make test pass. Native Wayland/PipeWire matching-commit acknowledgement and teardown passed under ASan/LSan/UBSan; Linux clients and Windows executables cross-build. Extracted distribution manifest passes every checksum and includes the diagnostic fixture. Reassemble/check the archive after this documentation commit so bundled sources and provenance match HEAD. README is unchanged; no GPU detached, PR opened or merge performed. Remote CI, full guest RTT, native reboot-required install, VDD mode and physical video/audio latency remain unverified.
 
-- **Commit `HEAD`**: `docs(av): specify mediated GPU slicing architecture`
+- **Commit `ccae02c1f50b`**: `docs(av): specify mediated GPU slicing architecture`
   - **Task Impact**: +100% to #11.1 (+4% overall); reweight previous completed work to 80% for the expanded scope.
   - **Summary**: Specify administrator-owned UUID slices, optional parent checks, retained host drivers, no physical passthrough fallback, vendor prerequisites and honest runtime acceptance boundaries.
+
+- **Commit `HEAD`**: `feat(av): validate and probe administrator-owned mdev slices`
+  - **Task Impact**: +100% to #11.2 (+4% overall).
+  - **Summary**: Add transactional UUID config/edit/reset and bounded CLI parsing, early read-only setup probes with optional parent matching, and daemon preparation checks. Synthetic sysfs tests accept an active host driver and reject malformed, missing and wrong-API slices; AV tests and all 12 configuration tests pass. No GPU state is changed.

@@ -13,10 +13,11 @@ typedef struct av_command_t {
     uint32_t kvmfr; /**< Setup requests privileged pinned module provisioning. */
     char device[64]; /**< ASCII registry name, empty selects saved default. */
     char firmware_vars[1024]; /**< Optional existing image firmware metadata to import. */
-    char gpu_bdf[16]; /**< Explicit canonical PCI BDF, empty leaves host GPU untouched. */
+    char gpu_bdf[16]; /**< Optional registered mdev parent, never detached. */
+    char gpu_mdev_uuid[37]; /**< Owned canonical UUID of an existing administrator slice. */
 } av_command_t;
 /** @brief Parse bounded AV command arguments before any side effects.
- * @param[in] count Number of argv strings, 0..10.
+ * @param[in] count Number of argv strings, 0..12.
  * @param[in] arguments Nonnull array of count nonnull NUL-terminated strings.
  * @param[out] command Nonnull caller-owned result; unchanged on invalid input.
  * @return 0 validated, 1 help, -1 invalid UTF-8/grammar/value/count.

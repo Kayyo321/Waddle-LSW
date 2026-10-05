@@ -74,3 +74,94 @@ int av_gpu_probe(const char *sysfs, const char *bdf, char *error, size_t capacit
     if (!result && !found) { errno = ENODEV; result = reject(error, capacity, bdf, "not in IOMMU group"); }
     return result;
 }
+
+/* Read one immutable API attribute; FILE ownership ends here on every path. */
+static int pci_api(const char *type) {
+    char path[PATH_MAX], value[32];
+    if (snprintf(path, sizeof(path), "%s/device_api", type) >= (int)sizeof(path)) {
+        errno = ENAMETOOLONG; return -1;
+    }
+    FILE *file = fopen(path, "r");
+    if (!file) return -1;
+    size_t count = fread(value, 1, sizeof(value) - 1, file);
+    int failed = ferror(file);
+    fclose(file);
+    if (failed) { errno = EIO; return -1; }
+    value[count] = '\0';
+    if (strcmp(value, "vfio-pci\n") && strcmp(value, "vfio-pci")) {
+        errno = ENOTSUP; return -1;
+    }
+    return 0;
+}
+static int supported_parent(const char *sysfs, const char *bdf, const char *type) {
+    char path[PATH_MAX], supported[PATH_MAX], registered[PATH_MAX];
+    if (snprintf(path, sizeof(path), "%s/bus/pci/devices/%s/mdev_supported_types", sysfs, bdf) >= (int)sizeof(path) ||
+        !realpath(path, supported)) return -1;
+    if (snprintf(path, sizeof(path), "%s/class/mdev_bus/%s/mdev_supported_types", sysfs, bdf) >= (int)sizeof(path) ||
+        !realpath(path, registered)) return -1;
+    if (strcmp(supported, registered)) { errno = EINVAL; return -1; }
+    if (type) {
+        size_t length = strlen(supported);
+        if (strncmp(type, supported, length) || type[length] != '/' ||
+            !type[length + 1] || strchr(type + length + 1, '/')) {
+            errno = EINVAL; return -1;
+        }
+        return pci_api(type);
+    }
+    DIR *directory = opendir(supported);
+    if (!directory) return -1;
+    int result = -1;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(directory);
+        if (!entry) break;
+        if (entry->d_name[0] == '.') continue;
+        if (snprintf(path, sizeof(path), "%s/%s", supported, entry->d_name) >= (int)sizeof(path)) continue;
+        if (pci_api(path) == 0) { result = 0; break; }
+    }
+    closedir(directory);
+    if (result) errno = ENOTSUP;
+    return result;
+}
+int av_gpu_mdev_probe(const char *sysfs, const char *bdf, const char *uuid,
+                      char *error, size_t capacity) {
+    if (!capacity) { errno = EINVAL; return -1; }
+    error[0] = '\0';
+    if ((bdf[0] && av_gpu_bdf_validate(bdf, strlen(bdf))) ||
+        (uuid[0] && av_gpu_uuid_validate(uuid, strlen(uuid))) || (!bdf[0] && !uuid[0])) {
+        errno = EINVAL; return reject(error, capacity, bdf, "invalid mdev UUID/parent");
+    }
+    char path[PATH_MAX], type[PATH_MAX];
+    if (uuid[0]) {
+        if (snprintf(path, sizeof(path), "%s/bus/mdev/devices/%s/mdev_type", sysfs, uuid) >= (int)sizeof(path)) {
+            errno = ENAMETOOLONG; return reject(error, capacity, uuid, "mdev path too long");
+        }
+        if (!realpath(path, type)) return reject(error, capacity, uuid, "existing mdev unavailable");
+    }
+    if (bdf[0]) {
+        if (!supported_parent(sysfs, bdf, uuid[0] ? type : NULL)) return 0;
+        if (!uuid[0]) errno = ENOTSUP;
+        return reject(error, capacity, bdf,
+            "GPU does not support the requested Mediated Devices (mdev) / vGPU slice. Host configuration/patching may be required");
+    }
+    if (snprintf(path, sizeof(path), "%s/class/mdev_bus", sysfs) >= (int)sizeof(path)) {
+        errno = ENAMETOOLONG; return reject(error, capacity, uuid, "mdev bus path too long");
+    }
+    DIR *directory = opendir(path);
+    if (!directory) {
+        errno = ENOTSUP; return reject(error, capacity, uuid, "GPU does not support Mediated Devices (mdev) / vGPU. Host configuration/patching may be required");
+    }
+    int result = -1;
+    for (;;) {
+        errno = 0;
+        struct dirent *entry = readdir(directory);
+        if (!entry) break;
+        if (av_gpu_bdf_validate(entry->d_name, strlen(entry->d_name))) continue;
+        if (!supported_parent(sysfs, entry->d_name, type)) { result = 0; break; }
+    }
+    closedir(directory);
+    if (result) {
+        errno = ENOTSUP; return reject(error, capacity, uuid, "mdev has no registered PCI vfio-pci parent/type");
+    }
+    return 0;
+}

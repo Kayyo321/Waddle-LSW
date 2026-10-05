@@ -110,9 +110,15 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
     }
     if (prepare_firmware(config) != 0)
         return fail(environment, error, capacity, "persistent OVMF firmware preparation");
-    if (config->av_gpu_bdf[0] &&
-        av_gpu_probe("/sys", config->av_gpu_bdf, error, capacity) != 0)
-        return -1;
+    if (config->av_gpu_bdf[0] || config->av_gpu_mdev_uuid[0]) {
+        if (av_gpu_mdev_probe("/sys", config->av_gpu_bdf, config->av_gpu_mdev_uuid,
+                              error, capacity) != 0) return -1;
+        if (!config->av_gpu_mdev_uuid[0]) {
+            errno = EINVAL;
+            snprintf(error, capacity, "AV GPU slicing requires gpu_mdev_uuid; physical GPU preserved");
+            return -1;
+        }
+    }
     snprintf(environment->path, sizeof(environment->path), "%s", config->av_shm_path);
     int is_device = strncmp(config->av_shm_path, "/dev/kvmfr", 10) == 0;
     if (is_device) {

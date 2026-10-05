@@ -57,6 +57,43 @@ int main(void) {
     make_link("bus/pci/devices/0000:01:00.0/iommu_group", group);
     remove_link("kernel/iommu_groups/1/devices/0000:01:00.0");
     assert(av_gpu_probe(root, "0000:01:00.0", error, sizeof(error)) == -1 && errno == ENODEV);
+    const char *uuid = "12345678-1234-5678-9abc-123456789abc";
+    assert(av_gpu_mdev_probe(root, "../x", "", error, sizeof(error)) == -1 && errno == EINVAL);
+    assert(av_gpu_mdev_probe(root, "", "../x", error, sizeof(error)) == -1 && errno == EINVAL);
+    assert(av_gpu_mdev_probe(root, "", "", error, sizeof(error)) == -1);
+    assert(av_gpu_mdev_probe(root, "0000:01:00.0", "", error, sizeof(error)) == -1 && errno == ENOTSUP);
+    assert(strstr(error, "mdev"));
+    const char *mdev_directories[] = {"class", "class/mdev_bus", "bus/mdev", "bus/mdev/devices",
+        "bus/mdev/devices/12345678-1234-5678-9abc-123456789abc",
+        "bus/pci/devices/0000:01:00.0/mdev_supported_types",
+        "bus/pci/devices/0000:01:00.0/mdev_supported_types/test-pci"};
+    for (unsigned i = 0; i < sizeof(mdev_directories)/sizeof(*mdev_directories); ++i) make_directory(mdev_directories[i]);
+    path_for(device, "bus/pci/devices/0000:01:00.0");
+    make_link("class/mdev_bus/0000:01:00.0", device);
+    assert(av_gpu_mdev_probe(root, "0000:01:00.0", "", error, sizeof(error)) == -1);
+    path_for(path, "bus/pci/devices/0000:01:00.0/mdev_supported_types/test-pci/device_api");
+    FILE *file = fopen(path, "w"); assert(file); assert(fputs("vfio-pci\n", file) >= 0); assert(!fclose(file));
+    make_link("bus/pci/devices/0000:01:00.0/driver", "/sys/bus/pci/drivers/nvidia");
+    assert(av_gpu_mdev_probe(root, "0000:01:00.0", "", error, sizeof(error)) == 0);
+    assert(av_gpu_mdev_probe(root, "", uuid, error, sizeof(error)) == -1);
+    path_for(device, "bus/pci/devices/0000:01:00.0/mdev_supported_types/test-pci");
+    make_link("bus/mdev/devices/12345678-1234-5678-9abc-123456789abc/mdev_type", device);
+    assert(av_gpu_mdev_probe(root, "", uuid, error, sizeof(error)) == 0);
+    assert(av_gpu_mdev_probe(root, "0000:01:00.0", uuid, error, sizeof(error)) == 0);
+    assert(av_gpu_mdev_probe(root, "0000:01:00.1", uuid, error, sizeof(error)) == -1);
+    file = fopen(path, "w"); assert(file); assert(fputs("vfio-ccw\n", file) >= 0); assert(!fclose(file));
+    assert(av_gpu_mdev_probe(root, "", uuid, error, sizeof(error)) == -1 && errno == ENOTSUP);
+    assert(unlink(path) == 0);
+    remove_link("bus/mdev/devices/12345678-1234-5678-9abc-123456789abc/mdev_type");
+    make_link("bus/mdev/devices/12345678-1234-5678-9abc-123456789abc/mdev_type", root);
+    assert(av_gpu_mdev_probe(root, "", uuid, error, sizeof(error)) == -1);
+    remove_link("bus/mdev/devices/12345678-1234-5678-9abc-123456789abc/mdev_type");
+    remove_link("class/mdev_bus/0000:01:00.0");
+    assert(av_gpu_mdev_probe(root, "0000:01:00.0", "", error, sizeof(error)) == -1);
+    remove_link("bus/pci/devices/0000:01:00.0/driver");
+    for (unsigned i = sizeof(mdev_directories)/sizeof(*mdev_directories); i > 0; --i) {
+        path_for(path, mdev_directories[i - 1]); assert(rmdir(path) == 0);
+    }
     remove_link("kernel/iommu_groups/1/devices/0000:01:00.1");
     remove_link("bus/pci/devices/0000:01:00.0/iommu_group");
     for (unsigned i = sizeof(directories)/sizeof(*directories); i > 0; --i) {

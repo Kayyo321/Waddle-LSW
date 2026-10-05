@@ -79,8 +79,12 @@ typedef struct daemon_config_t {
     uint32_t av_uefi;
     /** @brief Absolute private AV shared-memory/KVMFR path, no comma/newline. */
     char av_shm_path[WaddleMaxPathLen];
-    /** @brief Explicit VFIO GPU PCI address dddd:bb:ss.f; empty means no passthrough. */
+    /** @brief Optional mdev parent PCI address; never passed through as a physical GPU. */
     char av_gpu_bdf[16];
+    /** @brief Owned NUL-terminated lowercase UUID[36] of administrator-created mdev.
+     * Empty means no GPU slice; lifetime is this config; no pointer transfer.
+     * Callers synchronize writes, validation is read-only and allocation-free. */
+    char av_gpu_mdev_uuid[37];
 } daemon_config_t;
 
 /**

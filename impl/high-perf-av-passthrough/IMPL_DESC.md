@@ -193,11 +193,10 @@ falls back asynchronously to wl_shm for that window. Retired windows retain pend
 callback context until import/release completes. Teardown is bounded; unknown
 outstanding compositor leases remain Consuming after display failure/timeout.
 
-Setup never unloads an active module or detaches an unspecified GPU. Existing
-non-VFIO GPU bindings fail without modification. Both acceptance-host GPUs have
-active desktop users, so neither can be reassigned for performance verification.
-Automatic preparation/recovery of a safely eligible explicit GPU is still
-unfinished; a pre-bound GPU requirement is not recorded as fully provisioned.
+Setup never unloads an active module or detaches any physical GPU. Active host
+drivers are compatible with mdev probing; missing registered slicing support
+fails without modification. An administrator-created vfio-pci mdev UUID is
+required for GPU acceleration. Waddle does not automatically create slices.
 Secure Boot restrictions, missing running-kernel headers, guest logon/bridge
 bootstrap, driver reboot-required status and incompatible live modules produce
 explicit failures. Setup does not bypass signatures or overwrite the licensed OS.
@@ -343,9 +342,9 @@ headers and the pinned KVMFR module source. Guest probe checks OS build >=20348,
 signed IVSHMEM/Viosock drivers, D3D capture capability, audio render endpoint and
 AV agent version. Unsupported capabilities have explicit statuses and diagnostics;
 provisioning must not claim that it can manufacture GPU virtualization support.
-Consumer hardware may require exclusive VFIO passthrough rather than GPU slicing.
-Only an explicitly configured GPU or already unbound device is eligible; the
-program must not silently detach the host desktop GPU.
+Consumer hardware without a supported mdev stack cannot satisfy this architecture.
+Full-device assignment is unavailable. The physical host driver stays attached;
+manual vendor driver, slice creation and licensing are prerequisites.
 
 The program owns a private AV shared-memory resource and guest agent lifecycle.
 KVMFR preparation builds the pinned module against the running kernel. Installed
@@ -718,11 +717,14 @@ external acceptance evidence.
 
 Each zero xdg_toplevel configure dimension independently preserves the corresponding guest dimension. Nonzero valid axes replace that dimension; negative or oversized pairs preserve both. Fullscreen transitions still propagate with zero dimensions. The callback regression includes both mixed-zero cases. Fresh AV sanitizers and the real Wayland/PipeWire platform gate verify teardown without reported leaks.
 
-### Safe GPU group capability boundary
+### Historical physical GPU group probe
 
-`waddle-av-setup --probe-gpu PCI_BDF` and daemon AV preparation call the same read-only probe. Zig validates exactly twelve PCI address bytes (hex domain/bus, slot below 32, function below eight) before path construction. The probe resolves the device's IOMMU group and requires a direct child of the canonical sysfs group root. It enumerates that group's devices, requires the requested BDF to be present and each member to exist, and reads every driver symlink. Missing driver links on existing devices mean unbound; only vfio-pci or unbound members are eligible. All other drivers return EBUSY with the offending member and driver. Missing IOMMU support, corrupt links and I/O errors fail closed. Directory ownership ends at closedir on success and all errors; no allocation survives the call.
-
-Eligibility is a snapshot, not a hardware lease or completed VFIO binding. An unbound member is safe to prepare manually but QEMU still needs a usable VFIO group; concurrent administrative changes may make launch fail. The program never writes driver_override/unbind/bind, stops a display manager, kills render clients or unloads GPU modules. Consequently no rollback writes are needed. Physical 144-Hz acceptance is blocked here: fresh probes of 0000:01:00.0 and 0000:0e:00.0 report nvidia and amdgpu respectively. Companion functions are also checked. Synthetic sysfs fixtures cover unbound/VFIO, active graphics/audio companions, invalid PCI paths, missing group membership and malformed driver/group links under ASan/LSan/UBSan.
+The previous read-only IOMMU group helper remains covered by regression tests,
+but setup and daemon startup now use the mediated-device probe described in
+section 2. Prior NVIDIA/AMD busy-group evidence concerned physical assignment
+and does not establish mdev support or failure. Physical assignment is no longer
+a launch option. The new tests accept a registered slice with an active NVIDIA
+parent driver and reject missing types, invalid API, missing UUID and wrong parent.
 
 ### Host-clock color challenge diagnostic
 
