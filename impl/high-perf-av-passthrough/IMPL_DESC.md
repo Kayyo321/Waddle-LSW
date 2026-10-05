@@ -113,3 +113,16 @@ mock frame tests are not evidence of that fidelity or of end-to-end latency.
 Tracker entries use HEAD for the commit containing the entry (self hashes cannot
 be embedded in their own content). The next atomic commit resolves that reference
 to the preceding immutable hash. Historical planning commits have zero progress.
+
+### Control encoding
+
+Each independent AV frame is exactly 328 bytes: LE uint16 magic 0x574c at 0,
+LE uint16 type at 2, LE uint32 payload length 320 at 4. Payload offsets are
+window_id 8 (u64), x/y 16/20 (i32), width/height 24/28 (u32), flags 32, dpi 36,
+process_id 40, buffer_index 44, sequence 48 (u64), damage_x/y 56/60 (i32),
+damage_width/height 64/68 (u32), NUL-terminated UTF-8 title 72..327. Message IDs
+are create 1, destroy 2, geometry 3, frame 4, close 5. Window ID is nonzero.
+Non-destroy/close dimensions are 1..8192, DPI 48..768, flags only bits 0/1.
+Frame index is 0..2, sequence nonzero, damage nonempty within dimensions.
+Encoders zero title padding. Decoders never cast wire buffers to native structs
+and leave the output unchanged on error. No payload allocation is necessary.
