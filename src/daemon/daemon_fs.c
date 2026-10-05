@@ -192,23 +192,26 @@ void daemon_fs_free_args(char **argv, size_t argc) {
 }
 
 /**
- * @brief Probes whether a UNIX domain socket has been created and is accepting connections.
+ * @brief Probes whether a UNIX domain socket inode has been created and bound by virtiofsd.
+ *
+ * Checks for socket file existence via stat() without connecting. An active connect()
+ * causes virtiofsd (which operates as a 1:1 vhost-user backend) to conclude that the
+ * hypervisor has disconnected and immediately shut down.
  *
  * @param[in] path Path to UNIX domain socket.
- * @return 0 if connectable, or -1 otherwise.
+ * @return 0 if socket inode exists, or -1 otherwise.
  */
 static int probe_socket_ready(const char *path) {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
-
-    int r = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    close(fd);
-    return (r == 0) ? 0 : -1;
+    if (path == NULL || path[0] == '\0') {
+        return -1;
+    }
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
+        /* Socket file bound; brief sleep ensures listen() is complete */
+        usleep(20000);
+        return 0;
+    }
+    return -1;
 }
 
 int daemon_fs_spawn(virtiofs_process_t *proc,
