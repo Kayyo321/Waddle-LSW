@@ -6,8 +6,11 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import signal
+import time
+import shutil
 
-executable = str(Path('build/waddle').resolve())
+executable = os.environ.get('WADDLE_TEST_EXECUTABLE', str(Path('build/waddle').resolve()))
 with tempfile.TemporaryDirectory(prefix='wd-storage-') as root:
     root = Path(root)
     env = dict(os.environ, HOME=str(root), XDG_CONFIG_HOME=str(root/'config'),
@@ -42,6 +45,17 @@ with tempfile.TemporaryDirectory(prefix='wd-storage-') as root:
     assert omega['config'] == alpha['config']
     assert Path(omega['disk_image']).read_bytes() == original
     assert 'token = keep-me' in Path(omega['config_path']).read_text()
+    # A managed disk cannot be removed or renamed while another registration backs it.
+    run('init', 'dependent', '--base-disk', omega['disk_image'])
+    run('remove', 'omega', '--yes', status=1)
+    run('rename', 'omega', 'blocked', status=1)
+    run('remove', 'dependent', '--yes')
+    # Orphan destinations and symlink state roots are never adopted.
+    orphan = root/'state/waddle/devices/orphan'
+    orphan.mkdir(mode=0o700)
+    run('init', 'orphan', '--blank-disk', '8M', status=2)
+    run('doctor', '--all', status=1)
+    orphan.rmdir()
     run('clone','omega','copy')
     copy = show('copy')
     assert copy['vsock_cid'] != omega['vsock_cid'] and not copy['is_default']
@@ -53,6 +67,24 @@ with tempfile.TemporaryDirectory(prefix='wd-storage-') as root:
     manifest = json.loads((backup/'manifest.json').read_text())
     assert manifest['disk_sha256'] == hashlib.sha256((backup/'disk.qcow2').read_bytes()).hexdigest()
     run('export','omega','--output',str(backup),status=2)
+    manifest_original = (backup/'manifest.json').read_bytes()
+    (backup/'extra').write_text('unrecognized')
+    run('import', 'bad', '--input', str(backup), status=2)
+    (backup/'extra').unlink()
+    saved_disk = backup/'saved_disk'
+    (backup/'disk.qcow2').rename(saved_disk)
+    (backup/'disk.qcow2').symlink_to(saved_disk)
+    run('import', 'bad', '--input', str(backup), status=2)
+    (backup/'disk.qcow2').unlink()
+    saved_disk.rename(backup/'disk.qcow2')
+    link = root/'backup_link'
+    link.symlink_to(backup, target_is_directory=True)
+    run('import', 'bad', '--input', str(link), status=1)
+    link.unlink()
+    for broken in ('{"schema_version":1,"schema_version":1}', '{"unknown":true}', '[[[[[[[[[0]]]]]]]]]', '{', '\xff'):
+        (backup/'manifest.json').write_bytes(broken.encode('latin1'))
+        run('import', 'bad', '--input', str(backup), status=2)
+    (backup/'manifest.json').write_bytes(manifest_original)
     run('import','restored','--input',str(backup))
     restored = show('restored')
     assert restored['config'] == omega['config'] and restored['mount_count'] == 0
@@ -95,3 +127,36 @@ with tempfile.TemporaryDirectory(prefix='wd-storage-') as root:
     assert run('list')['results'] == []
 
 print('device_storage: real QCOW2 init/rename/clone/export/import/retention/removal passed')
+
+# SIGINT owns, kills and reaps a utility child, rolls back intent and renders JSON.
+with tempfile.TemporaryDirectory(prefix="waddle-cancel-") as temporary:
+    root = Path(temporary)
+    env = os.environ.copy()
+    env.update(HOME=str(root), XDG_CONFIG_HOME=str(root/'config'),
+               XDG_STATE_HOME=str(root/'state'), XDG_RUNTIME_DIR=str(root/'run'))
+    binary = root/'bin'; binary.mkdir()
+    utility = binary/'qemu-img'
+    utility.write_text('#!/usr/bin/python3\nimport os,sys,time\nfrom pathlib import Path\n'
+                       'if sys.argv[1] == "create":\n'
+                       ' Path(os.environ["WADDLE_CHILD_PID"]).write_text(str(os.getpid()))\n'
+                       ' Path(sys.argv[-2]).write_bytes(b"partial")\n'
+                       ' time.sleep(30)\n'
+                       'else: os.execv('+repr(shutil.which('qemu-img'))+',sys.argv)\n')
+    utility.chmod(0o700)
+    env.update(PATH=str(binary)+':'+env['PATH'], WADDLE_CHILD_PID=str(root/'child'))
+    process = subprocess.Popen([str(Path('build/waddle').resolve()),'device','init','cancelled','--blank-disk','8M','--json'],
+                               env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    deadline = time.monotonic()+10
+    while not (root/'child').exists() and time.monotonic() < deadline:
+        time.sleep(.02)
+    assert (root/'child').exists(), 'utility failed to spawn'
+    child = int((root/'child').read_text())
+    process.send_signal(signal.SIGINT)
+    output, diagnostics = process.communicate(timeout=10)
+    assert process.returncode == 130, (process.returncode,output,diagnostics)
+    assert json.loads(output)['error']['code'] == 'cancelled'
+    assert not Path('/proc',str(child)).exists(), 'cancelled utility was not reaped'
+    assert not (root/'config/waddle/devices/cancelled.ini').exists()
+    assert not list((root/'config/waddle/transactions').iterdir())
+    assert not list((root/'state/waddle/transactions').iterdir())
+print('device storage cancellation: SIGINT JSON/130, child reaped, transaction rollback clean')

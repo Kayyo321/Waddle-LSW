@@ -13,17 +13,17 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1 | Fix VirtIO-FS readiness probing and stabilize startup | Done | 10% | 100% | Existing stat-based fix; final VM acceptance remains #10 |
 | #2 | Implement registry discovery, storage paths, and device metadata | Done | 10% | 100% | Existing baseline; hardening/recovery tracked in #7 |
-| #3 | Implement init and aliases with valid QCOW2 creation | In Progress | 10% | 90% | Transactional init, explicit blank/base modes and options pass; broader gates remain |
+| #3 | Implement init and aliases with valid QCOW2 creation | Done | 10% | 100% | Blank/base modes, real QCOW2, options and all durable init failures verified |
 | #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | Done | 10% | 100% | Strict selectors, sorted aggregate batches, startup handoff, shell/log/fs and v1 JSON implemented |
-| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 80% | Real-QCOW2 offline and eight rename crash boundaries pass; broader matrix remains |
+| #5 | Unit/integration tests for init and multi-device baseline | Done | 10% | 100% | Expanded CLI, real QCOW2 and 356 mutation crash/failure boundaries pass |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
-| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 90% | Rename/remove/retention and durable root-relative inode journals implemented; diagnostic repair and hardening remain |
+| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | Done | 10% | 100% | All mutations recover complete state; SIGINT kills/reaps utility and rolls back; unsafe/live/dependent disks refused |
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | Done | 10% | 100% | Typed settings, backing/ownership/binary/CID inspection, orphan reporting and explicit limited repair implemented |
-| #9 | Implement independent clone and local export/import | In Progress | 10% | 70% | Standalone clone, manifest SHA-256 export/import and no-mount restore pass; expanded rejection matrix remains |
+| #9 | Implement independent clone and local export/import | Done | 10% | 100% | Portable round trip, flattened clone, fresh identities and malformed/extra/symlink/hash rejection verified |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
 | #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `85.5%`
+**Total Feature Completion**: `92.5%`
 
 ## Commit History & Progress Log
 
@@ -175,6 +175,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +25% to TODO #7 (+2.5% overall), +20% to #8 (+2.0%); total 79.0%.
   - **Summary**: Extend prepared/committed transactions to config/default replacements; restrict recovery references to declared names and staging namespaces; refuse empty/unsafe registrations and symlink backups. Add bounded inspection of backing chains, ownership, CID conflicts and executable availability. Runtime repair audits processes, leases, image writers and the kernel UNIX table without connecting to vhost-user endpoints. Expanded CLI integration remains a separate commit.
 
-- **Commit `:/complete named command routing and batch lifecycle results`**: `feat(cli): complete named command routing and batch lifecycle results`
+- **Commit `236abba`**: `feat(cli): complete named command routing and batch lifecycle results`
   - **Task Impact**: +25% to TODO #4 (+2.5% overall), +30% to #8 (+3.0%), +10% to #5 (+1.0%); total 85.5%.
   - **Summary**: Route lifecycle/logs/fs through strict shared parsing and v1 JSON; add sorted sequential batches with aggregate failure, authoritative nullable runtime fields and registry read-lock startup handoff. Add shell selectors/help, device-specific bounded log targets/follow and filesystem verification. Integrate doctor inspection/repair/orphan reporting. Persist named logs in owned state only after config-to-lease handoff; harden runtime/log directory traversal. Expanded native CLI cases and full make test pass.
+
+- **Commit `:/reap cancelled utilities and recover persisted journal phases`**: `fix(device): reap cancelled utilities and recover persisted journal phases`
+  - **Task Impact**: +10% to TODO #3 (+1.0% overall), +20% to #5 (+2.0%), +10% to #7 (+1.0%), +30% to #9 (+3.0%); total 92.5%.
+  - **Summary**: Own utility children through every bounded-output/error/cancellation path, return SIGINT JSON/130, recheck import identity/hash after conversion, reject malformed manifests consistently, observe live backing chains without weakening offline locking, sort orphan diagnostics. Reread persisted journal phases after ambiguous durability failures; remove partial metadata safely. Real QCOW2 tests and 356 deterministic mutation/crash/I/O/utility failure boundaries pass with repeated recovery and no mixed state or journals.

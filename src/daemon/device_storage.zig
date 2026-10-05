@@ -83,7 +83,7 @@ fn native_error() anyerror {
         c.ENOENT => error.FileNotFound,
         c.EEXIST => error.PathAlreadyExists,
         c.EBUSY => error.Busy,
-        c.EACCES, c.EPERM, c.ELOOP => error.AccessDenied,
+        c.EACCES, c.EPERM, c.ELOOP, c.ENOTDIR => error.AccessDenied,
         c.ENOSPC => error.NoSpaceLeft,
         c.EINTR => error.Interrupted,
         c.EUCLEAN => error.RecoveryRequired,
@@ -153,8 +153,12 @@ fn create_file(ctx: context_t, path: []const u8, bytes: []const u8) !void {
     defer parent.close();
     var file = try parent.createFile(std.fs.path.basename(path), .{ .exclusive = true, .mode = 0o600 });
     defer file.close();
+    errdefer { parent.deleteFile(std.fs.path.basename(path)) catch {}; std.posix.fsync(parent.fd) catch {}; }
+    try checkpoint("write");
     try file.writeAll(bytes);
+    try checkpoint("fsync");
     try file.sync();
+    try checkpoint("fsync");
     try std.posix.fsync(parent.fd);
 }
 fn absent(ctx: context_t, path: []const u8) !void {
@@ -183,8 +187,11 @@ fn rename_path(ctx: context_t, old: []const u8, final: []const u8) !void {
     defer source.close();
     var dest = try directory(ctx, std.fs.path.dirname(final).?, false, true);
     defer dest.close();
+    try checkpoint("rename");
     try std.posix.renameat(source.fd, std.fs.path.basename(old), dest.fd, std.fs.path.basename(final));
+    try checkpoint("fsync");
     try std.posix.fsync(source.fd);
+    try checkpoint("fsync");
     try std.posix.fsync(dest.fd);
 }
 fn move(ctx: context_t, old: location_t, final: location_t) !move_t {
@@ -229,6 +236,7 @@ fn purge(ctx: context_t, root: []const u8, path: []const u8) !void {
         return err;
     };
     defer parent.close();
+    try checkpoint("unlink");
     try parent.deleteTree(path);
     try std.posix.fsync(parent.fd);
 }
@@ -241,6 +249,7 @@ fn cleanup_journal(ctx: context_t, record: journal_t) !void {
     defer parent.close();
     const leaf = try std.fmt.allocPrint(ctx.allocator, "{s}.json", .{record.transaction_id});
     parent.deleteFile(try std.fmt.allocPrint(ctx.allocator, "{s}.tmp", .{leaf})) catch |err| if (err != error.FileNotFound) return err;
+    try checkpoint("unlink");
     try parent.deleteFile(leaf);
     try std.posix.fsync(parent.fd);
 }
@@ -349,18 +358,37 @@ export fn daemon_device_recover(repair: c_int) c_int {
 }
 /// Run fixed argv without a shell, with bounded captured metadata and inherited stderr.
 fn tool(ctx: context_t, argv: []const []const u8) ![]const u8 {
-    const result = try std.process.Child.run(.{ .allocator = ctx.allocator, .argv = argv, .max_output_bytes = 65536 });
-    switch (result.term) { .Exited => |status| if (status != 0) {
-        std.io.getStdErr().writer().writeAll(result.stderr) catch {};
+    if (c.daemon_device_cancelled() != 0) return error.Interrupted;
+    var child = std.process.Child.init(argv, ctx.allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    var stdout = std.ArrayList(u8).init(ctx.allocator);
+    var stderr = std.ArrayList(u8).init(ctx.allocator);
+    defer stdout.deinit();
+    defer stderr.deinit();
+    try checkpoint("fork");
+    try child.spawn();
+    c.daemon_device_cancel_child(child.id);
+    defer c.daemon_device_cancel_child(0);
+    errdefer _ = child.kill() catch {};
+    try checkpoint("exec");
+    try child.collectOutput(&stdout, &stderr, 65536);
+    try checkpoint("wait");
+    const term = try child.wait();
+    if (c.daemon_device_cancelled() != 0) return error.Interrupted;
+    switch (term) { .Exited => |status| if (status != 0) {
+        std.io.getStdErr().writer().writeAll(stderr.items) catch {};
         return error.ToolFailed;
     }, else => return error.Interrupted }
-    return result.stdout;
+    return try stdout.toOwnedSlice();
 }
 /// Validate qemu-img's trusted tool output via bounded JSON and every backing member.
-fn image(ctx: context_t, path: []const u8, standalone: bool) !std.json.Value {
+fn image_info(ctx: context_t, path: []const u8, standalone: bool, force_share: bool) !std.json.Value {
     var file = try regular(ctx, path, false);
     file.close();
-    const bytes = try tool(ctx, &.{ "qemu-img", "info", "--output=json", "--backing-chain", path });
+    const argv: []const []const u8 = if (force_share) &.{ "qemu-img", "info", "-U", "--output=json", "--backing-chain", path } else &.{ "qemu-img", "info", "--output=json", "--backing-chain", path };
+    const bytes = try tool(ctx, argv);
     if (bytes.len > 65536) return error.InvalidConfig;
     const value = try parse_json(std.json.Value, ctx, bytes);
     if (value != .array or value.array.items.len == 0 or value.array.items.len > 8) return error.InvalidConfig;
@@ -376,6 +404,10 @@ fn image(ctx: context_t, path: []const u8, standalone: bool) !std.json.Value {
     }
     return value;
 }
+/// Offline image validation requires QEMU's ordinary reader lock.
+fn image(ctx: context_t, path: []const u8, standalone: bool) !std.json.Value {
+    return image_info(ctx, path, standalone, false);
+}
 fn hash_disk(ctx: context_t, path: []const u8) !struct { size: u64, hash: [64]u8 } {
     var file = try regular(ctx, path, false);
     defer file.close();
@@ -383,6 +415,7 @@ fn hash_disk(ctx: context_t, path: []const u8) !struct { size: u64, hash: [64]u8
     var buffer: [65536]u8 = undefined;
     var size: u64 = 0;
     while (true) {
+        if (c.daemon_device_cancelled() != 0) return error.Interrupted;
         const amount = try file.read(&buffer);
         if (amount == 0) break;
         hash.update(buffer[0..amount]);
@@ -524,6 +557,8 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
     }
     var base: []const u8 = "";
     var backup_disk: []const u8 = "";
+    var backup_hash: ?struct { size: u64, hash: [64]u8 } = null;
+    var backup_identity: ?c.struct_stat = null;
     if (operation == c.DeviceInit) {
         if (request.memory_mb != 0) value.memory_mb = request.memory_mb;
         if (request.vcpus != 0) value.vcpus = request.vcpus;
@@ -559,13 +594,15 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
             count += 1;
         }
         if (count != 2) return error.InvalidConfig;
-        const manifest = try parse_json(manifest_t, ctx, try read_metadata(ctx, try ctx.join(input, "manifest.json")));
+        const manifest = parse_json(manifest_t, ctx, try read_metadata(ctx, try ctx.join(input, "manifest.json"))) catch return error.InvalidConfig;
         if (manifest.schema_version != 1 or !name_valid(manifest.source_name) or !std.mem.eql(u8, manifest.disk_file, "disk.qcow2") or manifest.disk_sha256.len != 64) return error.InvalidConfig;
         value = manifest.config;
         try settings_valid(value);
         backup_disk = try ctx.join(input, "disk.qcow2");
         _ = try image(ctx, backup_disk, true);
         const hash = try hash_disk(ctx, backup_disk);
+        backup_hash = .{ .size = hash.size, .hash = hash.hash };
+        backup_identity = try identity(ctx, backup_disk);
         if (hash.size != manifest.disk_size_bytes or !std.mem.eql(u8, &hash.hash, manifest.disk_sha256)) return error.InvalidConfig;
     }
     const cid = if (creates) c.daemon_device_allocate_cid(&registry) else if (source) |info| info.vsock_cid else 0;
@@ -587,9 +624,9 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
         var dir = try directory(ctx, try ctx.join(root, "transactions"), true, true);
         dir.close();
     }
+    errdefer recover(ctx, true) catch {};
     try save_journal(ctx, record, true);
     fault("prepared");
-    errdefer recover_one(ctx, record) catch {};
     const staging = try std.fmt.allocPrint(ctx.allocator, "transactions/{s}", .{id});
     for ([_][]const u8{ ctx.config, ctx.state }) |root| {
         const path = try ctx.join(root, staging);
@@ -609,6 +646,11 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
         if (operation == c.DeviceInit) {
             if (request.blank != 0) { _ = try tool(ctx, &.{ "qemu-img", "create", "-f", "qcow2", disk, arg }); } else { _ = try tool(ctx, &.{ "qemu-img", "create", "-f", "qcow2", "-b", base, "-F", "qcow2", disk }); }
         } else { _ = try tool(ctx, &.{ "qemu-img", "convert", "-O", "qcow2", if (operation == c.DeviceImport) backup_disk else text(&source.?.disk_image), disk }); }
+        if (operation == c.DeviceImport) {
+            const current = try identity(ctx, backup_disk);
+            const check = try hash_disk(ctx, backup_disk);
+            if (current.st_dev != backup_identity.?.st_dev or current.st_ino != backup_identity.?.st_ino or check.size != backup_hash.?.size or !std.mem.eql(u8, &check.hash, &backup_hash.?.hash)) return error.InvalidConfig;
+        }
         var disk_file = try regular(ctx, disk, false);
         try disk_file.chmod(0o600);
         try disk_file.sync();
@@ -683,6 +725,7 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
     record.moves = moves.items;
     try save_journal(ctx, record, false);
     for (record.moves, 0..) |item, index| {
+        if (c.daemon_device_cancelled() != 0) return error.Interrupted;
         try apply_move(ctx, item, true);
         fault(try std.fmt.allocPrint(ctx.allocator, "move_{d}", .{index}));
     }
@@ -694,6 +737,17 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
     try cleanup_journal(ctx, record);
 }
 /// Deterministic subprocess crash seam used only by isolated acceptance fixtures.
+/// Deterministic single-failure test seam; no allocation, disabled without env.
+/// Count only the selected operation; fail once so recovery can exercise cleanup.
+var checkpoint_count: usize = 0;
+fn checkpoint(kind: []const u8) !void {
+    const selected = std.posix.getenv("WADDLE_DEVICE_TEST_FAIL") orelse return;
+    var parts = std.mem.splitScalar(u8, selected, ':');
+    if (!std.mem.eql(u8, parts.next().?, kind)) return;
+    const ordinal = std.fmt.parseInt(usize, parts.next() orelse return, 10) catch return;
+    checkpoint_count += 1;
+    if (checkpoint_count == ordinal) return error.NoSpaceLeft;
+}
 fn fault(point: []const u8) void {
     const configured = std.posix.getenv("WADDLE_DEVICE_TEST_CRASH") orelse return;
     if (std.mem.eql(u8, configured, point)) c._exit(99);
@@ -775,7 +829,7 @@ fn inspect(ctx: context_t, name: []const u8, repair: bool, dry_run: bool) !inspe
     if (identity(ctx, text(&info.state_dir))) |_| { result.state_owned = true; } else |_| { try findings.append("missing_or_unsafe_state"); }
     if (info.config_valid != 0) {
         if (identity(ctx, text(&info.disk_image))) |_| { result.disk_owned = true; } else |_| { try findings.append("missing_or_unsafe_disk"); }
-        if (image(ctx, text(&info.disk_image), false)) |chain| { result.backing_chain = chain; } else |_| { try findings.append("invalid_or_unavailable_backing_chain"); }
+        if (image_info(ctx, text(&info.disk_image), false, true)) |chain| { result.backing_chain = chain; } else |_| { try findings.append("invalid_or_unavailable_backing_chain"); }
         for (registry.devices[0..registry.count]) |*other| {
             if (!std.mem.eql(u8, text(&other.name), name) and other.vsock_cid == info.vsock_cid) { try findings.append("cid_collision"); break; }
         }
@@ -833,7 +887,7 @@ fn replace_locked(ctx: context_t, path: []const u8, bytes: ?[]const u8) !void {
     var parent = try directory(ctx, try ctx.join(ctx.config, "transactions"), true, true);
     parent.close();
     try save_journal(ctx, record, true);
-    errdefer recover_one(ctx, record) catch {};
+    errdefer recover(ctx, true) catch {};
     fault("prepared");
     var staged = try directory(ctx, try ctx.join(ctx.config, try std.fmt.allocPrint(ctx.allocator, "transactions/{s}", .{id})), true, true);
     staged.close();

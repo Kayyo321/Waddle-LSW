@@ -276,6 +276,23 @@ int daemon_device_replace_locked(const char *path, const char *data, size_t leng
  */
 int daemon_device_socket_in_use(const char *path);
 
+/** @brief Install/restore SIGINT cancellation for one main-thread CLI command.
+ * @param[in] enabled Nonzero installs, zero restores the previous disposition.
+ * @return 0 success, -1 errno if sigaction fails; no allocation or borrowed data.
+ * @note Main thread only; never used by guest execution or daemon service loops.
+ */
+int daemon_device_cancel_scope(int enabled);
+/** @brief Read the signal-safe cancellation flag.
+ * @return Nonzero after SIGINT; zero otherwise. No ownership; signal-safe.
+ */
+int daemon_device_cancelled(void);
+/** @brief Publish the owned utility PID to the cancellation handler.
+ * @param[in] pid Child PID, or zero to clear before releasing ownership.
+ * @note Main thread only; an already pending SIGINT kills this child immediately.
+ * No pointers or allocations; caller must reap the child on every path.
+ */
+void daemon_device_cancel_child(int pid);
+
 #ifdef __cplusplus
 }
 #endif

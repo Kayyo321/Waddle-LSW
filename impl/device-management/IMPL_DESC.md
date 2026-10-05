@@ -621,3 +621,42 @@ with exclusive temporary files and deterministic cleanup, including read-only
 export checks. Doctor reports orphan state without deleting it; dry repair validates
 its plan without changing paths. Shell remains a ConPTY stream and rejects JSON.
 Raw socket transport development remains handled by the original C interface.
+
+
+### Final storage error and cancellation contract
+
+Management commands install a main-thread SIGINT scope and restore the previous
+signal disposition before returning. The handler only sets a sig_atomic_t flag,
+kills the currently owned qemu-img PID with SIGKILL, and preserves errno. The
+parent always waits/reaps that child, closes its pipes, releases its arena and
+locks, and emits the v1 cancelled error with exit 130. Hash loops and log-follow
+loops observe the same flag. Guest exec/shell retain their existing signal path.
+Utility stdout/stderr are independently bounded to 64 KiB. A capture/spawn/wait
+error kills and reaps the utility through errdefer; no background copy continues
+writing a staging disk after command return. Utility invocation never uses a shell.
+
+Import pins the private source disk's device/inode, SHA-256 and size before
+conversion, then checks all three again before publication. A changed source
+rejects the import and rolls back staging. It never publishes a profile for a
+copy made while its backup was changing. Diagnostic show/doctor use qemu-img
+info -U to observe a live disk; mutation/dependency validation retains normal
+QEMU image locking and the independent exclusive offline audit.
+
+An error after journal replacement may have occurred after rename but before
+directory fsync. Error cleanup rereads the on-disk journal phase instead of using
+the last in-memory phase: prepared rolls back, committed finishes cleanup.
+Partially written newly created metadata is removed by its creating scope.
+Journal recovery refuses malformed/foreign identities instead of guessing.
+
+The disabled-by-default WADDLE_DEVICE_TEST_FAIL=KIND:ORDINAL seam injects one
+ENOSPC at the selected write/fsync/rename/unlink/fork/exec/wait boundary. Its
+counter advances only for that kind, and only one ordinal fails, allowing cleanup
+itself to run. Utility fork is checked before spawn, exec after spawn with an
+owned child, wait after bounded output capture. It does not replace qemu-img.
+WADDLE_DEVICE_TEST_CRASH still exits 99 at prepared, staged, each move_N and
+committed. tests/integration/device_faults.py enumerates all reachable boundaries
+for init/clone/import/export/remove/retention/default/config/rename, then performs
+two repair passes and checks complete registrations/defaults, distinct CIDs,
+managed disks and empty staging/journal directories. The current matrix covers
+356 single failure/crash boundaries. These are deterministic boundary injections,
+not an assertion that every kernel/filesystem failure mechanism was reproduced.

@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -638,4 +639,39 @@ cleanup:
       close(registry_fd);
       errno = saved; }
     return result;
+}
+
+/* Main-thread management cancellation; the handler uses only async-safe state/kill. */
+static volatile sig_atomic_t cancel_requested;
+static volatile sig_atomic_t cancel_pid;
+static struct sigaction cancel_previous;
+static int cancel_installed;
+static void cancel_handler(int signal_number) {
+    (void)signal_number;
+    int saved = errno;
+    cancel_requested = 1;
+    if (cancel_pid > 0) kill((pid_t)cancel_pid, SIGKILL);
+    errno = saved;
+}
+int daemon_device_cancel_scope(int enabled) {
+    if (enabled) {
+        struct sigaction action = {0};
+        action.sa_handler = cancel_handler;
+        sigemptyset(&action.sa_mask);
+        cancel_requested = 0;
+        cancel_pid = 0;
+        if (sigaction(SIGINT, &action, &cancel_previous) != 0) return -1;
+        cancel_installed = 1;
+    } else if (cancel_installed) {
+        if (sigaction(SIGINT, &cancel_previous, NULL) != 0) return -1;
+        cancel_installed = 0;
+        cancel_requested = 0;
+        cancel_pid = 0;
+    }
+    return 0;
+}
+int daemon_device_cancelled(void) { return cancel_requested != 0; }
+void daemon_device_cancel_child(int pid) {
+    cancel_pid = pid;
+    if (cancel_requested && pid > 0) kill((pid_t)pid, SIGKILL);
 }

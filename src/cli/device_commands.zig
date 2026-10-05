@@ -201,7 +201,7 @@ fn registry_error() anyerror {
         c.ENOENT => error.NotFound,
         c.EEXIST => error.AlreadyExists,
         c.ENOSPC => error.Capacity,
-        c.EACCES, c.EPERM, c.ELOOP => error.PermissionDenied,
+        c.EACCES, c.EPERM, c.ELOOP, c.ENOTDIR => error.PermissionDenied,
         c.EINTR => error.Cancelled,
         c.EBUSY, c.ESTALE => error.Busy,
         c.EUCLEAN => error.RecoveryRequired,
@@ -370,6 +370,11 @@ fn execute_doctor(allocator: std.mem.Allocator, command: command_t, results: *st
             }
         } else |err| if (err != error.FileNotFound) return error.IoError;
     }
+    std.mem.sort(std.json.Value, results.array.items, {}, struct {
+        fn less_than(_: void, left: std.json.Value, right: std.json.Value) bool {
+            return std.mem.order(u8, left.object.get("name").?.string, right.object.get("name").?.string) == .lt;
+        }
+    }.less_than);
     if (!found and command.count == 2) return error.NotFound;
     if (unhealthy) return error.PartialFailure;
 }
@@ -426,6 +431,7 @@ fn execute_observation(allocator: std.mem.Allocator, command: command_t, results
         var offsets: [3]u64 = .{ 0, 0, 0 };
         var first = true;
         while (true) {
+            if (c.daemon_device_cancelled() != 0) return error.Cancelled;
             var iteration_arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
             defer iteration_arena.deinit();
             const loop_allocator = iteration_arena.allocator();
@@ -698,6 +704,8 @@ fn render(allocator: std.mem.Allocator, command: []const u8, json: bool, results
 
 /// Run borrowed argv with one arena owning every result allocation; no memory retained.
 export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int {
+    if (c.daemon_device_cancel_scope(1) != 0) return 125;
+    defer _ = c.daemon_device_cancel_scope(0);
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
