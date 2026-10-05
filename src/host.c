@@ -440,6 +440,7 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
                 waddle_daemon_result_resp_t start_resp;
                 memset(&start_resp, 0, sizeof(start_resp));
                 if (waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp) != 0 || start_resp.status_code != 0) {
+                    waddle_terminal_close();
                     fprintf(stderr, "waddle: failed to start subsystem: %s\n", start_resp.error_msg[0] ? start_resp.error_msg : strerror(start_resp.status_code ? (int)start_resp.status_code : errno));
                     close(client_fd);
                     result = 125;
@@ -475,6 +476,7 @@ usage_error:
     goto done;
 
 local_error:
+    waddle_terminal_close();
     fprintf(stderr, "waddle: %s\n", strerror(errno));
 
 done:
