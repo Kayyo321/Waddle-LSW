@@ -40,10 +40,9 @@
 | **7**   | **Testing & CI Verification** | | | | |
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | Done | 1.6% | 100% | Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes. |
 | #7.2 | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | In Progress | 1.6% | 95% | Retain the already-loaded system D-Bus library while PipeWire closes its RTKit connections, then release global bus caches before the final library close. The standalone host owns the only bus lifecycle. Native ASan/LSan/UBSan now reports zero leaks instead of 3677 bytes; all bounded module coverage gates remain at one hundred percent. |
-
+| **8**   | **External Dependencies & Submodules** | | | | |
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
-
-| **10** | **All-in-one AV environment provisioning** | | | | |
+| **10**  | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 95% | Extend managed probe to validate the guest first, then map the configured region and establish real Wayland and ready PipeWire clients without opening a capture session. Tear down workers before unmapping on every path; the program-provisioned native host/guest probe passes. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
@@ -355,6 +354,11 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Advertise a 1920x1080 144-Hz virtual VGA EDID with sufficient framebuffer memory for AV profiles that use the software capture path. Keep explicitly assigned GPUs in control of their display modes and preserve non-AV defaults; hypervisor argument/lifecycle regressions pass.
 
-- **Commit `HEAD`**: `fix(av): instantiate the configured virtual display explicitly`
+- **Commit `9af0394811a8`**: `fix(av): instantiate the configured virtual display explicitly`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Instantiate the full-HD high-refresh VGA device explicitly instead of relying on global properties and an implicit default. Native boot inspection showed those globals suppress the default video device, leaving Windows without a capture display; argument and lifecycle regressions pass with the explicit device.
+
+- **Commit `HEAD`**: `docs(tracker): fix markdown table formatting in feature progress tracker`
+  - **Task Impact**: 0% overall; formatting fix
+  - **Summary**: Remove blank lines breaking table parsing before #8.1 and section 10, add the section 8 category row, and restore continuous table rendering in markdown preview mode.
+
