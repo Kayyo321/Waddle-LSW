@@ -146,6 +146,10 @@
   - **Task Impact**: +40% to #10.1 (+2.00% overall); +35% to #10.2 (+1.75% overall)
   - **Summary**: Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass.
 
-- **Commit `HEAD`**: `feat(av): own shared-memory provisioning in daemon lifecycle`
+- **Commit `56d6fca6f630`**: `feat(av): own shared-memory provisioning in daemon lifecycle`
   - **Task Impact**: +15% to #10.3 (+0.75% overall)
   - **Summary**: Prepare AV memory before managed QEMU startup and release it on spawn failure, shutdown, kill, child exit and supervisor cleanup. Reject duplicate prepare without releasing a live resource; existing server/client lifecycle regressions pass.
+
+- **Commit `HEAD`**: `fix(av): snapshot ring bounds and preserve foreign shared resources`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Use a single validated PCM capacity and bounded slices for all copies, reject KVMFR mappings with another ABI and remove only the inode created by this environment instance. Preserve live resources on duplicate prepare and report nonregular backing files accurately.

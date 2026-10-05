@@ -19,18 +19,21 @@ static int fail(av_environment_t *environment, char *error, size_t capacity,
     return -1;
 }
 void av_environment_free(av_environment_t *environment) {
+    struct stat owned, current;
+    int matches = environment->created_file && environment->fd >= 0 &&
+                  fstat(environment->fd, &owned) == 0 && lstat(environment->path, &current) == 0 &&
+                  owned.st_dev == current.st_dev && owned.st_ino == current.st_ino;
     if (environment->mapping) {
         munmap(environment->mapping, environment->length);
         environment->mapping = NULL;
     }
+    if (matches)
+        unlink(environment->path);
     if (environment->fd >= 0) {
         close(environment->fd);
         environment->fd = -1;
     }
-    if (environment->created_file) {
-        unlink(environment->path);
-        environment->created_file = 0;
-    }
+    environment->created_file = 0;
     environment->length = 0;
     environment->path[0] = '\0';
 }
@@ -88,7 +91,10 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
                 errno = EINVAL;
             return fail(environment, error, capacity, "KVMFR exact-size probe");
         }
-    } else if (!S_ISREG(status.st_mode) || ftruncate(environment->fd, AvMappingBytes) != 0) {
+    } else if (!S_ISREG(status.st_mode)) {
+        errno = EINVAL;
+        return fail(environment, error, capacity, "shared-memory file type");
+    } else if (ftruncate(environment->fd, AvMappingBytes) != 0) {
         return fail(environment, error, capacity, "shared-memory sizing");
     }
     environment->length = AvMappingBytes;
@@ -98,7 +104,13 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
         return fail(environment, error, capacity, "shared-memory mmap");
     environment->mapping = mapping;
     if (is_device) {
-        if (av_layout_validate(mapping, environment->length) == 0) {
+        uint32_t magic;
+        memcpy(&magic, mapping, sizeof(magic));
+        if (magic != 0 && av_layout_validate(mapping, environment->length) != 0) {
+            errno = EBUSY;
+            return fail(environment, error, capacity, "KVMFR already contains another mapping ABI");
+        }
+        if (magic != 0) {
             for (unsigned pool = 0; pool < AvMaxWindows; ++pool)
                 for (unsigned index = 0; index < AvVideoBuffers; ++index) {
                     window_slot_header_t *slot =

@@ -13,8 +13,7 @@ const audio_ring_header_t = extern struct {
     reserved: [36]u8,
 };
 
-fn valid_ring(ring: *align(64) audio_ring_header_t, pcm_len: usize) bool {
-    const capacity = ring.capacity_frames;
+fn valid_ring(ring: *align(64) audio_ring_header_t, capacity: u32, pcm_len: usize) bool {
     return capacity >= 2 and capacity <= 1048576 and std.math.isPowerOfTwo(capacity) and
         ring.sample_rate == 48000 and ring.channels == 2 and ring.format == 1 and
         pcm_len >= @as(usize, capacity) * 4;
@@ -24,17 +23,18 @@ fn valid_ring(ring: *align(64) audio_ring_header_t, pcm_len: usize) bool {
 /// Returns copied frames or -1 for invalid format/length/cursors. No allocation;
 /// exactly one producer; mapping immutable and alive throughout call.
 export fn av_audio_write(ring: *align(64) audio_ring_header_t, pcm: [*]u8, pcm_len: usize, input: [*]const u8, input_len: usize) i64 {
-    if (!valid_ring(ring, pcm_len) or input_len % 4 != 0 or input_len / 4 > std.math.maxInt(u32)) return -1;
+    const capacity = ring.capacity_frames;
+    if (!valid_ring(ring, capacity, pcm_len) or input_len % 4 != 0 or input_len / 4 > std.math.maxInt(u32)) return -1;
     const write_head = @atomicLoad(u32, &ring.write_head, .acquire);
     const read_head = @atomicLoad(u32, &ring.read_head, .acquire);
     const used = write_head -% read_head;
-    if (used > ring.capacity_frames) return -1;
+    if (used > capacity) return -1;
     const requested: u32 = @intCast(input_len / 4);
-    const count = @min(requested, ring.capacity_frames - used);
-    const offset = (write_head & (ring.capacity_frames - 1)) * 4;
-    const first = @min(count * 4, ring.capacity_frames * 4 - offset);
-    @memcpy(pcm[offset..][0..first], input[0..first]);
-    @memcpy(pcm[0 .. count * 4 - first], input[first .. count * 4]);
+    const count = @min(requested, capacity - used);
+    const offset = (write_head & (capacity - 1)) * 4;
+    const first = @min(count * 4, capacity * 4 - offset);
+    @memcpy(pcm[0..pcm_len][offset..][0..first], input[0..input_len][0..first]);
+    @memcpy(pcm[0..pcm_len][0 .. count * 4 - first], input[0..input_len][first .. count * 4]);
     @atomicStore(u32, &ring.write_head, write_head +% count, .release);
     const dropped = requested - count;
     const overruns = @atomicLoad(u32, &ring.overrun_frames, .acquire);
@@ -46,20 +46,21 @@ export fn av_audio_write(ring: *align(64) audio_ring_header_t, pcm: [*]u8, pcm_l
 /// out: nonoverlapping output[output_len]. Returns copied frames or -1; fills
 /// underruns with zero. Single consumer only; no allocation or ownership transfer.
 export fn av_audio_read(ring: *align(64) audio_ring_header_t, pcm: [*]const u8, pcm_len: usize, output: [*]u8, output_len: usize, max_backlog: u32) i64 {
-    if (!valid_ring(ring, pcm_len) or output_len % 4 != 0 or output_len / 4 > std.math.maxInt(u32)) return -1;
+    const capacity = ring.capacity_frames;
+    if (!valid_ring(ring, capacity, pcm_len) or output_len % 4 != 0 or output_len / 4 > std.math.maxInt(u32)) return -1;
     const write_head = @atomicLoad(u32, &ring.write_head, .acquire);
     var read_head = @atomicLoad(u32, &ring.read_head, .acquire);
     var used = write_head -% read_head;
-    if (used > ring.capacity_frames) return -1;
+    if (used > capacity) return -1;
     if (max_backlog != 0 and used > max_backlog) {
         read_head +%= used - max_backlog;
         used = max_backlog;
     }
     const count = @min(output_len / 4, used);
-    const offset = (read_head & (ring.capacity_frames - 1)) * 4;
-    const first = @min(count * 4, ring.capacity_frames * 4 - offset);
-    @memcpy(output[0..first], pcm[offset..][0..first]);
-    @memcpy(output[first .. count * 4], pcm[0 .. count * 4 - first]);
+    const offset = (read_head & (capacity - 1)) * 4;
+    const first = @min(count * 4, capacity * 4 - offset);
+    @memcpy(output[0..output_len][0..first], pcm[0..pcm_len][offset..][0..first]);
+    @memcpy(output[0..output_len][first .. count * 4], pcm[0..pcm_len][0 .. count * 4 - first]);
     @memset(output[count * 4 .. output_len], 0);
     @atomicStore(u32, &ring.read_head, read_head +% @as(u32, @intCast(count)), .release);
     return @intCast(count);
