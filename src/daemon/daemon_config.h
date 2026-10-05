@@ -149,7 +149,7 @@ int daemon_config_validate(const daemon_config_t *config);
  * @param[in] length Input byte count; embedded NUL is rejected.
  * @param[in] changes Non-null borrowed array of non-null NUL-terminated keys
  * (reset) or key=value assignments (set); unknown/duplicate keys are rejected.
- * @param[in] count Number of changes, 1 through 6.
+ * @param[in] count Number of changes, 1 through 9.
  * @param[in] reset Nonzero selects documented default values.
  * @param[out] output Non-null caller-owned buffer; must not alias data.
  * @param[in] capacity Output capacity; complete output is limited to 65536 bytes.

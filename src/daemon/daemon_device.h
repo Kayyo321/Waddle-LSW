@@ -178,7 +178,7 @@ int daemon_device_default_set(const char *name);
  * @brief Apply validated mutable settings to a quiescent named device.
  * @param[in] name Non-null borrowed ASCII profile name.
  * @param[in] changes Non-null borrowed array of count non-null key/value strings.
- * @param[in] count Number of changes, 1..6; duplicates and unknown keys fail.
+ * @param[in] count Number of changes, 1..9; duplicates and unknown keys fail.
  * @param[in] reset Nonzero uses documented defaults, otherwise parses key=value.
  * @param[in] dry_run Nonzero validates without creating or changing files.
  * @return 0 on success; -1 with errno (EINVAL, ENOENT, EBUSY, EACCES or I/O).

@@ -499,7 +499,7 @@ test "daemon_config: full width vsock port and empty export section" {
 
 /// Mutable key schema; immutable storage borrowed by the editor.
 const edit_key_t = struct { name: []const u8, section: []const u8, default: []const u8 };
-/// The six supported mutable settings and their exact reset representations.
+/// The nine supported mutable settings and their exact reset representations.
 const EditKeys = [_]edit_key_t{
     .{ .name = "memory_mb", .section = "subsystem", .default = "4096" },
     .{ .name = "vcpus", .section = "subsystem", .default = "4" },
@@ -507,6 +507,9 @@ const EditKeys = [_]edit_key_t{
     .{ .name = "vsock_port", .section = "subsystem", .default = "5242" },
     .{ .name = "start_timeout", .section = "timeouts", .default = "60" },
     .{ .name = "stop_timeout", .section = "timeouts", .default = "15" },
+    .{ .name = "enabled", .section = "av", .default = "0" },
+    .{ .name = "shm_path", .section = "av", .default = "/dev/kvmfr0" },
+    .{ .name = "gpu_bdf", .section = "av", .default = "" },
 };
 
 /// Bounded all-or-none validation; output remains caller-owned and is never allocated.
@@ -527,7 +530,8 @@ fn edit_config(data: []const u8, changes: []const []const u8, reset: bool, outpu
         const i = index orelse return error.Invalid;
         if (values[i] != null) return error.Invalid;
         const value = if (reset) EditKeys[i].default else change[eq.? + 1 ..];
-        if (value.len == 0 or value.len > 255 or !std.unicode.utf8ValidateSlice(value) or
+        if ((value.len == 0 and !std.mem.eql(u8, name, "gpu_bdf")) or
+            value.len > (if (std.mem.eql(u8, name, "shm_path")) @as(usize, 1023) else 255) or !std.unicode.utf8ValidateSlice(value) or
             std.mem.indexOfAny(u8, value, "\x00\r\n") != null or
             !std.mem.eql(u8, std.mem.trim(u8, value, " \t"), value)) return error.Invalid;
         values[i] = value;
@@ -637,4 +641,19 @@ test "AV device configuration is bounded and transactional" {
         try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, invalid.ptr, invalid.len));
         try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&cfg));
     }
+}
+
+test "AV config edits enable only a complete bounded environment" {
+    const original = "[subsystem]\nmemory_mb=4096\n";
+    var output: [4096]u8 = undefined;
+    try std.testing.expectError(error.Invalid, edit_config(original, &.{"enabled=1"}, false, &output));
+    const length = try edit_config(original, &.{ "enabled=1", "shm_path=/dev/shm/private-av", "gpu_bdf=" }, false, &output);
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, output[0..length].ptr, length));
+    try std.testing.expectEqual(@as(u32, 1), cfg.av_enabled);
+    var reset_output: [4096]u8 = undefined;
+    _ = try edit_config(output[0..length], &.{ "enabled", "shm_path", "gpu_bdf" }, true, &reset_output);
+    try std.testing.expectError(error.Invalid, edit_config(original, &.{"shm_path=/tmp/x,share=off"}, false, &output));
+    try std.testing.expectError(error.Invalid, edit_config(original, &.{"gpu_bdf=0000:00:20.0"}, false, &output));
 }

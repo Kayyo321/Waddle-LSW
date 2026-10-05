@@ -158,7 +158,9 @@ fn observed_state(info: *const c.device_info_t) []const u8 {
         if (registry_fd < 0) return "unknown";
         defer _ = c.close(registry_fd);
         var lease: c_int = -1;
-        defer if (lease >= 0) { _ = c.close(lease); };
+        defer if (lease >= 0) {
+            _ = c.close(lease);
+        };
         return if (c.daemon_device_lock_quiescent(info, &lease) == 0) "stopped" else "unknown";
     }
     const fd = c.waddle_client_connect(&info.socket_path);
@@ -237,16 +239,24 @@ fn lifecycle_one(info: *const c.device_info_t, op: []const u8, force: bool, wait
             var response: c.waddle_daemon_result_resp_t = undefined;
             const result = if (std.mem.eql(u8, op, "kill")) c.waddle_client_kill(fd, &response) else c.waddle_client_stop(fd, @intFromBool(force), timeout, &response);
             if (result != 0) return registry_error();
-            if (response.status_code != 0) { c.__errno_location().* = @intCast(response.status_code); return registry_error(); }
+            if (response.status_code != 0) {
+                c.__errno_location().* = @intCast(response.status_code);
+                return registry_error();
+            }
             if (c.waddle_client_shutdown(fd, &response) != 0) return registry_error();
-            if (response.status_code != 0) { c.__errno_location().* = @intCast(response.status_code); return registry_error(); }
+            if (response.status_code != 0) {
+                c.__errno_location().* = @intCast(response.status_code);
+                return registry_error();
+            }
         }
         if (c.waddle_client_wait_supervisor_exit(&info.socket_path, timeout) != 0) return registry_error();
         const registry_fd = c.daemon_device_registry_lock(0);
         if (registry_fd < 0) return registry_error();
         defer _ = c.close(registry_fd);
         var lease: c_int = -1;
-        defer if (lease >= 0) { _ = c.close(lease); };
+        defer if (lease >= 0) {
+            _ = c.close(lease);
+        };
         if (c.daemon_device_lock_quiescent(info, &lease) != 0) return registry_error();
     }
     if (starting or restarting) {
@@ -264,7 +274,10 @@ fn lifecycle_one(info: *const c.device_info_t, op: []const u8, force: bool, wait
         defer _ = c.close(fd);
         var response: c.waddle_daemon_result_resp_t = undefined;
         if (c.waddle_client_start(fd, if (wait) c.DaemonStartFlagWaitGuest else 0, timeout, &response) != 0) return registry_error();
-        if (response.status_code != 0) { c.__errno_location().* = @intCast(response.status_code); return registry_error(); }
+        if (response.status_code != 0) {
+            c.__errno_location().* = @intCast(response.status_code);
+            return registry_error();
+        }
     }
 }
 /// Snapshot and process sorted batch targets; aggregate failures never truncate results.
@@ -359,7 +372,10 @@ fn execute_doctor(allocator: std.mem.Allocator, command: command_t, results: *st
             var iterator = dir.iterate();
             while (try iterator.next()) |entry| {
                 var registered = false;
-                for (registry.devices[0..registry.count]) |info| if (std.mem.eql(u8, entry.name, c_text(&info.name))) { registered = true; break; };
+                for (registry.devices[0..registry.count]) |info| if (std.mem.eql(u8, entry.name, c_text(&info.name))) {
+                    registered = true;
+                    break;
+                };
                 if (!registered) {
                     unhealthy = true;
                     var data = object(allocator);
@@ -453,10 +469,23 @@ fn execute_observation(allocator: std.mem.Allocator, command: command_t, results
                 if (first) {
                     var count: u32 = 0;
                     var position = bytes.len;
-                    while (position > 0) { position -= 1; if (bytes[position] == '\n' and position + 1 < bytes.len) { count += 1; if (count >= lines) { start = position + 1; break; } } }
+                    while (position > 0) {
+                        position -= 1;
+                        if (bytes[position] == '\n' and position + 1 < bytes.len) {
+                            count += 1;
+                            if (count >= lines) {
+                                start = position + 1;
+                                break;
+                            }
+                        }
+                    }
                 }
                 if (!std.unicode.utf8ValidateSlice(bytes[start..])) return error.InvalidConfig;
-                if (command.follow) { try std.io.getStdOut().writer().writeAll(bytes[start..]); } else { try combined.appendSlice(bytes[start..]); }
+                if (command.follow) {
+                    try std.io.getStdOut().writer().writeAll(bytes[start..]);
+                } else {
+                    try combined.appendSlice(bytes[start..]);
+                }
             }
             if (!command.follow) break;
             first = false;
@@ -523,11 +552,17 @@ fn execute_mutation(allocator: std.mem.Allocator, command: command_t, results: *
             if (c.daemon_device_cancelled() != 0) return error.Cancelled;
             var descriptor = c.struct_pollfd{ .fd = c.STDIN_FILENO, .events = c.POLLIN, .revents = 0 };
             const ready = c.poll(&descriptor, 1, 100);
-            if (ready < 0) { if (c.__errno_location().* == c.EINTR) continue; return error.IoError; }
+            if (ready < 0) {
+                if (c.__errno_location().* == c.EINTR) continue;
+                return error.IoError;
+            }
             if (ready == 0) continue;
             var byte: u8 = undefined;
             const amount = c.read(c.STDIN_FILENO, &byte, 1);
-            if (amount < 0) { if (c.__errno_location().* == c.EINTR) continue; return error.IoError; }
+            if (amount < 0) {
+                if (c.__errno_location().* == c.EINTR) continue;
+                return error.IoError;
+            }
             if (amount == 0) return error.Cancelled;
             if (byte == '\n') break;
             if (length == input_buffer.len) return error.Cancelled;
@@ -540,12 +575,15 @@ fn execute_mutation(allocator: std.mem.Allocator, command: command_t, results: *
     const terminated_arg = if (argument) |arg| try allocator.dupeZ(u8, arg) else null;
     const shell = if (command.shell) |value| try allocator.dupeZ(u8, value) else null;
     var request = c.device_request_t{
-        .operation = operation, .name = (try allocator.dupeZ(u8, name)).ptr,
+        .operation = operation,
+        .name = (try allocator.dupeZ(u8, name)).ptr,
         .argument = if (terminated_arg) |arg| arg.ptr else null,
         .shell = if (shell) |value| value.ptr else null,
         .memory_mb = if (command.memory_mb) |value| std.fmt.parseInt(u32, value, 10) catch return error.Usage else 0,
         .vcpus = if (command.vcpus) |value| std.fmt.parseInt(u32, value, 10) catch return error.Usage else 0,
-        .blank = @intFromBool(command.blank_disk != null), .dry_run = @intFromBool(command.dry_run), .keep_data = @intFromBool(command.keep_data),
+        .blank = @intFromBool(command.blank_disk != null),
+        .dry_run = @intFromBool(command.dry_run),
+        .keep_data = @intFromBool(command.keep_data),
     };
     if ((command.memory_mb != null and request.memory_mb == 0) or (command.vcpus != null and request.vcpus == 0)) return error.InvalidConfig;
     var path: [1024]u8 = undefined;
@@ -588,7 +626,7 @@ fn execute(allocator: std.mem.Allocator, command: command_t, results: *std.json.
         config_write = config_reset or std.mem.eql(u8, action, "set");
         if (!config_write and !std.mem.eql(u8, action, "get")) return error.Usage;
         if (config_write) {
-            if (command.count < 4 or command.count > 9) return error.Usage;
+            if (command.count < 4 or command.count > 12) return error.Usage;
         } else if (command.count > 4) return error.Usage;
     }
     if (command.dry_run and !config_write) return error.Usage;
@@ -596,7 +634,7 @@ fn execute(allocator: std.mem.Allocator, command: command_t, results: *std.json.
     if (name) |n| if (!name_valid(n)) return error.InvalidName;
     if (config_write) {
         const terminated = try allocator.dupeZ(u8, name.?);
-        var changes: [6][*:0]const u8 = undefined;
+        var changes: [9][*:0]const u8 = undefined;
         var plan = std.json.Value{ .array = std.ArrayList(std.json.Value).init(allocator) };
         for (command.operands[3..command.count], 0..) |change, i| {
             changes[i] = (try allocator.dupeZ(u8, change)).ptr;
@@ -761,7 +799,8 @@ export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int
                 "       waddle device config reset NAME KEY... [--dry-run] [--json]\n" ++
                 "Config edits require a stopped device without runtime owners; changes apply together.\n" ++
                 "Reset values: memory_mb=4096, vcpus=4, default_shell=powershell.exe,\n" ++
-                "vsock_port=5242, start_timeout=60, stop_timeout=15.\n" ++
+                "vsock_port=5242, start_timeout=60, stop_timeout=15, enabled=0,\n" ++
+                "shm_path=/dev/kvmfr0, gpu_bdf=(empty).\n" ++
                 "       waddle logs [NAME|--device NAME] [--target daemon|qemu|virtiofsd|all] [--lines N] [--follow] [--json]\n" ++
                 "       waddle fs [test] [NAME|--device NAME] [--json]\n" ++
                 "       waddle shell [NAME|--device NAME] (interactive stream; JSON rejected)\n" ++
@@ -769,7 +808,8 @@ export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int
                 "Start: --wait|--no-wait, --timeout 1..600; stop/restart: --force, --timeout 1..600.\n" ++
                 "Batch operations snapshot sorted names, continue failures and return aggregate failure.\n" ++
                 "Read commands never start a guest. Default selection does not boot.\n" ++
-                "Config keys: memory_mb, vcpus, default_shell, vsock_port, start_timeout, stop_timeout.\n" ++
+                "Config keys: memory_mb, vcpus, default_shell, vsock_port, start_timeout, stop_timeout,\n" ++
+                "enabled, shm_path, gpu_bdf (AV environment).\n" ++
                 "Exit codes: 0 success, 2 usage/validation, 1 I/O, 125 resources, 130 interrupted.\n",
         ) catch return 125;
         return 0;
@@ -825,7 +865,7 @@ test "every device option has bounded values and duplicate rejection" {
     _ = try @call(.never_inline, parse, .{&[_][]const u8{ "logs", "-f" }});
     _ = try @call(.never_inline, parse, .{&[_][]const u8{ "show", "--", "--literal", "-x" }});
     _ = try @call(.never_inline, parse, .{&[_][]const u8{}});
-    try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{ &([_]u8{'x'} ** 4097) }}));
+    try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&[_][]const u8{&([_]u8{'x'} ** 4097)}}));
     const overflow = [_][]const u8{"operand"} ** 17;
     try std.testing.expectError(error.Usage, @call(.never_inline, parse, .{&overflow}));
     for ([_][]const u8{ "", "a/b", "\xff", &([_]u8{'x'} ** 64) }) |name| try std.testing.expect(!@call(.never_inline, name_valid, .{name}));

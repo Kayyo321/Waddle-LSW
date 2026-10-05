@@ -46,11 +46,11 @@
 | **10** | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 40% | Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 65% | Build the pinned driver through an argv-only child process against running-kernel headers, expose an administrator-only load step and preserve incompatible live devices. Bundle source/license from the submodule in ignored build outputs; build succeeds on the current kernel. |
-| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 70% | Prepare AV memory before managed QEMU startup and release it on spawn failure, shutdown, kill, child exit and supervisor cleanup. Reject duplicate prepare without releasing a live resource; existing server/client lifecycle regressions pass. |
+| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 80% | Extend the bounded configuration editor with AV enable, shared-memory path and explicit GPU assignment. Validate the complete patch before replacing a quiescent device configuration, preserve unrelated bytes and cover incomplete, malformed and reset requests. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `79.55%`
+**Total Feature Completion**: `80.05%`
 
 ## Commit History & Progress Log
 
@@ -186,6 +186,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Run AV transport sanitizers, cross-link platform clients and compile the WinRT DLL with the base Windows SDK. Add native window lifecycle/filtering and C ABI checks plus allocator tests; publish first-party Windows artifacts for managed deployment.
 
-- **Commit `HEAD`**: `fix(av): distinguish orderly closure from corrupted sessions`
+- **Commit `5dd9996b4f06`**: `fix(av): distinguish orderly closure from corrupted sessions`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Return a separate orderly EOF result, reject truncated final frames and propagate protocol errors through host and guest exit status. Fragmented, burst, corruption and truncation tests and native/cross builds pass.
+
+- **Commit `HEAD`**: `feat(av): expose atomic AV settings through device configuration`
+  - **Task Impact**: +10% to #10.3 (+0.50% overall)
+  - **Summary**: Extend the bounded configuration editor with AV enable, shared-memory path and explicit GPU assignment. Validate the complete patch before replacing a quiescent device configuration, preserve unrelated bytes and cover incomplete, malformed and reset requests.
