@@ -323,3 +323,17 @@ Existing ownership/group permissions remain intact; no world-write mode is added
 Missing kernel devices or the base `acl` package produce explicit errors. Setup
 rechecks actual access afterward. ACLs may be reset by reboot/hotplug policy, so
 idempotent setup reprobes them; no session starts by assuming a previous grant.
+
+
+### KVMFR and vhost-user filesystem compatibility
+
+The B7 driver lacks `llseek`, while the system virtiofsd maps each shared QEMU
+memory region after seeking its descriptor to determine its length. A KVMFR
+IVSHMEM region therefore fails import with ESPIPE even though ordinary mappings
+work. The owned driver patch adds a bounded `fixed_size_llseek` implementation
+using the device's actual capacity; no read/write semantics change. AV preflight
+requires both the explicit 64-bit size ioctl and SEEK_END to report 2 GiB, so an
+older incompatible live module fails before a VM starts. Native tests check the
+seek result/reset as well as actual DMA-BUF aliasing. Existing live modules are
+never silently unloaded by setup; only the explicitly owned validation instance
+is replaced while no VM/mapping/export retains it.

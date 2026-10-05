@@ -13,7 +13,29 @@
  
      default:
        return -ENOTTY;
-@@ -508,7 +514,7 @@
+@@ -361,11 +367,21 @@
+   }
+ }
+ 
++static loff_t device_llseek(struct file *filp, loff_t offset, int whence)
++{
++  struct kvmfr_dev *kdev;
++  kdev = (struct kvmfr_dev *)idr_find(&kvmfr_idr, iminor(filp->f_inode));
++  if (!kdev)
++    return -EINVAL;
++  return fixed_size_llseek(filp, offset, whence, kdev->size);
++}
++
+ static struct file_operations fops =
+ {
+   .owner          = THIS_MODULE,
+   .unlocked_ioctl = device_ioctl,
+   .mmap           = device_mmap,
++  .llseek         = device_llseek,
+ };
+ 
+ static int kvmfr_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
+@@ -508,7 +524,7 @@
    if (!kdev)
      return -ENOMEM;
  

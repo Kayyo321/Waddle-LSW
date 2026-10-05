@@ -18,6 +18,8 @@ int main(void) {
     char error[1024];
     assert(av_environment_prepare(&environment, &config, error, sizeof(error)) == 0);
     assert(av_kvmfr_size(environment.fd) == (long)AvMappingBytes);
+    assert(lseek(environment.fd, 0, SEEK_END) == (off_t)AvMappingBytes);
+    assert(lseek(environment.fd, 0, SEEK_SET) == 0);
     int exported = av_dmabuf_export(environment.fd, AvPixelOffset, AvSlotCapacity);
     assert(exported >= 0 && (fcntl(exported, F_GETFD) & FD_CLOEXEC));
     uint8_t *pixels = mmap(NULL, AvSlotCapacity, PROT_READ | PROT_WRITE, MAP_SHARED, exported, 0);

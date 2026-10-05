@@ -258,6 +258,10 @@
   - **Task Impact**: +10% to #10.1 (+0.50% overall)
   - **Summary**: Probe both host kernel devices and grant the validated invoking user a specific read/write ACL through the privileged bundled helper when needed. Preserve ownership/groups, use no world-write permissions and recheck actual access before boot; native access provisioning passes.
 
-- **Commit `HEAD`**: `fix(av): release mappings after early hypervisor exit`
+- **Commit `80ac6ff66f82`**: `fix(av): release mappings after early hypervisor exit`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Release AV mappings and stop the filesystem child when readiness polling reaps QEMU before the event loop. Add a reaper fallback for already-reaped children and a regression proving failed startup removes owned memory and permits a clean retry.
+
+- **Commit `HEAD`**: `chore(deps): make KVMFR regions importable by system virtiofsd`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Add bounded fixed-size seeking to the pinned driver build patch so vhost-user can determine and map IVSHMEM regions. Require compatible seek/size probes before boot and verify them with real exports; reload only the owned idle validation module and pass the native gate.

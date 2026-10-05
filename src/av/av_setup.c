@@ -121,8 +121,9 @@ int main(int argc, char **argv) {
         int fd = open("/dev/kvmfr0", O_RDWR | O_CLOEXEC | O_NOFOLLOW);
         if (fd >= 0) {
             long size = av_kvmfr_size(fd);
+            off_t seek_size = lseek(fd, 0, SEEK_END);
             close(fd);
-            if (size == (long)AvMappingBytes)
+            if (size == (long)AvMappingBytes && seek_size == (off_t)AvMappingBytes)
                 return 0;
             fprintf(stderr, "AV setup: existing KVMFR device has incompatible size; preserved\n");
             return 1;

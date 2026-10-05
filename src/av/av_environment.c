@@ -141,7 +141,8 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
         return fail(environment, error, capacity, "mapping stat");
     if (is_device) {
         long bytes = av_kvmfr_size(environment->fd);
-        if (!S_ISCHR(status.st_mode) || bytes < 0 || (uint64_t)bytes != AvMappingBytes) {
+        if (!S_ISCHR(status.st_mode) || bytes < 0 || (uint64_t)bytes != AvMappingBytes ||
+            lseek(environment->fd, 0, SEEK_END) != (off_t)AvMappingBytes) {
             if (bytes >= 0)
                 errno = EINVAL;
             return fail(environment, error, capacity, "KVMFR exact-size probe");
