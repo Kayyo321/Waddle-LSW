@@ -11,13 +11,13 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 10% | Transport contract specified; runtime and adapters pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 45% | C/Zig ring and basic sanitizer tests pass; stress and adapters pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 25% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 
-**Total Feature Completion**: `1.5%`
+**Total Feature Completion**: `6.75%`
 
 ## Commit History & Progress Log
 
@@ -34,7 +34,7 @@
 - **Commit `8b3edcd`**: `refactor(headers): convert header guards to PascalCase per project convention`
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Existing header naming cleanup; no Venus transport implementation.
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify IVSHMEM ring transport contract`
+- **Commit `5398e3f`**: `docs(vgpu): specify IVSHMEM ring transport contract`
   - **Task Impact**: +10% to TODO: #1 (+1.5% overall).
   - **Summary**: Defined cache-isolated C ABI, bounded Zig validation, SPSC ordering,
     errors, ownership, milestones, and transport-versus-renderer boundary.
@@ -42,3 +42,11 @@
 The current entry is identified by its unique commit subject because a commit
 cannot contain its own content-derived hash. Each following atomic commit records
 the preceding entry's actual hash; `git log` resolves the latest entry directly.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): implement bounded SPSC byte transport`
+  - **Task Impact**: +35% to TODO: #1 (+5.25% overall).
+  - **Summary**: Added the 192-byte C11 ABI, cache-isolated cursors, local capacity
+    snapshots, allocation-free Zig validation/copy helpers, and basic tests.
+  - **Verification**: `make vgpu-test vgpu-sanitizers` passed with ASan/LSan/UBSan;
+    Zig allocator tests passed; Windows x86-64 C object compilation passed.
+    Native Windows execution, stress, coverage, and session adapters remain pending.

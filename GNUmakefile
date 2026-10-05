@@ -201,3 +201,5 @@ device-stress: build/waddle
 	python3 tests/integration/device_stress.py
 
 include scripts/av.mk
+
+include scripts/vgpu.mk
