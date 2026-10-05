@@ -600,3 +600,24 @@ holders, and refuses any UNIX endpoint still present in `/proc/net/unix`. The
 kernel table is parsed with bounded Zig slices; no connection to VirtIO-FS is made.
 Only absent kernel endpoints with owned stale socket files are removed. Stable
 lease files, registered data and processes are never removed by doctor.
+
+### Implementation evidence: complete command routing
+
+Named start/stop/restart/kill/status, logs and fs use one bounded Zig parser and
+v1 result envelope. Lifecycle batches snapshot sorted registration names, recheck
+each target, continue failures and return aggregate failure. Start keeps a shared
+registry lease until the supervisor has acquired its lifetime lease, then releases
+it before readiness waits. Stop/kill wait for supervisor exit and independently
+verify quiescence; restart completes that path before start. Unavailable PID and
+uptime fields are null; missing sockets with unresolved ownership report unknown.
+Explicit targets bypass damaged/default selection metadata.
+
+Named logs persist at state `devices/<name>/logs/`; the supervisor creates that
+path only after protected config-to-lease handoff. Log queries read bounded tails
+for the selected targets without spawning, reject symlinks, support JSON, and
+follow uses a fresh iteration arena to keep memory bounded. Fs inspection reads
+only declared mounts; fs test reproduces the existing host round-trip fixture
+with exclusive temporary files and deterministic cleanup, including read-only
+export checks. Doctor reports orphan state without deleting it; dry repair validates
+its plan without changing paths. Shell remains a ConPTY stream and rejects JSON.
+Raw socket transport development remains handled by the original C interface.

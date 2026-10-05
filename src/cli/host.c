@@ -647,8 +647,10 @@ static int cmd_start(int argc, char **argv) {
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
         } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
             target_device = argv[++i];
         } else if (argv[i][0] != '-' && target_device == NULL) {
             target_device = argv[i];
@@ -660,6 +662,7 @@ static int cmd_start(int argc, char **argv) {
 
     char resolved_sock[WaddleMaxPathLen];
     device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
     if (socket_path == NULL) {
         int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
         if (r != 0) {
@@ -692,8 +695,10 @@ static int cmd_stop(int argc, char **argv) {
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
         } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
             target_device = argv[++i];
         } else if (argv[i][0] != '-' && target_device == NULL) {
             target_device = argv[i];
@@ -705,6 +710,7 @@ static int cmd_stop(int argc, char **argv) {
 
     char resolved_sock[WaddleMaxPathLen];
     device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
     if (socket_path == NULL) {
         int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
         if (r != 0) {
@@ -737,8 +743,10 @@ static int cmd_restart(int argc, char **argv) {
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
         } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
             target_device = argv[++i];
         } else if (argv[i][0] != '-' && target_device == NULL) {
             target_device = argv[i];
@@ -750,6 +758,7 @@ static int cmd_restart(int argc, char **argv) {
 
     char resolved_sock[WaddleMaxPathLen];
     device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
     if (socket_path == NULL) {
         int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
         if (r != 0) {
@@ -776,8 +785,10 @@ static int cmd_status(int argc, char **argv) {
         if (strcmp(argv[i], "--json") == 0) {
             json_output = 1;
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
         } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
             target_device = argv[++i];
         } else if (argv[i][0] != '-' && target_device == NULL) {
             target_device = argv[i];
@@ -789,6 +800,7 @@ static int cmd_status(int argc, char **argv) {
 
     char resolved_sock[WaddleMaxPathLen];
     device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
     if (socket_path == NULL) {
         int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 0);
         if (r != 0) {
@@ -808,8 +820,10 @@ static int cmd_kill(int argc, char **argv) {
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
         } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
             target_device = argv[++i];
         } else if (argv[i][0] != '-' && target_device == NULL) {
             target_device = argv[i];
@@ -821,6 +835,7 @@ static int cmd_kill(int argc, char **argv) {
 
     char resolved_sock[WaddleMaxPathLen];
     device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
     if (socket_path == NULL) {
         int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
         if (r != 0) {
@@ -915,8 +930,10 @@ static int cmd_fs(int argc, char **argv) {
         if (strcmp(argv[i], "test") == 0) {
             is_test = 1;
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
         } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
             target_device = argv[++i];
         } else if (argv[i][0] != '-' && target_device == NULL) {
             target_device = argv[i];
@@ -928,6 +945,7 @@ static int cmd_fs(int argc, char **argv) {
 
     char resolved_sock[WaddleMaxPathLen];
     device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
     if (socket_path == NULL) {
         int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
         if (r != 0) {
@@ -960,8 +978,10 @@ static int cmd_logs(int argc, char **argv) {
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
         } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
             target_device = argv[++i];
         } else if (argv[i][0] != '-' && target_device == NULL) {
             target_device = argv[i];
@@ -973,6 +993,7 @@ static int cmd_logs(int argc, char **argv) {
 
     char resolved_sock[WaddleMaxPathLen];
     device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
     if (socket_path == NULL) {
         int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
         if (r != 0) {
@@ -1080,6 +1101,22 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    if (strcmp(cmd, "shell") == 0) {
+        const char *name = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) { usage(stdout); return 0; }
+            if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc && name == NULL) name = argv[++i];
+            else if (argv[i][0] != '-' && name == NULL) name = argv[i];
+            else { fprintf(stderr, "waddle shell: expected one NAME or --device NAME\n"); return 2; }
+        }
+        return cmd_interactive_default(name);
+    }
+    if (strcmp(cmd, "exec") == 0 || strcmp(cmd, "run") == 0 || strcmp(cmd, "fs") == 0 || strcmp(cmd, "logs") == 0) {
+        for (int i = 2; i < argc && strcmp(argv[i], "--") != 0; i++) {
+            if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) { usage(stdout); return 0; }
+        }
+    }
+
     if (strcmp(cmd, "device") == 0) {
         return waddle_device_command(argc - 2, argv + 2);
     }
@@ -1093,6 +1130,19 @@ int main(int argc, char **argv) {
         strcmp(cmd, "list") == 0 || strcmp(cmd, "--list") == 0) {
         argv[1] = "list";
         return waddle_device_command(argc - 1, argv + 1);
+    }
+
+    /* Raw socket invocations retain their existing transport interface. */
+    const char *lifecycle[] = { "start", "stop", "restart", "status", "kill", "logs", "fs" };
+    for (size_t i = 0; i < sizeof(lifecycle) / sizeof(lifecycle[0]); i++) {
+        const char *canonical = cmd[0] == '-' && cmd[1] == '-' ? cmd + 2 : cmd;
+        if (strcmp(canonical, lifecycle[i]) != 0) continue;
+        int raw_socket = 0;
+        for (int j = 2; j < argc; j++) if (strcmp(argv[j], "--socket-path") == 0) raw_socket = 1;
+        if (!raw_socket) {
+            argv[1] = (char *)lifecycle[i];
+            return waddle_device_command(argc - 1, argv + 1);
+        }
     }
 
     if (strcmp(cmd, "start") == 0 || strcmp(cmd, "--start") == 0) {

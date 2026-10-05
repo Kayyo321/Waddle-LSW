@@ -28,6 +28,10 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
 
     assert run("device", "list", "--json", structured=True)["results"] == []
     assert run("device", "default", "--json", structured=True)["results"][0]["data"]["default_device"] is None
+    assert run("status", "--all", "--json", structured=True)["results"] == []
+    run("stop", "--all", "--json", structured=True)
+    run("status", "--all", "--device", "alpha", "--json", expected=2, structured=True)
+    run("start", "alpha", "--wait", "--no-wait", expected=2)
     assert not Path(env["XDG_CONFIG_HOME"]).exists()
     assert not Path(env["XDG_STATE_HOME"]).exists()
     run("status", expected=2)
@@ -48,6 +52,15 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     run("status", expected=2)
     run("device", "default", "alpha", "--json", structured=True)
     run("status")
+    states = run("status", "--all", "--json", structured=True)["results"]
+    assert [item["name"] for item in states] == ["alpha", "beta"]
+    assert all(item["data"]["daemon_pid"] is None for item in states)
+    run("stop", "--all", "--json", structured=True)
+    run("kill", "--all", "--json", structured=True)
+    run("status", "alpha", "--device", "alpha", expected=2)
+    run("status", "--force", expected=2)
+    run("stop", "--timeout", "0", expected=2)
+
     shown = run("device", "show", "alpha", "--json", structured=True)["results"][0]
     assert shown["data"]["is_default"]
     assert '"日本語' in shown["data"]["config_path"]
@@ -89,11 +102,46 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     # Same-user orphan disk holders must block mutations even without a socket.
     with open(shown["data"]["disk_image"], "rb"):
         run("device", "config", "set", "alpha", "vcpus=8", expected=1)
+    mounts = run("fs", "alpha", "--json", structured=True)["results"][0]["data"]["mounts"]
+    assert len(mounts) == 1 and mounts[0]["host_path"] == str(root)
+    run("fs", "test", "alpha", "--json", structured=True)
+    log_dir = Path(shown["data"]["state_dir"]) / "logs"
+    log_dir.mkdir(mode=0o700)
+    (log_dir / "qemu.log").write_text("one\ntwo\nthree\n")
+    log = run("logs", "alpha", "--target", "qemu", "--lines", "2", "--json", structured=True)
+    assert log["results"][0]["data"]["text"] == "two\nthree\n"
+    run("logs", "alpha", "--follow", "--json", expected=2)
+    run("logs", "alpha", "--target", "bogus", expected=2)
+    run("shell", "alpha", "--device", "alpha", expected=2)
+    for subcommand in ("start", "stop", "restart", "kill", "status", "logs", "fs", "shell", "exec"):
+        run(subcommand, "--help")
+    run("device", "doctor", "alpha", "--json", structured=True)
+    # A stale private socket is reported and only explicit repair removes it.
+    import socket
+    runtime = Path(env["XDG_RUNTIME_DIR"]) / "waddle/alpha"
+    runtime.mkdir(parents=True, mode=0o700)
+    for parent in (Path(env["XDG_RUNTIME_DIR"]), runtime.parent):
+        parent.chmod(0o700)
+    stale = socket.socket(socket.AF_UNIX)
+    stale.bind(str(runtime / "daemon.sock"))
+    stale.close()
+    run("device", "doctor", "alpha", "--json", expected=1, structured=True)
+    run("device", "doctor", "alpha", "--repair", "--dry-run", "--json", expected=0, structured=True)
+    assert (runtime / "daemon.sock").exists()
+    run("device", "doctor", "alpha", "--repair", "--json", structured=True)
+    assert not (runtime / "daemon.sock").exists()
+    runtime.rmdir()
+    runtime.parent.rmdir()
+    Path(env["XDG_RUNTIME_DIR"]).rmdir()
     profile.write_text("[subsystem]\nvsock_cid=2\n")
     listed = run("device", "list", "--json", structured=True)["results"]
     assert not listed[0]["data"]["config_valid"]
     run("device", "default", "alpha", expected=2)
     run("device", "config", "get", "alpha", expected=2)
     run("status", "alpha", expected=2)
+    batch = run("status", "--all", "--json", expected=1, structured=True)["results"]
+    assert len(batch) == 2 and not batch[0]["ok"] and batch[1]["ok"]
+    run("device", "doctor", "alpha", "--json", expected=1, structured=True)
+
     assert not Path(env["XDG_RUNTIME_DIR"]).exists(), "read commands must never spawn or create runtime files"
 print("device_commands: isolated JSON, selection, inspection, malformed and raw-transport cases passed")

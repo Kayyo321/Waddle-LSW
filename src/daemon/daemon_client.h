@@ -139,6 +139,15 @@ int waddle_client_status(int fd, waddle_daemon_status_resp_t *resp);
  */
 int waddle_client_shutdown(int fd, waddle_daemon_result_resp_t *resp);
 
+/** @brief Wait until the supervisor socket is removed and its stable lease is free.
+ * @param[in] socket_path Borrowed explicit path or NULL for legacy transport.
+ * @param[in] timeout_sec Deadline seconds, 0 selects 15 seconds.
+ * @return 0 fully exited, -1 errno ETIMEDOUT/EINTR/EACCES or I/O.
+ * @note No heap allocation or retained fds; single caller, never unlinks lock files.
+ */
+int waddle_client_wait_supervisor_exit(const char *socket_path, uint32_t timeout_sec);
+
+
 /**
  * @brief Sends a Kill request to the daemon to force-terminate all processes.
  *

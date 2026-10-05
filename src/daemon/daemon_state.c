@@ -32,30 +32,13 @@ static uint64_t state_monotonic_ms(void) {
  * @return 0 on success, or -1 on failure.
  */
 static int ensure_dir(const char *path) {
-    if (path == NULL || path[0] == '\0') {
-        errno = EINVAL;
-        return -1;
-    }
-
-    char tmp[WaddleMaxPathLen];
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    size_t len = strlen(tmp);
-    if (len == 0) return -1;
-    if (tmp[len - 1] == '/') tmp[len - 1] = '\0';
-
-    for (char *p = tmp + 1; *p != '\0'; p++) {
-        if (*p == '/') {
-            *p = '\0';
-            if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
-                return -1;
-            }
-            *p = '/';
-        }
-    }
-    if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
-        return -1;
-    }
-    return 0;
+    int fd = daemon_device_open_directory(path, 1);
+    if (fd < 0) return -1;
+    struct stat st;
+    int result = fstat(fd, &st);
+    if (result == 0 && (st.st_uid != getuid() || (st.st_mode & 077) != 0)) { errno = EACCES; result = -1; }
+    int saved = errno; close(fd); errno = saved;
+    return result;
 }
 
 int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
@@ -131,16 +114,29 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
         snprintf(s->mock_guest_sock_path, sizeof(s->mock_guest_sock_path), "%.1000s", mock_sock);
     }
 
+    char named_socket[WaddleMaxPathLen];
+    const char *runtime_name = strrchr(s->runtime_dir, '/');
+    int named_runtime = config_loaded && runtime_name != NULL &&
+        daemon_device_get_socket_path(runtime_name + 1, named_socket, sizeof(named_socket)) == 0 &&
+        strcmp(named_socket, s->daemon_sock_path) == 0;
+
     /* Determine log directory */
     if (custom_runtime_dir != NULL && custom_runtime_dir[0] != '\0') {
-        snprintf(s->log_dir, sizeof(s->log_dir), "%.900s/logs", s->runtime_dir);
+        const char *device_name = strrchr(custom_runtime_dir, '/');
+        device_info_t device;
+        if (named_runtime && device_name != NULL && daemon_device_find(device_name + 1, &device) == 0 && device.config_valid) {
+            int written = snprintf(s->log_dir, sizeof(s->log_dir), "%s/logs", device.state_dir);
+            if (written < 0 || (size_t)written >= sizeof(s->log_dir)) { errno = ENAMETOOLONG; return -1; }
+        } else {
+            snprintf(s->log_dir, sizeof(s->log_dir), "%.900s/logs", s->runtime_dir);
+        }
     } else {
         const char *home = getenv("HOME");
         if (home == NULL) home = "/tmp";
         snprintf(s->log_dir, sizeof(s->log_dir), "%.900s/.local/state/waddle/logs", home);
     }
 
-    if (ensure_dir(s->log_dir) != 0) {
+    if (!named_runtime && ensure_dir(s->log_dir) != 0) {
         return -1;
     }
 
@@ -234,7 +230,17 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
         result = daemon_config_load_file(&config, info.config_path);
         if (result == 0) {
             result = acquire_lease(s);
-            if (result == 0) s->config = config;
+            if (result == 0) {
+                s->config = config;
+                int written = snprintf(s->log_dir, sizeof(s->log_dir), "%s/logs", info.state_dir);
+                if (written < 0 || (size_t)written >= sizeof(s->log_dir)) { errno = ENAMETOOLONG; result = -1; }
+                else result = ensure_dir(s->log_dir);
+                if (result == 0) {
+                    snprintf(s->daemon_log_path, sizeof(s->daemon_log_path), "%.900s/daemon.log", s->log_dir);
+                    snprintf(s->qemu_log_path, sizeof(s->qemu_log_path), "%.900s/qemu.log", s->log_dir);
+                    snprintf(s->virtiofsd_log_path, sizeof(s->virtiofsd_log_path), "%.900s/virtiofsd.log", s->log_dir);
+                }
+            }
         }
     }
     int saved = errno;

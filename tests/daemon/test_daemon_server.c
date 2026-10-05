@@ -41,6 +41,7 @@ static void test_named_startup_handoff(void) {
     assert(file != NULL);
     assert(fputs("[subsystem]\nvsock_cid=33\ndisk_image=/tmp/test.qcow2\nvcpus=2\n", file) >= 0);
     assert(fclose(file) == 0);
+    assert(chmod(profile, 0600) == 0);
     close(registry_fd);
 
     /* Independent nested readers must not release the outer OFD lock. */

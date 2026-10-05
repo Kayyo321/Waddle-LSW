@@ -311,7 +311,7 @@ int waddle_client_shutdown(int fd, waddle_daemon_result_resp_t *resp) {
  * @return 0 fully exited, -1 with errno; closes all temporary descriptors.
  * @note No lock inode is ever removed; lease lock is released on fd close.
  */
-static int wait_supervisor_exit(const char *socket_path, uint32_t timeout_sec) {
+int waddle_client_wait_supervisor_exit(const char *socket_path, uint32_t timeout_sec) {
     char socket_buffer[WaddleMaxPathLen];
     if (socket_path == NULL) {
         if (waddle_client_default_socket_path(socket_buffer, sizeof(socket_buffer)) != 0) return -1;
@@ -510,7 +510,7 @@ int waddle_client_cmd_start(const char *socket_path, int wait_guest, uint32_t ti
 int waddle_client_cmd_stop(const char *socket_path, int force, uint32_t timeout_sec) {
     int fd = waddle_client_connect(socket_path);
     if (fd < 0) {
-        if (wait_supervisor_exit(socket_path, timeout_sec) != 0) {
+        if (waddle_client_wait_supervisor_exit(socket_path, timeout_sec) != 0) {
             fprintf(stderr, "waddle: supervisor is unreachable or still owns its lease: %s\n", strerror(errno));
             return 1;
         }
@@ -544,7 +544,7 @@ int waddle_client_cmd_stop(const char *socket_path, int force, uint32_t timeout_
         return 1;
     }
     close(fd);
-    if (wait_supervisor_exit(socket_path, timeout_sec) != 0) {
+    if (waddle_client_wait_supervisor_exit(socket_path, timeout_sec) != 0) {
         fprintf(stderr, "waddle: supervisor exit failed: %s\n", strerror(errno));
         return 1;
     }
@@ -661,7 +661,7 @@ int waddle_client_cmd_status(const char *socket_path, int json_output) {
 int waddle_client_cmd_kill(const char *socket_path) {
     int fd = waddle_client_connect(socket_path);
     if (fd < 0) {
-        return wait_supervisor_exit(socket_path, 1) == 0 ? 0 : 1;
+        return waddle_client_wait_supervisor_exit(socket_path, 1) == 0 ? 0 : 1;
     }
     waddle_daemon_result_resp_t resp = {0};
     if (waddle_client_kill(fd, &resp) != 0 || resp.status_code != 0 ||
@@ -672,7 +672,7 @@ int waddle_client_cmd_kill(const char *socket_path) {
         return 1;
     }
     close(fd);
-    if (wait_supervisor_exit(socket_path, 15) != 0) return 1;
+    if (waddle_client_wait_supervisor_exit(socket_path, 15) != 0) return 1;
     printf("[waddle] Subsystem children reaped and supervisor exited.\n");
     return 0;
 }
