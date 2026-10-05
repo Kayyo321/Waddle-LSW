@@ -76,3 +76,11 @@
   - **Task Impact**: 0% progress impact
   - **Summary**: Synced initial commit SHA into feature tracker.
 
+- **Commit `aa3bd74`**: `fix(daemon): correctly wait for QEMU and VSOCK guest agent readiness`
+  - **Task Impact**: 0% progress impact (bugfix to Tasks #5 and #6)
+  - **Summary**: Fixed state machine ignoring `WaitGuest` flags. Added QEMU exit poll check to prevent hanging. Exported CLI errors upon subsystem start failure. Avoided `connect()` consuming mock socket.
+
+- **Commit `b6f0a33`**: `test(mock): rewrite desktop write test using mock guest socket architecture`
+  - **Task Impact**: 0% progress impact (bugfix/improvement to Task #8)
+  - **Summary**: Fixed `tests/desktop_write_test.sh` string expansion issues and integrated `WADDLE_MOCK_GUEST_SOCK` for full end-to-end testing on CI servers without KVM access.
+
