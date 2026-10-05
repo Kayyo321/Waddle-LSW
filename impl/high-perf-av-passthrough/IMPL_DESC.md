@@ -761,3 +761,30 @@ The final implementation passes `make av-coverage`, `make av-test`, `make av-san
 The complete archive includes av_windows_test.exe and its installation/RTT instructions, host/guest programs, signed IVSHMEM package, unchanged SDK-built av_wgc.dll, patched module sources, source archives, implementation documents, license notices, provenance and sha256sums.txt. Every extracted file passes the manifest. This session cross-built the updated C/Zig Windows executables; it reused the existing DLL because the native C++ WinRT adapter source/ABI did not change. It did not run a new Windows SDK build or remote CI. The distribution is reassembled after the final documentation commit so its Waddle source archive and provenance identify that exact commit. Generated archives remain ignored build outputs.
 
 No running acceptance VM or VDD-equipped desktop was available. Hardware-specific results from earlier runs are historical and have not been relabeled as current success. Busy GPU rejection was tested read-only on the actual NVIDIA/AMD devices. Implementation tracker completion follows the user's revised framework/manual-prerequisite stopping condition; branch status remains Review pending external native/performance evidence. README.md remains untouched. A draft PR command is supplied for review; no PR is opened or merged by this run.
+
+### Mediated GPU final validation (2026-10-05)
+
+All five pivot tasks are implementation-complete. `make av-coverage`,
+`make av-test`, `make av-sanitizers`, `make av-distribution` and repository-wide
+`make test` pass. Configuration edit/reset/transaction tests pass (12 Zig tests).
+QEMU argument/lifecycle tests also pass under ASan/LSan/UBSan. Registered-parent
+and type-API discovery repeats 1000 times under those sanitizers with an active
+NVIDIA driver link present; all handles close and no leak is reported.
+Measured protocol/memory line coverage is 100% for all four modules; branches are
+94.44% audio/pixels, 96.34% codec, 100% layout and 100% video.
+
+The real CLI capability probe fails with ENOTSUP for both 0000:01:00.0 and
+0000:0e:00.0 because neither has supported mdev types and no mdev bus exists.
+Before/after driver symlink checks confirm nvidia and amdgpu remain bound.
+Missing UUID lookup fails explicitly. No host GPU driver or VM was changed for
+this validation; no supported slice exists here for live launch acceptance.
+
+The complete distribution passes all 23 extracted manifest checksums. INSTALL.txt
+now explains UUID setup, optional parent, vendor/driver/license and manual signed
+VDD prerequisites. Packaging is repeated after the final documentation commit so
+provenance and bundled source archive identify that commit. Updated Windows C/Zig
+fixture and agent cross-build; the unchanged WinRT SDK DLL is reused. No fresh
+Windows SDK DLL build, native VDD run, Adobe hardware-acceleration measurement,
+full guest RTT, 144-Hz throughput, physical scanout/audio latency or remote CI
+result is asserted. README is untouched. The provided draft PR command is for
+human execution; this run opens or merges no PR.

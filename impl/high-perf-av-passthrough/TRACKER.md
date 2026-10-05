@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Antigravity, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-05T22:27:57Z
 - **Feature Branch**: feature/high-perf-av-passthrough
 - **Target Merge Branch**: origin
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Review
 
 ## Tasks & Progress
 
@@ -45,7 +45,7 @@
 | **10**  | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | Done | 4% | 100% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | Done | 4% | 100% | With the isolated acceptance VM stopped, rerun the actual two-GiB capacity, bounded seeking, CLOEXEC DMA-BUF aliasing, out-of-range and exclusive-ownership gate under ASan/LSan/UBSan. Build the pinned patched module for the running kernel and preserve the existing compatible live module. Complete KVMFR distribution/access provisioning; safe GPU rejection and the RTT framework are now complete, with hardware performance explicitly unverified. |
-| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | Done | 4% | 100% | Managed UEFI/q35/IVSHMEM and silent audio configured; shared read-only IOMMU probe rejects active graphics/audio drivers and accepts VFIO/unbound snapshots. Physical capture is blocked by busy NVIDIA/AMD GPUs; manual VFIO ownership remains required. |
+| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | Done | 4% | 100% | Managed UEFI/q35/IVSHMEM and silent audio retained; UUID mdev assignment replaces physical passthrough. Active host drivers remain attached; administrator-created supported slices and signed VDD are manual prerequisites. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Done | 2.4% | 100% | Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete. |
 | #10.5 | Complete host-clock latency/fidelity diagnostic framework | Done | 1.6% | 100% | Host RGB24 challenges, bounded Zig center-pixel verification and Wayland processing acknowledgements; 16 visible plus 16 occluded samples. Framework complete per revised request; physical 144-Hz, scanout and audio latency acceptance remain unmeasured. |
 
@@ -53,13 +53,13 @@
 | #11.2 | Validate UUID configuration, CLI and read-only mdev probing | Done | 4% | 100% | No kernel or driver modification. |
 | #11.3 | Launch QEMU using mdev sysfsdev with audio and IVSHMEM | Done | 4% | 100% | Reject physical passthrough fallback. |
 | #11.4 | Remove guest timestamp dependence; warn on display prerequisite | Done | 4% | 100% | Reuse host-clock RTT framework. |
-| #11.5 | Verify coverage, sanitizers and final distribution | Pending | 4% | 0% | Runtime hardware acceptance remains external. |
+| #11.5 | Verify coverage, sanitizers and final distribution | Done | 4% | 100% | Runtime hardware acceptance remains external. |
 
-**Total Feature Completion**: `96.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Completion scope
 
-The revised request completes safe GPU rejection, the manual VDD prerequisite,
+The revised request completes mediated GPU UUID configuration/probing/launch, the manual VDD prerequisite,
 reboot handling and diagnostic framework. Task completion below means implementation
 completion. Hardware performance, full guest RTT, native VDD mode verification,
 real reboot-required installation and final remote CI remain external acceptance
@@ -73,18 +73,20 @@ gates; this branch is in Review and does not claim those gates passed.
   is invalid; neither video <7 ms at 144 Hz nor audio <10 ms is measured.
   A later pixel-freshness diagnostic accepted 11 unique frames in 3000.955 ms
   (3.67 FPS) and rejected nine future timestamps; performance remains unverified.
-- Both host GPUs retain active desktop/render clients. No eligible GPU has been
-  detached. The read-only IOMMU group probe rejects either active GPU and
-  every actively bound companion. Hardware reassignment is a manual prerequisite.
+- Both host GPUs keep their native drivers. Current sysfs exposes no mdev bus or
+  supported types for NVIDIA 0000:01:00.0 or AMD 0000:0e:00.0. The new slicing
+  probe fails gracefully and preserves both bindings. A supported vendor stack
+  and administrator-created slice are manual prerequisites; no physical
+  reassignment fallback is available.
 - Driver reboot-required status now has one graceful managed restart and fresh
   re-probe; real reboot-required native acceptance remains unverified.
 - Complete archive assembly and required-input failure checks pass locally. The
   new same-run CI transfer and final-commit checks still require remote evidence.
-- Live host/guest setup passes; an unavailable Wayland socket fails publication
+- Historical live host/guest setup passed; an unavailable Wayland socket fails publication
   and preserves the previous deployment selector. AV and repository-wide native
   sanitizers passed historically; fresh AV sanitizers pass in this session.
   Current protocol/memory lines are 100%; branches are 94.44% audio/pixels,
-  95.83% codec and 100% layout/video. These results do not satisfy the missing performance acceptance.
+  96.34% codec and 100% layout/video. These results do not satisfy the missing performance acceptance.
 
 ## Commit History & Progress Log
 
@@ -482,6 +484,10 @@ gates; this branch is in Review and does not claim those gates passed.
   - **Task Impact**: +100% to #11.4 (+4% overall).
   - **Summary**: Reuse the existing host CLOCK_MONOTONIC color challenge and compositor sync RTT. Remove all timestamp-based fixture acceptance, uniqueness and ordering; count pixel-validated delivered frames for throughput. Warn at benchmark/RTT startup when primary 1080p144 mode is absent. Windows fixture and agent cross-builds pass; live VDD/vGPU/RTT remain external gates.
 
-- **Commit `HEAD`**: `test(av): stress repeated mediated-device capability discovery`
+- **Commit `64c169e46d12`**: `test(av): stress repeated mediated-device capability discovery`
   - **Task Impact**: 0% to #11.5 (+0% overall); final verification still pending.
   - **Summary**: Repeat registered-parent and type-API discovery 1000 times with the host NVIDIA driver still present, exercising deterministic directory and FILE teardown under the AV sanitizer gate.
+
+- **Commit `HEAD`**: `chore: finalize mdev vGPU passthrough architecture and packaging`
+  - **Task Impact**: +100% to #11.5 (+4% overall).
+  - **Summary**: All requested gates pass: av-coverage, av-test, av-sanitizers and av-distribution; repository-wide make test, configuration tests, QEMU ASan/LSan/UBSan and 1000 repeated mdev probes also pass. Protocol/memory lines are 100%; branches audio 94.44%, codec 96.34%, layout/video 100%. Extracted archive passes 23 checksums. Real GPU capability failures preserve nvidia/amdgpu. Reassemble and verify after this commit for exact source provenance; no live mdev/VDD/performance acceptance or new Windows SDK DLL build claimed.

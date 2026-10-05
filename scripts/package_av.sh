@@ -48,8 +48,16 @@ Extract this archive to a private directory owned by the invoking Linux user.
 Keep its layout intact: run ./waddle, with sibling host/guest binaries, DLL,
 privileged setup helper, signed driver package, and patched module sources.
 Use waddle device commands to select a licensed Windows image and its execution
-bridge, then ./waddle av setup --device NAME [--uefi] [--kvmfr] [--gpu PCI_BDF].
-Setup provisions AV devices, drivers, host access and deploys the guest adapter;
+bridge, then ./waddle av setup --device NAME [--uefi] [--kvmfr] [--gpu-mdev UUID] [--gpu PCI_BDF].
+For GPU acceleration, an administrator must first configure a supported licensed
+mdev/vGPU stack and create the UUID slice. --gpu optionally checks its PCI parent;
+a BDF alone cannot assign a GPU. --probe-gpu BDF and --probe-mdev UUID [BDF] in
+waddle-av-setup check capabilities read-only. Setup preserves host GPU drivers;
+it does not install vGPU managers, patch kernels, create slices or enable SR-IOV.
+Manually install a signed IddSampleDriver-based Virtual Display Driver in Windows,
+set it primary at 1920x1080 @ 144 Hz, and verify av_windows_test.exe --probe-display.
+Install the matching vendor guest vGPU driver and configure application GPU choice.
+Setup provisions AV devices, IVSHMEM drivers, host access and the guest adapter;
 ./waddle av probe --device NAME validates native guest and host readiness.
 ./waddle av run PROCESS_ID --device NAME presents the selected guest process.
 For host-clock commit RTT, run av_windows_test.exe --round-trip-fixture in the
