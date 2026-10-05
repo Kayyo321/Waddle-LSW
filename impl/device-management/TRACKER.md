@@ -21,7 +21,7 @@
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | Pending | 10% | 0% | Typed validation, preservation of exports, no live changes, bounded repairs |
 | #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
-| #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 0% | Draft PR required while implementation tasks remain unfinished |
+| #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 0% | Workflow paths and vendor build prerequisites repaired; checks pending |
 
 **Total Feature Completion**: `40.0%`
 
@@ -47,9 +47,13 @@
   - **Task Impact**: +0% to TODO: #3/#4 in this audit; retain their 50% pending expanded safety and selection requirements.
   - **Summary**: Added init/list and lifecycle target dispatch, device tests in the build, QEMU log capture, and device-aware client routing. This existing commit was absent from the prior log.
 
-- **Commit `:/^docs(device): specify complete device management CLI$`**: `docs(device): specify complete device management CLI`
+- **Commit `926fbff`**: `docs(device): specify complete device management CLI`
   - **Task Impact**: +100% to TODO: #6 (+10.0% under revised weights). Scope expansion reweights existing #1–#5 from 20% each to 10% each: prior 60.0% becomes 30.0%, then specification completion brings it to 40.0%.
   - **Summary**: Define remove/rename, retention, show/default/config/doctor, clone/export/import, batch lifecycle, grammar, JSON, locks, crash recovery, error behavior, and all required verification. Expanded implementation tasks remain pending.
+
+- **Commit `:/^chore(ci): repair device branch verification workflows$`**: `chore(ci): repair device branch verification workflows`
+  - **Task Impact**: +0% to TODO: #11 pending successful checks; +0% implementation completion.
+  - **Summary**: Follow reorganized guest/common/test paths on Windows and install Linux vendor-build prerequisites and real qemu-img. Preserve native heap, allocator, sanitizer, coverage, and cross-build gates.
 
 ## Audit conventions and specification review
 
