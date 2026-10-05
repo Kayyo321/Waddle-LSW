@@ -269,3 +269,28 @@ SDK compilation alone cannot prove it.
 The 10% mapping milestone is split into 5% for the tested Linux owner and 5%
 for the Windows owner and its error-path/ownership fixtures. Actual cross-VM
 signed-driver use remains in the separate native integration milestone.
+
+### Cancellable backpressure adapter
+
+`venus_ring_write_wait` and `venus_ring_read_wait` wrap exact-transfer operations.
+They require a nonnull `venus_wait_callback_t` and retain borrowed source/output,
+endpoint, and optional callback context until return. Immediate success/failure
+never calls the wait callback. Only RingAgain enters the callback, which must
+block for a bounded interval or await actual readiness, checking cancellation,
+a deadline, and lifecycle EOF. It returns RingOk for retry, RingCancelled (-4)
+for local cancellation, RingTimeout (-5) for deadline, RingClosed for disconnect,
+RingCorrupt for control corruption, or RingInvalid for a local error. RingAgain
+and unknown callback results become RingInvalid; neither is interpreted as an
+unbounded busy retry. Spurious RingOk wakeups are allowed and recheck the ring.
+
+Read/write adapters preserve exact-transfer semantics: timeout, cancellation,
+and other failures copy no bytes and do not publish a cursor. Source bytes must
+remain stable across all retries. A callback disconnect closes the current ring
+atomically; lifecycle owner closes the other direction, joins workers, then
+frees mapping ownership. Cancellation/timeout alone do not close a peer session.
+Callbacks execute on the current producer/consumer owner thread, may operate on
+a distinct peer-owned cursor, and must not detach/unmap the caller's endpoint.
+This component does not own sockets or timers; the later lifecycle channel
+supplies an OS-backed callback and readiness/disconnect handoff. Unit fixtures
+verify retry progress, all terminal outcomes, cursor/output preservation, and
+invalid callbacks on Linux and the Windows-target ABI.

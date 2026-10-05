@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 80% | Linux owner verified; Windows implementation/fixture await native CI; handoff pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 85% | Cancellable waits verified; Windows fixture CI and lifecycle handoff pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `17.0%`
+**Total Feature Completion**: `17.75%`
 
 ## Commit History & Progress Log
 
@@ -115,7 +115,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     injected acquisition/post-map failures release resources. Linux mapping
     line/branch coverage 100%; ASan/LSan/UBSan and Zig allocator tests pass.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): map signed Windows IVSHMEM regions`
+- **Commit `ff50f69`**: `feat(vgpu): map signed Windows IVSHMEM regions`
   - **Task Impact**: +0% to TODO: #1 (+0% overall); Windows fixture execution pending.
   - **Summary**: Added signed-driver cached mapping, identity validation, bounded
     SetupAPI detail allocation, ownership flags for invalid map returns, preserved
@@ -125,3 +125,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and fourteen allocation/driver/ABI failures, tracking every live allocation,
     device/list handle, and mapping. Native execution is queued next. This fake
     driver fixture does not establish real cross-VM IVSHMEM functionality.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): add cancellable ring backpressure waits`
+  - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
+  - **Summary**: Added exact-transfer wait adapters with caller-owned bounded
+    readiness callbacks, local cancellation/deadlines, disconnect closure,
+    spurious-wakeup retries, and validation of unexpected callback results.
+  - **Verification**: Wait adapter production line/branch coverage 100%; the
+    complete local transport/mapping/wait sanitizer and allocator suite passes.
+    Windows fixtures cross-link; native execution/lifecycle handoff still pending.

@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else 'ring'
-if mode not in ('ring', 'region', 'mapping'):
+if mode not in ('ring', 'region', 'mapping', 'wait'):
     raise ValueError(mode)
 root = Path.cwd()
 output = root / 'build/coverage/vgpu' / mode
@@ -21,7 +21,7 @@ subprocess.run([
 ], check=True)
 subprocess.run([
     'cc', '-D_GNU_SOURCE', '-std=c11', '-Iinclude', f'tests/vgpu/{mode}.c', str(output / f'{mode}.o'),
-    *(['src/vgpu/venus_ring.c'] if mode in ('region', 'mapping') else []),
+    *(['src/vgpu/venus_ring.c'] if mode in ('region', 'mapping', 'wait') else []),
     *(['src/vgpu/venus_region.c', '-Isrc/vgpu', '-Wl,--wrap=memfd_create,--wrap=ftruncate,--wrap=fcntl,--wrap=mmap,--wrap=venus_region_init,--wrap=venus_region_attach'] if mode == 'mapping' else []),
     'build/venus_bounds.o', '--coverage', '-o', str(output / 'runner'),
 ], check=True)

@@ -24,7 +24,9 @@ typedef enum venus_ring_status_t {
     RingAgain = 1,    /**< Insufficient space/data; retry with cancellation checks. */
     RingInvalid = -1, /**< Invalid local argument or incompatible mapping ABI. */
     RingCorrupt = -2, /**< Invalid peer flags or occupied-byte distance. */
-    RingClosed = -3   /**< Shutdown observed; no payload transfer. */
+    RingClosed = -3,  /**< Shutdown observed; no payload transfer. */
+    RingCancelled = -4, /**< Local wait cancelled; no new payload transfer. */
+    RingTimeout = -5    /**< Local wait deadline elapsed; no new payload transfer. */
 } venus_ring_status_t;
 
 /** @brief Caller-owned, coherent IVSHMEM header; exactly three 64-byte lines.
