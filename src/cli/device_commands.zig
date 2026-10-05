@@ -18,6 +18,7 @@ const command_t = struct {
     clear: bool = false,
     running: bool = false,
     stopped: bool = false,
+    dry_run: bool = false,
 };
 
 /// Parse bounded UTF-8 argument slices; duplicate singleton flags fail before I/O.
@@ -34,6 +35,9 @@ fn parse(args: []const []const u8) !command_t {
         } else if (!literal and (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h"))) {
             if (command.help) return error.Usage;
             command.help = true;
+        } else if (!literal and std.mem.eql(u8, arg, "--dry-run")) {
+            if (command.dry_run) return error.Usage;
+            command.dry_run = true;
         } else if (!literal and std.mem.eql(u8, arg, "--clear")) {
             if (command.clear) return error.Usage;
             command.clear = true;
@@ -142,6 +146,7 @@ fn registry_error() anyerror {
         c.ENOSPC => error.Capacity,
         c.EACCES, c.EPERM, c.ELOOP => error.PermissionDenied,
         c.EINTR => error.Cancelled,
+        c.EBUSY => error.Busy,
         else => error.IoError,
     };
 }
@@ -160,9 +165,37 @@ fn execute(allocator: std.mem.Allocator, command: command_t, results: *std.json.
     if (is_list and command.count != 1) return error.Usage;
     if (is_show and command.count != 2) return error.Usage;
     if (is_default and (command.count > 2 or (command.clear and command.count != 1))) return error.Usage;
-    if (is_config and (command.count < 3 or command.count > 4 or !std.mem.eql(u8, command.operands[1], "get"))) return error.Usage;
+    var config_write = false;
+    var config_reset = false;
+    if (is_config) {
+        if (command.count < 3) return error.Usage;
+        const action = command.operands[1];
+        config_reset = std.mem.eql(u8, action, "reset");
+        config_write = config_reset or std.mem.eql(u8, action, "set");
+        if (!config_write and !std.mem.eql(u8, action, "get")) return error.Usage;
+        if (config_write) {
+            if (command.count < 4 or command.count > 9) return error.Usage;
+        } else if (command.count > 4) return error.Usage;
+    }
+    if (command.dry_run and !config_write) return error.Usage;
     const name: ?[]const u8 = if (is_show or (is_default and command.count == 2)) command.operands[1] else if (is_config) command.operands[2] else null;
     if (name) |n| if (!name_valid(n)) return error.InvalidName;
+    if (config_write) {
+        const terminated = try allocator.dupeZ(u8, name.?);
+        var changes: [6][*:0]const u8 = undefined;
+        var plan = std.json.Value{ .array = std.ArrayList(std.json.Value).init(allocator) };
+        for (command.operands[3..command.count], 0..) |change, i| {
+            changes[i] = (try allocator.dupeZ(u8, change)).ptr;
+            try plan.array.append(try text_value(allocator, change));
+        }
+        if (c.daemon_device_config_update(terminated.ptr, &changes, command.count - 3, @intFromBool(config_reset), @intFromBool(command.dry_run)) != 0) return registry_error();
+        var data = object(allocator);
+        try put(&data, "dry_run", .{ .bool = command.dry_run });
+        try put(&data, "action", try text_value(allocator, command.operands[1]));
+        try put(&data, "changes", plan);
+        try add_result(allocator, results, name, data);
+        return;
+    }
     if (is_default and (name != null or command.clear)) {
         const terminated = if (name) |n| try allocator.dupeZ(u8, n) else null;
         if (c.daemon_device_default_set(if (terminated) |n| n.ptr else null) != 0) return registry_error();
@@ -228,6 +261,7 @@ fn failure(err: anyerror) failure_t {
         error.AlreadyExists => .{ .code = "already_exists", .message = "Destination already exists.", .status = 2 },
         error.Capacity => .{ .code = "capacity", .message = "Registry capacity exceeded.", .status = 2 },
         error.PermissionDenied => .{ .code = "permission_denied", .message = "Unsafe permissions or symlink path.", .status = 1 },
+        error.Busy => .{ .code = "busy", .message = "Device has a runtime owner, open disk or unresolved runtime sockets.", .status = 1 },
         error.Cancelled => .{ .code = "cancelled", .message = "Operation interrupted.", .status = 130 },
         error.OutOfMemory => .{ .code = "resource_error", .message = "Allocation failed.", .status = 125 },
         else => .{ .code = "io_error", .message = "Registry I/O failed.", .status = 1 },
@@ -289,6 +323,11 @@ export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int
                 "       waddle device show NAME [--json]\n" ++
                 "       waddle device default [NAME|--clear] [--json]\n" ++
                 "       waddle device config get NAME [KEY] [--json]\n" ++
+                "       waddle device config set NAME KEY=VALUE... [--dry-run] [--json]\n" ++
+                "       waddle device config reset NAME KEY... [--dry-run] [--json]\n" ++
+                "Config edits require a stopped device without runtime owners; changes apply together.\n" ++
+                "Reset values: memory_mb=4096, vcpus=4, default_shell=powershell.exe,\n" ++
+                "vsock_port=5242, start_timeout=60, stop_timeout=15.\n" ++
                 "Read commands never start a guest. Default selection does not boot.\n" ++
                 "Config keys: memory_mb, vcpus, default_shell, vsock_port, start_timeout, stop_timeout.\n" ++
                 "Exit codes: 0 success, 2 usage/validation, 1 I/O, 125 resources, 130 interrupted.\n",

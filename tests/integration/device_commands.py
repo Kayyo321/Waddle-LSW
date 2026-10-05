@@ -73,6 +73,22 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     run("exec", "--device", "alpha", "--vsock-cid", "3", "--", "cmd.exe", expected=2)
     run("exec", "--socket-path", str(root / "absent.sock"), "--", "cmd.exe", expected=125)
     profile = Path(shown["data"]["config_path"])
+    original = profile.read_bytes()
+    run("device", "config", "set", "alpha", "memory_mb=8192", "vcpus=8", "--dry-run", "--json", structured=True)
+    assert profile.read_bytes() == original
+    run("device", "config", "set", "alpha", "memory_mb=8192", "vcpus=0", expected=2)
+    assert profile.read_bytes() == original
+    run("device", "config", "set", "alpha", "vcpus=8", "vcpus=4", expected=2)
+    assert profile.read_bytes() == original
+    run("device", "config", "set", "alpha", "memory_mb=8192", "vcpus=8")
+    assert "mount =" in profile.read_text()
+    values = run("device", "config", "get", "alpha", "--json", structured=True)["results"][0]["data"]
+    assert values["memory_mb"] == 8192 and values["vcpus"] == 8
+    run("device", "config", "reset", "alpha", "memory_mb", "vcpus")
+    assert run("device", "config", "get", "alpha", "memory_mb", "--json", structured=True)["results"][0]["data"] == {"memory_mb": 4096}
+    # Same-user orphan disk holders must block mutations even without a socket.
+    with open(shown["data"]["disk_image"], "rb"):
+        run("device", "config", "set", "alpha", "vcpus=8", expected=1)
     profile.write_text("[subsystem]\nvsock_cid=2\n")
     listed = run("device", "list", "--json", structured=True)["results"]
     assert not listed[0]["data"]["config_valid"]

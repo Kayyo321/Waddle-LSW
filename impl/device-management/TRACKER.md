@@ -18,12 +18,12 @@
 | #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 50% | Registry/CLI selection plus shutdown busy/malformed/idle regressions pass; complete creation/lifecycle matrix remains |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
 | #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 20% | Registry hardening and stable OFD supervisor leases delivered; startup handoff, orphan auditing and offline transactions remain |
-| #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 30% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
+| #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 50% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
 | #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
 | #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `56.0%`
+**Total Feature Completion**: `58.0%`
 
 ## Commit History & Progress Log
 
@@ -159,6 +159,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Summary**: Use OFD registry locks so nested readers cannot release an outer handoff lease. Named supervisors reload and validate their registration under a registry read lock, acquire their lifetime lease, then release the registry lock. Reject disappeared profiles rather than starting with stale defaults. Native server and registry suites pass, including deterministic nested-lock, changed-config and missing-profile regressions.
 
 
-- **Commit `:/preserve active sockets when competing startup loses its lease`**: `fix(daemon): preserve active sockets when competing startup loses its lease`
+- **Commit `17aaaa6`**: `fix(daemon): preserve active sockets when competing startup loses its lease`
   - **Task Impact**: +0% to TODO #7; regression correction for existing ownership cleanup.
   - **Summary**: Only unlink supervisor/QMP/VirtIO-FS socket names while owning the lifetime lease. Previously a losing second supervisor invoked cleanup and could disconnect the active device by unlinking its socket. The native fork/collision test now binds a real Unix socket, cleans the losing instance, and proves the original socket survives.
+
+- **Commit `:/persist validated offline device configuration edits`**: `feat(device): persist validated offline device configuration edits`
+  - **Task Impact**: +20% to TODO #8 (+2.0% overall); total 58.0%.
+  - **Summary**: Integrate set/reset/dry-run with validated complete INI replacement, registry and device leases, no-follow metadata, orphan descriptor audit and exclusive qemu-img check. Protected unrelated proc descriptors are covered by the independent image writer lock. Isolated CLI tests cover all-or-nothing validation, duplicate keys, dry-run, reset, mount preservation and open orphan disk refusal.

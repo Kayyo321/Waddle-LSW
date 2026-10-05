@@ -553,3 +553,10 @@ Cleanup after failed lease acquisition never unlinks named supervisor/QMP/VirtIO
 sockets: that instance has not established ownership. A collision regression binds
 an actual Unix socket, runs competing acquisition/cleanup in another process, and
 verifies that the original socket pathname survives.
+
+Offline config edits now validate first, acquire a nonblocking lifetime lease,
+check same-user readable descriptor identities and obtain qemu-img check's exclusive
+writer lock. Protected unrelated /proc entries cannot establish identity; the image
+lock supplies the independent live-QEMU check. A complete 0600 candidate is fsynced,
+renamed and its parent fsynced; dry-run creates no paths. Set/reset preserve mounts
+and unknown content through the bounded Zig editor.

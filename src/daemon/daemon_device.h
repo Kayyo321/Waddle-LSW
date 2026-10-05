@@ -174,6 +174,22 @@ int daemon_device_default_get(char *name, size_t capacity);
  */
 int daemon_device_default_set(const char *name);
 
+/**
+ * @brief Apply validated mutable settings to a quiescent named device.
+ * @param[in] name Non-null borrowed ASCII profile name.
+ * @param[in] changes Non-null borrowed array of count non-null key/value strings.
+ * @param[in] count Number of changes, 1..6; duplicates and unknown keys fail.
+ * @param[in] reset Nonzero uses documented defaults, otherwise parses key=value.
+ * @param[in] dry_run Nonzero validates without creating or changing files.
+ * @return 0 on success; -1 with errno (EINVAL, ENOENT, EBUSY, EACCES or I/O).
+ * @note Owns temporary fds through return; retains no pointers. Serializes registry
+ * and holds the runtime lease through replacement. A parent fsync failure after
+ * rename reports uncertain durability; the visible file is always complete.
+ * Concurrent threads must not change process environment during the call.
+ */
+int daemon_device_config_update(const char *name, const char *const *changes,
+                                size_t count, int reset, int dry_run);
+
 #ifdef __cplusplus
 }
 #endif
