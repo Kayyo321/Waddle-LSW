@@ -228,3 +228,24 @@ Native platform jobs build/link all adapters. Final completion additionally need
 an actual session created through the program, including driver readiness, window
 lifecycle, isolated PCM playback, bounded compositor release, capture alpha and
 occlusion fidelity, <7ms video and <10ms audio measured on the provisioned setup.
+
+### WinRT compatibility boundary
+
+The per-window fidelity path is av_wgc.dll, built with the base Windows SDK's
+C++/WinRT projections. C++ is confined to WinRT activation, capture item/session,
+frame pool and COM RAII. A narrow C ABI reports borrowed mapped texture rows to
+C, which invokes Zig's bounded copy into a claimed slot. No raw new/delete,
+heap buffer or frame pointer crosses this boundary. C loads the sibling DLL
+through an absolute restricted-search path; it remains loaded until all opaque
+sessions are destroyed. DLL deployment is part of managed guest provisioning.
+
+CreateForWindow selects the target HWND (including its non-client content).
+CreateFreeThreaded avoids a DispatcherQueue dependency. Polling occurs on the
+single MTA capture thread; WinRT owns its internal capture worker. Frame pools
+are recreated on content-size change after the old frame is closed. Every mapped
+staging texture is unmapped and every frame closed via RAII even on exceptions.
+Hardware D3D is preferred; WARP is a functional software fallback and cannot be
+reported as achieving the hardware gaming performance target.
+
+API contracts: [Microsoft CreateForWindow](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createforwindow)
+and [free-threaded frame pools](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframepool.createfreethreaded).

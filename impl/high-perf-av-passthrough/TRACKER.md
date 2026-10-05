@@ -20,7 +20,7 @@
 | #2.2 | Implement HWND filtering (exclude non-app windows, tooltips, hidden elements) | In Progress | 3.2% | 90% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
 | #2.3 | Extract bounds via `DwmGetWindowAttribute` and send `MsgWindowGeometry` | In Progress | 3.2% | 90% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
 | **3**   | **Video Capture & Transport (Guest)** | | | | |
-| #3.1 | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | In Progress | 4% | 60% | Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate. |
+| #3.1 | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | In Progress | 4% | 80% | Add a system-SDK C++/WinRT adapter with RAII-owned sessions, free-threaded frame pools, resize recreation and scoped GPU mappings. Expose only borrowed pixel rows through C callbacks; native SDK build and fidelity tests remain pending. |
 | #3.2 | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | In Progress | 6.4% | 85% | Enumerate the selected device, own its handle and cached mapping, validate fixed-layout metadata before exposure, and unmap/close after workers join. Keep SDK ABI headers isolated to one boundary translation unit; Windows compilation passes. |
 | #3.3 | Implement `memory_order_acquire/release` fences for buffer synchronization | Done | 4% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #3.4 | Dispatch `MsgFrameReady` over VSOCK with buffer index and damage rects | In Progress | 2.4% | 85% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `78.23%`
+**Total Feature Completion**: `79.03%`
 
 ## Commit History & Progress Log
 
@@ -170,6 +170,10 @@
   - **Task Impact**: +10% to #2.1 (+0.40% overall); +10% to #2.2 (+0.32% overall); +15% to #2.3 (+0.48% overall); +25% to #3.4 (+0.60% overall); +15% to #4.1 (+0.60% overall); +25% to #4.3 (+0.80% overall)
   - **Summary**: Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable.
 
-- **Commit `HEAD`**: `feat(av): connect managed shared memory to native host playback`
+- **Commit `56c2ed63cca1`**: `feat(av): connect managed shared memory to native host playback`
   - **Task Impact**: +15% to #5.1 (+0.60% overall); +10% to #5.2 (+0.48% overall); +20% to #5.3 (+0.80% overall); +20% to #5.4 (+0.80% overall); +10% to #6.1 (+0.40% overall); +10% to #6.3 (+0.32% overall)
   - **Summary**: Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable.
+
+- **Commit `HEAD`**: `feat(av): isolate per-window Windows Graphics Capture behind C ABI`
+  - **Task Impact**: +20% to #3.1 (+0.80% overall)
+  - **Summary**: Add a system-SDK C++/WinRT adapter with RAII-owned sessions, free-threaded frame pools, resize recreation and scoped GPU mappings. Expose only borrowed pixel rows through C callbacks; native SDK build and fidelity tests remain pending.
