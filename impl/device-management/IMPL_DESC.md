@@ -360,7 +360,7 @@ be large; interruption and ENOSPC must clean or journal every partial allocation
 
 ## 5. Concurrency, Threading & Synchronization
 
-The single-threaded CLI obtains a whole-file `F_SETLKW` exclusive registry lock for
+The single-threaded CLI obtains a whole-file `F_OFD_SETLKW` exclusive registry lock for
 metadata mutations and startup handoff. Shared locks protect consistent discovery;
 diagnostics never turn a shared read into an implicit write. Stable lock files
 are opened with close-on-exec and no-follow, ownership checked; child utilities
@@ -483,7 +483,7 @@ status is collected by the command layer. Invalid profiles block allocation.
 Readers take the existing stable registry lock when present; before the first
 mutation a missing lock is allowed, as no publication has occurred. Writers
 create the lock with 0600 permissions and retain its fd through CID allocation
-and creation. These functions must not nest POSIX lock acquisition in one process.
+and creation. OFD shared acquisitions can nest without an inner close releasing an outer lock. Exclusive operations use unlocked helpers and never reacquire the lock.
 Creation currently fails utility errors without a placeholder. This foundation
 does not yet implement the durable journal/publication sequence specified above.
 
@@ -533,3 +533,18 @@ comments, exports and unknown keys remain byte-identical. Missing mutable keys
 are appended in explicit section blocks. Reset uses the six documented defaults.
 This pure codec has no filesystem effects; command persistence and quiescence
 checks remain separate pending integration work.
+
+
+### Implementation evidence: configuration-to-lease handoff
+
+Before acquiring its lifetime lease, a named supervisor takes an OFD registry
+read lock, rereads the registered healthy profile and reloads its configuration,
+then acquires the lifetime lease before releasing the registry lock. The canonical
+named runtime socket identifies this path; explicit legacy runtime directories
+retain their separate configuration behavior. A missing or malformed registration
+fails acquisition and cannot fall back to another device. The earlier init read
+is provisional only. This order gives writers either a stopped profile before
+startup or an occupied lease after startup. Nested discovery read locks do not
+release the outer OFD lock. No registry lock is acquired while a lifetime lease
+is already held. Tests verify nested-reader exclusion, config changes between
+initialization and acquisition, and disappearance before acquisition.

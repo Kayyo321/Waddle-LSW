@@ -149,6 +149,11 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Summary**: Add v1 shutdown request/response, reject malformed/busy requests, reply before server teardown, retain a stable private OFD lease until children and sockets are cleaned, and wait for lease release in stop/kill/restart. Remove unsafe lock-file unlinking and abort restart on failed stop. Handle newly accepted clients outside the current poll snapshot. Server/client regressions and full make test pass; standalone server suite passes ThreadSanitizer. Orphan process audit, startup registry handoff and full lifecycle/VM matrix remain pending.
 
 
-- **Commit `:/validate and preserve INI content during config edits`**: `feat(device): validate and preserve INI content during config edits`
+- **Commit `79df9a6`**: `feat(device): validate and preserve INI content during config edits`
   - **Task Impact**: +0% to TODO #8 until offline persistence and commands are integrated.
   - **Summary**: Add an allocation-free bounded Zig editor for the six mutable settings. Validate all changes before rendering, preserve unknown keys/comments/exports and line endings, replace duplicate effective key occurrences consistently, and reparse the full candidate. Eight Zig tests and native configuration regressions pass, including malformed/duplicate inputs, integer bounds, UTF-8, insufficient capacity and reset preservation.
+
+
+- **Commit `:/serialize named configuration handoff with registry writers`**: `fix(device): serialize named configuration handoff with registry writers`
+  - **Task Impact**: +0% to TODO #7 pending complete offline transactions and orphan auditing.
+  - **Summary**: Use OFD registry locks so nested readers cannot release an outer handoff lease. Named supervisors reload and validate their registration under a registry read lock, acquire their lifetime lease, then release the registry lock. Reject disappeared profiles rather than starting with stale defaults. Native server and registry suites pass, including deterministic nested-lock, changed-config and missing-profile regressions.

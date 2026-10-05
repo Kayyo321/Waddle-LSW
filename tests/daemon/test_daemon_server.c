@@ -5,6 +5,9 @@
 
 #include "daemon_server.h"
 #include "daemon_state.h"
+#include "daemon_device.h"
+#include <fcntl.h>
+#include <sys/stat.h>
 #include "waddle/daemon_protocol.h"
 #include <assert.h>
 #include <errno.h>
@@ -17,6 +20,68 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/** @brief Verify final config reload and nested lock lifetime without starting a VM. */
+static void test_named_startup_handoff(void) {
+    char root[] = "/tmp/waddle_handoff_XXXXXX";
+    assert(mkdtemp(root) != NULL);
+    const char *keys[] = {"XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"};
+    char *saved[3] = {NULL, NULL, NULL};
+    for (size_t i = 0; i < 3; i++) {
+        if (getenv(keys[i]) != NULL) { saved[i] = strdup(getenv(keys[i])); assert(saved[i]); }
+        assert(setenv(keys[i], root, 1) == 0);
+    }
+    int registry_fd = daemon_device_registry_lock(1);
+    assert(registry_fd >= 0);
+    char directory[1024], profile[1100];
+    assert(daemon_device_get_config_dir(directory, sizeof(directory)) == 0);
+    assert(mkdir(directory, 0700) == 0);
+    assert(snprintf(profile, sizeof(profile), "%s/alpha.ini", directory) < (int)sizeof(profile));
+    FILE *file = fopen(profile, "w");
+    assert(file != NULL);
+    assert(fputs("[subsystem]\nvsock_cid=33\ndisk_image=/tmp/test.qcow2\nvcpus=2\n", file) >= 0);
+    assert(fclose(file) == 0);
+    close(registry_fd);
+
+    /* Independent nested readers must not release the outer OFD lock. */
+    registry_fd = daemon_device_registry_lock(0);
+    assert(registry_fd >= 0);
+    device_info_t info;
+    assert(daemon_device_find("alpha", &info) == 0);
+    char lock_path[1100];
+    assert(snprintf(lock_path, sizeof(lock_path), "%s/waddle/registry.lock", root) < (int)sizeof(lock_path));
+    int probe = open(lock_path, O_RDWR | O_CLOEXEC);
+    assert(probe >= 0);
+    struct flock lock = {.l_type = F_WRLCK, .l_whence = SEEK_SET};
+    assert(fcntl(probe, F_OFD_SETLK, &lock) == -1 && errno == EAGAIN);
+    close(registry_fd);
+    assert(fcntl(probe, F_OFD_SETLK, &lock) == 0);
+    close(probe);
+
+    char socket_path[1024];
+    assert(daemon_device_get_socket_path("alpha", socket_path, sizeof(socket_path)) == 0);
+    *strrchr(socket_path, '/') = '\0';
+    daemon_state_t state;
+    assert(daemon_state_init(&state, socket_path) == 0);
+    assert(state.config.vcpus == 2);
+    file = fopen(profile, "a");
+    assert(file != NULL && fputs("vcpus=7\n", file) >= 0 && fclose(file) == 0);
+    assert(daemon_state_acquire_lock(&state) == 0);
+    assert(state.config.vcpus == 7);
+    daemon_state_cleanup(&state);
+    assert(daemon_state_init(&state, socket_path) == 0);
+    assert(unlink(profile) == 0);
+    assert(daemon_state_acquire_lock(&state) == -1 && errno == ENOENT);
+    assert(state.lock_fd == -1);
+    daemon_state_cleanup(&state);
+    for (size_t i = 0; i < 3; i++) {
+        if (saved[i]) { assert(setenv(keys[i], saved[i], 1) == 0); free(saved[i]); saved[i] = NULL; }
+        else assert(unsetenv(keys[i]) == 0);
+    }
+    char cleanup[1200];
+    assert(snprintf(cleanup, sizeof(cleanup), "rm -rf %s", root) < (int)sizeof(cleanup));
+    assert(system(cleanup) == 0);
+}
 
 static void test_lockfile_concurrency(void) {
     char runtime_dir[128];
@@ -170,6 +235,7 @@ static void test_server_ipc(void) {
 }
 
 int main(void) {
+    test_named_startup_handoff();
     test_lockfile_concurrency();
     test_server_ipc();
     printf("test_daemon_server: all daemon lockfile, state machine, and IPC server tests passed\n");

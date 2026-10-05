@@ -156,7 +156,8 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
     return 0;
 }
 
-int daemon_state_acquire_lock(daemon_state_t *s) {
+/** @brief Acquire only the lifetime lease; caller serializes named config handoff. */
+static int acquire_lease(daemon_state_t *s) {
     if (s == NULL) {
         errno = EINVAL;
         return -1;
@@ -208,6 +209,38 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
 
     s->lock_fd = fd;
     return 0;
+}
+
+int daemon_state_acquire_lock(daemon_state_t *s) {
+    if (s == NULL) { errno = EINVAL; return -1; }
+    if (s->lock_fd >= 0) return 0;
+    const char *slash = strrchr(s->runtime_dir, '/');
+    const char *name = slash == NULL ? s->runtime_dir : slash + 1;
+    char expected[WaddleMaxPathLen];
+    int named = daemon_device_get_socket_path(name, expected, sizeof(expected)) == 0 &&
+                strcmp(expected, s->daemon_sock_path) == 0;
+    if (!named) return acquire_lease(s);
+
+    /* OFD read locks can nest safely: closing discovery's fd does not release
+     * this outer lock. Writers cannot change the config before lease ownership. */
+    int registry_fd = daemon_device_registry_lock(0);
+    if (registry_fd < 0) return -1;
+    device_info_t info;
+    int result = daemon_device_find(name, &info);
+    if (result == 0 && !info.config_valid) { errno = EINVAL; result = -1; }
+    if (result == 0) {
+        daemon_config_t config;
+        daemon_config_init_defaults(&config);
+        result = daemon_config_load_file(&config, info.config_path);
+        if (result == 0) {
+            result = acquire_lease(s);
+            if (result == 0) s->config = config;
+        }
+    }
+    int saved = errno;
+    close(registry_fd);
+    errno = saved;
+    return result;
 }
 
 void daemon_state_release_lock(daemon_state_t *s) {

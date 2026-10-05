@@ -290,7 +290,7 @@ int daemon_device_registry_lock(int exclusive) {
         close(fd); errno = EACCES; return -1;
     }
     struct flock lock = { .l_type = exclusive ? F_WRLCK : F_RDLCK, .l_whence = SEEK_SET };
-    if (fcntl(fd, F_SETLKW, &lock) != 0) { saved = errno; close(fd); errno = saved; return -1; }
+    if (fcntl(fd, F_OFD_SETLKW, &lock) != 0) { saved = errno; close(fd); errno = saved; return -1; }
     return fd;
 }
 

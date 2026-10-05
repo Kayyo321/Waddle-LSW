@@ -108,8 +108,9 @@ int daemon_device_list(device_list_t *list);
  * @param[in] exclusive Nonzero obtains a write lock, creates private registry root/lock;
  * zero obtains a read lock without writes and returns ENOENT before first mutation.
  * @return Owned CLOEXEC fd, or -1 with errno (including EINTR). Caller closes to release.
- * @note Process-local POSIX locks: callers must not nest acquisition or close another
- * fd for this inode while holding the lock. Child utilities cannot inherit it.
+ * @note Linux OFD locks: independent shared acquisitions may nest; never nest
+ * an exclusive acquisition. Closing another descriptor cannot drop this lease.
+ * Fork inherits the description until exec (CLOEXEC); children must not retain it.
  * No heap allocation; lock order is registry then per-device lease.
  */
 int daemon_device_registry_lock(int exclusive);
