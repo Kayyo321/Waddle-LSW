@@ -1,6 +1,6 @@
 # Feature Tracker: High-Performance Audio/Video Passthrough for Gaming
 
-- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex
+- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
@@ -16,9 +16,9 @@
 | #1.2 | Define C structs for IVSHMEM audio ring buffer (lockless SPSC, 48kHz 16-bit) | Done | 2% | 100% | Define C11 lock-free ownership states, stable offsets and bounded fixed-format audio metadata; verify layout on Linux and cross-build Windows. |
 | #1.3 | Update VSOCK IPC control messages to include full geometries & lifecycle events | Done | 3% | 100% | Add isolated AV control IDs and a fixed little-endian Zig codec validating titles, geometry, state flags and damage rectangles before exposing data to C. |
 | **2**   | **Guest Window Tracking Agent** | | | | |
-| #2.1    | Register `SetWinEventHook` for CREATE, DESTROY, LOCATIONCHANGE, MINIMIZE | Pending | 5% | 0% | - |
-| #2.2    | Implement HWND filtering (exclude non-app windows, tooltips, hidden elements) | Pending | 4% | 0% | - |
-| #2.3    | Extract bounds via `DwmGetWindowAttribute` and send `MsgWindowGeometry` | Pending | 4% | 0% | - |
+| #2.1 | Register `SetWinEventHook` for CREATE, DESTROY, LOCATIONCHANGE, MINIMIZE | In Progress | 5% | 80% | Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes. |
+| #2.2 | Implement HWND filtering (exclude non-app windows, tooltips, hidden elements) | In Progress | 4% | 80% | Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes. |
+| #2.3 | Extract bounds via `DwmGetWindowAttribute` and send `MsgWindowGeometry` | In Progress | 4% | 75% | Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes. |
 | **3**   | **Video Capture & Transport (Guest)** | | | | |
 | #3.1    | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | Pending | 5% | 0% | - |
 | #3.2    | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | Pending | 8% | 0% | - |
@@ -41,7 +41,7 @@
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 2% | 35% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
 
-**Total Feature Completion**: `29.35%`
+**Total Feature Completion**: `39.55%`
 
 ## Commit History & Progress Log
 
@@ -69,6 +69,10 @@
   - **Task Impact**: +100% to #3.3 (+5.00% overall); +100% to #4.2 (+8.00% overall); +40% to #4.3 (+1.60% overall); +100% to #6.2 (+6.00% overall); +35% to #7.1 (+0.70% overall)
   - **Summary**: Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass.
 
-- **Commit `HEAD`**: `feat(av): add bounded lifecycle and frame control codec`
+- **Commit `aeb6813a4a11`**: `feat(av): add bounded lifecycle and frame control codec`
   - **Task Impact**: +100% to #1.3 (+3.00% overall); +35% to #3.4 (+1.05% overall)
   - **Summary**: Add isolated AV control IDs and a fixed little-endian Zig codec validating titles, geometry, state flags and damage rectangles before exposing data to C.
+
+- **Commit `HEAD`**: `feat(av): track target-process Windows window lifecycle`
+  - **Task Impact**: +80% to #2.1 (+4.00% overall); +80% to #2.2 (+3.20% overall); +75% to #2.3 (+3.00% overall)
+  - **Summary**: Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes.
