@@ -291,6 +291,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Hold an exclusive nonblocking descriptor lease before initializing a device so idle video and audio-only sessions cannot be reset by another profile. Verify a second owner fails before mapping and succeeds after teardown; regular-file provisioning remains exclusive through creation.
 
-- **Commit `HEAD`**: `fix(av): start deployment commands in a valid guest directory`
+- **Commit `290819a54b2a`**: `fix(av): start deployment commands in a valid guest directory`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Use the installed Windows directory as the explicit working directory for setup, probe and capture-agent jobs. Host CLI working directories may not exist on the guest export and otherwise fail Windows CreateProcess before any capability probe can run.
+
+- **Commit `HEAD`**: `fix(av): preserve signed INF driver filename casing on deployment`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Deploy the unchanged vendor SYS bytes under the exact IVSHMEM.sys basename referenced by the signed INF. Native Windows installation logs prove case-sensitive VirtIO-FS lookup otherwise rejects the package despite all lower-case files being present.

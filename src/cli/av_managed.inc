@@ -78,7 +78,10 @@ static int av_deploy(const device_info_t *device, char *agent, size_t capacity) 
     for (size_t i = 0; i < sizeof(driver_files) / sizeof(driver_files[0]); ++i) {
         char source[128];
         snprintf(source, sizeof(source), "vendor/av/ivshmem/%s", driver_files[i]);
-        if (av_stage_file(source, drivers, driver_files[i]) != 0) goto fail;
+        /* The signed vendor INF names IVSHMEM.sys exactly. VirtIO-FS exports
+         * retain Linux case sensitivity even for Windows driver-store reads. */
+        const char *destination = !strcmp(driver_files[i], "ivshmem.sys") ? "IVSHMEM.sys" : driver_files[i];
+        if (av_stage_file(source, drivers, destination) != 0) goto fail;
     }
     if (av_stage_file("waddle-guest-av.exe", directory, "waddle-guest-av.exe") != 0 ||
         av_stage_file("av_wgc.dll", directory, "av_wgc.dll") != 0 ||
