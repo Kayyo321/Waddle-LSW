@@ -51,11 +51,11 @@
 
 | #11.1 | Specify mediated GPU architecture and prerequisites | Done | 4% | 100% | Existing host driver and administrator-owned slice. |
 | #11.2 | Validate UUID configuration, CLI and read-only mdev probing | Done | 4% | 100% | No kernel or driver modification. |
-| #11.3 | Launch QEMU using mdev sysfsdev with audio and IVSHMEM | Pending | 4% | 0% | Reject physical passthrough fallback. |
+| #11.3 | Launch QEMU using mdev sysfsdev with audio and IVSHMEM | Done | 4% | 100% | Reject physical passthrough fallback. |
 | #11.4 | Remove guest timestamp dependence; warn on display prerequisite | Pending | 4% | 0% | Reuse host-clock RTT framework. |
 | #11.5 | Verify coverage, sanitizers and final distribution | Pending | 4% | 0% | Runtime hardware acceptance remains external. |
 
-**Total Feature Completion**: `88.0%`
+**Total Feature Completion**: `92.0%`
 
 ## Completion scope
 
@@ -470,6 +470,10 @@ gates; this branch is in Review and does not claim those gates passed.
   - **Task Impact**: +100% to #11.1 (+4% overall); reweight previous completed work to 80% for the expanded scope.
   - **Summary**: Specify administrator-owned UUID slices, optional parent checks, retained host drivers, no physical passthrough fallback, vendor prerequisites and honest runtime acceptance boundaries.
 
-- **Commit `HEAD`**: `feat(av): validate and probe administrator-owned mdev slices`
+- **Commit `da11440864b0`**: `feat(av): validate and probe administrator-owned mdev slices`
   - **Task Impact**: +100% to #11.2 (+4% overall).
   - **Summary**: Add transactional UUID config/edit/reset and bounded CLI parsing, early read-only setup probes with optional parent matching, and daemon preparation checks. Synthetic sysfs tests accept an active host driver and reject malformed, missing and wrong-API slices; AV tests and all 12 configuration tests pass. No GPU state is changed.
+
+- **Commit `HEAD`**: `feat(av): launch mediated GPU UUIDs without physical assignment`
+  - **Task Impact**: +100% to #11.3 (+4% overall).
+  - **Summary**: Generate exact vfio-pci sysfsdev/display=off arguments in daemon_qemu.c, where QEMU provisioning actually lives. Preserve silent HDA, IVSHMEM and boot VGA; reject BDF-only assignment. Native QEMU argument/lifecycle tests pass for UUID with/without optional parent and verify absence of host=BDF.

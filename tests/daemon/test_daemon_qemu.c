@@ -76,6 +76,7 @@ static void test_av_args(void) {
     config.av_enabled = 1;
     strcpy(config.av_shm_path, "/dev/shm/waddle-av-test");
     strcpy(config.av_gpu_bdf, "0000:0e:00.0");
+    strcpy(config.av_gpu_mdev_uuid, "12345678-1234-5678-9abc-123456789abc");
     char *argv[QemuMaxArgs];
     int count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
     assert(count > 0);
@@ -85,10 +86,19 @@ static void test_av_args(void) {
         if (strstr(argv[i], "size=2147483648,mem-path=/dev/shm/waddle-av-test,share=on")) memory = 1;
         if (!strcmp(argv[i], "none,id=waddle_silent")) audio = 1;
         if (!strcmp(argv[i], "hda-duplex,audiodev=waddle_silent")) endpoint = 1;
-        if (!strcmp(argv[i], "vfio-pci,host=0000:0e:00.0")) gpu = 1;
+        if (!strcmp(argv[i], "vfio-pci,sysfsdev=/sys/bus/mdev/devices/12345678-1234-5678-9abc-123456789abc,display=off")) gpu = 1;
+        assert(!strstr(argv[i], "vfio-pci,host="));
     }
     assert(ivshmem && memory && audio && endpoint && gpu);
     qemu_free_args(argv, (size_t)count);
+    config.av_gpu_bdf[0] = '\0';
+    count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0); /* UUID alone is a complete assignment. */
+    qemu_free_args(argv, (size_t)count);
+    config.av_gpu_mdev_uuid[0] = '\0';
+    strcpy(config.av_gpu_bdf, "0000:0e:00.0");
+    assert(qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs) == -1);
+    assert(argv[0] == NULL);
     config.av_gpu_bdf[0] = '\0';
     count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
     assert(count > 0);

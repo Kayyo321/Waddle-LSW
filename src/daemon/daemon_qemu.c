@@ -193,22 +193,28 @@ int qemu_build_args(const daemon_config_t *config,
             append_arg(argv, &argc, max_args, "ich9-intel-hda") != 0 ||
             append_arg(argv, &argc, max_args, "-device") != 0 ||
             append_arg(argv, &argc, max_args, "hda-duplex,audiodev=waddle_silent") != 0) goto fail;
-        if (config->av_gpu_bdf[0]) {
-            char gpu_device[64];
-            snprintf(gpu_device, sizeof(gpu_device), "vfio-pci,host=%s", config->av_gpu_bdf);
-            if (append_arg(argv, &argc, max_args, "-device") != 0 ||
-                append_arg(argv, &argc, max_args, gpu_device) != 0 ||
-                append_arg(argv, &argc, max_args, "-vga") != 0 ||
-                append_arg(argv, &argc, max_args, "none") != 0) goto fail;
-        } else {
-            /* Advertise a 144-Hz full-HD virtual display for capture rather
-             * than inheriting QEMU's low-resolution/default-refresh EDID. */
-            if (append_arg(argv, &argc, max_args, "-vga") != 0 ||
-                append_arg(argv, &argc, max_args, "none") != 0 ||
-                append_arg(argv, &argc, max_args, "-device") != 0 ||
-                append_arg(argv, &argc, max_args,
-                           "VGA,refresh_rate=144,xres=1920,yres=1080,vgamem_mb=64") != 0) goto fail;
+        /* A parent address is a capability constraint, never physical assignment. */
+        if (config->av_gpu_bdf[0] && !config->av_gpu_mdev_uuid[0]) {
+            errno = EINVAL; goto fail;
         }
+        if (config->av_gpu_mdev_uuid[0]) {
+            char gpu_device[128];
+            int gpu_length = snprintf(gpu_device, sizeof(gpu_device),
+                "vfio-pci,sysfsdev=/sys/bus/mdev/devices/%s,display=off",
+                config->av_gpu_mdev_uuid);
+            if (gpu_length < 0 || (size_t)gpu_length >= sizeof(gpu_device)) {
+                errno = E2BIG; goto fail;
+            }
+            if (append_arg(argv, &argc, max_args, "-device") != 0 ||
+                append_arg(argv, &argc, max_args, gpu_device) != 0) goto fail;
+        }
+        /* Keep a boot display until the signed guest VDD is configured. EDID
+         * advertises a mode but does not certify 144-Hz composition/capture. */
+        if (append_arg(argv, &argc, max_args, "-vga") != 0 ||
+            append_arg(argv, &argc, max_args, "none") != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args,
+                       "VGA,refresh_rate=144,xres=1920,yres=1080,vgamem_mb=64") != 0) goto fail;
     }
 
     /* Headless display */
