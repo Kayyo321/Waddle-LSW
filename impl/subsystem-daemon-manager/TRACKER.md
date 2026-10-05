@@ -84,3 +84,7 @@
   - **Task Impact**: 0% progress impact (bugfix/improvement to Task #8)
   - **Summary**: Fixed `tests/desktop_write_test.sh` string expansion issues and integrated `WADDLE_MOCK_GUEST_SOCK` for full end-to-end testing on CI servers without KVM access.
 
+- **Commit `6619533`**: `fix(cli): restore terminal before printing socket errors`
+  - **Task Impact**: 0% progress impact (bugfix to Task #7)
+  - **Summary**: Explicitly called `waddle_terminal_close()` in `host.c` before printing `connect_peer` connection errors to `stderr` to prevent horizontal carriage return drift caused by raw terminal modes.
+
