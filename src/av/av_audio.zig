@@ -117,3 +117,25 @@ test "pixel validation prevents overflow and zero dimensions" {
         try std.testing.expectEqual(@as(u64, 0), av_video_size(@intCast(args[0]), @intCast(args[1]), @intCast(args[2]), args[3]));
     }
 }
+
+/// in: borrowed source[source_len], stride and dimensions; out: nonoverlapping
+/// output[output_len]. Returns 0/-1, leaves output unchanged on error. Pure,
+/// thread-safe and allocation-free; caller retains all memory.
+export fn av_copy_bgra(source: [*]const u8, source_len: usize, source_stride: u32, output: [*]u8, output_len: usize, width: u32, height: u32) c_int {
+    if (av_video_size(width, height, source_stride, source_len) == 0 or @as(u64, width) * 4 > std.math.maxInt(u32)) return -1;
+    const stride = width * 4;
+    if (av_video_size(width, height, stride, output_len) == 0) return -1;
+    for (0..height) |row| {
+        @memcpy(output[row * stride ..][0..stride], source[row * source_stride ..][0..stride]);
+    }
+    return 0;
+}
+test "padded BGRA rows copy without touching destination tail" {
+    const source = [_]u8{ 1, 2, 3, 4, 99, 99, 99, 99, 5, 6, 7, 8, 99, 99, 99, 99 };
+    var output = [_]u8{0xaa} ** 12;
+    try std.testing.expectEqual(@as(c_int, 0), av_copy_bgra(&source, source.len, 8, &output, output.len, 1, 2));
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4, 5, 6, 7, 8 }, output[0..8]);
+    try std.testing.expectEqual(@as(u8, 0xaa), output[8]);
+    try std.testing.expectEqual(@as(c_int, -1), av_copy_bgra(&source, 15, 8, &output, 12, 1, 2));
+    try std.testing.expectEqual(@as(c_int, -1), av_copy_bgra(&source, 16, 8, &output, 7, 1, 2));
+}

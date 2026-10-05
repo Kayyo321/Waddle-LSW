@@ -1,6 +1,6 @@
 # Feature Tracker: High-Performance Audio/Video Passthrough for Gaming
 
-- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex
+- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
@@ -20,8 +20,8 @@
 | #2.2 | Implement HWND filtering (exclude non-app windows, tooltips, hidden elements) | In Progress | 4% | 80% | Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes. |
 | #2.3 | Extract bounds via `DwmGetWindowAttribute` and send `MsgWindowGeometry` | In Progress | 4% | 75% | Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes. |
 | **3**   | **Video Capture & Transport (Guest)** | | | | |
-| #3.1    | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | Pending | 5% | 0% | - |
-| #3.2    | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | Pending | 8% | 0% | - |
+| #3.1 | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | In Progress | 5% | 60% | Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate. |
+| #3.2 | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | In Progress | 8% | 65% | Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate. |
 | #3.3 | Implement `memory_order_acquire/release` fences for buffer synchronization | Done | 5% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #3.4 | Dispatch `MsgFrameReady` over VSOCK with buffer index and damage rects | In Progress | 3% | 35% | Add isolated AV control IDs and a fixed little-endian Zig codec validating titles, geometry, state flags and damage rectangles before exposing data to C. |
 | **4**   | **Audio Capture & Transport (Guest)** | | | | |
@@ -41,7 +41,7 @@
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 2% | 35% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
 
-**Total Feature Completion**: `39.55%`
+**Total Feature Completion**: `47.75%`
 
 ## Commit History & Progress Log
 
@@ -73,6 +73,10 @@
   - **Task Impact**: +100% to #1.3 (+3.00% overall); +35% to #3.4 (+1.05% overall)
   - **Summary**: Add isolated AV control IDs and a fixed little-endian Zig codec validating titles, geometry, state flags and damage rectangles before exposing data to C.
 
-- **Commit `HEAD`**: `feat(av): track target-process Windows window lifecycle`
+- **Commit `0b2d3219fd34`**: `feat(av): track target-process Windows window lifecycle`
   - **Task Impact**: +80% to #2.1 (+4.00% overall); +80% to #2.2 (+3.20% overall); +75% to #2.3 (+3.00% overall)
   - **Summary**: Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes.
+
+- **Commit `HEAD`**: `feat(av): capture bounded visible-window crops with DXGI`
+  - **Task Impact**: +60% to #3.1 (+3.00% overall); +65% to #3.2 (+5.20% overall)
+  - **Summary**: Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate.
