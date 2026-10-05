@@ -11,15 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 70% | Linux/native Windows CI green; dedicated IVSHMEM adapters pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 75% | Bidirectional region layout tested; native adapters/handoff pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
+| #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-| #6      | Pin, configure, build, and verify virglrenderer dependency | In Progress | 5% | 80% | Immutable 1.2.0 pin, MIT audit and offline build done; dependency CI pending |
-
-**Total Feature Completion**: `14.5%`
+**Total Feature Completion**: `16.25%`
 
 ## Commit History & Progress Log
 
@@ -85,7 +84,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     task by splitting 5% from unimplemented TODO #2. No guest or GPU completion
     is implied by the dependency pin.
 
-- **Commit (current; resolve by subject)**: `chore(vgpu): build pinned Venus renderer offline`
+- **Commit `bca923e`**: `chore(vgpu): build pinned Venus renderer offline`
   - **Task Impact**: +40% to TODO: #6 (+2.0% overall); +5% to TODO: #1
     (+0.75% overall) for native transport CI verification.
   - **Summary**: Added deterministic Meson/Ninja targets with wrap downloads
@@ -94,3 +93,15 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Transport Linux and native Windows jobs both succeeded at
     `63862ff` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37385937849 .
     Dependency CI for this commit remains pending; this is not a rendering test.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): define bidirectional dedicated IVSHMEM region`
+  - **Task Impact**: +5% to TODO: #1 (+0.75% overall); +20% to TODO: #6
+    (+1.0% overall) for verified dependency CI.
+  - **Summary**: Added a 64-byte immutable region ABI, separate command/reply
+    rings, a bounded resource area, single-snapshot Zig extent validation, and
+    all-or-nothing local attachment. Added portable fixtures and native CI checks.
+  - **Verification**: Ring lines/branches 100%; region lines 100%, branches
+    96.15%; combined Zig validation/copy lines 100%, branches 97.5%. Sanitizers
+    and allocator tests pass. Dependency CI succeeded at `bca923e` in
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37386229779 .
+    Dedicated driver-backed host/guest integration is still pending.

@@ -30,4 +30,17 @@ void venus_bounds_write(uint8_t *payload, uint32_t capacity, uint32_t cursor,
  */
 void venus_bounds_read(const uint8_t *payload, uint32_t capacity, uint32_t cursor,
                        uint8_t *destination, size_t length);
+/** @brief Check region extent and two-ring layout before initialization.
+ * @param[in] length Proposed actual bytes, power of two, 4096..one GiB.
+ * @param[in] capacity Proposed bounded power-of-two ring bytes.
+ * @return One when valid, zero otherwise; pure/thread-safe, no allocation.
+ */
+int venus_bounds_region_size(size_t length, uint32_t capacity);
+/** @brief Validate immutable region byte metadata before pointer calculations.
+ * @param[in] mapping Nonnull borrowed length-byte region, metadata immutable.
+ * @param[in] length Actual accessible bytes, untrusted headers cannot extend it.
+ * @param[out] region_bytes Nonnull private extent output, zeroed on failure.
+ * @return Valid ring capacity or zero; pure/thread-safe, no allocation/mutation.
+ */
+uint32_t venus_bounds_region_capacity(const uint8_t *mapping, size_t length, uint64_t *region_bytes);
 #endif

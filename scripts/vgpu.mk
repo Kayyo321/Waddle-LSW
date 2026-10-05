@@ -10,9 +10,10 @@ build/vgpu_ring_test: tests/vgpu/ring.c src/vgpu/venus_ring.c src/vgpu/venus_bou
 build/vgpu_stress_test: tests/vgpu/stress.c src/vgpu/venus_ring.c src/vgpu/venus_bounds.h include/waddle/venus_ring.h build/venus_bounds.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/stress.c src/vgpu/venus_ring.c build/venus_bounds.o $(LDFLAGS) -pthread -o $@
 
-vgpu-test: build/vgpu_ring_test build/vgpu_stress_test
+vgpu-test: build/vgpu_ring_test build/vgpu_stress_test build/vgpu_region_test
 	./build/vgpu_ring_test
 	./build/vgpu_stress_test
+	./build/vgpu_region_test
 	$(ZIG) test src/vgpu/venus_bounds.zig
 
 vgpu-sanitizers: build/venus_bounds.o
@@ -21,10 +22,13 @@ vgpu-sanitizers: build/venus_bounds.o
 	$(ZIG) test src/vgpu/venus_bounds.zig
 	$(CC) $(CPPFLAGS) -Isrc/vgpu -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/stress.c src/vgpu/venus_ring.c build/venus_bounds.o -pthread -o build/vgpu_stress_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_stress_sanitized
+	$(CC) $(CPPFLAGS) -Isrc/vgpu -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/region.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_bounds.o -o build/vgpu_region_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_region_sanitized
 
 .PHONY: vgpu-coverage vgpu-windows
 vgpu-coverage: build/venus_bounds.o
 	python3 tests/vgpu/coverage.py
+	python3 tests/vgpu/coverage.py region
 	python3 tests/av/coverage.py venus_bounds
 
 build/venus_bounds_windows.lib: src/vgpu/venus_bounds.zig | build
@@ -45,3 +49,12 @@ $(VgpuRendererBuildDirectory)/build.ninja: $(VgpuRendererDirectory)/meson.build 
 .PHONY: vgpu-renderer
 vgpu-renderer: $(VgpuRendererBuildDirectory)/build.ninja
 	meson compile -C $(VgpuRendererBuildDirectory) -j 4
+
+build/vgpu_region_test: tests/vgpu/region.c src/vgpu/venus_region.c src/vgpu/venus_ring.c include/waddle/venus_region.h build/venus_bounds.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/region.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_bounds.o $(LDFLAGS) -o $@
+
+
+build/vgpu_region_test.exe: tests/vgpu/region.c src/vgpu/venus_region.c src/vgpu/venus_ring.c include/waddle/venus_region.h build/venus_bounds_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/region.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o $@
+
+vgpu-windows: build/vgpu_region_test.exe

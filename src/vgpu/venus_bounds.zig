@@ -107,3 +107,68 @@ test "bounded copy handles every start and length and maximum capacity" {
         }
     }
 }
+
+/// in: proposed region length and capacity; returns 1 when both rings fit in a
+/// power-of-two 4096..one-GiB BAR, else 0. Pure/thread-safe, no allocation.
+export fn venus_bounds_region_size(length: usize, capacity: u32) c_int {
+    if (length < 4096 or length > 1073741824 or length & (length - 1) != 0) return 0;
+    if (capacity < MinCapacity or capacity > MaxCapacity or capacity & (capacity - 1) != 0) return 0;
+    const needed = 64 + 2 * (HeaderBytes + @as(usize, capacity));
+    return if (needed <= length) 1 else 0;
+}
+
+/// in: nonnull borrowed mapping[length], immutable region metadata during attach.
+/// out: nonnull private extent, zeroed on failure; returns ring capacity or zero
+/// for invalid identity/layout/padding/bounds. Extent is validated once.
+/// Pure/thread-safe; no mutation, allocation, or alignment precondition here.
+export fn venus_bounds_region_capacity(mapping: [*]const u8, length: usize, extent: *u64) u32 {
+    extent.* = 0;
+    if (length < 64) return 0;
+    const bytes = mapping[0..64];
+    if (read_u32(bytes, 0) != 0x57564731 or read_u32(bytes, 4) != 1) return 0;
+    const region_bytes = std.mem.readInt(u64, bytes[8..16], .little);
+    const capacity = read_u32(bytes, 16);
+    if (region_bytes > length or region_bytes > 1073741824 or
+        venus_bounds_region_size(@intCast(region_bytes), capacity) == 0) return 0;
+    const reply_offset = 64 + HeaderBytes + @as(usize, capacity);
+    const resource_offset = reply_offset + HeaderBytes + capacity;
+    if (read_u32(bytes, 20) != 64 or read_u32(bytes, 24) != reply_offset or
+        read_u32(bytes, 28) != resource_offset) return 0;
+    for (bytes[32..64]) |byte| if (byte != 0) return 0;
+    extent.* = region_bytes;
+    return capacity;
+}
+
+test "region size and immutable metadata bounds reject every mismatch" {
+    for ([_]usize{ 0, 1, 4095, 4097, 1073741825 }) |length| {
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_bounds_region_size, .{ length, MinCapacity }));
+    }
+    for ([_]u32{ 0, 32, 65, MaxCapacity + 1, MaxCapacity }) |capacity| {
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_bounds_region_size, .{ @as(usize, 4096), capacity }));
+    }
+    try std.testing.expectEqual(@as(c_int, 1), @call(.never_inline, venus_bounds_region_size, .{ @as(usize, 4096), MinCapacity }));
+    var bytes: [4096]u8 = [_]u8{0} ** 4096;
+    std.mem.writeInt(u32, bytes[0..4], 0x57564731, .little);
+    std.mem.writeInt(u32, bytes[4..8], 1, .little);
+    std.mem.writeInt(u64, bytes[8..16], 4096, .little);
+    std.mem.writeInt(u32, bytes[16..20], MinCapacity, .little);
+    std.mem.writeInt(u32, bytes[20..24], 64, .little);
+    std.mem.writeInt(u32, bytes[24..28], 64 + HeaderBytes + MinCapacity, .little);
+    std.mem.writeInt(u32, bytes[28..32], 64 + 2 * (HeaderBytes + MinCapacity), .little);
+    var extent: u64 = 0;
+    try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_region_capacity, .{ &bytes, @as(usize, 63), &extent }));
+    try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_region_capacity, .{ &bytes, @as(usize, 4095), &extent }));
+    for (0..64) |offset| {
+        bytes[offset] ^= 0x80;
+        try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_region_capacity, .{ &bytes, @as(usize, 4096), &extent }));
+        try std.testing.expectEqual(@as(u64, 0), extent);
+        bytes[offset] ^= 0x80;
+    }
+    std.mem.writeInt(u64, bytes[8..16], 4095, .little);
+    try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_region_capacity, .{ &bytes, @as(usize, 4096), &extent }));
+    std.mem.writeInt(u64, bytes[8..16], 2147483648, .little);
+    try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_region_capacity, .{ &bytes, @as(usize, 2147483648), &extent }));
+    std.mem.writeInt(u64, bytes[8..16], 4096, .little);
+    try std.testing.expectEqual(MinCapacity, @call(.never_inline, venus_bounds_region_capacity, .{ &bytes, @as(usize, 4096), &extent }));
+    try std.testing.expectEqual(@as(u64, 4096), extent);
+}

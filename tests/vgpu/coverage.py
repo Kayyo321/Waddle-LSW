@@ -5,33 +5,38 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
+mode = sys.argv[1] if len(sys.argv) > 1 else 'ring'
+if mode not in ('ring', 'region'):
+    raise ValueError(mode)
 root = Path.cwd()
-output = root / 'build/coverage/vgpu/ring'
+output = root / 'build/coverage/vgpu' / mode
 if output.exists():
     shutil.rmtree(output)
 output.mkdir(parents=True)
 subprocess.run([
     'cc', '-std=c11', '-Iinclude', '-Isrc/vgpu', '-O0', '-g', '--coverage',
-    '-fprofile-abs-path', '-c', 'src/vgpu/venus_ring.c', '-o', str(output / 'ring.o'),
+    '-fprofile-abs-path', '-c', f'src/vgpu/venus_{mode}.c', '-o', str(output / f'{mode}.o'),
 ], check=True)
 subprocess.run([
-    'cc', '-std=c11', '-Iinclude', 'tests/vgpu/ring.c', str(output / 'ring.o'),
+    'cc', '-std=c11', '-Iinclude', f'tests/vgpu/{mode}.c', str(output / f'{mode}.o'),
+    *(['src/vgpu/venus_ring.c'] if mode == 'region' else []),
     'build/venus_bounds.o', '--coverage', '-o', str(output / 'runner'),
 ], check=True)
 subprocess.run([str(output / 'runner')], check=True)
-subprocess.run(['gcov', '--json-format', '-b', '-c', str(output / 'ring.gcno')],
+subprocess.run(['gcov', '--json-format', '-b', '-c', str(output / f'{mode}.gcno')],
                cwd=output, check=True)
-report = json.loads(gzip.decompress((output / 'ring.gcov.json.gz').read_bytes()))
+report = json.loads(gzip.decompress((output / f'{mode}.gcov.json.gz').read_bytes()))
 lines = next(file['lines'] for file in report['files']
-             if file['file'].endswith('/src/vgpu/venus_ring.c'))
+             if file['file'].endswith(f'/src/vgpu/venus_{mode}.c'))
 branches = [branch for line in lines for branch in line.get('branches', [])]
 for kind, entries in [('line', lines), ('branch', branches)]:
     if not entries:
         raise RuntimeError(f'No production {kind} coverage recorded')
     covered = sum(entry['count'] > 0 for entry in entries)
     percent = 100 * covered / len(entries)
-    print(f'venus_ring production {kind} coverage: {percent:.2f}% '
+    print(f'venus_{mode} production {kind} coverage: {percent:.2f}% '
           f'({covered}/{len(entries)})', flush=True)
     if percent < 90:
         raise RuntimeError(f'{kind} coverage below 90%: {percent:.2f}%')

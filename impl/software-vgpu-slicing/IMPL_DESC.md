@@ -200,3 +200,33 @@ Dependency milestone #6: immutable pin/license/architecture audit 40%; offline
 configuration, native build, and CI dependency synchronization 60%. Its 5% weight
 is split from the previously 25%-weighted host receiver task, which remains
 unimplemented; the original feature scope and total 100% weight are preserved.
+
+### Dedicated bidirectional region ABI
+
+`venus_region_header_t` is exactly 64 bytes, alignment 64: magic u32 at 0
+(`0x57564731`), version u32 at 4 (one), mapping_bytes u64 at 8, capacity u32 at
+16, command_offset u32 at 20, reply_offset u32 at 24, resource_offset u32 at 28,
+and 32 reserved zero bytes at 32. All fields are little-endian, host-initialized,
+and immutable after handoff. mapping_bytes must be a power of two from 4096
+through 1073741824 and fit the actual mapping length. Both rings have the same
+validated capacity. command_offset is exactly 64; reply_offset is exactly
+`64 + 192 + capacity`; resource_offset is exactly `64 + 2*(192 + capacity)`.
+The entire layout must fit mapping_bytes. Offsets remain 64-byte aligned.
+
+Guest produces commands and consumes replies; host consumes commands and
+produces replies. Remaining bytes form a bounded resource arena for the later
+renderer resource lifecycle; this layout does not itself allocate or expose
+Vulkan memory. Region initialization leaves payload and resource bytes unchanged.
+Zig checks extent arithmetic and validates metadata before C forms any pointer.
+Attachment snapshots extent and capacity from a single validation, attaches both
+rings, rejects ring/region capacity mismatches, and publishes the local view only
+when both attachments succeed. Failure zeroes the output view. Detach clears
+only the local view; worker joining and actual unmapping remain the owner's job.
+Existing AV mappings have a distinct identity and must never be initialized as
+Venus regions. The dedicated region will be presented as a separate IVSHMEM PCI
+BAR, selected by identity rather than assuming the AV device is device zero.
+
+The final 30% of Task #1 is apportioned: dedicated region layout 5%, owned native
+mapping adapters 10%, cancellable backpressure 5%, lifecycle/control handoff 5%,
+and native guest/host IVSHMEM integration 5%. Layout completion does not complete
+the mapping, driver, or renderer integration milestones.
