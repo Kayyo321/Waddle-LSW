@@ -1,6 +1,6 @@
 # Feature Tracker: High-Performance Audio/Video Passthrough for Gaming
 
-- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex, Codex, Codex, Codex
+- **Contributors / Agents**: Antigravity, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
@@ -30,7 +30,7 @@
 | #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 4% | 60% | Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes. |
 | **5**   | **Host Wayland Client (Video)** | | | | |
 | #5.1    | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | Pending | 5% | 0% | - |
-| #5.2    | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | Pending | 8% | 0% | - |
+| #5.2    | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | Pending | 6% | 0% | - |
 | #5.3    | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | Pending | 5% | 0% | - |
 | #5.4    | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | Pending | 5% | 0% | - |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
@@ -41,7 +41,9 @@
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 2% | 35% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
 
-**Total Feature Completion**: `58.80%`
+| #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 2% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
+
+**Total Feature Completion**: `60.80%`
 
 ## Commit History & Progress Log
 
@@ -85,6 +87,10 @@
   - **Task Impact**: +70% to #4.1 (+3.50% overall); +20% to #4.3 (+0.80% overall)
   - **Summary**: Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes.
 
-- **Commit `HEAD`**: `feat(av): feed bounded PCM into realtime PipeWire playback`
+- **Commit `834656a81308`**: `feat(av): feed bounded PCM into realtime PipeWire playback`
   - **Task Impact**: +75% to #6.1 (+3.75% overall); +75% to #6.3 (+3.00% overall)
   - **Summary**: Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes.
+
+- **Commit `HEAD`**: `chore(deps): pin Looking Glass B7 driver ABI headers`
+  - **Task Impact**: +100% to #8.1 (+2.00% overall)
+  - **Summary**: Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations.

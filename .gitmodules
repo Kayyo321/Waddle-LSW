@@ -2,3 +2,6 @@
 	path = submodules/qemu
 	url = https://gitlab.com/qemu-project/qemu.git
 	shallow = true
+[submodule "submodules/looking_glass"]
+	path = submodules/looking_glass
+	url = https://github.com/gnif/LookingGlass.git

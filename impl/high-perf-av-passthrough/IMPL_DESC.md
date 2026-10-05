@@ -126,3 +126,14 @@ Non-destroy/close dimensions are 1..8192, DPI 48..768, flags only bits 0/1.
 Frame index is 0..2, sequence nonzero, damage nonempty within dimensions.
 Encoders zero title padding. Decoders never cast wire buffers to native structs
 and leave the output unchanged on error. No payload allocation is necessary.
+
+### Driver ABI dependency
+
+Looking Glass B7 is pinned at 27fe47cbe2a3a8da986d310ab866f0b646ed68f5 under
+submodules/looking_glass, public HTTPS upstream https://github.com/gnif/LookingGlass.git.
+Only module/kvmfr.h and vendor/ivshmem/ivshmem.h define driver ABI boundaries;
+no upstream application implementation is linked or loosely copied. Both files
+carry GPL-2.0-or-later notices, compatible with this repository's GPL-3.0.
+Kernel driver installation remains an operator task, not an automatic build step.
+Host uses KVMFR_DMABUF_GETSIZE/CREATE; guest uses the signed Red Hat IVSHMEM
+interface GUID and map/unmap ioctls. No nested vendor sources are used.
