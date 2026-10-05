@@ -1,5 +1,6 @@
 /** @file av_setup.c @brief Bundled KVMFR build/load helper, no shell execution. */
 #include "av_layout.h"
+#include "waddle/av_protocol.h"
 #include "av_kvmfr.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -108,10 +109,26 @@ int main(int argc, char **argv) {
     if (fd < 0)
         return 1;
     long size = av_kvmfr_size(fd);
+    int access_status = 0;
+    const char *owner_text = getenv("SUDO_UID"), *group_text = getenv("SUDO_GID");
+    if (owner_text || group_text) {
+        uint32_t owner = 0, group = 0;
+        if (!owner_text || !group_text ||
+            av_number_parse(owner_text, strlen(owner_text), &owner) != 0 ||
+            (strcmp(group_text, "0") && av_number_parse(group_text, strlen(group_text), &group) != 0)) {
+            errno = EINVAL;
+            access_status = -1;
+        } else {
+            access_status = fchown(fd, (uid_t)owner, (gid_t)group);
+        }
+    }
+    if (!access_status)
+        access_status = fchmod(fd, 0600);
     close(fd);
-    if (size != (long)AvMappingBytes)
+    if (size != (long)AvMappingBytes || access_status != 0) {
+        fprintf(stderr, "AV setup: device size/access verification failed: %s\n", strerror(errno));
         return 1;
-    puts("AV setup: exact-size KVMFR device ready; configure its user access before unprivileged "
-         "startup");
+    }
+    puts("AV setup: exact-size KVMFR device ready with private access for invoking user");
     return 0;
 }

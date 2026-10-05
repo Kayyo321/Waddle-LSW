@@ -51,8 +51,8 @@ build/vendor/av/module/kvmfr.c: submodules/looking_glass/module/kvmfr.c submodul
 	mkdir -p build/vendor/av/module
 	cp submodules/looking_glass/module/kvmfr.c submodules/looking_glass/module/kvmfr.h submodules/looking_glass/module/Makefile build/vendor/av/module/
 	cp submodules/looking_glass/LICENSE build/vendor/av/module/LICENSE
-build/waddle-av-setup: src/av/av_setup.c src/av/av_layout.h build/vendor/av/module/kvmfr.c | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $< $(LDFLAGS) -o $@
+build/waddle-av-setup: src/av/av_setup.c src/av/av_layout.h src/av/av_kvmfr.h build/av_codec.o build/vendor/av/module/kvmfr.c | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $< build/av_codec.o $(LDFLAGS) -o $@
 .PHONY: av-module
 av-module: build/waddle-av-setup
 	./build/waddle-av-setup --build-module

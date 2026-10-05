@@ -45,12 +45,12 @@
 
 | **10** | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 40% | Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass. |
-| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 65% | Build the pinned driver through an argv-only child process against running-kernel headers, expose an administrator-only load step and preserve incompatible live devices. Bundle source/license from the submodule in ignored build outputs; build succeeds on the current kernel. |
+| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 80% | Assign a newly loaded exact-size device to the validated sudo invoking user with mode 0600, verify ownership operations and preserve pre-existing devices. Build and probe use the pinned module and nontruncating capacity ABI; running-kernel module build passes. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 80% | Extend the bounded configuration editor with AV enable, shared-memory path and explicit GPU assignment. Validate the complete patch before replacing a quiescent device configuration, preserve unrelated bytes and cover incomplete, malformed and reset requests. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `80.05%`
+**Total Feature Completion**: `80.80%`
 
 ## Commit History & Progress Log
 
@@ -198,6 +198,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Resolve native MSVC diagnostics by including the apartment API, qualifying the SDK DXGI interface namespace and sharing C ABI export declarations between the adapter header and implementation. Native Windows CI will recompile the boundary with warnings treated as errors.
 
-- **Commit `HEAD`**: `fix(av): preserve full KVMFR capacity and bound host connection`
+- **Commit `6d147930638a`**: `fix(av): preserve full KVMFR capacity and bound host connection`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Use the 64-bit kernel ioctl return for all two-GiB capacity probes, reject incompatible character mappings before mmap and bound nonblocking VSOCK startup to five seconds. Transport/provisioning tests and native client/helper builds pass.
+
+- **Commit `HEAD`**: `feat(av): provision private access for newly loaded KVMFR`
+  - **Task Impact**: +15% to #10.2 (+0.75% overall)
+  - **Summary**: Assign a newly loaded exact-size device to the validated sudo invoking user with mode 0600, verify ownership operations and preserve pre-existing devices. Build and probe use the pinned module and nontruncating capacity ABI; running-kernel module build passes.
