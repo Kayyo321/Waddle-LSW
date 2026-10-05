@@ -422,3 +422,29 @@ closes that final reference. Missing D-Bus/RTKit is allowed and requires no clea
 This lifecycle is confined to the standalone AV process. The live platform gate
 passes ASan/LSan/UBSan with zero reported bytes leaked after this cleanup; no leak
 suppression or disabled sanitizer check is used.
+
+### Native capture timing diagnostic
+
+The Windows fixture's optional `--benchmark` paints a changing pixel while pumping
+real window messages, polls the native WGC DLL with a one-millisecond owned
+high-resolution timer, and measures three seconds using QueryPerformanceCounter.
+It verifies the deterministic center pixels in every accepted frame, counts unique
+WGC timestamps separately from duplicates, and reports timestamp-to-mapped-CPU
+callback mean/maximum age and maximum timestamp interval. Sampling state is bounded
+stack storage owned by the capture thread; the timer is cancelled and closed before
+reporting. Fresh-frame cutoff excludes frames queued before the measurement starts.
+These are guest capture diagnostics, not host presentation or audio output latency.
+The program-created acceptance guest reports 1920x1080 at 64 Hz despite QEMU's 144-Hz
+VGA request; a VGA refresh property alone cannot establish the actual Windows mode
+or satisfy 144-Hz performance acceptance. No performance task passes on that basis.
+Native executable tests use a fresh ignored deployment directory to avoid retained
+Windows executable sections reading an earlier build at a reused shared-file path.
+
+Timing validity is checked for every sampled unique frame. Future or regressing
+WGC timestamps invalidate the aggregate age result and make `--benchmark` return
+1 after normal resource cleanup and the remaining fidelity/audio tests. Nothing
+is clamped to zero to hide invalid timing. The native acceptance run observed
+future timestamps, so its capture-age measurement is invalid. Microsoft's documented
+[SystemRelativeTime contract](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframe.systemrelativetime)
+identifies compositor QPC time, but the observed platform result still requires
+investigation before using that value in a latency acceptance measurement.

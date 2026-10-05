@@ -358,7 +358,11 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Instantiate the full-HD high-refresh VGA device explicitly instead of relying on global properties and an implicit default. Native boot inspection showed those globals suppress the default video device, leaving Windows without a capture display; argument and lifecycle regressions pass with the explicit device.
 
-- **Commit `HEAD`**: `docs(tracker): fix markdown table formatting in feature progress tracker`
+- **Commit `97089db0e8a7`**: `docs(tracker): fix markdown table formatting in feature progress tracker`
   - **Task Impact**: 0% overall; formatting fix
   - **Summary**: Remove blank lines breaking table parsing before #8.1 and section 10, add the section 8 category row, and restore continuous table rendering in markdown preview mode.
 
+
+- **Commit `HEAD`**: `test(av): validate native capture throughput and timestamp diagnostics`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Finish the optional native benchmark with a changing pixel, fresh unique-frame accounting, bounded QPC age and interval statistics, and deterministic timer cleanup. Real acceptance reports 64 Hz and invalid future WGC timestamps; return failure for invalid age measurements and leave end-to-end video/audio acceptance incomplete.
