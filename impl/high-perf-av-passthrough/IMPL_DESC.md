@@ -456,3 +456,26 @@ and preserves the previous current_bundle selector. An unused immutable deployme
 directory may remain for diagnosis; it is never selected for subsequent run/probe.
 Both setup and explicit probe invoke the same native host gate, which stops
 PipeWire and Wayland clients before unmapping on every error or success path.
+
+### Complete distributable AV bundle
+
+`make all` includes `av-distribution`, which requires host CLI/daemon/playback/helper,
+execution and AV guest binaries, the native Windows SDK-built WinRT DLL, the
+verified signed IVSHMEM package, and patched pinned module sources. Missing inputs
+fail before publishing an archive; Linux cannot fabricate the SDK projection DLL.
+Native CI produces that DLL on Windows and automatically transfers the same-run
+artifact to the Linux package job. Users download one `waddle_av.tar.gz`, extract
+it into a private user-owned writable directory and keep the sibling executable
+and vendor/av layout intact. No user assembly of different CI artifacts is needed.
+
+The archive contains GPL notices, exact application and original Looking Glass
+source archives, patched module sources and a per-file SHA-256 manifest. Provenance
+records the application commit and verifies the Looking Glass checkout matches
+the immutable gitlink. Base-system QEMU, virtiofsd, Wayland, PipeWire, libc, sudo,
+acl, kmod, OVMF and running-kernel development headers remain OS packages. They
+are not loosely vendored runtime dependencies. The licensed Windows image and
+existing execution bridge belong to the caller's managed device. Kernel modules
+are built for the actual target kernel, not the CI kernel. Packaging uses a private
+staging directory removed on all exits; a failed package preserves the previous
+archive, and only a successful complete archive atomically replaces the output.
+The bundled source is git HEAD; rebuild packaging after committing source edits.

@@ -106,3 +106,13 @@ build/av_platform_test: tests/av/platform.c src/av/av_wayland.c src/av/av_pipewi
 .PHONY: av-native-platform-test
 av-native-platform-test: build/av_platform_test
 	./build/av_platform_test
+
+# The SDK projection DLL is built on native Windows by scripts/build_wgc.cmd.
+# Linux packaging consumes the same-run CI artifact; never omit the DLL.
+build/av_wgc.dll: | build
+	@echo 'AV distribution needs the matching Windows SDK-built build/av_wgc.dll (scripts/build_wgc.cmd or complete CI bundle)' >&2
+	@exit 1
+
+.PHONY: av-distribution
+av-distribution: build/waddle build/waddled av windows av-drivers build/av_wgc.dll
+	sh scripts/package_av.sh

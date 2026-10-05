@@ -46,10 +46,10 @@
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 95% | Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 96% | Make all assemble a coherent AV archive with host binaries, matching guest execution/capture binaries, native WinRT DLL, signed driver package, patched kernel-module sources, source archives, licenses and SHA-256 manifest. Keep CLI regressions independent of native Windows SDK packaging. Test every missing required input and verify failed assembly preserves the prior complete archive; same-run CI assembly remains pending. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `96.72%`
+**Total Feature Completion**: `96.75%`
 
 ## Commit History & Progress Log
 
@@ -367,6 +367,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Finish the optional native benchmark with a changing pixel, fresh unique-frame accounting, bounded QPC age and interval statistics, and deterministic timer cleanup. Real acceptance reports 64 Hz and invalid future WGC timestamps; return failure for invalid age measurements and leave end-to-end video/audio acceptance incomplete.
 
-- **Commit `HEAD`**: `fix(av): gate deployment publication on native host readiness`
+- **Commit `48b4d1f6dc40`**: `fix(av): gate deployment publication on native host readiness`
   - **Task Impact**: +3% to #10.1 (+0.15% overall)
   - **Summary**: Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte.
+
+- **Commit `HEAD`**: `feat(av): assemble a complete host and guest distribution archive`
+  - **Task Impact**: +1% to #10.4 (+0.03% overall)
+  - **Summary**: Make all assemble a coherent AV archive with host binaries, matching guest execution/capture binaries, native WinRT DLL, signed driver package, patched kernel-module sources, source archives, licenses and SHA-256 manifest. Keep CLI regressions independent of native Windows SDK packaging. Test every missing required input and verify failed assembly preserves the prior complete archive; same-run CI assembly remains pending.

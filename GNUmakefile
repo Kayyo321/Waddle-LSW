@@ -6,14 +6,17 @@ CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Werror
 LDFLAGS ?=
 COMMON = src/common/protocol.c src/common/arguments.c build/path_rules.o
 
-.PHONY: all test clean zig-test test-sanitizers demo windows windows-test coverage qemu-vendor qemu-clean
+.PHONY: all cli test clean zig-test test-sanitizers demo windows windows-test coverage qemu-vendor qemu-clean
 
 # Bundled Vendor Dependencies
 QEMU_DIR = submodules/qemu
 QEMU_BUILD_DIR = $(QEMU_DIR)/build
 QEMU_SYSTEM_X86 = $(QEMU_BUILD_DIR)/qemu-system-x86_64
 
-all: build/waddle build/waddle-mock-guest build/waddled qemu-vendor
+all: cli av-distribution
+
+# CLI regressions do not require a Windows SDK-produced capture DLL.
+cli: build/waddle build/waddle-mock-guest build/waddled qemu-vendor
 
 build:
 	mkdir -p $@
@@ -132,7 +135,7 @@ build/test_daemon_client: tests/daemon/test_daemon_client.c src/daemon/daemon_cl
 build/test_auto_terminal: tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
 
-test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_device build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
+test: cli build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_device build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
 	./build/unit
 	./build/integration
 	./build/test_daemon_protocol
@@ -154,7 +157,7 @@ test-sanitizers: clean
 		CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" \
 		LDFLAGS="-fsanitize=address,leak,undefined"
 
-demo: all
+demo: cli
 	sh tests/integration/demo.sh
 
 clean:
@@ -179,7 +182,7 @@ build/windows_guest_test.exe: tests/windows/windows_guest.c src/guest/guest_code
 windows-test: windows build/windows_guest_test.exe
 	./build/windows_guest_test.exe
 
-coverage: all build/test_daemon_device build/path_rules.o
+coverage: cli build/test_daemon_device build/path_rules.o
 	sh tests/coverage.sh
 	python3 tests/device_coverage.py
 	python3 tests/device_branches.py
