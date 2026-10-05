@@ -57,6 +57,8 @@
   The validated native benchmark recorded 113 unique frames in 3002.042 ms
   (37.64 FPS), zero duplicates and 12 future WGC timestamps. Capture-age timing
   is invalid; neither video <7 ms at 144 Hz nor audio <10 ms is measured.
+  A later pixel-freshness diagnostic accepted 11 unique frames in 3000.955 ms
+  (3.67 FPS) and rejected nine future timestamps; performance remains unverified.
 - Both host GPUs retain active desktop/render clients. No eligible GPU has been
   detached. Automatic preparation and recovery for a safe explicit GPU remains
   unfinished; a pre-bound vfio-pci requirement does not complete provisioning.
@@ -413,6 +415,10 @@
   - **Task Impact**: +1% to #10.4 (+0.03% overall)
   - **Summary**: Handle reboot-required signed-driver setup with one graceful restart of the selected managed device, a fresh probe of the immutable guest bundle and native host readiness before publication. Propagate every failure without a force kill, repeated installation or false selector update. Verify ordered steps, first-failure termination, ordinary ready setup and invalid callbacks under the native sanitizer suite; real reboot-required installation remains unverified.
 
-- **Commit `HEAD`**: `docs(av): record extracted distribution readiness and regression evidence`
+- **Commit `298c4b1b979e`**: `docs(av): record extracted distribution readiness and regression evidence`
   - **Task Impact**: +1% to #10.4 (+0.03% overall)
   - **Summary**: Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete.
+
+- **Commit `HEAD`**: `test(av): prove occlusion freshness through newly painted pixels`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Change the target color while an actual topmost window covers it and require the newly painted center pixels, ignoring only known queued old content. Count benchmark samples only when pixel validation accepts them. Real native capture and process-loopback fidelity pass; the later 64-Hz benchmark still fails timestamp validity and performance acceptance, which remains incomplete.

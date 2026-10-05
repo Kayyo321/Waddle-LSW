@@ -15,11 +15,12 @@ static int defer_creation = 1;
 static unsigned captured_frames;
 static uint64_t minimum_timestamp;
 static unsigned paint_sequence;
+static COLORREF paint_color = RGB(63, 127, 191);
 static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_PAINT && (uint64_t)(uintptr_t)window == target_id) {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(window, &paint);
-        HBRUSH brush = CreateSolidBrush(RGB(63, 127, 191));
+        HBRUSH brush = CreateSolidBrush(paint_color);
         FillRect(dc, &paint.rcPaint, brush);
         SetPixelV(dc, 20, 20, RGB(++paint_sequence % 256, 0, 0));
         DeleteObject(brush); EndPaint(window, &paint);
@@ -35,7 +36,12 @@ static HRESULT captured_pixels(const uint8_t *pixels, size_t length, uint32_t st
     assert(width > 100 && height > 100 && timestamp_ns);
     assert(stride >= width * 4 && length >= (size_t)stride * height);
     const uint8_t *center = pixels + (size_t)(height / 2) * stride + (width / 2) * 4;
-    assert(center[0] == 191 && center[1] == 127 && center[2] == 63);
+    /* A queued pre-occlusion frame cannot prove newly painted hidden content.
+     * Ignore only the known old color while waiting for the changed target. */
+    if (paint_color != RGB(63, 127, 191) &&
+        center[0] == 191 && center[1] == 127 && center[2] == 63) return S_OK;
+    assert(center[0] == GetBValue(paint_color) && center[1] == GetGValue(paint_color) &&
+           center[2] == GetRValue(paint_color));
     ++captured_frames;
     return S_OK;
 }
@@ -111,8 +117,9 @@ static HRESULT measured_pixels(const uint8_t *pixels, size_t length, uint32_t st
                                uint32_t width, uint32_t height, uint64_t timestamp_ns,
                                void *context) {
     capture_measurement_t *measurement = context;
+    unsigned accepted_before = captured_frames;
     HRESULT result = captured_pixels(pixels, length, stride, width, height, timestamp_ns, NULL);
-    if (timestamp_ns < minimum_timestamp) return result;
+    if (captured_frames == accepted_before) return result;
     if (timestamp_ns == measurement->last_timestamp) {
         ++measurement->duplicate_frames;
         return result;
@@ -245,7 +252,7 @@ int main(int argc, char **argv) {
         HDC dc = GetDC(target);
         RECT client;
         assert(dc && GetClientRect(target, &client));
-        HBRUSH brush = CreateSolidBrush(RGB(63, 127, 191));
+        HBRUSH brush = CreateSolidBrush(paint_color);
         assert(brush && FillRect(dc, &client, brush));
         DeleteObject(brush); ReleaseDC(target, dc);
         HRESULT status = create(target, &capture);
@@ -255,6 +262,8 @@ int main(int argc, char **argv) {
         assert(read_frame);
         capture_until_frame(capture, read_frame);
         assert(SetWindowPos(tool, HWND_TOPMOST, 100, 100, 700, 500, SWP_SHOWWINDOW));
+        paint_color = RGB(95, 159, 223);
+        assert(InvalidateRect(target, NULL, FALSE) && UpdateWindow(target));
         LARGE_INTEGER clock, frequency;
         assert(QueryPerformanceCounter(&clock) && QueryPerformanceFrequency(&frequency));
         minimum_timestamp = (uint64_t)(clock.QuadPart / frequency.QuadPart) * 1000000000 +
@@ -266,7 +275,7 @@ int main(int argc, char **argv) {
         }
         destroy(&capture);
         assert(!capture);
-        puts("Native WGC: exact center pixels survive an occluding window");
+        puts("Native WGC: newly painted center pixels survive an occluding window");
         native_audio_test();
     }
     FreeLibrary(library);

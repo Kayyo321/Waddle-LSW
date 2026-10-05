@@ -632,3 +632,21 @@ host mapping/Wayland/PipeWire readiness from this archive. This validates portab
 package layout and deployment, not the still-missing high-refresh latency targets
 or a real reboot-required install transition. Repository-wide sanitizer regression,
 CLI coverage and the rerun of all 1000 storage stress cycles also pass locally.
+
+### Pixel-based occlusion freshness
+
+The native fixture first verifies the original deterministic center color, then
+places a topmost tool window over the target and repaints the covered target with
+a different deterministic color. Capture must deliver the new color before its
+five-second deadline. Only the known old color is ignored while draining queued
+frames; unexpected center pixels fail. This prevents future/rounded WGC timestamps
+from allowing a pre-occlusion frame to count as fresh fidelity evidence. The
+benchmark validates the new expected color in every accepted frame afterward.
+
+The strengthened native test passes newly painted occluded content and captures
+nonzero process-loopback PCM. Its later diagnostic run still reports a 64-Hz mode,
+only 11 accepted unique frames over 3000.955 ms (3.67 FPS), and nine invalid future
+WGC timestamps. Throughput varies substantially across these software-display
+runs; neither the earlier 37.64 FPS nor this later result meets the acceptance
+requirement. Small positive ages from the subset of valid timestamps are not a
+passing latency result because the aggregate timing validation fails.
