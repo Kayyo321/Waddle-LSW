@@ -8,6 +8,7 @@ import tempfile
 import pty
 import signal
 import select
+import time
 
 with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     root = Path(root)
@@ -162,8 +163,15 @@ for mode in ('cancel','confirm','mismatch','overlong'):
         process=subprocess.Popen([driver,'device','remove','confirmed'],env=env,stdin=slave,
                                  stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
         try:
-            assert select.select([process.stdout],[],[],10)[0], 'confirmation prompt missing'
-            assert 'Type the exact name' in os.read(process.stdout.fileno(),4096).decode()
+            prompt=bytearray()
+            deadline=time.monotonic()+10
+            while b'Type the exact name' not in prompt and time.monotonic()<deadline:
+                if not select.select([process.stdout],[],[],.1)[0]: continue
+                chunk=os.read(process.stdout.fileno(),4096)
+                if not chunk: break
+                prompt.extend(chunk)
+                assert len(prompt)<=16384, 'unbounded confirmation prompt'
+            assert b'Type the exact name' in prompt, (mode,bytes(prompt),process.poll())
             if mode=='cancel': process.send_signal(signal.SIGINT)
             else: os.write(master, {'confirm':b'confirmed\n','mismatch':b'wrong\n','overlong':b'x'*80+b'\n'}[mode])
             output,diagnostics=process.communicate(timeout=10)
