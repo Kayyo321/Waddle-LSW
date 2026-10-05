@@ -292,6 +292,39 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
         }
     }
 
+    char *allocated_dest[64] = {0};
+
+    if (translate && rule_count == 0) {
+        daemon_config_t cfg;
+        daemon_config_init_defaults(&cfg);
+        (void)daemon_config_load_file(&cfg, NULL);
+        for (size_t m = 0; m < cfg.mount_count && rule_count < 63; m++) {
+            char *src = strdup(cfg.mounts[m].host_path);
+            char *dst = strdup(cfg.mounts[m].guest_drive);
+            if (src != NULL && dst != NULL) {
+                size_t src_len = strlen(src);
+                while (src_len > 1 && src[src_len - 1] == '/') {
+                    src[--src_len] = '\0';
+                }
+                allocated_dest[rule_count] = dst;
+                rules[rule_count++] = (path_rule_t){src, dst};
+            } else {
+                free(src);
+                free(dst);
+            }
+        }
+        /* Add root fallback mapping */
+        char *root_src = strdup("/");
+        char *root_dst = strdup("Z:\\");
+        if (root_src != NULL && root_dst != NULL && rule_count < 64) {
+            allocated_dest[rule_count] = root_dst;
+            rules[rule_count++] = (path_rule_t){root_src, root_dst};
+        } else {
+            free(root_src);
+            free(root_dst);
+        }
+    }
+
     if (start == 0 || start >= argc || *argv[start] == '\0') {
         goto usage_error;
     }
@@ -387,6 +420,23 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     }
 
     uint64_t deadline = (timeout > 0) ? (monotonic_ms() + ((uint64_t)timeout * 1000)) : 0;
+
+    if (socket_path == NULL) {
+        int client_fd = waddle_client_ensure_daemon(NULL, WaddleDaemonSpawnTimeoutMs);
+        if (client_fd >= 0) {
+            waddle_daemon_status_resp_t status;
+            memset(&status, 0, sizeof(status));
+            if (waddle_client_status(client_fd, &status) == 0 &&
+                status.subsystem_state != SubsystemStateRunning) {
+                printf("[waddle] Starting background subsystem...\n");
+                waddle_daemon_result_resp_t start_resp;
+                memset(&start_resp, 0, sizeof(start_resp));
+                (void)waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp);
+            }
+            close(client_fd);
+        }
+    }
+
     fd = connect_peer(socket_path, cid, port, deadline);
     if (fd < 0) {
         result = (errno == ETIMEDOUT) ? 124 : 125;
@@ -418,6 +468,10 @@ done:
     for (size_t i = 0; i < rule_count; i++) {
         free((void *)rules[i].source);
         rules[i].source = NULL;
+        if (allocated_dest[i] != NULL) {
+            free(allocated_dest[i]);
+            allocated_dest[i] = NULL;
+        }
     }
     waddle_terminal_close();
     if (fd >= 0) {
@@ -632,6 +686,12 @@ static int cmd_logs(int argc, char **argv) {
  * @brief Default zero-flag action: auto-starts subsystem and opens ConPTY terminal.
  */
 static int cmd_interactive_default(void) {
+    daemon_config_t cfg;
+    daemon_config_init_defaults(&cfg);
+    (void)daemon_config_load_file(&cfg, NULL);
+
+    const char *shell_cmd = (cfg.default_shell[0] != '\0') ? cfg.default_shell : "powershell.exe";
+
     /* 1. Ensure daemon and hypervisor are running */
     int client_fd = waddle_client_ensure_daemon(NULL, WaddleDaemonSpawnTimeoutMs);
     if (client_fd >= 0) {
@@ -655,7 +715,7 @@ static int cmd_interactive_default(void) {
         "--interactive",
         "--translate-path",
         "--",
-        "powershell.exe",
+        (char *)shell_cmd,
         NULL
     };
     return cmd_exec(6, default_args, 2);

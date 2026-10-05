@@ -69,7 +69,10 @@ build/test_daemon_server: tests/test_daemon_server.c $(DAEMON_COMMON) | build
 build/test_daemon_client: tests/test_daemon_client.c src/daemon_client.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_client.c src/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
 
-test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_server build/test_daemon_client zig-test
+build/test_auto_terminal: tests/test_auto_terminal.c src/daemon_client.c $(DAEMON_COMMON) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_auto_terminal.c src/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
+
+test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
 	./build/unit
 	./build/integration
 	./build/test_daemon_protocol
@@ -78,6 +81,7 @@ test: all build/unit build/integration build/test_daemon_protocol build/test_dae
 	./build/test_daemon_fs
 	./build/test_daemon_server
 	./build/test_daemon_client
+	./build/test_auto_terminal
 	sh tests/path_options.sh
 
 test-sanitizers: clean
