@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -47,20 +48,21 @@ static int prepare_firmware(const daemon_config_t *config) {
     if (access("/usr/share/OVMF/OVMF_CODE_4M.fd", R_OK) != 0) return -1;
     int input = open("/usr/share/OVMF/OVMF_VARS_4M.fd", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (input < 0) return -1;
-    char destination[WaddleMaxPathLen + 16];
+    char destination[WaddleMaxPathLen + 16], temporary[WaddleMaxPathLen + 32] = {0};
     struct stat source, existing;
     int output = -1, result = -1, created = 0;
     if (fstat(input, &source) != 0 || !S_ISREG(source.st_mode) || source.st_size <= 0 ||
         source.st_size > 16777216 || snprintf(destination, sizeof(destination), "%s.av_uefi.fd", config->disk_image) >= (int)sizeof(destination)) goto cleanup;
-    output = open(destination, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (output < 0 && errno == EEXIST) {
-        output = open(destination, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    output = open(destination, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (output >= 0 || errno != ENOENT) {
         if (output >= 0 && fstat(output, &existing) == 0 && S_ISREG(existing.st_mode) &&
             existing.st_uid == geteuid() && !(existing.st_mode & 0077) && existing.st_size == source.st_size)
             result = 0;
         else errno = EINVAL;
         goto cleanup;
     }
+    if (snprintf(temporary, sizeof(temporary), "%s.tmp.XXXXXX", destination) >= (int)sizeof(temporary)) goto cleanup;
+    output = mkostemp(temporary, O_CLOEXEC);
     if (output < 0) goto cleanup;
     created = 1;
     char bytes[65536];
@@ -77,13 +79,13 @@ static int prepare_firmware(const daemon_config_t *config) {
             offset += written;
         }
     }
-    if (fsync(output) == 0) result = 0;
+    if (fsync(output) == 0 && link(temporary, destination) == 0) result = 0;
 cleanup:
     {
         int saved = errno;
         close(input);
         if (output >= 0) close(output);
-        if (created && result) unlink(destination);
+        if (created) unlink(temporary);
         errno = saved;
     }
     return result;

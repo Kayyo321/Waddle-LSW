@@ -36,6 +36,23 @@ int main(void) {
     assert(av_environment_prepare(&environment, &config, error, sizeof(error)) == -1);
     assert(lstat(config.av_shm_path, &status) == 0 && S_ISLNK(status.st_mode));
     unlink(config.av_shm_path);
+    if (access("/usr/share/OVMF/OVMF_CODE_4M.fd", R_OK) == 0) {
+        config.av_uefi = 1;
+        snprintf(config.disk_image, sizeof(config.disk_image), "%s/windows.qcow2", root);
+        char firmware[1200];
+        snprintf(firmware, sizeof(firmware), "%s.av_uefi.fd", config.disk_image);
+        assert(av_environment_prepare(&environment, &config, error, sizeof(error)) == 0);
+        av_environment_free(&environment);
+        assert(stat(firmware, &status) == 0 && (status.st_mode & 0777) == 0600);
+        ino_t original = status.st_ino;
+        assert(av_environment_prepare(&environment, &config, error, sizeof(error)) == 0);
+        av_environment_free(&environment);
+        assert(stat(firmware, &status) == 0 && status.st_ino == original);
+        assert(unlink(firmware) == 0 && symlink("/dev/null", firmware) == 0);
+        assert(av_environment_prepare(&environment, &config, error, sizeof(error)) == -1);
+        assert(lstat(firmware, &status) == 0 && S_ISLNK(status.st_mode));
+        unlink(firmware);
+    }
     rmdir(root);
     puts("AV environment: automatic sparse mapping, private permissions, collision/symlink "
          "preservation passed");

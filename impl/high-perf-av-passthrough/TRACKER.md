@@ -246,6 +246,10 @@
   - **Task Impact**: +10% to #10.4 (+0.30% overall)
   - **Summary**: Launch the deployed target-PID agent through the existing bridge, await its exact bounded readiness line with a deadline and start native playback for the configured CID/mapping. Cancel and reap only owned execution children on failure or playback exit; preserve the user game process.
 
-- **Commit `HEAD`**: `feat(av): provision persistent firmware for UEFI Windows guests`
+- **Commit `6d872a5bbc9b`**: `feat(av): provision persistent firmware for UEFI Windows guests`
   - **Task Impact**: +5% to #10.3 (+0.25% overall)
   - **Summary**: Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass.
+
+- **Commit `HEAD`**: `fix(av): publish firmware stores atomically and preserve existing state`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Create persistent OVMF variables through flushed staging files and non-overwriting publication, preventing partial stores after interrupted setup. Verify stable inode reuse and symlink preservation, and specify UEFI boot, package and lifecycle boundaries in the implementation description.

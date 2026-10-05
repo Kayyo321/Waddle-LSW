@@ -295,3 +295,19 @@ exit/failure the CLI cancels and reaps its own execution child, escalating after
 one second. Cancellation targets the AV agent job, never the pre-existing game
 PID. A missing bundled executable, malformed readiness line or startup timeout
 fails the command and tears down its owned children.
+
+
+### Optional UEFI boot compatibility
+
+`waddle av setup --uefi` writes `[av] uefi=1`. Default zero preserves BIOS boot
+for existing images. The daemon requires the base-system OVMF files
+`/usr/share/OVMF/OVMF_CODE_4M.fd` and `OVMF_VARS_4M.fd`; missing packages fail with
+a capability diagnostic. It creates `<device-disk>.av_uefi.fd` with private 0600
+permissions through a flushed staging file and non-overwriting hard-link publish.
+An existing same-user regular store with matching template length is preserved;
+symlinks, incorrect ownership/permissions and mismatched sizes fail. Firmware
+variables persist across VM/AV teardown and are not reinitialized on restart.
+QEMU uses q35, read-only code pflash and the persistent writable variables pflash.
+The managed Windows disk is never altered by provisioning. Setup cannot convert
+an installed BIOS Windows image to UEFI automatically; the caller selects firmware
+matching that image. Secure Boot key enrollment is outside automated mutation.
