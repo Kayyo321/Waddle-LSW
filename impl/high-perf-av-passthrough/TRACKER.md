@@ -1,6 +1,6 @@
 # Feature Tracker: High-Performance Audio/Video Passthrough for Gaming
 
-- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex, Codex
+- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex, Codex, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
@@ -25,9 +25,9 @@
 | #3.3 | Implement `memory_order_acquire/release` fences for buffer synchronization | Done | 5% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #3.4 | Dispatch `MsgFrameReady` over VSOCK with buffer index and damage rects | In Progress | 3% | 35% | Add isolated AV control IDs and a fixed little-endian Zig codec validating titles, geometry, state flags and damage rectangles before exposing data to C. |
 | **4**   | **Audio Capture & Transport (Guest)** | | | | |
-| #4.1    | Initialize WASAPI `AUDIOCLIENT_ACTIVATION_PARAMS` for per-process loopback | Pending | 5% | 0% | - |
+| #4.1 | Initialize WASAPI `AUDIOCLIENT_ACTIVATION_PARAMS` for per-process loopback | In Progress | 5% | 70% | Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes. |
 | #4.2 | Implement lockless SPSC write loop from WASAPI buffers to IVSHMEM audio ring | Done | 8% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
-| #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 4% | 40% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
+| #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 4% | 60% | Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes. |
 | **5**   | **Host Wayland Client (Video)** | | | | |
 | #5.1    | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | Pending | 5% | 0% | - |
 | #5.2    | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | Pending | 8% | 0% | - |
@@ -41,7 +41,7 @@
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 2% | 35% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
 
-**Total Feature Completion**: `47.75%`
+**Total Feature Completion**: `52.05%`
 
 ## Commit History & Progress Log
 
@@ -77,6 +77,10 @@
   - **Task Impact**: +80% to #2.1 (+4.00% overall); +80% to #2.2 (+3.20% overall); +75% to #2.3 (+3.00% overall)
   - **Summary**: Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes.
 
-- **Commit `HEAD`**: `feat(av): capture bounded visible-window crops with DXGI`
+- **Commit `f6accb42adb4`**: `feat(av): capture bounded visible-window crops with DXGI`
   - **Task Impact**: +60% to #3.1 (+3.00% overall); +65% to #3.2 (+5.20% overall)
   - **Summary**: Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate.
+
+- **Commit `HEAD`**: `feat(av): capture process-tree audio through WASAPI loopback`
+  - **Task Impact**: +70% to #4.1 (+3.50% overall); +20% to #4.3 (+0.80% overall)
+  - **Summary**: Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes.
