@@ -199,6 +199,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +0% to TODO #10; retain 95.5% pending final verification.
   - **Summary**: Extend PTY tests to exact-name confirmation, mismatched input and bounded overlong rejection alongside SIGINT cancellation. Trace normal prompt paths through kcov while signal tests retain direct child ownership. CLI implementation line coverage is 93.89% (446/475), registry 92.34%, storage 93.64%; no coverage threshold is relaxed.
 
-- **Commit `:/wait for the complete confirmation prompt in PTY tests`**: `test(cli): wait for the complete confirmation prompt in PTY tests`
+- **Commit `75eeff3`**: `test(cli): wait for the complete confirmation prompt in PTY tests`
   - **Task Impact**: +0% to TODO #11; retain 95.5% pending green final-head CI.
   - **Summary**: Native Windows CI passed at c4c5c51. Linux sanitizer CI exposed a fixture timing assumption: formatted prompt text can span multiple pipe writes. Accumulate bounded output until the full marker/deadline instead of assuming one read contains the marker. Keep all assertions and sanitizer/coverage thresholds unchanged.
+
+- **Commit `:/scope the storage creation mask inside the registry lock`**: `fix(device): scope the storage creation mask inside the registry lock`
+  - **Task Impact**: +0% to TODO #10/#11; retain 95.5% pending final verification.
+  - **Summary**: Move the process-wide private creation mask inside the exclusive registry-lock scope and restore it before releasing that lock. Concurrent in-process mutation callers can no longer restore each other's masks; dry-run never changes umask. This preserves the public serialization contract and receives local storage/sanitizer/coverage plus PR-head verification.

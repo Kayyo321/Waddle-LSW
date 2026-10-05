@@ -719,3 +719,10 @@ EOF/mismatch/overlong input also cancels, and no registry/runtime write lock is
 held while prompting. PTY acceptance signals the waiting prompt without a
 newline and proves the original profile and disk are preserved. The final disk
 flush-expanded crash/failure matrix contains 360 boundaries.
+
+The process-wide umask override is entered only after acquiring the exclusive
+registry write lock and restored before releasing it. Concurrent storage mutation
+ABI callers therefore cannot overlap mask save/restore scopes. Dry-run never
+changes the mask; files and directories also use explicit 0600/0700 modes. The
+CLI is a main-thread caller; unrelated application code must not independently
+change process-wide umask while using this storage ABI.

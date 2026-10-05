@@ -523,6 +523,9 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
         if (!(request.dry_run != 0 and c.__errno_location().* == c.ENOENT)) return native_error();
     }
     defer if (lock >= 0) { _ = c.close(lock); };
+    // Serialize and restore the process-wide mask before releasing the write lock.
+    const previous_mask = if (request.dry_run == 0) c.umask(0o077) else null;
+    defer if (previous_mask) |mask| { _ = c.umask(mask); };
     try recover(ctx, request.dry_run == 0);
     var registry: c.device_list_t = undefined;
     if (c.daemon_device_scan_locked(&registry) < 0) return native_error();
@@ -772,8 +775,6 @@ fn fault(point: []const u8) void {
 export fn daemon_device_mutate(request: ?*const c.device_request_t, output: ?[*]u8) c_int {
     const input = request orelse { c.__errno_location().* = c.EINVAL; return -1; };
     const result = output orelse { c.__errno_location().* = c.EINVAL; return -1; };
-    const previous_mask = c.umask(0o077);
-    defer _ = c.umask(previous_mask);
     var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
     defer arena.deinit();
     const ctx = context(arena.allocator()) catch |err| { set_errno(err); return -1; };
