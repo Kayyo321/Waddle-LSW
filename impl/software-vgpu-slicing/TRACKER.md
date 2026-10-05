@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 92% | Lifecycle codec/state machine verified on Linux/Windows; native stream adapter and cross-VM test pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 94% | Native stream handoff/waits verified on Linux and cross-linked for Windows; Windows execution and cross-VM test pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 10% | Scoped public renderer/context/reply owner and real CPU dispatch verified; resource/session/GPU integration pending |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `20.8%`
+**Total Feature Completion**: `21.1%`
 
 ## Commit History & Progress Log
 
@@ -211,10 +211,24 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     This milestone proves CPU dispatch/ownership, not GPU execution, resource
     allocation policy, session integration, guest ICD or zero-copy presentation.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify native lifecycle stream adapters`
+- **Commit `6281b0b`**: `docs(vgpu): specify native lifecycle stream adapters`
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Defined borrowed Linux VSOCK/UNIX and Windows overlapped serial
     streams, exact private framing, monotonic operation deadlines, cancellation,
     bounded backpressure waits, partial EOF and completion-event cleanup.
   - **Verification**: Reviewed against session readiness and ring exact-transfer
     contracts; native implementation and runtime validation remain pending.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): hand off native lifecycle streams with deadlines`
+  - **Task Impact**: +2% to TODO: #1 (+0.3% overall).
+  - **Summary**: Added borrowed native Linux stream/Windows overlapped adapters,
+    complete readiness delivery, private partial framing, atomic cancellation,
+    monotonic operation deadlines, stop/EOF closure and bounded ring wait callbacks.
+    Windows requests are cancelled and joined before stack/event reuse. Added real
+    Linux sockets and cross-linked real Windows pipe tests plus coverage/CI gates.
+  - **Verification**: `make vgpu-test vgpu-sanitizers vgpu-coverage vgpu-windows`
+    passed locally. Channel C lines 98.37%, branches 95.10%; Linux native boundary
+    lines 100%, branches 97.62%. ASan/LSan/UBSan and Zig allocator gates pass.
+    Real Linux two-peer handshake, one-byte framing, full-ring progress, partial
+    EOF, final Stop, cancellation during waits and deadline shutdown passed.
+    Native Windows execution and the real cross-VM signed-driver gate are pending.
