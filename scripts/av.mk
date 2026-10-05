@@ -75,3 +75,6 @@ build/waddle-av-host: $(AvHostSources) build/xdg_shell_client.h build/linux_dmab
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) $(AvHostSources) build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
 .PHONY: av
 av: build/waddle-av-host build/waddle-av-setup av-windows
+
+build/av_windows_test.exe: tests/av/windows.c $(AvWindowsSources) build/av_audio_windows.lib build/av_codec_windows.lib build/av_layout_windows.lib | build
+	$(ZIG) cc $(AvWindowsFlags) $^ $(AvWindowsLibraries) -o $@

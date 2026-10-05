@@ -178,6 +178,10 @@
   - **Task Impact**: +20% to #3.1 (+0.80% overall)
   - **Summary**: Add a system-SDK C++/WinRT adapter with RAII-owned sessions, free-threaded frame pools, resize recreation and scoped GPU mappings. Expose only borrowed pixel rows through C callbacks; native SDK build and fidelity tests remain pending.
 
-- **Commit `HEAD`**: `feat(av): prefer per-window WinRT capture in the guest pipeline`
+- **Commit `aae9676e3292`**: `feat(av): prefer per-window WinRT capture in the guest pipeline`
   - **Task Impact**: +5% to #3.1 (+0.20% overall); +5% to #3.2 (+0.32% overall)
   - **Summary**: Load the sibling first-party WGC DLL through restricted absolute search, retain its opaque contexts and publish mapped rows through Zig bounded copies. Report visible-window DXGI fallback explicitly and send actual captured dimensions after resize; complete C guest cross-link passes.
+
+- **Commit `HEAD`**: `test(av): add native Linux and Windows verification jobs`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Run AV transport sanitizers, cross-link platform clients and compile the WinRT DLL with the base Windows SDK. Add native window lifecycle/filtering and C ABI checks plus allocator tests; publish first-party Windows artifacts for managed deployment.
