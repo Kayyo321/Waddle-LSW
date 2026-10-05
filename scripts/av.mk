@@ -18,7 +18,8 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -pthread -o $@
 
 .PHONY: av-test av-sanitizers av-windows
-av-test: build/av_transport_test
+av-test: build/av_transport_test build/av_environment_test
+	./build/av_environment_test
 	./build/av_transport_test
 	$(ZIG) test src/av/av_audio.zig
 	$(ZIG) test src/av/av_codec.zig -Iinclude
@@ -38,3 +39,6 @@ build/linux_dmabuf_client.h: /usr/share/wayland-protocols/stable/linux-dmabuf/li
 	wayland-scanner client-header $< $@
 build/linux_dmabuf_protocol.c: /usr/share/wayland-protocols/stable/linux-dmabuf/linux-dmabuf-v1.xml | build
 	wayland-scanner private-code $< $@
+
+build/av_environment_test: tests/av/environment.c src/av/av_environment.c build/av_layout.o build/daemon_config.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -o $@

@@ -44,13 +44,13 @@
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
 | **10** | **All-in-one AV environment provisioning** | | | | |
-| #10.1 | Probe host/guest prerequisites and report actionable capability failures | Pending | 5% | 0% | Added by user: program must set up its AV environment. |
-| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | Pending | 5% | 0% | Running-kernel headers/signing and privilege boundaries required. |
+| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 40% | Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass. |
+| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 35% | Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 55% | Extend managed VM arguments with exact-size IVSHMEM, a none-backed HDA render endpoint and explicitly configured VFIO GPU. Preserve AV-disabled behavior, validate paths before option construction and exercise accepted/rejected configurations. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `65.03%`
+**Total Feature Completion**: `68.78%`
 
 ## Commit History & Progress Log
 
@@ -138,6 +138,10 @@
   - **Task Impact**: +20% to #10.3 (+1.00% overall)
   - **Summary**: Add transactional bounded AV configuration for shared-memory paths and explicit GPU PCI addresses, defaulting to disabled for existing CLI-only VMs. Reject malformed BDFs and QEMU-option-injecting paths; parser tests pass.
 
-- **Commit `HEAD`**: `feat(av): attach IVSHMEM and silent render endpoint to managed QEMU`
+- **Commit `1d717259ed80`**: `feat(av): attach IVSHMEM and silent render endpoint to managed QEMU`
   - **Task Impact**: +35% to #10.3 (+1.75% overall)
   - **Summary**: Extend managed VM arguments with exact-size IVSHMEM, a none-backed HDA render endpoint and explicitly configured VFIO GPU. Preserve AV-disabled behavior, validate paths before option construction and exercise accepted/rejected configurations.
+
+- **Commit `HEAD`**: `feat(av): provision private shared memory before VM startup`
+  - **Task Impact**: +40% to #10.1 (+2.00% overall); +35% to #10.2 (+1.75% overall)
+  - **Summary**: Prepare exact-size private IVSHMEM backing automatically, validate explicitly assigned VFIO GPU state and reject existing/symlink files without replacing user data. Own mapping/file cleanup and prevent resetting KVMFR slots still held by a compositor; native provisioning tests pass.
