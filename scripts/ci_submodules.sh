@@ -24,12 +24,7 @@ seed_openssl() {
     git -C "$parent" submodule init "$openssl_path"
     target=$parent/$openssl_path
     if [ ! -e "$target/.git" ]; then
-        ref_dir="submodules/qemu/roms/edk2/CryptoPkg/Library/OpensslLib/openssl"
-        if [ -d "$ref_dir" ] && [ "$target" != "$ref_dir" ]; then
-            git clone --depth 1 --reference "$ref_dir" --branch "$OpenSslTag" "$OpenSslUrl" "$target"
-        else
-            git clone --depth 1 --branch "$OpenSslTag" "$OpenSslUrl" "$target"
-        fi
+        git clone --depth 1 --branch "$OpenSslTag" "$OpenSslUrl" "$target"
     elif ! git -C "$target" cat-file -e "$OpenSslCommit^{commit}" 2>/dev/null; then
         git -C "$target" fetch --depth 1 origin "refs/tags/$OpenSslTag"
         fetched=$(git -C "$target" rev-parse 'FETCH_HEAD^{commit}')
