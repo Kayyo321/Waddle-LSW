@@ -4,6 +4,7 @@
  */
 
 #include "daemon_state.h"
+#include "daemon_device.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -74,7 +75,28 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
 
     /* Initialize configuration */
     daemon_config_init_defaults(&s->config);
-    (void)daemon_config_load_file(&s->config, NULL);
+
+    int config_loaded = 0;
+    if (custom_runtime_dir != NULL && custom_runtime_dir[0] != '\0') {
+        const char *last_slash = strrchr(custom_runtime_dir, '/');
+        const char *dev_name = (last_slash != NULL) ? (last_slash + 1) : custom_runtime_dir;
+        if (dev_name != NULL && dev_name[0] != '\0' && strcmp(dev_name, "waddle") != 0 && strcmp(dev_name, "run") != 0) {
+            device_info_t dev_info;
+            if (daemon_device_find(dev_name, &dev_info) == 0) {
+                if (daemon_config_load_file(&s->config, dev_info.config_path) == 0) {
+                    config_loaded = 1;
+                }
+            }
+        }
+    }
+    if (!config_loaded) {
+        device_list_t dev_list;
+        if (daemon_device_list(&dev_list) == 1) {
+            (void)daemon_config_load_file(&s->config, dev_list.devices[0].config_path);
+        } else {
+            (void)daemon_config_load_file(&s->config, NULL);
+        }
+    }
 
     /* Determine runtime directory */
     if (custom_runtime_dir != NULL && custom_runtime_dir[0] != '\0') {

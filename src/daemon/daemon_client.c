@@ -190,7 +190,17 @@ int waddle_client_ensure_daemon(const char *socket_path, uint32_t timeout_ms) {
     }
 
     /* Daemon not running; attempt to spawn it */
-    (void)waddle_client_spawn_daemon(NULL);
+    char runtime_buf[WaddleMaxPathLen];
+    const char *target_runtime = NULL;
+    if (socket_path != NULL && socket_path[0] != '\0') {
+        snprintf(runtime_buf, sizeof(runtime_buf), "%.1000s", socket_path);
+        char *slash = strrchr(runtime_buf, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            target_runtime = runtime_buf;
+        }
+    }
+    (void)waddle_client_spawn_daemon(target_runtime);
 
     uint32_t elapsed = 0;
     uint32_t interval_ms = 50;

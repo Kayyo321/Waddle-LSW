@@ -13,11 +13,11 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Fix VirtIO-FS vhost-user socket probing bug in daemon (`src/daemon/daemon_fs.c`) and stabilize hypervisor startup | Done | 20% | 100% | Non-destructive socket inode detection |
 | #2      | Implement device data structures, storage manager, and registry discovery in C (`src/daemon/daemon_device.h`, `src/daemon/daemon_device.c`) | Done | 20% | 100% | Registry scanning and CID allocation |
-| #3      | Implement CLI `init` and `--init` command with automated QCOW2 overlay generation | Pending | 20% | 0% | Device initialization and INI creation |
-| #4      | Implement multi-device resolution logic across lifecycle commands (`start`, `stop`, `status`, etc.) and integrated terminal | Pending | 20% | 0% | Enforce single default vs. multi-device requirements |
+| #3      | Implement CLI `init` and `--init` command with automated QCOW2 overlay generation | In Progress | 20% | 50% | Device backend complete; CLI integration underway |
+| #4      | Implement multi-device resolution logic across lifecycle commands (`start`, `stop`, `status`, etc.) and integrated terminal | In Progress | 20% | 50% | Daemon runtime directory and config auto-loader wired |
 | #5      | Automated unit and integration testing suite for device init, multi-device lifecycle, and error handling | Pending | 20% | 0% | Comprehensive verification and LeakSanitizer gating |
 
-**Total Feature Completion**: `40.0%`
+**Total Feature Completion**: `60.0%`
 
 ## Commit History & Progress Log
 
@@ -29,6 +29,10 @@
   - **Task Impact**: +100% to TODO: #1 (+20.0% overall feature completion)
   - **Summary**: Replaced connect() call in probe_socket_ready with stat() inode verification to prevent virtiofsd from shutting down prematurely on client disconnect.
 
-- **Commit `pending`**: `feat(device): implement device registry, storage manager, and discovery in C`
+- **Commit `df7e601`**: `feat(device): implement device registry, storage manager, and discovery in C`
   - **Task Impact**: +100% to TODO: #2 (+20.0% overall feature completion)
   - **Summary**: Implemented daemon_device.h and daemon_device.c providing device name validation, config/state path resolution, QCOW2 overlay disk creation, dynamic CID allocation, and registry enumeration.
+
+- **Commit `pending`**: `feat(daemon): wire device runtime directory isolation and configuration auto-loading`
+  - **Task Impact**: +50% to TODO: #3, +50% to TODO: #4 (+20.0% overall feature completion)
+  - **Summary**: Updated daemon_client.c to extract device runtime paths when spawning waddled, and updated daemon_state.c to dynamically load device-specific INI profiles or auto-load single-device profiles.
