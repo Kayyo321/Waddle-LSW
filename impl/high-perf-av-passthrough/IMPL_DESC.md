@@ -161,3 +161,69 @@ Destroy does not permit pool reuse until all previously presented slots are Free
 control dimensions are within the protocol's 8192 pixel ceiling. This fixed
 bounded pool avoids allocator activity during capture. Host initialization is
 explicit and occurs before guest connection, never during a running session.
+
+## 9. All-in-one environment provisioning (user-required scope extension)
+
+AV startup must use the managed subsystem rather than require a separately built
+AV test VM. Provisioning, capability probing, install recovery and guest readiness
+are part of this feature. Existing task weights are rescaled to 80%; provisioning
+receives 20%. Historical commit percentages remain historical; overall progress
+is recalculated against this expanded scope. Nothing is marked complete merely
+because the native capture source cross-compiles.
+
+### Prerequisites and resource ownership
+
+Host preflight checks KVM read/write access, Wayland compositor/shm/xdg-shell and
+optional linear DMA-BUF support, PipeWire connection, running-kernel module build
+headers and the pinned KVMFR module source. Guest probe checks OS build >=20348,
+signed IVSHMEM/Viosock drivers, D3D capture capability, audio render endpoint and
+AV agent version. Unsupported capabilities have explicit statuses and diagnostics;
+provisioning must not claim that it can manufacture GPU virtualization support.
+Consumer hardware may require exclusive VFIO passthrough rather than GPU slicing.
+Only an explicitly configured GPU or already unbound device is eligible; the
+program must not silently detach the host desktop GPU.
+
+The program owns a private AV shared-memory resource and guest agent lifecycle.
+KVMFR preparation builds the pinned module against the running kernel. Installed
+module paths, modprobe configuration, permissions and signing are documented and
+verified; failures retain a diagnostic and do not start a half-configured session.
+A regular shared-memory file is an explicit fallback with wl_shm, not a DMA-BUF.
+Kernel module loading requires privileged setup; normal capture runs unprivileged.
+No runtime loose source downloads, unpinned builds or shell-interpolated paths.
+Secure Boot failures must be reported; the program cannot silently enroll keys.
+
+### VM and guest setup
+
+Managed QEMU arguments include the AV mapping as memory-backend-file plus
+ivshmem-plain, the existing VSOCK device, and a render endpoint connected to the
+none audio backend to avoid duplicate host playback. The Windows guest must keep
+a render endpoint enabled; process loopback cannot substitute an absent device.
+The managed disk image is preserved; guest deployment copies the built agent and
+installs already supplied signed driver packages via the execution bridge. Driver
+binaries must come from a pinned, verified dependency with compatible distribution
+terms. Setup does not overwrite an existing OS disk or assume a Windows license.
+A missing image/installation media is an explicit provisionable prerequisite, not
+permission to erase data. Existing CLI and filesystem provisioning continues to
+work when AV is disabled.
+
+### Operational sequence and failure recovery
+
+1. Load validated AV configuration and run preflight before mutating resources.
+2. Prepare/install host module, create or open its exact-size mapping and verify
+   permissions. Initialize metadata only with no connected producer/consumer.
+3. Add VM devices on startup, then probe guest readiness via the existing bridge.
+4. Deploy agent/drivers, perform any required guest restart and re-probe.
+5. Start the guest agent for the requested game process, then host video/audio.
+6. On failure stop/join all workers and disconnect Wayland before releasing the
+   mapping. A reconnect never resets slots still owned by a compositor.
+7. Report unsupported GPU, module-signature and guest-driver failures separately
+   from transport failure. Do not automatically retry a destructive install.
+
+### Verification
+
+Mock tests cover provisioner decisions, argv construction, exact mapping bounds,
+failed installs and rollback without requiring root or a GPU in ordinary CI.
+Native platform jobs build/link all adapters. Final completion additionally needs
+an actual session created through the program, including driver readiness, window
+lifecycle, isolated PCM playback, bounded compositor release, capture alpha and
+occlusion fidelity, <7ms video and <10ms audio measured on the provisioned setup.
