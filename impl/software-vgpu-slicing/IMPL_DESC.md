@@ -230,3 +230,42 @@ The final 30% of Task #1 is apportioned: dedicated region layout 5%, owned nativ
 mapping adapters 10%, cancellable backpressure 5%, lifecycle/control handoff 5%,
 and native guest/host IVSHMEM integration 5%. Layout completion does not complete
 the mapping, driver, or renderer integration milestones.
+
+### Native mapping lifecycle
+
+`venus_mapping_t` owns one native handle and one mapped region. It is a local
+record, never a wire structure. Separate owns_handle/owns_mapping flags make
+free safe for zero, partial, successful, and already-freed records. No active
+record may be copied or reinitialized. All workers and QEMU users must stop
+before free; mapping lifecycle functions belong exclusively to the session
+thread. Borrowed region views are cleared before unmapping; the owner record is
+zeroed after releasing resources.
+
+Linux create validates the proposed BAR size and ring capacity before acquiring
+anything, creates a close-on-exec sealable memfd, truncates it to the validated
+size, seals against grow/shrink/further seal changes, mmaps it shared read/write,
+initializes the dedicated region, and attaches both rings. QEMU accesses the
+live fd through `/proc/<host-pid>/fd/<fd>`; close-on-exec does not transfer fd
+ownership to a child. Failed create returns -1, preserves errno, releases all
+partial resources at a single cleanup site, and leaves an empty output. Success
+returns zero and transfers mapping/fd ownership to the output record, released
+only through `venus_mapping_free`. No global descriptors or host GPU allocation
+are hidden in this layer. Synthetic fault injection covers each acquisition
+stage and both post-map initialization/attachment failures; tests verify closed
+descriptors, empty outputs, resizing rejection, and a second real shared mmap.
+
+Windows open enumerates the requested signed IVSHMEM device through SetupAPI,
+bounds the interface detail allocation to 65536 bytes, opens a device handle,
+requests a cached coherent mapping, validates the returned ABI extent/alignment
+and region identity, and attaches both rings. The one temporary detail allocation
+is released at the cleanup site on every path. A successful mapping request
+sets ownership even if returned pointer/length is invalid, so cleanup still
+attempts release. Free releases the driver mapping before closing the handle,
+then clears the record. GetLastError is preserved across cleanup. A driver
+mapping is never host-initialized by the guest. Wrong-device AV identity fails
+safely. Native driver-backed success remains part of the final integration gate;
+SDK compilation alone cannot prove it.
+
+The 10% mapping milestone is split into 5% for the tested Linux owner and 5%
+for the Windows owner and its error-path/ownership fixtures. Actual cross-VM
+signed-driver use remains in the separate native integration milestone.

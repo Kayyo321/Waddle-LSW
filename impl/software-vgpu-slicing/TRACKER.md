@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 75% | Bidirectional region layout tested; native adapters/handoff pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 80% | Linux sealed mapping owner verified; Windows owner/handoff pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `16.25%`
+**Total Feature Completion**: `17.0%`
 
 ## Commit History & Progress Log
 
@@ -94,7 +94,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     `63862ff` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37385937849 .
     Dependency CI for this commit remains pending; this is not a rendering test.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): define bidirectional dedicated IVSHMEM region`
+- **Commit `b993e78`**: `feat(vgpu): define bidirectional dedicated IVSHMEM region`
   - **Task Impact**: +5% to TODO: #1 (+0.75% overall); +20% to TODO: #6
     (+1.0% overall) for verified dependency CI.
   - **Summary**: Added a 64-byte immutable region ABI, separate command/reply
@@ -105,3 +105,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and allocator tests pass. Dependency CI succeeded at `bca923e` in
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37386229779 .
     Dedicated driver-backed host/guest integration is still pending.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): own sealed Linux IVSHMEM backing mappings`
+  - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
+  - **Summary**: Created dedicated memfd-backed BAR ownership with resize seals,
+    shared mmap, deterministic free, and preserved errno. Defined the native
+    mapping API and Windows ownership contract for the next atomic implementation.
+  - **Verification**: Real dual mapping exchanges commands/replies; all six
+    injected acquisition/post-map failures release resources. Linux mapping
+    line/branch coverage 100%; ASan/LSan/UBSan and Zig allocator tests pass.

@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else 'ring'
-if mode not in ('ring', 'region'):
+if mode not in ('ring', 'region', 'mapping'):
     raise ValueError(mode)
 root = Path.cwd()
 output = root / 'build/coverage/vgpu' / mode
@@ -16,12 +16,13 @@ if output.exists():
     shutil.rmtree(output)
 output.mkdir(parents=True)
 subprocess.run([
-    'cc', '-std=c11', '-Iinclude', '-Isrc/vgpu', '-O0', '-g', '--coverage',
-    '-fprofile-abs-path', '-c', f'src/vgpu/venus_{mode}.c', '-o', str(output / f'{mode}.o'),
+    'cc', '-D_GNU_SOURCE', '-std=c11', '-Iinclude', '-Isrc/vgpu', '-O0', '-g', '--coverage',
+    '-fprofile-abs-path', '-c', f'src/vgpu/venus_{mode}{"_linux" if mode == "mapping" else ""}.c', '-o', str(output / f'{mode}.o'),
 ], check=True)
 subprocess.run([
-    'cc', '-std=c11', '-Iinclude', f'tests/vgpu/{mode}.c', str(output / f'{mode}.o'),
-    *(['src/vgpu/venus_ring.c'] if mode == 'region' else []),
+    'cc', '-D_GNU_SOURCE', '-std=c11', '-Iinclude', f'tests/vgpu/{mode}.c', str(output / f'{mode}.o'),
+    *(['src/vgpu/venus_ring.c'] if mode in ('region', 'mapping') else []),
+    *(['src/vgpu/venus_region.c', '-Isrc/vgpu', '-Wl,--wrap=memfd_create,--wrap=ftruncate,--wrap=fcntl,--wrap=mmap,--wrap=venus_region_init,--wrap=venus_region_attach'] if mode == 'mapping' else []),
     'build/venus_bounds.o', '--coverage', '-o', str(output / 'runner'),
 ], check=True)
 subprocess.run([str(output / 'runner')], check=True)
@@ -29,7 +30,7 @@ subprocess.run(['gcov', '--json-format', '-b', '-c', str(output / f'{mode}.gcno'
                cwd=output, check=True)
 report = json.loads(gzip.decompress((output / f'{mode}.gcov.json.gz').read_bytes()))
 lines = next(file['lines'] for file in report['files']
-             if file['file'].endswith(f'/src/vgpu/venus_{mode}.c'))
+             if file['file'].endswith(f'/src/vgpu/venus_{mode}{"_linux" if mode == "mapping" else ""}.c'))
 branches = [branch for line in lines for branch in line.get('branches', [])]
 for kind, entries in [('line', lines), ('branch', branches)]:
     if not entries:
