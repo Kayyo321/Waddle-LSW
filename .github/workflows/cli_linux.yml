@@ -18,9 +18,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          git config --global --add safe.directory '*'
           apt-get update
           apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential kcov clang-19 llvm-19 python3 python3-venv qemu-system-x86 qemu-utils virtiofsd
+          git config --global --add safe.directory '*'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: false
