@@ -63,19 +63,28 @@ static int module_build(char *module_path, size_t capacity) {
         return -1;
     return 0;
 }
+/* Extend access for the explicit invoking user without replacing live ownership. */
+static int grant_invoking_user(const char *path) {
+    const char *owner_text = getenv("SUDO_UID");
+    uint32_t owner = 0;
+    if (!owner_text || av_number_parse(owner_text, strlen(owner_text), &owner) != 0) {
+        fputs("AV setup: invoke access setup through sudo as the intended user\n", stderr);
+        return -1;
+    }
+    char grant[48];
+    snprintf(grant, sizeof(grant), "u:%u:rw", owner);
+    char *arguments[] = {"/usr/bin/setfacl", "-m", grant, (char *)path, NULL};
+    if (run(arguments) != 0) {
+        fputs("AV setup: install the base-system acl package and retry access setup\n", stderr);
+        return -1;
+    }
+    return 0;
+}
 static int prepare_host(void) {
     if (geteuid() != 0) {
         fputs("AV setup: host device access setup requires administrator privileges\n", stderr);
         return 1;
     }
-    const char *owner_text = getenv("SUDO_UID");
-    uint32_t owner = 0;
-    if (!owner_text || av_number_parse(owner_text, strlen(owner_text), &owner) != 0) {
-        fputs("AV setup: invoke host access setup through sudo as the intended user\n", stderr);
-        return 1;
-    }
-    char grant[48];
-    snprintf(grant, sizeof(grant), "u:%u:rw", owner);
     const char *paths[] = {"/dev/kvm", "/dev/vhost-vsock"};
     for (unsigned i = 0; i < 2; ++i) {
         int fd = open(paths[i], O_RDWR | O_CLOEXEC | O_NOFOLLOW);
@@ -86,11 +95,7 @@ static int prepare_host(void) {
             return 1;
         }
         close(fd);
-        char *arguments[] = {"/usr/bin/setfacl", "-m", grant, (char *)paths[i], NULL};
-        if (run(arguments) != 0) {
-            fputs("AV setup: install the base-system acl package and retry host access setup\n", stderr);
-            return 1;
-        }
+        if (grant_invoking_user(paths[i]) != 0) return 1;
     }
     puts("AV setup: KVM and VSOCK access granted to invoking user");
     return 0;
@@ -124,7 +129,7 @@ int main(int argc, char **argv) {
             off_t seek_size = lseek(fd, 0, SEEK_END);
             close(fd);
             if (size == (long)AvMappingBytes && seek_size == (off_t)AvMappingBytes)
-                return 0;
+                return grant_invoking_user("/dev/kvmfr0") == 0 ? 0 : 1;
             fprintf(stderr, "AV setup: existing KVMFR device has incompatible size; preserved\n");
             return 1;
         }

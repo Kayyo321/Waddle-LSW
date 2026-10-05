@@ -18,9 +18,10 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -pthread -o $@
 
 .PHONY: av-test av-sanitizers av-windows
-av-test: build/av_transport_test build/av_environment_test build/av_peer_test
+av-test: build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test
 	python3 tests/av/package.py
 	$(ZIG) test src/cli/av_commands.zig -Isrc/cli
+	./build/av_setup_test
 	./build/av_environment_test
 	./build/av_peer_test
 	./build/av_transport_test
@@ -118,3 +119,9 @@ build/av_wgc.dll: | build
 .PHONY: av-distribution
 av-distribution: build/waddle build/waddled av windows av-drivers build/av_wgc.dll
 	sh scripts/package_av.sh
+
+# Fake syscall wrappers ensure privileged reuse tests never touch real devices.
+build/av_setup_test.o: src/av/av_setup.c | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) -Dmain=av_setup_entry -c $< -o $@
+build/av_setup_test: tests/av/setup.c build/av_setup_test.o build/av_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -Wl,--wrap=geteuid,--wrap=open,--wrap=ioctl,--wrap=lseek,--wrap=close,--wrap=fork,--wrap=waitpid -o $@

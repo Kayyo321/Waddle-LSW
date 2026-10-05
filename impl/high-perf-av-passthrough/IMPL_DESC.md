@@ -489,3 +489,10 @@ check's annotation reports no hosted runner acquired, with no test steps execute
 it does not change compiler, sanitizer, coverage thresholds or container packages.
 The AV suite also exercises the bounded managed-command parser and packaging
 failure tests. Final-commit checks remain required regardless of older green runs.
+
+Reusing a compatible already-loaded KVMFR also grants a specific-user read/write
+ACL to the validated SUDO_UID. A root-openable descriptor alone does not establish
+the invoking user's access. The helper preserves existing device ownership and
+mode policy instead of chowning or resetting a live mapping; the exclusive daemon
+lease still prevents concurrent profile initialization. Missing acl tools or invalid
+invoking-user identity fail setup. No live module is unloaded for this operation.

@@ -44,12 +44,12 @@
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 | **10**  | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
-| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
+| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 92% | Validate SUDO_UID and grant a specific-user ACL even when the privileged helper can already open a compatible live KVMFR device. Preserve its ownership and active mappings, fail on an invalid identity or grant failure, and add syscall-isolated tests that never mutate kernel devices. The extended AV sanitizer suite and real compatible-device reuse pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 96% | Make all assemble a coherent AV archive with host binaries, matching guest execution/capture binaries, native WinRT DLL, signed driver package, patched kernel-module sources, source archives, licenses and SHA-256 manifest. Keep CLI regressions independent of native Windows SDK packaging. Test every missing required input and verify failed assembly preserves the prior complete archive; same-run CI assembly remains pending. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `96.75%`
+**Total Feature Completion**: `96.85%`
 
 ## Commit History & Progress Log
 
@@ -375,6 +375,10 @@
   - **Task Impact**: +1% to #10.4 (+0.03% overall)
   - **Summary**: Make all assemble a coherent AV archive with host binaries, matching guest execution/capture binaries, native WinRT DLL, signed driver package, patched kernel-module sources, source archives, licenses and SHA-256 manifest. Keep CLI regressions independent of native Windows SDK packaging. Test every missing required input and verify failed assembly preserves the prior complete archive; same-run CI assembly remains pending.
 
-- **Commit `HEAD`**: `chore(av): publish a verified same-run distribution from native CI`
+- **Commit `8caa40fcf5ef`**: `chore(av): publish a verified same-run distribution from native CI`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Receive the native Windows SDK artifact in the Linux AV job, assemble and extract-check the single complete distribution, and upload it only after the existing gates pass. Add parser and package failure regressions to the AV suite. Move Linux runner allocation to ubuntu-22.04 while preserving the Debian trixie verification environment after hosted ubuntu-24.04 jobs repeatedly failed before acquiring a runner.
+
+- **Commit `HEAD`**: `fix(av): provision invoking-user access when reusing live KVMFR`
+  - **Task Impact**: +2% to #10.2 (+0.10% overall)
+  - **Summary**: Validate SUDO_UID and grant a specific-user ACL even when the privileged helper can already open a compatible live KVMFR device. Preserve its ownership and active mappings, fail on an invalid identity or grant failure, and add syscall-isolated tests that never mutate kernel devices. The extended AV sanitizer suite and real compatible-device reuse pass.
