@@ -262,6 +262,11 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Release AV mappings and stop the filesystem child when readiness polling reaps QEMU before the event loop. Add a reaper fallback for already-reaped children and a regression proving failed startup removes owned memory and permits a clean retry.
 
-- **Commit `HEAD`**: `chore(deps): make KVMFR regions importable by system virtiofsd`
+- **Commit `a5a3e3131abd`**: `chore(deps): make KVMFR regions importable by system virtiofsd`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Add bounded fixed-size seeking to the pinned driver build patch so vhost-user can determine and map IVSHMEM regions. Require compatible seek/size probes before boot and verify them with real exports; reload only the owned idle validation module and pass the native gate.
+
+
+- **Commit `HEAD`**: `fix(av): boot UEFI guests with inbox-compatible AHCI storage`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Attach UEFI AV system disks through q35 AHCI so installed Windows images can boot before any optimized VirtIO storage driver is deployed. Preserve BIOS profile behavior and disk contents; QEMU lifecycle and argument regressions pass.

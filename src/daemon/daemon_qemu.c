@@ -154,7 +154,8 @@ int qemu_build_args(const daemon_config_t *config,
 
     /* Base disk image */
     char drive_buf[WaddleMaxPathLen + 64];
-    snprintf(drive_buf, sizeof(drive_buf), "file=%s,if=virtio,cache=writeback", config->disk_image);
+    snprintf(drive_buf, sizeof(drive_buf), "file=%s,if=%s,cache=writeback", config->disk_image,
+             config->av_enabled && config->av_uefi ? "ide" : "virtio");
     if (append_arg(argv, &argc, max_args, "-drive") != 0 ||
         append_arg(argv, &argc, max_args, drive_buf) != 0) goto fail;
 

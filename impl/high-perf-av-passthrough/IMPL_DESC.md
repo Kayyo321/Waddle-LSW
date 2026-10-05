@@ -337,3 +337,12 @@ older incompatible live module fails before a VM starts. Native tests check the
 seek result/reset as well as actual DMA-BUF aliasing. Existing live modules are
 never silently unloaded by setup; only the explicitly owned validation instance
 is replaced while no VM/mapping/export retains it.
+
+
+UEFI AV guests attach their existing system disk through q35's inbox-compatible
+AHCI controller (`if=ide`) so an installed Windows image does not require a
+preinstalled VirtIO boot-storage driver before AV provisioning can run. BIOS
+profiles retain the existing VirtIO storage behavior. This controls disk attachment,
+not disk contents; it does not migrate or overwrite partitions. The chosen firmware
+and controller must match the installed image; native acceptance boots the managed
+copy-on-write image with the same inbox storage path used during OS installation.
