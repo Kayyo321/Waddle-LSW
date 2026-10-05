@@ -1,3 +1,4 @@
+#include "av/av_deploy.h"
 /* Managed AV orchestration shares the existing resolver and execution bridge.
  * This include is private to host.c; no symbols or ownership cross its TU. */
 static volatile sig_atomic_t av_session_active;
@@ -123,6 +124,32 @@ static int av_host_probe(const daemon_config_t *config) {
     char *arguments[] = {host, "--probe", (char *)config->av_shm_path, NULL};
     return av_run_helper(arguments);
 }
+/* Stack-owned deployment callbacks; nothing is retained beyond av_deploy. */
+typedef struct av_deploy_context_t {
+    const device_info_t *device;
+    const daemon_config_t *config;
+    char *agent;
+} av_deploy_context_t;
+static int av_deploy_restart(void *context) {
+    av_deploy_context_t *deployment = context;
+    device_info_t resolved;
+    char socket_path[WaddleMaxPathLen];
+    if (resolve_target_device(deployment->device->name, &resolved, socket_path,
+                              sizeof(socket_path), 1) != 0) return 1;
+    fputs("waddle av: signed driver requires a restart; restarting the selected managed guest\n", stderr);
+    /* Graceful ACPI shutdown only; a busy/nonresponsive VM is not force-killed. */
+    return waddle_client_cmd_restart(socket_path, 0, 180);
+}
+static int av_deploy_guest_probe(void *context) {
+    av_deploy_context_t *deployment = context;
+    char *arguments[] = {"waddle", "exec", "--device", (char *)deployment->device->name,
+        "--translate-path", "--cwd", "C:\\Windows", "--", deployment->agent, "--probe", NULL};
+    return cmd_exec(10, arguments, 2);
+}
+static int av_deploy_host_probe(void *context) {
+    av_deploy_context_t *deployment = context;
+    return av_host_probe(deployment->config);
+}
 static int av_deploy(const device_info_t *device, const daemon_config_t *config,
                      char *agent, size_t capacity) {
     char state[WaddleMaxPathLen], directory[PATH_MAX], drivers[PATH_MAX], bundle[PATH_MAX];
@@ -149,7 +176,9 @@ static int av_deploy(const device_info_t *device, const daemon_config_t *config,
     char *arguments[] = {"waddle", "exec", "--device", (char *)device->name,
         "--translate-path", "--cwd", "C:\\Windows", "--", agent, "--setup", drivers, NULL};
     int result = cmd_exec(11, arguments, 2);
-    if (result == 0) result = av_host_probe(config);
+    av_deploy_context_t deployment = {device, config, agent};
+    result = av_deploy_finish(result, av_deploy_restart, av_deploy_guest_probe,
+                              av_deploy_host_probe, &deployment);
     if (result == 0 && av_publish_bundle(directory, strrchr(bundle, '/') + 1) != 0) return 1;
     return result;
 fail:

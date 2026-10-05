@@ -46,10 +46,10 @@
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 92% | Validate SUDO_UID and grant a specific-user ACL even when the privileged helper can already open a compatible live KVMFR device. Preserve its ownership and active mappings, fail on an invalid identity or grant failure, and add syscall-isolated tests that never mutate kernel devices. The extended AV sanitizer suite and real compatible-device reuse pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 96% | Make all assemble a coherent AV archive with host binaries, matching guest execution/capture binaries, native WinRT DLL, signed driver package, patched kernel-module sources, source archives, licenses and SHA-256 manifest. Keep CLI regressions independent of native Windows SDK packaging. Test every missing required input and verify failed assembly preserves the prior complete archive; same-run CI assembly remains pending. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 97% | Handle reboot-required signed-driver setup with one graceful restart of the selected managed device, a fresh probe of the immutable guest bundle and native host readiness before publication. Propagate every failure without a force kill, repeated installation or false selector update. Verify ordered steps, first-failure termination, ordinary ready setup and invalid callbacks under the native sanitizer suite; real reboot-required installation remains unverified. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `96.97%`
+**Total Feature Completion**: `97.00%`
 
 ## Outstanding acceptance evidence
 
@@ -60,8 +60,8 @@
 - Both host GPUs retain active desktop/render clients. No eligible GPU has been
   detached. Automatic preparation and recovery for a safe explicit GPU remains
   unfinished; a pre-bound vfio-pci requirement does not complete provisioning.
-- A driver-install reboot-required result remains incomplete setup. Automated
-  restart/re-probe through the managed lifecycle is not implemented yet.
+- Driver reboot-required status now has one graceful managed restart and fresh
+  re-probe; real reboot-required native acceptance remains unverified.
 - Complete archive assembly and required-input failure checks pass locally. The
   new same-run CI transfer and final-commit checks still require remote evidence.
 - Live host/guest setup passes; an unavailable Wayland socket fails publication
@@ -405,6 +405,10 @@
   - **Task Impact**: +3% to #5.4 (+0.12% overall)
   - **Summary**: Treat xdg-shell zero dimensions as client-selected size while still forwarding changed fullscreen state. Preserve guest dimensions, avoid unchanged echoes, and propagate delivery failures. Add isolated callback regressions for zero-size entry/exit, valid resizing, invalid sizes and callback failure; the extended AV sanitizers and real Wayland/PipeWire platform gate pass.
 
-- **Commit `HEAD`**: `docs(av): align architecture and acceptance claims with observed behavior`
+- **Commit `7a4df1104b11`**: `docs(av): align architecture and acceptance claims with observed behavior`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Replace stale conceptual C++ ABI and zero-copy/input/reconnect claims with the implemented C/Zig interfaces, exact layouts, startup/teardown ownership and drop-new audio policy. Document observed 64-Hz/37.64-FPS capture with invalid WGC age timing, active desktop GPUs, pending automatic GPU recovery and driver reboot handling. Preserve incomplete tracker status and acceptance thresholds.
+
+- **Commit `HEAD`**: `feat(av): restart and re-probe managed guests after driver reboot status`
+  - **Task Impact**: +1% to #10.4 (+0.03% overall)
+  - **Summary**: Handle reboot-required signed-driver setup with one graceful restart of the selected managed device, a fresh probe of the immutable guest bundle and native host readiness before publication. Propagate every failure without a force kill, repeated installation or false selector update. Verify ordered steps, first-failure termination, ordinary ready setup and invalid callbacks under the native sanitizer suite; real reboot-required installation remains unverified.

@@ -18,9 +18,10 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -pthread -o $@
 
 .PHONY: av-test av-sanitizers av-windows
-av-test: build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test
+av-test: build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test build/av_deploy_test
 	python3 tests/av/package.py
 	$(ZIG) test src/cli/av_commands.zig -Isrc/cli
+	./build/av_deploy_test
 	./build/av_wayland_state_test
 	./build/av_setup_test
 	./build/av_environment_test
@@ -129,3 +130,6 @@ build/av_setup_test: tests/av/setup.c build/av_setup_test.o build/av_codec.o | b
 
 build/av_wayland_state_test: tests/av/wayland_state.c src/av/av_wayland.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_codec.o build/av_audio.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/wayland_state.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_codec.o build/av_audio.o $(LDFLAGS) $(shell pkg-config --libs wayland-client) -o $@
+
+build/av_deploy_test: tests/av/deploy.c src/av/av_deploy.c src/av/av_deploy.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av tests/av/deploy.c src/av/av_deploy.c $(LDFLAGS) -o $@

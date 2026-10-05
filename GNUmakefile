@@ -77,8 +77,8 @@ build/device_commands.o: src/cli/device_commands.zig src/cli/device_commands.h s
 build/av_commands.o: src/cli/av_commands.zig src/cli/av_commands.h | build
 	$(ZIG) build-obj $< -Isrc/cli -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
-build/waddle: build/av_commands.o src/cli/av_managed.inc build/device_commands.o src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h src/daemon/daemon_device.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o build/device_commands.o build/av_commands.o $(COMMON) $(LDFLAGS) -o $@
+build/waddle: src/av/av_deploy.c src/av/av_deploy.h build/av_commands.o src/cli/av_managed.inc build/device_commands.o src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o src/cli/session.h src/cli/terminal.h src/daemon/daemon_client.h src/daemon/daemon_device.h $(COMMON) include/waddle/cli_protocol.h include/waddle/daemon_protocol.h src/common/common.h src/common/path_rules.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/av/av_deploy.c src/cli/host.c src/cli/session.c src/cli/terminal.c src/daemon/daemon_client.c src/daemon/daemon_device.c build/device_storage.o src/daemon/daemon_protocol.c build/daemon_config.o build/device_commands.o build/av_commands.o $(COMMON) $(LDFLAGS) -o $@
 
 build/waddle-mock-guest: src/mock/mock_guest.c src/mock/mock_process.c src/mock/mock_process.h $(COMMON) include/waddle/cli_protocol.h src/common/common.h src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/mock/mock_guest.c src/mock/mock_process.c $(COMMON) $(LDFLAGS) -lutil -o $@

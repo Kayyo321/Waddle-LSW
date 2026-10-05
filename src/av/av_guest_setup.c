@@ -112,7 +112,7 @@ int av_guest_setup(const char *directory) {
         GetExitCodeProcess(process.hProcess, &status);
     CloseHandle(process.hProcess);
     if (status == 3010 || status == 1641) {
-        fputs("AV setup: driver installed; restart the managed guest then run av probe\n", stderr);
+        fputs("AV setup: driver installed; reboot required before readiness can be verified\n", stderr);
         return 3;
     }
     /* PnPUtil returns ERROR_NO_MORE_ITEMS when the signed package is already

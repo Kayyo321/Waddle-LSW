@@ -80,8 +80,8 @@ row and payload offset. The control decoder writes output only after validation.
 3. The existing bridge executes native guest setup from an immutable deployment.
    Signed IVSHMEM installation and the guest probe must succeed. Native host
    mapping, Wayland and ready PipeWire probes must then succeed before publishing
-   the deployment selector. Reboot-required driver status remains an explicit
-   incomplete setup result rather than a false ready state.
+   the deployment selector. Reboot-required driver status triggers one graceful managed restart and a fresh
+   guest probe; host readiness must also pass before selection.
 4. Run validates a live selected process object, starts its guest agent via the
    existing bridge and waits for the exact listener-ready line. The guest listens;
    the native Linux host connects to guest CID and AV port 5001.
@@ -608,3 +608,18 @@ Unchanged geometry/state emits no request; callback delivery failures become
 session errors. Isolated callback tests verify zero-size enter/exit fullscreen,
 unchanged states, valid resize, invalid size and failed delivery; the separate
 native platform suite validates real compositor attachment/release.
+
+### Managed driver reboot completion
+
+Native PnPUtil statuses 3010/1641 remain normalized to guest status 3. The managed
+deployment completion sequence handles 3 by requesting one graceful restart of
+the exact selected device through the existing daemon client, waiting up to its
+180-second deadline for bridge readiness, probing the same immutable guest bundle
+again, then probing the host. No force flag, repeated driver install or restart
+loop is used. Other guest failures return unchanged without any restart or probe.
+An already-ready guest runs only the host probe. Every step's nonzero error stops
+selection publication and preserves the prior selector. If OS logon/bridge startup
+is unavailable after restart, setup returns failure while the daemon preserves
+its owned running VM; it does not invent readiness or change OS credentials.
+The allocation-free completion state machine has ordered step/failure tests under
+native sanitizers. Real reboot-required driver-install acceptance is still pending.
