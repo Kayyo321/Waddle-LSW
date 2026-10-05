@@ -144,6 +144,11 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Summary**: Resolve explicit/default/sole selection consistently, reject missing and dangling defaults and ambiguous registries, remove implicit multi-device status, preserve selected config for shell execution, and bypass inference for explicit raw transports. Add isolated JSON and target-selection acceptance, and give path-option tests an explicit mock transport. Filesystem mock demonstration now initializes an isolated profile/export instead of relying on developer devices. Broad suite detected the outdated implicit-global expectation in path tests; this commit updates that fixture contract.
 
 
-- **Commit `:/shut down idle supervisors before releasing device leases`**: `feat(daemon): shut down idle supervisors before releasing device leases`
+- **Commit `0030fc6`**: `feat(daemon): shut down idle supervisors before releasing device leases`
   - **Task Impact**: +10% to TODO #4 (+1.0% overall), +10% to TODO #5 (+1.0% overall), +5% to TODO #7 (+0.5% overall); total 56.0%.
   - **Summary**: Add v1 shutdown request/response, reject malformed/busy requests, reply before server teardown, retain a stable private OFD lease until children and sockets are cleaned, and wait for lease release in stop/kill/restart. Remove unsafe lock-file unlinking and abort restart on failed stop. Handle newly accepted clients outside the current poll snapshot. Server/client regressions and full make test pass; standalone server suite passes ThreadSanitizer. Orphan process audit, startup registry handoff and full lifecycle/VM matrix remain pending.
+
+
+- **Commit `:/validate and preserve INI content during config edits`**: `feat(device): validate and preserve INI content during config edits`
+  - **Task Impact**: +0% to TODO #8 until offline persistence and commands are integrated.
+  - **Summary**: Add an allocation-free bounded Zig editor for the six mutable settings. Validate all changes before rendering, preserve unknown keys/comments/exports and line endings, replace duplicate effective key occurrences consistently, and reparse the full candidate. Eight Zig tests and native configuration regressions pass, including malformed/duplicate inputs, integer bounds, UTF-8, insufficient capacity and reset preservation.

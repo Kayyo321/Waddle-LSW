@@ -518,3 +518,18 @@ these client commands. OFD locks prevent another fd close in the same process
 Teardown unlinks owned sockets while still holding the lease, then releases it.
 Legacy supervisors rejecting shutdown remain blocked rather than guessed dead.
 Startup serialization and orphan QEMU/virtiofsd auditing remain required in #7.
+
+### Implementation evidence: bounded configuration editing
+
+`daemon_config_edit` validates 1–6 distinct mutable-key requests in Zig before
+rendering a replacement. It parses the original and the combined candidate,
+rejects unknown keys, embedded line breaks/NUL, invalid UTF-8 and out-of-range
+numbers, and reparses the final output. The caller supplies separate input/output
+buffers; output is at most 64 KiB and is unusable on failure. There are no dynamic
+allocations. Every occurrence of an edited key in its recognized section receives
+the new value, including repeated sections; values in unknown sections remain
+unchanged. Indentation, assignment spacing, trailing whitespace, line endings,
+comments, exports and unknown keys remain byte-identical. Missing mutable keys
+are appended in explicit section blocks. Reset uses the six documented defaults.
+This pure codec has no filesystem effects; command persistence and quiescence
+checks remain separate pending integration work.

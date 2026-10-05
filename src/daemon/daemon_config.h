@@ -135,6 +135,25 @@ int daemon_config_parse_export(const char *line, waddle_daemon_fs_mount_t *mount
  */
 int daemon_config_validate(const daemon_config_t *config);
 
+/**
+ * @brief Validate and edit mutable INI values without changing unrelated bytes.
+ * @param[in] data Non-null borrowed UTF-8 input, at most 65536 bytes.
+ * @param[in] length Input byte count; embedded NUL is rejected.
+ * @param[in] changes Non-null borrowed array of non-null NUL-terminated keys
+ * (reset) or key=value assignments (set); unknown/duplicate keys are rejected.
+ * @param[in] count Number of changes, 1 through 6.
+ * @param[in] reset Nonzero selects documented default values.
+ * @param[out] output Non-null caller-owned buffer; must not alias data.
+ * @param[in] capacity Output capacity; complete output is limited to 65536 bytes.
+ * @param[out] output_length Non-null byte count; zero on failure.
+ * @return 0 on success, -1 on validation/capacity failure. Output bytes are
+ * unspecified on failure and must not be persisted. No allocation or retained
+ * storage; thread-safe when callers use independent buffers.
+ */
+int daemon_config_edit(const char *data, size_t length,
+                       const char *const *changes, size_t count, int reset,
+                       char *output, size_t capacity, size_t *output_length);
+
 #ifdef __cplusplus
 }
 #endif
