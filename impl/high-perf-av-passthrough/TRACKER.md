@@ -44,12 +44,12 @@
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 | **10**  | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
-| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 92% | Validate SUDO_UID and grant a specific-user ACL even when the privileged helper can already open a compatible live KVMFR device. Preserve its ownership and active mappings, fail on an invalid identity or grant failure, and add syscall-isolated tests that never mutate kernel devices. The extended AV sanitizer suite and real compatible-device reuse pass. |
+| #10.2 | Build/install pinned KVMFR module and provision shared-memory access | Done | 5% | 100% | With the isolated acceptance VM stopped, rerun the actual two-GiB capacity, bounded seeking, CLOEXEC DMA-BUF aliasing, out-of-range and exclusive-ownership gate under ASan/LSan/UBSan. Build the pinned patched module for the running kernel and preserve the existing compatible live module. Complete KVMFR distribution/access provisioning while leaving safe GPU preparation and video/audio performance tasks incomplete. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 98% | Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `97.03%`
+**Total Feature Completion**: `97.43%`
 
 ## Outstanding acceptance evidence
 
@@ -423,6 +423,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Change the target color while an actual topmost window covers it and require the newly painted center pixels, ignoring only known queued old content. Count benchmark samples only when pixel validation accepts them. Real native capture and process-loopback fidelity pass; the later 64-Hz benchmark still fails timestamp validity and performance acceptance, which remains incomplete.
 
-- **Commit `HEAD`**: `fix(av): preserve live guests when driver restart times out`
+- **Commit `23d64f7485d1`**: `fix(av): preserve live guests when driver restart times out`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Add a distinct ACPI-only daemon request for AV driver restarts; older supervisors reject it without interpreting a nonzero legacy force flag. On timeout retain VM, filesystem, sockets, mapping leases and prior subsystem state, returning ETIMEDOUT. Test an actual child/mapping timeout, native client/server request exchange and malformed payload rejection under ASan/LSan/UBSan; repository-wide sanitizer regressions pass.
+
+- **Commit `HEAD`**: `docs(av): complete native KVMFR provisioning verification`
+  - **Task Impact**: +8% to #10.2 (+0.40% overall)
+  - **Summary**: With the isolated acceptance VM stopped, rerun the actual two-GiB capacity, bounded seeking, CLOEXEC DMA-BUF aliasing, out-of-range and exclusive-ownership gate under ASan/LSan/UBSan. Build the pinned patched module for the running kernel and preserve the existing compatible live module. Complete KVMFR distribution/access provisioning while leaving safe GPU preparation and video/audio performance tasks incomplete.

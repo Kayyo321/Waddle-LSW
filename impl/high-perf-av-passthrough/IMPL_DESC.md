@@ -660,3 +660,12 @@ leases. Older daemons reject the unknown request without changing VM state.
 The legacy CLI stop command retains its existing optional force fallback. A
 native state test uses an actual owned child and sparse two-GiB mapping to verify
 the new timeout path preserves both, then explicitly reaps its fixture child.
+
+After the owned acceptance VM stops, the real KVMFR gate passes again under
+ASan/LSan/UBSan: exact 2-GiB capacity, SEEK_END/reset, CLOEXEC export descriptor,
+shared/exported pixel aliasing, out-of-range rejection and competing ownership
+lease preservation. `make av-module` also builds the patched pinned sources
+against the running kernel. The loaded compatible module remains intact; no
+unload/reload is needed to claim this verification. This completes KVMFR build,
+distribution and access provisioning (#10.2). Safe GPU preparation/recovery and
+high-refresh performance belong to the still-incomplete #10.3/#10.5 acceptance.
