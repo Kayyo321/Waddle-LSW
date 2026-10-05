@@ -287,6 +287,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Retry guest readiness against the existing QEMU child without remapping shared memory or replacing the filesystem worker. Reap stale children before clean startup and prove live retries retain their PID and mapping with a supervisor regression.
 
-- **Commit `HEAD`**: `fix(av): lease KVMFR across the managed runtime lifecycle`
+- **Commit `679a277683da`**: `fix(av): lease KVMFR across the managed runtime lifecycle`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Hold an exclusive nonblocking descriptor lease before initializing a device so idle video and audio-only sessions cannot be reset by another profile. Verify a second owner fails before mapping and succeeds after teardown; regular-file provisioning remains exclusive through creation.
+
+- **Commit `HEAD`**: `fix(av): start deployment commands in a valid guest directory`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Use the installed Windows directory as the explicit working directory for setup, probe and capture-agent jobs. Host CLI working directories may not exist on the guest export and otherwise fail Windows CreateProcess before any capability probe can run.

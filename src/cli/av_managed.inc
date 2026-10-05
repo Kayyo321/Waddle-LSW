@@ -85,8 +85,8 @@ static int av_deploy(const device_info_t *device, char *agent, size_t capacity) 
         snprintf(agent, capacity, "%s/waddle-guest-av.exe", directory) >= (int)capacity)
         goto fail;
     char *arguments[] = {"waddle", "exec", "--device", (char *)device->name,
-        "--translate-path", "--", agent, "--setup", drivers, NULL};
-    return cmd_exec(9, arguments, 2);
+        "--translate-path", "--cwd", "C:\\Windows", "--", agent, "--setup", drivers, NULL};
+    return cmd_exec(11, arguments, 2);
 fail:
     fprintf(stderr, "waddle av: bundled AV agent, native WinRT DLL or signed driver package is missing: %s\n", strerror(errno));
     return 1;
@@ -167,8 +167,8 @@ static int cmd_av(int argc, char **argv) {
     }
     if (command.kind == AvProbe) {
         char *arguments[] = {"waddle", "exec", "--device", device.name, "--translate-path",
-            "--", agent, "--probe", NULL};
-        return cmd_exec(8, arguments, 2);
+            "--cwd", "C:\\Windows", "--", agent, "--probe", NULL};
+        return cmd_exec(10, arguments, 2);
     }
     char process_id[16], host_path[PATH_MAX], cid[16];
     snprintf(process_id, sizeof(process_id), "%u", command.process_id);
@@ -184,8 +184,8 @@ static int cmd_av(int argc, char **argv) {
         if (dup2(output[1], STDOUT_FILENO) < 0) _exit(1);
         close(output[1]);
         char *arguments[] = {"waddle", "exec", "--device", device.name, "--translate-path",
-            "--", agent, process_id, NULL};
-        _exit(cmd_exec(8, arguments, 2));
+            "--cwd", "C:\\Windows", "--", agent, process_id, NULL};
+        _exit(cmd_exec(10, arguments, 2));
     }
     close(output[1]);
     char pending[256] = {0};
