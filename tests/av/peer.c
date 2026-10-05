@@ -36,6 +36,12 @@ int main(void) {
     assert(write(sockets[0], bytes, sizeof(bytes)) == sizeof(bytes));
     assert(av_peer_pump(&receiver, receive_message, NULL) == -1);
     close(sockets[0]);
+    assert(av_peer_pump(&receiver, receive_message, NULL) == 1);
+    close(sockets[1]);
+    assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, sockets) == 0);
+    receiver = (av_peer_t){.socket = (uintptr_t)sockets[1]};
+    assert(write(sockets[0], bytes, 1) == 1);
+    close(sockets[0]);
     assert(av_peer_pump(&receiver, receive_message, NULL) == -1);
     close(sockets[1]);
     puts("AV peer: one-byte fragmented frames, bounded burst backpressure, corruption and EOF "

@@ -213,8 +213,9 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id) 
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
-        if (av_peer_pump(&session.peer, host_request, &session) != 0) {
-            result = 0;
+        int peer_status = av_peer_pump(&session.peer, host_request, &session);
+        if (peer_status != 0) {
+            result = peer_status == 1 ? 0 : -1;
             break;
         }
         capture_windows(&session);

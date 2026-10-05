@@ -121,8 +121,11 @@ int main(int argc, char **argv) {
             result = 1;
             break;
         }
-        if (av_peer_pump(&host.peer, guest_message, &host) != 0)
+        int peer_status = av_peer_pump(&host.peer, guest_message, &host);
+        if (peer_status != 0) {
+            result = peer_status == 1 ? 0 : 1;
             break;
+        }
     }
 cleanup:
     if (result)

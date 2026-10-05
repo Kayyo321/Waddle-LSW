@@ -59,7 +59,7 @@ int av_peer_pump(av_peer_t *peer, av_peer_notify_t notify, void *context) {
         if (count < 0)
             return would_block() ? 0 : -1;
         if (!count)
-            return -1;
+            return peer->received ? -1 : 1;
         peer->received += (size_t)count;
         if (peer->received == AvControlBytes) {
             av_message_t message;

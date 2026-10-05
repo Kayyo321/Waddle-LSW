@@ -182,6 +182,10 @@
   - **Task Impact**: +5% to #3.1 (+0.20% overall); +5% to #3.2 (+0.32% overall)
   - **Summary**: Load the sibling first-party WGC DLL through restricted absolute search, retain its opaque contexts and publish mapped rows through Zig bounded copies. Report visible-window DXGI fallback explicitly and send actual captured dimensions after resize; complete C guest cross-link passes.
 
-- **Commit `HEAD`**: `test(av): add native Linux and Windows verification jobs`
+- **Commit `47b6c4d840ae`**: `test(av): add native Linux and Windows verification jobs`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Run AV transport sanitizers, cross-link platform clients and compile the WinRT DLL with the base Windows SDK. Add native window lifecycle/filtering and C ABI checks plus allocator tests; publish first-party Windows artifacts for managed deployment.
+
+- **Commit `HEAD`**: `fix(av): distinguish orderly closure from corrupted sessions`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Return a separate orderly EOF result, reject truncated final frames and propagate protocol errors through host and guest exit status. Fragmented, burst, corruption and truncation tests and native/cross builds pass.

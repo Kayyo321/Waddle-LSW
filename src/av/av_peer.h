@@ -30,7 +30,8 @@ int av_peer_send(av_peer_t *peer, const av_message_t *message);
  * @param[in,out] peer Nonnull event-thread-owned peer, caller-owned socket.
  * @param[in] notify Nonnull callback retained only during call.
  * @param[in,out] context Optional caller-owned context.
- * @return 0 alive/would-block, -1 EOF/socket/codec/callback failure.
+ * @return 0 alive/would-block, 1 orderly EOF, -1 socket/codec/callback failure.
+ * EOF in a partial frame is a protocol failure.
  * @note At most 16 receive frames and 16 send attempts per call; no allocation,
  * no spinning on EAGAIN. Use poll/select between calls. Socket remains caller-owned.
  */
