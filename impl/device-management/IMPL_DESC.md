@@ -707,3 +707,8 @@ timeout/peer loss, 39x101 PTY resizing/Ctrl-C/restoration and 32 reconnects.
 Temporary /dev/vhost-vsock ACL access is restored exactly from the saved ACL;
 fixtures never change the base or developer registrations. VM evidence is local;
 CI repeats native Windows guest regression/heap checks and Linux acceptance.
+
+Staged disk handles use a lexical defer before chmod/fsync, including export.
+A failed disk durability operation closes the handle before error recovery. The
+fsync ordinal seam covers staged disk flushes as well as metadata and rename
+parent flushes; the final reported fault count includes these additional sites.

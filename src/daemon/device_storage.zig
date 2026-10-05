@@ -654,10 +654,13 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
             const check = try hash_disk(ctx, backup_disk);
             if (current.st_dev != backup_identity.?.st_dev or current.st_ino != backup_identity.?.st_ino or check.size != backup_hash.?.size or !std.mem.eql(u8, &check.hash, &backup_hash.?.hash)) return error.InvalidConfig;
         }
-        var disk_file = try regular(ctx, disk, false);
-        try disk_file.chmod(0o600);
-        try disk_file.sync();
-        disk_file.close();
+        {
+            var disk_file = try regular(ctx, disk, false);
+            defer disk_file.close();
+            try disk_file.chmod(0o600);
+            try checkpoint("fsync");
+            try disk_file.sync();
+        }
         _ = try image(ctx, disk, operation != c.DeviceInit or request.blank != 0);
         const staged_cfg = try stage_path(ctx, "config", id, "new.ini");
         const mounts = if (operation == c.DeviceImport) "[filesystem]\n" else if (operation == c.DeviceClone) "" else try std.fmt.allocPrint(ctx.allocator, "[filesystem]\nmount = {s}:Z:\\:rw\n", .{std.posix.getenv("HOME") orelse return error.InvalidConfig});
@@ -713,8 +716,13 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
         dir.close();
         const disk = try ctx.join(path, "disk.qcow2");
         _ = try tool(ctx, &.{ "qemu-img", "convert", "-O", "qcow2", text(&source.?.disk_image), disk });
-        var file = try regular(ctx, disk, false);
-        try file.chmod(0o600); try file.sync(); file.close();
+        {
+            var file = try regular(ctx, disk, false);
+            defer file.close();
+            try file.chmod(0o600);
+            try checkpoint("fsync");
+            try file.sync();
+        }
         _ = try image(ctx, disk, true);
         const hash = try hash_disk(ctx, disk);
         const manifest = manifest_t{ .schema_version = 1, .source_name = name, .disk_file = "disk.qcow2", .disk_size_bytes = hash.size, .disk_sha256 = &hash.hash, .config = value };

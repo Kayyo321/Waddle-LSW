@@ -183,6 +183,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +10% to TODO #3 (+1.0% overall), +20% to #5 (+2.0%), +10% to #7 (+1.0%), +30% to #9 (+3.0%); total 92.5%.
   - **Summary**: Own utility children through every bounded-output/error/cancellation path, return SIGINT JSON/130, recheck import identity/hash after conversion, reject malformed manifests consistently, observe live backing chains without weakening offline locking, sort orphan diagnostics. Reread persisted journal phases after ambiguous durability failures; remove partial metadata safely. Real QCOW2 tests and 356 deterministic mutation/crash/I/O/utility failure boundaries pass with repeated recovery and no mixed state or journals.
 
-- **Commit `:/enforce device coverage stress and real VM acceptance`**: `test(device): enforce device coverage stress and real VM acceptance`
+- **Commit `5fb914a`**: `test(device): enforce device coverage stress and real VM acceptance`
   - **Task Impact**: +60% to TODO #10 (+3.0% overall); total 95.5%.
   - **Summary**: Add reproducible 1000-cycle concurrent-reader stress, real two-device Windows acceptance, registry ABI negative cases, allocator-failure codec/reference tests, >90% kcov line gates and LLVM source conditional/switch edge gates. CLI branch coverage 100% (140/140), storage codec/reference coverage 92.93% (92/99); compiler panic guards are separately identified. Extend Linux CI with coverage prerequisites, explicit leak detection, full fault matrix and stress. Local final sanitizer/TSan/cross-build and final-head GitHub CI are still pending.
+
+- **Commit `:/close staged image descriptors when durability fails`**: `fix(device): close staged image descriptors when durability fails`
+  - **Task Impact**: +0% to TODO #10; retain 95.5% pending final verification.
+  - **Summary**: Scope staged clone/init/import/export image handles with defer so chmod/fsync errors close descriptors before rollback. Include staged disk fsync in ordinal failure injection. This audit fix receives full fault/sanitizer/coverage reruns before completion.
