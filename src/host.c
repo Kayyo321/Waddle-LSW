@@ -421,7 +421,15 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
 
     uint64_t deadline = (timeout > 0) ? (monotonic_ms() + ((uint64_t)timeout * 1000)) : 0;
 
+    int was_mocked = 0;
     if (socket_path == NULL) {
+        socket_path = getenv("WADDLE_MOCK_GUEST_SOCK");
+        if (socket_path != NULL) {
+            was_mocked = 1;
+        }
+    }
+
+    if (socket_path == NULL || was_mocked) {
         int client_fd = waddle_client_ensure_daemon(NULL, WaddleDaemonSpawnTimeoutMs);
         if (client_fd >= 0) {
             waddle_daemon_status_resp_t status;
@@ -431,7 +439,12 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
                 printf("[waddle] Starting background subsystem...\n");
                 waddle_daemon_result_resp_t start_resp;
                 memset(&start_resp, 0, sizeof(start_resp));
-                (void)waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp);
+                if (waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp) != 0 || start_resp.status_code != 0) {
+                    fprintf(stderr, "waddle: failed to start subsystem: %s\n", start_resp.error_msg[0] ? start_resp.error_msg : strerror(start_resp.status_code ? (int)start_resp.status_code : errno));
+                    close(client_fd);
+                    result = 125;
+                    goto done;
+                }
             }
             close(client_fd);
         }
@@ -745,7 +758,11 @@ static int cmd_interactive_default(void) {
                 printf("[waddle] Starting background subsystem...\n");
                 waddle_daemon_result_resp_t start_resp;
                 memset(&start_resp, 0, sizeof(start_resp));
-                (void)waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp);
+                if (waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp) != 0 || start_resp.status_code != 0) {
+                    fprintf(stderr, "waddle: failed to start subsystem: %s\n", start_resp.error_msg[0] ? start_resp.error_msg : strerror(start_resp.status_code ? (int)start_resp.status_code : errno));
+                    close(client_fd);
+                    return 1;
+                }
             }
         }
         close(client_fd);

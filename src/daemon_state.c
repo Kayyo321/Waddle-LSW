@@ -16,6 +16,13 @@
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
+#include <linux/vm_sockets.h>
+
+static uint64_t state_monotonic_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
+}
 
 /**
  * @brief Recursively ensures that a directory path exists with permissions 0700.
@@ -96,6 +103,11 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
     snprintf(s->daemon_sock_path, sizeof(s->daemon_sock_path), "%.900s/daemon.sock", s->runtime_dir);
     snprintf(s->qmp_sock_path, sizeof(s->qmp_sock_path), "%.900s/qmp.sock", s->runtime_dir);
     snprintf(s->virtiofsd_sock_path, sizeof(s->virtiofsd_sock_path), "%.900s/virtiofsd.sock", s->runtime_dir);
+
+    const char *mock_sock = getenv("WADDLE_MOCK_GUEST_SOCK");
+    if (mock_sock != NULL) {
+        snprintf(s->mock_guest_sock_path, sizeof(s->mock_guest_sock_path), "%.1000s", mock_sock);
+    }
 
     /* Determine log directory */
     if (custom_runtime_dir != NULL && custom_runtime_dir[0] != '\0') {
@@ -205,6 +217,11 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
     (void)wait_timeout;
     (void)flags;
 
+    if (s->mock_guest_sock_path[0] != '\0') {
+        /* Skip VirtIO-FS and QEMU for mock environments */
+        goto probe_readiness;
+    }
+
     /* Step 1: VirtIO-FS host daemon */
     s->state = SubsystemStateStartingVirtiofs;
     if (s->config.mount_count > 0 && s->config.mounts[0].host_path[0] != '\0') {
@@ -235,6 +252,7 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
         return -1;
     }
 
+probe_readiness:
     /* Step 3: Probe Guest Readiness */
     s->state = SubsystemStateWaitingGuest;
     if (s->mock_guest_sock_path[0] != '\0') {
@@ -242,26 +260,47 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
         int tries = 0;
         int connected = 0;
         while (tries < 20) {
-            int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-            if (sock >= 0) {
-                struct sockaddr_un addr;
-                memset(&addr, 0, sizeof(addr));
-                addr.sun_family = AF_UNIX;
-                if (strlen(s->mock_guest_sock_path) < sizeof(addr.sun_path)) {
-                    snprintf(addr.sun_path, sizeof(addr.sun_path), "%.107s", s->mock_guest_sock_path);
-                    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
-                        connected = 1;
-                        close(sock);
-                        break;
-                    }
-                }
-                close(sock);
+            if (access(s->mock_guest_sock_path, F_OK) == 0) {
+                connected = 1;
+                break;
             }
             usleep(50000);
             tries++;
         }
         if (!connected) {
             snprintf(s->last_error, sizeof(s->last_error), "Timed out waiting for mock guest agent");
+            s->state = SubsystemStateFailed;
+            return -1;
+        }
+    } else if (flags & DaemonStartFlagWaitGuest) {
+        int connected = 0;
+        uint64_t start = state_monotonic_ms();
+        while (state_monotonic_ms() - start < wait_timeout * 1000) {
+            if (qemu_poll_status(&s->qemu) == 0) {
+                snprintf(s->last_error, sizeof(s->last_error), "QEMU hypervisor exited prematurely");
+                s->state = SubsystemStateFailed;
+                return -1;
+            }
+
+            int sock = socket(AF_VSOCK, SOCK_STREAM, 0);
+            if (sock >= 0) {
+                struct sockaddr_vm addr;
+                memset(&addr, 0, sizeof(addr));
+                addr.svm_family = AF_VSOCK;
+                addr.svm_cid = s->config.vsock_cid;
+                addr.svm_port = s->config.vsock_port;
+                
+                if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+                    connected = 1;
+                    close(sock);
+                    break;
+                }
+                close(sock);
+            }
+            usleep(100000); /* 100ms */
+        }
+        if (!connected) {
+            snprintf(s->last_error, sizeof(s->last_error), "Timed out waiting for VSOCK guest agent");
             s->state = SubsystemStateFailed;
             return -1;
         }
