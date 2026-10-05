@@ -8,7 +8,7 @@ COMMON = src/protocol.c src/arguments.c build/path_rules.o
 
 .PHONY: all test clean zig-test test-sanitizers demo windows windows-test coverage
 
-all: build/waddle build/waddle-mock-guest
+all: build/waddle build/waddle-mock-guest build/waddled
 
 build:
 	mkdir -p $@
@@ -58,13 +58,22 @@ build/test_daemon_qemu: tests/test_daemon_qemu.c src/daemon_qemu.c src/daemon_qm
 build/test_daemon_fs: tests/test_daemon_fs.c src/daemon_fs.c src/arguments.c build/daemon_config.o build/path_rules.o src/daemon_fs.h src/daemon_config.h src/path_rules.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_fs.c src/daemon_fs.c src/arguments.c build/daemon_config.o build/path_rules.o $(LDFLAGS) -o $@
 
-test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs zig-test
+DAEMON_COMMON = src/daemon_protocol.c src/daemon_state.c src/daemon_server.c src/daemon_qemu.c src/daemon_qmp.c src/daemon_fs.c src/arguments.c build/daemon_config.o build/path_rules.o
+
+build/waddled: src/daemon_main.c $(DAEMON_COMMON) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon_main.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
+
+build/test_daemon_server: tests/test_daemon_server.c $(DAEMON_COMMON) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_server.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
+
+test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_server zig-test
 	./build/unit
 	./build/integration
 	./build/test_daemon_protocol
 	./build/test_daemon_config
 	./build/test_daemon_qemu
 	./build/test_daemon_fs
+	./build/test_daemon_server
 	sh tests/path_options.sh
 
 test-sanitizers: clean
