@@ -335,6 +335,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Acquire a private same-user no-symlink command lease for setup, probe and the full playback lifetime, releasing it on every command exit. A concurrent probe during genuine managed playback fails immediately while cancellation still reaps owned children; separate profiles retain independent leases.
 
-- **Commit `HEAD`**: `feat(av): import DMA buffers asynchronously with retained fallback`
+- **Commit `0a5df99697eb`**: `feat(av): import DMA buffers asynchronously with retained fallback`
   - **Task Impact**: +5% to #3.1 (+0.20% overall); +10% to #3.2 (+0.64% overall); +15% to #3.4 (+0.36% overall); +5% to #4.3 (+0.16% overall); +5% to #5.1 (+0.20% overall); +10% to #5.2 (+0.48% overall); +5% to #5.3 (+0.20% overall); +5% to #6.1 (+0.20% overall); +5% to #6.3 (+0.16% overall); +5% to #7.1 (+0.08% overall)
   - **Summary**: Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes.
+
+- **Commit `HEAD`**: `fix(av): retry window admission after retained pool release`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Allow a synchronous Create callback to defer admission without failing the session, clear only that unaccepted registry entry and rescan at a bounded 250-ms interval. Retain compositor-owned pool states, retry newly available windows without duplicate events and verify deferred admission in the native capture/audio fixture.

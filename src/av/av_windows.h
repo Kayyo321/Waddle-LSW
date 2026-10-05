@@ -5,7 +5,7 @@
 /** @brief Borrowed synchronous window notification callback.
  * @param[in] message Nonnull transient message, valid only during callback.
  * @param[in,out] context Optional caller-owned context retained through stop.
- * @return 0 on success, -1 to record delivery failure.
+ * @return 0 accepted, 1 defer a Create until refresh, -1 delivery failure.
  * @note Runs on the start caller's message-pump thread; must not retain message.
  */
 typedef int (*av_window_notify_t)(const av_message_t *message, void *context);
@@ -18,6 +18,12 @@ typedef int (*av_window_notify_t)(const av_message_t *message, void *context);
  * call av_windows_stop on the same thread. No heap allocation or ownership transfer.
  */
 int av_windows_start(DWORD process_id, av_window_notify_t notify, void *context);
+/** @brief Retry bounded window admission after transport/compositor leases clear.
+ * @return 0 scanned, -1 inactive tracker, enumeration or delivery failure.
+ * @note Start caller's thread only; no parameters/allocation; callback lifetimes
+ * remain those of start. Existing unchanged windows do not emit duplicate events.
+ */
+int av_windows_refresh(void);
 /** @brief Remove hooks and tracked handles after stopping the message pump.
  * @note Same thread as start; idempotent. No parameters/results/heap allocation.
  */

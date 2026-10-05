@@ -11,6 +11,7 @@
 #include <string.h>
 static uint64_t target_id;
 static unsigned creates, geometries, destroys;
+static int defer_creation = 1;
 static unsigned captured_frames;
 static uint64_t minimum_timestamp;
 static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -90,7 +91,10 @@ static void native_audio_test(void) {
 static int notification(const av_message_t *message, void *context) {
     (void)context;
     assert(message->window_id == target_id);
-    if (message->type == MsgWindowCreate) ++creates;
+    if (message->type == MsgWindowCreate) {
+        if (defer_creation) { defer_creation = 0; return 1; }
+        ++creates;
+    }
     else if (message->type == MsgWindowGeometry) ++geometries;
     else if (message->type == MsgWindowDestroy) ++destroys;
     else assert(0);
@@ -123,6 +127,8 @@ int main(int argc, char **argv) {
     target_id = (uint64_t)(uintptr_t)target;
     assert(av_windows_start(0, notification, NULL) == -1);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
+    assert(creates == 0);
+    assert(av_windows_refresh() == 0);
     assert(creates == 1);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == -1);
     av_message_t resize = {.type = MsgWindowGeometry, .window_id = target_id,

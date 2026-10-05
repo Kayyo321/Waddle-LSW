@@ -61,6 +61,7 @@ static int window_notification(const av_message_t *message, void *context) {
             }
     }
     if (pool == AvMaxWindows) {
+        if (message->type == MsgWindowCreate) return 1;
         session->failed = 1;
         return -1;
     }
@@ -211,6 +212,7 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, 
         goto cleanup;
     DWORD task_index = 0;
     HANDLE priority = AvSetMmThreadCharacteristicsW(L"Games", &task_index);
+    ULONGLONG last_refresh = GetTickCount64();
     while (!session.failed && WaitForSingleObject(session.stop, 0) != WAIT_OBJECT_0) {
         if (WaitForSingleObject(target, 0) == WAIT_OBJECT_0) {
             result = 0;
@@ -231,6 +233,10 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, 
             break;
         }
         capture_windows(&session);
+        if (GetTickCount64() - last_refresh >= 250) {
+            if (av_windows_refresh() != 0) session.failed = 1;
+            last_refresh = GetTickCount64();
+        }
         HANDLE events[2] = {session.stop, session.capture_tick};
         if (MsgWaitForMultipleObjectsEx(2, events, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE) == WAIT_FAILED) {
             session.failed = 1;

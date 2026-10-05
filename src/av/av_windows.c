@@ -82,9 +82,11 @@ static int geometry(HWND handle, av_message_t *message) {
         message->title[0] = '\0';
     return 0;
 }
-static void emit(av_message_t *message) {
-    if (notification(message, notification_context) != 0)
+static int emit(av_message_t *message) {
+    int result = notification(message, notification_context);
+    if (result < 0 || (result > 0 && message->type != MsgWindowCreate))
         delivery_failed = 1;
+    return result;
 }
 static void remove_window(int index) {
     av_message_t message = {.type = MsgWindowDestroy,
@@ -115,7 +117,7 @@ static void update_window(HWND handle) {
         windows[index].handle = handle;
         message.type = MsgWindowCreate;
         windows[index].geometry = message;
-        emit(&message);
+        if (emit(&message) > 0) memset(&windows[index], 0, sizeof(windows[index]));
     } else {
         message.type = MsgWindowGeometry;
         av_message_t previous = windows[index].geometry;
@@ -183,6 +185,11 @@ void av_windows_stop(void) {
     notification = NULL;
     notification_context = NULL;
     target_process = 0;
+}
+int av_windows_refresh(void) {
+    if (!target_process || !notification) return -1;
+    if (!EnumWindows(enumerate_window, 0)) return -1;
+    return delivery_failed ? -1 : 0;
 }
 int av_windows_apply(const av_message_t *message) {
     HWND handle = (HWND)(uintptr_t)message->window_id;
