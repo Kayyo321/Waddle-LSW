@@ -203,14 +203,11 @@ int qemu_build_args(const daemon_config_t *config,
         } else {
             /* Advertise a 144-Hz full-HD virtual display for capture rather
              * than inheriting QEMU's low-resolution/default-refresh EDID. */
-            if (append_arg(argv, &argc, max_args, "-global") != 0 ||
-                append_arg(argv, &argc, max_args, "VGA.refresh_rate=144") != 0 ||
-                append_arg(argv, &argc, max_args, "-global") != 0 ||
-                append_arg(argv, &argc, max_args, "VGA.xres=1920") != 0 ||
-                append_arg(argv, &argc, max_args, "-global") != 0 ||
-                append_arg(argv, &argc, max_args, "VGA.yres=1080") != 0 ||
-                append_arg(argv, &argc, max_args, "-global") != 0 ||
-                append_arg(argv, &argc, max_args, "VGA.vgamem_mb=64") != 0) goto fail;
+            if (append_arg(argv, &argc, max_args, "-vga") != 0 ||
+                append_arg(argv, &argc, max_args, "none") != 0 ||
+                append_arg(argv, &argc, max_args, "-device") != 0 ||
+                append_arg(argv, &argc, max_args,
+                           "VGA,refresh_rate=144,xres=1920,yres=1080,vgamem_mb=64") != 0) goto fail;
         }
     }
 

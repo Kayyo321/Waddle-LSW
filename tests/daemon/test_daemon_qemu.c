@@ -94,7 +94,7 @@ static void test_av_args(void) {
     assert(count > 0);
     int refresh = 0;
     for (int i = 0; i < count; ++i)
-        if (!strcmp(argv[i], "VGA.refresh_rate=144")) refresh = 1;
+        if (!strcmp(argv[i], "VGA,refresh_rate=144,xres=1920,yres=1080,vgamem_mb=64")) refresh = 1;
     assert(refresh);
     qemu_free_args(argv, (size_t)count);
     strcpy(config.av_shm_path, "/tmp/x,share=off");

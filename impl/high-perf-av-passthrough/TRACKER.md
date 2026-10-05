@@ -351,6 +351,10 @@
   - **Task Impact**: +10% to #7.2 (+0.16% overall)
   - **Summary**: Retain the already-loaded system D-Bus library while PipeWire closes its RTKit connections, then release global bus caches before the final library close. The standalone host owns the only bus lifecycle. Native ASan/LSan/UBSan now reports zero leaks instead of 3677 bytes; all bounded module coverage gates remain at one hundred percent.
 
-- **Commit `HEAD`**: `feat(av): provision full-HD high-refresh virtual capture display`
+- **Commit `348245209eb5`**: `feat(av): provision full-HD high-refresh virtual capture display`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Advertise a 1920x1080 144-Hz virtual VGA EDID with sufficient framebuffer memory for AV profiles that use the software capture path. Keep explicitly assigned GPUs in control of their display modes and preserve non-AV defaults; hypervisor argument/lifecycle regressions pass.
+
+- **Commit `HEAD`**: `fix(av): instantiate the configured virtual display explicitly`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Instantiate the full-HD high-refresh VGA device explicitly instead of relying on global properties and an implicit default. Native boot inspection showed those globals suppress the default video device, leaving Windows without a capture display; argument and lifecycle regressions pass with the explicit device.
