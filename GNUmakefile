@@ -27,9 +27,17 @@ $(QEMU_BUILD_DIR)/config-host.mak: $(QEMU_DIR)/configure
 $(QEMU_SYSTEM_X86): $(QEMU_BUILD_DIR)/config-host.mak
 	ninja -C $(QEMU_BUILD_DIR) qemu-system-x86_64
 
-build/vendor/qemu-system-x86_64: $(QEMU_SYSTEM_X86) | build/vendor
-	cp -f $< $@
-	chmod +x $@
+build/vendor/qemu-system-x86_64: | build/vendor
+	@if [ -x /usr/bin/qemu-system-x86_64 ]; then \
+		cp -f /usr/bin/qemu-system-x86_64 $@; \
+	elif which qemu-system-x86_64 >/dev/null 2>&1; then \
+		cp -f "$$(which qemu-system-x86_64)" $@; \
+	elif [ -f $(QEMU_SYSTEM_X86) ]; then \
+		cp -f $(QEMU_SYSTEM_X86) $@; \
+	elif [ -d $(QEMU_DIR) ]; then \
+		$(MAKE) $(QEMU_SYSTEM_X86) && cp -f $(QEMU_SYSTEM_X86) $@; \
+	fi
+	@[ -f $@ ] && chmod +x $@ || true
 
 build/vendor/virtiofsd: | build/vendor
 	@if [ -x /usr/libexec/virtiofsd ]; then \
