@@ -11,7 +11,7 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 80% | Linux sealed mapping owner verified; Windows owner/handoff pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 80% | Linux owner verified; Windows implementation/fixture await native CI; handoff pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
@@ -106,7 +106,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37386229779 .
     Dedicated driver-backed host/guest integration is still pending.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): own sealed Linux IVSHMEM backing mappings`
+- **Commit `acf8d73`**: `feat(vgpu): own sealed Linux IVSHMEM backing mappings`
   - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
   - **Summary**: Created dedicated memfd-backed BAR ownership with resize seals,
     shared mmap, deterministic free, and preserved errno. Defined the native
@@ -114,3 +114,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Real dual mapping exchanges commands/replies; all six
     injected acquisition/post-map failures release resources. Linux mapping
     line/branch coverage 100%; ASan/LSan/UBSan and Zig allocator tests pass.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): map signed Windows IVSHMEM regions`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall); Windows fixture execution pending.
+  - **Summary**: Added signed-driver cached mapping, identity validation, bounded
+    SetupAPI detail allocation, ownership flags for invalid map returns, preserved
+    Windows errors, and symmetric mapping/handle cleanup. Guarded the upstream
+    unguarded driver header without modifying the pinned dependency.
+  - **Verification**: Cross-linked a native Windows SDK fixture covering success
+    and fourteen allocation/driver/ABI failures, tracking every live allocation,
+    device/list handle, and mapping. Native execution is queued next. This fake
+    driver fixture does not establish real cross-VM IVSHMEM functionality.
