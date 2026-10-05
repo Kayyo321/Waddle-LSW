@@ -44,13 +44,13 @@
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
 | **10** | **All-in-one AV environment provisioning** | | | | |
-| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 85% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
+| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 95% | Extend managed probe to validate the guest first, then map the configured region and establish real Wayland and ready PipeWire clients without opening a capture session. Tear down workers before unmapping on every path; the program-provisioned native host/guest probe passes. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 95% | Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `95.91%`
+**Total Feature Completion**: `96.41%`
 
 ## Commit History & Progress Log
 
@@ -339,6 +339,10 @@
   - **Task Impact**: +5% to #3.1 (+0.20% overall); +10% to #3.2 (+0.64% overall); +15% to #3.4 (+0.36% overall); +5% to #4.3 (+0.16% overall); +5% to #5.1 (+0.20% overall); +10% to #5.2 (+0.48% overall); +5% to #5.3 (+0.20% overall); +5% to #6.1 (+0.20% overall); +5% to #6.3 (+0.16% overall); +5% to #7.1 (+0.08% overall)
   - **Summary**: Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes.
 
-- **Commit `HEAD`**: `fix(av): retry window admission after retained pool release`
+- **Commit `6703a69e9505`**: `fix(av): retry window admission after retained pool release`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Allow a synchronous Create callback to defer admission without failing the session, clear only that unaccepted registry entry and rescan at a bounded 250-ms interval. Retain compositor-owned pool states, retry newly available windows without duplicate events and verify deferred admission in the native capture/audio fixture.
+
+- **Commit `HEAD`**: `feat(av): probe actual host mapping and playback connections`
+  - **Task Impact**: +10% to #10.1 (+0.50% overall)
+  - **Summary**: Extend managed probe to validate the guest first, then map the configured region and establish real Wayland and ready PipeWire clients without opening a capture session. Tear down workers before unmapping on every path; the program-provisioned native host/guest probe passes.

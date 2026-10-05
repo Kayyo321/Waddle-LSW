@@ -59,11 +59,12 @@ static int guest_message(const av_message_t *message, void *context) {
  */
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--help")) {
-        puts("waddle-av-host GUEST_CID SHARED_MEMORY_PATH");
+        puts("waddle-av-host GUEST_CID SHARED_MEMORY_PATH | --probe SHARED_MEMORY_PATH");
         return 0;
     }
     uint32_t cid = 0;
-    if (argc != 3 || av_number_parse(argv[1], strlen(argv[1]), &cid) != 0 || cid < 3)
+    int probe = argc == 3 && !strcmp(argv[1], "--probe");
+    if (argc != 3 || (!probe && (av_number_parse(argv[1], strlen(argv[1]), &cid) != 0 || cid < 3)))
         return 2;
     host_av_t host = {.memory_fd = -1};
     int peer = -1, result = 1;
@@ -86,6 +87,7 @@ int main(int argc, char **argv) {
     host.mapping = mapping;
     if (av_layout_validate(mapping, AvMappingBytes) != 0)
         goto cleanup;
+    if (probe) goto start_clients;
     peer = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (peer < 0)
         goto cleanup;
@@ -108,6 +110,7 @@ int main(int argc, char **argv) {
             goto cleanup;
         }
     }
+start_clients:
     host.peer.socket = (uintptr_t)peer;
     if (av_wayland_init(&host.video, host_request, &host) != 0)
         goto cleanup;
@@ -115,6 +118,11 @@ int main(int argc, char **argv) {
     if (av_pipewire_init(&host.audio, (audio_ring_header_t *)(base + AvAudioHeaderOffset),
                          base + AvPcmOffset, AvAudioCapacity * AvAudioFrameBytes) != 0)
         goto cleanup;
+    if (probe) {
+        puts("AV host probe: shared mapping, Wayland and connected PipeWire ready");
+        result = 0;
+        goto cleanup;
+    }
     struct sigaction action = {.sa_handler = stop_signal};
     sigemptyset(&action.sa_mask);
     sigaction(SIGINT, &action, NULL);

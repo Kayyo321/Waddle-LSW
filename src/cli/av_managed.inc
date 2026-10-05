@@ -209,7 +209,12 @@ static int av_device_command(av_command_t command, device_info_t device) {
     if (command.kind == AvProbe) {
         char *arguments[] = {"waddle", "exec", "--device", device.name, "--translate-path",
             "--cwd", "C:\\Windows", "--", agent, "--probe", NULL};
-        return cmd_exec(10, arguments, 2);
+        int result = cmd_exec(10, arguments, 2);
+        if (result) return result;
+        char host[PATH_MAX];
+        if (av_bundle_path("waddle-av-host", host, sizeof(host)) != 0) return 1;
+        char *host_arguments[] = {host, "--probe", config.av_shm_path, NULL};
+        return av_run_helper(host_arguments);
     }
     char process_id[16], host_path[PATH_MAX], cid[16];
     snprintf(process_id, sizeof(process_id), "%u", command.process_id);
