@@ -294,3 +294,71 @@ This component does not own sockets or timers; the later lifecycle channel
 supplies an OS-backed callback and readiness/disconnect handoff. Unit fixtures
 verify retry progress, all terminal outcomes, cursor/output preservation, and
 invalid callbacks on Linux and the Windows-target ABI.
+
+### Lifecycle handoff protocol and session state machine
+
+The lifecycle channel is a dedicated reliable ordered byte stream, separate from
+CLI/AV traffic and the two IVSHMEM rings. It uses fixed 64-byte frames; a socket
+or serial adapter must accumulate exactly one frame into private memory before
+calling the parser. EOF, partial-frame EOF, timeout, cancellation, and send
+failure close both rings before workers join and the mapping owner frees it.
+No frame contains an fd, address, GPU handle, variable length, or allocation.
+
+All integers are little-endian and encoded field-by-field rather than transmitting
+a native struct. Offsets: magic u32 at 0 (0x57564331), version u32 at 4 (one),
+kind u32 at 8 (Offer=1, Ack=2, Ready=3, Stop=4), reason u32 at 12, session_id u64
+at 16, mapping_bytes u64 at 24, capacity u32 at 32, and 28 zero bytes at 36.
+The ID is nonzero, generated afresh by the host lifecycle owner for each mapping
+handoff and never reused for a live or stale connection; it identifies a session,
+not an authentication credential. Region bytes and capacity must satisfy the
+region ABI and exactly equal both peers' validated local snapshots. Stop reasons
+are Disconnect=1, Cancel=2, Deadline=3, Protocol=4; other frames require reason
+zero. Unknown versions/kinds/reasons, nonzero padding, zero IDs, invalid extents,
+and truncated/oversized frames are fatal. Zig parses private bounded bytes into
+a local C-compatible value; output is zeroed on error. Encoding accepts only
+validated local values and preserves the output on error. Neither path allocates.
+
+Session initialization borrows an actual aligned initialized mapping and attaches
+both rings, snapshots its declared extent/capacity, and requires zero cursors and
+open flags. It never initializes or resets the mapping. Host initialization
+requires a nonzero ID; guest initialization requires zero until an Offer arrives.
+Mapping validation may happen before Offer, but no payload traffic is permitted
+until readiness. Initialized records cannot be copied, concurrently initialized,
+or reused without their lifecycle owner first joining workers and zeroing them.
+
+The only successful startup sequence is:
+1. Host Initialized encodes Offer and becomes Offering.
+2. Guest Initialized receives matching Offer, records its ID, becomes Accepted.
+3. Guest Accepted encodes Ack, becomes Waiting.
+4. Host Offering receives matching Ack, becomes Acknowledged.
+5. Host Acknowledged encodes Ready, becomes Ready.
+6. Guest Waiting receives matching Ready, becomes Ready.
+
+Encoding advances local state when it produces a complete frame. The transport
+adapter must successfully send that frame before starting payload workers; failed
+or cancelled delivery invokes close. Both peers compare all identity/layout fields
+on every received frame. Duplicate or out-of-order received messages are protocol
+errors; local attempts to encode an illegal transition return RingInvalid and do
+not change state or output. A valid received Stop returns RingClosed, records its
+reason, and closes both rings. Encoding Stop with a known ID is permitted in any
+nonclosed initialized state, closes both rings, and emits the chosen reason.
+Protocol failure records Protocol and returns RingCorrupt. Local EOF/timeout/
+cancellation use close with the corresponding reason; close is idempotent and
+retains the first reason. No terminal state can become ready again.
+
+The session thread exclusively owns the local state machine and control stream.
+Payload workers may only run after ready; atomic ring closure can race their
+operations under the existing close contract. State queries are session-thread
+only. Closing does not join, detach, close sockets, or release mappings: the
+lifecycle owner closes rings, signals worker cancellation, joins all users, then
+closes the stream and frees the mapping in that order. Restart allocates a new
+initialized mapping, new ID, new stream, and new local records.
+
+The remaining lifecycle/control milestone (5% of Task #1) is divided into 2% for
+this documented, tested bounded codec/state machine and 3% for native ordered
+stream adapters, deadline/readiness waits, and session integration. The separate
+5% native cross-VM signed-driver gate is unchanged. Acceptance requires both
+roles, every legal/illegal transition, stale IDs, extent/capacity mismatches,
+every wire-field/padding corruption, exact output preservation, terminal-state
+closure, zero-leak sanitizer tests, >=90% line/branch coverage, and native Windows
+execution. Mock handshakes do not establish real driver or GPU execution.

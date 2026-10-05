@@ -145,7 +145,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37387395968 .
     Wait adapters added after this run are awaiting their own native CI result.
 
-- **Commit (current; resolve by subject)**: `chore(vgpu): enforce C formatting and audit transport checks`
+- **Commit `71be1b8`**: `chore(vgpu): enforce C formatting and audit transport checks`
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Applied four-space LLVM formatting with a 100-column limit to
     owned feature C headers/sources/fixtures. Preserved required SDK/GUID include
@@ -158,3 +158,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37387757325 .
     Existing AV coverage gates also passed locally after extending the shared
     LLVM coverage harness. Feature completion remains 18.5%.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define lifecycle readiness handoff`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall).
+  - **Summary**: Specified the fixed little-endian control frame, bounded parsing,
+    offer/acknowledgement/ready ordering, stale-session rejection, cancellation,
+    disconnect closure, and mapping lifetime. Split the remaining lifecycle gate
+    into tested state-machine and native stream-integration milestones.
+  - **Verification**: Reviewed against the existing bidirectional region and
+    cancellable ring contract. No implementation credit is assigned yet.
