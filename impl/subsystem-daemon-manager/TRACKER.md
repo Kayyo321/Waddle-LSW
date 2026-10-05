@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Antigravity Agent, Koyak
 - **Time Started**: 2026-10-04T19:40:00Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-05T02:05:00Z
 - **Feature Branch**: feature/subsystem-daemon-manager
 - **Target Merge Branch**: origin
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -20,11 +20,19 @@
 | #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Done | 10% | 100% | Interactive launcher, auto-start, export mount auto-loading & root fallback verified |
 | #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Done | 10% | 100% | Live VirtIO-FS directory/file creation and instant host visibility verified |
 | #9      | Vendor QEMU upstream Git repository as submodule (`submodules/qemu`) pinned to stable release commit | Done | 10% | 100% | Tracked via public HTTPS, pinned to v9.2.4 (b2995afe), shallow clone configured |
-| #10     | Integrate QEMU build target into build system and refactor daemon binary discovery for bundled vendor binaries | In Progress | 10% | 50% | QEMU build target and vendor directory outputs integrated in GNUmakefile |
+| #10     | Integrate QEMU build target into build system and refactor daemon binary discovery for bundled vendor binaries | Done | 10% | 100% | Minimal softmmu build target in GNUmakefile and relative binary resolution verified |
 
-**Total Feature Completion**: `95.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
+
+- **Commit `165ff2e`**: `fix(daemon): widen path candidate buffers to prevent format truncation warnings`
+  - **Task Impact**: 0% progress impact (bugfix to TODO: #10)
+  - **Summary**: Increased candidate buffer sizes in qemu_find_binary and daemon_fs_find_binary to WaddleMaxPathLen + 64 to eliminate GCC format truncation errors under AddressSanitizer.
+
+- **Commit `176afbf`**: `refactor(daemon): discover QEMU and VirtIO-FS binaries relative to executable`
+  - **Task Impact**: +50% to TODO: #10 (+5.0% overall feature completion)
+  - **Summary**: Implemented relative binary discovery for QEMU and VirtIO-FS via /proc/self/exe searching <exe_dir>/vendor before falling back to system paths.
 
 - **Commit `d1afd2f`**: `feat(build): add QEMU submodule build target and vendor binary directory`
   - **Task Impact**: +50% to TODO: #10 (+5.0% overall feature completion)
