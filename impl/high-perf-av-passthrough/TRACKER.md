@@ -283,6 +283,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Allow an explicit bounded firmware metadata path during setup, imply UEFI and stage the supplied image companion atomically under a quiescent device lease. Preserve the source and reject active-device imports; normal restart still retains the owned firmware store.
 
-- **Commit `HEAD`**: `fix(av): reuse live managed runtime after readiness timeout`
+- **Commit `658d49d2fa6b`**: `fix(av): reuse live managed runtime after readiness timeout`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Retry guest readiness against the existing QEMU child without remapping shared memory or replacing the filesystem worker. Reap stale children before clean startup and prove live retries retain their PID and mapping with a supervisor regression.
+
+- **Commit `HEAD`**: `fix(av): lease KVMFR across the managed runtime lifecycle`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Hold an exclusive nonblocking descriptor lease before initializing a device so idle video and audio-only sessions cannot be reset by another profile. Verify a second owner fails before mapping and succeeds after teardown; regular-file provisioning remains exclusive through creation.

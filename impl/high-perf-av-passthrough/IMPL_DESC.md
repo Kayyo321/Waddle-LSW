@@ -376,3 +376,11 @@ continues to preserve it. Firmware metadata is part of the supplied licensed OS
 image, not a manually configured AV environment. No enrollment/key contents are
 parsed, generated or printed by the application. The command cannot import while
 any runtime owns the device, and closes its lease before boot/deployment.
+
+The daemon takes a nonblocking exclusive `flock` on a KVMFR descriptor before
+validating or initializing its mapping and retains that descriptor throughout the
+VM lifecycle. Another managed profile fails with a runtime-ownership diagnostic,
+even when all video slots are Free or only audio is active. Closing the descriptor
+after workers/QEMU stop releases the lease; playback borrowers do not take this
+exclusive daemon lease. External applications must honor the same advisory lease
+before sharing a managed device.

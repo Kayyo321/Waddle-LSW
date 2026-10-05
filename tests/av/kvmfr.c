@@ -17,6 +17,9 @@ int main(void) {
     av_environment_t environment = {.fd = -1};
     char error[1024];
     assert(av_environment_prepare(&environment, &config, error, sizeof(error)) == 0);
+    av_environment_t contender = {.fd = -1};
+    assert(av_environment_prepare(&contender, &config, error, sizeof(error)) == -1);
+    assert(contender.fd == -1 && !contender.mapping);
     assert(av_kvmfr_size(environment.fd) == (long)AvMappingBytes);
     assert(lseek(environment.fd, 0, SEEK_END) == (off_t)AvMappingBytes);
     assert(lseek(environment.fd, 0, SEEK_SET) == 0);
@@ -35,11 +38,12 @@ int main(void) {
     close(exported);
     window_slot_header_t *slot = av_layout_slot(environment.mapping, environment.length, 0, 0);
     atomic_store_explicit(&slot->slot_state, SlotConsuming, memory_order_release);
-    av_environment_t contender = {.fd = -1};
     assert(av_environment_prepare(&contender, &config, error, sizeof(error)) == -1);
     assert(atomic_load_explicit(&slot->slot_state, memory_order_acquire) == SlotConsuming);
     atomic_store_explicit(&slot->slot_state, SlotFree, memory_order_release);
     av_environment_free(&environment);
+    assert(av_environment_prepare(&contender, &config, error, sizeof(error)) == 0);
+    av_environment_free(&contender);
     assert(access(config.av_shm_path, R_OK | W_OK) == 0);
     puts("Real KVMFR: two-GiB capacity, CLOEXEC DMA-BUF aliasing and live lease preservation passed");
     return 0;

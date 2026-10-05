@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -136,6 +137,10 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
     if (environment->fd < 0)
         return fail(environment, error, capacity,
                     "shared-memory open (existing files are preserved)");
+    /* The daemon retains this lease across QEMU and audio/video workers. Slot
+     * states alone cannot identify an active audio-only or idle session. */
+    if (is_device && flock(environment->fd, LOCK_EX | LOCK_NB) != 0)
+        return fail(environment, error, capacity, "KVMFR runtime ownership lease");
     struct stat status;
     if (fstat(environment->fd, &status) != 0)
         return fail(environment, error, capacity, "mapping stat");
