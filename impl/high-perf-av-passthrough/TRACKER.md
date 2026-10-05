@@ -267,6 +267,10 @@
   - **Summary**: Add bounded fixed-size seeking to the pinned driver build patch so vhost-user can determine and map IVSHMEM regions. Require compatible seek/size probes before boot and verify them with real exports; reload only the owned idle validation module and pass the native gate.
 
 
-- **Commit `HEAD`**: `fix(av): boot UEFI guests with inbox-compatible AHCI storage`
+- **Commit `4341783b76ea`**: `fix(av): boot UEFI guests with inbox-compatible AHCI storage`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Attach UEFI AV system disks through q35 AHCI so installed Windows images can boot before any optimized VirtIO storage driver is deployed. Preserve BIOS profile behavior and disk contents; QEMU lifecycle and argument regressions pass.
+
+- **Commit `HEAD`**: `fix(av): prioritize the managed UEFI system disk at boot`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Specify strict disk-first firmware boot order for UEFI AV profiles, preventing unrelated virtual network/filesystem boot candidates from preceding the managed Windows disk. Preserve the persistent variables and existing BIOS defaults; QEMU regressions pass.

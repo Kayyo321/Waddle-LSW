@@ -166,6 +166,8 @@ int qemu_build_args(const daemon_config_t *config,
         if (length <= 0 || (size_t)length >= sizeof(firmware_vars) ||
             append_arg(argv, &argc, max_args, "-machine") != 0 ||
             append_arg(argv, &argc, max_args, "q35") != 0 ||
+            append_arg(argv, &argc, max_args, "-boot") != 0 ||
+            append_arg(argv, &argc, max_args, "order=c,strict=on") != 0 ||
             append_arg(argv, &argc, max_args, "-drive") != 0 ||
             append_arg(argv, &argc, max_args, "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd") != 0 ||
             append_arg(argv, &argc, max_args, "-drive") != 0 ||
