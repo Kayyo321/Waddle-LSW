@@ -395,3 +395,18 @@ Only a successful native setup/probe atomically publishes a private 13-byte
 `current_bundle` selector. Run/probe validate its ownership, type, length and
 alphanumeric suffix before constructing the executable path. They never execute a
 partially published bundle or reinterpret selector contents as a path or command.
+
+### Asynchronous compositor DMA-BUF import
+
+The host prefers explicit linear ARGB modifiers and can also attempt an advertised
+implicit ARGB modifier. It uses `zwp_linux_buffer_params_v1.create`, never
+`create_immed`, because a valid export can still be rejected by the compositor's
+GPU. The slot remains Consuming while import is pending. A created callback owns
+the resulting buffer, attaches stable pixels and retains the slot until release.
+A failed callback creates a wl_shm buffer over the same region and disables further
+DMA-BUF attempts for that window. Retired windows remain allocated while callbacks
+or buffer releases are outstanding; pending imports that complete after retirement
+are destroyed without attachment and release their slots. Bounded teardown keeps
+unknown outstanding leases Consuming rather than making them reusable prematurely.
+Native acceptance on the NVIDIA compositor confirms an actual implicit ARGB
+KVMFR import, surface attachment and subsequent buffer release.

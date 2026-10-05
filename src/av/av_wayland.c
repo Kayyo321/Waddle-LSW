@@ -13,6 +13,8 @@
 /** @brief One retained compositor buffer; event thread owns protocol reference. */
 typedef struct video_buffer_t {
     struct wl_buffer *buffer;
+    struct zwp_linux_buffer_params_v1 *params;
+    struct video_window_t *window;
     window_slot_header_t *slot;
     uint32_t width, height, stride;
     uint64_t offset;
@@ -29,7 +31,7 @@ typedef struct video_window_t {
     video_buffer_t buffers[3];
     size_t capacity;
     int configured, retired;
-    int device_fd;
+    int device_fd, dmabuf_failed;
 } video_window_t;
 /** @brief Event-thread context; alloc/free are the sole ownership boundary. */
 struct av_wayland_t {
@@ -55,6 +57,52 @@ static void buffer_release(void *context, struct wl_buffer *buffer) {
     }
 }
 static const struct wl_buffer_listener BufferEvents = {.release = buffer_release};
+static void attach_buffer(video_buffer_t *video) {
+    video_window_t *window = video->window;
+    video->busy = 1;
+    wl_surface_attach(window->surface, video->buffer, 0, 0);
+    wl_surface_damage_buffer(window->surface, 0, 0, (int32_t)video->width, (int32_t)video->height);
+    xdg_surface_set_window_geometry(window->xdg_surface, 0, 0,
+                                   (int32_t)video->width, (int32_t)video->height);
+    wl_surface_commit(window->surface);
+}
+static void imported_buffer(void *context, struct zwp_linux_buffer_params_v1 *params,
+                            struct wl_buffer *buffer) {
+    video_buffer_t *video = context;
+    zwp_linux_buffer_params_v1_destroy(params);
+    video->params = NULL;
+    if (video->window->retired) {
+        wl_buffer_destroy(buffer);
+        av_video_release(video->slot);
+        video->busy = 0;
+        return;
+    }
+    video->buffer = buffer;
+    wl_buffer_add_listener(buffer, &BufferEvents, video);
+    attach_buffer(video);
+}
+static void rejected_buffer(void *context, struct zwp_linux_buffer_params_v1 *params) {
+    video_buffer_t *video = context;
+    video_window_t *window = video->window;
+    zwp_linux_buffer_params_v1_destroy(params);
+    video->params = NULL;
+    window->dmabuf_failed = 1;
+    if (!window->retired) {
+        video->buffer = wl_shm_pool_create_buffer(window->pool, (int32_t)video->offset,
+            (int32_t)video->width, (int32_t)video->height, (int32_t)video->stride,
+            WL_SHM_FORMAT_ARGB8888);
+        if (video->buffer) {
+            wl_buffer_add_listener(video->buffer, &BufferEvents, video);
+            attach_buffer(video);
+            return;
+        }
+        window->client->delivery_failed = 1;
+    }
+    av_video_release(video->slot);
+    video->busy = 0;
+}
+static const struct zwp_linux_buffer_params_v1_listener ParamsEvents = {
+    .created = imported_buffer, .failed = rejected_buffer};
 static void surface_configure(void *context, struct xdg_surface *surface, uint32_t serial) {
     video_window_t *window = context;
     xdg_surface_ack_configure(surface, serial);
@@ -108,6 +156,9 @@ static void dmabuf_modifier(void *context, struct zwp_linux_dmabuf_v1 *dmabuf, u
     av_wayland_t *client = context;
     if (format == AvPixelFormat && high == 0 && low == 0)
         client->linear_argb = 1;
+    else if (format == AvPixelFormat && high == 0x00ffffff && low == UINT32_MAX &&
+             client->linear_argb != 1)
+        client->linear_argb = 2; /* Advertised implicit modifier; async import may fail. */
 }
 static const struct zwp_linux_dmabuf_v1_listener DmabufEvents = {.format = dmabuf_format,
                                                                  .modifier = dmabuf_modifier};
@@ -156,6 +207,8 @@ static void retire_window(video_window_t *window) {
 static void free_window(video_window_t *window) {
     retire_window(window);
     for (unsigned i = 0; i < 3; ++i) {
+        if (window->buffers[i].params)
+            zwp_linux_buffer_params_v1_destroy(window->buffers[i].params);
         if (window->buffers[i].buffer)
             wl_buffer_destroy(window->buffers[i].buffer);
     }
@@ -262,6 +315,7 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
     for (unsigned i = 0; i < 3; ++i) {
         window->buffers[i].slot = slots[i];
         window->buffers[i].offset = offsets[i];
+        window->buffers[i].window = window;
     }
     wl_surface_commit(window->surface);
     return av_wayland_flush(client);
@@ -311,18 +365,26 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
             video->buffer = NULL;
         }
         if (!video->buffer) {
-            if (client->dmabuf && client->linear_argb) {
+            video->width = width;
+            video->height = height;
+            video->stride = stride;
+            if (client->dmabuf && client->linear_argb && !window->dmabuf_failed) {
                 int exported = av_dmabuf_export(window->device_fd, video->offset, window->capacity);
                 if (exported >= 0) {
                     struct zwp_linux_buffer_params_v1 *params =
                         zwp_linux_dmabuf_v1_create_params(client->dmabuf);
                     if (params) {
-                        zwp_linux_buffer_params_v1_add(params, exported, 0, 0, stride, 0, 0);
-                        video->buffer = zwp_linux_buffer_params_v1_create_immed(
-                            params, (int32_t)width, (int32_t)height, AvPixelFormat, 0);
-                        zwp_linux_buffer_params_v1_destroy(params);
+                        video->params = params;
+                        video->busy = 1;
+                        zwp_linux_buffer_params_v1_add_listener(params, &ParamsEvents, video);
+                        zwp_linux_buffer_params_v1_add(params, exported, 0, 0, stride,
+                            client->linear_argb == 1 ? 0 : 0x00ffffff,
+                            client->linear_argb == 1 ? 0 : UINT32_MAX);
+                        zwp_linux_buffer_params_v1_create(params, (int32_t)width,
+                                                         (int32_t)height, AvPixelFormat, 0);
                     }
                     close(exported);
+                    if (video->params) return av_wayland_flush(client);
                 }
             }
             if (!video->buffer) {
@@ -339,13 +401,7 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
             video->stride = stride;
             wl_buffer_add_listener(video->buffer, &BufferEvents, video);
         }
-        video->busy = 1;
-        wl_surface_attach(window->surface, video->buffer, 0, 0);
-        wl_surface_damage_buffer(window->surface, message->damage_x, message->damage_y,
-                                 (int32_t)message->damage_width, (int32_t)message->damage_height);
-        xdg_surface_set_window_geometry(window->xdg_surface, 0, 0, (int32_t)width,
-                                        (int32_t)height);
-        wl_surface_commit(window->surface);
+        attach_buffer(video);
     } else
         return -1;
     return av_wayland_flush(client);
