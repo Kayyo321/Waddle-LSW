@@ -18,9 +18,6 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
-      - name: Synchronize exact submodule pins via advertised OpenSSL tag
-        shell: bash
-        run: sh scripts/ci_submodules.sh
       - name: Install verified Zig 0.13 toolchain
         shell: pwsh
         run: |
