@@ -6,8 +6,8 @@
  * and validating ~/.config/waddle/config.ini.
  */
 
-#ifndef WADDLE_DAEMON_CONFIG_H
-#define WADDLE_DAEMON_CONFIG_H
+#ifndef WaddleDaemonConfigH
+#define WaddleDaemonConfigH
 
 #include "waddle/daemon_protocol.h"
 #include <stddef.h>
@@ -170,4 +170,4 @@ int daemon_config_edit(const char *data, size_t length,
 }
 #endif
 
-#endif /* WADDLE_DAEMON_CONFIG_H */
+#endif /* WaddleDaemonConfigH */

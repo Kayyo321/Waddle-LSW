@@ -6,8 +6,8 @@
  * stream decoding of wire frames.
  */
 
-#ifndef WADDLE_COMMON_H
-#define WADDLE_COMMON_H
+#ifndef WaddleCommonH
+#define WaddleCommonH
 
 #include "waddle/cli_protocol.h"
 #include <stddef.h>
@@ -185,4 +185,4 @@ uint64_t monotonic_ms(void);
 }
 #endif
 
-#endif /* WADDLE_COMMON_H */
+#endif /* WaddleCommonH */

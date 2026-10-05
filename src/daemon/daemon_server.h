@@ -3,8 +3,8 @@
  * @brief Non-blocking UNIX socket event loop and IPC request dispatcher for waddled.
  */
 
-#ifndef WADDLE_DAEMON_SERVER_H
-#define WADDLE_DAEMON_SERVER_H
+#ifndef WaddleDaemonServerH
+#define WaddleDaemonServerH
 
 #include "daemon_state.h"
 #include <signal.h>
@@ -32,4 +32,4 @@ int daemon_server_run(const char *custom_runtime_dir, volatile sig_atomic_t *sto
 }
 #endif
 
-#endif /* WADDLE_DAEMON_SERVER_H */
+#endif /* WaddleDaemonServerH */

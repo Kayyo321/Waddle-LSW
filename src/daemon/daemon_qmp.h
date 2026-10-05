@@ -6,8 +6,8 @@
  * commands over local UNIX domain sockets without external JSON dependencies.
  */
 
-#ifndef WADDLE_DAEMON_QMP_H
-#define WADDLE_DAEMON_QMP_H
+#ifndef WaddleDaemonQmpH
+#define WaddleDaemonQmpH
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -93,4 +93,4 @@ void qmp_close(qmp_client_t *client);
 }
 #endif
 
-#endif /* WADDLE_DAEMON_QMP_H */
+#endif /* WaddleDaemonQmpH */

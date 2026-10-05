@@ -3,8 +3,8 @@
  * @brief Multiplexed stream event loop bridging host I/O and guest transport.
  */
 
-#ifndef WADDLE_SESSION_H
-#define WADDLE_SESSION_H
+#ifndef WaddleSessionH
+#define WaddleSessionH
 
 #include "common.h"
 
@@ -34,4 +34,4 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
 }
 #endif
 
-#endif /* WADDLE_SESSION_H */
+#endif /* WaddleSessionH */

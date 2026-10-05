@@ -7,8 +7,8 @@
  * the guest Windows execution agent.
  */
 
-#ifndef WADDLE_CLI_PROTOCOL_H
-#define WADDLE_CLI_PROTOCOL_H
+#ifndef WaddleCliProtocolH
+#define WaddleCliProtocolH
 
 #include <stddef.h>
 #include <stdint.h>
@@ -368,4 +368,4 @@ char *waddle_translate_path(const char *path);
 }
 #endif
 
-#endif /* WADDLE_CLI_PROTOCOL_H */
+#endif /* WaddleCliProtocolH */
