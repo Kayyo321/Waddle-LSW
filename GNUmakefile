@@ -6,12 +6,45 @@ CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Werror
 LDFLAGS ?=
 COMMON = src/common/protocol.c src/common/arguments.c build/path_rules.o
 
-.PHONY: all test clean zig-test test-sanitizers demo windows windows-test coverage
+.PHONY: all test clean zig-test test-sanitizers demo windows windows-test coverage qemu-vendor qemu-clean
 
-all: build/waddle build/waddle-mock-guest build/waddled
+# Bundled Vendor Dependencies
+QEMU_DIR = submodules/qemu
+QEMU_BUILD_DIR = $(QEMU_DIR)/build
+QEMU_SYSTEM_X86 = $(QEMU_BUILD_DIR)/qemu-system-x86_64
+
+all: build/waddle build/waddle-mock-guest build/waddled qemu-vendor
 
 build:
 	mkdir -p $@
+
+build/vendor: | build
+	mkdir -p $@
+
+$(QEMU_BUILD_DIR)/config-host.mak: $(QEMU_DIR)/configure
+	cd $(QEMU_DIR) && ./configure --target-list=x86_64-softmmu --enable-kvm --disable-docs --disable-gtk --disable-sdl --disable-vnc
+
+$(QEMU_SYSTEM_X86): $(QEMU_BUILD_DIR)/config-host.mak
+	ninja -C $(QEMU_BUILD_DIR) qemu-system-x86_64
+
+build/vendor/qemu-system-x86_64: $(QEMU_SYSTEM_X86) | build/vendor
+	cp -f $< $@
+	chmod +x $@
+
+build/vendor/virtiofsd: | build/vendor
+	@if [ -x /usr/libexec/virtiofsd ]; then \
+		cp -f /usr/libexec/virtiofsd $@; \
+	elif [ -x /usr/lib/qemu/virtiofsd ]; then \
+		cp -f /usr/lib/qemu/virtiofsd $@; \
+	elif which virtiofsd >/dev/null 2>&1; then \
+		cp -f "$$(which virtiofsd)" $@; \
+	fi
+	@[ -f $@ ] && chmod +x $@ || true
+
+qemu-vendor: build/vendor/qemu-system-x86_64 build/vendor/virtiofsd
+
+qemu-clean:
+	rm -rf $(QEMU_BUILD_DIR)
 
 build/path_rules.o: src/common/path_rules.zig | build
 	$(ZIG) build-obj src/common/path_rules.zig -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
