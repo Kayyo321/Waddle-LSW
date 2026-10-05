@@ -6,6 +6,30 @@ set -eu
 
 echo "=== Desktop Write Test ==="
 
+DO_NOT_DELETE=0
+CONTENT="waddle desktop test"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --do-not-delete)
+            DO_NOT_DELETE=1
+            shift
+            ;;
+        --content)
+            if [ $# -lt 2 ]; then
+                echo "Error: --content requires an argument" >&2
+                exit 1
+            fi
+            CONTENT="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
 # Determine Desktop path (XDG user directories)
 DESKTOP_DIR="${HOME}/Desktop"
 if [ ! -d "$DESKTOP_DIR" ]; then
@@ -29,7 +53,7 @@ sleep 0.5
 # Run waddle to write a file in the shared mount (Desktop is under default mapping)
 ./build/waddle exec \
   --cwd "$DESKTOP_DIR" -- \
-  sh -c "echo 'waddle desktop test' > '$TMPFILE'"
+  sh -c "printf '%s\n' \"\$1\" > \"\$2\"" _ "$CONTENT" "$TMPFILE"
 
 # Cleanup mock guest
 kill $MOCK_PID 2>/dev/null || true
@@ -39,7 +63,11 @@ rm -f "$WADDLE_MOCK_GUEST_SOCK"
 if [ -f "$FULLPATH" ]; then
     echo "File successfully created on Desktop: $FULLPATH"
     cat "$FULLPATH"
-    rm -f "$FULLPATH"
+    if [ "$DO_NOT_DELETE" -eq 0 ]; then
+        rm -f "$FULLPATH"
+    else
+        echo "Preserving created file as requested: $FULLPATH"
+    fi
     echo "Desktop write test passed."
     exit 0
 else
