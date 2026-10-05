@@ -244,6 +244,34 @@ fn cleanup_journal(ctx: context_t, record: journal_t) !void {
     try parent.deleteFile(leaf);
     try std.posix.fsync(parent.fd);
 }
+/// Restrict journals to their declared registrations and unpredictable staging trees.
+fn journal_location_valid(ctx: context_t, record: journal_t, location: location_t) !bool {
+    const stage = try std.fmt.allocPrint(ctx.allocator, "transactions/{s}/", .{record.transaction_id});
+    if (std.mem.startsWith(u8, location.path, stage) and (std.mem.eql(u8, location.root, "config") or std.mem.eql(u8, location.root, "state"))) {
+        const leaf = location.path[stage.len..];
+        return leaf.len > 0 and std.mem.indexOfScalar(u8, leaf, '/') == null;
+    }
+    if (std.mem.eql(u8, location.root, "config")) {
+        if (std.mem.eql(u8, location.path, "default_device")) return std.mem.eql(u8, record.operation, "default") or std.mem.eql(u8, record.operation, "rename") or std.mem.eql(u8, record.operation, "remove");
+        for ([_]?[]const u8{ record.source_name, record.destination_name }) |candidate| if (candidate) |name| {
+            if (std.mem.eql(u8, location.path, (try registration(ctx, name)).path)) return true;
+        };
+    } else if (std.mem.eql(u8, location.root, "state")) {
+        for ([_]?[]const u8{ record.source_name, record.destination_name }) |candidate| if (candidate) |name| {
+            if (std.mem.eql(u8, location.path, (try state_location(ctx, name)).path)) return true;
+        };
+        if (std.mem.eql(u8, record.operation, "remove")) {
+            const retained = try std.fmt.allocPrint(ctx.allocator, "retained/{s}", .{record.transaction_id});
+            if (std.mem.eql(u8, location.path, retained) or std.mem.eql(u8, location.path, try ctx.join(retained, "original.ini"))) return true;
+        }
+    } else if (std.mem.eql(u8, location.root, "external") and std.mem.eql(u8, record.operation, "export") and record.external_parent != null) {
+        if (std.mem.indexOfScalar(u8, location.path, '/') != null) return false;
+        if (std.mem.startsWith(u8, location.path, ".waddle-")) return std.mem.eql(u8, location.path, try std.fmt.allocPrint(ctx.allocator, ".waddle-{s}", .{record.transaction_id}));
+        return true;
+    }
+    return false;
+}
+
 fn recover_one(initial: context_t, record: journal_t) !void {
     if (record.schema_version != 1 or record.transaction_id.len != 32 or record.moves.len > 16 or record.replacements.len != 0) return error.RecoveryRequired;
     for (record.transaction_id) |ch| if (!(ch >= '0' and ch <= '9') and !(ch >= 'a' and ch <= 'f')) return error.RecoveryRequired;
@@ -257,8 +285,17 @@ fn recover_one(initial: context_t, record: journal_t) !void {
         if (c.fstat(dir.fd, &st) != 0 or st.st_dev != record.external_device or st.st_ino != record.external_inode) return error.RecoveryRequired;
         ctx.external = root;
     }
-    // Validate every path before making any changes, including absent references.
-    for (record.moves) |item| { _ = try ctx.resolve(item.old); _ = try ctx.resolve(item.final); }
+    const operations = [_][]const u8{ "init", "rename", "remove", "config", "default", "clone", "import", "export" };
+    var operation_known = false;
+    for (operations) |op| if (std.mem.eql(u8, record.operation, op)) { operation_known = true; break; };
+    if (!operation_known) return error.RecoveryRequired;
+    // Validate every reference against this operation's names/staging namespace.
+    for (record.moves) |item| {
+        for ([_]location_t{ item.old, item.final }) |location| {
+            _ = try ctx.resolve(location);
+            if (!try journal_location_valid(ctx, record, location)) return error.RecoveryRequired;
+        }
+    }
     if (std.mem.eql(u8, record.phase, "prepared")) {
         var index = record.moves.len;
         while (index > 0) { index -= 1; try apply_move(ctx, record.moves[index], false); }
@@ -503,16 +540,14 @@ fn mutate(ctx_initial: context_t, request: *const c.device_request_t, output: []
     }
     if (operation == c.DeviceExport) {
         const absolute = if (std.fs.path.isAbsolute(arg)) arg else try ctx.join(try std.fs.cwd().realpathAlloc(ctx.allocator, "."), arg);
-        const parent = try canonical(ctx, std.fs.path.dirname(absolute) orelse return error.InvalidConfig);
+        const parent = try std.fs.path.resolve(ctx.allocator, &.{std.fs.path.dirname(absolute) orelse return error.InvalidConfig});
         var dir = try directory(ctx, parent, false, true);
         dir.close();
         ctx.external = parent;
         try absent(ctx, try ctx.join(parent, std.fs.path.basename(absolute)));
     }
     if (operation == c.DeviceImport) {
-        const input = try canonical(ctx, arg);
-        // Canonicalization cannot legitimize a symlink backup supplied by the caller.
-        if (std.fs.path.isAbsolute(arg) and !std.mem.eql(u8, input, arg)) return error.AccessDenied;
+        const input = try std.fs.path.resolve(ctx.allocator, &.{ try std.fs.cwd().realpathAlloc(ctx.allocator, "."), arg });
         var dir = try directory(ctx, input, false, true);
         defer dir.close();
         var entries_dir = try dir.openDir(".", .{ .iterate = true });
@@ -694,4 +729,163 @@ test "bounded journal parsing rejects duplicates unknown fields and nesting" {
     try std.testing.expectError(error.DuplicateField, parse_json(settings_t, ctx, "{\"vcpus\":4,\"vcpus\":8}"));
     try std.testing.expectError(error.UnknownField, parse_json(settings_t, ctx, "{\"unexpected\":4}"));
     try std.testing.expectError(error.InvalidConfig, parse_json(std.json.Value, ctx, "[[[[[[[[[0]]]]]]]]]"));
+}
+
+/// Device inspection schema; diagnostics do not mutate unless repair is explicit.
+const inspection_t = struct {
+    healthy: bool,
+    config_owned: bool,
+    state_owned: bool,
+    disk_owned: bool,
+    runtime_owned: bool,
+    backing_chain: std.json.Value,
+    findings: []const []const u8,
+};
+/// Locate system/bundled executable paths without executing arbitrary metadata.
+fn binary_exists(ctx: context_t, binary: []const u8) !bool {
+    const exe_dir = try std.fs.selfExeDirPathAlloc(ctx.allocator);
+    const bundled = try ctx.allocator.dupeZ(u8, try std.fmt.allocPrint(ctx.allocator, "{s}/vendor/{s}", .{ exe_dir, binary }));
+    if (c.access(bundled, c.X_OK) == 0) return true;
+    if (std.mem.eql(u8, binary, "virtiofsd")) {
+        if (c.access("/usr/libexec/virtiofsd", c.X_OK) == 0 or c.access("/usr/lib/qemu/virtiofsd", c.X_OK) == 0) return true;
+    }
+    var paths = std.mem.splitScalar(u8, std.posix.getenv("PATH") orelse "", ':');
+    while (paths.next()) |path| {
+        if (path.len == 0) continue;
+        const candidate = try ctx.allocator.dupeZ(u8, try std.fmt.allocPrint(ctx.allocator, "{s}/{s}", .{ path, binary }));
+        if (c.access(candidate, c.X_OK) == 0) return true;
+    }
+    return false;
+}
+
+fn inspect(ctx: context_t, name: []const u8, repair: bool, dry_run: bool) !inspection_t {
+    if (!name_valid(name)) return error.InvalidConfig;
+    const lock = c.daemon_device_registry_lock(@intFromBool(repair and !dry_run));
+    if (lock < 0) return native_error();
+    defer _ = c.close(lock);
+    var registry: c.device_list_t = undefined;
+    if (c.daemon_device_scan_locked(&registry) < 0) return native_error();
+    var selected: ?*const c.device_info_t = null;
+    for (registry.devices[0..registry.count]) |*info| if (std.mem.eql(u8, text(&info.name), name)) { selected = info; break; };
+    const info = selected orelse return error.FileNotFound;
+    var findings = std.ArrayList([]const u8).init(ctx.allocator);
+    var result = inspection_t{ .healthy = true, .config_owned = false, .state_owned = false, .disk_owned = false, .runtime_owned = false, .backing_chain = .null, .findings = &.{} };
+    if (info.config_valid == 0) try findings.append("invalid_config");
+    if (identity(ctx, text(&info.config_path))) |_| { result.config_owned = true; } else |_| { try findings.append("unsafe_config_ownership"); }
+    if (identity(ctx, text(&info.state_dir))) |_| { result.state_owned = true; } else |_| { try findings.append("missing_or_unsafe_state"); }
+    if (info.config_valid != 0) {
+        if (identity(ctx, text(&info.disk_image))) |_| { result.disk_owned = true; } else |_| { try findings.append("missing_or_unsafe_disk"); }
+        if (image(ctx, text(&info.disk_image), false)) |chain| { result.backing_chain = chain; } else |_| { try findings.append("invalid_or_unavailable_backing_chain"); }
+        for (registry.devices[0..registry.count]) |*other| {
+            if (!std.mem.eql(u8, text(&other.name), name) and other.vsock_cid == info.vsock_cid) { try findings.append("cid_collision"); break; }
+        }
+        var lease: c_int = -1;
+        const offline = c.daemon_device_lock_quiescent(info, &lease);
+        const offline_errno = c.__errno_location().*;
+        if (lease >= 0) _ = c.close(lease);
+        if (offline != 0) {
+            result.runtime_owned = offline_errno == c.EBUSY;
+            if (repair) {
+                if (c.daemon_device_repair_runtime(info, @intFromBool(dry_run)) != 0) try findings.append("busy_or_unverifiable_runtime");
+            } else if (offline_errno == c.ESTALE) try findings.append("stale_runtime_sockets") else if (offline_errno != c.EBUSY) try findings.append("unverifiable_runtime");
+        }
+    }
+    if (!try binary_exists(ctx, "qemu-img")) try findings.append("missing_qemu_img");
+    if (!try binary_exists(ctx, "qemu-system-x86_64")) try findings.append("missing_qemu_system");
+    if (!try binary_exists(ctx, "virtiofsd")) try findings.append("missing_virtiofsd");
+    result.findings = findings.items;
+    result.healthy = findings.items.len == 0;
+    return result;
+}
+/// C ABI inspection entry; owns one arena and output is copied before its release.
+export fn daemon_device_inspect(name: ?[*:0]const u8, repair: c_int, dry_run: c_int, output: ?[*]u8, capacity: usize) c_int {
+    const input = name orelse { c.__errno_location().* = c.EINVAL; return -1; };
+    const out = output orelse { c.__errno_location().* = c.EINVAL; return -1; };
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena.deinit();
+    const ctx = context(arena.allocator()) catch |err| { set_errno(err); return -1; };
+    const result = inspect(ctx, std.mem.span(input), repair != 0, dry_run != 0) catch |err| { set_errno(err); return -1; };
+    const bytes = std.json.stringifyAlloc(ctx.allocator, result, .{}) catch |err| { set_errno(err); return -1; };
+    if (bytes.len >= capacity) { c.__errno_location().* = c.ENOSPC; return -1; }
+    @memcpy(out[0..bytes.len], bytes);
+    out[bytes.len] = 0;
+    return 0;
+}
+
+/// Journal a single metadata replacement while caller owns registry/runtime locks.
+fn replace_locked(ctx: context_t, path: []const u8, bytes: ?[]const u8) !void {
+    if (!std.mem.startsWith(u8, path, ctx.config) or path.len <= ctx.config.len or path[ctx.config.len] != '/') return error.AccessDenied;
+    const relative = path[ctx.config.len + 1 ..];
+    try relative_valid(relative);
+    const is_default = std.mem.eql(u8, relative, "default_device");
+    if (!is_default and (!std.mem.startsWith(u8, relative, "devices/") or !std.mem.endsWith(u8, relative, ".ini"))) return error.AccessDenied;
+    var old_exists = true;
+    _ = identity(ctx, path) catch |err| {
+        if (err != error.FileNotFound) return err;
+        old_exists = false;
+    };
+    if (!old_exists and bytes == null) return;
+    var random: [16]u8 = undefined;
+    std.crypto.random.bytes(&random);
+    const id = try ctx.allocator.dupe(u8, &std.fmt.bytesToHex(random, .lower));
+    const profile_name = if (is_default) null else relative[8 .. relative.len - 4];
+    var record = journal_t{ .transaction_id = id, .operation = if (is_default) "default" else "config", .source_name = profile_name, .destination_name = profile_name };
+    var parent = try directory(ctx, try ctx.join(ctx.config, "transactions"), true, true);
+    parent.close();
+    try save_journal(ctx, record, true);
+    errdefer recover_one(ctx, record) catch {};
+    fault("prepared");
+    var staged = try directory(ctx, try ctx.join(ctx.config, try std.fmt.allocPrint(ctx.allocator, "transactions/{s}", .{id})), true, true);
+    staged.close();
+    var moves = std.ArrayList(move_t).init(ctx.allocator);
+    const final = location_t{ .root = "config", .path = relative };
+    if (old_exists) try moves.append(try move(ctx, final, try stage_path(ctx, "config", id, "old_metadata")));
+    if (bytes) |data| {
+        const candidate = try stage_path(ctx, "config", id, "new_metadata");
+        try create_file(ctx, try ctx.resolve(candidate), data);
+        try moves.append(try move(ctx, candidate, final));
+    }
+    fault("staged");
+    record.moves = moves.items;
+    try save_journal(ctx, record, false);
+    for (record.moves, 0..) |item, index| { try apply_move(ctx, item, true); fault(try std.fmt.allocPrint(ctx.allocator, "move_{d}", .{index})); }
+    var committed = record;
+    committed.phase = "committed";
+    try save_journal(ctx, committed, false);
+    record = committed;
+    fault("committed");
+    try cleanup_journal(ctx, record);
+}
+/// C ABI: borrowed data/path, no retained allocations; caller already holds locks.
+export fn daemon_device_replace_locked(path: ?[*:0]const u8, data: ?[*]const u8, length: usize) c_int {
+    const input = path orelse { c.__errno_location().* = c.EINVAL; return -1; };
+    if (length > 65536 or (data == null and length != 0)) { c.__errno_location().* = c.EINVAL; return -1; }
+    var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
+    defer arena.deinit();
+    const ctx = context(arena.allocator()) catch |err| { set_errno(err); return -1; };
+    replace_locked(ctx, std.mem.span(input), if (data) |pointer| pointer[0..length] else null) catch |err| { set_errno(err); return -1; };
+    return 0;
+}
+
+/// C ABI: kernel UNIX table lookup; in path is borrowed/non-null, no ownership retained.
+/// Returns 1 for a live bound endpoint, 0 absent, -1 errno on ambiguity/I/O. The
+/// bounded parser never connects or consumes a vhost-user endpoint. Thread-safe.
+export fn daemon_device_socket_in_use(path: ?[*:0]const u8) c_int {
+    const input = path orelse { c.__errno_location().* = c.EINVAL; return -1; };
+    var file = std.fs.openFileAbsolute("/proc/net/unix", .{}) catch { c.__errno_location().* = c.EIO; return -1; };
+    defer file.close();
+    const allocator = std.heap.c_allocator;
+    const bytes = file.readToEndAlloc(allocator, 1024 * 1024) catch { c.__errno_location().* = c.EIO; return -1; };
+    defer allocator.free(bytes);
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    _ = lines.next();
+    while (lines.next()) |line| {
+        var fields = std.mem.tokenizeAny(u8, line, " \t");
+        var index: usize = 0;
+        while (index < 7) : (index += 1) { if (fields.next() == null) break; }
+        if (index != 7) continue;
+        const remaining = std.mem.trim(u8, fields.rest(), " \t\r");
+        if (std.mem.eql(u8, remaining, std.mem.span(input))) return 1;
+    }
+    return 0;
 }

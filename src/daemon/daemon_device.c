@@ -233,7 +233,7 @@ int daemon_device_scan_locked(device_list_t *list) {
             struct stat st;
             char data[65537];
             ssize_t amount = -1;
-            if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == getuid() && st.st_size <= 65536) {
+            if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == getuid() && (st.st_mode & 077) == 0 && st.st_nlink == 1 && st.st_size > 0 && st.st_size <= 65536) {
                 amount = read(fd, data, sizeof(data));
             }
             close(fd);
@@ -241,13 +241,13 @@ int daemon_device_scan_locked(device_list_t *list) {
             daemon_config_init_defaults(&cfg);
             cfg.vsock_cid = 0;
             cfg.disk_image[0] = '\0';
-            if (amount >= 0 && amount <= 65536 && daemon_config_parse_string(&cfg, data, (size_t)amount) == 0) {
+            if (amount > 0 && amount <= 65536 && daemon_config_parse_string(&cfg, data, (size_t)amount) == 0) {
                 memcpy(info->disk_image, cfg.disk_image, sizeof(info->disk_image));
                 info->vsock_cid = cfg.vsock_cid;
                 info->vsock_port = cfg.vsock_port;
                 info->memory_mb = cfg.memory_mb;
                 info->vcpus = cfg.vcpus;
-                info->config_valid = 1;
+                info->config_valid = cfg.vsock_cid >= BaseVsockCid && cfg.vsock_cid != UINT32_MAX && cfg.disk_image[0] == '/';
             }
         }
         list->count++;
@@ -386,51 +386,30 @@ int daemon_device_default_set(const char *name) {
     int lock_fd = daemon_device_registry_lock(1);
     if (lock_fd < 0) return -1;
     int result = -1;
-    int dir_fd = -1;
-    int fd = -1;
-    char stage[80] = {0};
     device_list_t list;
     if (name != NULL) {
         if (daemon_device_scan_locked(&list) < 0) goto cleanup;
         size_t i;
-        for (i = 0; i < list.count; i++) {
-            if (strcmp(name, list.devices[i].name) == 0) break;
-        }
+        for (i = 0; i < list.count; i++) if (strcmp(name, list.devices[i].name) == 0) break;
         if (i == list.count) { errno = ENOENT; goto cleanup; }
         if (!list.devices[i].config_valid) { errno = EINVAL; goto cleanup; }
         struct stat disk;
         if (stat(list.devices[i].disk_image, &disk) != 0) goto cleanup;
         if (!S_ISREG(disk.st_mode)) { errno = EINVAL; goto cleanup; }
     }
-    dir_fd = open_registry_parent(0);
-    if (dir_fd < 0) goto cleanup;
-    if (name == NULL) {
-        if (unlinkat(dir_fd, "default_device", 0) != 0 && errno != ENOENT) goto cleanup;
-        result = fsync(dir_fd);
-        goto cleanup;
-    }
-    for (unsigned i = 0; i < 100; i++) {
-        snprintf(stage, sizeof(stage), ".default-%ld-%u", (long)getpid(), i);
-        fd = openat(dir_fd, stage, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0600);
-        if (fd >= 0 || errno != EEXIST) break;
-    }
-    if (fd < 0) { stage[0] = '\0'; goto cleanup; }
+    char path[WaddleMaxPathLen];
+    if (daemon_device_get_config_dir(path, sizeof(path)) != 0) goto cleanup;
+    *strrchr(path, '/') = '\0';
+    size_t length = strlen(path);
+    if (length + sizeof("/default_device") > sizeof(path)) { errno = ENAMETOOLONG; goto cleanup; }
+    memcpy(path + length, "/default_device", sizeof("/default_device"));
     char data[WaddleMaxDeviceNameLen + 1];
-    int len = snprintf(data, sizeof(data), "%s\n", name);
-    if (write(fd, data, (size_t)len) != len || fsync(fd) != 0) goto cleanup;
-    if (renameat(dir_fd, stage, dir_fd, "default_device") != 0) goto cleanup;
-    stage[0] = '\0';
-    result = fsync(dir_fd);
+    int count = name ? snprintf(data, sizeof(data), "%s\n", name) : 0;
+    result = daemon_device_replace_locked(path, name ? data : NULL, (size_t)count);
 cleanup:
-    { int saved = errno;
-      if (fd >= 0) close(fd);
-      if (stage[0] && dir_fd >= 0) unlinkat(dir_fd, stage, 0);
-      if (dir_fd >= 0) close(dir_fd);
-      close(lock_fd);
-      errno = saved; }
+    { int saved = errno; close(lock_fd); errno = saved; }
     return result;
 }
-
 
 /** @brief Refuse a disk still open by any same-user process, including orphan QEMU.
  * Borrow info; use stat identity rather than PID text or basename guesses. Disappeared
@@ -487,15 +466,53 @@ cleanup:
     return result;
 }
 
+/** @brief Conservatively detect orphan children referring to the named runtime.
+ * Borrow the runtime prefix; bounded proc command bytes are never executed.
+ * Disappeared processes are harmless; unreadable virtualizer command lines fail closed.
+ */
+static int check_runtime_holders(const char *runtime) {
+    DIR *processes = opendir("/proc");
+    if (processes == NULL) return -1;
+    int result = 0;
+    struct dirent *entry;
+    while ((entry = readdir(processes)) != NULL) {
+        if (entry->d_name[0] < '0' || entry->d_name[0] > '9') continue;
+        struct stat owner;
+        if (fstatat(dirfd(processes), entry->d_name, &owner, AT_SYMLINK_NOFOLLOW) != 0) {
+            if (errno == ENOENT) continue;
+            result = -1; break;
+        }
+        if (owner.st_uid != getuid()) continue;
+        char path[300];
+        int count = snprintf(path, sizeof(path), "/proc/%s/cmdline", entry->d_name);
+        if (count < 0 || (size_t)count >= sizeof(path)) { errno = EOVERFLOW; result = -1; break; }
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) {
+            if (errno == ENOENT) continue;
+            result = -1; break;
+        }
+        char data[65536];
+        ssize_t size = read(fd, data, sizeof(data));
+        int saved = errno; close(fd); errno = saved;
+        if (size < 0) { result = -1; break; }
+        if ((size_t)size == sizeof(data) || (size > 0 && memmem(data, (size_t)size, runtime, strlen(runtime)) != NULL)) {
+            errno = EBUSY; result = -1; break;
+        }
+    }
+    int saved = errno; closedir(processes); errno = saved;
+    return result;
+}
+
 /** @brief Probe quiescence under registry ownership; retain existing lease until close.
  * No runtime paths are created. Socket names remain conservatively busy even if
  * their supervisor disappeared; a later diagnostic recovery must establish ownership.
  */
-int daemon_device_lock_quiescent(const device_info_t *info, int *lease_fd) {
+static int device_lock_offline(const device_info_t *info, int *lease_fd, int repair, int dry_run) {
     *lease_fd = -1;
     char runtime[WaddleMaxPathLen];
     memcpy(runtime, info->socket_path, strlen(info->socket_path) + 1);
     *strrchr(runtime, '/') = '\0';
+    if (check_runtime_holders(runtime) != 0) return -1;
     int dir_fd = daemon_device_open_directory(runtime, 0);
     if (dir_fd < 0 && errno != ENOENT) return -1;
     if (dir_fd >= 0) {
@@ -519,10 +536,22 @@ int daemon_device_lock_quiescent(const device_info_t *info, int *lease_fd) {
         const char *sockets[] = {"daemon.sock", "qmp.sock", "virtiofsd.sock"};
         for (size_t i = 0; i < sizeof(sockets) / sizeof(sockets[0]); i++) {
             if (fstatat(dir_fd, sockets[i], &st, AT_SYMLINK_NOFOLLOW) == 0) {
-                close(dir_fd); errno = EBUSY; return -1;
+                if (!repair || !S_ISSOCK(st.st_mode) || st.st_uid != getuid() || check_disk_holders(info) != 0) {
+                    close(dir_fd); errno = !repair ? ESTALE : EBUSY; return -1;
+                }
+                char socket_path[WaddleMaxPathLen];
+                int written = snprintf(socket_path, sizeof(socket_path), "%s/%s", runtime, sockets[i]);
+                if (written < 0 || (size_t)written >= sizeof(socket_path) || daemon_device_socket_in_use(socket_path) != 0) {
+                    close(dir_fd); errno = EBUSY; return -1;
+                }
+                if (!dry_run && unlinkat(dir_fd, sockets[i], 0) != 0) {
+                    int saved = errno; close(dir_fd); errno = saved; return -1;
+                }
+                continue;
             }
             if (errno != ENOENT) { int saved = errno; close(dir_fd); errno = saved; return -1; }
         }
+        if (repair && !dry_run && fsync(dir_fd) != 0) { int saved = errno; close(dir_fd); errno = saved; return -1; }
         close(dir_fd);
     }
     if (check_disk_holders(info) != 0) return -1;
@@ -540,8 +569,21 @@ int daemon_device_lock_quiescent(const device_info_t *info, int *lease_fd) {
     pid_t waited;
     do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
     if (waited < 0) return -1;
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) { errno = EBUSY; return -1; }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) { errno = WIFEXITED(status) && WEXITSTATUS(status) == 127 ? ENOENT : EBUSY; return -1; }
     return 0;
+}
+
+int daemon_device_lock_quiescent(const device_info_t *info, int *lease_fd) {
+    return device_lock_offline(info, lease_fd, 0, 0);
+}
+
+int daemon_device_repair_runtime(const device_info_t *info, int dry_run) {
+    int lease_fd = -1;
+    int result = device_lock_offline(info, &lease_fd, 1, dry_run);
+    int saved = errno;
+    if (lease_fd >= 0) close(lease_fd);
+    errno = saved;
+    return result;
 }
 
 int daemon_device_config_update(const char *name, const char *const *changes,
@@ -552,8 +594,7 @@ int daemon_device_config_update(const char *name, const char *const *changes,
     /* A dry run takes a shared existing lock; real runs serialize replacement. */
     int registry_fd = daemon_device_registry_lock(!dry_run);
     if (registry_fd < 0) return -1;
-    int result = -1, lease_fd = -1, dir_fd = -1, input_fd = -1, output_fd = -1;
-    char stage[80] = {0};
+    int result = -1, lease_fd = -1, dir_fd = -1, input_fd = -1;
     device_list_t list;
     if (daemon_device_scan_locked(&list) < 0) goto cleanup;
     device_info_t *info = NULL;
@@ -588,31 +629,10 @@ int daemon_device_config_update(const char *name, const char *const *changes,
     }
     if (daemon_device_lock_quiescent(info, &lease_fd) != 0) goto cleanup;
     if (dry_run) { result = 0; goto cleanup; }
-    for (unsigned i = 0; i < 100; i++) {
-        snprintf(stage, sizeof(stage), ".config-%ld-%u", (long)getpid(), i);
-        output_fd = openat(dir_fd, stage, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0600);
-        if (output_fd >= 0 || errno != EEXIST) break;
-    }
-    if (output_fd < 0) { stage[0] = '\0'; goto cleanup; }
-    size_t written = 0;
-    while (written < output_length) {
-        ssize_t amount = write(output_fd, output + written, output_length - written);
-        if (amount < 0) { if (errno == EINTR) continue; goto cleanup; }
-        if (amount == 0) { errno = EIO; goto cleanup; }
-        written += (size_t)amount;
-    }
-    if (fsync(output_fd) != 0) goto cleanup;
-    struct stat current;
-    if (fstatat(dir_fd, filename, &current, AT_SYMLINK_NOFOLLOW) != 0) goto cleanup;
-    if (current.st_dev != st.st_dev || current.st_ino != st.st_ino) { errno = EBUSY; goto cleanup; }
-    if (renameat(dir_fd, stage, dir_fd, filename) != 0) goto cleanup;
-    stage[0] = '\0';
-    result = fsync(dir_fd);
+    result = daemon_device_replace_locked(info->config_path, output, output_length);
 cleanup:
     { int saved = errno;
       if (input_fd >= 0) close(input_fd);
-      if (output_fd >= 0) close(output_fd);
-      if (stage[0] && dir_fd >= 0) unlinkat(dir_fd, stage, 0);
       if (dir_fd >= 0) close(dir_fd);
       if (lease_fd >= 0) close(lease_fd);
       close(registry_fd);

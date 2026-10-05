@@ -239,6 +239,43 @@ int daemon_device_open_directory(const char *path, int create);
  */
 int daemon_device_lock_quiescent(const device_info_t *info, int *lease_fd);
 
+/** @brief Repair only proven stale, user-owned runtime socket names.
+ * @param[in] info Non-null healthy borrowed profile; caller holds registry write lock.
+ * @param[in] dry_run Nonzero validates the repair without unlinking anything.
+ * @return 0 quiescent/repaired, -1 errno EBUSY/EACCES/ENOENT or I/O.
+ * @note Acquires/releases a temporary lease and audits process/disk owners. Never
+ * kills children, removes stable leases, or modifies registered config/disks.
+ */
+int daemon_device_repair_runtime(const device_info_t *info, int dry_run);
+/** @brief Inspect a device without spawning it; optional explicit stale repair.
+ * @param[in] name Non-null borrowed ASCII name.
+ * @param[in] repair Nonzero recovers journals and proven stale sockets.
+ * @param[in] dry_run Nonzero forbids writes even with repair.
+ * @param[out] output Non-null bounded buffer for JSON diagnostics.
+ * @param[in] capacity Output capacity including NUL; at least 65537 for full output.
+ * @return 0 valid JSON result, -1 errno on selection/serialization/resource failure.
+ * @note JSON reports findings independently of function status; caller owns buffer.
+ * One call arena/fds are released on return; registry precedes runtime locks.
+ */
+int daemon_device_inspect(const char *name, int repair, int dry_run, char *output, size_t capacity);
+
+/** @brief Journal an atomic registry metadata replacement under caller-held locks.
+ * @param[in] path Non-null borrowed absolute device INI or default selection path.
+ * @param[in] data Borrowed complete validated UTF-8 bytes, or NULL to remove.
+ * @param[in] length Byte count 0..65536, zero required when data is NULL.
+ * @return 0 committed, -1 errno; interruption leaves a recoverable journal.
+ * @note Caller holds registry write lock and device lease for config edits. Arena,
+ * staging descriptors and memory are released on return; no pointers retained.
+ */
+int daemon_device_replace_locked(const char *path, const char *data, size_t length);
+
+/** @brief Observe a bound UNIX socket through the kernel table without connecting.
+ * @param[in] path Non-null borrowed absolute socket pathname.
+ * @return 1 live endpoint, 0 absent, -1 errno on lookup failure/ambiguity.
+ * @note Bounded Zig parser; temporary allocation freed on every return. Thread-safe.
+ */
+int daemon_device_socket_in_use(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

@@ -583,3 +583,20 @@ sections without dropping original comments/unknown keys/exports. Removal checks
 managed-disk containment and registered backing dependencies. Retention returns
 the unique retained state directory with original.ini. No default is inferred for
 mutations; JSON removal requires --yes. Expanded acceptance remains tracked.
+
+### Implementation evidence: metadata durability and diagnostics
+
+Configuration/default edits use the same prepared/committed journal and reversible
+moves as device storage. Single-file atomic replacement alone is no longer their
+recovery boundary. Recovery accepts only known operations and references to the
+journal's source/destination names, its staging tree, its retention ID or pinned
+export parent. Empty, publicly accessible or hard-linked profile metadata is
+unhealthy. Import/export traverse supplied paths without following symlinks.
+
+Inspection returns bounded JSON for ownership, backing chain, CID collisions,
+required executable availability and runtime findings. Explicit repair holds the
+registry then runtime lease, audits same-user process command references and disk
+holders, and refuses any UNIX endpoint still present in `/proc/net/unix`. The
+kernel table is parsed with bounded Zig slices; no connection to VirtIO-FS is made.
+Only absent kernel endpoints with owned stale socket files are removed. Stable
+lease files, registered data and processes are never removed by doctor.

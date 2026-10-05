@@ -17,13 +17,13 @@
 | #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | In Progress | 10% | 75% | Default precedence, transport bypass, supervisor shutdown/wait delivered; batch grammar and complete state observations remain |
 | #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 70% | Real-QCOW2 offline and eight rename crash boundaries pass; broader matrix remains |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
-| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 65% | Rename/remove/retention and durable root-relative inode journals implemented; diagnostic repair and hardening remain |
-| #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 50% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
+| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 90% | Rename/remove/retention and durable root-relative inode journals implemented; diagnostic repair and hardening remain |
+| #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 70% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
 | #9 | Implement independent clone and local export/import | In Progress | 10% | 70% | Standalone clone, manifest SHA-256 export/import and no-mount restore pass; expanded rejection matrix remains |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
 | #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `74.5%`
+**Total Feature Completion**: `79.0%`
 
 ## Commit History & Progress Log
 
@@ -167,6 +167,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +20% to TODO #8 (+2.0% overall); total 58.0%.
   - **Summary**: Integrate set/reset/dry-run with validated complete INI replacement, registry and device leases, no-follow metadata, orphan descriptor audit and exclusive qemu-img check. Protected unrelated proc descriptors are covered by the independent image writer lock. Isolated CLI tests cover all-or-nothing validation, duplicate keys, dry-run, reset, mount preservation and open orphan disk refusal.
 
-- **Commit `:/add recoverable offline device storage transactions`**: `feat(device): add recoverable offline device storage transactions`
+- **Commit `f4676bc`**: `feat(device): add recoverable offline device storage transactions`
   - **Task Impact**: +30% to TODO #3 (+3.0% overall), +20% to #5 (+2.0%), +45% to #7 (+4.5%), +70% to #9 (+7.0%); total 74.5%.
   - **Summary**: Add bounded Zig storage/manifest/journal parsing, root-relative moves, inode-checked rollback and committed cleanup, transactional init/rename/remove/retention, flattened clone and SHA-256 local backup/import. Require explicit blank disks without a discovered base, preserve rename CID/default/config and clone mounts, disable import mounts. Real QCOW2 workflows and eight deterministic rename crash/recovery boundaries pass. Full make test passes; expanded safety/diagnostics/stress/VM/coverage gates remain.
+
+- **Commit `:/journal metadata edits and expose safe device diagnostics`**: `feat(device): journal metadata edits and expose safe device diagnostics`
+  - **Task Impact**: +25% to TODO #7 (+2.5% overall), +20% to #8 (+2.0%); total 79.0%.
+  - **Summary**: Extend prepared/committed transactions to config/default replacements; restrict recovery references to declared names and staging namespaces; refuse empty/unsafe registrations and symlink backups. Add bounded inspection of backing chains, ownership, CID conflicts and executable availability. Runtime repair audits processes, leases, image writers and the kernel UNIX table without connecting to vhost-user endpoints. Expanded CLI integration remains a separate commit.
