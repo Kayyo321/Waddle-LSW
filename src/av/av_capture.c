@@ -1,8 +1,16 @@
 #define COBJMACROS
 #include "av_capture.h"
+#include <stdio.h>
 #include <string.h>
+#include <wchar.h>
 
 void av_capture_free(av_capture_t *capture) {
+    if (capture->wgc && capture->wgc_destroy)
+        capture->wgc_destroy(&capture->wgc);
+    if (capture->wgc_library) {
+        FreeLibrary(capture->wgc_library);
+        capture->wgc_library = NULL;
+    }
     if (capture->staging)
         ID3D11Texture2D_Release(capture->staging);
     if (capture->duplication)
@@ -13,7 +21,59 @@ void av_capture_free(av_capture_t *capture) {
         ID3D11Device_Release(capture->device);
     memset(capture, 0, sizeof(*capture));
 }
+static HRESULT try_wgc(av_capture_t *capture, HWND window) {
+    WCHAR path[32768];
+    DWORD count = GetModuleFileNameW(NULL, path, 32768);
+    if (!count || count >= 32768)
+        return E_FAIL;
+    WCHAR *slash = wcsrchr(path, L'\\');
+    if (!slash)
+        return E_FAIL;
+    const WCHAR DllName[] = L"av_wgc.dll";
+    size_t offset = (size_t)(slash + 1 - path);
+    if (offset + sizeof(DllName) / sizeof(WCHAR) > 32768)
+        return E_FAIL;
+    memcpy(path + offset, DllName, sizeof(DllName));
+    capture->wgc_library =
+        LoadLibraryExW(path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!capture->wgc_library)
+        return HRESULT_FROM_WIN32(GetLastError());
+    av_wgc_create_t create = (av_wgc_create_t)GetProcAddress(capture->wgc_library, "av_wgc_create");
+    capture->wgc_read = (av_wgc_read_t)GetProcAddress(capture->wgc_library, "av_wgc_read");
+    capture->wgc_destroy = (av_wgc_destroy_t)GetProcAddress(capture->wgc_library, "av_wgc_destroy");
+    if (!create || !capture->wgc_read || !capture->wgc_destroy)
+        return E_NOINTERFACE;
+    return create(window, &capture->wgc);
+}
+/** @brief Borrowed producer-owned publication arguments, valid during DLL callback. */
+typedef struct wgc_publication_t {
+    av_capture_t *capture;
+    window_slot_header_t *slot;
+    uint8_t *pixels;
+    size_t capacity;
+} wgc_publication_t;
+static HRESULT wgc_publish(const uint8_t *source, size_t length, uint32_t source_stride,
+                           uint32_t width, uint32_t height, uint64_t timestamp_ns, void *context) {
+    wgc_publication_t *publication = context;
+    if (av_copy_bgra(source, length, source_stride, publication->pixels, publication->capacity,
+                     width, height) != 0)
+        return E_INVALIDARG;
+    window_slot_header_t *slot = publication->slot;
+    slot->width = width;
+    slot->height = height;
+    slot->stride = width * 4;
+    slot->format = AvPixelFormat;
+    slot->frame_sequence = ++publication->capture->sequence;
+    slot->timestamp_ns = timestamp_ns;
+    return av_video_publish(slot) ? S_OK : E_FAIL;
+}
 HRESULT av_capture_init(av_capture_t *capture, HWND window) {
+    HRESULT wgc_result = try_wgc(capture, window);
+    if (SUCCEEDED(wgc_result))
+        return wgc_result;
+    av_capture_free(capture);
+    fprintf(stderr, "AV capture: WGC unavailable (0x%08lx); visible-window DXGI fallback\n",
+            (unsigned long)wgc_result);
     IDXGIFactory1 *factory = NULL;
     IDXGIAdapter1 *adapter = NULL;
     IDXGIOutput *output = NULL;
@@ -67,6 +127,15 @@ cleanup:
 }
 HRESULT av_capture_frame(av_capture_t *capture, const RECT *bounds, window_slot_header_t *slot,
                          uint8_t *pixels, size_t capacity) {
+    if (capture->wgc) {
+        if (!av_video_begin_write(slot))
+            return S_FALSE;
+        wgc_publication_t publication = {capture, slot, pixels, capacity};
+        HRESULT result = capture->wgc_read(capture->wgc, wgc_publish, &publication);
+        if (result != S_OK)
+            av_video_cancel(slot);
+        return result;
+    }
     IDXGIResource *resource = NULL;
     ID3D11Texture2D *texture = NULL;
     DXGI_OUTDUPL_FRAME_INFO info;

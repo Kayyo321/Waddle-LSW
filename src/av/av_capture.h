@@ -2,6 +2,7 @@
 #define WaddleAvCaptureH
 #define COBJMACROS
 #include "av_transport.h"
+#include "av_wgc.h"
 #include <d3d11.h>
 #include <dxgi1_2.h>
 /** @brief Caller-owned DXGI capture resources, one capture thread per instance.
@@ -9,8 +10,12 @@
  * every reference. No heap allocations owned by caller, no shared access.
  */
 typedef struct av_capture_t {
-    ID3D11Device *device;                /**< Owned device until free. */
-    ID3D11DeviceContext *context;        /**< Owned immediate context until free. */
+    HMODULE wgc_library;          /**< Owned sibling WGC DLL, retained until opaque destroy. */
+    av_wgc_t *wgc;                /**< Owned per-window WinRT context. */
+    av_wgc_read_t wgc_read;       /**< Borrowed DLL procedure while library is loaded. */
+    av_wgc_destroy_t wgc_destroy; /**< Borrowed DLL destructor procedure. */
+    ID3D11Device *device;         /**< Owned device until free. */
+    ID3D11DeviceContext *context; /**< Owned immediate context until free. */
     IDXGIOutputDuplication *duplication; /**< Owned duplication until free. */
     ID3D11Texture2D *staging;            /**< Owned reusable CPU-readable staging texture. */
     RECT desktop_bounds;                 /**< Output's guest virtual-screen bounds. */

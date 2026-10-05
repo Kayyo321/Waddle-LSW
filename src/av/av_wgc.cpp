@@ -17,7 +17,7 @@ using capture_pool_t = winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame
 using capture_session_t = winrt::Windows::Graphics::Capture::GraphicsCaptureSession;
 using direct_device_t = winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 using pixel_format_t = winrt::Windows::Graphics::DirectX::DirectXPixelFormat;
-using size_t_t = winrt::Windows::Graphics::SizeInt32;
+using capture_size_t = winrt::Windows::Graphics::SizeInt32;
 /** @brief RAII instance; one creating thread owns every device/frame/session.
  * COM smart pointers own references; destructor closes WinRT objects before
  * releasing device and balancing its RoInitialize call. No raw new/delete.
@@ -31,7 +31,7 @@ struct av_wgc_t {
     capture_item_t item{nullptr};
     capture_pool_t pool{nullptr};
     capture_session_t session{nullptr};
-    size_t_t size{};
+    capture_size_t size{};
     ~av_wgc_t() noexcept {
         try { if (session) session.Close(); } catch (...) {}
         try { if (pool) pool.Close(); } catch (...) {}

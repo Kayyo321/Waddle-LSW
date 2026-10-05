@@ -136,7 +136,7 @@ static void capture_windows(guest_av_t *session) {
         guest_window_t *window = &session->windows[pool];
         if (!window->active || (window->geometry.flags & AvWindowMinimized))
             continue;
-        if (!window->capture.device) {
+        if (!window->capture.device && !window->capture.wgc) {
             HRESULT result =
                 av_capture_init(&window->capture, (HWND)(uintptr_t)window->geometry.window_id);
             if (FAILED(result)) {
@@ -163,6 +163,8 @@ static void capture_windows(guest_av_t *session) {
                 frame.type = MsgFrameReady;
                 frame.buffer_index = index;
                 frame.sequence = slot->frame_sequence;
+                frame.width = slot->width;
+                frame.height = slot->height;
                 frame.damage_width = slot->width;
                 frame.damage_height = slot->height;
                 int queued = av_peer_send(&session->peer, &frame);
