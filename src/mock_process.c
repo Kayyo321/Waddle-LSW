@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <pty.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -146,7 +147,23 @@ int mock_spawn(mock_process_t *p, uint8_t *body, size_t length) {
             close_pair(err);
         }
 
-        if (chdir(cwd) != 0) {
+        char resolved_cwd[1024];
+        const char *target_cwd = cwd;
+        if (cwd[0] != '\0' && cwd[1] == ':' && (cwd[2] == '\\' || cwd[2] == '/')) {
+            const char *env_root = getenv("WADDLE_MOCK_ROOT");
+            const char *sub = (cwd[2] != '\0') ? (cwd + 3) : "";
+            if (env_root != NULL && env_root[0] != '\0') {
+                snprintf(resolved_cwd, sizeof(resolved_cwd), "%s/%s", env_root, sub);
+            } else {
+                snprintf(resolved_cwd, sizeof(resolved_cwd), "/%s", sub);
+            }
+            for (char *c = resolved_cwd; *c; c++) {
+                if (*c == '\\') *c = '/';
+            }
+            target_cwd = resolved_cwd;
+        }
+
+        if (chdir(target_cwd) != 0) {
             child_error(error_pipe[1], errno);
         }
 

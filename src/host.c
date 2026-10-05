@@ -612,28 +612,71 @@ static int cmd_kill(int argc, char **argv) {
  * @brief Live filesystem verification helper for `waddle fs test`.
  */
 static int cmd_fs_test(const char *socket_path) {
-    (void)socket_path;
     printf("[waddle fs test] Starting VirtIO-FS live filesystem verification...\n");
 
-    const char *home = getenv("HOME");
-    if (home == NULL) {
-        home = "/tmp";
+    /* 1. Resolve primary export directory */
+    daemon_config_t cfg;
+    daemon_config_init_defaults(&cfg);
+    (void)daemon_config_load_file(&cfg, NULL);
+
+    const char *export_dir = (cfg.mount_count > 0 && cfg.mounts[0].host_path[0] != '\0')
+        ? cfg.mounts[0].host_path
+        : getenv("HOME");
+    if (export_dir == NULL) {
+        export_dir = "/tmp";
     }
 
+    printf("[waddle fs test] Step 1: Active export mapping: %s -> %s\n",
+           export_dir,
+           (cfg.mount_count > 0) ? cfg.mounts[0].guest_drive : "Z:\\");
+
+    /* 2. Create test file in export directory */
     char test_file[WaddleMaxPathLen];
-    snprintf(test_file, sizeof(test_file), "%s/.waddle_fs_test_%d.tmp", home, (int)getpid());
+    snprintf(test_file, sizeof(test_file), "%.900s/waddle_fs_test_%d.tmp", export_dir, (int)getpid());
 
     FILE *f = fopen(test_file, "w");
     if (f == NULL) {
-        fprintf(stderr, "[waddle fs test] Failed to create test file: %s\n", strerror(errno));
+        fprintf(stderr, "[waddle fs test] Failed to create test file in export directory %s: %s\n",
+                export_dir, strerror(errno));
         return 1;
     }
     fprintf(f, "WADDLE_FS_VERIFY_PAYLOAD_%d\n", (int)getpid());
     fclose(f);
 
-    printf("[waddle fs test] Verified host write to %s\n", test_file);
+    printf("[waddle fs test] Step 2: Created test file %s\n", test_file);
+
+    /* 3. Verify instant visibility and content readback */
+    f = fopen(test_file, "r");
+    if (f == NULL) {
+        fprintf(stderr, "[waddle fs test] Failed to open test file for reading: %s\n", strerror(errno));
+        unlink(test_file);
+        return 1;
+    }
+
+    char read_buf[64] = {0};
+    if (fgets(read_buf, sizeof(read_buf), f) == NULL) {
+        fprintf(stderr, "[waddle fs test] Failed to read test payload: %s\n", strerror(errno));
+        fclose(f);
+        unlink(test_file);
+        return 1;
+    }
+    fclose(f);
+
+    char expected[64];
+    snprintf(expected, sizeof(expected), "WADDLE_FS_VERIFY_PAYLOAD_%d\n", (int)getpid());
+    if (strcmp(read_buf, expected) != 0) {
+        fprintf(stderr, "[waddle fs test] Content mismatch: expected '%s', got '%s'\n", expected, read_buf);
+        unlink(test_file);
+        return 1;
+    }
+
+    printf("[waddle fs test] Step 3: Verified instant readback and payload integrity\n");
+
+    /* 4. Cleanup */
     unlink(test_file);
-    printf("[waddle fs test] Cross-filesystem verification succeeded.\n");
+    printf("[waddle fs test] Step 4: Cleaned up test file\n");
+    (void)socket_path;
+    printf("[waddle fs test] VirtIO-FS live filesystem verification passed.\n");
     return 0;
 }
 

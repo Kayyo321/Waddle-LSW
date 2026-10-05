@@ -83,6 +83,7 @@ test: all build/unit build/integration build/test_daemon_protocol build/test_dae
 	./build/test_daemon_client
 	./build/test_auto_terminal
 	sh tests/path_options.sh
+	sh tests/demo_fs.sh
 
 test-sanitizers: clean
 	$(MAKE) test \
