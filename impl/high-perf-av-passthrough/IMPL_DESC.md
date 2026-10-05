@@ -311,3 +311,15 @@ QEMU uses q35, read-only code pflash and the persistent writable variables pflas
 The managed Windows disk is never altered by provisioning. Setup cannot convert
 an installed BIOS Windows image to UEFI automatically; the caller selects firmware
 matching that image. Secure Boot key enrollment is outside automated mutation.
+
+
+### KVM/VSOCK host access provisioning
+
+Setup probes read/write access to both `/dev/kvm` and `/dev/vhost-vsock` before
+starting the managed VM. If either fails, the bundled privileged helper validates
+`SUDO_UID` through the bounded decimal codec, checks non-symlink character devices
+and adds a specific-user read/write ACL through absolute `/usr/bin/setfacl`.
+Existing ownership/group permissions remain intact; no world-write mode is added.
+Missing kernel devices or the base `acl` package produce explicit errors. Setup
+rechecks actual access afterward. ACLs may be reset by reboot/hotplug policy, so
+idempotent setup reprobes them; no session starts by assuming a previous grant.

@@ -63,6 +63,38 @@ static int module_build(char *module_path, size_t capacity) {
         return -1;
     return 0;
 }
+static int prepare_host(void) {
+    if (geteuid() != 0) {
+        fputs("AV setup: host device access setup requires administrator privileges\n", stderr);
+        return 1;
+    }
+    const char *owner_text = getenv("SUDO_UID");
+    uint32_t owner = 0;
+    if (!owner_text || av_number_parse(owner_text, strlen(owner_text), &owner) != 0) {
+        fputs("AV setup: invoke host access setup through sudo as the intended user\n", stderr);
+        return 1;
+    }
+    char grant[48];
+    snprintf(grant, sizeof(grant), "u:%u:rw", owner);
+    const char *paths[] = {"/dev/kvm", "/dev/vhost-vsock"};
+    for (unsigned i = 0; i < 2; ++i) {
+        int fd = open(paths[i], O_RDWR | O_CLOEXEC | O_NOFOLLOW);
+        struct stat status;
+        if (fd < 0 || fstat(fd, &status) != 0 || !S_ISCHR(status.st_mode)) {
+            if (fd >= 0) close(fd);
+            fprintf(stderr, "AV setup: required kernel device %s is unavailable\n", paths[i]);
+            return 1;
+        }
+        close(fd);
+        char *arguments[] = {"/usr/bin/setfacl", "-m", grant, (char *)paths[i], NULL};
+        if (run(arguments) != 0) {
+            fputs("AV setup: install the base-system acl package and retry host access setup\n", stderr);
+            return 1;
+        }
+    }
+    puts("AV setup: KVM and VSOCK access granted to invoking user");
+    return 0;
+}
 /** @brief Build or load the bundled pinned kernel module for this running kernel.
  * @param[in] argc CRT argument count. @param[in] argv Borrowed NUL-terminated args.
  * @return 0 help/success, 2 invalid command, 1 build/load/capability failure.
@@ -71,11 +103,13 @@ static int module_build(char *module_path, size_t capacity) {
  */
 int main(int argc, char **argv) {
     if (argc != 2 || !strcmp(argv[1], "--help")) {
-        puts("waddle-av-setup --build-module | --load-module\n"
+        puts("waddle-av-setup --build-module | --load-module | --prepare-host\n"
              "Builds pinned KVMFR against the running kernel; load requires administrator "
              "privileges.");
         return argc == 2 ? 0 : 2;
     }
+    if (!strcmp(argv[1], "--prepare-host"))
+        return prepare_host();
     int load = !strcmp(argv[1], "--load-module");
     if (!load && strcmp(argv[1], "--build-module"))
         return 2;

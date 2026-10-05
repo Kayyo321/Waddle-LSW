@@ -114,6 +114,14 @@ static int cmd_av(int argc, char **argv) {
         snprintf(agent, sizeof(agent), "%s/av/waddle-guest-av.exe", state) >= (int)sizeof(agent))
         return 1;
     if (command.kind == AvSetup) {
+        if (access("/dev/kvm", R_OK | W_OK) != 0 || access("/dev/vhost-vsock", R_OK | W_OK) != 0) {
+            char helper[PATH_MAX];
+            if (av_bundle_path("waddle-av-setup", helper, sizeof(helper)) != 0) return 1;
+            char *arguments[] = {"sudo", "--", helper, "--prepare-host", NULL};
+            int result = av_run_helper(arguments);
+            if (result != 0 || access("/dev/kvm", R_OK | W_OK) != 0 ||
+                access("/dev/vhost-vsock", R_OK | W_OK) != 0) return 1;
+        }
         char memory[WaddleMaxPathLen], setting[WaddleMaxPathLen + 16], gpu[32];
         if (command.kvmfr) {
             char helper[PATH_MAX];

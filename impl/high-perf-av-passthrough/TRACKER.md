@@ -44,13 +44,13 @@
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
 | **10** | **All-in-one AV environment provisioning** | | | | |
-| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 65% | Add native pnputil deployment with bounded paths, child timeout/reaping and explicit reboot status. Probe actual OS build, mapped IVSHMEM ABI, D3D11/WARP, sibling WinRT adapter and enabled audio endpoint before declaring readiness; cross-linked guest and invalid-path fixture pass. |
+| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 75% | Probe both host kernel devices and grant the validated invoking user a specific read/write ACL through the privileged bundled helper when needed. Preserve ownership/groups, use no world-write permissions and recheck actual access before boot; native access provisioning passes. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 75% | Launch the deployed target-PID agent through the existing bridge, await its exact bounded readiness line with a deadline and start native playback for the configured CID/mapping. Cancel and reap only owned execution children on failure or playback exit; preserve the user game process. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `87.55%`
+**Total Feature Completion**: `88.05%`
 
 ## Commit History & Progress Log
 
@@ -250,6 +250,10 @@
   - **Task Impact**: +5% to #10.3 (+0.25% overall)
   - **Summary**: Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass.
 
-- **Commit `HEAD`**: `fix(av): publish firmware stores atomically and preserve existing state`
+- **Commit `66be4f1ed6d6`**: `fix(av): publish firmware stores atomically and preserve existing state`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Create persistent OVMF variables through flushed staging files and non-overwriting publication, preventing partial stores after interrupted setup. Verify stable inode reuse and symlink preservation, and specify UEFI boot, package and lifecycle boundaries in the implementation description.
+
+- **Commit `HEAD`**: `feat(av): provision KVM and VSOCK access before managed startup`
+  - **Task Impact**: +10% to #10.1 (+0.50% overall)
+  - **Summary**: Probe both host kernel devices and grant the validated invoking user a specific read/write ACL through the privileged bundled helper when needed. Preserve ownership/groups, use no world-write permissions and recheck actual access before boot; native access provisioning passes.
