@@ -496,3 +496,11 @@ the invoking user's access. The helper preserves existing device ownership and
 mode policy instead of chowning or resetting a live mapping; the exclusive daemon
 lease still prevents concurrent profile initialization. Missing acl tools or invalid
 invoking-user identity fail setup. No live module is unloaded for this operation.
+
+Host xdg_toplevel configure callbacks preserve guest dimensions when the
+compositor sends zero size (client chooses size), but still forward changed
+fullscreen state. Positive pairs within the protocol's bounds replace dimensions.
+Unchanged geometry/state emits no request; callback delivery failures become
+session errors. Isolated callback tests verify zero-size enter/exit fullscreen,
+unchanged states, valid resize, invalid size and failed delivery; the separate
+native platform suite validates real compositor attachment/release.

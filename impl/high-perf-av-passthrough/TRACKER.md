@@ -32,7 +32,7 @@
 | #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | Done | 4% | 100% | Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes. |
 | #5.2 | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | Done | 4.8% | 100% | Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes. |
 | #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | Done | 4% | 100% | Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes. |
-| #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 4% | 95% | Apply host fullscreen requests through the target monitor, retain original styles and bounds, restore them when leaving fullscreen or stopping tracking, and account for invisible DWM borders when resizing the captured window. Native tests verify style restoration through both transitions and teardown alongside real WinRT/audio capture. |
+| #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 4% | 98% | Treat xdg-shell zero dimensions as client-selected size while still forwarding changed fullscreen state. Preserve guest dimensions, avoid unchanged echoes, and propagate delivery failures. Add isolated callback regressions for zero-size entry/exit, valid resizing, invalid sizes and callback failure; the extended AV sanitizers and real Wayland/PipeWire platform gate pass. |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
 | #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | Done | 4% | 100% | Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes. |
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 4.8% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
@@ -49,7 +49,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 96% | Make all assemble a coherent AV archive with host binaries, matching guest execution/capture binaries, native WinRT DLL, signed driver package, patched kernel-module sources, source archives, licenses and SHA-256 manifest. Keep CLI regressions independent of native Windows SDK packaging. Test every missing required input and verify failed assembly preserves the prior complete archive; same-run CI assembly remains pending. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `96.85%`
+**Total Feature Completion**: `96.97%`
 
 ## Commit History & Progress Log
 
@@ -379,6 +379,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Receive the native Windows SDK artifact in the Linux AV job, assemble and extract-check the single complete distribution, and upload it only after the existing gates pass. Add parser and package failure regressions to the AV suite. Move Linux runner allocation to ubuntu-22.04 while preserving the Debian trixie verification environment after hosted ubuntu-24.04 jobs repeatedly failed before acquiring a runner.
 
-- **Commit `HEAD`**: `fix(av): provision invoking-user access when reusing live KVMFR`
+- **Commit `468bb43da1f9`**: `fix(av): provision invoking-user access when reusing live KVMFR`
   - **Task Impact**: +2% to #10.2 (+0.10% overall)
   - **Summary**: Validate SUDO_UID and grant a specific-user ACL even when the privileged helper can already open a compatible live KVMFR device. Preserve its ownership and active mappings, fail on an invalid identity or grant failure, and add syscall-isolated tests that never mutate kernel devices. The extended AV sanitizer suite and real compatible-device reuse pass.
+
+- **Commit `HEAD`**: `fix(av): forward fullscreen state from zero-size Wayland configure`
+  - **Task Impact**: +3% to #5.4 (+0.12% overall)
+  - **Summary**: Treat xdg-shell zero dimensions as client-selected size while still forwarding changed fullscreen state. Preserve guest dimensions, avoid unchanged echoes, and propagate delivery failures. Add isolated callback regressions for zero-size entry/exit, valid resizing, invalid sizes and callback failure; the extended AV sanitizers and real Wayland/PipeWire platform gate pass.

@@ -124,11 +124,13 @@ static void toplevel_configure(void *context, struct xdg_toplevel *toplevel, int
     if (width > 0 && height > 0 && width <= 8192 && height <= 8192) {
         request.width = (uint32_t)width;
         request.height = (uint32_t)height;
-        if (request.width != window->geometry.width || request.height != window->geometry.height ||
-            request.flags != window->geometry.flags) {
-            if (window->client->request(&request, window->client->request_context) != 0)
-                window->client->delivery_failed = 1;
-        }
+    }
+    /* Zero dimensions mean the client chooses its size; state transitions still
+     * apply. Preserve guest dimensions while forwarding fullscreen changes. */
+    if (request.width != window->geometry.width || request.height != window->geometry.height ||
+        request.flags != window->geometry.flags) {
+        if (window->client->request(&request, window->client->request_context) != 0)
+            window->client->delivery_failed = 1;
     }
 }
 static void toplevel_close(void *context, struct xdg_toplevel *toplevel) {
