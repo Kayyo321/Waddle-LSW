@@ -6,6 +6,9 @@
 typedef struct tracked_window_t {
     HWND handle;
     av_message_t geometry;
+    LONG_PTR saved_style;
+    RECT saved_bounds;
+    int fullscreen_override;
 } tracked_window_t;
 static tracked_window_t windows[AvMaxWindows];
 static HWINEVENTHOOK object_hook;
@@ -14,6 +17,18 @@ static DWORD target_process;
 static av_window_notify_t notification;
 static void *notification_context;
 static int delivery_failed;
+static void restore_window(tracked_window_t *window) {
+    DWORD process_id = 0;
+    GetWindowThreadProcessId(window->handle, &process_id);
+    if (window->fullscreen_override && process_id == target_process && IsWindow(window->handle)) {
+        SetWindowLongPtrW(window->handle, GWL_STYLE, window->saved_style);
+        SetWindowPos(window->handle, NULL, window->saved_bounds.left, window->saved_bounds.top,
+            window->saved_bounds.right - window->saved_bounds.left,
+            window->saved_bounds.bottom - window->saved_bounds.top,
+            SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    window->fullscreen_override = 0;
+}
 
 static int find_window(HWND handle) {
     for (unsigned i = 0; i < AvMaxWindows; ++i)
@@ -75,6 +90,7 @@ static void remove_window(int index) {
     av_message_t message = {.type = MsgWindowDestroy,
                             .window_id = (uint64_t)(uintptr_t)windows[index].handle};
     emit(&message);
+    restore_window(&windows[index]);
     memset(&windows[index], 0, sizeof(windows[index]));
 }
 static void update_window(HWND handle) {
@@ -162,6 +178,7 @@ void av_windows_stop(void) {
         UnhookWinEvent(minimize_hook);
     object_hook = NULL;
     minimize_hook = NULL;
+    for (unsigned i = 0; i < AvMaxWindows; ++i) restore_window(&windows[i]);
     memset(windows, 0, sizeof(windows));
     notification = NULL;
     notification_context = NULL;
@@ -171,7 +188,8 @@ int av_windows_apply(const av_message_t *message) {
     HWND handle = (HWND)(uintptr_t)message->window_id;
     DWORD process_id = 0;
     GetWindowThreadProcessId(handle, &process_id);
-    if (find_window(handle) < 0 || process_id != target_process || !IsWindow(handle))
+    int index = find_window(handle);
+    if (index < 0 || process_id != target_process || !IsWindow(handle))
         return -1;
     if (message->type == MsgWindowClose)
         return PostMessageW(handle, WM_CLOSE, 0, 0) ? 0 : -1;
@@ -184,10 +202,42 @@ int av_windows_apply(const av_message_t *message) {
     }
     if (IsIconic(handle))
         ShowWindow(handle, SW_RESTORE);
+    tracked_window_t *window = &windows[index];
+    if (message->flags & AvWindowFullscreen) {
+        MONITORINFO monitor = {.cbSize = sizeof(monitor)};
+        if (!GetMonitorInfoW(MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST), &monitor))
+            return -1;
+        if (!window->fullscreen_override && !(window->geometry.flags & AvWindowFullscreen)) {
+            if (!GetWindowRect(handle, &window->saved_bounds)) return -1;
+            window->saved_style = GetWindowLongPtrW(handle, GWL_STYLE);
+            SetLastError(0);
+            if (!SetWindowLongPtrW(handle, GWL_STYLE, window->saved_style & ~WS_OVERLAPPEDWINDOW) && GetLastError())
+                return -1;
+            window->fullscreen_override = 1;
+        }
+        return SetWindowPos(handle, NULL, monitor.rcMonitor.left, monitor.rcMonitor.top,
+            monitor.rcMonitor.right - monitor.rcMonitor.left,
+            monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+            SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE) ? 0 : -1;
+    }
+    if (window->fullscreen_override) {
+        SetLastError(0);
+        if (!SetWindowLongPtrW(handle, GWL_STYLE, window->saved_style) && GetLastError()) return -1;
+        if (!SetWindowPos(handle, NULL, window->saved_bounds.left, window->saved_bounds.top,
+            window->saved_bounds.right - window->saved_bounds.left,
+            window->saved_bounds.bottom - window->saved_bounds.top,
+            SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE)) return -1;
+        window->fullscreen_override = 0;
+    }
     RECT rect;
     if (!GetWindowRect(handle, &rect))
         return -1;
-    return SetWindowPos(handle, NULL, 0, 0, (int)message->width, (int)message->height,
+    RECT visible = rect;
+    DwmGetWindowAttribute(handle, DWMWA_EXTENDED_FRAME_BOUNDS, &visible, sizeof(visible));
+    int width = (int)message->width + (rect.right - rect.left) - (visible.right - visible.left);
+    int height = (int)message->height + (rect.bottom - rect.top) - (visible.bottom - visible.top);
+    if (width <= 0 || height <= 0 || width > 16384 || height > 16384) return -1;
+    return SetWindowPos(handle, NULL, 0, 0, width, height,
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)
                ? 0
                : -1;

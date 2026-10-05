@@ -130,6 +130,15 @@ int main(int argc, char **argv) {
     assert(av_windows_apply(&resize) == 0);
     pump();
     assert(geometries >= 1);
+    LONG_PTR original_style = GetWindowLongPtrW(target, GWL_STYLE);
+    resize.flags = AvWindowFullscreen;
+    assert(av_windows_apply(&resize) == 0);
+    pump();
+    assert(!(GetWindowLongPtrW(target, GWL_STYLE) & WS_OVERLAPPEDWINDOW));
+    resize.flags = 0;
+    assert(av_windows_apply(&resize) == 0);
+    pump();
+    assert(GetWindowLongPtrW(target, GWL_STYLE) == original_style);
     av_message_t stale = {.type = MsgWindowClose, .window_id = 1};
     assert(av_windows_apply(&stale) == -1);
     av_wasapi_t audio = {0};
@@ -168,6 +177,11 @@ int main(int argc, char **argv) {
         native_audio_test();
     }
     FreeLibrary(library);
+    resize.flags = AvWindowFullscreen;
+    assert(av_windows_apply(&resize) == 0);
+    av_windows_stop();
+    assert(GetWindowLongPtrW(target, GWL_STYLE) == original_style);
+    assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
     assert(DestroyWindow(target)); pump();
     assert(destroys == 1);
     av_windows_stop(); av_windows_stop();

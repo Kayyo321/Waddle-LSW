@@ -18,7 +18,7 @@
 | **2**   | **Guest Window Tracking Agent** | | | | |
 | #2.1 | Register `SetWinEventHook` for CREATE, DESTROY, LOCATIONCHANGE, MINIMIZE | Done | 4% | 100% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
 | #2.2 | Implement HWND filtering (exclude non-app windows, tooltips, hidden elements) | Done | 3.2% | 100% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
-| #2.3 | Extract bounds via `DwmGetWindowAttribute` and send `MsgWindowGeometry` | In Progress | 3.2% | 95% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
+| #2.3 | Extract bounds via `DwmGetWindowAttribute` and send `MsgWindowGeometry` | Done | 3.2% | 100% | Apply host fullscreen requests through the target monitor, retain original styles and bounds, restore them when leaving fullscreen or stopping tracking, and account for invisible DWM borders when resizing the captured window. Native tests verify style restoration through both transitions and teardown alongside real WinRT/audio capture. |
 | **3**   | **Video Capture & Transport (Guest)** | | | | |
 | #3.1 | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | In Progress | 4% | 95% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
 | #3.2 | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | In Progress | 6.4% | 90% | Load the sibling first-party WGC DLL through restricted absolute search, retain its opaque contexts and publish mapped rows through Zig bounded copies. Report visible-window DXGI fallback explicitly and send actual captured dimensions after resize; complete C guest cross-link passes. |
@@ -32,7 +32,7 @@
 | #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | In Progress | 4% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | #5.2 | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | In Progress | 4.8% | 90% | Exercise the program-provisioned driver with a two-GiB capacity probe, CLOEXEC DMA-BUF export, bidirectional mmap aliasing, bounds rejection and refusal to reset a consumed slot. Verify teardown preserves the device; the explicit native gate passes on this host. |
 | #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 4% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
-| #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 4% | 70% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
+| #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 4% | 95% | Apply host fullscreen requests through the target monitor, retain original styles and bounds, restore them when leaving fullscreen or stopping tracking, and account for invisible DWM borders when resizing the captured window. Native tests verify style restoration through both transitions and teardown alongside real WinRT/audio capture. |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
 | #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 4% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 4.8% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 95% | Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `92.07%`
+**Total Feature Completion**: `93.23%`
 
 ## Commit History & Progress Log
 
@@ -315,6 +315,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Reject nonexistent or exited target PIDs before listener readiness and retain a non-inheritable process synchronization handle until teardown. End normally when that process exits, avoiding silent audio-only success for a stale PID; close the handle on mapping, Winsock and session failure paths.
 
-- **Commit `HEAD`**: `fix(av): verify readiness after already-current driver installation`
+- **Commit `b831b529b965`**: `fix(av): verify readiness after already-current driver installation`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Treat PnPUtil ERROR_NO_MORE_ITEMS as an idempotent installation outcome, then require the actual mapped-driver and endpoint capability probe. Native repeat setup reports an already-present signed package and current device driver rather than a deployment failure.
+
+- **Commit `HEAD`**: `feat(av): round-trip fullscreen state and visible window dimensions`
+  - **Task Impact**: +5% to #2.3 (+0.16% overall); +25% to #5.4 (+1.00% overall)
+  - **Summary**: Apply host fullscreen requests through the target monitor, retain original styles and bounds, restore them when leaving fullscreen or stopping tracking, and account for invisible DWM borders when resizing the captured window. Native tests verify style restoration through both transitions and teardown alongside real WinRT/audio capture.
