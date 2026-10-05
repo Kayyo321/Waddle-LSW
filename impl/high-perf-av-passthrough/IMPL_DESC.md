@@ -479,3 +479,13 @@ are built for the actual target kernel, not the CI kernel. Packaging uses a priv
 staging directory removed on all exits; a failed package preserves the previous
 archive, and only a successful complete archive atomically replaces the output.
 The bundled source is git HEAD; rebuild packaging after committing source edits.
+
+The native Linux verification job depends on the same workflow's Windows job,
+downloads its artifact by name without cross-run selection, assembles the archive
+and checks every checksum after extraction before uploading `waddle-av-complete`.
+Both Linux workflows run the same Debian trixie container on ubuntu-22.04 runners.
+This runner choice avoids observed ubuntu-24.04 acquisition failures (the failed
+check's annotation reports no hosted runner acquired, with no test steps executed);
+it does not change compiler, sanitizer, coverage thresholds or container packages.
+The AV suite also exercises the bounded managed-command parser and packaging
+failure tests. Final-commit checks remain required regardless of older green runs.

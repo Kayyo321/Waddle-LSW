@@ -8,7 +8,8 @@ permissions:
   contents: read
 jobs:
   transport:
-    runs-on: ubuntu-24.04
+    needs: windows
+    runs-on: ubuntu-22.04
     container:
       image: debian:trixie-slim
       options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
@@ -16,7 +17,7 @@ jobs:
       - name: Install base build and platform development packages
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential pkg-config libwayland-dev wayland-protocols libpipewire-0.3-dev clang-19 llvm-19 kcov python3 ovmf
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential pkg-config libwayland-dev wayland-protocols libpipewire-0.3-dev clang-19 llvm-19 kcov python3 ovmf 7zip
           git config --global --add safe.directory '*'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -36,6 +37,24 @@ jobs:
         run: make av-coverage
       - name: Build and link Linux platform clients and Windows guest
         run: make av build/av_windows_test.exe
+      - name: Receive the matching native SDK-built guest bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-av-agent
+          path: build
+      - name: Assemble and verify the complete distributable bundle
+        run: |
+          make av-distribution
+          python3 tests/av/package.py
+          mkdir -p "$RUNNER_TEMP/av_bundle"
+          tar -xzf build/waddle_av.tar.gz -C "$RUNNER_TEMP/av_bundle"
+          cd "$RUNNER_TEMP/av_bundle/waddle_av"
+          sha256sum --check sha256sums.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: waddle-av-complete
+          path: build/waddle_av.tar.gz
+          if-no-files-found: error
   windows:
     runs-on: windows-2022
     steps:

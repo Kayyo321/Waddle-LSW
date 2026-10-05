@@ -19,6 +19,8 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 
 .PHONY: av-test av-sanitizers av-windows
 av-test: build/av_transport_test build/av_environment_test build/av_peer_test
+	python3 tests/av/package.py
+	$(ZIG) test src/cli/av_commands.zig -Isrc/cli
 	./build/av_environment_test
 	./build/av_peer_test
 	./build/av_transport_test

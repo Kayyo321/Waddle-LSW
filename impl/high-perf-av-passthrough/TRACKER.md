@@ -371,6 +371,10 @@
   - **Task Impact**: +3% to #10.1 (+0.15% overall)
   - **Summary**: Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte.
 
-- **Commit `HEAD`**: `feat(av): assemble a complete host and guest distribution archive`
+- **Commit `ad51961595e9`**: `feat(av): assemble a complete host and guest distribution archive`
   - **Task Impact**: +1% to #10.4 (+0.03% overall)
   - **Summary**: Make all assemble a coherent AV archive with host binaries, matching guest execution/capture binaries, native WinRT DLL, signed driver package, patched kernel-module sources, source archives, licenses and SHA-256 manifest. Keep CLI regressions independent of native Windows SDK packaging. Test every missing required input and verify failed assembly preserves the prior complete archive; same-run CI assembly remains pending.
+
+- **Commit `HEAD`**: `chore(av): publish a verified same-run distribution from native CI`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Receive the native Windows SDK artifact in the Linux AV job, assemble and extract-check the single complete distribution, and upload it only after the existing gates pass. Add parser and package failure regressions to the AV suite. Move Linux runner allocation to ubuntu-22.04 while preserving the Debian trixie verification environment after hosted ubuntu-24.04 jobs repeatedly failed before acquiring a runner.
