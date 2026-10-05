@@ -23,7 +23,7 @@
 | #3.1 | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | In Progress | 4% | 60% | Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate. |
 | #3.2 | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | In Progress | 6.4% | 85% | Enumerate the selected device, own its handle and cached mapping, validate fixed-layout metadata before exposure, and unmap/close after workers join. Keep SDK ABI headers isolated to one boundary translation unit; Windows compilation passes. |
 | #3.3 | Implement `memory_order_acquire/release` fences for buffer synchronization | Done | 4% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
-| #3.4 | Dispatch `MsgFrameReady` over VSOCK with buffer index and damage rects | In Progress | 2.4% | 35% | Add isolated AV control IDs and a fixed little-endian Zig codec validating titles, geometry, state flags and damage rectangles before exposing data to C. |
+| #3.4 | Dispatch `MsgFrameReady` over VSOCK with buffer index and damage rects | In Progress | 2.4% | 60% | Add an allocation-free single-event-thread peer queue handling partial sends and receives, bounded lifecycle bursts and codec rejection. Verify byte-fragmented socket frames, full queues, corruption and peer EOF through a real socketpair fixture. |
 | **4**   | **Audio Capture & Transport (Guest)** | | | | |
 | #4.1 | Initialize WASAPI `AUDIOCLIENT_ACTIVATION_PARAMS` for per-process loopback | In Progress | 4% | 70% | Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes. |
 | #4.2 | Implement lockless SPSC write loop from WASAPI buffers to IVSHMEM audio ring | Done | 6.4% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `71.03%`
+**Total Feature Completion**: `71.63%`
 
 ## Commit History & Progress Log
 
@@ -154,6 +154,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Use a single validated PCM capacity and bounded slices for all copies, reject KVMFR mappings with another ABI and remove only the inode created by this environment instance. Preserve live resources on duplicate prepare and report nonregular backing files accurately.
 
-- **Commit `HEAD`**: `feat(av): bundle pinned KVMFR module build and load helper`
+- **Commit `a7a39506d002`**: `feat(av): bundle pinned KVMFR module build and load helper`
   - **Task Impact**: +30% to #10.2 (+1.50% overall)
   - **Summary**: Build the pinned driver through an argv-only child process against running-kernel headers, expose an administrator-only load step and preserve incompatible live devices. Bundle source/license from the submodule in ignored build outputs; build succeeds on the current kernel.
+
+- **Commit `HEAD`**: `feat(av): stream bounded control frames with nonblocking backpressure`
+  - **Task Impact**: +25% to #3.4 (+0.60% overall)
+  - **Summary**: Add an allocation-free single-event-thread peer queue handling partial sends and receives, bounded lifecycle bursts and codec rejection. Verify byte-fragmented socket frames, full queues, corruption and peer EOF through a real socketpair fixture.

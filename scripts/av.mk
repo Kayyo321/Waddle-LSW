@@ -18,8 +18,9 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -pthread -o $@
 
 .PHONY: av-test av-sanitizers av-windows
-av-test: build/av_transport_test build/av_environment_test
+av-test: build/av_transport_test build/av_environment_test build/av_peer_test
 	./build/av_environment_test
+	./build/av_peer_test
 	./build/av_transport_test
 	$(ZIG) test src/av/av_audio.zig
 	$(ZIG) test src/av/av_codec.zig -Iinclude
@@ -55,3 +56,6 @@ build/waddle-av-setup: src/av/av_setup.c src/av/av_layout.h build/vendor/av/modu
 .PHONY: av-module
 av-module: build/waddle-av-setup
 	./build/waddle-av-setup --build-module
+
+build/av_peer_test: tests/av/peer.c src/av/av_peer.c build/av_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -o $@
