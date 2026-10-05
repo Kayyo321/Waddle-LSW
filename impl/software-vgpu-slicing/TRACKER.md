@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 91% | Lifecycle codec/state machine verified locally; native execution, stream adapter and cross-VM test pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 92% | Lifecycle codec/state machine verified on Linux/Windows; native stream adapter and cross-VM test pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `18.65%`
+**Total Feature Completion**: `18.8%`
 
 ## Commit History & Progress Log
 
@@ -180,7 +180,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     branches 93.75%; Zig allocator tests leak no bytes. Native Windows execution
     is not yet credited; OS stream adapters and actual cross-VM validation remain.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify public Venus receiver bootstrap`
+- **Commit `1921804`**: `docs(vgpu): specify public Venus receiver bootstrap`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Defined singleton/context/blob ownership, private bounded commands,
     callback lifetime, CPU completion versus GPU completion, exact reply mapping,
@@ -188,3 +188,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: A local exploratory public-ABI probe executed real Venus
     EnumerateInstanceVersion and received VK_SUCCESS after timeline-zero retirement.
     The probe is not production implementation or GPU-rendering evidence.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): record native lifecycle verification`
+  - **Task Impact**: +1% to TODO: #1 (+0.15% overall).
+  - **Summary**: Credited the lifecycle state-machine native Windows execution
+    milestone after both Linux and Windows jobs completed successfully.
+  - **Verification**: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37389407524
+    passed at `0474547`. Stream integration (3%) and real cross-VM signed-driver
+    validation (5%) remain pending; no GPU execution credit is assigned.
