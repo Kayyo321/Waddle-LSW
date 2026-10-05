@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Antigravity Agent, Koyak
 - **Time Started**: 2026-10-04T19:40:00Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-04T21:00:00Z
 - **Feature Branch**: feature/subsystem-daemon-manager
 - **Target Merge Branch**: origin
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -18,11 +18,19 @@
 | #5      | Implement Waddle background daemon supervisor core (`src/daemon_main.c`, `src/daemon_state.c`) with non-blocking event loop and readiness prober | Done | 15% | 100% | Lockfile, state machine, child reaper & multiplexed server verified |
 | #6      | Implement host CLI lifecycle commands (`--start`, `--stop`, `--restart`, `--status`, `--kill`, `--logs`, `fs`) and daemon client library in C | Done | 15% | 100% | Client IPC, socket resolution, lifecycle commands, and unit tests verified |
 | #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Done | 10% | 100% | Interactive launcher, auto-start, export mount auto-loading & root fallback verified |
-| #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Pending | 10% | 0% | Primary goal: live dir/mkdir test verifying instant folder appearance on Linux desktop |
+| #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Done | 10% | 100% | Live VirtIO-FS directory/file creation and instant host visibility verified |
 
-**Total Feature Completion**: `90.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
+
+- **Commit `e6e4695`**: `feat(test): implement mock subsystem acceptance harness and VirtIO-FS verification`
+  - **Task Impact**: +100% to TODO: #8 (+10.0% overall feature completion)
+  - **Summary**: Implemented live VirtIO-FS acceptance test (tests/demo_fs.sh) validating instant host appearance of guest directory/file and bidirectional sync; enhanced cmd_fs_test in src/host.c and mock_process.c.
+
+- **Commit `432b404`**: `docs(tracker): record completion of Task #7 in tracker`
+  - **Task Impact**: Synchronize tracker metadata with Task #7 commit.
+  - **Summary**: Updated progress log and tracker table for zero-flag interactive launcher and auto-start.
 
 - **Commit `c805c19`**: `feat(cli): implement zero-flag default interactive launcher and auto-start`
   - **Task Impact**: +100% to TODO: #7 (+10.0% overall feature completion)
