@@ -4,7 +4,7 @@ AvZigSources = src/av/av_audio.zig src/av/av_codec.zig src/av/av_layout.zig
 AvHostFlags = -Isrc/av -Ibuild $(shell pkg-config --cflags wayland-client libpipewire-0.3)
 AvDriverFlags = -Isubmodules/looking_glass/module
 AvWindowsFlags = $(WindowsFlags) -Isrc/av -Isubmodules/looking_glass/vendor/ivshmem
-AvWindowsSources = src/av/av_guids.c src/av/av_windows.c src/av/av_capture.c src/av/av_wasapi.c src/av/av_ivshmem.c src/av/av_video.c
+AvWindowsSources = src/av/av_guest_setup.c src/av/av_guids.c src/av/av_windows.c src/av/av_capture.c src/av/av_wasapi.c src/av/av_ivshmem.c src/av/av_video.c
 AvWindowsLibraries = -luser32 -ldwmapi -ld3d11 -ldxgi -lmmdevapi -lavrt -lole32 -luuid -lsetupapi
 
 build/av_audio.o: src/av/av_audio.zig | build

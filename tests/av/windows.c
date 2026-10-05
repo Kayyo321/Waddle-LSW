@@ -1,6 +1,7 @@
 /** @file windows.c @brief Native window lifecycle and C/WinRT boundary fixture. */
 #include <windows.h>
 #include "av_windows.h"
+#include "av_guest_setup.h"
 #include "av_wasapi.h"
 #include "av_wgc.h"
 #include "av_layout.h"
@@ -29,6 +30,9 @@ static void pump(void) {
     } while (GetTickCount64() < deadline);
 }
 int main(void) {
+    assert(av_guest_setup("relative") == 2);
+    assert(av_guest_setup("C:\\bad\"path") == 2);
+
     assert(SUCCEEDED(CoInitializeEx(NULL, COINIT_MULTITHREADED)));
     WNDCLASSW window_class = {.lpfnWndProc = DefWindowProcW, .hInstance = GetModuleHandleW(NULL),
                               .lpszClassName = L"WaddleAvFixture"};

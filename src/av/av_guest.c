@@ -2,6 +2,7 @@
 #include <winsock2.h>
 
 #include "av_capture.h"
+#include "av_guest_setup.h"
 #include "av_ivshmem.h"
 #include "av_layout.h"
 #include "av_peer.h"
@@ -258,9 +259,13 @@ static int vsock_family(void) {
  */
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--help")) {
-        puts("waddle-guest-av.exe PROCESS_ID");
+        puts("waddle-guest-av.exe PROCESS_ID | --probe | --setup DRIVER_DIRECTORY");
         return 0;
     }
+    if (argc == 2 && !strcmp(argv[1], "--probe"))
+        return av_guest_probe();
+    if (argc == 3 && !strcmp(argv[1], "--setup"))
+        return av_guest_setup(argv[2]);
     uint32_t process_id = 0;
     if (argc != 2 || av_number_parse(argv[1], strlen(argv[1]), &process_id) != 0)
         return 2;
