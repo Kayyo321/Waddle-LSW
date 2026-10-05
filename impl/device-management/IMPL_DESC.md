@@ -467,3 +467,21 @@ recorded, tracker at 100% with Time Ended, all branch commits attributed, and CI
 passing at the PR head. `README.md` remains untouched. Specification review is
 complete when the CLI contracts, safety/recovery model, tests, and tracker tasks
 are synchronized; it does not complete the implementation.
+
+
+### Implementation evidence: registry safety foundation
+
+`daemon_device_get_config_dir`, `daemon_device_get_state_dir`, and
+`daemon_device_get_socket_path` now compute paths only. Discovery traverses
+absolute directory components with `openat(O_DIRECTORY|O_NOFOLLOW)` and reads
+regular, user-owned metadata without contacting supervisors. `config_valid`
+is an additional host-only `int` in `device_info_t`: one means the bounded INI
+parsed successfully with explicit valid CID and disk fields; zero leaves the
+profile registered but unhealthy. `is_running` is reserved until authoritative
+status is collected by the command layer. Invalid profiles block allocation.
+Readers take the existing stable registry lock when present; before the first
+mutation a missing lock is allowed, as no publication has occurred. Writers
+create the lock with 0600 permissions and retain its fd through CID allocation
+and creation. These functions must not nest POSIX lock acquisition in one process.
+Creation currently fails utility errors without a placeholder. This foundation
+does not yet implement the durable journal/publication sequence specified above.

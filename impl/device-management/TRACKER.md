@@ -13,17 +13,17 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1 | Fix VirtIO-FS readiness probing and stabilize startup | Done | 10% | 100% | Existing stat-based fix; final VM acceptance remains #10 |
 | #2 | Implement registry discovery, storage paths, and device metadata | Done | 10% | 100% | Existing baseline; hardening/recovery tracked in #7 |
-| #3 | Implement init and aliases with valid QCOW2 creation | In Progress | 10% | 50% | CLI exists; transactional publication and removal of placeholder-disk fallback remain |
+| #3 | Implement init and aliases with valid QCOW2 creation | In Progress | 10% | 60% | Placeholder fallback removed; transactional publication and expanded grammar remain |
 | #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | In Progress | 10% | 50% | CLI wired; default precedence, explicit batch behavior, authoritative status, and supervisor exit remain |
-| #5 | Unit/integration tests for init and multi-device baseline | Pending | 10% | 0% | Existing device smoke tests do not establish complete CLI/error-path verification |
+| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 20% | Registry failure/concurrency/CID/name/path tests pass; full CLI acceptance remains |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
-| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | Pending | 10% | 0% | Explicit operands, quiescence, safe traversal, default updates, and interruption recovery |
+| #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 15% | Pure discovery, no-follow traversal, stable lock and overflow checks delivered; mutations/recovery remain |
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | Pending | 10% | 0% | Typed validation, preservation of exports, no live changes, bounded repairs |
 | #9 | Implement independent clone and local export/import | Pending | 10% | 0% | Flattened disks, validated portable manifest/hash, fresh CIDs, import without host exports |
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
 | #11 | Verify specification revision and PR CI at final head | Done | 5% | 100% | Linux and Windows checks passed at af829ec; final tracker-only audit recheck required before handoff |
 
-**Total Feature Completion**: `45.0%`
+**Total Feature Completion**: `49.5%`
 
 ## Commit History & Progress Log
 
@@ -115,6 +115,11 @@ is awarded merely for a documentation or CI maintenance commit.
   Feature Time Ended remains TBD and PR remains draft pending #3–#5 and #7–#10.
 
 
-- **Commit `:/harden device INI parsing against partial updates and truncation`**: `fix(device): harden device INI parsing against partial updates and truncation`
+- **Commit `8d08646`**: `fix(device): harden device INI parsing against partial updates and truncation`
   - **Task Impact**: +0% to TODO #7 pending complete registry/recovery acceptance.
   - **Summary**: Parse into a private candidate, reject oversized/non-UTF-8/NUL metadata and truncated shell/disk fields, reject reserved CID UINT32_MAX, support full-width ports and explicitly empty exports. Regression tests verify byte-identical rollback and allocator cleanup.
+
+
+- **Commit `:/serialize device creation and make registry discovery read only`**: `fix(device): serialize device creation and make registry discovery read only`
+  - **Task Impact**: +10% to TODO #3 (+1.0% overall), +20% to TODO #5 (+2.0% overall), +15% to TODO #7 (+1.5% overall); total 49.5%.
+  - **Summary**: Resolve paths without filesystem writes, reject relative roots and symlink directory components, sort and bound discovery, mark malformed/symlink profiles unhealthy, serialize CID reservation with a stable private lock, handle CID overflow, and fail qemu-img errors without publishing placeholder disks. Native tests and isolated ASan/LSan/UBSan pass, including simultaneous writers and capacity overflow. Journal recovery, atomic publication and offline mutations remain incomplete.

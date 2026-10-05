@@ -14,10 +14,15 @@
 extern "C" {
 #endif
 
+/** @brief Name buffer capacity including NUL; ASCII identifiers only. */
 #define WaddleMaxDeviceNameLen 64
+/** @brief Registry capacity; excess entries return ENOSPC. */
 #define MaxDeviceCount 32
+/** @brief Initial RAM in MiB. */
 #define DefaultDeviceMemoryMb 4096
+/** @brief Initial processor count. */
 #define DefaultDeviceVcpus 4
+/** @brief First non-reserved guest CID. */
 #define BaseVsockCid 3
 
 /**
@@ -33,7 +38,10 @@ typedef struct device_info_t {
     uint32_t vsock_port;
     uint32_t memory_mb;
     uint32_t vcpus;
+    /** @brief Reserved observation; discovery never contacts a live supervisor. */
     int is_running;
+    /** @brief One only after bounded INI validation with explicit CID and disk. */
+    int config_valid;
 } device_info_t;
 
 /**
@@ -53,7 +61,7 @@ typedef struct device_list_t {
 int daemon_device_validate_name(const char *name);
 
 /**
- * @brief Resolves the configuration directory for Waddle devices.
+ * @brief Purely resolves the configuration directory for Waddle devices.
  *
  * Typically resolves to ~/.config/waddle/devices or $XDG_CONFIG_HOME/waddle/devices.
  *
@@ -64,7 +72,7 @@ int daemon_device_validate_name(const char *name);
 int daemon_device_get_config_dir(char *out_path, size_t path_cap);
 
 /**
- * @brief Resolves the persistent state directory for a specific device.
+ * @brief Purely resolves the persistent state directory for a specific device.
  *
  * Typically resolves to ~/.local/state/waddle/devices/<device-name>.
  *
@@ -76,7 +84,7 @@ int daemon_device_get_config_dir(char *out_path, size_t path_cap);
 int daemon_device_get_state_dir(const char *device_name, char *out_path, size_t path_cap);
 
 /**
- * @brief Resolves the UNIX domain socket path for a device daemon supervisor.
+ * @brief Purely resolves the UNIX domain socket path for a device daemon supervisor.
  *
  * If device_name is NULL or empty, resolves to the default socket path.
  *
@@ -96,6 +104,17 @@ int daemon_device_get_socket_path(const char *device_name, char *out_path, size_
 int daemon_device_list(device_list_t *list);
 
 /**
+ * @brief Acquire the stable registry inode's advisory whole-file lock.
+ * @param[in] exclusive Nonzero obtains a write lock, creates private registry root/lock;
+ * zero obtains a read lock without writes and returns ENOENT before first mutation.
+ * @return Owned CLOEXEC fd, or -1 with errno (including EINTR). Caller closes to release.
+ * @note Process-local POSIX locks: callers must not nest acquisition or close another
+ * fd for this inode while holding the lock. Child utilities cannot inherit it.
+ * No heap allocation; lock order is registry then per-device lease.
+ */
+int daemon_device_registry_lock(int exclusive);
+
+/**
  * @brief Finds a specific device by name in the registry.
  *
  * @param[in]  name     Device identifier to look up.
@@ -108,7 +127,8 @@ int daemon_device_find(const char *name, device_info_t *out_info);
  * @brief Determines the next non-colliding VSOCK CID across existing devices.
  *
  * @param[in] list Active device list.
- * @return Next available CID (>= BaseVsockCid).
+ * @return Next available CID (3..UINT32_MAX-1), or 0 with EINVAL/ENOSPC.
+ * @note Borrowed list; no allocation or mutation; thread-safe. Caller holds registry write lock for reservation.
  */
 uint32_t daemon_device_allocate_cid(const device_list_t *list);
 
