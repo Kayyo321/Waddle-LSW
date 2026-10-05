@@ -307,6 +307,10 @@
   - **Task Impact**: +15% to #4.1 (+0.60% overall); +10% to #4.3 (+0.32% overall)
   - **Summary**: Require an occlusion frame timestamp newer than the actual window transition. Activate native per-process WASAPI loopback, render bounded PCM through a Windows endpoint, drain the real stream into the shared-format ring, verify nonzero samples and release all handles; the provisioned guest captures 71520 frames in the native gate.
 
-- **Commit `HEAD`**: `fix(av): cancel and reap managed playback on parent signals`
+- **Commit `84a47a96daa1`**: `fix(av): cancel and reap managed playback on parent signals`
   - **Task Impact**: +5% to #10.4 (+0.15% overall)
   - **Summary**: Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application.
+
+- **Commit `HEAD`**: `fix(av): retain and monitor the actual game process lifetime`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Reject nonexistent or exited target PIDs before listener readiness and retain a non-inheritable process synchronization handle until teardown. End normally when that process exits, avoiding silent audio-only success for a stale PID; close the handle on mapping, Winsock and session failure paths.

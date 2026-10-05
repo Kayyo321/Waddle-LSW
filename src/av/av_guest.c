@@ -181,7 +181,7 @@ static void capture_windows(guest_av_t *session) {
         }
     }
 }
-static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id) {
+static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, HANDLE target) {
     guest_av_t session = {
         .peer = {.socket = (uintptr_t)socket}, .memory = memory, .process_id = process_id};
     HRESULT com = CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -205,6 +205,10 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id) 
     DWORD task_index = 0;
     HANDLE priority = AvSetMmThreadCharacteristicsW(L"Games", &task_index);
     while (!session.failed && WaitForSingleObject(session.stop, 0) != WAIT_OBJECT_0) {
+        if (WaitForSingleObject(target, 0) == WAIT_OBJECT_0) {
+            result = 0;
+            break;
+        }
         MSG message;
         while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT) {
@@ -269,14 +273,24 @@ int main(int argc, char **argv) {
     uint32_t process_id = 0;
     if (argc != 2 || av_number_parse(argv[1], strlen(argv[1]), &process_id) != 0)
         return 2;
+    /* Retain a synchronization handle to the actual process object: a numeric
+     * PID alone can disappear or be reused while the session is running. */
+    HANDLE target = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    if (!target || WaitForSingleObject(target, 0) != WAIT_TIMEOUT) {
+        if (target) CloseHandle(target);
+        fputs("AV guest: target process is absent, inaccessible or already exited\n", stderr);
+        return 2;
+    }
     av_ivshmem_t memory = {0};
     WSADATA startup;
     if (av_ivshmem_init(&memory, 0) != 0) {
         fputs("AV guest: IVSHMEM driver/mapping not ready\n", stderr);
+        CloseHandle(target);
         return 1;
     }
     if (WSAStartup(MAKEWORD(2, 2), &startup) != 0) {
         av_ivshmem_free(&memory);
+        CloseHandle(target);
         return 1;
     }
     int family = vsock_family(), result = 1;
@@ -298,7 +312,7 @@ int main(int argc, char **argv) {
     u_long nonblocking = 1;
     if (ioctlsocket(peer, FIONBIO, &nonblocking) != 0)
         goto cleanup;
-    result = guest_session(peer, &memory, process_id) == 0 ? 0 : 1;
+    result = guest_session(peer, &memory, process_id, target) == 0 ? 0 : 1;
 cleanup:
     if (peer != INVALID_SOCKET)
         closesocket(peer);
@@ -306,5 +320,6 @@ cleanup:
         closesocket(listener);
     WSACleanup();
     av_ivshmem_free(&memory);
+    CloseHandle(target);
     return result;
 }
