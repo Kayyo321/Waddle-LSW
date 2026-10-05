@@ -192,7 +192,8 @@ shared-memory transport, lifecycle, resource-ID validation, cancellation,
 presentation integration, and per-guest policy. This library alone does not
 implement a Windows Vulkan ICD or WDDM device. Build with `venus=true`, no EGL/GLX
 platform selection, and no dynamic configure-time downloads; Vulkan/epoxy/DRM
-headers and libraries come from base system packages. Keep compiled outputs in
+headers and libraries come from base system packages, as do Meson/Ninja and
+Python/PyYAML (upstream format-table generation). Keep compiled outputs in
 ignored `build/vendor/virglrenderer`, never inside the dependency checkout.
 
 Dependency milestone #6: immutable pin/license/architecture audit 40%; offline

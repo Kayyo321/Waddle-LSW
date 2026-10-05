@@ -34,3 +34,14 @@ build/vgpu_ring_test.exe: tests/vgpu/ring.c src/vgpu/venus_ring.c include/waddle
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/ring.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o $@
 
 vgpu-windows: build/vgpu_ring_test.exe
+
+# Renderer is pinned as a submodule; configure must not fetch anything.
+VgpuRendererDirectory = submodules/virglrenderer
+VgpuRendererBuildDirectory = build/vendor/virglrenderer
+
+$(VgpuRendererBuildDirectory)/build.ninja: $(VgpuRendererDirectory)/meson.build $(VgpuRendererDirectory)/meson_options.txt | build
+	meson setup $(VgpuRendererBuildDirectory) $(VgpuRendererDirectory) --wrap-mode=nodownload -Dvenus=true -Dplatforms=[] -Dtests=false -Dtracing=none
+
+.PHONY: vgpu-renderer
+vgpu-renderer: $(VgpuRendererBuildDirectory)/build.ninja
+	meson compile -C $(VgpuRendererBuildDirectory) -j 4

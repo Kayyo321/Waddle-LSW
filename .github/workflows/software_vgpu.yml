@@ -17,7 +17,7 @@ jobs:
       - name: Install transport build and coverage tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential clang-19 llvm-19 python3
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential clang-19 llvm-19 python3 python3-yaml meson ninja-build pkg-config libvulkan-dev libepoxy-dev libdrm-dev
           git config --global --add safe.directory '*'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -29,6 +29,10 @@ jobs:
           echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
           tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
+      - name: Check out immutable Venus renderer dependency
+        run: git submodule update --init --depth 1 submodules/virglrenderer
+      - name: Build Venus renderer without dependency downloads
+        run: make vgpu-renderer
       - name: Verify ring safety and independent-process ordering
         run: make vgpu-test vgpu-sanitizers
       - name: Gate production C and Zig transport coverage
