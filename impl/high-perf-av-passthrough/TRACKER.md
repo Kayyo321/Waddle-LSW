@@ -47,10 +47,10 @@
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 85% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 90% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 95% | Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `91.92%`
+**Total Feature Completion**: `92.07%`
 
 ## Commit History & Progress Log
 
@@ -303,6 +303,10 @@
   - **Task Impact**: +10% to #2.1 (+0.40% overall); +10% to #2.2 (+0.32% overall); +5% to #2.3 (+0.16% overall); +10% to #3.1 (+0.40% overall); +10% to #10.1 (+0.50% overall); +15% to #10.4 (+0.45% overall)
   - **Summary**: Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI.
 
-- **Commit `HEAD`**: `test(av): capture real process audio and reject stale occlusion frames`
+- **Commit `a4b7de1231d2`**: `test(av): capture real process audio and reject stale occlusion frames`
   - **Task Impact**: +15% to #4.1 (+0.60% overall); +10% to #4.3 (+0.32% overall)
   - **Summary**: Require an occlusion frame timestamp newer than the actual window transition. Activate native per-process WASAPI loopback, render bounded PCM through a Windows endpoint, drain the real stream into the shared-format ring, verify nonzero samples and release all handles; the provisioned guest captures 71520 frames in the native gate.
+
+- **Commit `HEAD`**: `fix(av): cancel and reap managed playback on parent signals`
+  - **Task Impact**: +5% to #10.4 (+0.15% overall)
+  - **Summary**: Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application.

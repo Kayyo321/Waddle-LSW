@@ -1,5 +1,12 @@
 /* Managed AV orchestration shares the existing resolver and execution bridge.
  * This include is private to host.c; no symbols or ownership cross its TU. */
+static volatile sig_atomic_t av_session_active;
+static volatile sig_atomic_t av_interrupted;
+static volatile sig_atomic_t av_playback_child;
+static void av_session_signal(int signal_number) {
+    av_interrupted = signal_number;
+    if (av_playback_child > 0) kill((pid_t)av_playback_child, SIGTERM);
+}
 static int av_child_wait(pid_t child) {
     int status = 0;
     pid_t waited;
@@ -9,8 +16,17 @@ static int av_child_wait(pid_t child) {
 static int av_run_helper(char *const arguments[]) {
     pid_t child = fork();
     if (child < 0) return 1;
-    if (!child) { execvp(arguments[0], arguments); _exit(127); }
-    return av_child_wait(child);
+    if (!child) {
+        if (av_session_active) { signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL); }
+        execvp(arguments[0], arguments); _exit(127);
+    }
+    if (av_session_active) {
+        av_playback_child = child;
+        if (av_interrupted) kill(child, SIGTERM);
+    }
+    int result = av_child_wait(child);
+    av_playback_child = 0;
+    return result;
 }
 static int av_bundle_path(const char *relative, char *output, size_t capacity) {
     char executable[PATH_MAX];
@@ -180,9 +196,25 @@ static int cmd_av(int argc, char **argv) {
         return 1;
     int output[2];
     if (pipe2(output, O_CLOEXEC) != 0) return 1;
+    struct sigaction handler = {.sa_handler = av_session_signal}, old_interrupt, old_terminate;
+    sigemptyset(&handler.sa_mask);
+    if (sigaction(SIGINT, &handler, &old_interrupt) != 0) {
+        close(output[0]); close(output[1]); return 1;
+    }
+    if (sigaction(SIGTERM, &handler, &old_terminate) != 0) {
+        sigaction(SIGINT, &old_interrupt, NULL);
+        close(output[0]); close(output[1]); return 1;
+    }
+    av_interrupted = 0;
+    av_session_active = 1;
     pid_t guest = fork();
-    if (guest < 0) { close(output[0]); close(output[1]); return 1; }
+    if (guest < 0) {
+        av_session_active = 0;
+        sigaction(SIGINT, &old_interrupt, NULL); sigaction(SIGTERM, &old_terminate, NULL);
+        close(output[0]); close(output[1]); return 1;
+    }
     if (!guest) {
+        signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL);
         close(output[0]);
         if (dup2(output[1], STDOUT_FILENO) < 0) _exit(1);
         close(output[1]);
@@ -197,7 +229,7 @@ static int cmd_av(int argc, char **argv) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     int64_t deadline = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 + 90000;
-    while (!ready) {
+    while (!ready && !av_interrupted) {
         clock_gettime(CLOCK_MONOTONIC, &now);
         int64_t remaining = deadline - ((int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000);
         if (remaining <= 0) break;
@@ -217,7 +249,7 @@ static int cmd_av(int argc, char **argv) {
         else break;
     }
     int result = 1;
-    if (ready) {
+    if (ready && !av_interrupted) {
         char *arguments[] = {host_path, cid, config.av_shm_path, NULL};
         result = av_run_helper(arguments);
     } else fputs("waddle av: guest did not announce listener readiness before deadline\n", stderr);
@@ -228,12 +260,17 @@ static int cmd_av(int argc, char **argv) {
     int status = 0;
     for (unsigned attempt = 0; attempt < 50; ++attempt) {
         pid_t waited = waitpid(guest, &status, WNOHANG);
-        if (waited == guest) return result;
-        if (waited < 0 && errno != EINTR) return 1;
+        if (waited == guest) goto complete;
+        if (waited < 0 && errno != EINTR) { result = 1; goto complete; }
         struct timespec pause = {0, 20000000};
         nanosleep(&pause, NULL);
     }
     kill(guest, SIGKILL);
     av_child_wait(guest);
+complete:
+    av_session_active = 0;
+    if (av_interrupted) result = 128 + av_interrupted;
+    sigaction(SIGINT, &old_interrupt, NULL);
+    sigaction(SIGTERM, &old_terminate, NULL);
     return result;
 }
