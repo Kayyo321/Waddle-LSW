@@ -19,8 +19,8 @@ expect_status 2 --path-map 'relative=X:\export' -- /bin/true
 expect_status 2 --path-map '/a=X:relative' -- /bin/true
 expect_status 2 --path-map '/a=X:\bad?' -- /bin/true
 expect_status 2 --path-map '/a=X:\one' --path-map '/a/=Y:\two' -- /bin/true
-expect_status 125 --path-map '/export=X:\shared' --cwd /unmapped -- command
-expect_status 125 --path-map '/export=X:\shared' --cwd relative -- /unmapped
+expect_status 125 --socket-path /no/such/waddle/socket --path-map '/export=X:\shared' --cwd /unmapped -- command
+expect_status 125 --socket-path /no/such/waddle/socket --path-map '/export=X:\shared' --cwd relative -- /unmapped
 expect_status 125 --socket-path /no/such/waddle/socket --path-map '/export=X:\shared' --cwd /export -- /export/program
 set --
 i=0

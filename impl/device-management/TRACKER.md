@@ -14,8 +14,8 @@
 | #1 | Fix VirtIO-FS readiness probing and stabilize startup | Done | 10% | 100% | Existing stat-based fix; final VM acceptance remains #10 |
 | #2 | Implement registry discovery, storage paths, and device metadata | Done | 10% | 100% | Existing baseline; hardening/recovery tracked in #7 |
 | #3 | Implement init and aliases with valid QCOW2 creation | In Progress | 10% | 60% | Placeholder fallback removed; transactional publication and expanded grammar remain |
-| #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | In Progress | 10% | 50% | CLI wired; default precedence, explicit batch behavior, authoritative status, and supervisor exit remain |
-| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 20% | Registry failure/concurrency/CID/name/path tests pass; full CLI acceptance remains |
+| #4 | Resolve targets across lifecycle, shell, exec, logs, and filesystem commands | In Progress | 10% | 65% | Default precedence and explicit transport bypass delivered; batch grammar, authoritative state and supervisor exit remain |
+| #5 | Unit/integration tests for init and multi-device baseline | In Progress | 10% | 40% | Registry plus isolated JSON/default/inspection/raw-transport acceptance pass; complete creation/lifecycle matrix remains |
 | #6 | Specify complete device-management CLI and completion criteria | Done | 10% | 100% | IMPL_DESC.md defines command grammar, output, ownership, transactions, and acceptance |
 | #7 | Implement offline rename/remove/retention, leases, journal recovery, and registry hardening | In Progress | 10% | 15% | Pure discovery, no-follow traversal, stable lock and overflow checks delivered; mutations/recovery remain |
 | #8 | Implement show/default/config get/set/reset and diagnostic doctor | In Progress | 10% | 30% | list/show/default/config get and JSON available; backing/ownership inspection, setters/reset/doctor remain |
@@ -23,7 +23,7 @@
 | #10 | Complete expanded unit/integration/stress, sanitizer, coverage, and real Windows VM gates | Pending | 5% | 0% | Planned cases in IMPL_DESC.md section 7; no unsupported completion claim |
 | #11 | Verify specification revision and PR CI at final head | In Progress | 5% | 50% | Prior head green; new implementation commits require final-head CI rerun |
 
-**Total Feature Completion**: `50.0%`
+**Total Feature Completion**: `53.5%`
 
 ## Commit History & Progress Log
 
@@ -134,6 +134,11 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Summary**: Add bounded no-follow default reads and serialized selection/clear using private staging files, file fsync, atomic replacement and directory fsync. Invalid targets preserve the selected default; tests cover idempotent clear, missing selection, invalid targets and small output buffers. Single-file replacement is atomic; multi-operation journal recovery remains pending.
 
 
-- **Commit `:/add device inspection commands and versioned JSON results`**: `feat(cli): add device inspection commands and versioned JSON results`
+- **Commit `e04c35a`**: `feat(cli): add device inspection commands and versioned JSON results`
   - **Task Impact**: +30% to TODO #8 (+3.0% overall); -50% to TODO #11 (-2.5% overall) because final-head verification must rerun; total 50.0%.
   - **Summary**: Add bounded Zig CLI parsing, typed list/show/default/config-get commands, duplicate/contextual option checks, filters and proper JSON escaping in the v1 envelope. Query the daemon status protocol without spawning a supervisor; unreachable existing sockets remain unknown. Arena ownership and testing allocator tests cover result storage. Complete backing-chain/ownership observation and config/doctor mutations remain pending.
+
+
+- **Commit `:/apply explicit default and sole device target precedence`**: `feat(cli): apply explicit default and sole device target precedence`
+  - **Task Impact**: +15% to TODO #4 (+1.5% overall), +20% to TODO #5 (+2.0% overall); total 53.5%.
+  - **Summary**: Resolve explicit/default/sole selection consistently, reject missing and dangling defaults and ambiguous registries, remove implicit multi-device status, preserve selected config for shell execution, and bypass inference for explicit raw transports. Add isolated JSON and target-selection acceptance, and give path-option tests an explicit mock transport. Filesystem mock demonstration now initializes an isolated profile/export instead of relying on developer devices. Broad suite detected the outdated implicit-global expectation in path tests; this commit updates that fixture contract.

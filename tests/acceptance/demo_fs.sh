@@ -1,6 +1,6 @@
 #!/bin/sh
 # Acceptance Test: VirtIO-FS Live Cross-Filesystem Integration Demonstration
-# Verifies instant bidirectional filesystem synchronization between host and guest.
+# Verifies mock export path mapping; real VirtIO-FS acceptance is a separate VM gate.
 
 set -eu
 
@@ -21,6 +21,11 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 export WADDLE_MOCK_ROOT="$host_shared"
+export HOME="$host_shared"
+export XDG_CONFIG_HOME="$demo_dir/config"
+export XDG_STATE_HOME="$demo_dir/state"
+export XDG_RUNTIME_DIR="$demo_dir/runtime"
+./build/waddle init fs-demo >/dev/null
 
 # Step 1: Run built-in CLI filesystem self-test
 echo "[Step 1] Running 'waddle fs test'..."
