@@ -5,7 +5,7 @@
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
 - **Target Merge Branch**: origin
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Review
 
 ## Tasks & Progress
 
@@ -43,13 +43,21 @@
 | **8**   | **External Dependencies & Submodules** | | | | |
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 | **10**  | **All-in-one AV environment provisioning** | | | | |
-| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
+| #10.1 | Probe host/guest prerequisites and report actionable capability failures | Done | 5% | 100% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | Done | 5% | 100% | With the isolated acceptance VM stopped, rerun the actual two-GiB capacity, bounded seeking, CLOEXEC DMA-BUF aliasing, out-of-range and exclusive-ownership gate under ASan/LSan/UBSan. Build the pinned patched module for the running kernel and preserve the existing compatible live module. Complete KVMFR distribution/access provisioning while leaving safe GPU preparation and video/audio performance tasks incomplete. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | Done | 5% | 100% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 98% | Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Done | 3% | 100% | Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete. |
 | #10.5 | Complete host-clock latency/fidelity diagnostic framework | Done | 2% | 100% | Host RGB24 challenges, bounded Zig center-pixel verification and Wayland processing acknowledgements; 16 visible plus 16 occluded samples. Framework complete per revised request; physical 144-Hz, scanout and audio latency acceptance remain unmeasured. |
 
-**Total Feature Completion**: `99.84%`
+**Total Feature Completion**: `100.00%`
+
+## Completion scope
+
+The revised request completes safe GPU rejection, the manual VDD prerequisite,
+reboot handling and diagnostic framework. Task completion below means implementation
+completion. Hardware performance, full guest RTT, native VDD mode verification,
+real reboot-required installation and final remote CI remain external acceptance
+gates; this branch is in Review and does not claim those gates passed.
 
 ## Outstanding acceptance evidence
 
@@ -68,8 +76,9 @@
   new same-run CI transfer and final-commit checks still require remote evidence.
 - Live host/guest setup passes; an unavailable Wayland socket fails publication
   and preserves the previous deployment selector. AV and repository-wide native
-  sanitizers pass; each measured AV protocol/memory module has 100% line/branch
-  coverage. These results do not satisfy the missing performance acceptance.
+  sanitizers passed historically; fresh AV sanitizers pass in this session.
+  Current protocol/memory lines are 100%; branches are 94.44% audio/pixels,
+  95.83% codec and 100% layout/video. These results do not satisfy the missing performance acceptance.
 
 ## Commit History & Progress Log
 
@@ -439,6 +448,10 @@
   - **Task Impact**: +5% to #10.3 (+0.25% overall).
   - **Summary**: Share read-only sysfs group probing between setup and daemon startup. Validate PCI paths with Zig, reject missing/malformed groups and active companion drivers, accept unbound/VFIO snapshots. Synthetic tests and fresh AV sanitizers pass; actual NVIDIA 0000:01:00.0 and AMD 0000:0e:00.0 probes reject active drivers. No sysfs writes or service stops occur.
 
-- **Commit `HEAD`**: `feat(av): measure host-clock color challenge commit round trips`
+- **Commit `a22cb4e5d106`**: `feat(av): measure host-clock color challenge commit round trips`
   - **Task Impact**: +100% to #10.5 (+2.00% overall), framework scope explicitly revised by user.
   - **Summary**: Add opt-in fixture flash protocol, selected-process/class/title validation, bounded RGB matching in Zig, owned Wayland sync callback, host CLOCK_MONOTONIC RTT and five-second deadlines. Package the fixture and expose managed --latency. Verify wire/pixel/callback tests, native compositor acknowledgement and Linux/Windows cross-builds. Protocol/memory line coverage is 100%; measured branch coverage is 94.44%, 95.83%, 100%, 100%. Full guest RTT and performance remain unmeasured because no acceptance VM is running.
+
+- **Commit `HEAD`**: `fix(av): classify native reboot codes and probe primary display mode`
+  - **Task Impact**: +2% to #10.1 (+0.10% overall); +2% to #10.4 (+0.06% overall).
+  - **Summary**: Share/test native PnPUtil classification for 3010 and 1641 through the ordered graceful restart/re-probe state machine. Add a read-only interactive primary 1920x1080/144-Hz display capability probe and document upstream signed VDD installation/configuration as a manual prerequisite. Fresh AV sanitizers pass; Windows builds link the shared classifier. Real driver-triggered reboot and VDD runtime verification remain unexecuted.

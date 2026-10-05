@@ -192,6 +192,7 @@ static void pump(void) {
     } while (GetTickCount64() < deadline);
 }
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--probe-display")) return av_guest_display_probe();
     int benchmark_status = 0;
     latency_fixture = argc == 2 && !strcmp(argv[1], "--round-trip-fixture");
     int benchmark = argc == 2 && !strcmp(argv[1], "--benchmark");

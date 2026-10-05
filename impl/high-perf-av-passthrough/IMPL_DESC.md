@@ -155,7 +155,8 @@ verify all required payloads/checksums and preservation of prior archives on eve
 missing-input failure. `make av-sanitizers` runs native tests with ASan/LSan/UBSan
 and Zig's testing allocator; zero leaked bytes are required. `make av-coverage`
 gates each protocol/memory module's production line and branch coverage separately
-at 90%; the current measured modules are each at 100%.
+at 90%; current production lines are 100% in all four measured modules, with
+branch coverage 94.44% audio/pixels, 95.83% codec and 100% layout/video.
 
 Native gates require actual Windows WGC occlusion pixels, process-tree loopback
 PCM, KVMFR DMA-BUF aliasing, compositor attachment/release, PipeWire callbacks and
@@ -164,7 +165,9 @@ fidelity nor latency. Full performance acceptance additionally requires real
 144-Hz operation and timestamped video presentation/audio delivery. A backlog
 counter, Wayland commit, WGC-to-CPU age or guest-only FPS diagnostic cannot substitute
 for that end-to-end evidence. The native benchmark currently finds a 64-Hz Windows
-mode and invalid future WGC timestamps; task #10.5 remains incomplete. Every
+mode and invalid future WGC timestamps; task #10.5 now records diagnostic
+framework completion under the revised request, while performance remains
+unverified. Every
 applicable GitHub check must pass on the final source commit before completion.
 
 ## 8. Binding implementation refinements
@@ -533,26 +536,9 @@ suppression or disabled sanitizer check is used.
 The Windows fixture's optional `--benchmark` paints a changing pixel while pumping
 real window messages, polls the native WGC DLL with a one-millisecond owned
 high-resolution timer, and measures three seconds using QueryPerformanceCounter.
-It verifies the deterministic center pixels in every accepted frame, counts unique
-WGC timestamps separately from duplicates, and reports timestamp-to-mapped-CPU
-callback mean/maximum age and maximum timestamp interval. Sampling state is bounded
-stack storage owned by the capture thread; the timer is cancelled and closed before
-reporting. Fresh-frame cutoff excludes frames queued before the measurement starts.
-These are guest capture diagnostics, not host presentation or audio output latency.
-The program-created acceptance guest reports 1920x1080 at 64 Hz despite QEMU's 144-Hz
-VGA request; a VGA refresh property alone cannot establish the actual Windows mode
-or satisfy 144-Hz performance acceptance. No performance task passes on that basis.
-Native executable tests use a fresh ignored deployment directory to avoid retained
-Windows executable sections reading an earlier build at a reused shared-file path.
+It verifies deterministic center pixels, counts distinct WGC timestamps and reports relative intervals. QPC measures only the duration of the guest throughput run. Absolute WGC-to-CPU age subtraction has been removed after historical native runs produced future timestamps. Newly painted pixels, rather than guest timestamps, establish occlusion freshness. Stack-owned statistics and the owned high-resolution timer are released after each run. This is throughput evidence only; the host-clock diagnostic below measures compositor commit RTT.
 
-Timing validity is checked for every sampled unique frame. Future or regressing
-WGC timestamps invalidate the aggregate age result and make `--benchmark` return
-1 after normal resource cleanup and the remaining fidelity/audio tests. Nothing
-is clamped to zero to hide invalid timing. The native acceptance run observed
-future timestamps, so its capture-age measurement is invalid. Microsoft's documented
-[SystemRelativeTime contract](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframe.systemrelativetime)
-identifies compositor QPC time, but the observed platform result still requires
-investigation before using that value in a latency acceptance measurement.
+The historical program-created guest reports 1920x1080 at 64 Hz despite the QEMU 144-Hz VGA request. This is an observed Basic Display Driver limitation in that configuration, not a universal guarantee about every Windows/QEMU combination. A requested EDID alone cannot establish actual selected mode or 144-Hz capture throughput. Installing/configuring a real indirect display is a manual prerequisite for the software path.
 
 Setup reloads the committed profile after configuration and probes the exact
 configured mapping after guest deployment. A host readiness failure returns nonzero
@@ -667,8 +653,10 @@ shared/exported pixel aliasing, out-of-range rejection and competing ownership
 lease preservation. `make av-module` also builds the patched pinned sources
 against the running kernel. The loaded compatible module remains intact; no
 unload/reload is needed to claim this verification. This completes KVMFR build,
-distribution and access provisioning (#10.2). Safe GPU preparation/recovery and
-high-refresh performance belong to the still-incomplete #10.3/#10.5 acceptance.
+distribution and access provisioning (#10.2). Under the revised safe-rejection
+policy, #10.3 completes read-only GPU eligibility checks; #10.5 completes the
+diagnostic framework. Physical high-refresh and latency performance remain
+external acceptance evidence.
 
 ### Configure-axis verification (2026-10-05)
 
@@ -691,3 +679,19 @@ The host identifies the exact fixture title in Create, arms a single watch, reco
 After attaching and committing matching pixels, Wayland queues wl_display.sync on that same connection. Its done callback proves the compositor has processed the preceding surface commit; it destroys the callback and records `Time_End` with the same host clock. RTT = Time_End - Time_Start includes control queueing, guest rendering/capture, transport, import and compositor processing. It does not include physical scanout, presentation feedback or audio output. Calling it physical input-to-photon latency would be incorrect. Sixteen visible and sixteen guest-occluded samples print individual RTT and aggregate mean/max. Missing fixture, failed color transition, occlusion failure, import/display disconnect or missing acknowledgement fails after five seconds per challenge. Peer closure, signal cancellation, clock failure or incomplete sample count returns failure. No guest QPC/WGC timestamp participates in subtraction.
 
 One event thread owns the watch, mapping references and callback. The mapping remains borrowed until Wayland teardown; the callback is destroyed on completion or before draining/freeing the client. Slot leases remain unchanged and compositor release still controls reuse. Guest throughput diagnostics retain timestamp uniqueness/relative ordering only, remove absolute capture-age calculations and ignore timestamp values when proving occlusion freshness. Linux wire/pixel/watch tests, real compositor matching-commit acknowledgement under sanitizers, and Windows cross-builds pass. No running acceptance VM was available for a full guest RTT run in this session. Task #10.5 records framework completion as requested, not measured 144-Hz or physical latency acceptance.
+
+### Software 144-Hz display prerequisite and verification
+
+Microsoft's [IddSampleDriver documentation](https://learn.microsoft.com/en-us/samples/microsoft/windows-driver-samples/indirect-display-driver-sample/) provides an IddCx indirect display sample. [VirtualDrivers/Virtual-Display-Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) is an IddSampleDriver-derived implementation exposing configurable resolutions/refresh rates. It is an external manual prerequisite, not redistributed or installed by Waddle; no new loose vendor files or submodules are introduced. Waddle's bundled signed IVSHMEM driver transports memory and does not create a Windows display.
+
+1. In the licensed interactive Windows guest, obtain the signed Virtual Display Driver installer from its upstream releases and follow that release's installation/dependency instructions. Preserve Windows signature validation; Waddle does not enable test-signing or enroll certificates. Record the installed release, package hash and signature when gathering acceptance evidence.
+2. In Virtual Driver Control (or that release's documented vdd_settings.xml controls), expose one 1920x1080 mode at 144 Hz. Restart the guest if the installer requires it. Exact installer/UI details are release-specific and remain the upstream installer's responsibility.
+3. In Windows Settings > System > Display, select the virtual monitor and make it the primary display. Use Advanced display to select 1920x1080 at 144 Hz; do not rely on the virtual VGA EDID. Keep the capture target on that monitor, with the guest interactive desktop active and unlocked.
+4. Run `waddle-guest-av.exe --probe-display` or `av_windows_test.exe --probe-display` in the same interactive session. The read-only Win32 current-primary query requires exactly 1920x1080 and nominal 144 Hz; mismatches return 1 with the observed mode and VDD prerequisite. This separate performance probe does not turn basic setup/readiness into a claim of 144-Hz performance.
+5. Run the native `--benchmark` and then the host color RTT diagnostic. The selected mode can allow 144-Hz composition but does not guarantee it: WARP, VM CPU scheduling, capture copies and compositor behavior can still limit throughput. Record actual frames and host RTT; physical video <7 ms/audio <10 ms remain unverified without their respective presentation/audio endpoints.
+
+The current physical GPUs are busy, and no VDD-equipped acceptance VM is running here. Thus physical 144-Hz capture and the manual VDD path remain unexecuted hardware/environment gates. Research, prerequisite instructions, mode verification and the host RTT framework are complete; their existence is not a passing native performance measurement.
+
+### PnPUtil reboot classification verification
+
+One shared allocation-free classifier maps native 3010 (restart required) and 1641 (restart initiated) to guest setup status 3; 0 and 259 (already-current package) permit the actual capability probe; all other statuses fail. Tests feed both native reboot codes through av_deploy_finish and assert restart, fresh guest probe, host probe in that order, once only. The managed restart uses daemon request 0x000f (DaemonMsgStopGracefulReq), preserving the VM/resources on ACPI timeout and refusing selector publication on failure. The already-implemented timeout/first-failure tests remain in place. Real Windows installation returning these codes has not been observed in this session and remains explicitly unverified.

@@ -13,4 +13,11 @@ int av_guest_probe(void);
  * handles; driver store/catalog validation is performed by Windows. No shell.
  */
 int av_guest_setup(const char *directory);
+/** @brief Verify the interactive primary display is 1920x1080 at nominal 144 Hz.
+ * @return 0 selected mode ready, 1 unavailable/different with actionable diagnostic.
+ * @note Caller thread, read-only Win32 display query; no parameters/allocation/
+ * retained handles. Does not install or trust a driver, modify display topology,
+ * claim WGC throughput or apply to a different Windows session.
+ */
+int av_guest_display_probe(void);
 #endif

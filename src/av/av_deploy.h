@@ -1,5 +1,6 @@
 #ifndef WaddleAvDeployH
 #define WaddleAvDeployH
+#include <stdint.h>
 /** @brief Synchronous managed deployment step; no ownership transfer.
  * @param[in,out] context Optional borrowed caller context, valid for the call.
  * @return 0 success; nonzero readiness/restart error, propagated unchanged.
@@ -21,4 +22,12 @@ typedef int (*av_deploy_step_t)(void *context);
  */
 int av_deploy_finish(int guest_status, av_deploy_step_t restart, av_deploy_step_t guest_probe,
                      av_deploy_step_t host_probe, void *context);
+/** @brief Classify a native PnPUtil exit status without claiming readiness.
+ * @param[in] status Native unsigned exit code; 3010/1641 require restart,
+ * 0/259 permit a fresh capability probe, others fail.
+ * @return 3 reboot-required, 0 probe permitted, 1 install failure.
+ * @note Pure/thread-safe, no allocation/ownership transfer; readiness requires
+ * av_deploy_finish callbacks and successful native probes before publication.
+ */
+int av_driver_install_status(uint32_t status);
 #endif

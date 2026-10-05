@@ -16,6 +16,17 @@ static int restart(void *context) { return step(context, 0); }
 static int guest_probe(void *context) { return step(context, 1); }
 static int host_probe(void *context) { return step(context, 2); }
 int main(void) {
+    assert(av_driver_install_status(0) == 0);
+    assert(av_driver_install_status(259) == 0);
+    assert(av_driver_install_status(5) == 1);
+    assert(av_driver_install_status(UINT32_MAX) == 1);
+    for (unsigned i = 0; i < 2; ++i) {
+        deploy_fixture_t reboot = {0};
+        uint32_t native_status = i ? 1641 : 3010;
+        assert(av_driver_install_status(native_status) == 3);
+        assert(av_deploy_finish(av_driver_install_status(native_status), restart, guest_probe,
+                               host_probe, &reboot) == 0 && reboot.next == 3);
+    }
     deploy_fixture_t fixture = {0};
     assert(av_deploy_finish(3, restart, guest_probe, host_probe, &fixture) == 0);
     assert(fixture.next == 3);

@@ -1,6 +1,7 @@
 /** @file av_guest_setup.c @brief Native AV driver deployment and capability probe. */
 #define COBJMACROS
 #include "av_guest_setup.h"
+#include "av_deploy.h"
 #include "av_ivshmem.h"
 #include <d3d11.h>
 #include <mmdeviceapi.h>
@@ -111,15 +112,42 @@ int av_guest_setup(const char *directory) {
     } else if (waited == WAIT_OBJECT_0)
         GetExitCodeProcess(process.hProcess, &status);
     CloseHandle(process.hProcess);
-    if (status == 3010 || status == 1641) {
+    int outcome = av_driver_install_status(status);
+    if (outcome == 3) {
         fputs("AV setup: driver installed; reboot required before readiness can be verified\n", stderr);
         return 3;
     }
     /* PnPUtil returns ERROR_NO_MORE_ITEMS when the signed package is already
      * current. Readiness still requires the actual driver mapping probe. */
-    if (status != 0 && status != ERROR_NO_MORE_ITEMS) {
+    if (outcome != 0) {
         fprintf(stderr, "AV setup: Windows rejected driver installation (%lu)\n", (unsigned long)status);
         return 1;
     }
     return av_guest_probe();
+}
+
+int av_guest_display_probe(void) {
+    DISPLAY_DEVICEW display = {.cb = sizeof(display)};
+    int primary = 0;
+    for (DWORD index = 0; index < 64; ++index) {
+        memset(&display, 0, sizeof(display));
+        display.cb = sizeof(display);
+        if (!EnumDisplayDevicesW(NULL, index, &display, 0)) break;
+        if ((display.StateFlags & (DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) ==
+            (DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) { primary = 1; break; }
+    }
+    DEVMODEW mode = {.dmSize = sizeof(mode)};
+    if (!primary || !EnumDisplaySettingsW(display.DeviceName, ENUM_CURRENT_SETTINGS, &mode)) {
+        fputs("AV display capability failure: primary display mode unavailable\n", stderr);
+        return 1;
+    }
+    fprintf(stderr, "AV primary display: %lux%lu @ %lu Hz\n", (unsigned long)mode.dmPelsWidth,
+            (unsigned long)mode.dmPelsHeight, (unsigned long)mode.dmDisplayFrequency);
+    if (mode.dmPelsWidth != 1920 || mode.dmPelsHeight != 1080 || mode.dmDisplayFrequency != 144) {
+        fputs("AV display capability failure: configure a signed IddSampleDriver-based virtual "
+              "display as primary at 1920x1080 @ 144 Hz; VGA EDID alone is insufficient\n", stderr);
+        return 1;
+    }
+    puts("AV primary display mode ready; measured capture throughput still required");
+    return 0;
 }

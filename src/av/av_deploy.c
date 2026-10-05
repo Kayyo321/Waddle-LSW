@@ -11,3 +11,8 @@ int av_deploy_finish(int guest_status, av_deploy_step_t restart, av_deploy_step_
     } else if (guest_status) return guest_status;
     return host_probe(context);
 }
+
+int av_driver_install_status(uint32_t status) {
+    if (status == 3010 || status == 1641) return 3;
+    return status == 0 || status == 259 ? 0 : 1;
+}

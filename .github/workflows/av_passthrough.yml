@@ -84,7 +84,7 @@ jobs:
           zig build-lib src/av/av_layout.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_layout_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $flags = @('-target','x86_64-windows-gnu','-U_WIN32_WINNT','-D_WIN32_WINNT=0x0A00','-DNTDDI_VERSION=0x0A000006','-std=c11','-Wall','-Wextra','-Wpedantic','-Werror','-Iinclude','-Isrc/av','-Isubmodules/looking_glass/vendor/ivshmem')
-          $sources = @('src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
+          $sources = @('src/av/av_deploy.c','src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
           $libraries = @('build/av_audio_windows.lib','build/av_codec_windows.lib','build/av_layout_windows.lib','-luser32','-ldwmapi','-ld3d11','-ldxgi','-lmmdevapi','-lavrt','-lole32','-luuid','-lsetupapi')
           zig cc @flags tests/av/windows.c @sources @libraries -lgdi32 -lwinmm -o build/av_windows_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

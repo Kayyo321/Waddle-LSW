@@ -297,9 +297,11 @@ static int vsock_family(void) {
  */
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--help")) {
-        puts("waddle-guest-av.exe PROCESS_ID | --probe | --setup DRIVER_DIRECTORY");
+        puts("waddle-guest-av.exe PROCESS_ID | --probe | --probe-display | --setup DRIVER_DIRECTORY");
         return 0;
     }
+    if (argc == 2 && !strcmp(argv[1], "--probe-display"))
+        return av_guest_display_probe();
     if (argc == 2 && !strcmp(argv[1], "--probe"))
         return av_guest_probe();
     if (argc == 3 && !strcmp(argv[1], "--setup"))
