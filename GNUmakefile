@@ -37,18 +37,26 @@ build/session.o: src/session.c src/session.h src/terminal.h src/common.h | build
 build/mock_process.o: src/mock_process.c src/mock_process.h src/common.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/mock_process.c -o $@
 
+build/daemon_config.o: src/daemon_config.zig src/daemon_config.h include/waddle/daemon_protocol.h | build
+	$(ZIG) build-obj src/daemon_config.zig -Iinclude -Isrc -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/test_daemon_config: tests/test_daemon_config.c build/daemon_config.o src/daemon_config.h include/waddle/daemon_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_config.c build/daemon_config.o $(LDFLAGS) -o $@
+
 zig-test: build/path_rules.o
 	$(ZIG) test tests/test_cli.zig -Iinclude -Isrc src/protocol.c src/arguments.c build/path_rules.o -lc
 	$(ZIG) test src/path_rules.zig
 	$(ZIG) test src/guest_codec.zig
+	$(ZIG) test src/daemon_config.zig -Iinclude -Isrc -lc
 
 build/test_daemon_protocol: tests/test_daemon_protocol.c src/daemon_protocol.c include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_protocol.c src/daemon_protocol.c $(LDFLAGS) -o $@
 
-test: all build/unit build/integration build/test_daemon_protocol zig-test
+test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config zig-test
 	./build/unit
 	./build/integration
 	./build/test_daemon_protocol
+	./build/test_daemon_config
 	sh tests/path_options.sh
 
 test-sanitizers: clean
