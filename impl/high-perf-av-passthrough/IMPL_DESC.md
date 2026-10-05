@@ -2,16 +2,16 @@
 
 ## 1. Title & High-Level Scope
 - **Title**: High-Performance Audio/Video Passthrough for Gaming
-- **Scope**: Implements near-bare-metal latency and FPS for Windows gaming by tracking game window lifecycle (move, resize, minimize, fullscreen, close), capturing the window surface using DXGI Desktop Duplication / Windows Graphics Capture, capturing game audio using WASAPI loopback, and transporting both video and audio to the Linux host via IVSHMEM and VirtIO. Host client handles server-side decorations (File, Edit menus natively rendered by Wayland if desired) and PipeWire audio injection.
-- **Out of Scope**: General full-desktop capturing. Virtual audio devices (uses loopback on existing devices).
+- **Scope**: Implements near-bare-metal latency and FPS for Windows gaming by tracking game window lifecycle (move, resize, minimize, fullscreen, close), capturing the entire window exactly as it appears (including native Windows title bars and menu bars) using DXGI Desktop Duplication / Windows Graphics Capture, capturing game audio using WASAPI Application Loopback, and transporting both video and audio to the Linux host via IVSHMEM lockless ring buffers.
+- **Out of Scope**: General full-desktop capturing. Virtual audio devices (we rely on WASAPI loopback combined with a QEMU `-audiodev none` configuration to prevent double audio without requiring custom drivers). Server-side Wayland decorations (we capture the native Windows decorations for 100% fidelity).
 
 ## 2. Architecture & Inter-Component Interactions
-- **Guest Agent**: Uses `SetWinEventHook` to track window state (move, resize, minimize, fullscreen, close). Hooks into DXGI for video and WASAPI for audio. Audio is captured per-process or system-wide loopback with session filtering.
+- **Guest Agent**: Uses `SetWinEventHook` to track window state (move, resize, minimize, fullscreen, close). Hooks into DXGI for video. Audio is captured via **per-process WASAPI Application Loopback** to isolate game audio from system sounds.
 - **IPC Layer**:
   - Control channel (VSOCK): Transmits window state changes, geometry updates, and input events.
   - Video channel (IVSHMEM): Zero-copy DXGI surface blitting.
-  - Audio channel (IVSHMEM or VSOCK): Low-latency audio stream, using a circular buffer in IVSHMEM for PCM data.
-- **Host Client**: Reads video frames via DMA-BUF and presents using Wayland `xdg_toplevel` (supporting decorations like File, Edit menus). Reads audio from IVSHMEM and plays back via PipeWire/PulseAudio.
+  - Audio channel (IVSHMEM): Low-latency audio stream using a lockless circular buffer for PCM data. The format is hardcoded to a standard gaming format (48kHz, 16-bit, Stereo) to avoid dynamic negotiation overhead.
+- **Host Client**: Reads video frames via DMA-BUF and presents using Wayland `xdg_toplevel` (displaying the captured Windows decorations). Reads audio from IVSHMEM and plays back via PipeWire/PulseAudio.
 
 ## 3. Data Structures, Protocols & Memory Layouts
 - **Window Slot Header** (IVSHMEM):
