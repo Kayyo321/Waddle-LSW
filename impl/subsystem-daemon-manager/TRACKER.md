@@ -1,6 +1,6 @@
 # Feature Tracker: Subsystem Daemon Manager
 
-- **Contributors / Agents**: Antigravity Agent, Koyak
+- **Contributors / Agents**: Antigravity Agent, Koyak, Codex (/root)
 - **Time Started**: 2026-10-04T19:40:00Z
 - **Time Ended**: 2026-10-04T21:00:00Z
 - **Feature Branch**: feature/subsystem-daemon-manager
@@ -100,3 +100,10 @@
   - **Task Impact**: 0% progress impact (tree hygiene & organization)
   - **Summary**: Reorganized `tests/` into `unit/`, `integration/`, `daemon/`, `acceptance/`, and `windows/` subdirectories and updated build recipes and test scripts.
 
+
+- **Commit `:/repair native Windows verification paths for daemon PR`**: `chore(ci): repair native Windows verification paths for daemon PR`
+  - **Task Impact**: +0% to TODO: #8 (maintenance; feature task remains 100%).
+  - **Summary**: Fix parser, source, include, native fixture, and heap-audit paths after src/test reorganization. Preserve native regression and zero-allocation heap gates. CI rerun required at the PR head.
+
+Current-commit audit entries use Git's unique message revision selector (`:/...`),
+resolvable with `git rev-parse`, because a commit cannot embed its own hash.
