@@ -34,7 +34,7 @@
 | #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 4% | 85% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
 | #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 4% | 70% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
-| #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 4% | 85% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
+| #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 4% | 90% | Publish stream states atomically, wait with a five-second readiness deadline and reject disconnected/error states before reporting startup success. Check asynchronous playback failure in the host event loop and stop the worker before releasing borrowed memory. |
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 4.8% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #6.3 | Feed audio frames into PipeWire playback buffer callback | In Progress | 3.2% | 85% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
 | **7**   | **Testing & CI Verification** | | | | |
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 65% | Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `85.48%`
+**Total Feature Completion**: `85.68%`
 
 ## Commit History & Progress Log
 
@@ -226,6 +226,10 @@
   - **Task Impact**: +15% to #10.1 (+0.75% overall); +25% to #10.4 (+0.75% overall)
   - **Summary**: Add native pnputil deployment with bounded paths, child timeout/reaping and explicit reboot status. Probe actual OS build, mapped IVSHMEM ABI, D3D11/WARP, sibling WinRT adapter and enabled audio endpoint before declaring readiness; cross-linked guest and invalid-path fixture pass.
 
-- **Commit `HEAD`**: `feat(av): integrate provisioning and readiness into managed CLI`
+- **Commit `65e55bb6a333`**: `feat(av): integrate provisioning and readiness into managed CLI`
   - **Task Impact**: +10% to #10.3 (+0.50% overall); +20% to #10.4 (+0.60% overall)
   - **Summary**: Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation.
+
+- **Commit `HEAD`**: `fix(av): wait for connected PipeWire state and surface failures`
+  - **Task Impact**: +5% to #6.1 (+0.20% overall)
+  - **Summary**: Publish stream states atomically, wait with a five-second readiness deadline and reject disconnected/error states before reporting startup success. Check asynchronous playback failure in the host event loop and stop the worker before releasing borrowed memory.

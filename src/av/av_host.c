@@ -121,6 +121,11 @@ int main(int argc, char **argv) {
     sigaction(SIGTERM, &action, NULL);
     result = 0;
     while (!stopping) {
+        if (!av_pipewire_ready(&host.audio)) {
+            errno = ENOTCONN;
+            result = 1;
+            break;
+        }
         struct pollfd descriptors[2] = {
             {peer, POLLIN | (host.peer.head != host.peer.tail ? POLLOUT : 0), 0},
             {av_wayland_fd(host.video), POLLIN, 0}};

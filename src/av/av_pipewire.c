@@ -1,6 +1,7 @@
 #include "av_pipewire.h"
 #include <spa/param/audio/format-utils.h>
 #include <string.h>
+#include <errno.h>
 
 static void playback_process(void *context) {
     av_pipewire_t *audio = context;
@@ -34,8 +35,21 @@ static void playback_process(void *context) {
     buffer->size = frames;
     pw_stream_queue_buffer(audio->stream, buffer);
 }
+static void playback_state(void *context, enum pw_stream_state previous,
+                           enum pw_stream_state state, const char *error) {
+    (void)previous;
+    (void)error;
+    av_pipewire_t *audio = context;
+    atomic_store_explicit(&audio->state, state, memory_order_release);
+    pw_thread_loop_signal(audio->loop, false);
+}
+int av_pipewire_ready(const av_pipewire_t *audio) {
+    int state = atomic_load_explicit(&audio->state, memory_order_acquire);
+    return state == PW_STREAM_STATE_PAUSED || state == PW_STREAM_STATE_STREAMING;
+}
 static const struct pw_stream_events PlaybackEvents = {.version = PW_VERSION_STREAM_EVENTS,
-                                                       .process = playback_process};
+                                                       .process = playback_process,
+                                                       .state_changed = playback_state};
 void av_pipewire_free(av_pipewire_t *audio) {
     if (audio->loop)
         pw_thread_loop_stop(audio->loop);
@@ -68,6 +82,7 @@ int av_pipewire_init(av_pipewire_t *audio, audio_ring_header_t *ring, const uint
     audio->pcm_len = pcm_len;
     atomic_init(&audio->underrun_frames, 0);
     atomic_init(&audio->invalid_buffers, 0);
+    atomic_init(&audio->state, PW_STREAM_STATE_UNCONNECTED);
     pw_init(NULL, NULL);
     audio->library_initialized = 1;
     audio->loop = pw_thread_loop_new("waddle-av-audio", NULL);
@@ -97,6 +112,18 @@ int av_pipewire_init(av_pipewire_t *audio, audio_ring_header_t *ring, const uint
                           params, 1) < 0 ||
         pw_thread_loop_start(audio->loop) < 0)
         goto fail;
+    pw_thread_loop_lock(audio->loop);
+    struct timespec deadline;
+    int wait_status = pw_thread_loop_get_time(audio->loop, &deadline, 5000000000LL);
+    while (!wait_status && !av_pipewire_ready(audio) &&
+           atomic_load_explicit(&audio->state, memory_order_acquire) != PW_STREAM_STATE_ERROR)
+        wait_status = pw_thread_loop_timed_wait_full(audio->loop, &deadline);
+    int ready = av_pipewire_ready(audio);
+    pw_thread_loop_unlock(audio->loop);
+    if (!ready) {
+        errno = wait_status == -ETIMEDOUT ? ETIMEDOUT : ENOTCONN;
+        goto fail;
+    }
     return 0;
 fail:
     av_pipewire_free(audio);
