@@ -14,13 +14,20 @@ fn valid_gpu(value: []const u8) bool {
 }
 /// Validate command and copy only after all values pass; empty/default device supported.
 fn parse(args: []const []const u8) !c.av_command_t {
-    if (args.len == 0 or args.len > 8) return error.Invalid;
+    if (args.len == 0 or args.len > 10) return error.Invalid;
     var command = std.mem.zeroes(c.av_command_t);
     command.kind = if (std.mem.eql(u8, args[0], "setup")) c.AvSetup else if (std.mem.eql(u8, args[0], "probe")) c.AvProbe else if (std.mem.eql(u8, args[0], "run")) c.AvRun else return error.Invalid;
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--uefi")) {
+        if (std.mem.eql(u8, arg, "--firmware-vars")) {
+            index += 1;
+            if (command.kind != c.AvSetup or command.firmware_vars[0] != 0 or index >= args.len) return error.Invalid;
+            const path = args[index];
+            if (path.len == 0 or path.len > 1023 or path[0] != '/' or std.mem.indexOfAny(u8, path, "\x00\r\n") != null) return error.Invalid;
+            @memcpy(command.firmware_vars[0..path.len], path);
+            command.uefi = 1;
+        } else if (std.mem.eql(u8, arg, "--uefi")) {
             if (command.kind != c.AvSetup or command.uefi != 0) return error.Invalid;
             command.uefi = 1;
         } else if (std.mem.eql(u8, arg, "--kvmfr")) {
@@ -51,12 +58,12 @@ fn parse(args: []const []const u8) !c.av_command_t {
 /// C ABI contract in av_commands.h; argv borrowed during call, result private.
 export fn waddle_av_parse(count: usize, arguments: ?[*]const ?[*:0]const u8, command: ?*c.av_command_t) c_int {
     const result = command orelse return -1;
-    if (count == 0 or count > 8) return -1;
+    if (count == 0 or count > 10) return -1;
     const argv = arguments orelse return -1;
-    var args: [8][]const u8 = undefined;
+    var args: [10][]const u8 = undefined;
     for (argv[0..count], 0..) |arg, index| {
         const value = std.mem.span(arg orelse return -1);
-        if (value.len > 63 or !std.unicode.utf8ValidateSlice(value)) return -1;
+        if (value.len > 1023 or !std.unicode.utf8ValidateSlice(value)) return -1;
         args[index] = value;
         if (std.mem.eql(u8, value, "--help") or std.mem.eql(u8, value, "-h")) return 1;
     }

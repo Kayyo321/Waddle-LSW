@@ -275,6 +275,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Specify strict disk-first firmware boot order for UEFI AV profiles, preventing unrelated virtual network/filesystem boot candidates from preceding the managed Windows disk. Preserve the persistent variables and existing BIOS defaults; QEMU regressions pass.
 
-- **Commit `HEAD`**: `test(av): enforce per-module coverage and complete sanitizer gates`
+- **Commit `e17595731cc7`**: `test(av): enforce per-module coverage and complete sanitizer gates`
   - **Task Impact**: +20% to #7.1 (+0.32% overall); +25% to #7.2 (+0.40% overall)
   - **Summary**: Gate production lines and branches independently at ninety percent for audio, control, layout and video; current results are one hundred percent in each module. Prevent constant-folded test calls, cover real sparse mapping initialization and invalid pool/metadata fields, and run all native AV suites under ASan/LSan/UBSan with leak-checking Zig tests.
+
+- **Commit `HEAD`**: `feat(av): import companion firmware metadata for installed images`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Allow an explicit bounded firmware metadata path during setup, imply UEFI and stage the supplied image companion atomically under a quiescent device lease. Preserve the source and reject active-device imports; normal restart still retains the owned firmware store.

@@ -33,7 +33,7 @@ static int av_private_directory(const char *path) {
 /* Atomic replacement of one owned deployment output; descriptors close on all paths. */
 static int av_stage_file(const char *relative, const char *directory, const char *name) {
     char source[PATH_MAX], destination[PATH_MAX], temporary[PATH_MAX];
-    if (av_bundle_path(relative, source, sizeof(source)) != 0 ||
+    if ((relative[0] == '/' ? snprintf(source, sizeof(source), "%s", relative) >= (int)sizeof(source) : av_bundle_path(relative, source, sizeof(source)) != 0) ||
         snprintf(destination, sizeof(destination), "%s/%s", directory, name) >= (int)sizeof(destination) ||
         snprintf(temporary, sizeof(temporary), "%s/.av_stage_XXXXXX", directory) >= (int)sizeof(temporary))
         return -1;
@@ -96,7 +96,7 @@ static int cmd_av(int argc, char **argv) {
     int parsed = waddle_av_parse((size_t)(argc - 2), (const char *const *)(argv + 2), &command);
     if (parsed != 0) {
         FILE *stream = parsed == 1 ? stdout : stderr;
-        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi] [--gpu PCI_BDF]\n"
+        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi | --firmware-vars PATH] [--gpu PCI_BDF]\n"
               "waddle av probe [--device NAME]\n"
               "waddle av run PROCESS_ID [--device NAME]\n", stream);
         return parsed == 1 ? 0 : 2;
@@ -140,6 +140,24 @@ static int cmd_av(int argc, char **argv) {
             daemon_device_config_update(device.name, changes, 4, 0, 0) != 0) {
             fprintf(stderr, "waddle av: configuring AV requires a stopped device: %s\n", strerror(errno));
             return 1;
+        }
+        if (command.firmware_vars[0]) {
+            int lease = -1;
+            if (daemon_device_lock_quiescent(&device, &lease) != 0) {
+                fputs("waddle av: firmware import requires a stopped device without runtime owners\n", stderr);
+                return 1;
+            }
+            char destination[PATH_MAX], directory[PATH_MAX];
+            if (snprintf(destination, sizeof(destination), "%s.av_uefi.fd", config.disk_image) >= (int)sizeof(destination)) {
+                close(lease); return 1;
+            }
+            snprintf(directory, sizeof(directory), "%s", destination);
+            char *slash = strrchr(directory, '/');
+            if (!slash) { close(lease); return 1; }
+            *slash = '\0';
+            int result = av_stage_file(command.firmware_vars, directory, slash + 1);
+            close(lease);
+            if (result != 0) return 1;
         }
         return av_deploy(&device, agent, sizeof(agent));
     }

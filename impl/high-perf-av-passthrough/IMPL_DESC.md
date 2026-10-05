@@ -362,3 +362,17 @@ source counters with all ownership states and concurrent stress. Reports persist
 under `build/coverage/av`; no subsystem is averaged with another to hide a failure.
 ASan/LSan/UBSan executes every native AV unit suite; Zig tests use its leak-checking
 allocator for all owned dynamic buffers and deterministically release OS mappings.
+
+
+### Importing an installed image's firmware metadata
+
+An existing UEFI Windows image may depend on its companion NVRAM file for the
+Windows Boot Manager device path. `av setup --firmware-vars ABSOLUTE_PATH` implies
+UEFI and atomically imports that supplied metadata into the owned device variables
+store under a quiescent device lease. The source is never changed, symlinks are
+rejected, and the size/type checks for the OVMF template still run before startup.
+This explicit import may replace the owned profile store; ordinary setup/restart
+continues to preserve it. Firmware metadata is part of the supplied licensed OS
+image, not a manually configured AV environment. No enrollment/key contents are
+parsed, generated or printed by the application. The command cannot import while
+any runtime owns the device, and closes its lease before boot/deployment.
