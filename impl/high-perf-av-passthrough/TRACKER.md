@@ -30,7 +30,7 @@
 | #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 3.2% | 85% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
 | **5**   | **Host Wayland Client (Video)** | | | | |
 | #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | In Progress | 4% | 85% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
-| #5.2 | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | In Progress | 4.8% | 80% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
+| #5.2 | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | In Progress | 4.8% | 90% | Exercise the program-provisioned driver with a two-GiB capacity probe, CLOEXEC DMA-BUF export, bidirectional mmap aliasing, bounds rejection and refusal to reset a consumed slot. Verify teardown preserves the device; the explicit native gate passes on this host. |
 | #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 4% | 85% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
 | #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 4% | 70% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | Pending | 3% | 0% | No manually prepared external AV environment assumed. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `81.30%`
+**Total Feature Completion**: `81.78%`
 
 ## Commit History & Progress Log
 
@@ -206,6 +206,10 @@
   - **Task Impact**: +15% to #10.2 (+0.75% overall)
   - **Summary**: Assign a newly loaded exact-size device to the validated sudo invoking user with mode 0600, verify ownership operations and preserve pre-existing devices. Build and probe use the pinned module and nontruncating capacity ABI; running-kernel module build passes.
 
-- **Commit `HEAD`**: `chore(deps): correct pinned KVMFR two-GiB capacity boundaries`
+- **Commit `2129177c3c06`**: `chore(deps): correct pinned KVMFR two-GiB capacity boundaries`
   - **Task Impact**: +10% to #10.2 (+0.50% overall)
   - **Summary**: Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass.
+
+- **Commit `HEAD`**: `test(av): verify real KVMFR exports and lease preservation`
+  - **Task Impact**: +10% to #5.2 (+0.48% overall)
+  - **Summary**: Exercise the program-provisioned driver with a two-GiB capacity probe, CLOEXEC DMA-BUF export, bidirectional mmap aliasing, bounds rejection and refusal to reset a consumed slot. Verify teardown preserves the device; the explicit native gate passes on this host.

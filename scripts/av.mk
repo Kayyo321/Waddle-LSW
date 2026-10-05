@@ -79,3 +79,10 @@ av: build/waddle-av-host build/waddle-av-setup av-windows
 
 build/av_windows_test.exe: tests/av/windows.c $(AvWindowsSources) build/av_audio_windows.lib build/av_codec_windows.lib build/av_layout_windows.lib | build
 	$(ZIG) cc $(AvWindowsFlags) $^ $(AvWindowsLibraries) -o $@
+
+# Explicit native driver gate: fails if setup has not provisioned KVMFR.
+build/av_kvmfr_test: tests/av/kvmfr.c src/av/av_environment.c src/av/av_dmabuf.c build/av_layout.o build/daemon_config.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -o $@
+.PHONY: av-native-kvmfr-test
+av-native-kvmfr-test: build/av_kvmfr_test
+	./build/av_kvmfr_test
