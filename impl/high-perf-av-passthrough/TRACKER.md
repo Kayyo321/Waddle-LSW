@@ -1,6 +1,6 @@
 # Feature Tracker: High-Performance Audio/Video Passthrough for Gaming
 
-- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex, Codex, Codex
+- **Contributors / Agents**: Antigravity, Codex, Codex, Codex, Codex, Codex, Codex, Codex, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
@@ -34,14 +34,14 @@
 | #5.3    | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | Pending | 5% | 0% | - |
 | #5.4    | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | Pending | 5% | 0% | - |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
-| #6.1    | Initialize PipeWire stream matching the hardcoded IVSHMEM format | Pending | 5% | 0% | - |
+| #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 5% | 75% | Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes. |
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 6% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
-| #6.3    | Feed audio frames into PipeWire playback buffer callback | Pending | 4% | 0% | - |
+| #6.3 | Feed audio frames into PipeWire playback buffer callback | In Progress | 4% | 75% | Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes. |
 | **7**   | **Testing & CI Verification** | | | | |
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 2% | 35% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
 
-**Total Feature Completion**: `52.05%`
+**Total Feature Completion**: `58.80%`
 
 ## Commit History & Progress Log
 
@@ -81,6 +81,10 @@
   - **Task Impact**: +60% to #3.1 (+3.00% overall); +65% to #3.2 (+5.20% overall)
   - **Summary**: Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate.
 
-- **Commit `HEAD`**: `feat(av): capture process-tree audio through WASAPI loopback`
+- **Commit `96b7aca88c97`**: `feat(av): capture process-tree audio through WASAPI loopback`
   - **Task Impact**: +70% to #4.1 (+3.50% overall); +20% to #4.3 (+0.80% overall)
   - **Summary**: Activate isolated process loopback using an agile ref-counted C completion handler, request fixed-format PCM, register MMCSS and drain packets into the bounded ring. Preserve callback and activation-blob lifetime after timeout and release every packet/resource; Windows cross-build passes.
+
+- **Commit `HEAD`**: `feat(av): feed bounded PCM into realtime PipeWire playback`
+  - **Task Impact**: +75% to #6.1 (+3.75% overall); +75% to #6.3 (+3.00% overall)
+  - **Summary**: Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes.
