@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 85% | Cancellable waits verified; Windows fixture CI and lifecycle handoff pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 90% | Native Linux/Windows transport and owners verified; lifecycle handoff and cross-VM test pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `17.75%`
+**Total Feature Completion**: `18.5%`
 
 ## Commit History & Progress Log
 
@@ -126,7 +126,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     device/list handle, and mapping. Native execution is queued next. This fake
     driver fixture does not establish real cross-VM IVSHMEM functionality.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): add cancellable ring backpressure waits`
+- **Commit `a7e0756`**: `feat(vgpu): add cancellable ring backpressure waits`
   - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
   - **Summary**: Added exact-transfer wait adapters with caller-owned bounded
     readiness callbacks, local cancellation/deadlines, disconnect closure,
@@ -134,3 +134,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Wait adapter production line/branch coverage 100%; the
     complete local transport/mapping/wait sanitizer and allocator suite passes.
     Windows fixtures cross-link; native execution/lifecycle handoff still pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): record native mapping verification`
+  - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
+  - **Summary**: Credited the Windows mapping-owner milestone only after its
+    fourteen-error-path fixture executed successfully on native Windows. Recorded
+    the latest ring/region/Linux-owner CI verification without crediting the
+    unimplemented lifecycle handoff or actual cross-VM signed-driver test.
+  - **Verification**: Both Linux and native Windows jobs passed at `ff50f69`:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37387395968 .
+    Wait adapters added after this run are awaiting their own native CI result.
