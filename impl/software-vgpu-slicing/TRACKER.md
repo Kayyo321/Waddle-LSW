@@ -60,11 +60,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: `make vgpu-test vgpu-sanitizers` passed; Zig allocator
     tests returned all allocations. Coverage and native adapters remain pending.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): gate C and Zig transport coverage`
+- **Commit `9ee99e0`**: `test(vgpu): gate C and Zig transport coverage`
   - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
   - **Summary**: Added gcov gates for production C lines and branches, reused the
     repository LLVM instrumentation for Zig validation/copy routines, and added
     reproducible Windows test cross-link targets. Coverage excludes compiler
     panic guards but includes source validation errors.
   - **Verification**: C production line/branch coverage 100%; Zig production
-    line coverage 100%, branch coverage above 90%. Native CI remains pending.
+    line/branch coverage 100%. Native CI remains pending.
+
+- **Commit (current; resolve by subject)**: `chore(vgpu): verify transport on Linux and native Windows CI`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall); CI verification pending.
+  - **Summary**: Added feature-branch Linux safety/stress/coverage and native
+    Windows ABI/allocator jobs with pinned tools and bounded runtime.
+    This verifies transport only; renderer, WDDM, presentation, and OpenCL
+    integration remain required for feature completion.
