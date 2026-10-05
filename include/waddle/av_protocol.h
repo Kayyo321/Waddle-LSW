@@ -14,13 +14,16 @@
 #define AvWindowMinimized 1u
 /** @brief Guest fullscreen state bit; immutable. */
 #define AvWindowFullscreen 2u
+/** @brief Private WM_APP fixture flash message; never sent to ordinary windows. */
+#define AvDiagnosticFlashEvent 0x8025u
 /** @brief AV control message types; IDs scoped to AV connection only. */
 typedef enum av_message_type_t {
     /** Guest announces an eligible window. */ MsgWindowCreate = 1,
     /** Guest destroys a previously announced window. */ MsgWindowDestroy = 2,
     /** Either peer updates size/state; position remains guest metadata. */ MsgWindowGeometry = 3,
     /** Guest publishes a triple-buffer slot and one bounded damage rectangle. */ MsgFrameReady = 4,
-    /** Host requests WM_CLOSE for the guest window. */ MsgWindowClose = 5
+    /** Host requests WM_CLOSE for the guest window. */ MsgWindowClose = 5,
+    /** Host-only opt-in fixture flash; sequence is RGB24 token, flags bit 0 occludes. */ MsgDiagnosticFlash = 6
 } av_message_type_t;
 /** @brief Decoded control data, caller-owned, natural alignment, no wire casts.
  * @note Codec copies fields using explicit LE offsets; struct is not serialized

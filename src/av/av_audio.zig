@@ -140,3 +140,26 @@ test "padded BGRA rows copy without touching destination tail" {
     try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_copy_bgra, .{ &source, 15, 8, &output, 12, 1, 2 }));
     try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_copy_bgra, .{ &source, 16, 8, &output, 7, 1, 2 }));
 }
+
+/// in: borrowed pixels[length] held under slot read ownership, geometry/stride,
+/// RGB24 token; returns 1 center 3x3 matches, 0 stale/invalid. No allocation,
+/// ownership transfer or writes. Pure/thread-safe, bounds checked in Zig.
+export fn av_target_matches(pixels: [*]const u8, length: usize, width: u32, height: u32, stride: u32, token: u32) c_int {
+    if (width < 3 or height < 3 or width > 8192 or height > 8192 or stride < @as(u64, width) * 4 or @as(u64, stride) * height > length or token == 0 or token > 0xffffff) return 0;
+    const data = pixels[0..length];
+    for (0..3) |dy| {
+        for (0..3) |dx| {
+            const offset = (@as(usize, height / 2) - 1 + dy) * stride + (@as(usize, width / 2) - 1 + dx) * 4;
+            if (data[offset] != @as(u8, @truncate(token)) or data[offset + 1] != @as(u8, @truncate(token >> 8)) or data[offset + 2] != @as(u8, @truncate(token >> 16))) return 0;
+        }
+    }
+    return 1;
+}
+test "latency target pixels reject stale tokens and bounded geometry" {
+    var pixels = [_]u8{0} ** 64;
+    for (0..16) |pixel| { pixels[pixel * 4] = 0x33; pixels[pixel * 4 + 1] = 0x22; pixels[pixel * 4 + 2] = 0x11; }
+    try std.testing.expectEqual(@as(c_int, 1), @call(.never_inline, av_target_matches, .{ &pixels, pixels.len, 4, 4, 16, 0x112233 }));
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_target_matches, .{ &pixels, pixels.len, 4, 4, 16, 0x112234 }));
+    for ([_][5]u32{ .{ 2, 4, 16, 64, 1 }, .{ 4, 2, 16, 64, 1 }, .{ 8193, 4, 16, 64, 1 }, .{ 4, 8193, 16, 64, 1 }, .{ 4, 4, 15, 64, 1 }, .{ 4, 4, 16, 63, 1 }, .{ 4, 4, 16, 64, 0 }, .{ 4, 4, 16, 64, 0x1000000 } }) |bad|
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_target_matches, .{ &pixels, bad[3], bad[0], bad[1], bad[2], bad[4] }));
+}

@@ -9,6 +9,7 @@ typedef struct av_command_t {
     uint32_t kind; /**< One av_command_kind_t value. */
     uint32_t process_id; /**< Run target, positive Windows PID; zero for setup/probe. */
     uint32_t uefi; /**< Setup selects managed persistent OVMF firmware. */
+    uint32_t latency; /**< Run opts into diagnostic fixture compositor-commit RTT. */
     uint32_t kvmfr; /**< Setup requests privileged pinned module provisioning. */
     char device[64]; /**< ASCII registry name, empty selects saved default. */
     char firmware_vars[1024]; /**< Optional existing image firmware metadata to import. */

@@ -47,6 +47,13 @@ struct av_wayland_t {
     void *request_context;
     int delivery_failed;
     int writable;
+    uint64_t watch_window;
+    uint32_t watch_token;
+    const uint8_t *watch_mapping;
+    size_t watch_length;
+    av_commit_done_t watch_done;
+    void *watch_context;
+    struct wl_callback *watch_sync;
 };
 static void buffer_release(void *context, struct wl_buffer *buffer) {
     (void)buffer;
@@ -57,6 +64,27 @@ static void buffer_release(void *context, struct wl_buffer *buffer) {
     }
 }
 static const struct wl_buffer_listener BufferEvents = {.release = buffer_release};
+static void commit_done(void *context, struct wl_callback *callback, uint32_t serial) {
+    (void)serial;
+    av_wayland_t *client = context;
+    wl_callback_destroy(callback);
+    client->watch_sync = NULL;
+    client->watch_window = 0;
+    client->watch_done(client->watch_context);
+}
+static const struct wl_callback_listener CommitEvents = {.done = commit_done};
+int av_wayland_watch(av_wayland_t *client, uint64_t window_id, uint32_t token,
+                     const uint8_t *mapping, size_t length, av_commit_done_t done, void *context) {
+    if (client->watch_window || !window_id || !token || token > 0xffffff || !mapping || !done)
+        return -1;
+    client->watch_window = window_id;
+    client->watch_token = token;
+    client->watch_mapping = mapping;
+    client->watch_length = length;
+    client->watch_done = done;
+    client->watch_context = context;
+    return 0;
+}
 static void attach_buffer(video_buffer_t *video) {
     video_window_t *window = video->window;
     video->busy = 1;
@@ -65,6 +93,15 @@ static void attach_buffer(video_buffer_t *video) {
     xdg_surface_set_window_geometry(window->xdg_surface, 0, 0,
                                    (int32_t)video->width, (int32_t)video->height);
     wl_surface_commit(window->surface);
+    av_wayland_t *client = window->client;
+    if (client->watch_window == window->geometry.window_id && !client->watch_sync &&
+        video->offset <= client->watch_length && window->capacity <= client->watch_length - video->offset &&
+        av_target_matches(client->watch_mapping + video->offset, window->capacity,
+                          video->width, video->height, video->stride, client->watch_token)) {
+        client->watch_sync = wl_display_sync(client->display);
+        if (!client->watch_sync || wl_callback_add_listener(client->watch_sync, &CommitEvents, client) != 0)
+            client->delivery_failed = 1;
+    }
 }
 static void imported_buffer(void *context, struct zwp_linux_buffer_params_v1 *params,
                             struct wl_buffer *buffer) {
@@ -229,6 +266,11 @@ void av_wayland_free(av_wayland_t **client_pointer) {
     av_wayland_t *client = *client_pointer;
     if (!client)
         return;
+    if (client->watch_sync) {
+        wl_callback_destroy(client->watch_sync);
+        client->watch_sync = NULL;
+    }
+    client->watch_window = 0;
     drain_buffers(client);
     for (unsigned i = 0; i < AvMaxWindows; ++i)
         free_window(&client->windows[i]);

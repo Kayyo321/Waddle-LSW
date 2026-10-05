@@ -7,6 +7,7 @@
 static av_message_t delivered;
 static unsigned deliveries;
 static int fail_delivery;
+static void done(void *context) { (void)context; }
 static int receive_request(const av_message_t *message, void *context) {
     assert(context == &deliveries);
     delivered = *message;
@@ -15,6 +16,14 @@ static int receive_request(const av_message_t *message, void *context) {
 }
 int main(void) {
     av_wayland_t client = {.request = receive_request, .request_context = &deliveries};
+    uint8_t mapping[64] = {0};
+    assert(av_wayland_watch(&client, 0, 1, mapping, sizeof(mapping), done, NULL) == -1);
+    assert(av_wayland_watch(&client, 1, 0, mapping, sizeof(mapping), done, NULL) == -1);
+    assert(av_wayland_watch(&client, 1, 0x1000000, mapping, sizeof(mapping), done, NULL) == -1);
+    assert(av_wayland_watch(&client, 1, 1, NULL, sizeof(mapping), done, NULL) == -1);
+    assert(av_wayland_watch(&client, 1, 1, mapping, sizeof(mapping), NULL, NULL) == -1);
+    assert(av_wayland_watch(&client, 1, 1, mapping, sizeof(mapping), done, NULL) == 0);
+    assert(av_wayland_watch(&client, 1, 1, mapping, sizeof(mapping), done, NULL) == -1);
     video_window_t window = {.client = &client, .geometry = {.window_id = 1,
         .width = 320, .height = 200, .dpi = 96, .x = 10, .y = 20}};
     uint32_t full = XDG_TOPLEVEL_STATE_FULLSCREEN;

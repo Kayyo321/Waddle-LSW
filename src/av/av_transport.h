@@ -62,4 +62,13 @@ int64_t av_audio_read(audio_ring_header_t *ring, const uint8_t *pcm, size_t pcm_
  * @note Pure, thread-safe, allocation-free; no ownership transfer.
  */
 uint64_t av_video_size(uint32_t width, uint32_t height, uint32_t stride, uint64_t capacity);
+/** @brief Check center 3x3 BGRA pixels against a diagnostic RGB24 token.
+ * @param[in] pixels Nonnull borrowed pixels[length], held under slot read ownership.
+ * @param[in] length Accessible bytes. @param[in] width Pixel width, 3..8192.
+ * @param[in] height Pixel height, 3..8192. @param[in] stride Row byte stride.
+ * @param[in] token Nonzero RGB24 token.
+ * @return 1 exact match, 0 stale or invalid layout. Pure/thread-safe, no allocation.
+ */
+int av_target_matches(const uint8_t *pixels, size_t length, uint32_t width,
+                      uint32_t height, uint32_t stride, uint32_t token);
 #endif

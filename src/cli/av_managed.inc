@@ -315,8 +315,9 @@ static int av_device_command(av_command_t command, device_info_t device) {
     }
     int result = 1;
     if (ready && !av_interrupted) {
-        char *arguments[] = {host_path, cid, config.av_shm_path, NULL};
-        result = av_run_helper(arguments);
+        char *normal_arguments[] = {host_path, cid, config.av_shm_path, NULL};
+        char *latency_arguments[] = {host_path, "--latency", cid, config.av_shm_path, NULL};
+        result = av_run_helper(command.latency ? latency_arguments : normal_arguments);
     } else fputs("waddle av: guest did not announce listener readiness before deadline\n", stderr);
     close(output[0]);
     /* The child owns only this execution session. Its cancellation closes the
@@ -347,7 +348,7 @@ static int cmd_av(int argc, char **argv) {
         FILE *stream = parsed == 1 ? stdout : stderr;
         fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi | --firmware-vars PATH] [--gpu PCI_BDF]\n"
               "waddle av probe [--device NAME]\n"
-              "waddle av run PROCESS_ID [--device NAME]\n", stream);
+              "waddle av run PROCESS_ID [--device NAME] [--latency]\n", stream);
         return parsed == 1 ? 0 : 2;
     }
     device_info_t device;

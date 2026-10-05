@@ -9,6 +9,11 @@
 #include <sys/mman.h>
 #include <unistd.h>
 static int requests;
+static unsigned commits;
+static void observed_commit(void *context) {
+    assert(context == &commits);
+    ++commits;
+}
 static int host_request(const av_message_t *message, void *context) {
     (void)context;
     assert(message->type == MsgWindowGeometry || message->type == MsgWindowClose);
@@ -35,6 +40,10 @@ int main(void) {
         .height = 200, .dpi = 96, .process_id = 1};
     strcpy(message.title, "Waddle AV native validation");
     assert(av_wayland_create(video, &message, memory, AvUsedBytes, slots, offsets, AvSlotCapacity) == 0);
+    assert(av_wayland_watch(video, 4242, 0x888888, mapping, AvMappingBytes,
+                             observed_commit, &commits) == 0);
+    assert(av_wayland_watch(video, 4242, 0x888888, mapping, AvMappingBytes,
+                             observed_commit, &commits) == -1);
     uint8_t silence[1024] = {0};
     int submitted = 0;
     for (unsigned iteration = 0; iteration < 200; ++iteration) {
@@ -60,6 +69,7 @@ int main(void) {
         assert(av_wayland_flush(video) == 0);
     }
     fprintf(stderr, "submitted=%d audio_state=%d read=%u underrun=%u invalid=%u\n", submitted, atomic_load(&audio.state), atomic_load(&ring->read_head), atomic_load(&audio.underrun_frames), atomic_load(&audio.invalid_buffers));
+    assert(commits == 1);
     assert(submitted && atomic_load_explicit(&ring->read_head, memory_order_acquire) != 0);
     av_wayland_free(&video);
     for (unsigned i = 0; i < 3; ++i)

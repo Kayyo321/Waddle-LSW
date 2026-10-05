@@ -3,7 +3,7 @@
 # Inputs are repository build outputs. A private staging tree owns all copied
 # bytes and is removed on success/error/signal. Existing archives survive failure.
 set -eu
-for name in waddle waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll; do
+for name in waddle waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll av_windows_test.exe; do
     test -s "build/$name" || { echo "AV package: missing build/$name" >&2; exit 1; }
 done
 for name in ivshmem.inf ivshmem.sys ivshmem.cat LICENSE.txt; do
@@ -17,7 +17,7 @@ trap 'rm -rf "$stage"' EXIT
 trap 'exit 1' HUP INT TERM
 bundle="$stage/waddle_av"
 mkdir -p "$bundle/vendor/av/ivshmem" "$bundle/vendor/av/module" "$bundle/source" "$bundle/impl/high-perf-av-passthrough"
-for name in waddle waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll; do
+for name in waddle waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll av_windows_test.exe; do
     cp "build/$name" "$bundle/$name"
 done
 for name in ivshmem.inf ivshmem.sys ivshmem.cat LICENSE.txt; do
@@ -52,6 +52,10 @@ bridge, then ./waddle av setup --device NAME [--uefi] [--kvmfr] [--gpu PCI_BDF].
 Setup provisions AV devices, drivers, host access and deploys the guest adapter;
 ./waddle av probe --device NAME validates native guest and host readiness.
 ./waddle av run PROCESS_ID --device NAME presents the selected guest process.
+For host-clock commit RTT, run av_windows_test.exe --round-trip-fixture in the
+interactive Windows desktop, then ./waddle av run PID --device NAME --latency.
+The fixture runs for at most two minutes; the host measures 16 visible and 16
+occluded color challenges. This measures compositor commit processing, not scanout.
 
 Linux x86_64 base packages: QEMU with KVM/VSOCK/IVSHMEM, virtiofsd, OVMF for UEFI,
 Wayland client, PipeWire, libc, sudo, make, acl, kmod, running-kernel build headers.

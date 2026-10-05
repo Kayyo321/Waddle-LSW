@@ -71,4 +71,23 @@ int av_wayland_fd(av_wayland_t *client);
  * two seconds. Unreleased slots remain consumed on compositor error/timeout.
  */
 void av_wayland_free(av_wayland_t **client);
+/** @brief Diagnostic commit acknowledgement callback, event thread only.
+ * @param[in,out] context Optional borrowed context retained until completion/free.
+ * @note No result/ownership transfer; called after compositor processes matching
+ * surface commit. Physical presentation/scanout is outside this endpoint.
+ */
+typedef void (*av_commit_done_t)(void *context);
+/** @brief Arm one diagnostic RGB24 match and compositor processing barrier.
+ * @param[in,out] client Nonnull initialized event-thread-owned client.
+ * @param[in] window_id Nonzero existing window identifier.
+ * @param[in] token Nonzero RGB24 expected center 3x3 color.
+ * @param[in] mapping Nonnull borrowed shared mapping retained until free.
+ * @param[in] length Accessible mapping bytes.
+ * @param[in] done Nonnull callback retained until completion/free.
+ * @param[in,out] context Optional borrowed callback context.
+ * @return 0 armed, -1 invalid/busy. No allocation until matching commit creates
+ * a Wayland sync proxy, owned/destroyed by callback or client free.
+ */
+int av_wayland_watch(av_wayland_t *client, uint64_t window_id, uint32_t token,
+                     const uint8_t *mapping, size_t length, av_commit_done_t done, void *context);
 #endif

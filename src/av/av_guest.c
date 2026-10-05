@@ -84,7 +84,19 @@ static int window_notification(const av_message_t *message, void *context) {
     return 0;
 }
 static int host_request(const av_message_t *message, void *context) {
-    (void)context;
+    guest_av_t *session = context;
+    if (message->type == MsgDiagnosticFlash) {
+        HWND window = (HWND)(uintptr_t)message->window_id;
+        DWORD owner = 0;
+        WCHAR name[64], title[64];
+        GetWindowThreadProcessId(window, &owner);
+        if (owner != session->process_id ||
+            !GetClassNameW(window, name, 64) || wcscmp(name, L"WaddleAvFixture") ||
+            !GetWindowTextW(window, title, 64) || wcscmp(title, L"Waddle AV latency fixture"))
+            return -1;
+        return PostMessageW(window, AvDiagnosticFlashEvent, (WPARAM)message->sequence,
+                            (LPARAM)message->flags) ? 0 : -1;
+    }
     if (message->type != MsgWindowGeometry && message->type != MsgWindowClose)
         return -1;
     return av_windows_apply(message);

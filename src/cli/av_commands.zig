@@ -20,7 +20,10 @@ fn parse(args: []const []const u8) !c.av_command_t {
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--firmware-vars")) {
+        if (std.mem.eql(u8, arg, "--latency")) {
+            if (command.kind != c.AvRun or command.latency != 0) return error.Invalid;
+            command.latency = 1;
+        } else if (std.mem.eql(u8, arg, "--firmware-vars")) {
             index += 1;
             if (command.kind != c.AvSetup or command.firmware_vars[0] != 0 or index >= args.len) return error.Invalid;
             const path = args[index];
@@ -78,4 +81,11 @@ test "AV grammar rejects ambiguous and unsafe provisioning inputs" {
     try std.testing.expectEqual(@as(u32, 4294967295), (try parse(&.{ "run", "4294967295" })).process_id);
     _ = try parse(&.{"probe"});
     for ([_][]const []const u8{ &.{}, &.{"unknown"}, &.{"run"}, &.{ "run", "0" }, &.{ "run", "+1" }, &.{ "run", "4294967296" }, &.{ "run", "1", "2" }, &.{ "setup", "--device", "../x" }, &.{ "setup", "--gpu", "0000:00:20.0" }, &.{ "setup", "--gpu", "0000:0e:00.8" }, &.{ "setup", "--gpu", "0000:0E:00.0" }, &.{ "setup", "--device" }, &.{ "probe", "--kvmfr" }, &.{ "setup", "--kvmfr", "--kvmfr" }, &.{ "probe", "--device", "a", "--device", "b" } }) |args| try std.testing.expectError(error.Invalid, parse(args));
+}
+
+test "latency requires explicit run opt-in exactly once" {
+    const command = try parse(&.{ "run", "123", "--latency" });
+    try std.testing.expectEqual(@as(u32, 1), command.latency);
+    for ([_][]const []const u8{ &.{ "setup", "--latency" }, &.{ "probe", "--latency" }, &.{ "run", "123", "--latency", "--latency" } }) |args|
+        try std.testing.expectError(error.Invalid, parse(args));
 }

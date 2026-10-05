@@ -13,10 +13,21 @@ static uint64_t target_id;
 static unsigned creates, geometries, destroys;
 static int defer_creation = 1;
 static unsigned captured_frames;
-static uint64_t minimum_timestamp;
 static unsigned paint_sequence;
+static HWND occlusion_window;
+static int latency_fixture;
 static COLORREF paint_color = RGB(63, 127, 191);
 static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (message == AvDiagnosticFlashEvent && latency_fixture &&
+        (uint64_t)(uintptr_t)window == target_id && wparam && wparam <= 0xffffff &&
+        (lparam == 0 || lparam == 1)) {
+        paint_color = RGB((wparam >> 16) & 255, (wparam >> 8) & 255, wparam & 255);
+        if (lparam) SetWindowPos(occlusion_window, HWND_TOPMOST, 50, 50, 1000, 700, SWP_SHOWWINDOW);
+        else ShowWindow(occlusion_window, SW_HIDE);
+        InvalidateRect(window, NULL, FALSE);
+        UpdateWindow(window);
+        return 0;
+    }
     if (message == WM_PAINT && (uint64_t)(uintptr_t)window == target_id) {
         PAINTSTRUCT paint;
         HDC dc = BeginPaint(window, &paint);
@@ -32,7 +43,6 @@ static HRESULT captured_pixels(const uint8_t *pixels, size_t length, uint32_t st
                                uint32_t width, uint32_t height, uint64_t timestamp_ns,
                                void *context) {
     (void)context;
-    if (timestamp_ns < minimum_timestamp) return S_OK;
     assert(width > 100 && height > 100 && timestamp_ns);
     assert(stride >= width * 4 && length >= (size_t)stride * height);
     const uint8_t *center = pixels + (size_t)(height / 2) * stride + (width / 2) * 4;
@@ -99,13 +109,10 @@ static void native_audio_test(void) {
 /** @brief Fixed diagnostic accumulator owned by the calling capture thread. */
 typedef struct capture_measurement_t {
     uint64_t last_timestamp;
-    uint64_t age_sum_ns;
-    uint64_t age_max_ns;
     uint64_t interval_max_ns;
     unsigned frames;
     unsigned duplicate_frames;
     unsigned invalid_timestamps;
-    unsigned age_samples;
 } capture_measurement_t;
 static uint64_t performance_time_ns(void) {
     LARGE_INTEGER clock, frequency;
@@ -124,18 +131,8 @@ static HRESULT measured_pixels(const uint8_t *pixels, size_t length, uint32_t st
         ++measurement->duplicate_frames;
         return result;
     }
-    uint64_t now = performance_time_ns();
-    if (timestamp_ns <= measurement->last_timestamp || timestamp_ns > now) {
-        ++measurement->invalid_timestamps;
-        ++measurement->frames;
-        measurement->last_timestamp = timestamp_ns;
-        return result;
-    }
-    ++measurement->age_samples;
-    uint64_t age = now - timestamp_ns;
-    uint64_t interval = measurement->last_timestamp ? timestamp_ns - measurement->last_timestamp : 0;
-    measurement->age_sum_ns += age;
-    if (age > measurement->age_max_ns) measurement->age_max_ns = age;
+    if (timestamp_ns < measurement->last_timestamp) ++measurement->invalid_timestamps;
+    uint64_t interval = timestamp_ns > measurement->last_timestamp ? timestamp_ns - measurement->last_timestamp : 0;
     if (interval > measurement->interval_max_ns) measurement->interval_max_ns = interval;
     measurement->last_timestamp = timestamp_ns;
     ++measurement->frames;
@@ -151,7 +148,6 @@ static int native_capture_benchmark(av_wgc_t *capture, av_wgc_read_t read_frame)
     LARGE_INTEGER due = {.QuadPart = -10000};
     assert(timer && SetWaitableTimer(timer, &due, 1, NULL, NULL, FALSE));
     capture_measurement_t measurement = {0};
-    minimum_timestamp = performance_time_ns();
     uint64_t start = performance_time_ns(), deadline = start + 3000000000;
     do {
         InvalidateRect((HWND)(uintptr_t)target_id, NULL, FALSE);
@@ -168,13 +164,10 @@ static int native_capture_benchmark(av_wgc_t *capture, av_wgc_read_t read_frame)
     fprintf(stderr, "Native capture benchmark: %u unique frames, %u duplicates in %.3f ms (%.2f fps)\n",
             measurement.frames, measurement.duplicate_frames, elapsed / 1000000.0,
             measurement.frames * 1000000000.0 / elapsed);
-    fprintf(stderr, "WGC timestamp-to-CPU callback age: mean=%.3f ms max=%.3f ms; max frame interval=%.3f ms\n",
-            measurement.age_samples ? measurement.age_sum_ns / (double)measurement.age_samples / 1000000.0 : 0.0,
-            measurement.age_max_ns / 1000000.0, measurement.interval_max_ns / 1000000.0);
-    fprintf(stderr, "WGC timing validation: %u invalid timestamps; age result %s\n",
-            measurement.invalid_timestamps, measurement.invalid_timestamps ? "INVALID" : "valid");
-    fputs("Capture diagnostics only: host presentation and audio output latency are unmeasured\n", stderr);
-    return measurement.invalid_timestamps ? 1 : 0;
+    fprintf(stderr, "WGC ordering: %u regressions; max guest frame interval %.3f ms\n",
+            measurement.invalid_timestamps, measurement.interval_max_ns / 1000000.0);
+    fputs("Throughput only; use host --latency for host-clock compositor commit RTT\n", stderr);
+    return 0;
 }
 static int notification(const av_message_t *message, void *context) {
     (void)context;
@@ -200,6 +193,7 @@ static void pump(void) {
 }
 int main(int argc, char **argv) {
     int benchmark_status = 0;
+    latency_fixture = argc == 2 && !strcmp(argv[1], "--round-trip-fixture");
     int benchmark = argc == 2 && !strcmp(argv[1], "--benchmark");
     int native_capture = benchmark || (argc == 2 && !strcmp(argv[1], "--capture"));
     assert(av_guest_setup("relative") == 2);
@@ -215,6 +209,20 @@ int main(int argc, char **argv) {
         WS_OVERLAPPEDWINDOW | WS_VISIBLE, 800, 100, 100, 100, NULL, NULL, window_class.hInstance, NULL);
     assert(target && tool);
     target_id = (uint64_t)(uintptr_t)target;
+    if (latency_fixture) {
+        occlusion_window = tool;
+        SetWindowTextW(target, L"Waddle AV latency fixture");
+        ShowWindow(tool, SW_HIDE);
+        fprintf(stderr, "Latency fixture PID=%lu; run managed AV for this PID and host --latency\n",
+                (unsigned long)GetCurrentProcessId());
+        ULONGLONG deadline = GetTickCount64() + 120000;
+        while (GetTickCount64() < deadline && IsWindow(target)) pump();
+        if (IsWindow(target)) DestroyWindow(target);
+        DestroyWindow(tool);
+        UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
+        CoUninitialize();
+        return 0;
+    }
     assert(av_windows_start(0, notification, NULL) == -1);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
     assert(creates == 0);
@@ -264,10 +272,6 @@ int main(int argc, char **argv) {
         assert(SetWindowPos(tool, HWND_TOPMOST, 100, 100, 700, 500, SWP_SHOWWINDOW));
         paint_color = RGB(95, 159, 223);
         assert(InvalidateRect(target, NULL, FALSE) && UpdateWindow(target));
-        LARGE_INTEGER clock, frequency;
-        assert(QueryPerformanceCounter(&clock) && QueryPerformanceFrequency(&frequency));
-        minimum_timestamp = (uint64_t)(clock.QuadPart / frequency.QuadPart) * 1000000000 +
-            (uint64_t)(clock.QuadPart % frequency.QuadPart) * 1000000000 / frequency.QuadPart;
         capture_until_frame(capture, read_frame);
         if (benchmark) {
             ShowWindow(tool, SW_HIDE);

@@ -9,10 +9,11 @@ fn put(comptime T: type, data: []u8, offset: usize, value: T) void {
     std.mem.writeInt(T, data[offset..][0..@sizeOf(T)], value, .little);
 }
 fn valid(message: *const c.av_message_t) bool {
-    if (message.window_id == 0 or message.type < 1 or message.type > 5 or message.flags > 3) return false;
+    if (message.window_id == 0 or message.type < 1 or message.type > 6 or message.flags > 3) return false;
     const title: []const u8 = std.mem.sliceAsBytes(&message.title);
     const end = std.mem.indexOfScalar(u8, title, 0) orelse return false;
     if (!std.unicode.utf8ValidateSlice(title[0..end])) return false;
+    if (message.type == 6) return message.sequence != 0 and message.sequence <= 0xffffff and message.flags <= 1;
     if (message.type == 2 or message.type == 5) return true;
     if (message.width == 0 or message.height == 0 or message.width > 8192 or message.height > 8192 or message.dpi < 48 or message.dpi > 768) return false;
     if (message.type == 1 and (message.process_id == 0 or message.buffer_index >= 16)) return false;
@@ -158,7 +159,7 @@ test "invalid lifecycle and frame fields never alter encoded output" {
         switch (index) {
             0 => message.window_id = 0,
             1 => message.type = 0,
-            2 => message.type = 6,
+            2 => message.type = 7,
             3 => message.flags = 4,
             4 => message.height = 0,
             5 => message.height = 8193,
@@ -205,4 +206,26 @@ test "PCI paths reject traversal and invalid slot/function" {
     for ([_][]const u8{ "", "../../driver", "0000:00:20.0", "0000:00:00.8", "0000:0g:00.0", "0000-00:00.0" }) |value|
         try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_gpu_bdf_validate, .{ value.ptr, value.len }));
     try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_gpu_bdf_validate, .{ "0000:0E:1f.7", 12 }));
+}
+
+test "diagnostic tokens have bounded color and occlusion state" {
+    var message = std.mem.zeroes(c.av_message_t);
+    message.type = 6;
+    message.window_id = 1;
+    var bytes: [328]u8 = undefined;
+    var decoded: c.av_message_t = undefined;
+    for ([_]u64{ 1, 0xffffff }) |token| {
+        message.sequence = token;
+        message.flags = 1;
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_decode, .{ &bytes, bytes.len, &decoded }));
+        try std.testing.expectEqual(token, decoded.sequence);
+    }
+    for ([_]u64{ 0, 0x1000000 }) |token| {
+        message.sequence = token;
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
+    }
+    message.sequence = 1;
+    message.flags = 2;
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
 }

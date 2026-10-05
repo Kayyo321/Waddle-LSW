@@ -17,6 +17,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <time.h>
 /** @brief Main-loop-owned borrowed mappings and native clients. */
 typedef struct host_av_t {
     av_peer_t peer;
@@ -24,11 +25,48 @@ typedef struct host_av_t {
     av_pipewire_t audio;
     void *mapping;
     int memory_fd;
+    int latency;
+    uint64_t target_window, start_ns, latency_sum_ns, latency_max_ns;
+    uint32_t token;
+    unsigned samples;
+
 } host_av_t;
 static volatile sig_atomic_t stopping;
 static void stop_signal(int signal_number) {
     (void)signal_number;
     stopping = 1;
+}
+static uint64_t host_time_ns(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0;
+    return (uint64_t)now.tv_sec * 1000000000 + (uint64_t)now.tv_nsec;
+}
+static int request_flash(host_av_t *host);
+static void measured_commit(void *context) {
+    host_av_t *host = context;
+    uint64_t end = host_time_ns();
+    if (!end || end < host->start_ns) { stopping = 1; host->latency = -1; return; }
+    uint64_t elapsed = end - host->start_ns;
+    host->latency_sum_ns += elapsed;
+    if (elapsed > host->latency_max_ns) host->latency_max_ns = elapsed;
+    fprintf(stderr, "Host commit RTT: sample=%u occluded=%u token=%06x %.3f ms\n",
+            host->samples + 1, host->samples >= 16, host->token, elapsed / 1000000.0);
+    if (++host->samples == 32) {
+        fprintf(stderr, "Host commit RTT: mean=%.3f ms max=%.3f ms; scanout/audio unmeasured\n",
+                host->latency_sum_ns / 32000000.0, host->latency_max_ns / 1000000.0);
+        stopping = 1;
+    } else if (request_flash(host) != 0) { stopping = 1; host->latency = -1; }
+}
+static int request_flash(host_av_t *host) {
+    /* Unique RGB24 tokens within this bounded run; old queued content cannot
+     * acknowledge the next challenge. Guest clocks are never read. */
+    host->token = host->token % 0xffffff + 1;
+    if (av_wayland_watch(host->video, host->target_window, host->token, host->mapping,
+                         AvMappingBytes, measured_commit, host) != 0) return -1;
+    av_message_t flash = {.type = MsgDiagnosticFlash, .window_id = host->target_window,
+        .sequence = host->token, .flags = host->samples >= 16};
+    host->start_ns = host_time_ns();
+    return host->start_ns && av_peer_send(&host->peer, &flash) == 0 ? 0 : -1;
 }
 static int host_request(const av_message_t *message, void *context) {
     host_av_t *host = context;
@@ -46,8 +84,14 @@ static int guest_message(const av_message_t *message, void *context) {
             slots[index] = av_layout_slot(host->mapping, AvMappingBytes, pool, index);
             offsets[index] = av_layout_pixels(pool, index);
         }
-        return av_wayland_create(host->video, message, host->memory_fd, AvUsedBytes, slots, offsets,
-                                 AvSlotCapacity);
+        int result = av_wayland_create(host->video, message, host->memory_fd, AvUsedBytes, slots, offsets,
+                                        AvSlotCapacity);
+        if (!result && host->latency && !host->target_window &&
+            !strcmp(message->title, "Waddle AV latency fixture")) {
+            host->target_window = message->window_id;
+            result = request_flash(host);
+        }
+        return result;
     }
     return av_wayland_message(host->video, message);
 }
@@ -59,14 +103,18 @@ static int guest_message(const av_message_t *message, void *context) {
  */
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--help")) {
-        puts("waddle-av-host GUEST_CID SHARED_MEMORY_PATH | --probe SHARED_MEMORY_PATH");
+        puts("waddle-av-host [--latency] GUEST_CID SHARED_MEMORY_PATH | --probe SHARED_MEMORY_PATH");
         return 0;
     }
+    int latency = argc == 4 && !strcmp(argv[1], "--latency");
+    if (latency) { --argc; ++argv; }
     uint32_t cid = 0;
     int probe = argc == 3 && !strcmp(argv[1], "--probe");
     if (argc != 3 || (!probe && (av_number_parse(argv[1], strlen(argv[1]), &cid) != 0 || cid < 3)))
         return 2;
-    host_av_t host = {.memory_fd = -1};
+    host_av_t host = {.memory_fd = -1, .latency = latency};
+    host.start_ns = host_time_ns();
+    host.token = (uint32_t)(host.start_ns % 0xffffff);
     int peer = -1, result = 1;
     host.memory_fd = open(argv[2], O_RDWR | O_CLOEXEC | O_NOFOLLOW);
     if (host.memory_fd < 0)
@@ -129,6 +177,11 @@ start_clients:
     sigaction(SIGTERM, &action, NULL);
     result = 0;
     while (!stopping) {
+        if (latency && host_time_ns() - host.start_ns > 5000000000) {
+            fputs("Host commit RTT: fixture/color/commit timeout; no valid sample\n", stderr);
+            result = 1;
+            break;
+        }
         if (!av_pipewire_ready(&host.audio)) {
             errno = ENOTCONN;
             result = 1;
@@ -165,6 +218,7 @@ start_clients:
         }
     }
 cleanup:
+    if (latency && (host.samples != 32 || host.latency < 0)) result = 1;
     if (result)
         fprintf(stderr, "AV host: session setup/playback failed: %s (%d)\n", strerror(errno),
                 errno);
