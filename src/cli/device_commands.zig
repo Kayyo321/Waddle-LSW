@@ -6,6 +6,7 @@ const c = @cImport({
     @cInclude("daemon_client.h");
     @cInclude("sys/stat.h");
     @cInclude("unistd.h");
+    @cInclude("poll.h");
     @cInclude("errno.h");
     @cInclude("fcntl.h");
 });
@@ -517,8 +518,23 @@ fn execute_mutation(allocator: std.mem.Allocator, command: command_t, results: *
         if (c.daemon_device_find(terminated, &info) != 0) return registry_error();
         try std.io.getStdOut().writer().print("Remove {s}? Config: {s}; owned state: {s}; keep data: {}. Type the exact name: ", .{ name, c_text(&info.config_path), c_text(&info.state_dir), command.keep_data });
         var input_buffer: [65]u8 = undefined;
-        const answer = try std.io.getStdIn().reader().readUntilDelimiterOrEof(&input_buffer, '\n');
-        if (answer == null or !std.mem.eql(u8, answer.?, name)) return error.Cancelled;
+        var length: usize = 0;
+        while (true) {
+            if (c.daemon_device_cancelled() != 0) return error.Cancelled;
+            var descriptor = c.struct_pollfd{ .fd = c.STDIN_FILENO, .events = c.POLLIN, .revents = 0 };
+            const ready = c.poll(&descriptor, 1, 100);
+            if (ready < 0) { if (c.__errno_location().* == c.EINTR) continue; return error.IoError; }
+            if (ready == 0) continue;
+            var byte: u8 = undefined;
+            const amount = c.read(c.STDIN_FILENO, &byte, 1);
+            if (amount < 0) { if (c.__errno_location().* == c.EINTR) continue; return error.IoError; }
+            if (amount == 0) return error.Cancelled;
+            if (byte == '\n') break;
+            if (length == input_buffer.len) return error.Cancelled;
+            input_buffer[length] = byte;
+            length += 1;
+        }
+        if (!std.mem.eql(u8, input_buffer[0..length], name)) return error.Cancelled;
     }
     const argument = if (two_names) command.operands[2] else if (operation == c.DeviceInit) command.base_disk orelse command.blank_disk else if (operation == c.DeviceExport) command.output else command.input;
     const terminated_arg = if (argument) |arg| try allocator.dupeZ(u8, arg) else null;

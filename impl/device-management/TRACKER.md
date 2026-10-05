@@ -187,6 +187,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +60% to TODO #10 (+3.0% overall); total 95.5%.
   - **Summary**: Add reproducible 1000-cycle concurrent-reader stress, real two-device Windows acceptance, registry ABI negative cases, allocator-failure codec/reference tests, >90% kcov line gates and LLVM source conditional/switch edge gates. CLI branch coverage 100% (140/140), storage codec/reference coverage 92.93% (92/99); compiler panic guards are separately identified. Extend Linux CI with coverage prerequisites, explicit leak detection, full fault matrix and stress. Local final sanitizer/TSan/cross-build and final-head GitHub CI are still pending.
 
-- **Commit `:/close staged image descriptors when durability fails`**: `fix(device): close staged image descriptors when durability fails`
+- **Commit `5736845`**: `fix(device): close staged image descriptors when durability fails`
   - **Task Impact**: +0% to TODO #10; retain 95.5% pending final verification.
   - **Summary**: Scope staged clone/init/import/export image handles with defer so chmod/fsync errors close descriptors before rollback. Include staged disk fsync in ordinal failure injection. This audit fix receives full fault/sanitizer/coverage reruns before completion.
+
+- **Commit `:/allow SIGINT to cancel device removal confirmation`**: `fix(cli): allow SIGINT to cancel device removal confirmation`
+  - **Task Impact**: +0% to TODO #10; retain 95.5% pending final verification.
+  - **Summary**: Read the bounded TTY confirmation through cancellable poll/read instead of a standard reader that retries EINTR. PTY acceptance proves immediate exit 130 without waiting for newline/EOF and preserves config/disk. Updated CLI acceptance passes under ASan/LSan/UBSan; the full storage matrix now covers 360 boundaries.

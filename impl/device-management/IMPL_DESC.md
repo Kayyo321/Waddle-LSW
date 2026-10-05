@@ -712,3 +712,10 @@ Staged disk handles use a lexical defer before chmod/fsync, including export.
 A failed disk durability operation closes the handle before error recovery. The
 fsync ordinal seam covers staged disk flushes as well as metadata and rename
 parent flushes; the final reported fault count includes these additional sites.
+
+Text removal confirmation polls stdin in 100 ms intervals and reads at most 65
+bytes without automatic EINTR retry. SIGINT cancels with exit 130 immediately,
+EOF/mismatch/overlong input also cancels, and no registry/runtime write lock is
+held while prompting. PTY acceptance signals the waiting prompt without a
+newline and proves the original profile and disk are preserved. The final disk
+flush-expanded crash/failure matrix contains 360 boundaries.
