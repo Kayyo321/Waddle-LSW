@@ -175,7 +175,7 @@ export fn daemon_config_validate(config: ?*const c.daemon_config_t) c_int {
         if (m.guest_drive[0] == 0) return -1;
     }
 
-    if (cfg.av_enabled > 1 or cfg.av_reserved != 0) return -1;
+    if (cfg.av_enabled > 1 or cfg.av_uefi > 1) return -1;
     const av_path_end = std.mem.indexOfScalar(u8, &cfg.av_shm_path, 0) orelse return -1;
     const gpu_end = std.mem.indexOfScalar(u8, &cfg.av_gpu_bdf, 0) orelse return -1;
     if (cfg.av_enabled != 0 and !av_path_valid(cfg.av_shm_path[0..av_path_end])) return -1;
@@ -293,6 +293,11 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                 }
             },
             .av => {
+                if (std.mem.eql(u8, key, "uefi")) {
+                    cfg.av_uefi = parse_u32(val) catch return -1;
+                    if (cfg.av_uefi > 1) return -1;
+                    continue;
+                }
                 if (std.mem.eql(u8, key, "enabled")) {
                     cfg.av_enabled = parse_u32(val) catch return -1;
                 } else if (std.mem.eql(u8, key, "shm_path")) {
@@ -499,7 +504,7 @@ test "daemon_config: full width vsock port and empty export section" {
 
 /// Mutable key schema; immutable storage borrowed by the editor.
 const edit_key_t = struct { name: []const u8, section: []const u8, default: []const u8 };
-/// The nine supported mutable settings and their exact reset representations.
+/// The ten supported mutable settings and their exact reset representations.
 const EditKeys = [_]edit_key_t{
     .{ .name = "memory_mb", .section = "subsystem", .default = "4096" },
     .{ .name = "vcpus", .section = "subsystem", .default = "4" },
@@ -508,6 +513,7 @@ const EditKeys = [_]edit_key_t{
     .{ .name = "start_timeout", .section = "timeouts", .default = "60" },
     .{ .name = "stop_timeout", .section = "timeouts", .default = "15" },
     .{ .name = "enabled", .section = "av", .default = "0" },
+    .{ .name = "uefi", .section = "av", .default = "0" },
     .{ .name = "shm_path", .section = "av", .default = "/dev/kvmfr0" },
     .{ .name = "gpu_bdf", .section = "av", .default = "" },
 };
@@ -634,7 +640,7 @@ test "AV device configuration is bounded and transactional" {
     try std.testing.expectEqual(@as(u32, 1), cfg.av_enabled);
     const before = cfg;
     for ([_][]const u8{
-        "[av]\nenabled=2\n",            "[av]\nshm_path=relative\n",    "[av]\nshm_path=/tmp/x,share=off\n",
+        "[av]\nenabled=2\n", "[av]\nuefi=2\n",            "[av]\nshm_path=relative\n",    "[av]\nshm_path=/tmp/x,share=off\n",
         "[av]\ngpu_bdf=0000:0e:ff.0\n", "[av]\ngpu_bdf=0000:0e:00.8\n", "[av]\nunknown=1\n",
         "[av]\ngpu_bdf=invalid\n",      "[av]\nshm_path=\n",
     }) |invalid| {

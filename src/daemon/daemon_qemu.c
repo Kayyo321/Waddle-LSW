@@ -158,6 +158,20 @@ int qemu_build_args(const daemon_config_t *config,
     if (append_arg(argv, &argc, max_args, "-drive") != 0 ||
         append_arg(argv, &argc, max_args, drive_buf) != 0) goto fail;
 
+    if (config->av_enabled && config->av_uefi) {
+        char firmware_vars[WaddleMaxPathLen + 64];
+        int length = snprintf(firmware_vars, sizeof(firmware_vars),
+            "if=pflash,format=raw,file=%s.av_uefi.fd", config->disk_image);
+        if (length <= 0 || (size_t)length >= sizeof(firmware_vars) ||
+            append_arg(argv, &argc, max_args, "-machine") != 0 ||
+            append_arg(argv, &argc, max_args, "q35") != 0 ||
+            append_arg(argv, &argc, max_args, "-drive") != 0 ||
+            append_arg(argv, &argc, max_args, "if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd") != 0 ||
+            append_arg(argv, &argc, max_args, "-drive") != 0 ||
+            append_arg(argv, &argc, max_args, firmware_vars) != 0)
+            goto fail;
+    }
+
     /* AV devices are managed with the existing VM; no external AV VM assumed. */
     if (config->av_enabled) {
         if (daemon_config_validate(config) != 0) { errno = EINVAL; goto fail; }

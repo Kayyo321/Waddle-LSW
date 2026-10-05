@@ -96,7 +96,7 @@ static int cmd_av(int argc, char **argv) {
     int parsed = waddle_av_parse((size_t)(argc - 2), (const char *const *)(argv + 2), &command);
     if (parsed != 0) {
         FILE *stream = parsed == 1 ? stdout : stderr;
-        fputs("waddle av setup [--device NAME] [--kvmfr] [--gpu PCI_BDF]\n"
+        fputs("waddle av setup [--device NAME] [--kvmfr] [--uefi] [--gpu PCI_BDF]\n"
               "waddle av probe [--device NAME]\n"
               "waddle av run PROCESS_ID [--device NAME]\n", stream);
         return parsed == 1 ? 0 : 2;
@@ -126,10 +126,10 @@ static int cmd_av(int argc, char **argv) {
             return 1;
         snprintf(setting, sizeof(setting), "shm_path=%s", memory);
         snprintf(gpu, sizeof(gpu), "gpu_bdf=%s", command.gpu_bdf);
-        const char *changes[] = {"enabled=1", setting, gpu};
+        const char *changes[] = {"enabled=1", setting, gpu, command.uefi ? "uefi=1" : "uefi=0"};
         if (!(config.av_enabled && !strcmp(config.av_shm_path, memory) &&
-              !strcmp(config.av_gpu_bdf, command.gpu_bdf)) &&
-            daemon_device_config_update(device.name, changes, 3, 0, 0) != 0) {
+              !strcmp(config.av_gpu_bdf, command.gpu_bdf) && config.av_uefi == command.uefi) &&
+            daemon_device_config_update(device.name, changes, 4, 0, 0) != 0) {
             fprintf(stderr, "waddle av: configuring AV requires a stopped device: %s\n", strerror(errno));
             return 1;
         }

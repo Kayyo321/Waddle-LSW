@@ -8,6 +8,7 @@ typedef enum av_command_kind_t { AvSetup = 1, AvProbe = 2, AvRun = 3 } av_comman
 typedef struct av_command_t {
     uint32_t kind; /**< One av_command_kind_t value. */
     uint32_t process_id; /**< Run target, positive Windows PID; zero for setup/probe. */
+    uint32_t uefi; /**< Setup selects managed persistent OVMF firmware. */
     uint32_t kvmfr; /**< Setup requests privileged pinned module provisioning. */
     char device[64]; /**< ASCII registry name, empty selects saved default. */
     char gpu_bdf[16]; /**< Explicit canonical PCI BDF, empty leaves host GPU untouched. */

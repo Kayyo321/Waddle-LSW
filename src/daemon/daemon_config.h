@@ -75,8 +75,8 @@ typedef struct daemon_config_t {
     waddle_daemon_fs_mount_t mounts[WaddleMaxMounts];
     /** @brief AV devices enabled (0/1); default disabled preserves CLI-only VMs. */
     uint32_t av_enabled;
-    /** @brief Reserved zero padding for future AV settings, no runtime semantics. */
-    uint32_t av_reserved;
+    /** @brief Use managed persistent OVMF firmware (0/1); default retains BIOS boot. */
+    uint32_t av_uefi;
     /** @brief Absolute private AV shared-memory/KVMFR path, no comma/newline. */
     char av_shm_path[WaddleMaxPathLen];
     /** @brief Explicit VFIO GPU PCI address dddd:bb:ss.f; empty means no passthrough. */
@@ -149,7 +149,7 @@ int daemon_config_validate(const daemon_config_t *config);
  * @param[in] length Input byte count; embedded NUL is rejected.
  * @param[in] changes Non-null borrowed array of non-null NUL-terminated keys
  * (reset) or key=value assignments (set); unknown/duplicate keys are rejected.
- * @param[in] count Number of changes, 1 through 9.
+ * @param[in] count Number of changes, 1 through 10.
  * @param[in] reset Nonzero selects documented default values.
  * @param[out] output Non-null caller-owned buffer; must not alias data.
  * @param[in] capacity Output capacity; complete output is limited to 65536 bytes.

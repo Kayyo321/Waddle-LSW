@@ -626,7 +626,7 @@ fn execute(allocator: std.mem.Allocator, command: command_t, results: *std.json.
         config_write = config_reset or std.mem.eql(u8, action, "set");
         if (!config_write and !std.mem.eql(u8, action, "get")) return error.Usage;
         if (config_write) {
-            if (command.count < 4 or command.count > 12) return error.Usage;
+            if (command.count < 4 or command.count > 13) return error.Usage;
         } else if (command.count > 4) return error.Usage;
     }
     if (command.dry_run and !config_write) return error.Usage;
@@ -634,7 +634,7 @@ fn execute(allocator: std.mem.Allocator, command: command_t, results: *std.json.
     if (name) |n| if (!name_valid(n)) return error.InvalidName;
     if (config_write) {
         const terminated = try allocator.dupeZ(u8, name.?);
-        var changes: [9][*:0]const u8 = undefined;
+        var changes: [10][*:0]const u8 = undefined;
         var plan = std.json.Value{ .array = std.ArrayList(std.json.Value).init(allocator) };
         for (command.operands[3..command.count], 0..) |change, i| {
             changes[i] = (try allocator.dupeZ(u8, change)).ptr;
@@ -809,7 +809,7 @@ export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int
                 "Batch operations snapshot sorted names, continue failures and return aggregate failure.\n" ++
                 "Read commands never start a guest. Default selection does not boot.\n" ++
                 "Config keys: memory_mb, vcpus, default_shell, vsock_port, start_timeout, stop_timeout,\n" ++
-                "enabled, shm_path, gpu_bdf (AV environment).\n" ++
+                "enabled, uefi, shm_path, gpu_bdf (AV environment).\n" ++
                 "Exit codes: 0 success, 2 usage/validation, 1 I/O, 125 resources, 130 interrupted.\n",
         ) catch return 125;
         return 0;

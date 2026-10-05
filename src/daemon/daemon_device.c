@@ -589,7 +589,7 @@ int daemon_device_repair_runtime(const device_info_t *info, int dry_run) {
 
 int daemon_device_config_update(const char *name, const char *const *changes,
                                 size_t count, int reset, int dry_run) {
-    if (daemon_device_validate_name(name) != 0 || changes == NULL || count == 0 || count > 9) {
+    if (daemon_device_validate_name(name) != 0 || changes == NULL || count == 0 || count > 10) {
         errno = EINVAL; return -1;
     }
     /* A dry run takes a shared existing lock; real runs serialize replacement. */

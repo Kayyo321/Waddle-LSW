@@ -20,7 +20,10 @@ fn parse(args: []const []const u8) !c.av_command_t {
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const arg = args[index];
-        if (std.mem.eql(u8, arg, "--kvmfr")) {
+        if (std.mem.eql(u8, arg, "--uefi")) {
+            if (command.kind != c.AvSetup or command.uefi != 0) return error.Invalid;
+            command.uefi = 1;
+        } else if (std.mem.eql(u8, arg, "--kvmfr")) {
             if (command.kind != c.AvSetup or command.kvmfr != 0) return error.Invalid;
             command.kvmfr = 1;
         } else if (std.mem.eql(u8, arg, "--device") or std.mem.eql(u8, arg, "--gpu")) {

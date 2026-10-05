@@ -37,6 +37,57 @@ void av_environment_free(av_environment_t *environment) {
     environment->length = 0;
     environment->path[0] = '\0';
 }
+/* Persistent firmware belongs to the device disk, not a capture session. */
+static int prepare_firmware(const daemon_config_t *config) {
+    if (!config->av_uefi) return 0;
+    if (strchr(config->disk_image, ',') || strchr(config->disk_image, '\n')) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (access("/usr/share/OVMF/OVMF_CODE_4M.fd", R_OK) != 0) return -1;
+    int input = open("/usr/share/OVMF/OVMF_VARS_4M.fd", O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (input < 0) return -1;
+    char destination[WaddleMaxPathLen + 16];
+    struct stat source, existing;
+    int output = -1, result = -1, created = 0;
+    if (fstat(input, &source) != 0 || !S_ISREG(source.st_mode) || source.st_size <= 0 ||
+        source.st_size > 16777216 || snprintf(destination, sizeof(destination), "%s.av_uefi.fd", config->disk_image) >= (int)sizeof(destination)) goto cleanup;
+    output = open(destination, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (output < 0 && errno == EEXIST) {
+        output = open(destination, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+        if (output >= 0 && fstat(output, &existing) == 0 && S_ISREG(existing.st_mode) &&
+            existing.st_uid == geteuid() && !(existing.st_mode & 0077) && existing.st_size == source.st_size)
+            result = 0;
+        else errno = EINVAL;
+        goto cleanup;
+    }
+    if (output < 0) goto cleanup;
+    created = 1;
+    char bytes[65536];
+    for (;;) {
+        ssize_t count = read(input, bytes, sizeof(bytes));
+        if (count < 0 && errno == EINTR) continue;
+        if (count < 0) goto cleanup;
+        if (!count) break;
+        ssize_t offset = 0;
+        while (offset < count) {
+            ssize_t written = write(output, bytes + offset, (size_t)(count - offset));
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) goto cleanup;
+            offset += written;
+        }
+    }
+    if (fsync(output) == 0) result = 0;
+cleanup:
+    {
+        int saved = errno;
+        close(input);
+        if (output >= 0) close(output);
+        if (created && result) unlink(destination);
+        errno = saved;
+    }
+    return result;
+}
 int av_environment_prepare(av_environment_t *environment, const daemon_config_t *config,
                            char *error, size_t capacity) {
     if (!capacity) {
@@ -53,6 +104,8 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
         errno = EINVAL;
         return fail(environment, error, capacity, "configuration");
     }
+    if (prepare_firmware(config) != 0)
+        return fail(environment, error, capacity, "persistent OVMF firmware preparation");
     if (config->av_gpu_bdf[0]) {
         char driver_path[128], driver[256];
         snprintf(driver_path, sizeof(driver_path), "/sys/bus/pci/devices/%s/driver",
