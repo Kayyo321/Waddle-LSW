@@ -39,7 +39,7 @@
 | #6.3 | Feed audio frames into PipeWire playback buffer callback | Done | 3.2% | 100% | Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes. |
 | **7**   | **Testing & CI Verification** | | | | |
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | Done | 1.6% | 100% | Negotiate explicit linear or advertised implicit ARGB imports, retain slot ownership through asynchronous creation, and fall back per window after compositor rejection. Preserve pending contexts across retirement and bound teardown; native protocol evidence confirms genuine KVMFR created/attach/release, while the regular-file platform gate still passes. |
-| #7.2 | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | In Progress | 1.6% | 85% | Gate production lines and branches independently at ninety percent for audio, control, layout and video; current results are one hundred percent in each module. Prevent constant-folded test calls, cover real sparse mapping initialization and invalid pool/metadata fields, and run all native AV suites under ASan/LSan/UBSan with leak-checking Zig tests. |
+| #7.2 | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | In Progress | 1.6% | 95% | Retain the already-loaded system D-Bus library while PipeWire closes its RTKit connections, then release global bus caches before the final library close. The standalone host owns the only bus lifecycle. Native ASan/LSan/UBSan now reports zero leaks instead of 3677 bytes; all bounded module coverage gates remain at one hundred percent. |
 
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 95% | Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `96.41%`
+**Total Feature Completion**: `96.57%`
 
 ## Commit History & Progress Log
 
@@ -343,6 +343,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Allow a synchronous Create callback to defer admission without failing the session, clear only that unaccepted registry entry and rescan at a bounded 250-ms interval. Retain compositor-owned pool states, retry newly available windows without duplicate events and verify deferred admission in the native capture/audio fixture.
 
-- **Commit `HEAD`**: `feat(av): probe actual host mapping and playback connections`
+- **Commit `e49aae39abee`**: `feat(av): probe actual host mapping and playback connections`
   - **Task Impact**: +10% to #10.1 (+0.50% overall)
   - **Summary**: Extend managed probe to validate the guest first, then map the configured region and establish real Wayland and ready PipeWire clients without opening a capture session. Tear down workers before unmapping on every path; the program-provisioned native host/guest probe passes.
+
+- **Commit `HEAD`**: `fix(av): release RTKit bus caches after playback teardown`
+  - **Task Impact**: +10% to #7.2 (+0.16% overall)
+  - **Summary**: Retain the already-loaded system D-Bus library while PipeWire closes its RTKit connections, then release global bus caches before the final library close. The standalone host owns the only bus lifecycle. Native ASan/LSan/UBSan now reports zero leaks instead of 3677 bytes; all bounded module coverage gates remain at one hundred percent.

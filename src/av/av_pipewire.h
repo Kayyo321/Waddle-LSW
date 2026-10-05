@@ -17,6 +17,7 @@ typedef struct av_pipewire_t {
     _Atomic uint32_t invalid_buffers; /**< Callback-owned error count. */
     _Atomic int state; /**< Callback-published stream state, control acquire-load only. */
     int library_initialized;          /**< Owns matching pw_init/pw_deinit lifecycle. */
+    void *bus_library; /**< Owned optional RTKit D-Bus library reference through global cleanup. */
 } av_pipewire_t;
 /** @brief Start fixed 48kHz stereo S16LE PipeWire playback.
  * @param[out] audio Nonnull zero-initialized caller-owned stream.

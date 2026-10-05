@@ -1,4 +1,5 @@
 #include "av_pipewire.h"
+#include <dlfcn.h>
 #include <spa/param/audio/format-utils.h>
 #include <string.h>
 #include <errno.h>
@@ -66,6 +67,18 @@ void av_pipewire_free(av_pipewire_t *audio) {
         pw_deinit();
         audio->library_initialized = 0;
     }
+    if (audio->bus_library) {
+        /* RTKit closes its connections but libdbus retains process caches. Our
+         * standalone host owns the only PipeWire/D-Bus lifecycle; release those
+         * caches after all workers/modules stop, before the final library close. */
+        typedef void (*av_bus_shutdown_t)(void);
+        av_bus_shutdown_t shutdown_bus = NULL;
+        void *procedure = dlsym(audio->bus_library, "dbus_shutdown");
+        memcpy(&shutdown_bus, &procedure, sizeof(shutdown_bus));
+        if (shutdown_bus) shutdown_bus();
+        dlclose(audio->bus_library);
+        audio->bus_library = NULL;
+    }
     audio->ring = NULL;
     audio->pcm = NULL;
     audio->pcm_len = 0;
@@ -96,6 +109,7 @@ int av_pipewire_init(av_pipewire_t *audio, audio_ring_header_t *ring, const uint
     /* pw_stream_new_simple takes ownership of properties, including failure. */
     audio->stream = pw_stream_new_simple(pw_thread_loop_get_loop(audio->loop), "Waddle game audio",
                                          properties, &PlaybackEvents, audio);
+    audio->bus_library = dlopen("libdbus-1.so.3", RTLD_LAZY | RTLD_NOLOAD);
     if (!audio->stream)
         goto fail;
     uint8_t storage[1024];

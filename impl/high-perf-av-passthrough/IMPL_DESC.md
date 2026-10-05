@@ -410,3 +410,15 @@ are destroyed without attachment and release their slots. Bounded teardown keeps
 unknown outstanding leases Consuming rather than making them reusable prematurely.
 Native acceptance on the NVIDIA compositor confirms an actual implicit ARGB
 KVMFR import, surface attachment and subsequent buffer release.
+
+### Host audio library teardown
+
+The standalone AV host owns one PipeWire instance per process and has no other
+D-Bus consumers. The RTKit module closes its connections but the system D-Bus
+library retains process-global caches. The audio owner retains an optional
+`RTLD_NOLOAD` library reference after context creation; after the worker, stream,
+context and PipeWire modules stop, it invokes the library's `dbus_shutdown` and
+closes that final reference. Missing D-Bus/RTKit is allowed and requires no cleanup.
+This lifecycle is confined to the standalone AV process. The live platform gate
+passes ASan/LSan/UBSan with zero reported bytes leaked after this cleanup; no leak
+suppression or disabled sanitizer check is used.
