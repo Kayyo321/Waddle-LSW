@@ -30,7 +30,7 @@ typedef struct guest_av_t {
     av_peer_t peer;
     av_ivshmem_t *memory;
     guest_window_t windows[AvMaxWindows];
-    HANDLE stop, audio_ready, audio_thread;
+    HANDLE stop, audio_ready, audio_thread, capture_tick;
     DWORD process_id;
     HRESULT audio_status;
     int failed;
@@ -202,6 +202,13 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, 
     }
     if (av_windows_start(process_id, window_notification, &session) != 0)
         goto cleanup;
+    /* A seven-ms MsgWait timeout rounds to the ordinary system clock tick and
+     * can cap capture below 144 Hz. Use an owned high-resolution 1-ms timer. */
+    session.capture_tick = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                                 TIMER_ALL_ACCESS);
+    LARGE_INTEGER due = {.QuadPart = -10000};
+    if (!session.capture_tick || !SetWaitableTimer(session.capture_tick, &due, 1, NULL, NULL, FALSE))
+        goto cleanup;
     DWORD task_index = 0;
     HANDLE priority = AvSetMmThreadCharacteristicsW(L"Games", &task_index);
     while (!session.failed && WaitForSingleObject(session.stop, 0) != WAIT_OBJECT_0) {
@@ -224,12 +231,21 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, 
             break;
         }
         capture_windows(&session);
-        MsgWaitForMultipleObjectsEx(1, &session.stop, 7, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        HANDLE events[2] = {session.stop, session.capture_tick};
+        if (MsgWaitForMultipleObjectsEx(2, events, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE) == WAIT_FAILED) {
+            session.failed = 1;
+            break;
+        }
     }
     if (priority)
         AvRevertMmThreadCharacteristics(priority);
 cleanup:
     av_windows_stop();
+    if (session.capture_tick) {
+        CancelWaitableTimer(session.capture_tick);
+        CloseHandle(session.capture_tick);
+        session.capture_tick = NULL;
+    }
     if (session.stop)
         SetEvent(session.stop);
     if (session.audio_thread) {

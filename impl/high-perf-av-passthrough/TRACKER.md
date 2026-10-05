@@ -319,6 +319,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Treat PnPUtil ERROR_NO_MORE_ITEMS as an idempotent installation outcome, then require the actual mapped-driver and endpoint capability probe. Native repeat setup reports an already-present signed package and current device driver rather than a deployment failure.
 
-- **Commit `HEAD`**: `feat(av): round-trip fullscreen state and visible window dimensions`
+- **Commit `4ebef372279d`**: `feat(av): round-trip fullscreen state and visible window dimensions`
   - **Task Impact**: +5% to #2.3 (+0.16% overall); +25% to #5.4 (+1.00% overall)
   - **Summary**: Apply host fullscreen requests through the target monitor, retain original styles and bounds, restore them when leaving fullscreen or stopping tracking, and account for invisible DWM borders when resizing the captured window. Native tests verify style restoration through both transitions and teardown alongside real WinRT/audio capture.
+
+- **Commit `HEAD`**: `fix(av): poll capture with an owned high-resolution timer`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Replace the rounded seven-millisecond message wait with a one-millisecond high-resolution waitable timer so capture polling can service 144-Hz frames without changing the global timer resolution. Keep Windows messages and cancellation in the same wait; cancel and close the timer on all setup and session exits.
