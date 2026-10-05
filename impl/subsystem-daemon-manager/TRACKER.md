@@ -19,12 +19,20 @@
 | #6      | Implement host CLI lifecycle commands (`--start`, `--stop`, `--restart`, `--status`, `--kill`, `--logs`, `fs`) and daemon client library in C | Done | 10% | 100% | Client IPC, socket resolution, lifecycle commands, and unit tests verified |
 | #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Done | 10% | 100% | Interactive launcher, auto-start, export mount auto-loading & root fallback verified |
 | #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Done | 10% | 100% | Live VirtIO-FS directory/file creation and instant host visibility verified |
-| #9      | Vendor QEMU upstream Git repository as submodule (`submodules/qemu`) pinned to stable release commit | Pending | 10% | 0% | Tracked via public HTTPS, shallow clone configured per AGENTS.md |
+| #9      | Vendor QEMU upstream Git repository as submodule (`submodules/qemu`) pinned to stable release commit | Done | 10% | 100% | Tracked via public HTTPS, pinned to v9.2.4 (b2995afe), shallow clone configured |
 | #10     | Integrate QEMU build target into build system and refactor daemon binary discovery for bundled vendor binaries | Pending | 10% | 0% | Minimal softmmu build target in GNUmakefile and relative binary resolution |
 
-**Total Feature Completion**: `80.0%`
+**Total Feature Completion**: `90.0%`
 
 ## Commit History & Progress Log
+
+- **Commit `1cd611d`**: `chore(deps): add qemu as git submodule pinned to v9.2.4 (b2995afe)`
+  - **Task Impact**: +100% to TODO: #9 (+10.0% overall feature completion)
+  - **Summary**: Added upstream QEMU repository as Git submodule under submodules/qemu pinned to stable release tag v9.2.4 (b2995afe) with shallow clone configuration and audited GPLv2 license compatibility.
+
+- **Commit `dd94f70`**: `docs(impl): document bundled QEMU architecture and register submodule tasks`
+  - **Task Impact**: 0% progress impact (specification baseline for TODO: #9 and #10)
+  - **Summary**: Documented Section 8 in IMPL_DESC.md detailing rationale, IPC boundary, licensing, build target, and relative binary discovery; registered tasks #9 and #10 in TRACKER.md.
 
 - **Commit `e6e4695`**: `feat(test): implement mock subsystem acceptance harness and VirtIO-FS verification`
   - **Task Impact**: +100% to TODO: #8 (+10.0% overall feature completion)
