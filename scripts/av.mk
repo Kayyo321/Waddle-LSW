@@ -97,3 +97,9 @@ build/vendor/av/ivshmem/ivshmem.inf: | build/vendor
 	7z e -y -obuild/vendor/av/ivshmem build/vendor/av/download/looking-glass-host-setup.exe ivshmem.inf ivshmem.sys ivshmem.cat LICENSE.txt
 .PHONY: av-drivers
 av-drivers: build/vendor/av/ivshmem/ivshmem.inf
+
+build/av_platform_test: tests/av/platform.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/platform.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
+.PHONY: av-native-platform-test
+av-native-platform-test: build/av_platform_test
+	./build/av_platform_test

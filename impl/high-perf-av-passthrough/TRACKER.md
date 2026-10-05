@@ -29,14 +29,14 @@
 | #4.2 | Implement lockless SPSC write loop from WASAPI buffers to IVSHMEM audio ring | Done | 6.4% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 3.2% | 85% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
 | **5**   | **Host Wayland Client (Video)** | | | | |
-| #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | In Progress | 4% | 85% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
+| #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | In Progress | 4% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | #5.2 | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | In Progress | 4.8% | 90% | Exercise the program-provisioned driver with a two-GiB capacity probe, CLOEXEC DMA-BUF export, bidirectional mmap aliasing, bounds rejection and refusal to reset a consumed slot. Verify teardown preserves the device; the explicit native gate passes on this host. |
-| #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 4% | 90% | Retire surfaces and wait up to two seconds for real buffer release before destroying presentation contexts, preserving consumed slots on timeout. Poll display writability after EAGAIN and snapshot shared dimensions/stride once before validation and protocol submission. |
+| #5.3 | Handle `MsgFrameReady` by attaching DMA-BUF to `wl_surface` and committing | In Progress | 4% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | #5.4 | Process `MsgWindowGeometry` to move/resize/minimize Wayland surfaces | In Progress | 4% | 70% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
 | **6**   | **Host PipeWire Client (Audio)** | | | | |
-| #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 4% | 90% | Publish stream states atomically, wait with a five-second readiness deadline and reject disconnected/error states before reporting startup success. Check asynchronous playback failure in the host event loop and stop the worker before releasing borrowed memory. |
+| #6.1 | Initialize PipeWire stream matching the hardcoded IVSHMEM format | In Progress | 4% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 4.8% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
-| #6.3 | Feed audio frames into PipeWire playback buffer callback | In Progress | 3.2% | 85% | Run the bounded AV peer alongside Wayland display polling and PipeWire playback, map validated daemon-provisioned memory and translate guest pool assignments into retained compositor buffers. Own shutdown ordering and build/link the complete native host executable. |
+| #6.3 | Feed audio frames into PipeWire playback buffer callback | In Progress | 3.2% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | **7**   | **Testing & CI Verification** | | | | |
 | #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 1.6% | 75% | Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks. |
 | #7.2 | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | In Progress | 1.6% | 60% | Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks. |
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 65% | Connect validated av setup/probe commands to the existing device registry and execution bridge. Configure AV atomically on quiescent devices, optionally provision KVMFR through the bundled helper, stage owned agent/DLL/signed-driver files atomically in private device state and install/probe the guest without shell interpolation. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `85.88%`
+**Total Feature Completion**: `87.00%`
 
 ## Commit History & Progress Log
 
@@ -234,6 +234,10 @@
   - **Task Impact**: +5% to #6.1 (+0.20% overall)
   - **Summary**: Publish stream states atomically, wait with a five-second readiness deadline and reject disconnected/error states before reporting startup success. Check asynchronous playback failure in the host event loop and stop the worker before releasing borrowed memory.
 
-- **Commit `HEAD`**: `fix(av): drain compositor leases and handle display backpressure`
+- **Commit `646dbe9595cf`**: `fix(av): drain compositor leases and handle display backpressure`
   - **Task Impact**: +5% to #5.3 (+0.20% overall)
   - **Summary**: Retire surfaces and wait up to two seconds for real buffer release before destroying presentation contexts, preserving consumed slots on timeout. Poll display writability after EAGAIN and snapshot shared dimensions/stride once before validation and protocol submission.
+
+- **Commit `HEAD`**: `test(av): exercise actual compositor release and PCM playback`
+  - **Task Impact**: +10% to #5.1 (+0.40% overall); +5% to #5.3 (+0.20% overall); +5% to #6.1 (+0.20% overall); +10% to #6.3 (+0.32% overall)
+  - **Summary**: Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples.
