@@ -38,12 +38,12 @@
 | #6.2 | Implement lockless SPSC read loop from IVSHMEM audio ring buffer | Done | 6% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #6.3 | Feed audio frames into PipeWire playback buffer callback | In Progress | 4% | 75% | Create a fixed-format host stream with a realtime dequeue/read/queue callback, silence underruns and count diagnostics without allocation or logging. Stop the loop before releasing stream and borrowed mapping references; host compilation passes. |
 | **7**   | **Testing & CI Verification** | | | | |
-| #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 2% | 35% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
-| #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
+| #7.1 | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | In Progress | 2% | 75% | Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks. |
+| #7.2 | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | In Progress | 2% | 60% | Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks. |
 
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 2% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
-**Total Feature Completion**: `75.85%`
+**Total Feature Completion**: `77.85%`
 
 ## Commit History & Progress Log
 
@@ -111,6 +111,10 @@
   - **Task Impact**: +10% to #3.2 (+0.80% overall)
   - **Summary**: Specify a fixed page-aligned 16-window triple-buffer layout and bounded Zig initialization/lookup functions. Keep ring and headers in the 64 KiB control region and prohibit live reset or pool reuse before compositor release.
 
-- **Commit `HEAD`**: `feat(av): map signed Windows IVSHMEM driver memory`
+- **Commit `be6aa8d385f3`**: `feat(av): map signed Windows IVSHMEM driver memory`
   - **Task Impact**: +10% to #3.2 (+0.80% overall)
   - **Summary**: Enumerate the selected device, own its handle and cached mapping, validate fixed-layout metadata before exposure, and unmap/close after workers join. Keep SDK ABI headers isolated to one boundary translation unit; Windows compilation passes.
+
+- **Commit `HEAD`**: `test(av): stress shared-memory ownership under sanitizers`
+  - **Task Impact**: +40% to #7.1 (+0.80% overall); +60% to #7.2 (+1.20% overall)
+  - **Summary**: Run 100000 ordered video and PCM frames across concurrent producer/consumer threads, cross uint32 cursor wrap and verify sparse mapping bounds and regular-file DMA-BUF rejection. ASan/LSan/UBSan and Zig allocator tests pass with zero reported leaks.

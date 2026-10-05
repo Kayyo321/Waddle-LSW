@@ -1,0 +1,40 @@
+# AV platform targets. OS dependencies come from base system packages; driver
+# declarations come only from the pinned Looking Glass submodule.
+AvZigSources = src/av/av_audio.zig src/av/av_codec.zig src/av/av_layout.zig
+AvHostFlags = -Isrc/av -Ibuild $(shell pkg-config --cflags wayland-client libpipewire-0.3)
+AvDriverFlags = -Isubmodules/looking_glass/module
+AvWindowsFlags = $(WindowsFlags) -Isrc/av -Isubmodules/looking_glass/vendor/ivshmem
+AvWindowsSources = src/av/av_windows.c src/av/av_capture.c src/av/av_wasapi.c src/av/av_ivshmem.c src/av/av_video.c
+AvWindowsLibraries = -luser32 -ldwmapi -ld3d11 -ldxgi -lmmdevapi -lavrt -lole32 -luuid -lsetupapi
+
+build/av_audio.o: src/av/av_audio.zig | build
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+build/av_codec.o: src/av/av_codec.zig include/waddle/av_protocol.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+build/av_layout.o: src/av/av_layout.zig | build
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf.c build/av_audio.o build/av_layout.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -pthread -o $@
+
+.PHONY: av-test av-sanitizers av-windows
+av-test: build/av_transport_test
+	./build/av_transport_test
+	$(ZIG) test src/av/av_audio.zig
+	$(ZIG) test src/av/av_codec.zig -Iinclude
+	$(ZIG) test src/av/av_layout.zig
+av-sanitizers:
+	$(MAKE) -B build/av_transport_test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/av_transport_test
+	$(ZIG) test src/av/av_audio.zig
+	$(ZIG) test src/av/av_codec.zig -Iinclude
+	$(ZIG) test src/av/av_layout.zig
+
+build/xdg_shell_client.h: /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml | build
+	wayland-scanner client-header $< $@
+build/xdg_shell_protocol.c: /usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml | build
+	wayland-scanner private-code $< $@
+build/linux_dmabuf_client.h: /usr/share/wayland-protocols/stable/linux-dmabuf/linux-dmabuf-v1.xml | build
+	wayland-scanner client-header $< $@
+build/linux_dmabuf_protocol.c: /usr/share/wayland-protocols/stable/linux-dmabuf/linux-dmabuf-v1.xml | build
+	wayland-scanner private-code $< $@

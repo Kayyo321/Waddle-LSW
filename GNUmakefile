@@ -193,3 +193,5 @@ vm-test: build/waddle build/windows_guest_test.exe build/vm_terminal
 .PHONY: device-stress
 device-stress: build/waddle
 	python3 tests/integration/device_stress.py
+
+include scripts/av.mk
