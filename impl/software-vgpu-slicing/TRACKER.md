@@ -197,7 +197,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     passed at `0474547`. Stream integration (3%) and real cross-VM signed-driver
     validation (5%) remain pending; no GPU execution credit is assigned.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): own public Venus receiver bootstrap`
+- **Commit `8bb90be`**: `feat(vgpu): own public Venus receiver bootstrap`
   - **Task Impact**: +10% to TODO: #2 (+2% overall).
   - **Summary**: Added scoped renderer singleton/context/blob/map ownership,
     bounded Zig private command/reply copies, CPU timeline retirement, poisoned
@@ -210,3 +210,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and Zig allocator gates pass. CI now executes the same real public-ABI test.
     This milestone proves CPU dispatch/ownership, not GPU execution, resource
     allocation policy, session integration, guest ICD or zero-copy presentation.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify native lifecycle stream adapters`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall).
+  - **Summary**: Defined borrowed Linux VSOCK/UNIX and Windows overlapped serial
+    streams, exact private framing, monotonic operation deadlines, cancellation,
+    bounded backpressure waits, partial EOF and completion-event cleanup.
+  - **Verification**: Reviewed against session readiness and ring exact-transfer
+    contracts; native implementation and runtime validation remain pending.

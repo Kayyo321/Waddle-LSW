@@ -441,3 +441,78 @@ singleton ownership tests; fault fixtures cover every acquisition and error
 stage with >=90% owned production coverage and sanitizer gates. This real Vulkan
 loader call is a CPU dispatch test; hardware device/queue execution, Vulkan guest
 ICD compatibility, performance and zero-copy presentation remain required later.
+
+### Native ordered control stream and lifecycle waits
+
+`venus_channel_t` borrows a connected stream, initialized session, and optional
+atomic cancellation flag; it owns only a Windows completion event. Linux streams
+must be nonblocking SOCK_STREAM sockets (AF_VSOCK at runtime, AF_UNIX fixtures;
+QEMU virtio-serial host socket backends also qualify). Windows streams are handles
+opened with FILE_FLAG_OVERLAPPED for a VirtIO-Serial port; native named-pipe fixtures
+exercise the same ReadFile/WriteFile completion and cancellation APIs. Opening,
+connecting, selecting the correct guest PCI/serial device, and closing stream
+handles remain with the runtime owner. A socket/pipe fixture does not prove a
+VirtIO driver's implementation. Channel functions never alter borrowed fd flags.
+
+Initialization requires a nonnull zero channel and initialized session, verifies
+Linux socket type/nonblocking flags or allocates a Windows manual-reset event,
+then installs borrowed fields. Failure frees any event and leaves an empty record.
+Session state and control stream have exactly one owning thread. A channel cannot
+be copied or used concurrently; session and mapping outlive all calls. Cancellation
+is a nullable borrowed `_Atomic uint32_t` initialized to zero, set nonzero with a
+release operation by another thread and read with acquire. It is the sole channel
+field that may be changed concurrently. Deadline configuration requires 1..60000
+milliseconds and snapshots an absolute monotonic deadline for the entire operation,
+including all partial writes/reads, interrupts, and spurious readiness. All callers
+must configure a deadline before handshake, stop delivery, or a ring wait; expiration
+is terminal for the session rather than silently starting a new partial frame.
+
+Host handshake performs complete Offer send, complete Ack receive/validation,
+complete Ready send, then returns success. Guest receives Offer, sends Ack, and
+receives Ready. No worker may start merely because encoding locally set Ready:
+the complete send/receive path must return RingOk. Each frame is privately buffered
+with an explicit bounded byte count. Partial I/O preserves byte order and is
+continued until 64 bytes; no untrusted length controls reads. EOF before any bytes
+closes with Disconnect/RingClosed; EOF after a partial frame closes with Protocol/
+RingCorrupt. Invalid API arguments return RingInvalid before I/O. Local cancellation
+closes with Cancel/RingCancelled; deadline closes with Deadline/RingTimeout; a clock
+or OS transport error closes with Disconnect/RingClosed. Malformed peer input is
+handled by the existing state machine and returns RingCorrupt.
+
+Linux readiness uses poll with a maximum one-millisecond slice and recv/send with
+MSG_DONTWAIT and MSG_NOSIGNAL; EINTR/EAGAIN return for deadline/cancellation recheck.
+POLLHUP still drains readable bytes before detecting EOF, so a final complete Stop
+is validated; invalid descriptors/errors are disconnects. No busy-spin or signal
+handler/global SIGPIPE policy is installed. Windows I/O uses one stack OVERLAPPED
+and the channel's event per request; wait slices are at most one millisecond.
+Pending requests are cancelled with CancelIoEx on timeout/error and joined with
+GetOverlappedResult before stack buffer/event reuse or return. Bytes completed
+while cancellation raced are retained. A driver must complete cancelled requests;
+a hung kernel driver cannot be repaired by releasing a live OVERLAPPED record.
+
+`venus_channel_wait` is a venus_wait_callback_t, used only by the same session
+thread owning its ring operation after successful handshake. It polls for at most
+one millisecond; absent control input returns RingOk so the ring adapter rechecks
+actual shared cursors. It privately accumulates partial control bytes across ticks,
+then accepts only a valid Stop (any startup duplicate is a protocol failure). It
+checks cancellation, deadline, and both ring closure flags each tick. No socket
+notification is fabricated as a guaranteed ring event. A data owner must configure
+an appropriate fresh operation deadline before entering each exact ring transfer;
+partial control frames retain the session deadline and never reset it on input.
+Readiness is never read concurrently from a different thread.
+
+Stop sends the chosen reason through the state machine and exact native write;
+it closes both rings before delivery. A failed stop write retains the first reason.
+Channel free closes the session if still live, releases its completion event,
+and clears all borrowed pointers/counts; it never closes a borrowed stream or
+unmaps memory. Caller must join other mapping users before final mapping release.
+No allocation occurs on Linux or per-transfer on either platform.
+
+The native stream milestone (3% of Task #1) is credited as 2% after real Linux
+socket framing/handshake/backpressure tests and Windows cross-link, and 1% after
+native Windows overlapped pipe execution and failure/cleanup tests. The independent
+real cross-VM signed-driver gate remains 5%. Required tests include real two-peer
+handshake, deliberately fragmented frames, full-ring backpressure progress, EOF
+before/after partial frames, final Stop before EOF, stale/out-of-order frames,
+local cancellation before and during waits, bounded deadline shutdown, both
+native ownership/error paths and >=90% production line/branch coverage.
