@@ -88,3 +88,11 @@
   - **Task Impact**: 0% progress impact (bugfix to Task #7)
   - **Summary**: Explicitly called `waddle_terminal_close()` in `host.c` before printing `connect_peer` connection errors to `stderr` to prevent horizontal carriage return drift caused by raw terminal modes.
 
+- **Commit `fd657b9`**: `refactor(src): organize source files into categorized subdirectories`
+  - **Task Impact**: 0% progress impact (tree hygiene & organization)
+  - **Summary**: Reorganized `src/` into `common/`, `cli/`, `daemon/`, `guest/`, and `mock/` subdirectories and updated makefile and test scripts.
+
+- **Commit `5109a58`**: `test(desktop): add --do-not-delete and --content options to desktop write test`
+  - **Task Impact**: 0% progress impact (test tooling enhancement)
+  - **Summary**: Added `--do-not-delete` flag and custom `--content` option parsing to `tests/desktop_write_test.sh`.
+
