@@ -11,10 +11,10 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Research and design software vGPU paravirtualization protocol | Pending | 20% | 0% | Deep research required on API remoting |
-| #2      | Implement IVSHMEM command ring buffer transport layer | Pending | 20% | 0% | - |
-| #3      | Implement host-side Vulkan/OpenGL render proxy | Pending | 30% | 0% | - |
-| #4      | Implement guest-side WDDM/UMD driver stub | Pending | 30% | 0% | - |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Pending | 20% | 0% | - |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 30% | 0% | - |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 30% | 0% | Requires DXVK integration testing |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 20% | 0% | - |
 
 **Total Feature Completion**: `0.0%`
 
