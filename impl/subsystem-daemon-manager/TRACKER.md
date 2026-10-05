@@ -17,12 +17,20 @@
 | #4      | Implement VirtIO-FS (`virtiofsd`) lifecycle manager and multi-export filesystem bridge (`src/daemon_fs.c`, `src/daemon_fs.h`) | Done | 15% | 100% | vhost-user socket setup, sandbox/cache flags, and path mapping verified |
 | #5      | Implement Waddle background daemon supervisor core (`src/daemon_main.c`, `src/daemon_state.c`) with non-blocking event loop and readiness prober | Done | 15% | 100% | Lockfile, state machine, child reaper & multiplexed server verified |
 | #6      | Implement host CLI lifecycle commands (`--start`, `--stop`, `--restart`, `--status`, `--kill`, `--logs`, `fs`) and daemon client library in C | Done | 15% | 100% | Client IPC, socket resolution, lifecycle commands, and unit tests verified |
-| #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Pending | 10% | 0% | Primary goal: 'waddle' drops into ConPTY, resolves Linux CWD -> Z:\... |
+| #7      | Implement zero-flag default interactive terminal launcher with transparent auto-start and working directory export mapping | Done | 10% | 100% | Interactive launcher, auto-start, export mount auto-loading & root fallback verified |
 | #8      | Build mock subsystem test harness, unit tests, integration test suite, and VirtIO-FS filesystem integration demonstration | Pending | 10% | 0% | Primary goal: live dir/mkdir test verifying instant folder appearance on Linux desktop |
 
-**Total Feature Completion**: `80.0%`
+**Total Feature Completion**: `90.0%`
 
 ## Commit History & Progress Log
+
+- **Commit `c805c19`**: `feat(cli): implement zero-flag default interactive launcher and auto-start`
+  - **Task Impact**: +100% to TODO: #7 (+10.0% overall feature completion)
+  - **Summary**: Implemented zero-flag interactive terminal session with auto-start of daemon/hypervisor, mount rule auto-loading from config.ini, root fallback translation, and unit tests in tests/test_auto_terminal.c.
+
+- **Commit `a6808d9`**: `docs(tracker): record completion of Task #6 in tracker`
+  - **Task Impact**: Synchronize tracker metadata with Task #6 commit.
+  - **Summary**: Updated progress log and tracker table for daemon client library and host lifecycle commands.
 
 - **Commit `e6bc98e`**: `feat(cli): implement daemon client library and host lifecycle commands`
   - **Task Impact**: +100% to TODO: #6 (+15.0% overall feature completion)
