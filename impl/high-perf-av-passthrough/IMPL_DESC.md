@@ -63,3 +63,53 @@
 - **Latency**: End-to-end video latency from DXGI present to Wayland commit must be < 7ms at 144Hz. Audio latency < 10ms.
 - **LeakSanitizer**: Zero leaked bytes across all tests.
 - **Coverage**: 90% coverage for audio and video ring buffer logic.
+
+## 8. Binding implementation refinements
+
+The sketches above are conceptual, not compilable ABI definitions. The C ABI is
+x86-64 little-endian only, with lock-free 32-bit atomics and explicit padding.
+C owns platform handles; Zig owns control decoding, length/offset validation and
+bounded PCM/pixel copies. AV uses a separate control connection on port 5001;
+CLI port and CLI message IDs remain unchanged. No audio format negotiation occurs.
+
+Video ownership is Free -> Writing -> Ready -> Consuming -> Free. Only a Free
+slot can be claimed. Publication is release; claim is acquire; compositor release
+is the only event permitting reuse after presentation. Triple buffering bounds
+queued video. Dropped notifications must release their Ready slot. Headers are
+64 bytes; the state is at offset 0, buffer index at 4, frame sequence at 8,
+timestamp at 16, width/height/stride/format at 24/28/32/36 and reserved bytes at 40.
+Each pixel region is page aligned and bounded by the negotiated mapping size.
+No shared-memory pointer is transmitted on the wire.
+
+Audio uses monotonically increasing uint32 cursors with modular subtraction,
+capacity below 2^31 frames, four bytes per stereo S16LE frame, and 48,000 Hz.
+Only producer writes write_head; only consumer writes read_head. Overrun drops
+new incoming frames, counts them and leaves unread frames intact. Consumer may
+skip old frames before copying to bound latency; producer never overwrites data
+being read. Underrun writes silence. Initialization/reset requires both peers
+quiescent. Runtime callbacks allocate no memory, take no locks, and do no logging.
+
+Wayland placement is compositor-owned: x/y are retained as guest metadata;
+standard xdg-shell provides resize/fullscreen/minimize requests but no global
+position setter or unminimize request. Host configure dimensions are sent back
+to SetWindowPos; close is translated to WM_CLOSE. No synthetic claim of moving
+a toplevel to arbitrary screen coordinates is permitted.
+
+A regular shared-memory file/memfd supports wl_shm only. Real DMA-BUF export
+requires a KVMFR device and its ioctl ABI plus compositor linux-dmabuf support.
+Import failure must select the explicit wl_shm fallback. DMA-BUF is never
+claimed for a regular file. All exported FDs have a single documented owner.
+
+Per-process WASAPI loopback requires Windows build 20348 or later; unsupported
+systems return an explicit error rather than capturing the whole system. See
+[Microsoft's process loopback contract](https://learn.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ns-audioclientactivationparams-audioclient_process_loopback_params).
+48kHz stereo S16LE is requested with shared-mode conversion flags. A disabled
+QEMU audio backend still requires a guest render endpoint; an absent endpoint
+is an error. Desktop Duplication crops a visible window from a monitor and cannot
+promise unoccluded content or original window alpha. Full feature verification
+therefore requires per-window Windows Graphics Capture and real GPU/VM tests;
+mock frame tests are not evidence of that fidelity or of end-to-end latency.
+
+Tracker entries use HEAD for the commit containing the entry (self hashes cannot
+be embedded in their own content). The next atomic commit resolves that reference
+to the preceding immutable hash. Historical planning commits have zero progress.

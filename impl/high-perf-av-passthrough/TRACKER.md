@@ -1,11 +1,11 @@
 # Feature Tracker: High-Performance Audio/Video Passthrough for Gaming
 
-- **Contributors / Agents**: Antigravity
+- **Contributors / Agents**: Antigravity, Codex
 - **Time Started**: 2026-10-05T14:15:27-04:00
 - **Time Ended**: TBD
 - **Feature Branch**: feature/high-perf-av-passthrough
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Planning
+- **Current Overall Status**: In Progress
 
 ## Tasks & Progress
 
@@ -41,6 +41,22 @@
 | #7.1    | Write unit tests for lockless IVSHMEM queue mechanisms (video and audio) | Pending | 2% | 0% | - |
 | #7.2    | Run LeakSanitizer/AddressSanitizer and verify zero bytes leaked | Pending | 2% | 0% | - |
 
-**Total Feature Completion**: `0.0%`
+**Total Feature Completion**: `0.00%`
 
 ## Commit History & Progress Log
+
+- **Commit `3923dd5`**: `docs(tracker): initialize implementation plan and tracker`
+  - **Task Impact**: 0% overall; planning baseline.
+  - **Summary**: Defined the requested scope and task breakdown before implementation.
+
+- **Commit `7992bb5`**: `docs(tracker): update implementation with resolved design decisions`
+  - **Task Impact**: 0% overall; planning baseline.
+  - **Summary**: Defined the requested scope and task breakdown before implementation.
+
+- **Commit `81fd201`**: `docs(tracker): detail implementation tasks for gaming passthrough`
+  - **Task Impact**: 0% overall; planning baseline.
+  - **Summary**: Defined the requested scope and task breakdown before implementation.
+
+- **Commit `HEAD`**: `docs(av): specify buffer ownership and platform constraints`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Resolve cursor ownership, compositor placement, native audio requirements and honest hardware verification boundaries.
