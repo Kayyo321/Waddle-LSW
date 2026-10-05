@@ -62,3 +62,48 @@ test "bounds reject truncated headers and wrapped spans preserve byte order" {
     venus_bounds_read(bytes.ptr + HeaderBytes, MinCapacity, 60, &result, result.len);
     try std.testing.expectEqualSlices(u8, &Source, &result);
 }
+
+test "each metadata field and reserved byte rejects corruption" {
+    const bytes = try std.testing.allocator.alloc(u8, HeaderBytes + MinCapacity);
+    defer std.testing.allocator.free(bytes);
+    @memset(bytes, 0);
+    std.mem.writeInt(u32, bytes[0..4], 0x57565231, .little);
+    std.mem.writeInt(u32, bytes[4..8], 1, .little);
+    std.mem.writeInt(u32, bytes[8..12], MinCapacity, .little);
+    std.mem.writeInt(u32, bytes[12..16], HeaderBytes, .little);
+    for (0..HeaderBytes) |offset| {
+        if ((offset >= 16 and offset < 20) or (offset >= 64 and offset < 68) or
+            (offset >= 128 and offset < 132)) continue;
+        bytes[offset] ^= 0x80;
+        try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_capacity, .{ bytes.ptr, bytes.len }));
+        bytes[offset] ^= 0x80;
+    }
+    for ([_]u32{ 0, 32, 65, MaxCapacity + 1, 0xffffffff }) |capacity| {
+        std.mem.writeInt(u32, bytes[8..12], capacity, .little);
+        try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_capacity, .{ bytes.ptr, bytes.len }));
+    }
+    std.mem.writeInt(u32, bytes[8..12], MinCapacity, .little);
+    try std.testing.expectEqual(@as(u32, 0), @call(.never_inline, venus_bounds_capacity, .{ bytes.ptr, bytes.len - 1 }));
+    try std.testing.expectEqual(MinCapacity, @call(.never_inline, venus_bounds_capacity, .{ bytes.ptr, bytes.len }));
+}
+
+test "bounded copy handles every start and length and maximum capacity" {
+    const bytes = try std.testing.allocator.alloc(u8, HeaderBytes + MaxCapacity);
+    defer std.testing.allocator.free(bytes);
+    @memset(bytes[0..HeaderBytes], 0);
+    std.mem.writeInt(u32, bytes[0..4], 0x57565231, .little);
+    std.mem.writeInt(u32, bytes[4..8], 1, .little);
+    std.mem.writeInt(u32, bytes[8..12], MaxCapacity, .little);
+    std.mem.writeInt(u32, bytes[12..16], HeaderBytes, .little);
+    try std.testing.expectEqual(MaxCapacity, @call(.never_inline, venus_bounds_capacity, .{ bytes.ptr, bytes.len }));
+    var source: [64]u8 = undefined;
+    var result: [64]u8 = undefined;
+    for (&source, 0..) |*byte, index| byte.* = @intCast(index);
+    for (0..64) |offset| {
+        for (1..65) |length| {
+            @call(.never_inline, venus_bounds_write, .{ bytes.ptr + HeaderBytes, MinCapacity, @as(u32, @intCast(offset)), &source, length });
+            @call(.never_inline, venus_bounds_read, .{ bytes.ptr + HeaderBytes, MinCapacity, @as(u32, @intCast(offset)), &result, length });
+            try std.testing.expectEqualSlices(u8, source[0..length], result[0..length]);
+        }
+    }
+}
