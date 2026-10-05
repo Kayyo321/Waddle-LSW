@@ -347,6 +347,10 @@
   - **Task Impact**: +10% to #10.1 (+0.50% overall)
   - **Summary**: Extend managed probe to validate the guest first, then map the configured region and establish real Wayland and ready PipeWire clients without opening a capture session. Tear down workers before unmapping on every path; the program-provisioned native host/guest probe passes.
 
-- **Commit `HEAD`**: `fix(av): release RTKit bus caches after playback teardown`
+- **Commit `3d231fea96cf`**: `fix(av): release RTKit bus caches after playback teardown`
   - **Task Impact**: +10% to #7.2 (+0.16% overall)
   - **Summary**: Retain the already-loaded system D-Bus library while PipeWire closes its RTKit connections, then release global bus caches before the final library close. The standalone host owns the only bus lifecycle. Native ASan/LSan/UBSan now reports zero leaks instead of 3677 bytes; all bounded module coverage gates remain at one hundred percent.
+
+- **Commit `HEAD`**: `feat(av): provision full-HD high-refresh virtual capture display`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Advertise a 1920x1080 144-Hz virtual VGA EDID with sufficient framebuffer memory for AV profiles that use the software capture path. Keep explicitly assigned GPUs in control of their display modes and preserve non-AV defaults; hypervisor argument/lifecycle regressions pass.

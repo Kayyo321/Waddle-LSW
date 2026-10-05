@@ -89,6 +89,14 @@ static void test_av_args(void) {
     }
     assert(ivshmem && memory && audio && endpoint && gpu);
     qemu_free_args(argv, (size_t)count);
+    config.av_gpu_bdf[0] = '\0';
+    count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0);
+    int refresh = 0;
+    for (int i = 0; i < count; ++i)
+        if (!strcmp(argv[i], "VGA.refresh_rate=144")) refresh = 1;
+    assert(refresh);
+    qemu_free_args(argv, (size_t)count);
     strcpy(config.av_shm_path, "/tmp/x,share=off");
     assert(qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs) == -1);
     assert(argv[0] == NULL);
