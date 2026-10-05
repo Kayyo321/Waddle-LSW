@@ -483,3 +483,109 @@ int daemon_device_init(const char *name, const char *custom_base_disk, device_in
     errno = saved;
     return result;
 }
+
+/** @brief Open private registry parent; caller closes owned fd. Never follows links. */
+static int open_registry_parent(int create) {
+    char path[WaddleMaxPathLen];
+    if (daemon_device_get_config_dir(path, sizeof(path)) != 0) return -1;
+    *strrchr(path, '/') = '\0';
+    int fd = open_directory(path, create);
+    if (fd < 0) return -1;
+    struct stat st;
+    if (fstat(fd, &st) != 0 || st.st_uid != getuid() || (st.st_mode & 077) != 0) {
+        close(fd); errno = EACCES; return -1;
+    }
+    return fd;
+}
+
+/** @brief Read an optional default while registry lock is held; no allocation. */
+static int read_default_unlocked(char *name, size_t capacity) {
+    name[0] = '\0';
+    int dir_fd = open_registry_parent(0);
+    if (dir_fd < 0) return errno == ENOENT ? 0 : -1;
+    int fd = openat(dir_fd, "default_device", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int saved = errno;
+    close(dir_fd);
+    if (fd < 0) { errno = saved; return saved == ENOENT ? 0 : -1; }
+    struct stat st;
+    char data[WaddleMaxDeviceNameLen + 1];
+    ssize_t len = -1;
+    if (fstat(fd, &st) == 0 && S_ISREG(st.st_mode) && st.st_uid == getuid() &&
+        (st.st_mode & 077) == 0 && st.st_size > 0 && st.st_size <= WaddleMaxDeviceNameLen) {
+        len = read(fd, data, sizeof(data));
+    }
+    saved = errno;
+    close(fd);
+    if (len <= 0 || len >= (ssize_t)sizeof(data) || data[len - 1] != '\n') {
+        errno = len < 0 && saved ? saved : EINVAL; return -1;
+    }
+    data[--len] = '\0';
+    if (memchr(data, '\0', (size_t)len) != NULL || daemon_device_validate_name(data) != 0) {
+        errno = EINVAL; return -1;
+    }
+    if ((size_t)len >= capacity) { errno = ENAMETOOLONG; return -1; }
+    memcpy(name, data, (size_t)len + 1);
+    return 0;
+}
+
+int daemon_device_default_get(char *name, size_t capacity) {
+    if (name == NULL || capacity == 0) { errno = EINVAL; return -1; }
+    name[0] = '\0';
+    int lock_fd = daemon_device_registry_lock(0);
+    if (lock_fd < 0) return errno == ENOENT ? 0 : -1;
+    int result = read_default_unlocked(name, capacity);
+    int saved = errno;
+    close(lock_fd);
+    errno = saved;
+    return result;
+}
+
+int daemon_device_default_set(const char *name) {
+    if (name != NULL && daemon_device_validate_name(name) != 0) return -1;
+    int lock_fd = daemon_device_registry_lock(1);
+    if (lock_fd < 0) return -1;
+    int result = -1;
+    int dir_fd = -1;
+    int fd = -1;
+    char stage[80] = {0};
+    device_list_t list;
+    if (name != NULL) {
+        if (list_unlocked(&list) < 0) goto cleanup;
+        size_t i;
+        for (i = 0; i < list.count; i++) {
+            if (strcmp(name, list.devices[i].name) == 0) break;
+        }
+        if (i == list.count) { errno = ENOENT; goto cleanup; }
+        if (!list.devices[i].config_valid) { errno = EINVAL; goto cleanup; }
+        struct stat disk;
+        if (stat(list.devices[i].disk_image, &disk) != 0) goto cleanup;
+        if (!S_ISREG(disk.st_mode)) { errno = EINVAL; goto cleanup; }
+    }
+    dir_fd = open_registry_parent(0);
+    if (dir_fd < 0) goto cleanup;
+    if (name == NULL) {
+        if (unlinkat(dir_fd, "default_device", 0) != 0 && errno != ENOENT) goto cleanup;
+        result = fsync(dir_fd);
+        goto cleanup;
+    }
+    for (unsigned i = 0; i < 100; i++) {
+        snprintf(stage, sizeof(stage), ".default-%ld-%u", (long)getpid(), i);
+        fd = openat(dir_fd, stage, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC | O_NOFOLLOW, 0600);
+        if (fd >= 0 || errno != EEXIST) break;
+    }
+    if (fd < 0) { stage[0] = '\0'; goto cleanup; }
+    char data[WaddleMaxDeviceNameLen + 1];
+    int len = snprintf(data, sizeof(data), "%s\n", name);
+    if (write(fd, data, (size_t)len) != len || fsync(fd) != 0) goto cleanup;
+    if (renameat(dir_fd, stage, dir_fd, "default_device") != 0) goto cleanup;
+    stage[0] = '\0';
+    result = fsync(dir_fd);
+cleanup:
+    { int saved = errno;
+      if (fd >= 0) close(fd);
+      if (stage[0] && dir_fd >= 0) unlinkat(dir_fd, stage, 0);
+      if (dir_fd >= 0) close(dir_fd);
+      close(lock_fd);
+      errno = saved; }
+    return result;
+}

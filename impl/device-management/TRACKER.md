@@ -120,6 +120,15 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Summary**: Parse into a private candidate, reject oversized/non-UTF-8/NUL metadata and truncated shell/disk fields, reject reserved CID UINT32_MAX, support full-width ports and explicitly empty exports. Regression tests verify byte-identical rollback and allocator cleanup.
 
 
-- **Commit `:/serialize device creation and make registry discovery read only`**: `fix(device): serialize device creation and make registry discovery read only`
+- **Commit `ff00ab4`**: `fix(device): serialize device creation and make registry discovery read only`
   - **Task Impact**: +10% to TODO #3 (+1.0% overall), +20% to TODO #5 (+2.0% overall), +15% to TODO #7 (+1.5% overall); total 49.5%.
   - **Summary**: Resolve paths without filesystem writes, reject relative roots and symlink directory components, sort and bound discovery, mark malformed/symlink profiles unhealthy, serialize CID reservation with a stable private lock, handle CID overflow, and fail qemu-img errors without publishing placeholder disks. Native tests and isolated ASan/LSan/UBSan pass, including simultaneous writers and capacity overflow. Journal recovery, atomic publication and offline mutations remain incomplete.
+
+
+- **Commit `4830357`**: `Merge remote-tracking branch origin/feature/device-management into feature/device-management`
+  - **Task Impact**: +0% to TODO #11; no implementation completion awarded.
+  - **Summary**: Incorporate remote PR #2 integration and checkout credential CI fixes, then synchronize recursive submodules without changing pins.
+
+- **Commit `:/persist and validate default device selection atomically`**: `feat(device): persist and validate default device selection atomically`
+  - **Task Impact**: +0% to TODO #8 pending command integration and full config/doctor acceptance.
+  - **Summary**: Add bounded no-follow default reads and serialized selection/clear using private staging files, file fsync, atomic replacement and directory fsync. Invalid targets preserve the selected default; tests cover idempotent clear, missing selection, invalid targets and small output buffers. Single-file replacement is atomic; multi-operation journal recovery remains pending.

@@ -85,6 +85,10 @@ static void test_device_init_and_registry(void) {
     setenv("XDG_CONFIG_HOME", config_home, 1);
     setenv("XDG_STATE_HOME", state_home, 1);
 
+    char selected[WaddleMaxDeviceNameLen];
+    assert(daemon_device_default_get(selected, sizeof(selected)) == 0);
+    assert(selected[0] == '\0');
+
     /* Initially zero devices */
     device_list_t list;
     assert(daemon_device_list(&list) == 0);
@@ -167,6 +171,18 @@ static void test_device_init_and_registry(void) {
     assert(daemon_device_find("gamma", &gamma) == 0);
     assert(daemon_device_find("delta", &delta) == 0);
     assert(gamma.vsock_cid != delta.vsock_cid);
+
+    /* Default updates do not boot; invalid targets preserve the selection. */
+    assert(daemon_device_default_set("beta") == 0);
+    assert(daemon_device_default_get(selected, sizeof(selected)) == 0);
+    assert(strcmp(selected, "beta") == 0);
+    assert(daemon_device_default_set("absent") == -1 && errno == ENOENT);
+    assert(daemon_device_default_get(selected, sizeof(selected)) == 0);
+    assert(strcmp(selected, "beta") == 0);
+    assert(daemon_device_default_get(selected, 2) == -1 && errno == ENAMETOOLONG);
+    assert(daemon_device_default_set(NULL) == 0);
+    assert(daemon_device_default_set(NULL) == 0);
+    assert(daemon_device_default_get(selected, sizeof(selected)) == 0 && selected[0] == '\0');
 
     /* Symlink profiles are unhealthy; never consume outside metadata. */
     char link_path[1024];

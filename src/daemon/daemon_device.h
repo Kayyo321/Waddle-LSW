@@ -153,6 +153,26 @@ int daemon_device_find_base_disk(char *out_path, size_t path_cap);
  */
 int daemon_device_init(const char *name, const char *custom_base_disk, device_info_t *out_info);
 
+/**
+ * @brief Read persistent selection without creating registry or starting a guest.
+ * @param[out] name Non-null borrowed buffer; receives empty string if unset.
+ * @param[in] capacity Buffer size including NUL, at least 64 for all names.
+ * @return 0 on success, -1 with errno for invalid metadata, permissions or I/O.
+ * @note No allocation; holds a shared registry lock during read. Do not nest locks.
+ */
+int daemon_device_default_get(char *name, size_t capacity);
+
+/**
+ * @brief Atomically replace default selection or clear it.
+ * @param[in] name Borrowed valid registered healthy name, or NULL to clear idempotently.
+ * @return 0 after directory fsync, -1 with errno. A post-rename fsync failure
+ * leaves the new visible selection but its crash durability is uncertain.
+ * @note No retained memory. Serializes under registry lock; does not boot or stop.
+ * A unique 0600 staging file is flushed before atomic replacement. Caller must
+ * not nest registry lock acquisition. Full multi-operation journaling is separate.
+ */
+int daemon_device_default_set(const char *name);
+
 #ifdef __cplusplus
 }
 #endif
