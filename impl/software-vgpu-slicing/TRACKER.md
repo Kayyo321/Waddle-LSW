@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 92% | Lifecycle codec/state machine verified on Linux/Windows; native stream adapter and cross-VM test pending |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 10% | Scoped public renderer/context/reply owner and real CPU dispatch verified; resource/session/GPU integration pending |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `18.8%`
+**Total Feature Completion**: `20.8%`
 
 ## Commit History & Progress Log
 
@@ -189,10 +189,24 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     EnumerateInstanceVersion and received VK_SUCCESS after timeline-zero retirement.
     The probe is not production implementation or GPU-rendering evidence.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record native lifecycle verification`
+- **Commit `81e333c`**: `docs(vgpu): record native lifecycle verification`
   - **Task Impact**: +1% to TODO: #1 (+0.15% overall).
   - **Summary**: Credited the lifecycle state-machine native Windows execution
     milestone after both Linux and Windows jobs completed successfully.
   - **Verification**: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37389407524
     passed at `0474547`. Stream integration (3%) and real cross-VM signed-driver
     validation (5%) remain pending; no GPU execution credit is assigned.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): own public Venus receiver bootstrap`
+  - **Task Impact**: +10% to TODO: #2 (+2% overall).
+  - **Summary**: Added scoped renderer singleton/context/blob/map ownership,
+    bounded Zig private command/reply copies, CPU timeline retirement, poisoned
+    submission handling and deterministic pending/partial cleanup. Added real
+    public Venus dispatch and all acquisition/error-path ownership fixtures.
+  - **Verification**: `make vgpu-receiver-test vgpu-receiver-sanitizers
+    vgpu-receiver-coverage` passed locally. Real renderer returned nine successful
+    Vulkan instance-version replies over repeated owners/submissions and survived
+    pending teardown. Owned C and Zig line/branch coverage 100%; ASan/LSan/UBSan
+    and Zig allocator gates pass. CI now executes the same real public-ABI test.
+    This milestone proves CPU dispatch/ownership, not GPU execution, resource
+    allocation policy, session integration, guest ICD or zero-copy presentation.
