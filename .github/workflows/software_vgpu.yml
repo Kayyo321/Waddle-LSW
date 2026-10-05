@@ -78,5 +78,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_wait_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_control.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_control_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/session.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control_windows.lib build/venus_bounds_windows.lib -o build/vgpu_session_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_session_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_control.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_bounds.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

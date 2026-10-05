@@ -355,7 +355,8 @@ closes the stream and frees the mapping in that order. Restart allocates a new
 initialized mapping, new ID, new stream, and new local records.
 
 The remaining lifecycle/control milestone (5% of Task #1) is divided into 2% for
-this documented, tested bounded codec/state machine and 3% for native ordered
+this bounded codec/state machine (1% local verification, 1% native Windows
+verification) and 3% for native ordered
 stream adapters, deadline/readiness waits, and session integration. The separate
 5% native cross-VM signed-driver gate is unchanged. Acceptance requires both
 roles, every legal/illegal transition, stale IDs, extent/capacity mismatches,

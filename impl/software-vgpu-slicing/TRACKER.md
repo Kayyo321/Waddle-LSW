@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 90% | Native Linux/Windows transport and owners verified; lifecycle handoff and cross-VM test pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 91% | Lifecycle codec/state machine verified locally; native execution, stream adapter and cross-VM test pending |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Pending | 20% | 0% | - |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `18.5%`
+**Total Feature Completion**: `18.65%`
 
 ## Commit History & Progress Log
 
@@ -159,7 +159,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Existing AV coverage gates also passed locally after extending the shared
     LLVM coverage harness. Feature completion remains 18.5%.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define lifecycle readiness handoff`
+- **Commit `9e7940f`**: `docs(vgpu): define lifecycle readiness handoff`
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Specified the fixed little-endian control frame, bounded parsing,
     offer/acknowledgement/ready ordering, stale-session rejection, cancellation,
@@ -167,3 +167,15 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     into tested state-machine and native stream-integration milestones.
   - **Verification**: Reviewed against the existing bidirectional region and
     cancellable ring contract. No implementation credit is assigned yet.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): validate lifecycle readiness transitions`
+  - **Task Impact**: +1% to TODO: #1 (+0.15% overall).
+  - **Summary**: Added bounded Zig little-endian control encoding/decoding and a
+    C11 session state machine that gates readiness, snapshots layout/identity,
+    rejects stale/out-of-order frames, and atomically closes both directions.
+    Added exhaustive role/state transitions, malformed-frame and cleanup tests,
+    sanitizer/coverage gates, Windows cross-link and native CI execution targets.
+  - **Verification**: `make vgpu-test vgpu-sanitizers vgpu-coverage vgpu-windows`
+    passed locally. Session C line/branch coverage 100%; control Zig lines 100%,
+    branches 93.75%; Zig allocator tests leak no bytes. Native Windows execution
+    is not yet credited; OS stream adapters and actual cross-VM validation remain.

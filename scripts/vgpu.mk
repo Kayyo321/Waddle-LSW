@@ -10,15 +10,17 @@ build/vgpu_ring_test: tests/vgpu/ring.c src/vgpu/venus_ring.c src/vgpu/venus_bou
 build/vgpu_stress_test: tests/vgpu/stress.c src/vgpu/venus_ring.c src/vgpu/venus_bounds.h include/waddle/venus_ring.h build/venus_bounds.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/stress.c src/vgpu/venus_ring.c build/venus_bounds.o $(LDFLAGS) -pthread -o $@
 
-vgpu-test: build/vgpu_ring_test build/vgpu_stress_test build/vgpu_region_test build/vgpu_mapping_test build/vgpu_wait_test
+vgpu-test: build/vgpu_ring_test build/vgpu_stress_test build/vgpu_region_test build/vgpu_mapping_test build/vgpu_wait_test build/vgpu_session_test
 	./build/vgpu_ring_test
 	./build/vgpu_stress_test
 	./build/vgpu_region_test
 	./build/vgpu_mapping_test
 	./build/vgpu_wait_test
+	./build/vgpu_session_test
+	$(ZIG) test src/vgpu/venus_control.zig
 	$(ZIG) test src/vgpu/venus_bounds.zig
 
-vgpu-sanitizers: build/venus_bounds.o
+vgpu-sanitizers: build/venus_bounds.o build/venus_control.o
 	$(CC) $(CPPFLAGS) -Isrc/vgpu -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/ring.c src/vgpu/venus_ring.c build/venus_bounds.o -o build/vgpu_ring_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_ring_sanitized
 	$(ZIG) test src/vgpu/venus_bounds.zig
@@ -30,13 +32,18 @@ vgpu-sanitizers: build/venus_bounds.o
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_mapping_sanitized
 	$(CC) $(CPPFLAGS) -Isrc/vgpu -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/wait.c src/vgpu/venus_wait.c src/vgpu/venus_ring.c build/venus_bounds.o -o build/vgpu_wait_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_wait_sanitized
+	$(CC) $(CPPFLAGS) -Isrc/vgpu -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/session.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control.o build/venus_bounds.o -o build/vgpu_session_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_session_sanitized
+	$(ZIG) test src/vgpu/venus_control.zig
 
 .PHONY: vgpu-coverage vgpu-windows
-vgpu-coverage: build/venus_bounds.o
+vgpu-coverage: build/venus_bounds.o build/venus_control.o
 	python3 tests/vgpu/coverage.py
 	python3 tests/vgpu/coverage.py region
 	python3 tests/vgpu/coverage.py mapping
 	python3 tests/vgpu/coverage.py wait
+	python3 tests/vgpu/coverage.py session
+	python3 tests/av/coverage.py venus_control
 	python3 tests/av/coverage.py venus_bounds
 
 build/venus_bounds_windows.lib: src/vgpu/venus_bounds.zig | build
@@ -84,3 +91,18 @@ build/vgpu_wait_test.exe: tests/vgpu/wait.c src/vgpu/venus_wait.c src/vgpu/venus
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/wait.c src/vgpu/venus_wait.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o $@
 
 vgpu-windows: build/vgpu_wait_test.exe
+
+# Bounded lifecycle codec is independent of the ring metadata codec.
+build/venus_control.o: src/vgpu/venus_control.zig | build
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+
+build/vgpu_session_test: tests/vgpu/session.c src/vgpu/venus_session.c include/waddle/venus_session.h src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control.o build/venus_bounds.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/session.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control.o build/venus_bounds.o $(LDFLAGS) -o $@
+
+build/venus_control_windows.lib: src/vgpu/venus_control.zig | build
+	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+
+build/vgpu_session_test.exe: tests/vgpu/session.c src/vgpu/venus_session.c include/waddle/venus_session.h src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control_windows.lib build/venus_bounds_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/session.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control_windows.lib build/venus_bounds_windows.lib -o $@
+
+vgpu-windows: build/vgpu_session_test.exe
