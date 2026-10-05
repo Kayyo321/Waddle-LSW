@@ -623,3 +623,12 @@ is unavailable after restart, setup returns failure while the daemon preserves
 its owned running VM; it does not invent readiness or change OS credentials.
 The allocation-free completion state machine has ordered step/failure tests under
 native sanitizers. Real reboot-required driver-install acceptance is still pending.
+
+Native distribution verification extracts the complete final-source archive into
+a separate ignored private directory, checks its complete SHA-256 manifest and
+executes setup/probe from the extracted CLI with its sibling binaries and vendor
+layout. The actual acceptance profile passes both guest deployment readiness and
+host mapping/Wayland/PipeWire readiness from this archive. This validates portable
+package layout and deployment, not the still-missing high-refresh latency targets
+or a real reboot-required install transition. Repository-wide sanitizer regression,
+CLI coverage and the rerun of all 1000 storage stress cycles also pass locally.

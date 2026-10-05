@@ -46,10 +46,10 @@
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 92% | Validate SUDO_UID and grant a specific-user ACL even when the privileged helper can already open a compatible live KVMFR device. Preserve its ownership and active mappings, fail on an invalid identity or grant failure, and add syscall-isolated tests that never mutate kernel devices. The extended AV sanitizer suite and real compatible-device reuse pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
-| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 97% | Handle reboot-required signed-driver setup with one graceful restart of the selected managed device, a fresh probe of the immutable guest bundle and native host readiness before publication. Propagate every failure without a force kill, repeated installation or false selector update. Verify ordered steps, first-failure termination, ordinary ready setup and invalid callbacks under the native sanitizer suite; real reboot-required installation remains unverified. |
+| #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 98% | Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `97.00%`
+**Total Feature Completion**: `97.03%`
 
 ## Outstanding acceptance evidence
 
@@ -409,6 +409,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Replace stale conceptual C++ ABI and zero-copy/input/reconnect claims with the implemented C/Zig interfaces, exact layouts, startup/teardown ownership and drop-new audio policy. Document observed 64-Hz/37.64-FPS capture with invalid WGC age timing, active desktop GPUs, pending automatic GPU recovery and driver reboot handling. Preserve incomplete tracker status and acceptance thresholds.
 
-- **Commit `HEAD`**: `feat(av): restart and re-probe managed guests after driver reboot status`
+- **Commit `1ea0f5e818d2`**: `feat(av): restart and re-probe managed guests after driver reboot status`
   - **Task Impact**: +1% to #10.4 (+0.03% overall)
   - **Summary**: Handle reboot-required signed-driver setup with one graceful restart of the selected managed device, a fresh probe of the immutable guest bundle and native host readiness before publication. Propagate every failure without a force kill, repeated installation or false selector update. Verify ordered steps, first-failure termination, ordinary ready setup and invalid callbacks under the native sanitizer suite; real reboot-required installation remains unverified.
+
+- **Commit `HEAD`**: `docs(av): record extracted distribution readiness and regression evidence`
+  - **Task Impact**: +1% to #10.4 (+0.03% overall)
+  - **Summary**: Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete.
