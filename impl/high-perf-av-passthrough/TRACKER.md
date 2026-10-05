@@ -21,7 +21,7 @@
 | #2.3 | Extract bounds via `DwmGetWindowAttribute` and send `MsgWindowGeometry` | In Progress | 4% | 75% | Register bounded WinEvent hooks, enumerate initial visible application windows, filter shell noise, extract DWM bounds and translate tracked host resize/minimize/close requests; Windows cross-compilation passes. |
 | **3**   | **Video Capture & Transport (Guest)** | | | | |
 | #3.1 | Initialize DXGI Desktop Duplication / Windows.Graphics.Capture pipeline | In Progress | 5% | 60% | Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate. |
-| #3.2 | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | In Progress | 8% | 65% | Own and release D3D11 duplication resources, crop DWM bounds through reusable staging textures and publish only free video slots; Zig validates row copies and tests padding/short-buffer failures. Native fidelity remains a hardware verification gate. |
+| #3.2 | Implement rendering/copying DXGI surface to IVSHMEM double/triple buffer slots | In Progress | 8% | 75% | Specify a fixed page-aligned 16-window triple-buffer layout and bounded Zig initialization/lookup functions. Keep ring and headers in the 64 KiB control region and prohibit live reset or pool reuse before compositor release. |
 | #3.3 | Implement `memory_order_acquire/release` fences for buffer synchronization | Done | 5% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #3.4 | Dispatch `MsgFrameReady` over VSOCK with buffer index and damage rects | In Progress | 3% | 35% | Add isolated AV control IDs and a fixed little-endian Zig codec validating titles, geometry, state flags and damage rectangles before exposing data to C. |
 | **4**   | **Audio Capture & Transport (Guest)** | | | | |
@@ -43,7 +43,7 @@
 
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 2% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 
-**Total Feature Completion**: `74.25%`
+**Total Feature Completion**: `75.05%`
 
 ## Commit History & Progress Log
 
@@ -103,6 +103,10 @@
   - **Task Impact**: +70% to #5.2 (+4.20% overall); +25% to #5.3 (+1.25% overall)
   - **Summary**: Validate page-aligned regions against driver-reported size, export CLOEXEC DMA-BUFs using pinned ioctls and import advertised linear ARGB slots. Close local export FDs after submission and retain compositor ownership; ordinary files select wl_shm.
 
-- **Commit `HEAD`**: `fix(av): retain DMA-BUF global while binding xdg-shell`
+- **Commit `0d79d35dae82`**: `fix(av): retain DMA-BUF global while binding xdg-shell`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Remove an unintended destroy in the registry callback so global announcement order cannot leave the DMA-BUF client pointer dangling. DMA-BUF is destroyed only during full client teardown.
+
+- **Commit `HEAD`**: `feat(av): define validated fixed shared-memory window pools`
+  - **Task Impact**: +10% to #3.2 (+0.80% overall)
+  - **Summary**: Specify a fixed page-aligned 16-window triple-buffer layout and bounded Zig initialization/lookup functions. Keep ring and headers in the 64 KiB control region and prohibit live reset or pool reuse before compositor release.

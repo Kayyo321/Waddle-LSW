@@ -147,3 +147,17 @@ CLOEXEC FD is closed immediately after the protocol duplicates it. A regular
 file fails GETSIZE and selects wl_shm. The compositor owns the buffer import
 until wl_buffer.release. Immediate DMA-BUF import rejection is a display error;
 the session must reconnect with the shm path rather than reuse consumed pixels.
+
+### Fixed pool layout
+
+The initial mapping is 1,610,678,272 bytes (64 KiB metadata plus 48 * 32 MiB
+pixel regions). Metadata: magic 0x57415631 at 0, version 1 at 4, total bytes as
+LE u64 at 8, audio header at 128, 48 video headers at 4096 + slot * 64, PCM at
+16384 (4096 frames * 4 bytes). Pixels start at 65536 + slot * 33554432. Each
+window has three slots; global slot = window_pool * 3 + local_buffer_index.
+Window create's buffer_index carries pool 0..15; frame buffer_index remains 0..2.
+Destroy does not permit pool reuse until all previously presented slots are Free.
+32 MiB holds 3840x2160 BGRA; larger frames are rejected by byte capacity even if
+control dimensions are within the protocol's 8192 pixel ceiling. This fixed
+bounded pool avoids allocator activity during capture. Host initialization is
+explicit and occurs before guest connection, never during a running session.
