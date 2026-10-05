@@ -194,6 +194,10 @@
   - **Task Impact**: +10% to #10.3 (+0.50% overall)
   - **Summary**: Extend the bounded configuration editor with AV enable, shared-memory path and explicit GPU assignment. Validate the complete patch before replacing a quiescent device configuration, preserve unrelated bytes and cover incomplete, malformed and reset requests.
 
-- **Commit `HEAD`**: `fix(av): match WinRT SDK namespace and DLL export linkage`
+- **Commit `3888fc917051`**: `fix(av): match WinRT SDK namespace and DLL export linkage`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Resolve native MSVC diagnostics by including the apartment API, qualifying the SDK DXGI interface namespace and sharing C ABI export declarations between the adapter header and implementation. Native Windows CI will recompile the boundary with warnings treated as errors.
+
+- **Commit `HEAD`**: `fix(av): preserve full KVMFR capacity and bound host connection`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Use the 64-bit kernel ioctl return for all two-GiB capacity probes, reject incompatible character mappings before mmap and bound nonblocking VSOCK startup to five seconds. Transport/provisioning tests and native client/helper builds pass.

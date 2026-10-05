@@ -1,6 +1,6 @@
 #include "av_environment.h"
 #include "av_layout.h"
-#include "kvmfr.h"
+#include "av_kvmfr.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -85,7 +85,7 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
     if (fstat(environment->fd, &status) != 0)
         return fail(environment, error, capacity, "mapping stat");
     if (is_device) {
-        long bytes = ioctl(environment->fd, KVMFR_DMABUF_GETSIZE);
+        long bytes = av_kvmfr_size(environment->fd);
         if (!S_ISCHR(status.st_mode) || bytes < 0 || (uint64_t)bytes != AvMappingBytes) {
             if (bytes >= 0)
                 errno = EINVAL;

@@ -1,6 +1,6 @@
 /** @file av_setup.c @brief Bundled KVMFR build/load helper, no shell execution. */
 #include "av_layout.h"
-#include "kvmfr.h"
+#include "av_kvmfr.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -85,7 +85,7 @@ int main(int argc, char **argv) {
     if (load) {
         int fd = open("/dev/kvmfr0", O_RDWR | O_CLOEXEC | O_NOFOLLOW);
         if (fd >= 0) {
-            long size = ioctl(fd, KVMFR_DMABUF_GETSIZE);
+            long size = av_kvmfr_size(fd);
             close(fd);
             if (size == (long)AvMappingBytes)
                 return 0;
@@ -107,7 +107,7 @@ int main(int argc, char **argv) {
     int fd = open("/dev/kvmfr0", O_RDWR | O_CLOEXEC | O_NOFOLLOW);
     if (fd < 0)
         return 1;
-    long size = ioctl(fd, KVMFR_DMABUF_GETSIZE);
+    long size = av_kvmfr_size(fd);
     close(fd);
     if (size != (long)AvMappingBytes)
         return 1;

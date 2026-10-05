@@ -1,5 +1,7 @@
 /** @file av_host.c @brief Native Wayland/PipeWire client for a managed AV guest. */
 #include "av_dmabuf.h"
+#include "av_kvmfr.h"
+#include <sys/ioctl.h>
 #include "av_layout.h"
 #include "av_peer.h"
 #include "av_pipewire.h"
@@ -73,6 +75,10 @@ int main(int argc, char **argv) {
         (!S_ISCHR(status.st_mode) &&
          (!S_ISREG(status.st_mode) || status.st_size != (off_t)AvMappingBytes)))
         goto cleanup;
+    if (S_ISCHR(status.st_mode) && av_kvmfr_size(host.memory_fd) != (long)AvMappingBytes) {
+        errno = EINVAL;
+        goto cleanup;
+    }
     void *mapping =
         mmap(NULL, AvMappingBytes, PROT_READ | PROT_WRITE, MAP_SHARED, host.memory_fd, 0);
     if (mapping == MAP_FAILED)
@@ -80,14 +86,28 @@ int main(int argc, char **argv) {
     host.mapping = mapping;
     if (av_layout_validate(mapping, AvMappingBytes) != 0)
         goto cleanup;
-    peer = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    peer = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (peer < 0)
         goto cleanup;
     struct sockaddr_vm address = {
         .svm_family = AF_VSOCK, .svm_cid = cid, .svm_port = AvControlPort};
-    if (connect(peer, (struct sockaddr *)&address, sizeof(address)) != 0 ||
-        fcntl(peer, F_SETFL, O_NONBLOCK) != 0)
-        goto cleanup;
+    if (connect(peer, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        if (errno != EINPROGRESS)
+            goto cleanup;
+        struct pollfd connecting = {peer, POLLOUT, 0};
+        int ready = poll(&connecting, 1, 5000), socket_error = 0;
+        socklen_t length = sizeof(socket_error);
+        if (ready <= 0) {
+            if (!ready) errno = ETIMEDOUT;
+            goto cleanup;
+        }
+        if (getsockopt(peer, SOL_SOCKET, SO_ERROR, &socket_error, &length) != 0)
+            goto cleanup;
+        if (socket_error) {
+            errno = socket_error;
+            goto cleanup;
+        }
+    }
     host.peer.socket = (uintptr_t)peer;
     if (av_wayland_init(&host.video, host_request, &host) != 0)
         goto cleanup;

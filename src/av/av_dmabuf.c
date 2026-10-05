@@ -1,5 +1,5 @@
 #include "av_dmabuf.h"
-#include "kvmfr.h"
+#include "av_kvmfr.h"
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -9,7 +9,7 @@ int av_dmabuf_export(int device_fd, uint64_t offset, uint64_t size) {
         errno = EINVAL;
         return -1;
     }
-    long capacity = ioctl(device_fd, KVMFR_DMABUF_GETSIZE);
+    long capacity = av_kvmfr_size(device_fd);
     if (capacity < 0)
         return -1;
     if (offset > (uint64_t)capacity || size > (uint64_t)capacity - offset) {
