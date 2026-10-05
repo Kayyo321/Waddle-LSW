@@ -190,7 +190,17 @@ int waddle_client_ensure_daemon(const char *socket_path, uint32_t timeout_ms) {
     }
 
     /* Daemon not running; attempt to spawn it */
-    (void)waddle_client_spawn_daemon(NULL);
+    char runtime_buf[WaddleMaxPathLen];
+    const char *target_runtime = NULL;
+    if (socket_path != NULL && socket_path[0] != '\0') {
+        snprintf(runtime_buf, sizeof(runtime_buf), "%.1000s", socket_path);
+        char *slash = strrchr(runtime_buf, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            target_runtime = runtime_buf;
+        }
+    }
+    (void)waddle_client_spawn_daemon(target_runtime);
 
     uint32_t elapsed = 0;
     uint32_t interval_ms = 50;
@@ -278,6 +288,70 @@ int waddle_client_stop(int fd,
     }
 
     return 0;
+}
+
+int waddle_client_shutdown(int fd, waddle_daemon_result_resp_t *resp) {
+    if (fd < 0 || resp == NULL) { errno = EINVAL; return -1; }
+    const uint32_t sequence = UINT32_C(0x53485554);
+    if (waddle_daemon_send_msg(fd, DaemonMsgShutdownReq, sequence, NULL, 0) != 0) return -1;
+    waddle_daemon_header_t header;
+    memset(resp, 0, sizeof(*resp));
+    if (waddle_daemon_recv_msg(fd, &header, resp, sizeof(*resp), WaddleClientDefaultTimeoutMs) != 0) return -1;
+    if ((header.msg_type != DaemonMsgShutdownResp && header.msg_type != DaemonMsgErrorResp) ||
+        header.sequence != sequence || header.payload_len != sizeof(*resp)) {
+        errno = EPROTO;
+        return -1;
+    }
+    return 0;
+}
+
+/** @brief Wait for socket removal and the stable OFD lease to become available.
+ * @param[in] socket_path Borrowed explicit socket path or NULL for legacy transport.
+ * @param[in] timeout_sec Deadline seconds (0 means 15); bounded by callers.
+ * @return 0 fully exited, -1 with errno; closes all temporary descriptors.
+ * @note No lock inode is ever removed; lease lock is released on fd close.
+ */
+int waddle_client_wait_supervisor_exit(const char *socket_path, uint32_t timeout_sec) {
+    char socket_buffer[WaddleMaxPathLen];
+    if (socket_path == NULL) {
+        if (waddle_client_default_socket_path(socket_buffer, sizeof(socket_buffer)) != 0) return -1;
+        socket_path = socket_buffer;
+    }
+    char lease_path[WaddleMaxPathLen];
+    size_t len = strlen(socket_path);
+    if (len >= sizeof(lease_path)) { errno = ENAMETOOLONG; return -1; }
+    memcpy(lease_path, socket_path, len + 1);
+    char *slash = strrchr(lease_path, '/');
+    if (slash == NULL || (size_t)(slash - lease_path) + sizeof("/waddle.lock") > sizeof(lease_path)) {
+        errno = EINVAL; return -1;
+    }
+    memcpy(slash, "/waddle.lock", sizeof("/waddle.lock"));
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+    uint64_t deadline = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000 +
+                        (uint64_t)(timeout_sec ? timeout_sec : 15) * 1000;
+    for (;;) {
+        struct stat st;
+        if (lstat(socket_path, &st) != 0 && errno == ENOENT) {
+            int fd = open(lease_path, O_RDWR | O_NOFOLLOW | O_CLOEXEC);
+            if (fd < 0 && errno == ENOENT) return 0;
+            if (fd < 0) return -1;
+            if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != getuid() || (st.st_mode & 077) != 0) {
+                close(fd); errno = EACCES; return -1;
+            }
+            struct flock lock = { .l_type = F_WRLCK, .l_whence = SEEK_SET };
+            int result = fcntl(fd, F_OFD_SETLK, &lock);
+            int saved = errno;
+            close(fd);
+            if (result == 0) return 0;
+            if (saved != EACCES && saved != EAGAIN) { errno = saved; return -1; }
+        }
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+        uint64_t current = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+        if (current >= deadline) { errno = ETIMEDOUT; return -1; }
+        struct timespec delay = {0, 10000000L};
+        if (nanosleep(&delay, NULL) != 0 && errno == EINTR) return -1;
+    }
 }
 
 int waddle_client_status(int fd, waddle_daemon_status_resp_t *resp) {
@@ -436,6 +510,10 @@ int waddle_client_cmd_start(const char *socket_path, int wait_guest, uint32_t ti
 int waddle_client_cmd_stop(const char *socket_path, int force, uint32_t timeout_sec) {
     int fd = waddle_client_connect(socket_path);
     if (fd < 0) {
+        if (waddle_client_wait_supervisor_exit(socket_path, timeout_sec) != 0) {
+            fprintf(stderr, "waddle: supervisor is unreachable or still owns its lease: %s\n", strerror(errno));
+            return 1;
+        }
         printf("[waddle] Subsystem daemon is not running.\n");
         return 0;
     }
@@ -451,25 +529,33 @@ int waddle_client_cmd_stop(const char *socket_path, int force, uint32_t timeout_
         close(fd);
         return 1;
     }
-    close(fd);
-
     if (resp.status_code != 0) {
+        close(fd);
         fprintf(stderr, "waddle: stop failed: %s (code %u)\n",
                 resp.error_msg[0] ? resp.error_msg : strerror((int)resp.status_code),
                 (unsigned)resp.status_code);
         return 1;
     }
 
+    if (waddle_client_shutdown(fd, &resp) != 0 || resp.status_code != 0) {
+        int saved = resp.status_code ? (int)resp.status_code : errno;
+        close(fd);
+        fprintf(stderr, "waddle: supervisor shutdown failed: %s\n", strerror(saved));
+        return 1;
+    }
+    close(fd);
+    if (waddle_client_wait_supervisor_exit(socket_path, timeout_sec) != 0) {
+        fprintf(stderr, "waddle: supervisor exit failed: %s\n", strerror(errno));
+        return 1;
+    }
     printf("[waddle] Subsystem stopped successfully.\n");
     return 0;
 }
 
 int waddle_client_cmd_restart(const char *socket_path, int force, uint32_t timeout_sec) {
     printf("[waddle] Restarting subsystem...\n");
-    (void)waddle_client_cmd_stop(socket_path, force, timeout_sec);
-    /* Brief pause to ensure ports are completely freed */
-    struct timespec ts = {0, 200000000L};
-    nanosleep(&ts, NULL);
+    int stopped = waddle_client_cmd_stop(socket_path, force, timeout_sec);
+    if (stopped != 0) return stopped;
     return waddle_client_cmd_start(socket_path, 1, timeout_sec);
 }
 
@@ -574,28 +660,20 @@ int waddle_client_cmd_status(const char *socket_path, int json_output) {
 
 int waddle_client_cmd_kill(const char *socket_path) {
     int fd = waddle_client_connect(socket_path);
-    if (fd >= 0) {
-        waddle_daemon_result_resp_t resp;
-        memset(&resp, 0, sizeof(resp));
-        (void)waddle_client_kill(fd, &resp);
+    if (fd < 0) {
+        return waddle_client_wait_supervisor_exit(socket_path, 1) == 0 ? 0 : 1;
+    }
+    waddle_daemon_result_resp_t resp = {0};
+    if (waddle_client_kill(fd, &resp) != 0 || resp.status_code != 0 ||
+        waddle_client_shutdown(fd, &resp) != 0 || resp.status_code != 0) {
+        int saved = resp.status_code ? (int)resp.status_code : errno;
         close(fd);
+        fprintf(stderr, "waddle: kill/shutdown failed: %s\n", strerror(saved));
+        return 1;
     }
-
-    /* Clean runtime socket and lock files */
-    char runtime_dir[WaddleMaxPathLen];
-    if (waddle_client_default_runtime_dir(runtime_dir, sizeof(runtime_dir)) == 0) {
-        char path[WaddleMaxPathLen];
-        snprintf(path, sizeof(path), "%.900s/daemon.sock", runtime_dir);
-        unlink(path);
-        snprintf(path, sizeof(path), "%.900s/qmp.sock", runtime_dir);
-        unlink(path);
-        snprintf(path, sizeof(path), "%.900s/virtiofsd.sock", runtime_dir);
-        unlink(path);
-        snprintf(path, sizeof(path), "%.900s/waddle.lock", runtime_dir);
-        unlink(path);
-    }
-
-    printf("[waddle] Forcefully stopped all subsystem processes and cleaned runtime locks.\n");
+    close(fd);
+    if (waddle_client_wait_supervisor_exit(socket_path, 15) != 0) return 1;
+    printf("[waddle] Subsystem children reaped and supervisor exited.\n");
     return 0;
 }
 
@@ -638,15 +716,35 @@ int waddle_client_cmd_fs(const char *socket_path) {
 
 int waddle_client_cmd_logs(const char *socket_path, int follow, uint32_t lines) {
     char log_dir[WaddleMaxPathLen];
-    if (waddle_client_default_log_dir(log_dir, sizeof(log_dir)) != 0) {
-        fprintf(stderr, "waddle: failed to resolve log directory\n");
-        return 1;
+    int found_custom_dir = 0;
+    if (socket_path != NULL && socket_path[0] != '\0') {
+        char runtime_dir[WaddleMaxPathLen];
+        snprintf(runtime_dir, sizeof(runtime_dir), "%.1000s", socket_path);
+        char *slash = strrchr(runtime_dir, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            snprintf(log_dir, sizeof(log_dir), "%.900s/logs", runtime_dir);
+            struct stat st;
+            if (stat(log_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+                found_custom_dir = 1;
+            }
+        }
+    }
+    if (!found_custom_dir) {
+        if (waddle_client_default_log_dir(log_dir, sizeof(log_dir)) != 0) {
+            fprintf(stderr, "waddle: failed to resolve log directory\n");
+            return 1;
+        }
     }
 
     char daemon_log[WaddleMaxPathLen];
     snprintf(daemon_log, sizeof(daemon_log), "%.900s/daemon.log", log_dir);
 
     int log_fd = open(daemon_log, O_RDONLY);
+    if (log_fd < 0) {
+        snprintf(daemon_log, sizeof(daemon_log), "%.900s/qemu.log", log_dir);
+        log_fd = open(daemon_log, O_RDONLY);
+    }
     if (log_fd < 0) {
         /* Try querying daemon directly via IPC */
         int fd = waddle_client_connect(socket_path);

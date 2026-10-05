@@ -55,6 +55,41 @@ int qemu_build_args(const daemon_config_t *config,
     /* Binary name */
     if (append_arg(argv, &argc, max_args, "qemu-system-x86_64") != 0) goto fail;
 
+    /* BIOS/firmware directory search */
+    char exe_dir[WaddleMaxPathLen] = {0};
+    ssize_t exelen = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+    if (exelen > 0) {
+        exe_dir[exelen] = '\0';
+        char *slash = strrchr(exe_dir, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+        }
+    }
+
+    char candidate1[WaddleMaxPathLen + 64];
+    char candidate2[WaddleMaxPathLen + 64];
+    snprintf(candidate1, sizeof(candidate1), "%.800s/vendor/pc-bios", exe_dir);
+    snprintf(candidate2, sizeof(candidate2), "%.800s/../submodules/qemu/pc-bios", exe_dir);
+
+    const char *bios_candidates[] = {
+        candidate1,
+        candidate2,
+        "build/vendor/pc-bios",
+        "submodules/qemu/pc-bios",
+        "/usr/share/seabios",
+        "/usr/share/qemu",
+        NULL
+    };
+    for (size_t b = 0; bios_candidates[b] != NULL; b++) {
+        char test_file[WaddleMaxPathLen + 64];
+        snprintf(test_file, sizeof(test_file), "%.900s/bios-256k.bin", bios_candidates[b]);
+        if (access(test_file, R_OK) == 0) {
+            if (append_arg(argv, &argc, max_args, "-L") != 0 ||
+                append_arg(argv, &argc, max_args, bios_candidates[b]) != 0) goto fail;
+            break;
+        }
+    }
+
     /* VM name */
     if (append_arg(argv, &argc, max_args, "-name") != 0 ||
         append_arg(argv, &argc, max_args, "waddle-lsw,debug-threads=on") != 0) goto fail;
@@ -149,6 +184,89 @@ void qemu_free_args(char **argv, size_t argc) {
     }
 }
 
+int qemu_find_binary(char *out_path, size_t path_cap) {
+    if (out_path == NULL || path_cap < 16) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    char exe_dir[WaddleMaxPathLen];
+    ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+    if (len > 0) {
+        exe_dir[len] = '\0';
+        char *last_slash = strrchr(exe_dir, '/');
+        if (last_slash != NULL) {
+            *last_slash = '\0';
+        } else {
+            exe_dir[0] = '.';
+            exe_dir[1] = '\0';
+        }
+
+        /* Check relative vendor paths */
+        char candidate[WaddleMaxPathLen + 64];
+        snprintf(candidate, sizeof(candidate), "%s/vendor/qemu-system-x86_64", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+
+        snprintf(candidate, sizeof(candidate), "%s/../build/vendor/qemu-system-x86_64", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+
+        snprintf(candidate, sizeof(candidate), "%s/qemu-system-x86_64", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+    }
+
+    /* Fallback to local build vendor directory */
+    if (access("build/vendor/qemu-system-x86_64", X_OK) == 0) {
+        snprintf(out_path, path_cap, "build/vendor/qemu-system-x86_64");
+        return 0;
+    }
+
+    /* Standard known install locations */
+    const char *candidates[] = {
+        "/usr/bin/qemu-system-x86_64",
+        "/usr/local/bin/qemu-system-x86_64",
+        NULL
+    };
+
+    for (size_t i = 0; candidates[i] != NULL; i++) {
+        if (access(candidates[i], X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidates[i]);
+            return 0;
+        }
+    }
+
+    /* Search in PATH */
+    const char *path_env = getenv("PATH");
+    if (path_env != NULL) {
+        char *path_copy = strdup(path_env);
+        if (path_copy != NULL) {
+            char *token = strtok(path_copy, ":");
+            while (token != NULL) {
+                char candidate[WaddleMaxPathLen + 64];
+                snprintf(candidate, sizeof(candidate), "%s/qemu-system-x86_64", token);
+                if (access(candidate, X_OK) == 0) {
+                    snprintf(out_path, path_cap, "%s", candidate);
+                    free(path_copy);
+                    return 0;
+                }
+                token = strtok(NULL, ":");
+            }
+            free(path_copy);
+        }
+    }
+
+    errno = ENOENT;
+    return -1;
+}
+
 int qemu_spawn(qemu_process_t *proc,
                const daemon_config_t *config,
                const char *qmp_sock_path,
@@ -200,7 +318,16 @@ int qemu_spawn(qemu_process_t *proc,
         }
         close(log_fd);
 
-        const char *bin = (qemu_binary != NULL && qemu_binary[0] != '\0') ? qemu_binary : argv[0];
+        char resolved_binary[WaddleMaxPathLen];
+        const char *bin = NULL;
+        if (qemu_binary != NULL && qemu_binary[0] != '\0') {
+            bin = qemu_binary;
+        } else if (qemu_find_binary(resolved_binary, sizeof(resolved_binary)) == 0) {
+            bin = resolved_binary;
+        } else {
+            bin = argv[0];
+        }
+
         execvp(bin, argv);
         _exit(127);
     }

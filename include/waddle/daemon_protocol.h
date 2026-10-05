@@ -85,6 +85,10 @@ typedef enum waddle_daemon_msg_type_t {
     /** @brief Daemon to Host CLI: Log output payload. */
     DaemonMsgLogsResp         = 0x000C,
     /** @brief Daemon to Host CLI: Generic error response frame. */
+    /** @brief Request idle supervisor exit; empty payload, EBUSY with live children. */
+    DaemonMsgShutdownReq      = 0x000D,
+    /** @brief Shutdown response using waddle_daemon_result_resp_t before disconnect. */
+    DaemonMsgShutdownResp     = 0x000E,
     DaemonMsgErrorResp        = 0x00FF
 } waddle_daemon_msg_type_t;
 

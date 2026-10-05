@@ -146,10 +146,10 @@ export fn daemon_config_validate(config: ?*const c.daemon_config_t) c_int {
     if (cfg.vcpus < c.ConfigMinVcpus or cfg.vcpus > c.ConfigMaxVcpus) {
         return -1;
     }
-    if (cfg.vsock_cid < 3) {
+    if (cfg.vsock_cid < 3 or cfg.vsock_cid == std.math.maxInt(u32)) {
         return -1;
     }
-    if (cfg.vsock_port < 1 or cfg.vsock_port > 65535) {
+    if (cfg.vsock_port < 1) {
         return -1;
     }
     if (cfg.start_timeout_sec < 1 or cfg.start_timeout_sec > c.ConfigMaxStartTimeoutSec) {
@@ -188,9 +188,13 @@ export fn daemon_config_parse_export(line: ?[*:0]const u8, mount: ?*c.waddle_dae
 
 /// Parses an INI configuration string and updates the configuration structure.
 export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]const u8, ini_len: usize) c_int {
-    const cfg = config orelse return -1;
+    const destination = config orelse return -1;
+    var candidate = destination.*;
+    const cfg = &candidate;
     if (ini_len == 0) return 0;
+    if (ini_len > 65536) return -1;
     const data = (ini_data orelse return -1)[0..ini_len];
+    if (!std.unicode.utf8ValidateSlice(data) or std.mem.indexOfScalar(u8, data, 0) != null) return -1;
 
     var mounts_cleared = false;
     var current_section: enum { none, subsystem, filesystem, timeouts } = .none;
@@ -210,6 +214,10 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                 current_section = .subsystem;
             } else if (std.mem.eql(u8, sec_name, "filesystem")) {
                 current_section = .filesystem;
+                if (!mounts_cleared) {
+                    cfg.mount_count = 0;
+                    mounts_cleared = true;
+                }
             } else if (std.mem.eql(u8, sec_name, "timeouts")) {
                 current_section = .timeouts;
             } else {
@@ -232,12 +240,14 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                 } else if (std.mem.eql(u8, key, "disk_image")) {
                     var tilde_buf: [c.WaddleMaxPathLen]u8 = undefined;
                     const resolved = expand_tilde(val, &tilde_buf);
+                    if (resolved.len == 0 or resolved.len >= cfg.disk_image.len) return -1;
                     copy_to_c_buf(&cfg.disk_image, resolved);
                 } else if (std.mem.eql(u8, key, "vsock_cid")) {
                     cfg.vsock_cid = parse_u32(val) catch return -1;
                 } else if (std.mem.eql(u8, key, "vsock_port")) {
                     cfg.vsock_port = parse_u32(val) catch return -1;
                 } else if (std.mem.eql(u8, key, "default_shell")) {
+                    if (val.len == 0 or val.len >= cfg.default_shell.len) return -1;
                     copy_to_c_buf(&cfg.default_shell, val);
                 }
             },
@@ -265,7 +275,9 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
         }
     }
 
-    return daemon_config_validate(cfg);
+    if (daemon_config_validate(cfg) != 0) return -1;
+    destination.* = candidate;
+    return 0;
 }
 
 /// Loads and parses a configuration file from the filesystem.
@@ -306,6 +318,8 @@ export fn daemon_config_load_file(config: ?*c.daemon_config_t, path: ?[*:0]const
         return -1;
     };
     defer file.close();
+
+    if ((file.stat() catch return -1).size > 65536) return -1;
 
     // Read up to 64 KiB
     var file_buf: [65536]u8 = undefined;
@@ -412,4 +426,163 @@ test "daemon_config: invalid configs rejected" {
     // Malformed INI syntax
     const bad_ini = "this is not ini";
     try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, bad_ini.ptr, bad_ini.len));
+}
+
+test "daemon_config: failed parse leaves every original byte unchanged" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    const original = cfg;
+    const inputs = [_][]const u8{
+        "[subsystem]\nmemory_mb = 8192\nvcpus = 0\n",
+        "[subsystem]\nvsock_cid = 4294967295\n",
+        "[subsystem]\ndefault_shell = a\x00b\n",
+        "[subsystem]\ndefault_shell = \xff\n",
+        "[subsystem]\nvsock_port = 4294967296\n",
+    };
+    for (inputs) |input| {
+        try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, input.ptr, input.len));
+        try std.testing.expectEqualSlices(u8, std.mem.asBytes(&original), std.mem.asBytes(&cfg));
+    }
+    const oversized = try std.testing.allocator.alloc(u8, 65537);
+    defer std.testing.allocator.free(oversized);
+    @memset(oversized, ' ');
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, oversized.ptr, oversized.len));
+    var long_shell: [300]u8 = undefined;
+    @memset(&long_shell, 'a');
+    const prefix = "[subsystem]\ndefault_shell = ";
+    @memcpy(long_shell[0..prefix.len], prefix);
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, &long_shell, long_shell.len));
+}
+
+test "daemon_config: full width vsock port and empty export section" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    const input = "[subsystem]\nvsock_port = 4294967295\n[filesystem]\n";
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, input.ptr, input.len));
+    try std.testing.expectEqual(@as(u32, 4294967295), cfg.vsock_port);
+    try std.testing.expectEqual(@as(u32, 0), cfg.mount_count);
+}
+
+/// Mutable key schema; immutable storage borrowed by the editor.
+const edit_key_t = struct { name: []const u8, section: []const u8, default: []const u8 };
+/// The six supported mutable settings and their exact reset representations.
+const EditKeys = [_]edit_key_t{
+    .{ .name = "memory_mb", .section = "subsystem", .default = "4096" },
+    .{ .name = "vcpus", .section = "subsystem", .default = "4" },
+    .{ .name = "default_shell", .section = "subsystem", .default = "powershell.exe" },
+    .{ .name = "vsock_port", .section = "subsystem", .default = "5242" },
+    .{ .name = "start_timeout", .section = "timeouts", .default = "60" },
+    .{ .name = "stop_timeout", .section = "timeouts", .default = "15" },
+};
+
+/// Bounded all-or-none validation; output remains caller-owned and is never allocated.
+fn edit_config(data: []const u8, changes: []const []const u8, reset: bool, output: []u8) !usize {
+    if (data.len == 0 or data.len > 65536 or changes.len == 0 or changes.len > EditKeys.len) return error.Invalid;
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    if (daemon_config_parse_string(&cfg, data.ptr, data.len) != 0) return error.Invalid;
+    var values: [EditKeys.len]?[]const u8 = [_]?[]const u8{null} ** EditKeys.len;
+    for (changes) |change| {
+        const eq = std.mem.indexOfScalar(u8, change, '=');
+        if ((reset and eq != null) or (!reset and eq == null)) return error.Invalid;
+        const name = if (eq) |at| change[0..at] else change;
+        var index: ?usize = null;
+        for (EditKeys, 0..) |key, i| {
+            if (std.mem.eql(u8, key.name, name)) index = i;
+        }
+        const i = index orelse return error.Invalid;
+        if (values[i] != null) return error.Invalid;
+        const value = if (reset) EditKeys[i].default else change[eq.? + 1 ..];
+        if (value.len == 0 or value.len > 255 or !std.unicode.utf8ValidateSlice(value) or
+            std.mem.indexOfAny(u8, value, "\x00\r\n") != null or
+            !std.mem.eql(u8, std.mem.trim(u8, value, " \t"), value)) return error.Invalid;
+        values[i] = value;
+    }
+    // Validate the combined request before rendering even a partial replacement.
+    var patch: [2048]u8 = undefined;
+    var patch_stream = std.io.fixedBufferStream(&patch);
+    for (EditKeys, values) |key, value| {
+        if (value) |v| try patch_stream.writer().print("[{s}]\n{s}={s}\n", .{ key.section, key.name, v });
+    }
+    if (daemon_config_parse_string(&cfg, &patch, patch_stream.pos) != 0) return error.Invalid;
+    var stream = std.io.fixedBufferStream(output[0..@min(output.len, 65536)]);
+    const writer = stream.writer();
+    var seen: [EditKeys.len]bool = [_]bool{false} ** EditKeys.len;
+    var section: []const u8 = "";
+    var offset: usize = 0;
+    while (offset < data.len) {
+        const end = if (std.mem.indexOfScalarPos(u8, data, offset, '\n')) |at| at + 1 else data.len;
+        const raw = data[offset..end];
+        const line = std.mem.trim(u8, raw, " \t\r\n");
+        var replaced = false;
+        if (line.len > 0 and line[0] == '[') {
+            section = std.mem.trim(u8, line[1 .. line.len - 1], " \t");
+        } else if (line.len > 0 and line[0] != '#' and line[0] != ';') {
+            if (std.mem.indexOfScalar(u8, raw, '=')) |eq| {
+                const name = std.mem.trim(u8, raw[0..eq], " \t");
+                for (EditKeys, values, 0..) |key, value, i| {
+                    if (value != null and std.mem.eql(u8, section, key.section) and std.mem.eql(u8, name, key.name)) {
+                        var first = eq + 1;
+                        while (first < raw.len and (raw[first] == ' ' or raw[first] == '\t')) : (first += 1) {}
+                        var last = raw.len;
+                        while (last > first and std.mem.indexOfScalar(u8, " \t\r\n", raw[last - 1]) != null) : (last -= 1) {}
+                        try writer.writeAll(raw[0..first]);
+                        try writer.writeAll(value.?);
+                        try writer.writeAll(raw[last..]);
+                        seen[i] = true;
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!replaced) try writer.writeAll(raw);
+        offset = end;
+    }
+    for (EditKeys, values, seen) |key, value, found| {
+        if (value != null and !found) try writer.print("\n[{s}]\n{s}={s}\n", .{ key.section, key.name, value.? });
+    }
+    daemon_config_init_defaults(&cfg);
+    if (daemon_config_parse_string(&cfg, output.ptr, stream.pos) != 0) return error.Invalid;
+    return stream.pos;
+}
+
+/// C ABI documented in daemon_config.h; borrowed buffers, no heap storage or side effects.
+export fn daemon_config_edit(data: ?[*]const u8, length: usize, changes: ?[*]const ?[*:0]const u8, count: usize, reset: c_int, output: ?[*]u8, capacity: usize, output_length: ?*usize) c_int {
+    const result = output_length orelse return -1;
+    result.* = 0;
+    if (count == 0 or count > EditKeys.len) return -1;
+    const args = changes orelse return -1;
+    var slices: [EditKeys.len][]const u8 = undefined;
+    for (args[0..count], 0..) |arg, i| slices[i] = std.mem.span(arg orelse return -1);
+    result.* = edit_config((data orelse return -1)[0..length], slices[0..count], reset != 0, (output orelse return -1)[0..capacity]) catch return -1;
+    return 0;
+}
+
+test "config editor preserves unknown bytes and replaces repeated effective keys" {
+    const original = "# comment\r\n[subsystem]\r\n memory_mb = 4096 \r\nvcpus=4\nopaque = untouched\n" ++
+        "[filesystem]\nmount=/tmp:Z:\\:ro\n[subsystem]\nmemory_mb=2048\n[other]\nmemory_mb=123\n";
+    var output: [4096]u8 = undefined;
+    const length = try edit_config(original, &.{ "memory_mb=8192", "stop_timeout=30" }, false, &output);
+    try std.testing.expectEqualStrings("# comment\r\n[subsystem]\r\n memory_mb = 8192 \r\nvcpus=4\nopaque = untouched\n" ++
+        "[filesystem]\nmount=/tmp:Z:\\:ro\n[subsystem]\nmemory_mb=8192\n[other]\nmemory_mb=123\n" ++
+        "\n[timeouts]\nstop_timeout=30\n", output[0..length]);
+    var reset_output: [4096]u8 = undefined;
+    const reset_length = try edit_config(output[0..length], &.{"memory_mb"}, true, &reset_output);
+    try std.testing.expect(std.mem.indexOf(u8, reset_output[0..reset_length], "memory_mb=4096") != null);
+}
+
+test "config editor rejects invalid complete requests and bounded output" {
+    const source = "[subsystem]\nmemory_mb=4096\n";
+    var output: [4096]u8 = undefined;
+    for ([_][]const []const u8{
+        &.{},                       &.{"unknown=1"},                &.{"vsock_cid=3"},           &.{"vcpus"},              &.{"vcpus=0"},
+        &.{ "vcpus=2", "vcpus=3" }, &.{ "vcpus=2", "memory_mb=1" }, &.{"default_shell="},        &.{"default_shell=a\nb"}, &.{"default_shell=\xff"},
+        &.{"default_shell=a\x00b"}, &.{"default_shell= trailing"},  &.{"vsock_port=4294967296"}, &.{"start_timeout=601"},  &.{"stop_timeout=301"},
+    }) |args| try std.testing.expectError(error.Invalid, edit_config(source, args, false, &output));
+    try std.testing.expectError(error.Invalid, edit_config(source, &.{"vcpus=2"}, true, &output));
+    try std.testing.expectError(error.Invalid, edit_config("[", &.{"vcpus=2"}, false, &output));
+    try std.testing.expectError(error.NoSpaceLeft, edit_config(source, &.{"vcpus=2"}, false, output[0..4]));
+    const length = try edit_config(source, &.{ "vsock_port=4294967295", "default_shell=日本語.exe" }, false, &output);
+    try std.testing.expect(std.mem.indexOf(u8, output[0..length], "日本語.exe") != null);
 }

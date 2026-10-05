@@ -61,6 +61,45 @@ int daemon_fs_find_binary(char *out_path, size_t path_cap) {
         return -1;
     }
 
+    char exe_dir[WaddleMaxPathLen];
+    ssize_t len = readlink("/proc/self/exe", exe_dir, sizeof(exe_dir) - 1);
+    if (len > 0) {
+        exe_dir[len] = '\0';
+        char *last_slash = strrchr(exe_dir, '/');
+        if (last_slash != NULL) {
+            *last_slash = '\0';
+        } else {
+            exe_dir[0] = '.';
+            exe_dir[1] = '\0';
+        }
+
+        /* Check relative vendor paths */
+        char candidate[WaddleMaxPathLen + 64];
+        snprintf(candidate, sizeof(candidate), "%s/vendor/virtiofsd", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+
+        snprintf(candidate, sizeof(candidate), "%s/../build/vendor/virtiofsd", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+
+        snprintf(candidate, sizeof(candidate), "%s/virtiofsd", exe_dir);
+        if (access(candidate, X_OK) == 0) {
+            snprintf(out_path, path_cap, "%s", candidate);
+            return 0;
+        }
+    }
+
+    /* Fallback to local build vendor directory */
+    if (access("build/vendor/virtiofsd", X_OK) == 0) {
+        snprintf(out_path, path_cap, "build/vendor/virtiofsd");
+        return 0;
+    }
+
     /* Standard known install locations */
     const char *candidates[] = {
         "/usr/libexec/virtiofsd",
@@ -84,7 +123,7 @@ int daemon_fs_find_binary(char *out_path, size_t path_cap) {
         if (path_copy != NULL) {
             char *token = strtok(path_copy, ":");
             while (token != NULL) {
-                char candidate[WaddleMaxPathLen];
+                char candidate[WaddleMaxPathLen + 64];
                 snprintf(candidate, sizeof(candidate), "%s/virtiofsd", token);
                 if (access(candidate, X_OK) == 0) {
                     snprintf(out_path, path_cap, "%s", candidate);
@@ -153,23 +192,26 @@ void daemon_fs_free_args(char **argv, size_t argc) {
 }
 
 /**
- * @brief Probes whether a UNIX domain socket has been created and is accepting connections.
+ * @brief Probes whether a UNIX domain socket inode has been created and bound by virtiofsd.
+ *
+ * Checks for socket file existence via stat() without connecting. An active connect()
+ * causes virtiofsd (which operates as a 1:1 vhost-user backend) to conclude that the
+ * hypervisor has disconnected and immediately shut down.
  *
  * @param[in] path Path to UNIX domain socket.
- * @return 0 if connectable, or -1 otherwise.
+ * @return 0 if socket inode exists, or -1 otherwise.
  */
 static int probe_socket_ready(const char *path) {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) return -1;
-
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
-
-    int r = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-    close(fd);
-    return (r == 0) ? 0 : -1;
+    if (path == NULL || path[0] == '\0') {
+        return -1;
+    }
+    struct stat st;
+    if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
+        /* Socket file bound; brief sleep ensures listen() is complete */
+        usleep(20000);
+        return 0;
+    }
+    return -1;
 }
 
 int daemon_fs_spawn(virtiofs_process_t *proc,

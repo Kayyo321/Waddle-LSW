@@ -633,3 +633,63 @@ stop_timeout = 15
    - Verifies modification immediately appears on host without manual syncing.
 5. **Sanitizer & Leak-Free Verification**:
    - Test suite executes cleanly under AddressSanitizer and LeakSanitizer (`-fsanitize=address,leak`) with **zero memory leaks**.
+
+---
+
+## 8. Bundled Hypervisor & All-in-One Distribution Architecture
+
+### 8.1 Rationale for Bundling QEMU
+In earlier iterations of Waddle-LSW, users were required to manually provision system-level dependencies on their Linux host (such as `qemu-system-x86_64`, `virtiofsd`, and associated virtualization libraries via distributions' package managers like `apt`, `dnf`, or `pacman`). This approach introduced several critical friction points:
+1. **Host Configuration Drift & Version Incompatibilities**: Differing host distributions ship disparate versions of QEMU (e.g. 7.x vs 8.x vs 9.x) with differing command-line syntax, varying feature sets for `vhost-user-fs-pci`, and inconsistent socket permission models.
+2. **Missing Optional Components**: Many base QEMU distribution packages omit or unbundle `virtiofsd` into distinct package names (`qemu-system-virtio-fs` or separate Rust `virtiofsd`), leading to cryptic startup failures when users try to launch the subsystem.
+3. **Friction-Free "All-in-One" Experience**: By directly bundling QEMU into the repository as a Git submodule, Waddle-LSW achieves an all-in-one developer and user experience. Users clone the repository and compile everything required with a single invocation of `make`, without needing root privileges to install system packages.
+
+### 8.2 Architectural Boundary & Isolation
+Per `AGENTS.md` and `PROJECT.md`, loose source vendoring is strictly forbidden. The QEMU upstream source is tracked as a Git submodule located under `submodules/qemu`.
+
+The architectural relationship between Waddle-LSW and QEMU maintains strict process-level boundaries:
+- **Process Isolation**: QEMU is executed as an independent child process via standard POSIX `fork()` and `execvp()`. There is no dynamic or static C ABI linking against QEMU internal object files or libraries within Waddle's executable.
+- **IPC Protocol Boundary**: All control and status monitoring take place across standard UNIX domain sockets:
+  - **QMP Socket**: JSON-RPC control protocol for capabilities negotiation, ACPI graceful shutdown (`system_powerdown`), and VM status queries.
+  - **vhost-user Socket**: VirtIO shared memory interface connecting `virtiofsd` and QEMU's memory backend.
+  - **AF_VSOCK Device**: Transparent guest/host transport connecting `waddle` CLI sessions directly to `waddle-guest-exec` inside the Windows VM.
+- **Zero Kernel/Root Escalation**: Both the bundled QEMU hypervisor and `waddled` daemon run entirely in userland under the unprivileged user's session (`$XDG_RUNTIME_DIR/waddle`).
+
+### 8.3 License Compatibility & Distribution Analysis
+- **Waddle-LSW License**: GNU General Public License Version 3 (GPLv3).
+- **QEMU License**: GNU General Public License Version 2 (GPLv2), with individual subsystem components under GPLv2+, LGPLv2.1, BSD, and MIT licenses.
+- **Legal & License Interaction**:
+  - Waddle-LSW and QEMU communicate strictly across inter-process communication (IPC) boundaries (UNIX sockets, pipes, and process invocation). Under established Free Software Foundation (FSF) licensing guidelines, communicating via command-line arguments and standard IPC mechanisms establishes separate programs rather than a single combined work.
+  - When distributed together as an "all-in-one" package or container, Waddle-LSW and QEMU form an aggregate software bundle.
+  - Both licenses mandate that full corresponding source code must be made readily available. Vendoring QEMU as a public Git submodule pointing to immutable upstream commits guarantees complete compliance with GPLv2 and GPLv3 source distribution obligations.
+
+### 8.4 Local Build System Integration
+The root `GNUmakefile` defines dedicated build recipes for the QEMU submodule:
+1. **Target Minimization**:
+   To prevent excessive compile times and multi-gigabyte build artifacts, QEMU is configured to compile only the specific emulator binary required:
+   ```bash
+   ./configure --target-list=x86_64-softmmu --enable-kvm --disable-docs --disable-gtk --disable-sdl --disable-vnc
+   ```
+2. **Output Artifact Locations**:
+   Compiled binaries are output to a local build directory structured as:
+   ```
+   build/vendor/
+   ├── qemu-system-x86_64
+   └── virtiofsd
+   ```
+3. **Idempotence & Build Cache**:
+   The makefile checks for the existence of `build/vendor/qemu-system-x86_64` and invokes the submodule's configure/make only when the target is out of date or explicitly requested.
+
+### 8.5 Relative Binary Discovery Mechanism
+Instead of hardcoding absolute system paths (`/usr/bin/qemu-system-x86_64`, `/usr/libexec/virtiofsd`), both `daemon_qemu.c` and `daemon_fs.c` implement relative binary discovery:
+1. **Self-Executable Directory Resolution**:
+   The daemon inspects `/proc/self/exe` via `readlink()` to determine the absolute canonical directory of the running `waddle` or `waddled` binary.
+2. **Vendor Directory Search**:
+   The daemon constructs candidate paths relative to its own location:
+   - `<executable_dir>/vendor/qemu-system-x86_64`
+   - `<executable_dir>/../build/vendor/qemu-system-x86_64`
+   - `<executable_dir>/vendor/virtiofsd`
+   - `<executable_dir>/../build/vendor/virtiofsd`
+3. **Graceful Fallback**:
+   If the local vendor directory does not contain the binary (e.g. during lightweight test harnesses or when external QEMU is purposefully supplied), the discovery logic falls back to standard system paths (`/usr/libexec/virtiofsd`, `/usr/bin/virtiofsd`, and `$PATH`), guaranteeing backward compatibility and maximum execution flexibility.
+

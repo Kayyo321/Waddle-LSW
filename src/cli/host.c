@@ -8,6 +8,8 @@
 #include "terminal.h"
 #include "daemon_client.h"
 #include "daemon_config.h"
+#include "daemon_device.h"
+#include "device_commands.h"
 #include "waddle/daemon_protocol.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -59,24 +61,33 @@ static void usage(FILE *f) {
             "Usage: waddle [command|option] [parameters...]\n"
             "\n"
             "Default Action:\n"
-            "  waddle                         Enter interactive Windows terminal (ConPTY)\n"
+            "  waddle [device-name]           Enter interactive Windows terminal (ConPTY)\n"
             "                                 Auto-starts subsystem if not currently running.\n"
             "\n"
-            "Subsystem Lifecycle Commands:\n"
-            "  start, --start                 Start background subsystem (daemon + QEMU + virtiofsd)\n"
-            "                                 Options: --wait (default), --no-wait, --timeout <sec>\n"
-            "  stop, --stop                   Gracefully shut down background subsystem\n"
-            "                                 Options: --force, -f, --timeout <sec>\n"
-            "  restart, --restart             Restart background subsystem\n"
-            "  status, --status               Display subsystem status and metrics\n"
+            "Device Management:\n"
+            "  device list/show/default/config  Inspect profiles and select persistent default\n"
+            "                                 Use device --help for command grammar and exit codes\n"
+            "  init, --init <device-name>     Initialize a new isolated subsystem device\n"
+            "                                 Options: --disk <path> (custom base disk)\n"
+            "  devices, list                  List all configured devices and their status\n"
             "                                 Options: --json (machine-readable output)\n"
-            "  kill, --kill                   Forcefully terminate subsystem processes and clean locks\n"
+            "\n"
+            "Subsystem Lifecycle Commands:\n"
+            "  start, --start [device]        Start background subsystem (daemon + QEMU + virtiofsd)\n"
+            "                                 Options: --wait (default), --no-wait, --timeout <sec>, -d <device>\n"
+            "  stop, --stop [device]          Gracefully shut down background subsystem\n"
+            "                                 Options: --force, -f, --timeout <sec>, -d <device>\n"
+            "  restart, --restart [device]    Restart background subsystem\n"
+            "  status, --status [device]      Display subsystem status and metrics\n"
+            "                                 Options: --json (machine-readable output), -d <device>\n"
+            "  kill, --kill [device]          Forcefully terminate subsystem processes and clean locks\n"
             "\n"
             "Process Execution:\n"
             "  --exec, -e <command>           Execute command in Windows guest with auto-start\n"
             "  exec, run [options] -- <cmd>   Explicit passthrough execution\n"
+            "    --device, -d NAME            Target specific subsystem device\n"
             "    --socket-path PATH           UNIX mock transport (default: VSOCK)\n"
-            "    --vsock-cid N                Guest VSOCK CID (default: 3)\n"
+            "    --vsock-cid N                Guest VSOCK CID (default: device CID or 3)\n"
             "    --vsock-port N               Guest VSOCK port (default: 5242)\n"
             "    --pipe, -P                   Raw pipe streams (non-interactive)\n"
             "    --interactive, -i, --tty, -t Interactive terminal session (ConPTY)\n"
@@ -87,13 +98,86 @@ static void usage(FILE *f) {
             "    --timeout SECONDS            Total session deadline; 0 disables\n"
             "\n"
             "Filesystem Integration:\n"
-            "  fs, --mount                    List active VirtIO-FS shared directory mappings\n"
-            "  fs test                        Run cross-filesystem read/write verification\n"
+            "  fs, --mount [device]           List active VirtIO-FS shared directory mappings\n"
+            "  fs test [device]               Run cross-filesystem read/write verification\n"
             "\n"
             "Diagnostics & Information:\n"
-            "  logs, --logs                   View subsystem and hypervisor logs (-f, -n <lines>)\n"
+            "  logs, --logs [device]          View subsystem and hypervisor logs (-f, -n <lines>, -d <device>)\n"
             "  --version, -v                  Show version information\n"
             "  --help, -h                     Show this help text\n");
+}
+
+/**
+ * @brief Resolve explicit name, saved default, then sole registered profile.
+ * @param[in] specified_device Borrowed optional explicit name; NULL uses precedence.
+ * @param[out] out_dev Optional borrowed destination; receives owned inline metadata.
+ * @param[out] out_socket_path Optional borrowed output buffer; receives named socket.
+ * @param[in] socket_path_cap Output capacity including NUL.
+ * @param[in] require_single Reserved compatibility parameter; all calls reject ambiguity.
+ * @return 0 success, 2 missing/invalid/ambiguous selection or registry failure.
+ * @note No allocation or guest start. Registry/default APIs hold short shared locks.
+ * Missing and dangling defaults fail; no legacy global-profile inference is performed.
+ */
+static int resolve_target_device(const char *specified_device,
+                                 device_info_t *out_dev,
+                                 char *out_socket_path,
+                                 size_t socket_path_cap,
+                                 int require_single) {
+    if (out_dev != NULL) {
+        memset(out_dev, 0, sizeof(*out_dev));
+    }
+    if (out_socket_path != NULL && socket_path_cap > 0) {
+        out_socket_path[0] = '\0';
+    }
+
+    (void)require_single;
+    char selected[WaddleMaxDeviceNameLen];
+    if (specified_device == NULL) {
+        if (daemon_device_default_get(selected, sizeof(selected)) != 0) {
+            fprintf(stderr, "waddle: invalid saved default: %s\n", strerror(errno));
+            return 2;
+        }
+        if (selected[0] != '\0') specified_device = selected;
+    }
+    device_list_t list;
+    if (daemon_device_list(&list) < 0) {
+        fprintf(stderr, "waddle: registry discovery failed: %s\n", strerror(errno));
+        return 2;
+    }
+    device_info_t *chosen = NULL;
+    if (specified_device != NULL) {
+        for (size_t i = 0; i < list.count; i++) {
+            if (strcmp(specified_device, list.devices[i].name) == 0) {
+                chosen = &list.devices[i];
+                break;
+            }
+        }
+        if (chosen == NULL) {
+            fprintf(stderr, "waddle: device '%s' not found; select an existing device\n", specified_device);
+            return 2;
+        }
+    } else if (list.count == 1) {
+        chosen = &list.devices[0];
+    } else {
+        if (list.count == 0) {
+            fprintf(stderr, "waddle: no devices configured; use 'waddle init NAME'\n");
+        } else {
+            fprintf(stderr, "waddle: ambiguous device; specify --device NAME or set a default:\n");
+            for (size_t i = 0; i < list.count; i++) fprintf(stderr, "  %s\n", list.devices[i].name);
+        }
+        return 2;
+    }
+    if (!chosen->config_valid) {
+        fprintf(stderr, "waddle: device '%s' has invalid configuration\n", chosen->name);
+        return 2;
+    }
+    if (out_dev != NULL) *out_dev = *chosen;
+    if (out_socket_path != NULL) {
+        size_t len = strlen(chosen->socket_path);
+        if (len >= socket_path_cap) return 2;
+        memcpy(out_socket_path, chosen->socket_path, len + 1);
+    }
+    return 0;
 }
 
 /**
@@ -196,6 +280,8 @@ static int connect_peer(const char *path, uint32_t cid, uint32_t port, uint64_t 
  */
 static int cmd_exec(int argc, char **argv, int start_opt) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
+    int explicit_transport = 0;
     const char *cwd_arg = NULL;
     uint32_t cid = 3;
     uint32_t port = WaddleDefaultVsockPort;
@@ -207,6 +293,7 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     int start = 0;
     int result = 2;
     int fd = -1;
+    char *allocated_dest[64] = {0};
 
     char *cwd = NULL;
     char *command = NULL;
@@ -253,6 +340,10 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
         const char *val = argv[++i];
         if (strcmp(opt, "--socket-path") == 0) {
             socket_path = val;
+            explicit_transport = 1;
+        } else if (strcmp(opt, "--device") == 0 || strcmp(opt, "-d") == 0) {
+            if (target_device != NULL) goto usage_error;
+            target_device = val;
         } else if (strcmp(opt, "--path-map") == 0) {
             const char *equal = strchr(val, '=');
             if (equal == NULL || rule_count == 64) { goto usage_error; }
@@ -269,10 +360,12 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
         } else if (strcmp(opt, "--cwd") == 0) {
             cwd_arg = val;
         } else if (strcmp(opt, "--vsock-cid") == 0) {
+            explicit_transport = 1;
             if (number(val, &cid) != 0) {
                 goto usage_error;
             }
         } else if (strcmp(opt, "--vsock-port") == 0) {
+            explicit_transport = 1;
             if (number(val, &port) != 0 || port == 0) {
                 goto usage_error;
             }
@@ -292,12 +385,38 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
         }
     }
 
-    char *allocated_dest[64] = {0};
+    const char *daemon_socket = NULL;
+    char daemon_sock_buf[WaddleMaxPathLen];
+    device_info_t target_dev;
+    memset(&target_dev, 0, sizeof(target_dev));
+
+    if (target_device != NULL && explicit_transport) goto usage_error;
+    if (target_device != NULL) {
+        if (resolve_target_device(target_device, &target_dev, daemon_sock_buf, sizeof(daemon_sock_buf), 1) != 0) {
+            result = 2;
+            goto done;
+        }
+        daemon_socket = daemon_sock_buf;
+        if (cid == 3 && target_dev.vsock_cid > 0) {
+            cid = target_dev.vsock_cid;
+        }
+        if (port == WaddleDefaultVsockPort && target_dev.vsock_port > 0) {
+            port = target_dev.vsock_port;
+        }
+    } else if (!explicit_transport && getenv("WADDLE_MOCK_GUEST_SOCK") == NULL) {
+        if (resolve_target_device(NULL, &target_dev, daemon_sock_buf, sizeof(daemon_sock_buf), 1) != 0) {
+            result = 2;
+            goto done;
+        }
+        daemon_socket = daemon_sock_buf;
+        cid = target_dev.vsock_cid;
+        port = target_dev.vsock_port;
+    }
 
     if (translate && rule_count == 0) {
         daemon_config_t cfg;
         daemon_config_init_defaults(&cfg);
-        (void)daemon_config_load_file(&cfg, NULL);
+        (void)daemon_config_load_file(&cfg, target_dev.config_path[0] ? target_dev.config_path : NULL);
         for (size_t m = 0; m < cfg.mount_count && rule_count < 63; m++) {
             char *src = strdup(cfg.mounts[m].host_path);
             char *dst = strdup(cfg.mounts[m].guest_drive);
@@ -429,14 +548,16 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
         }
     }
 
-    if (socket_path == NULL || was_mocked) {
-        int client_fd = waddle_client_ensure_daemon(NULL, WaddleDaemonSpawnTimeoutMs);
+    if ((!explicit_transport && socket_path == NULL) || was_mocked) {
+        int client_fd = waddle_client_ensure_daemon(daemon_socket, WaddleDaemonSpawnTimeoutMs);
         if (client_fd >= 0) {
             waddle_daemon_status_resp_t status;
             memset(&status, 0, sizeof(status));
             if (waddle_client_status(client_fd, &status) == 0 &&
                 status.subsystem_state != SubsystemStateRunning) {
-                printf("[waddle] Starting background subsystem...\n");
+                printf("[waddle] Starting background subsystem%s%s...\n",
+                       target_dev.name[0] ? " for device " : "",
+                       target_dev.name[0] ? target_dev.name : "");
                 waddle_daemon_result_resp_t start_resp;
                 memset(&start_resp, 0, sizeof(start_resp));
                 if (waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp) != 0 || start_resp.status_code != 0) {
@@ -511,6 +632,7 @@ done:
  */
 static int cmd_start(int argc, char **argv) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
     int wait_guest = 1;
     uint32_t timeout_sec = 0;
 
@@ -521,15 +643,36 @@ static int cmd_start(int argc, char **argv) {
             wait_guest = 0;
         } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
             if (number(argv[++i], &timeout_sec) != 0) {
-                fprintf(stderr, "waddle: invalid timeout: %s\n", argv[i]);
+                fprintf(stderr, "waddle start: invalid timeout: %s\n", argv[i]);
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
+            target_device = argv[++i];
+        } else if (argv[i][0] != '-' && target_device == NULL) {
+            target_device = argv[i];
         } else {
             fprintf(stderr, "waddle start: unknown option '%s'\n", argv[i]);
             return 2;
         }
+    }
+
+    char resolved_sock[WaddleMaxPathLen];
+    device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
+    if (socket_path == NULL) {
+        int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
+        if (r != 0) {
+            return r;
+        }
+        socket_path = resolved_sock;
+    }
+
+    if (dev_info.name[0] != '\0') {
+        printf("[waddle] Starting background subsystem for device '%s'...\n", dev_info.name);
     }
     return waddle_client_cmd_start(socket_path, wait_guest, timeout_sec);
 }
@@ -539,6 +682,7 @@ static int cmd_start(int argc, char **argv) {
  */
 static int cmd_stop(int argc, char **argv) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
     int force = 0;
     uint32_t timeout_sec = 0;
 
@@ -547,15 +691,36 @@ static int cmd_stop(int argc, char **argv) {
             force = 1;
         } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
             if (number(argv[++i], &timeout_sec) != 0) {
-                fprintf(stderr, "waddle: invalid timeout: %s\n", argv[i]);
+                fprintf(stderr, "waddle stop: invalid timeout: %s\n", argv[i]);
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
+            target_device = argv[++i];
+        } else if (argv[i][0] != '-' && target_device == NULL) {
+            target_device = argv[i];
         } else {
             fprintf(stderr, "waddle stop: unknown option '%s'\n", argv[i]);
             return 2;
         }
+    }
+
+    char resolved_sock[WaddleMaxPathLen];
+    device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
+    if (socket_path == NULL) {
+        int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
+        if (r != 0) {
+            return r;
+        }
+        socket_path = resolved_sock;
+    }
+
+    if (dev_info.name[0] != '\0') {
+        printf("[waddle] Stopping background subsystem for device '%s'...\n", dev_info.name);
     }
     return waddle_client_cmd_stop(socket_path, force, timeout_sec);
 }
@@ -565,6 +730,7 @@ static int cmd_stop(int argc, char **argv) {
  */
 static int cmd_restart(int argc, char **argv) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
     int force = 0;
     uint32_t timeout_sec = 0;
 
@@ -573,15 +739,36 @@ static int cmd_restart(int argc, char **argv) {
             force = 1;
         } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
             if (number(argv[++i], &timeout_sec) != 0) {
-                fprintf(stderr, "waddle: invalid timeout: %s\n", argv[i]);
+                fprintf(stderr, "waddle restart: invalid timeout: %s\n", argv[i]);
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
+            target_device = argv[++i];
+        } else if (argv[i][0] != '-' && target_device == NULL) {
+            target_device = argv[i];
         } else {
             fprintf(stderr, "waddle restart: unknown option '%s'\n", argv[i]);
             return 2;
         }
+    }
+
+    char resolved_sock[WaddleMaxPathLen];
+    device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
+    if (socket_path == NULL) {
+        int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
+        if (r != 0) {
+            return r;
+        }
+        socket_path = resolved_sock;
+    }
+
+    if (dev_info.name[0] != '\0') {
+        printf("[waddle] Restarting background subsystem for device '%s'...\n", dev_info.name);
     }
     return waddle_client_cmd_restart(socket_path, force, timeout_sec);
 }
@@ -591,17 +778,35 @@ static int cmd_restart(int argc, char **argv) {
  */
 static int cmd_status(int argc, char **argv) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
     int json_output = 0;
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--json") == 0) {
             json_output = 1;
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
+            target_device = argv[++i];
+        } else if (argv[i][0] != '-' && target_device == NULL) {
+            target_device = argv[i];
         } else {
             fprintf(stderr, "waddle status: unknown option '%s'\n", argv[i]);
             return 2;
         }
+    }
+
+    char resolved_sock[WaddleMaxPathLen];
+    device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
+    if (socket_path == NULL) {
+        int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 0);
+        if (r != 0) {
+            return r;
+        }
+        socket_path = resolved_sock;
     }
     return waddle_client_cmd_status(socket_path, json_output);
 }
@@ -611,14 +816,32 @@ static int cmd_status(int argc, char **argv) {
  */
 static int cmd_kill(int argc, char **argv) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
+            target_device = argv[++i];
+        } else if (argv[i][0] != '-' && target_device == NULL) {
+            target_device = argv[i];
         } else {
             fprintf(stderr, "waddle kill: unknown option '%s'\n", argv[i]);
             return 2;
         }
+    }
+
+    char resolved_sock[WaddleMaxPathLen];
+    device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
+    if (socket_path == NULL) {
+        int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
+        if (r != 0) {
+            return r;
+        }
+        socket_path = resolved_sock;
     }
     return waddle_client_cmd_kill(socket_path);
 }
@@ -626,13 +849,13 @@ static int cmd_kill(int argc, char **argv) {
 /**
  * @brief Live filesystem verification helper for `waddle fs test`.
  */
-static int cmd_fs_test(const char *socket_path) {
+static int cmd_fs_test(const char *socket_path, const char *config_path) {
     printf("[waddle fs test] Starting VirtIO-FS live filesystem verification...\n");
 
     /* 1. Resolve primary export directory */
     daemon_config_t cfg;
     daemon_config_init_defaults(&cfg);
-    (void)daemon_config_load_file(&cfg, NULL);
+    (void)daemon_config_load_file(&cfg, config_path);
 
     const char *export_dir = (cfg.mount_count > 0 && cfg.mounts[0].host_path[0] != '\0')
         ? cfg.mounts[0].host_path
@@ -700,16 +923,39 @@ static int cmd_fs_test(const char *socket_path) {
  */
 static int cmd_fs(int argc, char **argv) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
+    int is_test = 0;
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "test") == 0) {
-            return cmd_fs_test(socket_path);
+            is_test = 1;
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
+            target_device = argv[++i];
+        } else if (argv[i][0] != '-' && target_device == NULL) {
+            target_device = argv[i];
         } else {
             fprintf(stderr, "waddle fs: unknown option '%s'\n", argv[i]);
             return 2;
         }
+    }
+
+    char resolved_sock[WaddleMaxPathLen];
+    device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
+    if (socket_path == NULL) {
+        int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
+        if (r != 0) {
+            return r;
+        }
+        socket_path = resolved_sock;
+    }
+
+    if (is_test) {
+        return cmd_fs_test(socket_path, dev_info.config_path[0] ? dev_info.config_path : NULL);
     }
     return waddle_client_cmd_fs(socket_path);
 }
@@ -719,6 +965,7 @@ static int cmd_fs(int argc, char **argv) {
  */
 static int cmd_logs(int argc, char **argv) {
     const char *socket_path = NULL;
+    const char *target_device = NULL;
     int follow = 0;
     uint32_t lines = 0;
 
@@ -731,37 +978,75 @@ static int cmd_logs(int argc, char **argv) {
                 return 2;
             }
         } else if (strcmp(argv[i], "--socket-path") == 0 && i + 1 < argc) {
+            if (socket_path != NULL) return 2;
             socket_path = argv[++i];
+        } else if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc) {
+            if (target_device != NULL) return 2;
+            target_device = argv[++i];
+        } else if (argv[i][0] != '-' && target_device == NULL) {
+            target_device = argv[i];
         } else {
             fprintf(stderr, "waddle logs: unknown option '%s'\n", argv[i]);
             return 2;
         }
     }
+
+    char resolved_sock[WaddleMaxPathLen];
+    device_info_t dev_info = {0};
+    if (socket_path != NULL && target_device != NULL) return 2;
+    if (socket_path == NULL) {
+        int r = resolve_target_device(target_device, &dev_info, resolved_sock, sizeof(resolved_sock), 1);
+        if (r != 0) {
+            return r;
+        }
+        socket_path = resolved_sock;
+    }
     return waddle_client_cmd_logs(socket_path, follow, lines);
 }
 
 /**
- * @brief Default zero-flag action: auto-starts subsystem and opens ConPTY terminal.
+ * @brief Default action: auto-starts subsystem and opens ConPTY terminal.
+ *
+ * @param[in] target_device Optional device identifier (may be NULL).
+ * @return Exit code.
  */
-static int cmd_interactive_default(void) {
+static int cmd_interactive_default(const char *target_device) {
+    device_info_t dev_info = {0};
+    memset(&dev_info, 0, sizeof(dev_info));
+    char socket_path[WaddleMaxPathLen];
+    memset(socket_path, 0, sizeof(socket_path));
+
+    int r = resolve_target_device(target_device, &dev_info, socket_path, sizeof(socket_path), 1);
+    if (r != 0) {
+        return r;
+    }
+
     daemon_config_t cfg;
     daemon_config_init_defaults(&cfg);
-    (void)daemon_config_load_file(&cfg, NULL);
+    if (dev_info.config_path[0] != '\0') {
+        (void)daemon_config_load_file(&cfg, dev_info.config_path);
+    } else {
+        (void)daemon_config_load_file(&cfg, NULL);
+    }
 
     const char *shell_cmd = (cfg.default_shell[0] != '\0') ? cfg.default_shell : "powershell.exe";
 
-    /* 1. Ensure daemon and hypervisor are running */
-    int client_fd = waddle_client_ensure_daemon(NULL, WaddleDaemonSpawnTimeoutMs);
+    /* 1. Ensure daemon and hypervisor are running for target device */
+    const char *sock = (socket_path[0] != '\0') ? socket_path : NULL;
+    int client_fd = waddle_client_ensure_daemon(sock, WaddleDaemonSpawnTimeoutMs);
     if (client_fd >= 0) {
         waddle_daemon_status_resp_t status;
         memset(&status, 0, sizeof(status));
         if (waddle_client_status(client_fd, &status) == 0) {
             if (status.subsystem_state != SubsystemStateRunning) {
-                printf("[waddle] Starting background subsystem...\n");
+                printf("[waddle] Starting background subsystem%s%s...\n",
+                       dev_info.name[0] ? " for device " : "",
+                       dev_info.name[0] ? dev_info.name : "");
                 waddle_daemon_result_resp_t start_resp;
                 memset(&start_resp, 0, sizeof(start_resp));
                 if (waddle_client_start(client_fd, DaemonStartFlagWaitGuest, 60, &start_resp) != 0 || start_resp.status_code != 0) {
-                    fprintf(stderr, "waddle: failed to start subsystem: %s\n", start_resp.error_msg[0] ? start_resp.error_msg : strerror(start_resp.status_code ? (int)start_resp.status_code : errno));
+                    fprintf(stderr, "waddle: failed to start subsystem: %s\n",
+                            start_resp.error_msg[0] ? start_resp.error_msg : strerror(start_resp.status_code ? (int)start_resp.status_code : errno));
                     close(client_fd);
                     return 1;
                 }
@@ -771,21 +1056,37 @@ static int cmd_interactive_default(void) {
     }
 
     /* 2. Synthesize arguments for interactive shell session */
+    uint32_t cid = (dev_info.vsock_cid > 0) ? dev_info.vsock_cid : 3;
+    uint32_t port = (dev_info.vsock_port > 0) ? dev_info.vsock_port : WaddleDefaultVsockPort;
+    char cid_str[16];
+    snprintf(cid_str, sizeof(cid_str), "%u", cid);
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%u", port);
+
     char *default_args[] = {
         "waddle",
         "exec",
+        "--vsock-cid",
+        cid_str,
+        "--vsock-port",
+        port_str,
         "--interactive",
         "--translate-path",
         "--",
         (char *)shell_cmd,
         NULL
     };
-    return cmd_exec(6, default_args, 2);
+    if (dev_info.name[0] != '\0') {
+        char *named_args[] = { "waddle", "exec", "--device", dev_info.name,
+                               "--interactive", "--translate-path", "--", (char *)shell_cmd, NULL };
+        return cmd_exec(8, named_args, 2);
+    }
+    return cmd_exec(10, default_args, 2);
 }
 
 int main(int argc, char **argv) {
     if (argc == 1) {
-        return cmd_interactive_default();
+        return cmd_interactive_default(NULL);
     }
 
     const char *cmd = argv[1];
@@ -798,6 +1099,50 @@ int main(int argc, char **argv) {
     if (strcmp(cmd, "--version") == 0 || strcmp(cmd, "-v") == 0 || strcmp(cmd, "version") == 0) {
         printf("waddle 0.1.0-alpha (protocol v1)\n");
         return 0;
+    }
+
+    if (strcmp(cmd, "shell") == 0) {
+        const char *name = NULL;
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) { usage(stdout); return 0; }
+            if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc && name == NULL) name = argv[++i];
+            else if (argv[i][0] != '-' && name == NULL) name = argv[i];
+            else { fprintf(stderr, "waddle shell: expected one NAME or --device NAME\n"); return 2; }
+        }
+        return cmd_interactive_default(name);
+    }
+    if (strcmp(cmd, "exec") == 0 || strcmp(cmd, "run") == 0 || strcmp(cmd, "fs") == 0 || strcmp(cmd, "logs") == 0) {
+        for (int i = 2; i < argc && strcmp(argv[i], "--") != 0; i++) {
+            if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) { usage(stdout); return 0; }
+        }
+    }
+
+    if (strcmp(cmd, "device") == 0) {
+        return waddle_device_command(argc - 2, argv + 2);
+    }
+
+    if (strcmp(cmd, "init") == 0 || strcmp(cmd, "--init") == 0) {
+        argv[1] = "init";
+        return waddle_device_command(argc - 1, argv + 1);
+    }
+
+    if (strcmp(cmd, "devices") == 0 || strcmp(cmd, "--devices") == 0 ||
+        strcmp(cmd, "list") == 0 || strcmp(cmd, "--list") == 0) {
+        argv[1] = "list";
+        return waddle_device_command(argc - 1, argv + 1);
+    }
+
+    /* Raw socket invocations retain their existing transport interface. */
+    const char *lifecycle[] = { "start", "stop", "restart", "status", "kill", "logs", "fs" };
+    for (size_t i = 0; i < sizeof(lifecycle) / sizeof(lifecycle[0]); i++) {
+        const char *canonical = cmd[0] == '-' && cmd[1] == '-' ? cmd + 2 : cmd;
+        if (strcmp(canonical, lifecycle[i]) != 0) continue;
+        int raw_socket = 0;
+        for (int j = 2; j < argc; j++) if (strcmp(argv[j], "--socket-path") == 0) raw_socket = 1;
+        if (!raw_socket) {
+            argv[1] = (char *)lifecycle[i];
+            return waddle_device_command(argc - 1, argv + 1);
+        }
     }
 
     if (strcmp(cmd, "start") == 0 || strcmp(cmd, "--start") == 0) {
@@ -848,6 +1193,15 @@ int main(int argc, char **argv) {
         int r = cmd_exec(argc + 2, synthetic, 2);
         free(synthetic);
         return r;
+    }
+
+    /* If the command does not begin with '-' and matches an initialized device,
+     * launch an interactive terminal into that device! */
+    if (cmd[0] != '-') {
+        device_info_t dev_info = {0};
+        if (daemon_device_find(cmd, &dev_info) == 0) {
+            return cmd_interactive_default(cmd);
+        }
     }
 
     usage(stderr);

@@ -4,6 +4,7 @@
  */
 
 #include "daemon_state.h"
+#include "daemon_device.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -31,30 +32,13 @@ static uint64_t state_monotonic_ms(void) {
  * @return 0 on success, or -1 on failure.
  */
 static int ensure_dir(const char *path) {
-    if (path == NULL || path[0] == '\0') {
-        errno = EINVAL;
-        return -1;
-    }
-
-    char tmp[WaddleMaxPathLen];
-    snprintf(tmp, sizeof(tmp), "%s", path);
-    size_t len = strlen(tmp);
-    if (len == 0) return -1;
-    if (tmp[len - 1] == '/') tmp[len - 1] = '\0';
-
-    for (char *p = tmp + 1; *p != '\0'; p++) {
-        if (*p == '/') {
-            *p = '\0';
-            if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
-                return -1;
-            }
-            *p = '/';
-        }
-    }
-    if (mkdir(tmp, 0700) != 0 && errno != EEXIST) {
-        return -1;
-    }
-    return 0;
+    int fd = daemon_device_open_directory(path, 1);
+    if (fd < 0) return -1;
+    struct stat st;
+    int result = fstat(fd, &st);
+    if (result == 0 && (st.st_uid != getuid() || (st.st_mode & 077) != 0)) { errno = EACCES; result = -1; }
+    int saved = errno; close(fd); errno = saved;
+    return result;
 }
 
 int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
@@ -74,7 +58,28 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
 
     /* Initialize configuration */
     daemon_config_init_defaults(&s->config);
-    (void)daemon_config_load_file(&s->config, NULL);
+
+    int config_loaded = 0;
+    if (custom_runtime_dir != NULL && custom_runtime_dir[0] != '\0') {
+        const char *last_slash = strrchr(custom_runtime_dir, '/');
+        const char *dev_name = (last_slash != NULL) ? (last_slash + 1) : custom_runtime_dir;
+        if (dev_name != NULL && dev_name[0] != '\0' && strcmp(dev_name, "waddle") != 0 && strcmp(dev_name, "run") != 0) {
+            device_info_t dev_info;
+            if (daemon_device_find(dev_name, &dev_info) == 0) {
+                if (daemon_config_load_file(&s->config, dev_info.config_path) == 0) {
+                    config_loaded = 1;
+                }
+            }
+        }
+    }
+    if (!config_loaded) {
+        device_list_t dev_list;
+        if (daemon_device_list(&dev_list) == 1) {
+            (void)daemon_config_load_file(&s->config, dev_list.devices[0].config_path);
+        } else {
+            (void)daemon_config_load_file(&s->config, NULL);
+        }
+    }
 
     /* Determine runtime directory */
     if (custom_runtime_dir != NULL && custom_runtime_dir[0] != '\0') {
@@ -109,16 +114,29 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
         snprintf(s->mock_guest_sock_path, sizeof(s->mock_guest_sock_path), "%.1000s", mock_sock);
     }
 
+    char named_socket[WaddleMaxPathLen];
+    const char *runtime_name = strrchr(s->runtime_dir, '/');
+    int named_runtime = config_loaded && runtime_name != NULL &&
+        daemon_device_get_socket_path(runtime_name + 1, named_socket, sizeof(named_socket)) == 0 &&
+        strcmp(named_socket, s->daemon_sock_path) == 0;
+
     /* Determine log directory */
     if (custom_runtime_dir != NULL && custom_runtime_dir[0] != '\0') {
-        snprintf(s->log_dir, sizeof(s->log_dir), "%.900s/logs", s->runtime_dir);
+        const char *device_name = strrchr(custom_runtime_dir, '/');
+        device_info_t device;
+        if (named_runtime && device_name != NULL && daemon_device_find(device_name + 1, &device) == 0 && device.config_valid) {
+            int written = snprintf(s->log_dir, sizeof(s->log_dir), "%s/logs", device.state_dir);
+            if (written < 0 || (size_t)written >= sizeof(s->log_dir)) { errno = ENAMETOOLONG; return -1; }
+        } else {
+            snprintf(s->log_dir, sizeof(s->log_dir), "%.900s/logs", s->runtime_dir);
+        }
     } else {
         const char *home = getenv("HOME");
         if (home == NULL) home = "/tmp";
         snprintf(s->log_dir, sizeof(s->log_dir), "%.900s/.local/state/waddle/logs", home);
     }
 
-    if (ensure_dir(s->log_dir) != 0) {
+    if (!named_runtime && ensure_dir(s->log_dir) != 0) {
         return -1;
     }
 
@@ -134,7 +152,8 @@ int daemon_state_init(daemon_state_t *s, const char *custom_runtime_dir) {
     return 0;
 }
 
-int daemon_state_acquire_lock(daemon_state_t *s) {
+/** @brief Acquire only the lifetime lease; caller serializes named config handoff. */
+static int acquire_lease(daemon_state_t *s) {
     if (s == NULL) {
         errno = EINVAL;
         return -1;
@@ -144,7 +163,7 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
         return 0; /* Already held */
     }
 
-    int fd = open(s->lock_path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    int fd = open(s->lock_path, O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0) {
         return -1;
     }
@@ -156,7 +175,7 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
     fl.l_start = 0;
     fl.l_len = 0;
 
-    if (fcntl(fd, F_SETLK, &fl) != 0) {
+    if (fcntl(fd, F_OFD_SETLK, &fl) != 0) {
         int saved_errno = errno;
         close(fd);
         if (saved_errno == EACCES || saved_errno == EAGAIN) {
@@ -164,6 +183,14 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
         } else {
             errno = saved_errno;
         }
+        return -1;
+    }
+
+    struct stat lock_stat;
+    if (fstat(fd, &lock_stat) != 0 || !S_ISREG(lock_stat.st_mode) ||
+        lock_stat.st_uid != getuid() || (lock_stat.st_mode & 077) != 0) {
+        close(fd);
+        errno = EACCES;
         return -1;
     }
 
@@ -180,6 +207,48 @@ int daemon_state_acquire_lock(daemon_state_t *s) {
     return 0;
 }
 
+int daemon_state_acquire_lock(daemon_state_t *s) {
+    if (s == NULL) { errno = EINVAL; return -1; }
+    if (s->lock_fd >= 0) return 0;
+    const char *slash = strrchr(s->runtime_dir, '/');
+    const char *name = slash == NULL ? s->runtime_dir : slash + 1;
+    char expected[WaddleMaxPathLen];
+    int named = daemon_device_get_socket_path(name, expected, sizeof(expected)) == 0 &&
+                strcmp(expected, s->daemon_sock_path) == 0;
+    if (!named) return acquire_lease(s);
+
+    /* OFD read locks can nest safely: closing discovery's fd does not release
+     * this outer lock. Writers cannot change the config before lease ownership. */
+    int registry_fd = daemon_device_registry_lock(0);
+    if (registry_fd < 0) return -1;
+    device_info_t info;
+    int result = daemon_device_find(name, &info);
+    if (result == 0 && !info.config_valid) { errno = EINVAL; result = -1; }
+    if (result == 0) {
+        daemon_config_t config;
+        daemon_config_init_defaults(&config);
+        result = daemon_config_load_file(&config, info.config_path);
+        if (result == 0) {
+            result = acquire_lease(s);
+            if (result == 0) {
+                s->config = config;
+                int written = snprintf(s->log_dir, sizeof(s->log_dir), "%s/logs", info.state_dir);
+                if (written < 0 || (size_t)written >= sizeof(s->log_dir)) { errno = ENAMETOOLONG; result = -1; }
+                else result = ensure_dir(s->log_dir);
+                if (result == 0) {
+                    snprintf(s->daemon_log_path, sizeof(s->daemon_log_path), "%.900s/daemon.log", s->log_dir);
+                    snprintf(s->qemu_log_path, sizeof(s->qemu_log_path), "%.900s/qemu.log", s->log_dir);
+                    snprintf(s->virtiofsd_log_path, sizeof(s->virtiofsd_log_path), "%.900s/virtiofsd.log", s->log_dir);
+                }
+            }
+        }
+    }
+    int saved = errno;
+    close(registry_fd);
+    errno = saved;
+    return result;
+}
+
 void daemon_state_release_lock(daemon_state_t *s) {
     if (s == NULL || s->lock_fd < 0) return;
 
@@ -190,7 +259,7 @@ void daemon_state_release_lock(daemon_state_t *s) {
     fl.l_start = 0;
     fl.l_len = 0;
 
-    (void)fcntl(s->lock_fd, F_SETLK, &fl);
+    (void)fcntl(s->lock_fd, F_OFD_SETLK, &fl);
     close(s->lock_fd);
     s->lock_fd = -1;
 }
@@ -242,7 +311,12 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
     /* Step 2: QEMU hypervisor */
     s->state = SubsystemStateStartingQemu;
     const char *vfs_sock = (s->virtiofs.is_running) ? s->virtiofsd_sock_path : NULL;
-    if (qemu_spawn(&s->qemu, &s->config, s->qmp_sock_path, vfs_sock, s->qemu_log_path, NULL) != 0) {
+    char qemu_bin[WaddleMaxPathLen];
+    const char *target_qemu_bin = NULL;
+    if (qemu_find_binary(qemu_bin, sizeof(qemu_bin)) == 0) {
+        target_qemu_bin = qemu_bin;
+    }
+    if (qemu_spawn(&s->qemu, &s->config, s->qmp_sock_path, vfs_sock, s->qemu_log_path, target_qemu_bin) != 0) {
         snprintf(s->last_error, sizeof(s->last_error),
                  "Failed to spawn QEMU hypervisor: %.150s", strerror(errno));
         if (s->virtiofs.is_running) {
@@ -441,9 +515,11 @@ void daemon_state_cleanup(daemon_state_t *s) {
 
     qemu_cleanup(&s->qemu);
     daemon_fs_cleanup(&s->virtiofs);
-    daemon_state_release_lock(s);
-
-    unlink(s->daemon_sock_path);
-    unlink(s->qmp_sock_path);
-    unlink(s->virtiofsd_sock_path);
+    /* A failed competing startup owns none of these socket names. */
+    if (s->lock_fd >= 0) {
+        unlink(s->daemon_sock_path);
+        unlink(s->qmp_sock_path);
+        unlink(s->virtiofsd_sock_path);
+        daemon_state_release_lock(s);
+    }
 }
