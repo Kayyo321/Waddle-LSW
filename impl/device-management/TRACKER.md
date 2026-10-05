@@ -51,9 +51,13 @@
   - **Task Impact**: +100% to TODO: #6 (+10.0% under revised weights). Scope expansion reweights existing #1–#5 from 20% each to 10% each: prior 60.0% becomes 30.0%, then specification completion brings it to 40.0%.
   - **Summary**: Define remove/rename, retention, show/default/config/doctor, clone/export/import, batch lifecycle, grammar, JSON, locks, crash recovery, error behavior, and all required verification. Expanded implementation tasks remain pending.
 
-- **Commit `:/^chore(ci): repair device branch verification workflows$`**: `chore(ci): repair device branch verification workflows`
+- **Commit `664a224`**: `chore(ci): repair device branch verification workflows`
   - **Task Impact**: +0% to TODO: #11 pending successful checks; +0% implementation completion.
   - **Summary**: Follow reorganized guest/common/test paths on Windows and install Linux vendor-build prerequisites and real qemu-img. Preserve native heap, allocator, sanitizer, coverage, and cross-build gates.
+
+- **Commit `:/enable long paths for native guest checkout`**: `chore(ci): enable long paths for native guest checkout`
+  - **Task Impact**: +0% to TODO: #11 pending rerun.
+  - **Summary**: Initial native CI failed while checking out deep QEMU/EDK2 cryptography submodule paths. Enable Git long-path support before recursive checkout without skipping dependencies.
 
 ## Audit conventions and specification review
 
