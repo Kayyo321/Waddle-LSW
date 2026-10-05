@@ -1,5 +1,6 @@
 /** @file windows.c @brief Native window lifecycle and C/WinRT boundary fixture. */
 #include <windows.h>
+#include <mmsystem.h>
 #include "av_windows.h"
 #include "av_guest_setup.h"
 #include "av_wasapi.h"
@@ -11,6 +12,7 @@
 static uint64_t target_id;
 static unsigned creates, geometries, destroys;
 static unsigned captured_frames;
+static uint64_t minimum_timestamp;
 static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == WM_PAINT && (uint64_t)(uintptr_t)window == target_id) {
         PAINTSTRUCT paint;
@@ -26,6 +28,7 @@ static HRESULT captured_pixels(const uint8_t *pixels, size_t length, uint32_t st
                                uint32_t width, uint32_t height, uint64_t timestamp_ns,
                                void *context) {
     (void)context;
+    if (timestamp_ns < minimum_timestamp) return S_OK;
     assert(width > 100 && height > 100 && timestamp_ns);
     assert(stride >= width * 4 && length >= (size_t)stride * height);
     const uint8_t *center = pixels + (size_t)(height / 2) * stride + (width / 2) * 4;
@@ -48,6 +51,41 @@ static void capture_until_frame(av_wgc_t *capture, av_wgc_read_t read_frame) {
     }
     fprintf(stderr, "Native WGC frames: %u -> %u\n", before, captured_frames);
     assert(captured_frames > before);
+}
+static void native_audio_test(void) {
+    av_wasapi_t audio = {0};
+    HRESULT status = av_wasapi_init(&audio, GetCurrentProcessId());
+    fprintf(stderr, "Native process loopback: 0x%08lx\n", (unsigned long)status);
+    assert(SUCCEEDED(status));
+    WAVEFORMATEX format = {.wFormatTag = WAVE_FORMAT_PCM, .nChannels = 2,
+        .nSamplesPerSec = 48000, .nAvgBytesPerSec = 192000, .nBlockAlign = 4, .wBitsPerSample = 16};
+    HWAVEOUT render = NULL;
+    assert(waveOutOpen(&render, WAVE_MAPPER, &format, 0, 0, CALLBACK_NULL) == MMSYSERR_NOERROR);
+    int16_t samples[96000];
+    for (size_t i = 0; i < 96000; ++i) samples[i] = ((i / 2) % 96 < 48) ? 2048 : -2048;
+    WAVEHDR packet = {.lpData = (LPSTR)samples, .dwBufferLength = sizeof(samples)};
+    assert(waveOutPrepareHeader(render, &packet, sizeof(packet)) == MMSYSERR_NOERROR);
+    audio_ring_header_t ring = {.sample_rate = AvSampleRate, .channels = 2,
+        .format = 1, .capacity_frames = AvAudioCapacity};
+    uint8_t pcm[AvAudioCapacity * AvAudioFrameBytes], consumed[1024];
+    assert(waveOutWrite(render, &packet, sizeof(packet)) == MMSYSERR_NOERROR);
+    unsigned nonzero = 0;
+    ULONGLONG deadline = GetTickCount64() + 1500;
+    while (GetTickCount64() < deadline) {
+        WaitForSingleObject(audio.ready_event, 10);
+        assert(SUCCEEDED(av_wasapi_drain(&audio, &ring, pcm, sizeof(pcm))));
+        int frames = av_audio_read(&ring, pcm, sizeof(pcm), consumed, sizeof(consumed), 0);
+        assert(frames >= 0);
+        for (int i = 0; i < frames * 4; ++i) nonzero += consumed[i] != 0;
+    }
+    assert(waveOutReset(render) == MMSYSERR_NOERROR);
+    assert(waveOutUnprepareHeader(render, &packet, sizeof(packet)) == MMSYSERR_NOERROR);
+    assert(waveOutClose(render) == MMSYSERR_NOERROR);
+    fprintf(stderr, "Native process loopback: frames=%llu nonzero_bytes=%u\n",
+            (unsigned long long)audio.captured_frames, nonzero);
+    assert(audio.captured_frames && nonzero);
+    av_wasapi_free(&audio);
+    av_wasapi_free(&audio);
 }
 static int notification(const av_message_t *message, void *context) {
     (void)context;
@@ -119,10 +157,15 @@ int main(int argc, char **argv) {
         assert(read_frame);
         capture_until_frame(capture, read_frame);
         assert(SetWindowPos(tool, HWND_TOPMOST, 100, 100, 700, 500, SWP_SHOWWINDOW));
+        LARGE_INTEGER clock, frequency;
+        assert(QueryPerformanceCounter(&clock) && QueryPerformanceFrequency(&frequency));
+        minimum_timestamp = (uint64_t)(clock.QuadPart / frequency.QuadPart) * 1000000000 +
+            (uint64_t)(clock.QuadPart % frequency.QuadPart) * 1000000000 / frequency.QuadPart;
         capture_until_frame(capture, read_frame);
         destroy(&capture);
         assert(!capture);
         puts("Native WGC: exact center pixels survive an occluding window");
+        native_audio_test();
     }
     FreeLibrary(library);
     assert(DestroyWindow(target)); pump();

@@ -25,9 +25,9 @@
 | #3.3 | Implement `memory_order_acquire/release` fences for buffer synchronization | Done | 4% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
 | #3.4 | Dispatch `MsgFrameReady` over VSOCK with buffer index and damage rects | In Progress | 2.4% | 85% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
 | **4**   | **Audio Capture & Transport (Guest)** | | | | |
-| #4.1 | Initialize WASAPI `AUDIOCLIENT_ACTIVATION_PARAMS` for per-process loopback | In Progress | 4% | 85% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
+| #4.1 | Initialize WASAPI `AUDIOCLIENT_ACTIVATION_PARAMS` for per-process loopback | Done | 4% | 100% | Require an occlusion frame timestamp newer than the actual window transition. Activate native per-process WASAPI loopback, render bounded PCM through a Windows endpoint, drain the real stream into the shared-format ring, verify nonzero samples and release all handles; the provisioned guest captures 71520 frames in the native gate. |
 | #4.2 | Implement lockless SPSC write loop from WASAPI buffers to IVSHMEM audio ring | Done | 6.4% | 100% | Implement acquire/release video ownership and Zig SPSC PCM copies with wraparound, drop-new overruns, consumer latency trimming and underrun silence; allocator and invalid-bound tests pass. |
-| #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 3.2% | 85% | Run tracked DXGI crops and a joined WASAPI capture worker over a bounded nonblocking Viosock session. Assign triple-buffer pools, publish frame notifications, cancel unsent slots and retain pool leases until host release. Emit system SDK COM GUIDs and cross-build/link the complete guest executable. |
+| #4.3 | Implement audio buffer overrun recovery and latency logging | In Progress | 3.2% | 95% | Require an occlusion frame timestamp newer than the actual window transition. Activate native per-process WASAPI loopback, render bounded PCM through a Windows endpoint, drain the real stream into the shared-format ring, verify nonzero samples and release all handles; the provisioned guest captures 71520 frames in the native gate. |
 | **5**   | **Host Wayland Client (Video)** | | | | |
 | #5.1 | Create `xdg_toplevel` upon receiving `MsgWindowCreate` from guest | In Progress | 4% | 95% | Present triple-buffered surfaces through the live Wayland compositor, consume shared PCM through connected PipeWire callbacks and verify every slot returns to Free after bounded teardown. The explicit native platform gate passes on this host without emitting audible test samples. |
 | #5.2 | Convert IVSHMEM slots to DMA-BUFs using KVMFR / memfds | In Progress | 4.8% | 90% | Exercise the program-provisioned driver with a two-GiB capacity probe, CLOEXEC DMA-BUF export, bidirectional mmap aliasing, bounds rejection and refusal to reset a consumed slot. Verify teardown preserves the device; the explicit native gate passes on this host. |
@@ -50,7 +50,7 @@
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 90% | Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `91.00%`
+**Total Feature Completion**: `91.92%`
 
 ## Commit History & Progress Log
 
@@ -299,6 +299,10 @@
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Deploy the unchanged vendor SYS bytes under the exact IVSHMEM.sys basename referenced by the signed INF. Native Windows installation logs prove case-sensitive VirtIO-FS lookup otherwise rejects the package despite all lower-case files being present.
 
-- **Commit `HEAD`**: `test(av): verify real WinRT pixels through occlusion`
+- **Commit `3fb55037ab3b`**: `test(av): verify real WinRT pixels through occlusion`
   - **Task Impact**: +10% to #2.1 (+0.40% overall); +10% to #2.2 (+0.32% overall); +5% to #2.3 (+0.16% overall); +10% to #3.1 (+0.40% overall); +10% to #10.1 (+0.50% overall); +15% to #10.4 (+0.45% overall)
   - **Summary**: Add an explicit native capture fixture that paints a deterministic target, polls real mapped WinRT frames with a five-second deadline and verifies center pixels before and after an occluding topmost window. Keep the hardware-dependent gate explicit and link only the fixture against system GDI.
+
+- **Commit `HEAD`**: `test(av): capture real process audio and reject stale occlusion frames`
+  - **Task Impact**: +15% to #4.1 (+0.60% overall); +10% to #4.3 (+0.32% overall)
+  - **Summary**: Require an occlusion frame timestamp newer than the actual window transition. Activate native per-process WASAPI loopback, render bounded PCM through a Windows endpoint, drain the real stream into the shared-format ring, verify nonzero samples and release all handles; the provisioned guest captures 71520 frames in the native gate.
