@@ -669,3 +669,7 @@ against the running kernel. The loaded compatible module remains intact; no
 unload/reload is needed to claim this verification. This completes KVMFR build,
 distribution and access provisioning (#10.2). Safe GPU preparation/recovery and
 high-refresh performance belong to the still-incomplete #10.3/#10.5 acceptance.
+
+### Configure-axis verification (2026-10-05)
+
+Each zero xdg_toplevel configure dimension independently preserves the corresponding guest dimension. Nonzero valid axes replace that dimension; negative or oversized pairs preserve both. Fullscreen transitions still propagate with zero dimensions. The callback regression includes both mixed-zero cases. Fresh AV sanitizers and the real Wayland/PipeWire platform gate verify teardown without reported leaks.

@@ -121,9 +121,9 @@ static void toplevel_configure(void *context, struct xdg_toplevel *toplevel, int
         if (*state == XDG_TOPLEVEL_STATE_FULLSCREEN)
             request.flags |= AvWindowFullscreen;
     }
-    if (width > 0 && height > 0 && width <= 8192 && height <= 8192) {
-        request.width = (uint32_t)width;
-        request.height = (uint32_t)height;
+    if (width >= 0 && height >= 0 && width <= 8192 && height <= 8192) {
+        if (width) request.width = (uint32_t)width;
+        if (height) request.height = (uint32_t)height;
     }
     /* Zero dimensions mean the client chooses its size; state transitions still
      * apply. Preserve guest dimensions while forwarding fullscreen changes. */

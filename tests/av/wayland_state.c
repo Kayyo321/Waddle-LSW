@@ -35,9 +35,15 @@ int main(void) {
     window.geometry = delivered;
     toplevel_configure(&window, NULL, -1, 100000, &states);
     assert(deliveries == 3); /* Invalid dimensions cannot escape into guest requests. */
+    toplevel_configure(&window, NULL, 0, 700, &states);
+    assert(deliveries == 4 && delivered.width == 800 && delivered.height == 700);
+    window.geometry = delivered;
+    toplevel_configure(&window, NULL, 900, 0, &states);
+    assert(deliveries == 5 && delivered.width == 900 && delivered.height == 700);
+    window.geometry = delivered;
     states.size = sizeof(full);
     fail_delivery = 1;
     toplevel_configure(&window, NULL, 0, 0, &states);
-    assert(deliveries == 4 && client.delivery_failed);
+    assert(deliveries == 6 && client.delivery_failed);
     return 0;
 }
