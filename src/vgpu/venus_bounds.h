@@ -18,8 +18,8 @@ uint32_t venus_bounds_capacity(const uint8_t *mapping, size_t length);
  * @param[in] length Validated bytes, 1..capacity, exclusively owned free space.
  * @note Producer-only; no allocation, cursor changes, or publication.
  */
-void venus_bounds_write(uint8_t *payload, uint32_t capacity, uint32_t cursor,
-                        const uint8_t *source, size_t length);
+void venus_bounds_write(uint8_t *payload, uint32_t capacity, uint32_t cursor, const uint8_t *source,
+                        size_t length);
 /** @brief Copy out of a ring with at most two bounded spans.
  * @param[in] payload Borrowed nonnull capacity-byte ring payload.
  * @param[in] capacity Validated power of two, 64..16777216 bytes.
@@ -42,5 +42,6 @@ int venus_bounds_region_size(size_t length, uint32_t capacity);
  * @param[out] region_bytes Nonnull private extent output, zeroed on failure.
  * @return Valid ring capacity or zero; pure/thread-safe, no allocation/mutation.
  */
-uint32_t venus_bounds_region_capacity(const uint8_t *mapping, size_t length, uint64_t *region_bytes);
+uint32_t venus_bounds_region_capacity(const uint8_t *mapping, size_t length,
+                                      uint64_t *region_bytes);
 #endif

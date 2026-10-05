@@ -1,7 +1,7 @@
 #include "waddle/venus_wait.h"
 
 static venus_ring_status_t wait_for_progress(venus_ring_t *ring, venus_wait_callback_t wait,
-                                            void *context) {
+                                             void *context) {
     venus_ring_status_t status = wait(context);
     switch (status) {
     case RingOk:
@@ -19,23 +19,29 @@ static venus_ring_status_t wait_for_progress(venus_ring_t *ring, venus_wait_call
 }
 
 venus_ring_status_t venus_ring_write_wait(venus_ring_t *ring, const void *data, size_t length,
-                                         venus_wait_callback_t wait, void *context) {
-    if (!wait) return RingInvalid;
+                                          venus_wait_callback_t wait, void *context) {
+    if (!wait)
+        return RingInvalid;
     for (;;) {
         venus_ring_status_t status = venus_ring_write(ring, data, length);
-        if (status != RingAgain) return status;
+        if (status != RingAgain)
+            return status;
         status = wait_for_progress(ring, wait, context);
-        if (status != RingOk) return status;
+        if (status != RingOk)
+            return status;
     }
 }
 
 venus_ring_status_t venus_ring_read_wait(venus_ring_t *ring, void *data, size_t length,
-                                        venus_wait_callback_t wait, void *context) {
-    if (!wait) return RingInvalid;
+                                         venus_wait_callback_t wait, void *context) {
+    if (!wait)
+        return RingInvalid;
     for (;;) {
         venus_ring_status_t status = venus_ring_read(ring, data, length);
-        if (status != RingAgain) return status;
+        if (status != RingAgain)
+            return status;
         status = wait_for_progress(ring, wait, context);
-        if (status != RingOk) return status;
+        if (status != RingOk)
+            return status;
     }
 }

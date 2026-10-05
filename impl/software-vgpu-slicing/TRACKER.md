@@ -135,7 +135,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     complete local transport/mapping/wait sanitizer and allocator suite passes.
     Windows fixtures cross-link; native execution/lifecycle handoff still pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record native mapping verification`
+- **Commit `ace5ce5`**: `docs(vgpu): record native mapping verification`
   - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
   - **Summary**: Credited the Windows mapping-owner milestone only after its
     fourteen-error-path fixture executed successfully on native Windows. Recorded
@@ -144,3 +144,17 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Both Linux and native Windows jobs passed at `ff50f69`:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37387395968 .
     Wait adapters added after this run are awaiting their own native CI result.
+
+- **Commit (current; resolve by subject)**: `chore(vgpu): enforce C formatting and audit transport checks`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall).
+  - **Summary**: Applied four-space LLVM formatting with a 100-column limit to
+    owned feature C headers/sources/fixtures. Preserved required SDK/GUID include
+    ordering; no upstream or README changes.
+  - **Verification**: Local transport/owner/wait sanitizers and allocator tests
+    pass. C ring/owner/wait line/branch coverage 100%; region line coverage
+    98.11%, branches 96.15%; Zig lines 100%, branches 97.5%. Windows fixtures
+    cross-link and the production driver adapter compiles independently.
+    New transport/native Windows jobs passed at `ace5ce5` in
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37387757325 .
+    Existing AV coverage gates also passed locally after extending the shared
+    LLVM coverage harness. Feature completion remains 18.5%.

@@ -59,7 +59,8 @@ static void test_corruption(void) {
     assert(venus_ring_attach(&ring, mapping, sizeof(mapping)) == RingOk);
     for (size_t offset = 0; offset < VenusRingHeaderBytes; ++offset) {
         if ((offset >= 16 && offset < 20) || (offset >= 64 && offset < 68) ||
-            (offset >= 128 && offset < 132)) continue;
+            (offset >= 128 && offset < 132))
+            continue;
         mapping[offset] ^= 0x80;
         assert(venus_ring_attach(&second, mapping, sizeof(mapping)) == RingInvalid);
         assert(second.header == NULL && second.payload == NULL && second.capacity == 0);
@@ -92,7 +93,8 @@ static void test_stream(void) {
     _Alignas(64) uint8_t mapping[VenusRingHeaderBytes + 128];
     venus_ring_t producer, consumer;
     uint8_t source[64], result[64];
-    for (size_t index = 0; index < sizeof(source); ++index) source[index] = (uint8_t)index;
+    for (size_t index = 0; index < sizeof(source); ++index)
+        source[index] = (uint8_t)index;
     memset(mapping, 0xa5, sizeof(mapping));
     assert(venus_ring_init(mapping, sizeof(mapping), 64) == RingOk);
     assert(mapping[VenusRingHeaderBytes] == 0xa5);
@@ -128,7 +130,7 @@ static void test_stream(void) {
 
 static void test_max_capacity(void) {
     size_t extent = VenusRingHeaderBytes + VenusRingMaxCapacity;
-    #ifdef _WIN32
+#ifdef _WIN32
     uint8_t *mapping = _aligned_malloc(extent, 64);
 #else
     uint8_t *mapping = aligned_alloc(64, extent);
@@ -138,7 +140,7 @@ static void test_max_capacity(void) {
     assert(venus_ring_init(mapping, extent, VenusRingMaxCapacity) == RingOk);
     assert(venus_ring_attach(&ring, mapping, extent) == RingOk);
     venus_ring_detach(&ring);
-    #ifdef _WIN32
+#ifdef _WIN32
     _aligned_free(mapping);
 #else
     free(mapping);

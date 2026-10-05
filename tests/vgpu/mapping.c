@@ -2,11 +2,11 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <stdarg.h>
-#include <string.h>
 
 static int failure_stage;
 static int last_descriptor = -1;
@@ -14,24 +14,33 @@ static int last_descriptor = -1;
 int __real_memfd_create(const char *name, unsigned flags);
 int __real_ftruncate(int descriptor, off_t length);
 int __real_fcntl(int descriptor, int command, ...);
-void *__real_mmap(void *address, size_t length, int protection, int flags,
-                  int descriptor, off_t offset);
+void *__real_mmap(void *address, size_t length, int protection, int flags, int descriptor,
+                  off_t offset);
 venus_ring_status_t __real_venus_region_init(void *mapping, size_t length, uint32_t capacity);
 venus_ring_status_t __real_venus_region_attach(venus_region_view_t *view, void *mapping,
-                                              size_t length);
+                                               size_t length);
 
 int __wrap_memfd_create(const char *name, unsigned flags) {
-    if (failure_stage == 1) { errno = EIO; return -1; }
+    if (failure_stage == 1) {
+        errno = EIO;
+        return -1;
+    }
     last_descriptor = __real_memfd_create(name, flags);
     return last_descriptor;
 }
 int __wrap_ftruncate(int descriptor, off_t length) {
-    if (failure_stage == 2) { errno = EIO; return -1; }
+    if (failure_stage == 2) {
+        errno = EIO;
+        return -1;
+    }
     return __real_ftruncate(descriptor, length);
 }
 int __wrap_fcntl(int descriptor, int command, ...) {
     if (command == F_ADD_SEALS) {
-        if (failure_stage == 3) { errno = EIO; return -1; }
+        if (failure_stage == 3) {
+            errno = EIO;
+            return -1;
+        }
         va_list arguments;
         va_start(arguments, command);
         int seals = va_arg(arguments, int);
@@ -40,18 +49,23 @@ int __wrap_fcntl(int descriptor, int command, ...) {
     }
     return __real_fcntl(descriptor, command);
 }
-void *__wrap_mmap(void *address, size_t length, int protection, int flags,
-                  int descriptor, off_t offset) {
-    if (failure_stage == 4) { errno = EIO; return MAP_FAILED; }
+void *__wrap_mmap(void *address, size_t length, int protection, int flags, int descriptor,
+                  off_t offset) {
+    if (failure_stage == 4) {
+        errno = EIO;
+        return MAP_FAILED;
+    }
     return __real_mmap(address, length, protection, flags, descriptor, offset);
 }
 venus_ring_status_t __wrap_venus_region_init(void *mapping, size_t length, uint32_t capacity) {
-    if (failure_stage == 5) return RingInvalid;
+    if (failure_stage == 5)
+        return RingInvalid;
     return __real_venus_region_init(mapping, length, capacity);
 }
 venus_ring_status_t __wrap_venus_region_attach(venus_region_view_t *view, void *mapping,
-                                              size_t length) {
-    if (failure_stage == 6) return RingInvalid;
+                                               size_t length) {
+    if (failure_stage == 6)
+        return RingInvalid;
     return __real_venus_region_attach(view, mapping, length);
 }
 

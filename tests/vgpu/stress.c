@@ -27,7 +27,8 @@ static void *transfer(void *argument) {
         do {
             status = context->producer ? venus_ring_write(&context->ring, bytes, sizeof(bytes))
                                        : venus_ring_read(&context->ring, bytes, sizeof(bytes));
-            if (status == RingAgain) sched_yield();
+            if (status == RingAgain)
+                sched_yield();
         } while (status == RingAgain);
         assert(status == RingOk);
         if (!context->producer)
@@ -50,8 +51,8 @@ static void attach_contexts(void *mapping, stress_context_t *producer, stress_co
 
 int main(void) {
     alarm(30); /* A deadlocked test must fail rather than hang CI indefinitely. */
-    void *mapping = mmap(NULL, MappingBytes, PROT_READ | PROT_WRITE,
-                         MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    void *mapping =
+        mmap(NULL, MappingBytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     assert(mapping != MAP_FAILED);
     stress_context_t producer, consumer;
     attach_contexts(mapping, &producer, &consumer);

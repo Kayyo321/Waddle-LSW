@@ -25,7 +25,7 @@ typedef venus_ring_status_t (*venus_wait_callback_t)(void *context);
  * Source must remain stable throughout all retries. Join this call before free.
  */
 venus_ring_status_t venus_ring_write_wait(venus_ring_t *ring, const void *data, size_t length,
-                                         venus_wait_callback_t wait, void *context);
+                                          venus_wait_callback_t wait, void *context);
 /** @brief Read exactly length bytes, waiting with lifecycle cancellation checks.
  * @param[in,out] ring Nonnull attached consumer endpoint, retained until return.
  * @param[out] data Nonnull borrowed output[length], disjoint from ring.
@@ -37,5 +37,5 @@ venus_ring_status_t venus_ring_write_wait(venus_ring_t *ring, const void *data, 
  * allocation or internal OS handle ownership. Join before detach/unmap.
  */
 venus_ring_status_t venus_ring_read_wait(venus_ring_t *ring, void *data, size_t length,
-                                        venus_wait_callback_t wait, void *context);
+                                         venus_wait_callback_t wait, void *context);
 #endif

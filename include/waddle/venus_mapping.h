@@ -9,12 +9,12 @@
  * Zero-initialized/failed/freed records are safe to free. No AV layout is reused.
  */
 typedef struct venus_mapping_t {
-    void *mapping;              /**< Owned mapping pages while owns_mapping is set. */
-    size_t mapping_bytes;       /**< Accessible mapped bytes, zero when inactive. */
-    intptr_t native_handle;     /**< Owned Linux fd or Windows driver handle. */
-    uint32_t owns_handle;       /**< Set immediately after native handle acquisition. */
-    uint32_t owns_mapping;      /**< Set after successful mmap/driver mapping request. */
-    venus_region_view_t view;   /**< Borrowed rings/resources pinned by this owner. */
+    void *mapping;            /**< Owned mapping pages while owns_mapping is set. */
+    size_t mapping_bytes;     /**< Accessible mapped bytes, zero when inactive. */
+    intptr_t native_handle;   /**< Owned Linux fd or Windows driver handle. */
+    uint32_t owns_handle;     /**< Set immediately after native handle acquisition. */
+    uint32_t owns_mapping;    /**< Set after successful mmap/driver mapping request. */
+    venus_region_view_t view; /**< Borrowed rings/resources pinned by this owner. */
 } venus_mapping_t;
 
 #ifndef _WIN32

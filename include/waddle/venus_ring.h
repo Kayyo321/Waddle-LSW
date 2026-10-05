@@ -1,9 +1,9 @@
 #ifndef WaddleVenusRingH
 #define WaddleVenusRingH
 
+#include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdatomic.h>
 
 /** @brief Version-one byte transport identity; immutable, no ownership. */
 #define VenusRingMagic 0x57565231u
@@ -20,11 +20,11 @@
 
 /** @brief Transport outcomes; no allocation, ownership, or thread restrictions. */
 typedef enum venus_ring_status_t {
-    RingOk = 0,       /**< Exact transfer or successful lifecycle operation. */
-    RingAgain = 1,    /**< Insufficient space/data; retry with cancellation checks. */
-    RingInvalid = -1, /**< Invalid local argument or incompatible mapping ABI. */
-    RingCorrupt = -2, /**< Invalid peer flags or occupied-byte distance. */
-    RingClosed = -3,  /**< Shutdown observed; no payload transfer. */
+    RingOk = 0,         /**< Exact transfer or successful lifecycle operation. */
+    RingAgain = 1,      /**< Insufficient space/data; retry with cancellation checks. */
+    RingInvalid = -1,   /**< Invalid local argument or incompatible mapping ABI. */
+    RingCorrupt = -2,   /**< Invalid peer flags or occupied-byte distance. */
+    RingClosed = -3,    /**< Shutdown observed; no payload transfer. */
     RingCancelled = -4, /**< Local wait cancelled; no new payload transfer. */
     RingTimeout = -5    /**< Local wait deadline elapsed; no new payload transfer. */
 } venus_ring_status_t;
@@ -35,16 +35,16 @@ typedef enum venus_ring_status_t {
  * owns head. Mapping outlives all endpoint operations. No pointers or locks.
  */
 typedef struct venus_ring_header_t {
-    _Alignas(64) uint32_t magic; /**< VenusRingMagic, host initialized. */
-    uint32_t version;           /**< VenusRingVersion, host initialized. */
-    uint32_t capacity;          /**< Immutable power-of-two payload bytes. */
-    uint32_t header_bytes;      /**< Always VenusRingHeaderBytes. */
-    _Atomic uint32_t flags;     /**< Shutdown state; acquire/release access. */
-    uint8_t reserved[44];       /**< Zero metadata extension space. */
+    _Alignas(64) uint32_t magic;        /**< VenusRingMagic, host initialized. */
+    uint32_t version;                   /**< VenusRingVersion, host initialized. */
+    uint32_t capacity;                  /**< Immutable power-of-two payload bytes. */
+    uint32_t header_bytes;              /**< Always VenusRingHeaderBytes. */
+    _Atomic uint32_t flags;             /**< Shutdown state; acquire/release access. */
+    uint8_t reserved[44];               /**< Zero metadata extension space. */
     _Alignas(64) _Atomic uint32_t tail; /**< Release-published producer cursor. */
-    uint8_t producer_padding[60];      /**< Zero, isolates producer writes. */
+    uint8_t producer_padding[60];       /**< Zero, isolates producer writes. */
     _Alignas(64) _Atomic uint32_t head; /**< Release-published consumer cursor. */
-    uint8_t consumer_padding[60];      /**< Zero, isolates consumer writes. */
+    uint8_t consumer_padding[60];       /**< Zero, isolates consumer writes. */
 } venus_ring_header_t;
 
 /** @brief Local borrowed endpoint, not placed in IVSHMEM or sent on the wire.
@@ -54,8 +54,8 @@ typedef struct venus_ring_header_t {
  */
 typedef struct venus_ring_t {
     venus_ring_header_t *header; /**< Borrowed aligned header, null when detached. */
-    uint8_t *payload;           /**< Borrowed capacity-byte region after header. */
-    uint32_t capacity;          /**< Validated local capacity, never peer reread. */
+    uint8_t *payload;            /**< Borrowed capacity-byte region after header. */
+    uint32_t capacity;           /**< Validated local capacity, never peer reread. */
 } venus_ring_t;
 
 /** @brief Initialize a quiescent shared subregion without touching payload.

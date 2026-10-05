@@ -46,16 +46,15 @@ int main(void) {
     context.byte = 0x73;
     assert(venus_ring_read_wait(&ring, result, 1, notify, &context) == RingOk);
     assert(result[0] == context.byte && context.calls == 2);
-    const venus_ring_status_t Outcomes[] = {
-        RingCancelled, RingTimeout, RingCorrupt, RingInvalid, RingAgain,
-        (venus_ring_status_t)123, RingClosed
-    };
+    const venus_ring_status_t Outcomes[] = {RingCancelled, RingTimeout, RingCorrupt,
+                                            RingInvalid,   RingAgain,   (venus_ring_status_t)123,
+                                            RingClosed};
     for (size_t index = 0; index < sizeof(Outcomes) / sizeof(Outcomes[0]); ++index) {
         assert(venus_ring_init(mapping, sizeof(mapping), 64) == RingOk);
         context.calls = 0;
         context.status = Outcomes[index];
-        venus_ring_status_t expected = context.status == RingAgain || context.status == 123 ?
-                                       RingInvalid : context.status;
+        venus_ring_status_t expected =
+            context.status == RingAgain || context.status == 123 ? RingInvalid : context.status;
         memset(result, 0xa5, sizeof(result));
         assert(venus_ring_read_wait(&ring, result, 1, notify, &context) == expected);
         assert(result[0] == 0xa5 && context.calls == 1);

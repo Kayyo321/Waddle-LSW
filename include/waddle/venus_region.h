@@ -15,13 +15,13 @@
  */
 typedef struct venus_region_header_t {
     _Alignas(64) uint32_t magic; /**< Always VenusRegionMagic. */
-    uint32_t version;           /**< Always VenusRingVersion (one). */
-    uint64_t mapping_bytes;     /**< Power of two, 4096..VenusRegionMaxBytes. */
-    uint32_t capacity;          /**< Immutable capacity for each ring. */
-    uint32_t command_offset;    /**< Always 64, guest producer/host consumer. */
-    uint32_t reply_offset;      /**< 64 + ring header + capacity, opposite direction. */
-    uint32_t resource_offset;   /**< First byte beyond the second ring. */
-    uint8_t reserved[32];       /**< Zero immutable extension space. */
+    uint32_t version;            /**< Always VenusRingVersion (one). */
+    uint64_t mapping_bytes;      /**< Power of two, 4096..VenusRegionMaxBytes. */
+    uint32_t capacity;           /**< Immutable capacity for each ring. */
+    uint32_t command_offset;     /**< Always 64, guest producer/host consumer. */
+    uint32_t reply_offset;       /**< 64 + ring header + capacity, opposite direction. */
+    uint32_t resource_offset;    /**< First byte beyond the second ring. */
+    uint8_t reserved[32];        /**< Zero immutable extension space. */
 } venus_region_header_t;
 
 /** @brief Borrowed local bidirectional view; attach/detach do not own memory.
@@ -52,7 +52,7 @@ venus_ring_status_t venus_region_init(void *mapping, size_t mapping_bytes, uint3
  * @note Caller-thread only after handoff; metadata immutable during attachment.
  */
 venus_ring_status_t venus_region_attach(venus_region_view_t *view, void *mapping,
-                                       size_t mapping_bytes);
+                                        size_t mapping_bytes);
 /** @brief Forget a quiescent local borrowed view.
  * @param[in,out] view Nullable local output; null is a no-op.
  * @note No free/close/unmap; caller-thread only after workers join.
