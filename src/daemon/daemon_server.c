@@ -59,12 +59,21 @@ static int handle_client_message(daemon_state_t *state,
         break;
     }
 
+    case DaemonMsgStopGracefulReq:
     case DaemonMsgStopReq: {
         const waddle_daemon_stop_req_t *req = (const waddle_daemon_stop_req_t *)payload;
         uint32_t force = (hdr->payload_len >= sizeof(waddle_daemon_stop_req_t)) ? req->force : 0;
         uint32_t timeout = (hdr->payload_len >= sizeof(waddle_daemon_stop_req_t)) ? req->timeout_sec : 0;
 
-        int r = daemon_state_stop_subsystem(state, force, timeout);
+        int r;
+        if (hdr->msg_type == DaemonMsgStopGracefulReq &&
+            (hdr->payload_len != sizeof(waddle_daemon_stop_req_t) || req->force != 0)) {
+            errno = EINVAL;
+            r = -1;
+        } else {
+            if (hdr->msg_type == DaemonMsgStopGracefulReq) force = WaddleStopGracefulOnly;
+            r = daemon_state_stop_subsystem(state, force, timeout);
+        }
         waddle_daemon_result_resp_t resp;
         memset(&resp, 0, sizeof(resp));
         resp.status_code = (r == 0) ? 0 : ((errno != 0) ? (uint32_t)errno : 1);

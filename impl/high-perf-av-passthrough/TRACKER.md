@@ -419,6 +419,10 @@
   - **Task Impact**: +1% to #10.4 (+0.03% overall)
   - **Summary**: Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete.
 
-- **Commit `HEAD`**: `test(av): prove occlusion freshness through newly painted pixels`
+- **Commit `40c4a2208f06`**: `test(av): prove occlusion freshness through newly painted pixels`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Change the target color while an actual topmost window covers it and require the newly painted center pixels, ignoring only known queued old content. Count benchmark samples only when pixel validation accepts them. Real native capture and process-loopback fidelity pass; the later 64-Hz benchmark still fails timestamp validity and performance acceptance, which remains incomplete.
+
+- **Commit `HEAD`**: `fix(av): preserve live guests when driver restart times out`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Add a distinct ACPI-only daemon request for AV driver restarts; older supervisors reject it without interpreting a nonzero legacy force flag. On timeout retain VM, filesystem, sockets, mapping leases and prior subsystem state, returning ETIMEDOUT. Test an actual child/mapping timeout, native client/server request exchange and malformed payload rejection under ASan/LSan/UBSan; repository-wide sanitizer regressions pass.

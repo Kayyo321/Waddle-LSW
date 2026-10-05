@@ -419,9 +419,10 @@ int daemon_state_stop_subsystem(daemon_state_t *s, uint32_t force, uint32_t time
         return 0;
     }
 
+    waddle_subsystem_state_t previous_state = s->state;
     s->state = SubsystemStateStopping;
 
-    if (force) {
+    if (force && force != WaddleStopGracefulOnly) {
         return daemon_state_kill_subsystem(s);
     }
 
@@ -443,6 +444,13 @@ int daemon_state_stop_subsystem(daemon_state_t *s, uint32_t force, uint32_t time
 
         /* Force kill if still running after timeout */
         if (s->qemu.is_running) {
+            if (force == WaddleStopGracefulOnly) {
+                s->state = previous_state;
+                snprintf(s->last_error, sizeof(s->last_error),
+                         "Graceful shutdown timed out; VM and owned resources preserved");
+                errno = ETIMEDOUT;
+                return -1;
+            }
             (void)qemu_kill(&s->qemu);
         }
     }

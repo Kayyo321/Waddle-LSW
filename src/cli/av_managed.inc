@@ -138,7 +138,7 @@ static int av_deploy_restart(void *context) {
                               sizeof(socket_path), 1) != 0) return 1;
     fputs("waddle av: signed driver requires a restart; restarting the selected managed guest\n", stderr);
     /* Graceful ACPI shutdown only; a busy/nonresponsive VM is not force-killed. */
-    return waddle_client_cmd_restart(socket_path, 0, 180);
+    return waddle_client_cmd_restart(socket_path, WaddleStopGracefulOnly, 180);
 }
 static int av_deploy_guest_probe(void *context) {
     av_deploy_context_t *deployment = context;

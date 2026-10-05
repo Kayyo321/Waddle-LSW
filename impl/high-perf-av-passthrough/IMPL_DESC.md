@@ -650,3 +650,13 @@ WGC timestamps. Throughput varies substantially across these software-display
 runs; neither the earlier 37.64 FPS nor this later result meets the acceptance
 requirement. Small positive ages from the subset of valid timestamps are not a
 passing latency result because the aggregate timing validation fails.
+
+AV driver restart uses a distinct daemon request ID 0x000f, with the existing
+eight-byte stop payload (force=0 and timeout=180), rather than the legacy stop
+request's force flag. New daemons select the internal ACPI-only mode. If QEMU
+remains live after the deadline, they return ETIMEDOUT, restore the previous
+subsystem state and retain VM, filesystem workers, sockets and shared-memory
+leases. Older daemons reject the unknown request without changing VM state.
+The legacy CLI stop command retains its existing optional force fallback. A
+native state test uses an actual owned child and sparse two-GiB mapping to verify
+the new timeout path preserves both, then explicitly reaps its fixture child.

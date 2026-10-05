@@ -106,9 +106,12 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
  * @brief Orchestrates graceful or forceful subsystem shutdown.
  *
  * @param[in,out] s           Daemon supervisor state.
- * @param[in]     force       1 for immediate SIGKILL, 0 for graceful ACPI shutdown.
+ * @param[in]     force       1 immediate SIGKILL, 0 ACPI with fallback, WaddleStopGracefulOnly ACPI without fallback.
  * @param[in]     timeout_sec Timeout in seconds before force kill fallback.
- * @return 0 on success, or -1 on error.
+ * @return 0 stopped, -1 with errno on failure; ETIMEDOUT in graceful-only mode
+ * leaves prior state, children, sockets and mappings intact.
+ * @note Nonnull borrowed supervisor; its startup thread serializes calls. No
+ * ownership transfer. Resources are freed only after successful child teardown.
  */
 int daemon_state_stop_subsystem(daemon_state_t *s, uint32_t force, uint32_t timeout_sec);
 
