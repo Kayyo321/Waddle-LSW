@@ -121,7 +121,7 @@ build/test_daemon_fs: tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/c
 build/test_daemon_device: tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o src/daemon/daemon_device.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o $(LDFLAGS) -o $@
 
-DAEMON_COMMON = build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c build/device_storage.o build/daemon_config.o build/path_rules.o
+DAEMON_COMMON = build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c build/device_storage.o build/daemon_config.o build/path_rules.o
 
 build/waddled: src/daemon/daemon_main.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_main.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@

@@ -189,3 +189,20 @@ test "invalid lifecycle and frame fields never alter encoded output" {
         try std.testing.expectEqualSlices(u8, &([_]u8{0xa5} ** 328), &bytes);
     }
 }
+
+/// in: borrowed bytes[length]; returns 0 valid PCI address, -1 invalid. Pure,
+/// thread-safe, allocation-free; no output or ownership transfer.
+export fn av_gpu_bdf_validate(bytes: [*]const u8, length: usize) c_int {
+    if (length != 12) return -1;
+    const value = bytes[0..length];
+    if (value[4] != ':' or value[7] != ':' or value[10] != '.' or value[11] < '0' or value[11] > '7') return -1;
+    for ([_]usize{ 0, 1, 2, 3, 5, 6, 8, 9 }) |index| {
+        if (!std.ascii.isHex(value[index])) return -1;
+    }
+    return if ((std.fmt.parseInt(u8, value[8..10], 16) catch return -1) < 32) 0 else -1;
+}
+test "PCI paths reject traversal and invalid slot/function" {
+    for ([_][]const u8{ "", "../../driver", "0000:00:20.0", "0000:00:00.8", "0000:0g:00.0", "0000-00:00.0" }) |value|
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_gpu_bdf_validate, .{ value.ptr, value.len }));
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_gpu_bdf_validate, .{ "0000:0E:1f.7", 12 }));
+}

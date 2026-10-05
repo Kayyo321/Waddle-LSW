@@ -18,7 +18,8 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -pthread -o $@
 
 .PHONY: av-test av-sanitizers av-windows
-av-test: build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test build/av_deploy_test
+av-test: build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test build/av_deploy_test build/av_gpu_test
+	./build/av_gpu_test
 	python3 tests/av/package.py
 	$(ZIG) test src/cli/av_commands.zig -Isrc/cli
 	./build/av_deploy_test
@@ -49,7 +50,7 @@ build/linux_dmabuf_client.h: /usr/share/wayland-protocols/stable/linux-dmabuf/li
 build/linux_dmabuf_protocol.c: /usr/share/wayland-protocols/stable/linux-dmabuf/linux-dmabuf-v1.xml | build
 	wayland-scanner private-code $< $@
 
-build/av_environment_test: tests/av/environment.c src/av/av_environment.c build/av_layout.o build/daemon_config.o | build
+build/av_environment_test: tests/av/environment.c src/av/av_environment.c src/av/av_gpu.c build/av_codec.o build/av_layout.o build/daemon_config.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -o $@
 
 build/av_environment.o: src/av/av_environment.c src/av/av_environment.h src/av/av_layout.h src/daemon/daemon_config.h | build
@@ -60,8 +61,8 @@ build/vendor/av/module/kvmfr.c: submodules/looking_glass/module/kvmfr.c submodul
 	cp submodules/looking_glass/module/kvmfr.c submodules/looking_glass/module/kvmfr.h submodules/looking_glass/module/Makefile build/vendor/av/module/
 	cp submodules/looking_glass/LICENSE build/vendor/av/module/LICENSE
 	git apply --directory=build/vendor/av/module scripts/patches/kvmfr_capacity.patch
-build/waddle-av-setup: src/av/av_setup.c src/av/av_layout.h src/av/av_kvmfr.h build/av_codec.o build/vendor/av/module/kvmfr.c | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $< build/av_codec.o $(LDFLAGS) -o $@
+build/waddle-av-setup: src/av/av_gpu.c src/av/av_setup.c src/av/av_layout.h src/av/av_kvmfr.h build/av_codec.o build/vendor/av/module/kvmfr.c | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) src/av/av_setup.c src/av/av_gpu.c build/av_codec.o $(LDFLAGS) -o $@
 .PHONY: av-module
 av-module: build/waddle-av-setup
 	./build/waddle-av-setup --build-module
@@ -125,7 +126,7 @@ av-distribution: build/waddle build/waddled av windows av-drivers build/av_wgc.d
 # Fake syscall wrappers ensure privileged reuse tests never touch real devices.
 build/av_setup_test.o: src/av/av_setup.c | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) -Dmain=av_setup_entry -c $< -o $@
-build/av_setup_test: tests/av/setup.c build/av_setup_test.o build/av_codec.o | build
+build/av_setup_test: tests/av/setup.c src/av/av_gpu.c build/av_setup_test.o build/av_codec.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -Wl,--wrap=geteuid,--wrap=open,--wrap=ioctl,--wrap=lseek,--wrap=close,--wrap=fork,--wrap=waitpid -o $@
 
 build/av_wayland_state_test: tests/av/wayland_state.c src/av/av_wayland.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_codec.o build/av_audio.o | build
@@ -133,3 +134,8 @@ build/av_wayland_state_test: tests/av/wayland_state.c src/av/av_wayland.c src/av
 
 build/av_deploy_test: tests/av/deploy.c src/av/av_deploy.c src/av/av_deploy.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av tests/av/deploy.c src/av/av_deploy.c $(LDFLAGS) -o $@
+
+build/av_gpu.o: src/av/av_gpu.c src/av/av_gpu.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av -c $< -o $@
+build/av_gpu_test: tests/av/gpu.c src/av/av_gpu.c build/av_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -o $@

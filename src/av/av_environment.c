@@ -1,4 +1,5 @@
 #include "av_environment.h"
+#include "av_gpu.h"
 #include "av_layout.h"
 #include "av_kvmfr.h"
 #include <errno.h>
@@ -109,21 +110,9 @@ int av_environment_prepare(av_environment_t *environment, const daemon_config_t 
     }
     if (prepare_firmware(config) != 0)
         return fail(environment, error, capacity, "persistent OVMF firmware preparation");
-    if (config->av_gpu_bdf[0]) {
-        char driver_path[128], driver[256];
-        snprintf(driver_path, sizeof(driver_path), "/sys/bus/pci/devices/%s/driver",
-                 config->av_gpu_bdf);
-        ssize_t count = readlink(driver_path, driver, sizeof(driver) - 1);
-        if (count < 0)
-            return fail(environment, error, capacity, "GPU driver probe");
-        driver[count] = '\0';
-        char *name = strrchr(driver, '/');
-        if (!name || strcmp(name + 1, "vfio-pci")) {
-            errno = EBUSY;
-            return fail(environment, error, capacity,
-                        "GPU must be explicitly assigned to vfio-pci");
-        }
-    }
+    if (config->av_gpu_bdf[0] &&
+        av_gpu_probe("/sys", config->av_gpu_bdf, error, capacity) != 0)
+        return -1;
     snprintf(environment->path, sizeof(environment->path), "%s", config->av_shm_path);
     int is_device = strncmp(config->av_shm_path, "/dev/kvmfr", 10) == 0;
     if (is_device) {

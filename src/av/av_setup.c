@@ -1,5 +1,6 @@
 /** @file av_setup.c @brief Bundled KVMFR build/load helper, no shell execution. */
 #include "av_layout.h"
+#include "av_gpu.h"
 #include "waddle/av_protocol.h"
 #include "av_kvmfr.h"
 #include <errno.h>
@@ -107,8 +108,17 @@ static int prepare_host(void) {
  * root. Does not unload a live module, alter GPUs, enroll keys or reset mapping.
  */
 int main(int argc, char **argv) {
+    if (argc == 3 && !strcmp(argv[1], "--probe-gpu")) {
+        char error[512];
+        if (av_gpu_probe("/sys", argv[2], error, sizeof(error)) != 0) {
+            fprintf(stderr, "AV capability failure: %s\n", error);
+            return 1;
+        }
+        puts("AV GPU group eligible: vfio-pci or unbound; no driver changed");
+        return 0;
+    }
     if (argc != 2 || !strcmp(argv[1], "--help")) {
-        puts("waddle-av-setup --build-module | --load-module | --prepare-host\n"
+        puts("waddle-av-setup --build-module | --load-module | --prepare-host | --probe-gpu PCI_BDF\n"
              "Builds pinned KVMFR against the running kernel; load requires administrator "
              "privileges.");
         return argc == 2 ? 0 : 2;

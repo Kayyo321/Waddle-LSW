@@ -45,11 +45,11 @@
 | **10**  | **All-in-one AV environment provisioning** | | | | |
 | #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | Done | 5% | 100% | With the isolated acceptance VM stopped, rerun the actual two-GiB capacity, bounded seeking, CLOEXEC DMA-BUF aliasing, out-of-range and exclusive-ownership gate under ASan/LSan/UBSan. Build the pinned patched module for the running kernel and preserve the existing compatible live module. Complete KVMFR distribution/access provisioning while leaving safe GPU preparation and video/audio performance tasks incomplete. |
-| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
+| #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | Done | 5% | 100% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 98% | Verify the complete source archive after extraction and run actual managed guest deployment plus native host/guest probes from its own CLI and sibling binaries. Record passing repository-wide ASan/LSan/UBSan regressions, coverage and all 1000 storage cycles. Keep real driver-reboot, safe GPU preparation and video/audio performance acceptance explicitly incomplete. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `97.59%`
+**Total Feature Completion**: `97.84%`
 
 ## Outstanding acceptance evidence
 
@@ -60,8 +60,8 @@
   A later pixel-freshness diagnostic accepted 11 unique frames in 3000.955 ms
   (3.67 FPS) and rejected nine future timestamps; performance remains unverified.
 - Both host GPUs retain active desktop/render clients. No eligible GPU has been
-  detached. Automatic preparation and recovery for a safe explicit GPU remains
-  unfinished; a pre-bound vfio-pci requirement does not complete provisioning.
+  detached. The read-only IOMMU group probe rejects either active GPU and
+  every actively bound companion. Hardware reassignment is a manual prerequisite.
 - Driver reboot-required status now has one graceful managed restart and fresh
   re-probe; real reboot-required native acceptance remains unverified.
 - Complete archive assembly and required-input failure checks pass locally. The
@@ -431,6 +431,10 @@
   - **Task Impact**: +8% to #10.2 (+0.40% overall)
   - **Summary**: With the isolated acceptance VM stopped, rerun the actual two-GiB capacity, bounded seeking, CLOEXEC DMA-BUF aliasing, out-of-range and exclusive-ownership gate under ASan/LSan/UBSan. Build the pinned patched module for the running kernel and preserve the existing compatible live module. Complete KVMFR distribution/access provisioning while leaving safe GPU preparation and video/audio performance tasks incomplete.
 
-- **Commit `HEAD`**: `fix(av): preserve independently unspecified Wayland dimensions`
+- **Commit `d92436d6289b`**: `fix(av): preserve independently unspecified Wayland dimensions`
   - **Task Impact**: +2% to #5.4 (+0.08% overall); +5% to #7.2 (+0.08% overall).
   - **Summary**: Preserve each zero configure axis independently; test mixed zero axes and invalid sizes. Fresh native Wayland/PipeWire teardown and full AV ASan/LSan/UBSan gates pass with no reported leaks. HEAD identifies this containing commit until the next log update resolves its hash.
+
+- **Commit `HEAD`**: `feat(av): reject active GPU groups without detaching host drivers`
+  - **Task Impact**: +5% to #10.3 (+0.25% overall).
+  - **Summary**: Share read-only sysfs group probing between setup and daemon startup. Validate PCI paths with Zig, reject missing/malformed groups and active companion drivers, accept unbound/VFIO snapshots. Synthetic tests and fresh AV sanitizers pass; actual NVIDIA 0000:01:00.0 and AMD 0000:0e:00.0 probes reject active drivers. No sysfs writes or service stops occur.
