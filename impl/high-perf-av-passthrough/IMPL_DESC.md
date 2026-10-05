@@ -384,3 +384,14 @@ even when all video slots are Free or only audio is active. Closing the descript
 after workers/QEMU stop releases the lease; playback borrowers do not take this
 exclusive daemon lease. External applications must honor the same advisory lease
 before sharing a managed device.
+
+### Immutable guest deployment versions
+
+Windows can retain an executable image section for a shared-filesystem pathname
+after its file bytes are atomically replaced. Each deployment therefore creates a
+private `av/bundle_XXXXXX` directory containing the complete agent/DLL pair. The
+signed driver SYS retains the external INF's required `IVSHMEM.sys` basename.
+Only a successful native setup/probe atomically publishes a private 13-byte
+`current_bundle` selector. Run/probe validate its ownership, type, length and
+alphanumeric suffix before constructing the executable path. They never execute a
+partially published bundle or reinterpret selector contents as a path or command.

@@ -83,8 +83,41 @@ cleanup:
     if (output >= 0) { close(output); if (result) unlink(temporary); }
     return result;
 }
+/* Publish a complete immutable deployment only after its guest probe succeeds. */
+static int av_current_bundle(const char *state, char *agent, size_t capacity) {
+    char path[PATH_MAX], name[32] = {0};
+    if (snprintf(path, sizeof(path), "%s/av/current_bundle", state) >= (int)sizeof(path)) return -1;
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) return -1;
+    struct stat status;
+    ssize_t count = -1;
+    if (fstat(fd, &status) == 0 && S_ISREG(status.st_mode) && status.st_uid == geteuid() &&
+        !(status.st_mode & 0077) && status.st_size == 13)
+        count = read(fd, name, sizeof(name) - 1);
+    close(fd);
+    if (count != 13 || strncmp(name, "bundle_", 7)) return -1;
+    for (size_t i = 7; i < 13; ++i)
+        if (!((name[i] >= 'a' && name[i] <= 'z') || (name[i] >= 'A' && name[i] <= 'Z') ||
+              (name[i] >= '0' && name[i] <= '9'))) return -1;
+    return snprintf(agent, capacity, "%s/av/%s/waddle-guest-av.exe", state, name) < (int)capacity ? 0 : -1;
+}
+static int av_publish_bundle(const char *directory, const char *bundle) {
+    char temporary[PATH_MAX], destination[PATH_MAX];
+    if (snprintf(temporary, sizeof(temporary), "%s/.current_XXXXXX", directory) >= (int)sizeof(temporary) ||
+        snprintf(destination, sizeof(destination), "%s/current_bundle", directory) >= (int)sizeof(destination)) return -1;
+    struct stat status;
+    if (lstat(destination, &status) == 0) {
+        if (!S_ISREG(status.st_mode) || status.st_uid != geteuid()) return -1;
+    } else if (errno != ENOENT) return -1;
+    int fd = mkostemp(temporary, O_CLOEXEC);
+    if (fd < 0) return -1;
+    int result = write(fd, bundle, 13) == 13 && fsync(fd) == 0 && rename(temporary, destination) == 0 ? 0 : -1;
+    close(fd);
+    if (result) unlink(temporary);
+    return result;
+}
 static int av_deploy(const device_info_t *device, char *agent, size_t capacity) {
-    char state[WaddleMaxPathLen], directory[PATH_MAX], drivers[PATH_MAX];
+    char state[WaddleMaxPathLen], directory[PATH_MAX], drivers[PATH_MAX], bundle[PATH_MAX];
     if (daemon_device_get_state_dir(device->name, state, sizeof(state)) != 0 ||
         snprintf(directory, sizeof(directory), "%s/av", state) >= (int)sizeof(directory) ||
         snprintf(drivers, sizeof(drivers), "%s/ivshmem", directory) >= (int)sizeof(drivers) ||
@@ -99,13 +132,17 @@ static int av_deploy(const device_info_t *device, char *agent, size_t capacity) 
         const char *destination = !strcmp(driver_files[i], "ivshmem.sys") ? "IVSHMEM.sys" : driver_files[i];
         if (av_stage_file(source, drivers, destination) != 0) goto fail;
     }
-    if (av_stage_file("waddle-guest-av.exe", directory, "waddle-guest-av.exe") != 0 ||
-        av_stage_file("av_wgc.dll", directory, "av_wgc.dll") != 0 ||
-        snprintf(agent, capacity, "%s/waddle-guest-av.exe", directory) >= (int)capacity)
+    if (snprintf(bundle, sizeof(bundle), "%s/bundle_XXXXXX", directory) >= (int)sizeof(bundle) ||
+        !mkdtemp(bundle)) goto fail;
+    if (av_stage_file("waddle-guest-av.exe", bundle, "waddle-guest-av.exe") != 0 ||
+        av_stage_file("av_wgc.dll", bundle, "av_wgc.dll") != 0 ||
+        snprintf(agent, capacity, "%s/waddle-guest-av.exe", bundle) >= (int)capacity)
         goto fail;
     char *arguments[] = {"waddle", "exec", "--device", (char *)device->name,
         "--translate-path", "--cwd", "C:\\Windows", "--", agent, "--setup", drivers, NULL};
-    return cmd_exec(11, arguments, 2);
+    int result = cmd_exec(11, arguments, 2);
+    if (result == 0 && av_publish_bundle(directory, strrchr(bundle, '/') + 1) != 0) return 1;
+    return result;
 fail:
     fprintf(stderr, "waddle av: bundled AV agent, native WinRT DLL or signed driver package is missing: %s\n", strerror(errno));
     return 1;
@@ -129,8 +166,7 @@ static int cmd_av(int argc, char **argv) {
     daemon_config_init_defaults(&config);
     if (daemon_config_load_file(&config, device.config_path) != 0) return 1;
     char state[WaddleMaxPathLen], agent[PATH_MAX];
-    if (daemon_device_get_state_dir(device.name, state, sizeof(state)) != 0 ||
-        snprintf(agent, sizeof(agent), "%s/av/waddle-guest-av.exe", state) >= (int)sizeof(agent))
+    if (daemon_device_get_state_dir(device.name, state, sizeof(state)) != 0)
         return 1;
     if (command.kind == AvSetup) {
         if (access("/dev/kvm", R_OK | W_OK) != 0 || access("/dev/vhost-vsock", R_OK | W_OK) != 0) {
@@ -180,7 +216,7 @@ static int cmd_av(int argc, char **argv) {
         }
         return av_deploy(&device, agent, sizeof(agent));
     }
-    if (!config.av_enabled || access(agent, R_OK) != 0) {
+    if (!config.av_enabled || av_current_bundle(state, agent, sizeof(agent)) != 0 || access(agent, R_OK) != 0) {
         fputs("waddle av: run av setup for this device first\n", stderr);
         return 1;
     }

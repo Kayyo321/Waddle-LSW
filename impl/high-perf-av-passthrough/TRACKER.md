@@ -323,6 +323,10 @@
   - **Task Impact**: +5% to #2.3 (+0.16% overall); +25% to #5.4 (+1.00% overall)
   - **Summary**: Apply host fullscreen requests through the target monitor, retain original styles and bounds, restore them when leaving fullscreen or stopping tracking, and account for invisible DWM borders when resizing the captured window. Native tests verify style restoration through both transitions and teardown alongside real WinRT/audio capture.
 
-- **Commit `HEAD`**: `fix(av): poll capture with an owned high-resolution timer`
+- **Commit `b51c8b55f77e`**: `fix(av): poll capture with an owned high-resolution timer`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Replace the rounded seven-millisecond message wait with a one-millisecond high-resolution waitable timer so capture polling can service 144-Hz frames without changing the global timer resolution. Keep Windows messages and cancellation in the same wait; cancel and close the timer on all setup and session exits.
+
+- **Commit `HEAD`**: `fix(av): publish immutable guest agent and adapter bundles`
+  - **Task Impact**: 0% overall; design/audit only
+  - **Summary**: Deploy each complete agent/DLL pair under a fresh private version directory and select it atomically only after native setup/probe passes. Validate the selector before run/probe; native repeat setup now executes the new image and accepts the already-current signed driver instead of reusing a cached Windows image section.
