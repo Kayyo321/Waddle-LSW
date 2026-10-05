@@ -43,7 +43,8 @@ static HRESULT captured_pixels(const uint8_t *pixels, size_t length, uint32_t st
                                uint32_t width, uint32_t height, uint64_t timestamp_ns,
                                void *context) {
     (void)context;
-    assert(width > 100 && height > 100 && timestamp_ns);
+    (void)timestamp_ns; /* Guest WGC time is never a latency or fidelity endpoint. */
+    assert(width > 100 && height > 100);
     assert(stride >= width * 4 && length >= (size_t)stride * height);
     const uint8_t *center = pixels + (size_t)(height / 2) * stride + (width / 2) * 4;
     /* A queued pre-occlusion frame cannot prove newly painted hidden content.
@@ -108,11 +109,7 @@ static void native_audio_test(void) {
 }
 /** @brief Fixed diagnostic accumulator owned by the calling capture thread. */
 typedef struct capture_measurement_t {
-    uint64_t last_timestamp;
-    uint64_t interval_max_ns;
     unsigned frames;
-    unsigned duplicate_frames;
-    unsigned invalid_timestamps;
 } capture_measurement_t;
 static uint64_t performance_time_ns(void) {
     LARGE_INTEGER clock, frequency;
@@ -127,14 +124,6 @@ static HRESULT measured_pixels(const uint8_t *pixels, size_t length, uint32_t st
     unsigned accepted_before = captured_frames;
     HRESULT result = captured_pixels(pixels, length, stride, width, height, timestamp_ns, NULL);
     if (captured_frames == accepted_before) return result;
-    if (timestamp_ns == measurement->last_timestamp) {
-        ++measurement->duplicate_frames;
-        return result;
-    }
-    if (timestamp_ns < measurement->last_timestamp) ++measurement->invalid_timestamps;
-    uint64_t interval = timestamp_ns > measurement->last_timestamp ? timestamp_ns - measurement->last_timestamp : 0;
-    if (interval > measurement->interval_max_ns) measurement->interval_max_ns = interval;
-    measurement->last_timestamp = timestamp_ns;
     ++measurement->frames;
     return result;
 }
@@ -161,11 +150,9 @@ static int native_capture_benchmark(av_wgc_t *capture, av_wgc_read_t read_frame)
     uint64_t elapsed = performance_time_ns() - start;
     assert(CancelWaitableTimer(timer) && CloseHandle(timer));
     assert(measurement.frames > 1);
-    fprintf(stderr, "Native capture benchmark: %u unique frames, %u duplicates in %.3f ms (%.2f fps)\n",
-            measurement.frames, measurement.duplicate_frames, elapsed / 1000000.0,
+    fprintf(stderr, "Native capture benchmark: %u pixel-validated delivered frames in %.3f ms (%.2f fps)\n",
+            measurement.frames, elapsed / 1000000.0,
             measurement.frames * 1000000000.0 / elapsed);
-    fprintf(stderr, "WGC ordering: %u regressions; max guest frame interval %.3f ms\n",
-            measurement.invalid_timestamps, measurement.interval_max_ns / 1000000.0);
     fputs("Throughput only; use host --latency for host-clock compositor commit RTT\n", stderr);
     return 0;
 }
@@ -195,6 +182,9 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--probe-display")) return av_guest_display_probe();
     int benchmark_status = 0;
     latency_fixture = argc == 2 && !strcmp(argv[1], "--round-trip-fixture");
+    if ((latency_fixture || (argc == 2 && !strcmp(argv[1], "--benchmark"))) &&
+        av_guest_display_probe() != 0)
+        fputs("AV performance warning: 1920x1080 @ 144 Hz primary virtual display prerequisite is unmet; diagnostic may run but cannot establish high-refresh acceptance\n", stderr);
     int benchmark = argc == 2 && !strcmp(argv[1], "--benchmark");
     int native_capture = benchmark || (argc == 2 && !strcmp(argv[1], "--capture"));
     assert(av_guest_setup("relative") == 2);

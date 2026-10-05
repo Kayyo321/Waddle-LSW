@@ -52,10 +52,10 @@
 | #11.1 | Specify mediated GPU architecture and prerequisites | Done | 4% | 100% | Existing host driver and administrator-owned slice. |
 | #11.2 | Validate UUID configuration, CLI and read-only mdev probing | Done | 4% | 100% | No kernel or driver modification. |
 | #11.3 | Launch QEMU using mdev sysfsdev with audio and IVSHMEM | Done | 4% | 100% | Reject physical passthrough fallback. |
-| #11.4 | Remove guest timestamp dependence; warn on display prerequisite | Pending | 4% | 0% | Reuse host-clock RTT framework. |
+| #11.4 | Remove guest timestamp dependence; warn on display prerequisite | Done | 4% | 100% | Reuse host-clock RTT framework. |
 | #11.5 | Verify coverage, sanitizers and final distribution | Pending | 4% | 0% | Runtime hardware acceptance remains external. |
 
-**Total Feature Completion**: `92.0%`
+**Total Feature Completion**: `96.0%`
 
 ## Completion scope
 
@@ -474,6 +474,10 @@ gates; this branch is in Review and does not claim those gates passed.
   - **Task Impact**: +100% to #11.2 (+4% overall).
   - **Summary**: Add transactional UUID config/edit/reset and bounded CLI parsing, early read-only setup probes with optional parent matching, and daemon preparation checks. Synthetic sysfs tests accept an active host driver and reject malformed, missing and wrong-API slices; AV tests and all 12 configuration tests pass. No GPU state is changed.
 
-- **Commit `HEAD`**: `feat(av): launch mediated GPU UUIDs without physical assignment`
+- **Commit `519aaf154378`**: `feat(av): launch mediated GPU UUIDs without physical assignment`
   - **Task Impact**: +100% to #11.3 (+4% overall).
   - **Summary**: Generate exact vfio-pci sysfsdev/display=off arguments in daemon_qemu.c, where QEMU provisioning actually lives. Preserve silent HDA, IVSHMEM and boot VGA; reject BDF-only assignment. Native QEMU argument/lifecycle tests pass for UUID with/without optional parent and verify absence of host=BDF.
+
+- **Commit `HEAD`**: `fix(av): remove guest WGC timing dependencies from diagnostics`
+  - **Task Impact**: +100% to #11.4 (+4% overall).
+  - **Summary**: Reuse the existing host CLOCK_MONOTONIC color challenge and compositor sync RTT. Remove all timestamp-based fixture acceptance, uniqueness and ordering; count pixel-validated delivered frames for throughput. Warn at benchmark/RTT startup when primary 1080p144 mode is absent. Windows fixture and agent cross-builds pass; live VDD/vGPU/RTT remain external gates.
