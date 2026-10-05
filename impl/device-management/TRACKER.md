@@ -203,6 +203,10 @@ is awarded merely for a documentation or CI maintenance commit.
   - **Task Impact**: +0% to TODO #11; retain 95.5% pending green final-head CI.
   - **Summary**: Native Windows CI passed at c4c5c51. Linux sanitizer CI exposed a fixture timing assumption: formatted prompt text can span multiple pipe writes. Accumulate bounded output until the full marker/deadline instead of assuming one read contains the marker. Keep all assertions and sanitizer/coverage thresholds unchanged.
 
-- **Commit `:/scope the storage creation mask inside the registry lock`**: `fix(device): scope the storage creation mask inside the registry lock`
+- **Commit `8d57a81`**: `fix(device): scope the storage creation mask inside the registry lock`
   - **Task Impact**: +0% to TODO #10/#11; retain 95.5% pending final verification.
   - **Summary**: Move the process-wide private creation mask inside the exclusive registry-lock scope and restore it before releasing that lock. Concurrent in-process mutation callers can no longer restore each other's masks; dry-run never changes umask. This preserves the public serialization contract and receives local storage/sanitizer/coverage plus PR-head verification.
+
+- **Commit `:/fetch pinned OpenSSL through its verified release tag`**: `chore(ci): fetch pinned OpenSSL through its verified release tag`
+  - **Task Impact**: +0% to TODO #11; retain 95.5% pending green final-head CI.
+  - **Summary**: Native checkout failed before tests with HTTP 504 on the shallow direct-SHA OpenSSL fetch. Seed both existing OpenSSL submodules through advertised openssl-3.0.9, verify its peeled SHA against each immutable gitlink, absorb their Git directories, then synchronize every recursive dependency normally. Pins/URLs/tests/gates stay unchanged; Windows job budget is 30 minutes for network setup. Fresh tag-clone and initialized-tree bootstrap checks pass locally.

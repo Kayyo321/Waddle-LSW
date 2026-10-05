@@ -726,3 +726,13 @@ ABI callers therefore cannot overlap mask save/restore scopes. Dry-run never
 changes the mask; files and directories also use explicit 0600/0700 modes. The
 CLI is a main-thread caller; unrelated application code must not independently
 change process-wide umask while using this storage ABI.
+
+CI uses scripts/ci_submodules.sh to avoid an upstream HTTP 504 on shallow direct
+SHA fetches of the existing OpenSSL dependency. The advertised openssl-3.0.9 tag
+must peel to de90e54bbe82e5be4fb9608b6f5c308bb837d355, and both EDK2/libspdm
+OpenSSL gitlinks must equal that SHA before their source is seeded. Git directories
+are absorbed as proper submodules; every remaining dependency is then initialized
+recursively at its declared pin. No gitlink or .gitmodules URL changes, no loose
+source vendoring, and no omitted native/sanitizer/coverage/stress test is permitted.
+A moved tag or mismatched pin fails setup. The Windows job allows 30 minutes for
+network setup; individual native regression/heap deadlines remain unchanged.

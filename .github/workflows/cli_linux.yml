@@ -20,8 +20,11 @@ jobs:
           apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential kcov clang-19 llvm-19 python3 python3-venv meson ninja-build pkg-config libglib2.0-dev libpixman-1-dev zlib1g-dev qemu-utils virtiofsd
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          submodules: recursive
+          submodules: false
           persist-credentials: false
+      - name: Synchronize exact submodule pins via advertised OpenSSL tag
+        shell: bash
+        run: sh scripts/ci_submodules.sh
       - name: Install verified Zig toolchain
         run: |
           curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz -o "$RUNNER_TEMP/zig.tar.xz"
