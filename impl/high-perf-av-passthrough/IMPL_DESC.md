@@ -391,7 +391,8 @@ Windows can retain an executable image section for a shared-filesystem pathname
 after its file bytes are atomically replaced. Each deployment therefore creates a
 private `av/bundle_XXXXXX` directory containing the complete agent/DLL pair. The
 signed driver SYS retains the external INF's required `IVSHMEM.sys` basename.
-Only a successful native setup/probe atomically publishes a private 13-byte
+Only successful guest setup/probe followed by a real host mapping, Wayland and
+connected PipeWire probe atomically publishes a private 13-byte
 `current_bundle` selector. Run/probe validate its ownership, type, length and
 alphanumeric suffix before constructing the executable path. They never execute a
 partially published bundle or reinterpret selector contents as a path or command.
@@ -448,3 +449,10 @@ future timestamps, so its capture-age measurement is invalid. Microsoft's docume
 [SystemRelativeTime contract](https://learn.microsoft.com/en-us/uwp/api/windows.graphics.capture.direct3d11captureframe.systemrelativetime)
 identifies compositor QPC time, but the observed platform result still requires
 investigation before using that value in a latency acceptance measurement.
+
+Setup reloads the committed profile after configuration and probes the exact
+configured mapping after guest deployment. A host readiness failure returns nonzero
+and preserves the previous current_bundle selector. An unused immutable deployment
+directory may remain for diagnosis; it is never selected for subsequent run/probe.
+Both setup and explicit probe invoke the same native host gate, which stops
+PipeWire and Wayland clients before unmapping on every error or success path.

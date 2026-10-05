@@ -116,7 +116,15 @@ static int av_publish_bundle(const char *directory, const char *bundle) {
     if (result) unlink(temporary);
     return result;
 }
-static int av_deploy(const device_info_t *device, char *agent, size_t capacity) {
+/* Guest setup has initialized the mapping before this real host readiness gate. */
+static int av_host_probe(const daemon_config_t *config) {
+    char host[PATH_MAX];
+    if (av_bundle_path("waddle-av-host", host, sizeof(host)) != 0) return 1;
+    char *arguments[] = {host, "--probe", (char *)config->av_shm_path, NULL};
+    return av_run_helper(arguments);
+}
+static int av_deploy(const device_info_t *device, const daemon_config_t *config,
+                     char *agent, size_t capacity) {
     char state[WaddleMaxPathLen], directory[PATH_MAX], drivers[PATH_MAX], bundle[PATH_MAX];
     if (daemon_device_get_state_dir(device->name, state, sizeof(state)) != 0 ||
         snprintf(directory, sizeof(directory), "%s/av", state) >= (int)sizeof(directory) ||
@@ -141,6 +149,7 @@ static int av_deploy(const device_info_t *device, char *agent, size_t capacity) 
     char *arguments[] = {"waddle", "exec", "--device", (char *)device->name,
         "--translate-path", "--cwd", "C:\\Windows", "--", agent, "--setup", drivers, NULL};
     int result = cmd_exec(11, arguments, 2);
+    if (result == 0) result = av_host_probe(config);
     if (result == 0 && av_publish_bundle(directory, strrchr(bundle, '/') + 1) != 0) return 1;
     return result;
 fail:
@@ -200,7 +209,10 @@ static int av_device_command(av_command_t command, device_info_t device) {
             close(lease);
             if (result != 0) return 1;
         }
-        return av_deploy(&device, agent, sizeof(agent));
+        /* Reload committed AV settings; the pre-setup snapshot may be disabled
+         * or refer to a different mapping. Publication requires both probes. */
+        if (daemon_config_load_file(&config, device.config_path) != 0) return 1;
+        return av_deploy(&device, &config, agent, sizeof(agent));
     }
     if (!config.av_enabled || av_current_bundle(state, agent, sizeof(agent)) != 0 || access(agent, R_OK) != 0) {
         fputs("waddle av: run av setup for this device first\n", stderr);
@@ -211,10 +223,7 @@ static int av_device_command(av_command_t command, device_info_t device) {
             "--cwd", "C:\\Windows", "--", agent, "--probe", NULL};
         int result = cmd_exec(10, arguments, 2);
         if (result) return result;
-        char host[PATH_MAX];
-        if (av_bundle_path("waddle-av-host", host, sizeof(host)) != 0) return 1;
-        char *host_arguments[] = {host, "--probe", config.av_shm_path, NULL};
-        return av_run_helper(host_arguments);
+        return av_host_probe(&config);
     }
     char process_id[16], host_path[PATH_MAX], cid[16];
     snprintf(process_id, sizeof(process_id), "%u", command.process_id);

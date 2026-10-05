@@ -43,13 +43,13 @@
 | **8**   | **External Dependencies & Submodules** | | | | |
 | #8.1 | Pin and verify Looking Glass driver ABI headers as a submodule | Done | 1.6% | 100% | Add public HTTPS Looking Glass submodule pinned to B7 commit 27fe47c; audit GPL-2.0-or-later headers for GPL-3.0 compatibility and isolate usage to KVMFR/IVSHMEM driver ABI declarations. |
 | **10**  | **All-in-one AV environment provisioning** | | | | |
-| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 95% | Extend managed probe to validate the guest first, then map the configured region and establish real Wayland and ready PipeWire clients without opening a capture session. Tear down workers before unmapping on every path; the program-provisioned native host/guest probe passes. |
+| #10.1 | Probe host/guest prerequisites and report actionable capability failures | In Progress | 5% | 98% | Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte. |
 | #10.2 | Build/install pinned KVMFR module and provision shared-memory access | In Progress | 5% | 90% | Apply an explicit build-tree patch that widens B7 allocation multiplication and adds a uint64 capacity out-parameter ioctl to avoid kernel/libc return truncation. Preserve the immutable submodule pin and incompatible live devices; running-kernel build and private-access load pass. |
 | #10.3 | Configure managed QEMU IVSHMEM, silent audio endpoint and GPU capture | In Progress | 5% | 95% | Add explicit managed UEFI setup, validate its configuration and create private persistent OVMF variables without replacing an existing store. Add matching q35/pflash arguments while retaining default BIOS behavior; parser, provisioning and QEMU lifecycle regressions pass. |
 | #10.4 | Deploy guest AV agent and signed drivers with readiness verification | In Progress | 3% | 95% | Catch SIGINT/SIGTERM during listener startup and playback, stop the owned host child, cancel/reap the owned bridge job and restore caller signal dispositions on every exit. A real twelve-second managed session exits 143 after SIGTERM without orphaned host/guest agents or terminating its selected application. |
 | #10.5 | Exercise provisioned real AV session and verify latency/fidelity | Pending | 2% | 0% | Real capture/playback measurements; no mock substitution. |
 
-**Total Feature Completion**: `96.57%`
+**Total Feature Completion**: `96.72%`
 
 ## Commit History & Progress Log
 
@@ -363,6 +363,10 @@
   - **Summary**: Remove blank lines breaking table parsing before #8.1 and section 10, add the section 8 category row, and restore continuous table rendering in markdown preview mode.
 
 
-- **Commit `HEAD`**: `test(av): validate native capture throughput and timestamp diagnostics`
+- **Commit `14ce1823114a`**: `test(av): validate native capture throughput and timestamp diagnostics`
   - **Task Impact**: 0% overall; design/audit only
   - **Summary**: Finish the optional native benchmark with a changing pixel, fresh unique-frame accounting, bounded QPC age and interval statistics, and deterministic timer cleanup. Real acceptance reports 64 Hz and invalid future WGC timestamps; return failure for invalid age measurements and leave end-to-end video/audio acceptance incomplete.
+
+- **Commit `HEAD`**: `fix(av): gate deployment publication on native host readiness`
+  - **Task Impact**: +3% to #10.1 (+0.15% overall)
+  - **Summary**: Reload committed AV settings after configuration and run the same mapping, Wayland and connected PipeWire probe used by av probe before publishing a deployment selector. Real managed setup succeeds with both host and guest; an unavailable Wayland socket fails setup and preserves the previous selector byte-for-byte.
