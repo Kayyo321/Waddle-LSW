@@ -52,11 +52,15 @@ zig-test: build/path_rules.o
 build/test_daemon_protocol: tests/test_daemon_protocol.c src/daemon_protocol.c include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_protocol.c src/daemon_protocol.c $(LDFLAGS) -o $@
 
-test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config zig-test
+build/test_daemon_qemu: tests/test_daemon_qemu.c src/daemon_qemu.c src/daemon_qmp.c build/daemon_config.o src/daemon_qemu.h src/daemon_qmp.h src/daemon_config.h include/waddle/daemon_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/test_daemon_qemu.c src/daemon_qemu.c src/daemon_qmp.c build/daemon_config.o $(LDFLAGS) -lpthread -o $@
+
+test: all build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu zig-test
 	./build/unit
 	./build/integration
 	./build/test_daemon_protocol
 	./build/test_daemon_config
+	./build/test_daemon_qemu
 	sh tests/path_options.sh
 
 test-sanitizers: clean
