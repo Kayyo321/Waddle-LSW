@@ -12,3 +12,7 @@
 [submodule "submodules/venus_protocol"]
 	path = submodules/venus_protocol
 	url = https://gitlab.freedesktop.org/virgl/venus-protocol.git
+[submodule "submodules/vulkan_loader"]
+	path = submodules/vulkan_loader
+	url = https://github.com/KhronosGroup/Vulkan-Loader.git
+	shallow = true

@@ -18,7 +18,7 @@
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
-| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Pending | 0% | 0% | Test-only v1.4.307 dependency; no runtime/DXVK completion implied |
+| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | In Progress | 0% | 30% | Immutable public v1.4.307 pin/license audited; offline build/native execution pending |
 
 **Total Feature Completion**: `65.0%`
 
@@ -1374,8 +1374,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     CI remains required. Prior4620bf9 vGPU Linux and Windows checks are green; CLI
     pending. TODO #3 remains40%; full API dispatch and real DXVK are still pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify pinned native loader acceptance`
+- **Commit `beb49d3`**: `docs(vgpu): specify pinned native loader acceptance`
   - **Task Impact**: +0% to TODO: #3; +0% to TODO: #8 (+0% overall).
   - **Summary**: Specify the exact public Vulkan-Loader v1.4.307 SHA, Apache-2.0/GPL-3.0
     compatibility, test-only offline build boundary using existing pinned headers,
     private DLL/manifest lifetime and real loader device/fence verification gates.
+
+- **Commit (current; resolve by subject)**: `chore(deps): pin native Vulkan loader to v1.4.307`
+  - **Task Impact**: +30% to TODO: #8; +0% to TODO: #3 (+0% overall).
+  - **Summary**: Add public HTTPS KhronosGroup/Vulkan-Loader under submodules/vulkan_loader
+    at0508dee4ff864f5034ae6b7f68d34cb2822b827d, with shallow clone preference.
+    Audit preserved Apache-2.0/more-permissive notices against repository GPL-3.0;
+    header307 matches the existing pinned protocol SDK.
+  - **Verification**: Public tag/commit resolves upstream, exact detached checkout
+    is clean; no loose vendor files, source changes or runtime substitutions.
+    Offline build and actual native loader acceptance remain pending.
