@@ -1,12 +1,14 @@
 /** @file mesa_cpu_cache.c @brief Ordinary Vulkan enumeration and real driver-unload ownership regression. */
 #include <vulkan/vulkan.h>
 #include <dlfcn.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 /** @brief Fixed independently repeated instance/library ownership cycles. */
 #define TeardownCycles 3u
 /** @brief Exclusive borrowed Vulkan dispatch and owned native teardown handles.
- * @note Single fixture thread; no fixture heap allocation. Dispatch expires when library closes.
+ * @note Single fixture thread; dispatch expires when library closes. No retained allocations.
  */
 typedef struct vulkan_fixture_t {
     void *library; /**< Owned nullable dlopen handle; released last. */
@@ -59,10 +61,56 @@ static int fixture_free(vulkan_fixture_t *fixture) {
     }
     return result;
 }
+/** @brief Confirm render-node namespace presence without trusting an API error alone.
+ * @return Zero for absent /dev/dri or no renderD* entry; one for any matching
+ * entry; minus one for directory open/read/close error other than absent path.
+ * @note No parameters; single fixture thread. Own nullable DIR allocation only
+ * within this call, closed on every acquired-directory path and NULLed after close.
+ */
+static int render_node_presence(void) {
+    DIR *directory = opendir("/dev/dri");
+    if (!directory) {
+        if (errno == ENOENT) return 0;
+        fprintf(stderr, "Render-node directory open failed: %s\n", strerror(errno));
+        return -1;
+    }
+    int result = 0;
+    for (;;) {
+        errno = 0;
+        const struct dirent *entry = readdir(directory);
+        if (!entry) {
+            if (errno) {
+                fprintf(stderr, "Render-node directory read failed: %s\n", strerror(errno));
+                result = -1;
+            }
+            break;
+        }
+        if (!strncmp(entry->d_name, "renderD", 7)) {
+            result = 1;
+            break;
+        }
+    }
+    if (closedir(directory)) {
+        fprintf(stderr, "Render-node directory close failed: %s\n", strerror(errno));
+        result = -1;
+    }
+    directory = NULL;
+    return result;
+}
+/** @brief Classify normal enumeration or exact confirmed no-GPU error.
+ * @param[in] status Native enumeration result. @param[in] count Initialized count.
+ * @param[in] render_nodes Zero confirms absence; one presence; minus one namespace error.
+ * @return One for success or INIT_FAILED/count0/confirmed-absence only, zero otherwise.
+ * @note Pure, allocation-free, thread-safe. No API error or directory failure suppressed.
+ */
+static int enumeration_valid(VkResult status, uint32_t count, int render_nodes) {
+    return status == VK_SUCCESS ||
+        (status == VK_ERROR_INITIALIZATION_FAILED && count == 0 && render_nodes == 0);
+}
 /** @brief Run one ordinary instance enumeration/destruction and verify actual driver unload.
  * @param[in] driver_path Nonnull accessible absolute driver path, borrowed for call.
  * @return Zero for exact successful teardown, one for any loader/API/unload failure.
- * @note All errors retire acquired ownership. No fixture heap allocations or suppression;
+ * @note All errors retire acquired ownership, including temporary directory storage;
  * no GPU selection occurs here: caller supplies the manifest through normal loader configuration.
  */
 static int run_cycle(const char *driver_path) {
@@ -88,12 +136,15 @@ static int run_cycle(const char *driver_path) {
     }
     uint32_t count = 0;
     status = fixture.enumerate(fixture.instance, &count, NULL);
-    if (status != VK_SUCCESS) {
+    const int render_nodes = status == VK_ERROR_INITIALIZATION_FAILED && count == 0
+        ? render_node_presence() : -1;
+    if (!enumeration_valid(status, count, render_nodes)) {
         fprintf(stderr, "Vulkan physical enumeration failed: %d\n", status);
         goto done;
     }
-    /* Zero physical devices is valid on CI without a render node; enumeration
-     * still probes the same RADV CPU topology initialization path. */
+    /* The native loader returns INIT_FAILED when all ICDs report zero devices.
+     * Confirm namespace absence before accepting that legitimate headless path;
+     * enumeration still probes the same RADV CPU topology initialization. */
     result = 0;
 done:
     if (fixture_free(&fixture)) result = 1;
@@ -112,7 +163,8 @@ done:
  * @param[in] argc Exactly two. @param[in] argv Nonnull borrowed terminated strings;
  * argv[1] is the absolute patched driver path selected by the caller's Vulkan manifest.
  * @return Zero only when every Vulkan call and actual unload succeeds, one otherwise.
- * @note Single thread, no owned fixture heap. ASan/LSan enforce vendor allocation cleanup.
+ * @note Single thread; temporary directory allocation closed before return.
+ * ASan/LSan enforce fixture and vendor allocation cleanup.
  */
 int main(int argc, char **argv) {
     if (argc != 2 || !argv[1] || argv[1][0] != '/') {
