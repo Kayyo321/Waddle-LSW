@@ -9,6 +9,7 @@
 #include "waddle/venus_objects.h"
 #include "waddle/venus_worker.h"
 #include "shaders/compute_shader.h"
+#include "shaders/compute_push_shader.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -25,7 +26,8 @@ typedef enum fixture_workload_t {
     FullWorkload, /**< Default mapped transfer plus image lifecycle acceptance. */
     MappingWorkload, /**< Exact-byte mapped CPU/GPU transfer workload. */
     ImageWorkload, /**< Native image/view lifecycle and subsequent image commands. */
-    ComputeWorkload /**< Actual shader dispatch and exact mapped output comparison. */
+    ComputeWorkload, /**< Actual shader dispatch and exact mapped output comparison. */
+    ComputePushWorkload /**< Actual distinct runtime push bias and shader result proof. */
 } fixture_workload_t;
 static fixture_workload_t selected_workload = FullWorkload;
 static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *) = venus_icd_bind;
@@ -201,12 +203,15 @@ static PFN_vkVoidFunction compute_proc(VkDevice device, PFN_vkGetDeviceProcAddr 
  * @param[in] family Existing queue family index.
  * @param[in] supported_memory Borrowed queried actual guest memory properties.
  * @param[in] device_proc Nonnull live device dispatch lookup.
+ * @param[in] use_push Nonzero selects the runtime push shader, zero the fixed7 shader.
+ * @param[in] bias Runtime u32 bias copied by recording; only used when use_push is nonzero.
  * @return 0 on exact64-word GPU proof,1 on failure; single-threaded fixture.
  * Local resource owner is this function; cleanup releases every acquired resource.
  * supported_memory has1..VK_MAX_MEMORY_TYPES validated records.
  */
 static int compute_probe(VkDevice device, VkQueue queue, uint32_t family,
-    const VkPhysicalDeviceMemoryProperties *supported_memory, PFN_vkGetDeviceProcAddr device_proc) {
+    const VkPhysicalDeviceMemoryProperties *supported_memory, PFN_vkGetDeviceProcAddr device_proc,
+    int use_push, uint32_t bias) {
     PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)compute_proc(device, device_proc, "vkCreateBuffer");
     if (!create_buffer) return 1;
     PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)compute_proc(device, device_proc, "vkDestroyBuffer");
@@ -280,6 +285,12 @@ static int compute_probe(VkDevice device, VkQueue queue, uint32_t family,
     if (!wait_for_fences) return 1;
     PFN_vkQueueWaitIdle queue_wait_idle = (PFN_vkQueueWaitIdle)compute_proc(device, device_proc, "vkQueueWaitIdle");
     if (!queue_wait_idle) return 1;
+    PFN_vkCmdPushConstants cmd_push_constants = NULL;
+    if (use_push) {
+        cmd_push_constants = (PFN_vkCmdPushConstants)compute_proc(device, device_proc, "vkCmdPushConstants");
+        if (!cmd_push_constants) return 1;
+    }
+    const uint32_t expected_bias = use_push ? bias : 7;
     int result = 1, submitted = 0;
     const char *stage = "buffer acquisition";
     VkBuffer buffer = NULL;
@@ -320,15 +331,18 @@ static int compute_probe(VkDevice device, VkQueue queue, uint32_t family,
 #endif
     stage = "shader and descriptor acquisition";
     const VkShaderModuleCreateInfo shader_info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = sizeof(ComputeShader), .pCode = ComputeShader};
+        .codeSize = use_push ? sizeof(ComputePushShader) : sizeof(ComputeShader),
+        .pCode = use_push ? ComputePushShader : ComputeShader};
     if (create_shader_module(device, &shader_info, NULL, &shader) != VK_SUCCESS || !shader) goto cleanup;
     const VkDescriptorSetLayoutBinding binding = {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
     const VkDescriptorSetLayoutCreateInfo set_layout_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = 1, .pBindings = &binding};
     if (create_descriptor_set_layout(device, &set_layout_info, NULL, &set_layout) != VK_SUCCESS || !set_layout) goto cleanup;
+    const VkPushConstantRange push_range = {.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .size = 4};
     const VkPipelineLayoutCreateInfo pipeline_layout_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1, .pSetLayouts = &set_layout};
+        .setLayoutCount = 1, .pSetLayouts = &set_layout, .pushConstantRangeCount = use_push ? 1 : 0,
+        .pPushConstantRanges = use_push ? &push_range : NULL};
     if (create_pipeline_layout(device, &pipeline_layout_info, NULL, &pipeline_layout) != VK_SUCCESS || !pipeline_layout) goto cleanup;
     const VkDescriptorPoolSize pool_size = {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1};
     const VkDescriptorPoolCreateInfo descriptor_pool_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -362,6 +376,13 @@ static int compute_probe(VkDevice device, VkQueue queue, uint32_t family,
     stage = "compute command recording";
     cmd_bind_pipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
     cmd_bind_descriptor_sets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &descriptor_set, 0, NULL);
+    if (use_push) {
+        uint32_t pushed_bias = bias;
+        cmd_push_constants(command, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 4, &pushed_bias);
+        /* Force mutation after synchronous recording: retaining this pointer
+         * instead of copied bytes must produce wrong GPU output and fail. */
+        *(volatile uint32_t *)&pushed_bias = UINT32_C(0xa5a5a5a5);
+    }
     cmd_dispatch(command, 64, 1, 1);
     const VkMemoryBarrier barrier = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
         .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
@@ -382,9 +403,9 @@ static int compute_probe(VkDevice device, VkQueue queue, uint32_t family,
     if (invalidate_mapped_memory_ranges(device, 1, &range) != VK_SUCCESS) goto cleanup;
     const uint32_t *words = mapped;
     for (uint32_t index = 0; index < 64; index++) {
-        if (words[index] != index * 13 + 7) {
-            fprintf(stderr, "ICD compute output word%u: got0x%08x, expected0x%08x\n",
-                index, words[index], index * 13 + 7);
+        if (words[index] != index * 13 + expected_bias) {
+            fprintf(stderr, "ICD compute output word %u: got 0x%08x, expected 0x%08x\n",
+                index, words[index], index * 13 + expected_bias);
             goto cleanup;
         }
     }
@@ -405,7 +426,7 @@ cleanup:
     return result;
 }
 
-static int icd_cycles(venus_guest_t *guest) {
+static int icd_cycles(venus_guest_t *guest, int corrupt) {
 #ifdef VgpuIcdLoader
     /* Host receiver is already initialized with its original driver environment. */
     if (loader_initialize()) { loader_cleanup(); return 1; }
@@ -478,7 +499,7 @@ static int icd_cycles(venus_guest_t *guest) {
         if (!family_count || family_count > 64) goto fail;
         uint32_t family = 0;
         while (family < family_count && (!families[family].queueCount ||
-            (selected_workload == ComputeWorkload &&
+            ((selected_workload == ComputeWorkload || selected_workload == ComputePushWorkload) &&
              !(families[family].queueFlags & VK_QUEUE_COMPUTE_BIT))))
             family++;
         if (family == family_count) goto fail;
@@ -829,8 +850,10 @@ static int icd_cycles(venus_guest_t *guest) {
 
         }
 
-        if (selected_workload == ComputeWorkload &&
-            compute_probe(device, queue, family, &supported_memory, device_proc)) goto fail;
+        if ((selected_workload == ComputeWorkload || selected_workload == ComputePushWorkload) &&
+            compute_probe(device, queue, family, &supported_memory, device_proc,
+                selected_workload == ComputePushWorkload, 37 + iteration * 19 + (uint32_t)corrupt * 257))
+            goto fail;
 
         destroy_device(device, NULL);
         cleanup_device = NULL;
@@ -900,7 +923,7 @@ static int run_fixture(int corrupt) {
         venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) != RingOk ||
         venus_guest_init(&guest, &rpc, 5000) != RingOk)
         goto cleanup;
-    if (query_version(&guest) || instance_cycle(&guest) || icd_cycles(&guest))
+    if (query_version(&guest) || instance_cycle(&guest) || icd_cycles(&guest, corrupt))
         goto cleanup;
     venus_frame_t frame = {.context = UINT64_MAX,
                            .frame = 1,
@@ -985,8 +1008,9 @@ int main(void) {
         if (!strcmp(workload, "mapping")) selected_workload = MappingWorkload;
         else if (!strcmp(workload, "image")) selected_workload = ImageWorkload;
         else if (!strcmp(workload, "compute")) selected_workload = ComputeWorkload;
+        else if (!strcmp(workload, "compute_push")) selected_workload = ComputePushWorkload;
         else {
-            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping, image or compute\n", stderr);
+            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping, image, compute or compute_push\n", stderr);
             return 2;
         }
     }
