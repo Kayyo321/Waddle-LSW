@@ -685,3 +685,63 @@ Codec acceptance covers all operations and statuses, each corrupt identity/paddi
 field, null/truncated/oversized inputs, every size/ID/flag/range edge, output
 preservation and allocator cleanliness. Native Windows ABI execution and >=90%
 production line/branch coverage are required before the 5% codec credit is given.
+
+### Sequential runtime framing and receiver dispatch
+
+`venus_rpc_t` borrows an already-ready channel and a disjoint caller-owned private
+buffer of 160..16777216 bytes. Initialization allocates nothing; channel, session,
+mapping, cancellation flag and buffer outlive every call. One session thread owns
+all RPC operations, channel state and ring cursors. Free closes the session and
+zeros only the record; receiver destruction, buffer free, channel/native-handle
+release and mapping teardown remain with the lifecycle owner, in that order after
+calls stop. The host serve call borrows the singleton receiver for that call only.
+
+Guest exchange requires a request with sequence zero (runtime fills its next ID),
+matching input payload length and a private output buffer large enough for the
+maximum successful response: 160 for Capabilities, requested count for Reply/Read,
+zero otherwise. No local invalid call publishes any bytes or advances sequence.
+Guest input is copied into the private runtime buffer before publication; complete
+response payload is accumulated privately before copying to caller output. Response
+record is zeroed on failure; caller payload output stays unchanged. Request inputs
+and payload output may alias each other, but must be disjoint from all runtime,
+channel, mapping and response records. Local input/output sizes cannot exceed the
+runtime buffer. Response validation checks direction, echoed operation/sequence
+and the exact successful payload count, as well as the portable codec rules.
+
+One deadline (1..60000ms) covers the entire header, streamed payload, host dispatch
+and response. Every chunk explicitly checks channel cancellation/deadline/control,
+even when the ring is immediately usable. Transfer chunks are at most the locally
+snapshotted ring capacity; no shared field determines an allocation. A partial
+control frame prevents extending the operation deadline. Header copies use exactly
+64 private bytes. EOF while awaiting a new header with no queued bytes is Closed;
+EOF after any consumed/queued header bytes, or while a declared payload is pending,
+is Corrupt. All terminal transfer/codec/sequence/renderer errors close both rings
+and clear the next sequence. Restart requires a new mapping/session/receiver.
+UINT64_MAX is reserved as exhaustion: attempting that next ID closes with Corrupt
+before a request can have effects. No sequence is reused, including Again/Limit.
+
+Host serve validates the copied header and next sequence before reading payload or
+calling any renderer API. A valid request whose payload exceeds the private buffer
+is drained in bounded 64-byte scratch chunks under the same deadline and answered
+Limit without dispatch. A requested successful output larger than the buffer also
+returns Limit. No guest can alter resource quota policy. Every valid dispatched
+operation routes to the corresponding receiver API; Create/Free/Read/Write retain
+all registry/quiescence/ownership rules. Submit receives only privately copied bytes.
+Success returns the accepted CPU fence, not GPU completion. Invalid/Again/Limit are
+ordinary responses; retry uses a new sequence. CPU progress is queried with Poll.
+
+Terminal renderer failure closes the session without a response. This refines the
+envelope's one-response rule: it applies to completed nonterminal operations only.
+Publishing a terminal response then immediately closing shared flags would make
+that response unreadable, so the runtime does not promise terminal-response delivery.
+Unknown internal statuses are terminal corruption. Guest exchange returns RingOk
+for a complete valid response, with operation outcome in its wire status; host serve
+returns RingOk after publishing a nonterminal response. Other returns are local
+argument or terminal transport/protocol errors. Neither API implies GPU readiness.
+
+The runtime milestone requires independent mapped-process/UNIX execution of every
+operation, payloads larger than ring capacity, real Venus CPU replies, real SHM
+resource quota/refund/reuse, malformed/stale/partial requests and responses,
+disconnect/cancellation/deadline closure, deterministic partial teardown, and >=90%
+owned C production line/branch coverage plus sanitizer cleanliness. Portable guest
+framing also requires native Windows execution before milestone credit.

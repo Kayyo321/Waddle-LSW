@@ -292,7 +292,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Checked against resource quotas, CPU fences, fixed capset
     extent and the backing-agnostic ring/channel ownership contracts.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): validate portable receiver request envelopes`
+- **Commit `b6e825e`**: `feat(vgpu): validate portable receiver request envelopes`
   - **Task Impact**: +0% to TODO: #2 (+0% overall); 5% codec gate awaits native CI.
   - **Summary**: Added a documented C ABI and allocation-free Zig request/response
     codec with explicit little-endian fields, per-operation policy validation,
@@ -304,3 +304,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     100%, line coverage 98.33%; sanitizers and Zig allocator tests pass. Native
     Windows execution remains pending. Resource commit `8766015` passed both jobs
     in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392534083 .
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define sequential receiver runtime ownership`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Specified private bounded framing, chunked payloads, explicit
+    operation deadlines, consumed sequence rules, output preservation, quota-safe
+    dispatch and terminal failures without an unreadable response guarantee.
+  - **Verification**: Reviewed against codec limits, channel lifecycle and receiver
+    ownership; integrated implementation and runtime acceptance remain pending.
