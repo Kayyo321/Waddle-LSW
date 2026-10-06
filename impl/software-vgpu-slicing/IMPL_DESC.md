@@ -3855,8 +3855,8 @@ set tokens, one bound pipeline token, and six independent push-stage definitions
 Descriptor binding is valid before pipeline binding. Compatibility for setN
 compares normalized binding definitions for every set0..N and complete push-range
 values; unrelated higher-set definitions do not overrestrict compatibility. On a
-new descriptor binding, lower bindings disturb when compatibility for firstSet
-fails and upper bindings disturb when compatibility for the new lastSet fails.
+new descriptor binding, each lower setM disturbs when compatibility for that
+setM fails; upper bindings disturb when compatibility for the new lastSet fails.
 Surviving upper bindings preserve their original suffix definitions, including
 unbound intermediate set definitions, in the merged owned layout snapshot. New
 sets replace only their addressed tokens. Empty binding changes no state. Native
@@ -3872,10 +3872,15 @@ any mutation. The maps represent recorded initialization rather than shader
 reflection: the Vulkan caller remains responsible for initialization of statically
 used values. No arbitrary requirement to initialize unused declared ranges occurs.
 
-Submission rescans referenced descriptor sets against their current element
-values and validates current bound buffer identities/usage/alignment/ranges. It
-adds those buffers to a provisional submission ticket before native submission,
-with no in-flight publication until success. For the current core binding flags0,
+Each dispatch validates its compute-visible descriptor buffer identities, usage,
+alignment and ranges before native command110. Only its exact consumed buffers
+join the recorded reference bitmap after acknowledgment. Submission adds the
+recorded identity bitmap to a provisional ticket and publishes in-flight counts
+only on native success; it does not rescan unrelated, noncompute or historically
+bound unused descriptors. Destroying an actually consumed buffer invalidates
+recorded commands before submission, and a positive in-flight count prohibits
+destruction during execution. Bound memory remains retained by its live buffer.
+For the current core binding flags0,
 a successful destination update invalidates every recording/executable command
 that bound, accessed or modified that set; reset and re-record are required before
 submission. Pending destination updates are prohibited. A copy source may be
