@@ -799,3 +799,30 @@ future/wrong-identity callbacks, CPU/GPU separation, SDK error and ID exhaustion
 poisoned operations and destruction with GPU fences pending. >=90% owned coverage
 and zero-leak sanitizer gates remain mandatory. Hardware queue, runtime fence wire
 operations, device-loss success semantics and bounded hang recovery remain pending.
+
+### GPU fence protocol operations
+
+The 9% recovery/runtime portion of the GPU milestone is split into 3% for GPU
+fence protocol routing and native/mock tests, 3% for bounded health deadlines and
+cancellation, and 3% for isolated receiver teardown/restart and guest device-loss
+notification. None of these replaces the separate hardware execution gate.
+
+Version-one request kinds extend to GpuFence=9 and GpuPoll=10 without changing
+header offsets or existing operation encodings. Older codecs reject these unknown
+operations; callers must use a matching feature build until final session feature
+negotiation is implemented. Both requests require zero payload, resource ID and
+flags. Argument zero is the queue timeline (u64 integer 1..63). GpuFence requires
+argument one zero; its successful response has only a nonzero accepted GPU fence
+ID in argument zero. GpuPoll requires argument one nonzero (previously-issued
+fence); success has no arguments/payload. Error responses retain the existing
+zero-payload/zero-arguments status contract. Invalid timeline/field combinations
+are rejected in Zig before any integer narrowing or receiver call.
+
+Host dispatch routes these operations to the documented receiver GPU APIs. Queue
+creation/association must precede GpuFence and complete its CPU decoder fence.
+Again is per-queue or CPU backpressure, requiring a new exchange sequence on retry.
+GpuPoll acquires only that GPU queue's retirement and does not substitute CPU Poll.
+A fence on an unassociated queue is a terminal SDK error. The guest still owns its
+Vulkan queue/object lifecycle; no native queue handle or host pointer is exposed.
+Native portable fixtures, SDK-boundary routing/error tests, codec size/field/fence
+boundaries, >=90% coverage and sanitizer gates are required for the 3% wire credit.

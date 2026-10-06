@@ -348,7 +348,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Matched the pinned public fence ABI and vkr queue association;
     callback retirement does not by itself prove successful GPU execution.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): track bounded GPU queue fence retirement`
+- **Commit `ec97da1`**: `feat(vgpu): track bounded GPU queue fence retirement`
   - **Task Impact**: +8% to TODO: #2 (+1.6% overall) for GPU fence ownership;
     +10% to TODO: #2 (+2.0% overall) for verified sequential runtime CI.
   - **Summary**: Added fixed per-queue issued/retired atomics, Zig timeline bounds,
@@ -366,3 +366,10 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Sequential runtime Linux/native Windows CI passed at `4253a51` in
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393773120 and at
     `f99723a` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393832459 .
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define GPU fence protocol routing`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Defined GpuFence/GpuPoll extension fields, exact retirement
+    semantics, matching-build requirement and separate wire/health/recovery gates.
+  - **Verification**: Reviewed against bounded per-queue receiver APIs; no queue
+    creation or hardware execution evidence is implied by the wire extension.
