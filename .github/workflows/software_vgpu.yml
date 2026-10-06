@@ -46,6 +46,8 @@ jobs:
         run: make vgpu-capabilities-test vgpu-capabilities-sanitizers vgpu-capabilities-coverage
       - name: Verify image layouts and complete DMA-BUF feedback
         run: make vgpu-dmabuf-test vgpu-dmabuf-sanitizers vgpu-dmabuf-coverage
+      - name: Verify negotiated guest frontend ownership
+        run: make vgpu-guest-test vgpu-guest-sanitizers vgpu-guest-coverage
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership
@@ -150,4 +152,12 @@ jobs:
           ./build/vgpu_dmabuf_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_dmabuf.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows negotiated frontend ownership
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/guest.c src/vgpu/venus_guest.c build/venus_capabilities_windows.lib -o build/vgpu_guest_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_guest_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -13,12 +13,12 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 5% | Negotiated guest frontend verified locally; Vulkan entry points, userland WDDM stubs and DXVK pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 30% | Export and image/feedback validation verified locally; native codec CI, Wayland ownership and worker FD handoff pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `44.5%`
+**Total Feature Completion**: `45.75%`
 
 ## Commit History & Progress Log
 
@@ -694,9 +694,19 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     all 4096 table indices, late corruption and descriptor fields exercised.
     No wl_buffer imports or worker FD handoff are claimed by codec tests.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define negotiated guest frontend ownership`
+- **Commit `5bcaa0b`**: `docs(vgpu): define negotiated guest frontend ownership`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify constant guest encoder profile, borrowed ready RPC,
     private host capabilities, wire-status translation and sticky session loss.
   - **Verification**: Keep serialized Vulkan entry points, userland adapter stub
     and DXVK acceptance separate from the command/resource/fence backend.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): own negotiated guest frontend and sticky session loss`
+  - **Task Impact**: +5% to TODO: #3 (+1.25% overall); integrated/native acceptance pending.
+  - **Summary**: Add caller-owned allocation-free guest command/resource/fence
+    frontend, constant mandatory-only encoder declaration, private host capability
+    checks, exact status translation and terminal loss preventing further publication.
+  - **Verification**: Linux unit/fault/churn fixtures, ASan/LSan/UBSan and Windows
+    x86_64 cross-link pass. Production C lines 100%, branches 100%. Every init
+    precondition, profile mismatch, exchange acquisition failure, wire status,
+    sticky terminal result and idempotent teardown tested; native CI follows.

@@ -407,3 +407,24 @@ vgpu-dmabuf-coverage:
 	python3 tests/av/coverage.py venus_dmabuf
 
 vgpu-windows: build/vgpu_dmabuf_test.exe
+
+# The user-mode frontend borrows the existing ready guest transport.
+VgpuGuestHeaders = include/waddle/venus_guest.h include/waddle/venus_capabilities.h include/waddle/venus_rpc.h include/waddle/venus_channel.h include/waddle/venus_session.h include/waddle/venus_request.h
+build/vgpu_guest_test: tests/vgpu/guest.c src/vgpu/venus_guest.c $(VgpuGuestHeaders) build/venus_capabilities.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/vgpu/guest.c src/vgpu/venus_guest.c build/venus_capabilities.o $(LDFLAGS) -o $@
+
+build/vgpu_guest_test.exe: tests/vgpu/guest.c src/vgpu/venus_guest.c $(VgpuGuestHeaders) build/venus_capabilities_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/guest.c src/vgpu/venus_guest.c build/venus_capabilities_windows.lib -o $@
+
+.PHONY: vgpu-guest-test vgpu-guest-sanitizers vgpu-guest-coverage
+vgpu-guest-test: build/vgpu_guest_test
+	./build/vgpu_guest_test
+
+vgpu-guest-sanitizers: build/venus_capabilities.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) tests/vgpu/guest.c src/vgpu/venus_guest.c build/venus_capabilities.o -o build/vgpu_guest_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_guest_sanitized
+
+vgpu-guest-coverage: build/venus_capabilities.o build/venus_bounds.o
+	python3 tests/vgpu/coverage.py guest
+
+vgpu-windows: build/vgpu_guest_test.exe
