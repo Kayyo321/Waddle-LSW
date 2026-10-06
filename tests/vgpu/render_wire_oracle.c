@@ -4,10 +4,13 @@
 #define vn_ring_submit_command venus_render_oracle_unused_submit
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+/* Immutable upstream multi-draw encoders use GNU void-pointer arithmetic. */
+#pragma GCC diagnostic ignored "-Wpointer-arith"
 #include "vn_protocol_driver_image.h"
 #include "vn_protocol_driver_shader_module.h"
 #include "vn_protocol_driver_descriptor_set_layout.h"
 #include "vn_protocol_driver_pipeline_layout.h"
+#include "vn_protocol_driver_pipeline.h"
 #include "vn_protocol_driver_image_view.h"
 #include "vn_protocol_driver_command_buffer.h"
 #pragma GCC diagnostic pop
@@ -81,5 +84,20 @@ size_t venus_render_test_pipeline_layout(const VkPipelineLayoutCreateInfo *info,
     struct instance_encoder_t encoder = {.bytes = bytes, .capacity = 8192};
     VkPipelineLayout handle = (VkPipelineLayout)(uintptr_t)43;
     vn_encode_vkCreatePipelineLayout(&encoder, 1, (VkDevice)(uintptr_t)7, info, NULL, &handle);
+    return encoder.used;
+}
+
+/** @brief Encode one core compute pipeline with independent translated test IDs.
+ * @param[in] info Nonnull accessible immutable create record/name for call.
+ * @param[out] bytes Nonnull disjoint8192-byte scratch.
+ * @return Initialized bytes; allocation-free, thread-safe on disjoint storage.
+ */
+size_t venus_render_test_compute(const VkComputePipelineCreateInfo *info, unsigned char *bytes) {
+    struct instance_encoder_t encoder = {.bytes = bytes, .capacity = 8192};
+    VkComputePipelineCreateInfo translated = *info;
+    translated.stage.module = (VkShaderModule)(uintptr_t)42;
+    translated.layout = (VkPipelineLayout)(uintptr_t)43;
+    VkPipeline pipeline = (VkPipeline)(uintptr_t)44;
+    vn_encode_vkCreateComputePipelines(&encoder, 1, (VkDevice)(uintptr_t)7, NULL, 1, &translated, NULL, &pipeline);
     return encoder.used;
 }

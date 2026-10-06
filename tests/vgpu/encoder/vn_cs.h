@@ -69,7 +69,7 @@ static inline void vn_cs_encoder_write(struct instance_encoder_t *encoder,
  * @param[in] handle Nonnull address of test handle word, borrowed for call.
  * @param[in] kind Imported Vulkan object kind, must be INSTANCE or
  * PHYSICAL_DEVICE, DEVICE, QUEUE, FENCE, SEMAPHORE, BUFFER, DEVICE_MEMORY, COMMAND_POOL, COMMAND_BUFFER, RENDER_PASS, FRAMEBUFFER, IMAGE, IMAGE_VIEW, SHADER_MODULE,
- * PIPELINE, PIPELINE_LAYOUT, DESCRIPTOR_SET_LAYOUT, DESCRIPTOR_POOL or DESCRIPTOR_SET.
+ * PIPELINE, PIPELINE_CACHE, PIPELINE_LAYOUT, DESCRIPTOR_SET_LAYOUT, DESCRIPTOR_POOL or DESCRIPTOR_SET.
  * @return Preassigned test host ID encoded in the native handle word.
  * @note Test-only; never used to validate application handles in the real ICD.
  */
@@ -81,6 +81,7 @@ static inline vn_object_id vn_cs_handle_load_id(const void **handle,
          kind == VK_OBJECT_TYPE_RENDER_PASS || kind == VK_OBJECT_TYPE_FRAMEBUFFER ||
          kind == VK_OBJECT_TYPE_IMAGE || kind == VK_OBJECT_TYPE_IMAGE_VIEW ||
          kind == VK_OBJECT_TYPE_SHADER_MODULE || kind == VK_OBJECT_TYPE_PIPELINE ||
+         kind == VK_OBJECT_TYPE_PIPELINE_CACHE ||
          kind == VK_OBJECT_TYPE_PIPELINE_LAYOUT || kind == VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT ||
          kind == VK_OBJECT_TYPE_DESCRIPTOR_POOL || kind == VK_OBJECT_TYPE_DESCRIPTOR_SET);
   uintptr_t id;

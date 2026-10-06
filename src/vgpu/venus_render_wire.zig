@@ -668,3 +668,101 @@ test "barrier exhaustion at each scalar boundary returns Limit within scratch ex
         try std.testing.expect(writer.used <= MaxBytes);
     }
 }
+
+/// Encode one core compute pipeline with translated identities and no specialization.
+/// [in] info and its accessible NUL-terminated name are borrowed only for this call.
+/// [in] IDs are nonzero validated host identities; native shader/layout handles are ignored.
+/// Returns owned bounded packet or Invalid/Limit before publication; no allocation or locks.
+/// Caller owns semantic shader/layout validation and pipeline lifetime/host result handling.
+pub fn create_compute_pipeline(info: *const c.VkComputePipelineCreateInfo, device_id: u64, shader_id: u64, layout_id: u64, pipeline_id: u64) !writer_t {
+    if (device_id == 0 or shader_id == 0 or layout_id == 0 or pipeline_id == 0 or
+        info.sType != c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO or info.pNext != null or
+        info.flags != 0 or info.basePipelineHandle != null or info.basePipelineIndex < -1 or info.basePipelineIndex > 0 or
+        info.stage.sType != c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO or info.stage.pNext != null or
+        info.stage.flags != 0 or info.stage.stage != c.VK_SHADER_STAGE_COMPUTE_BIT or
+        info.stage.pSpecializationInfo != null or info.stage.pName == null) return error.Invalid;
+    var length: usize = 0;
+    while (length < 256 and info.stage.pName[length] != 0) : (length += 1) {}
+    if (length == 256) return error.Limit;
+    if (length == 0 or !std.unicode.utf8ValidateSlice(info.stage.pName[0..length])) return error.Invalid;
+    const padded = (length + 1 + 3) & ~@as(usize, 3);
+    var writer = writer_t{};
+    // At most396 bytes: bounded name includes its NUL and four-byte wire padding.
+    writer.require_capacity(140 + padded) catch unreachable;
+    writer.header(66, device_id) catch unreachable;
+    writer.put_proven(u64, 0);
+    writer.put_proven(u32, 1);
+    writer.put_proven(u64, 1);
+    writer.put_proven(u32, c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
+    writer.put_proven(u64, 0);
+    writer.put_proven(u32, 0);
+    writer.put_proven(u32, c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
+    writer.put_proven(u64, 0);
+    writer.put_proven(u32, 0);
+    writer.put_proven(u32, c.VK_SHADER_STAGE_COMPUTE_BIT);
+    writer.put_proven(u64, shader_id);
+    writer.put_proven(u64, length + 1);
+    @memcpy(writer.bytes[writer.used..][0..length], info.stage.pName[0..length]);
+    @memset(writer.bytes[writer.used + length ..][0 .. padded - length], 0);
+    writer.used += padded;
+    writer.put_proven(u64, 0);
+    writer.put_proven(u64, layout_id);
+    writer.put_proven(u64, 0);
+    writer.put_proven(i32, info.basePipelineIndex);
+    writer.put_proven(u64, 0);
+    writer.put_proven(u64, 1);
+    writer.put_proven(u64, pipeline_id);
+    std.debug.assert(writer.used == 140 + padded);
+    return writer;
+}
+extern fn venus_render_test_compute(info: *const c.VkComputePipelineCreateInfo, output: [*]u8) usize;
+test "compute pipeline packets match independent shader stage and array encoder" {
+    var info = std.mem.zeroes(c.VkComputePipelineCreateInfo);
+    info.sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    info.stage.sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    info.stage.stage = c.VK_SHADER_STAGE_COMPUTE_BIT;
+    info.stage.pName = "main";
+    info.basePipelineIndex = -1;
+    var expected: [MaxBytes]u8 = undefined;
+    var writer = try create_compute_pipeline(&info, 7, 42, 43, 44);
+    var count = venus_render_test_compute(&info, &expected);
+    try std.testing.expectEqual(@as(usize, 148), writer.used);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    var name = [_]u8{'x'} ** 256;
+    name[255] = 0;
+    info.stage.pName = &name;
+    info.basePipelineIndex = 0;
+    writer = try create_compute_pipeline(&info, 7, 42, 43, 44);
+    count = venus_render_test_compute(&info, &expected);
+    try std.testing.expectEqual(@as(usize, 396), writer.used);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    name[255] = 'x';
+    try std.testing.expectError(error.Limit, create_compute_pipeline(&info, 7, 42, 43, 44));
+    const Valid = blk: { info.stage.pName = "main"; break :blk info; };
+    for (0..17) |index| {
+        info = Valid;
+        var ids = [_]u64{7,42,43,44};
+        switch (index) {
+            0...3 => ids[index] = 0,
+            4 => info.sType = 0,
+            5 => info.pNext = @ptrFromInt(1),
+            6 => info.flags = 1,
+            7 => info.basePipelineHandle = @ptrFromInt(1),
+            8 => info.basePipelineIndex = -2,
+            9 => info.basePipelineIndex = 1,
+            10 => info.stage.sType = 0,
+            11 => info.stage.pNext = @ptrFromInt(1),
+            12 => info.stage.flags = 1,
+            13 => info.stage.stage = c.VK_SHADER_STAGE_VERTEX_BIT,
+            14 => info.stage.pSpecializationInfo = @ptrFromInt(@alignOf(c.VkSpecializationInfo)),
+            15 => info.stage.pName = null,
+            16 => info.stage.pName = "",
+            else => unreachable,
+        }
+        try std.testing.expectError(error.Invalid, create_compute_pipeline(&info,ids[0],ids[1],ids[2],ids[3]));
+    }
+    info = Valid;
+    const BadUtf8 = [_:0]u8{0xff};
+    info.stage.pName = &BadUtf8;
+    try std.testing.expectError(error.Invalid, create_compute_pipeline(&info,7,42,43,44));
+}
