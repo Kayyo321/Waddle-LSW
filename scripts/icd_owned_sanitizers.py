@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Instrument owned ICD production accesses with ASan; preserve compiler defenses.
+"""Instrument owned ICD/imported production accesses with ASan; preserve defenses.
 
 Input: owned Zig source pathname and exclusive artifact directory. The currently
 specified integration is venus_icd.zig, with its native C frontend and pinned
 oracle dependencies. Debug retains Zig runtime safety and prevents late ASan from
 misreading ReleaseSafe-coalesced stack lifetimes. UBSan instruments C, not Zig IR.
+The recursive embedded source closure is accounted for by exact path/name/line.
+Separately linked objects remain outside this access-instrumentation scope.
 All original compiler guards, lifetime hints, panic paths and initializers survive.
 No suppression, fault injection, source rewrite or intentionally failing variant.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +22,8 @@ if not __debug__:
     raise RuntimeError("preservation gates require Python assertions enabled")
 
 MaxIrBytes = 256 * 1024 * 1024
+# Immutable recursion ceiling; every source stays borrowed within one synchronous gate.
+MaxSourceModules = 16
 
 
 def run(arguments, **kwargs):
@@ -30,22 +35,79 @@ def run(arguments, **kwargs):
     subprocess.run(arguments, check=True, timeout=180, **kwargs)
 
 
-def instrument(source, original, output):
-    """Own only source-defined functions; normalize guard stores without erasure.
+def source_inventory(source):
+    """[in] Borrow root; [out] own bounded immutable sibling-source inventory.
 
-    Borrow source/original paths, own output/JSON. Reject unknown guard grammar,
+    No source mutation/retention of caller buffers; synchronous read-only operation.
+    Reject unknown imports, duplicate names and unsupported fixture/type signatures.
+    Runtime functions require emitted definitions; the exact type constructor does not.
+    """
+    source = source.resolve()
+    pending, inventories = [source], {}
+    while pending:
+        current = pending.pop()
+        if current in inventories:
+            continue
+        assert current.parent == source.parent and current.is_file()
+        assert len(inventories) < MaxSourceModules
+        code = current.read_text()
+        fixture_signature = 'fn image_fixture() c.VkImageCreateInfo {'
+        type_signature = 'fn slot_type(comptime profile_t: type) type {'
+        if current.name == 'venus_render_wire.zig':
+            assert '// Test-only fixtures.' not in code and code.count(fixture_signature) == 1
+            production = code
+        else:
+            assert code.count('// Test-only fixtures.') == 1, 'missing unique fixture boundary: ' + str(current)
+            production = code.split('// Test-only fixtures.', 1)[0]
+        functions, excluded = {}, {}
+        for line, text in enumerate(production.splitlines(), 1):
+            match = re.match(r'\s*(?:pub |export )?fn (\w+)\(', text)
+            if not match:
+                continue
+            name = match[1]
+            assert name not in functions and name not in excluded, 'duplicate declaration: ' + name
+            if current.name == 'venus_render_wire.zig' and name == 'image_fixture':
+                assert text == fixture_signature
+                excluded[name] = {'line': line, 'reason': 'interleaved test-only fixture'}
+            elif current.name == 'venus_icd_profiles.zig' and name == 'slot_type':
+                assert text == type_signature
+                excluded[name] = {'line': line, 'reason': 'compile-time type constructor; no runtime definition'}
+            else:
+                functions[name] = line
+        assert functions
+        test_lines = {line for line, text in enumerate(code.splitlines(), 1)
+                      if re.match(r'\s*test "', text)}
+        inventories[current] = {'functions': functions, 'excluded': excluded, 'test_lines': test_lines,
+                                'source_sha256': hashlib.sha256(code.encode()).hexdigest(),
+                                'fixture_boundary': len(production.splitlines()) + 1}
+        for name in re.findall(r'@import\("([^"\n]+)"\)', code):
+            if name in ('std', 'builtin'):
+                continue
+            assert re.fullmatch(r'venus_\w+\.zig', name), 'unsupported source import: ' + name
+            imported = (current.parent / name).resolve()
+            assert imported.parent == source.parent
+            pending.append(imported)
+    return inventories
+
+
+def instrument(source, original, output, inventories):
+    """Own source-closure runtime definitions; normalize guards without erasure.
+
+    Borrow source/original/inventory, own output/JSON. Reject unknown guard grammar,
     missing production definitions or failed byte-for-byte reverse transformation.
     Volatile same-value/same-slot stores implement llvm.stackprotector semantics;
     existing volatile reload, compare, failure edge and SSP attribute remain intact.
     """
     assert original.stat().st_size <= MaxIrBytes
     ir = original.read_text()
-    source_code = source.read_text().split('// Test-only fixtures.', 1)[0]
-    owned = set(re.findall(r'(?:export )?fn (\w+)\(', source_code))
     metadata = {int(match[1]): match[2] for match in re.finditer(r'^!(\d+) = (.+)$', ir, re.M)}
-    changes = []
-    found = set()
-    symbols = []
+    changes, symbols = [], []
+    reports = {path: {'source': str(path), 'source_sha256': inventory['source_sha256'],
+                      'owned_source_functions': len(inventory['functions']),
+                      'runtime_functions': inventory['functions'], 'excluded_declarations': inventory['excluded'],
+                      'symbols': [], 'uncovered_owned_functions': [], 'excluded_emitted_definitions': 0}
+               for path, inventory in inventories.items()}
+    found = {path: set() for path in inventories}
     pattern = re.compile(r'^define .*?@(?:"([^"]+)"|([^ (]+))\(.*? #\d+ !dbg !(\d+) \{$', re.M)
     for match in pattern.finditer(ir):
         value = metadata[int(match[3])]
@@ -54,18 +116,38 @@ def instrument(source, original, output):
         if not name or not file_id:
             continue
         filename = metadata[int(file_id[1])]
-        if 'filename: "' + source.name + '"' not in filename:
+        file_match = re.search(r'!DIFile\(filename: "([^"]+)", directory: "([^"]+)"', filename)
+        if not file_match:
             continue
+        path = (Path(file_match[2]) / file_match[1]).resolve()
+        if path not in inventories:
+            continue
+        inventory, report = inventories[path], reports[path]
+        line_match = re.search(r'line: (\d+)', value)
+        assert line_match, 'owned definition lacks declaration line: ' + name[1]
+        line = int(line_match[1])
         canonical = re.sub(r'__anon_\d+$', '', name[1])
-        if canonical not in owned:
+        if canonical not in inventory['functions']:
+            assert canonical != 'slot_type' or path.name != 'venus_icd_profiles.zig', 'type constructor emitted at runtime'
+            test_definition = name[1].startswith('test.') and line in inventory['test_lines']
+            excluded = inventory['excluded'].get(canonical)
+            assert (line >= inventory['fixture_boundary'] or test_definition or
+                    (excluded and excluded['line'] == line)), 'unknown owned runtime definition: ' + str(path) + ':' + name[1]
+            report['excluded_emitted_definitions'] += 1
             continue
+        assert inventory['functions'][canonical] == line, 'owned declaration location mismatch: ' + canonical
         assert 'sanitize_address' not in match[0]
         replacement = re.sub(r'( #\d+ !dbg !\d+ \{)$', r' sanitize_address\1', match[0])
         assert replacement != match[0]
         changes.append((match.start(), match.end(), match[0], replacement))
-        found.add(canonical)
-        symbols.append(match[1] or match[2])
-    assert found == owned, 'unaccounted owned functions: ' + str(sorted(owned - found))
+        found[path].add(canonical)
+        symbol = match[1] or match[2]
+        symbols.append(symbol)
+        report['symbols'].append(symbol)
+    for path, inventory in inventories.items():
+        missing = sorted(set(inventory['functions']) - found[path])
+        assert not missing, 'unaccounted owned functions: ' + str(path) + str(missing)
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == inventory['source_sha256'], 'source changed during gate'
     for start, end, before, after in reversed(changes):
         ir = ir[:start] + after + ir[end:]
     guard_pattern = re.compile(r'call void @llvm\.stackprotector\(ptr (%[\w.]+), ptr (%[\w.]+)\)')
@@ -97,12 +179,39 @@ def instrument(source, original, output):
     assert ir.count('call void @__stack_chk_fail(') == reverse.count('call void @__stack_chk_fail(')
     output.write_text(ir)
     report = {'source': str(source.resolve()), 'mode': 'Debug',
-              'owned_source_functions': len(owned), 'instrumented_definitions': len(symbols),
+              'owned_source_functions': sum(len(value['functions']) for value in inventories.values()),
+              'instrumented_definitions': len(symbols), 'modules': list(reports.values()),
               'uncovered_owned_functions': [], 'guard_stores_preserved': len(guard_changes),
               'symbols': symbols, 'entire_module_reverse_proof': True,
-              'ubsan_scope': 'C frontend only; Zig Debug runtime safety retained'}
+              'ubsan_scope': 'C frontend only; Zig Debug runtime safety retained',
+              'excluded_object_scope': 'separately linked Zig dependencies and C wire oracles'}
     output.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
     return report
+
+
+def verify_access_hooks(binary, report, output):
+    """[in] Borrow sanitized object/report; [out] append actual per-module hook proof.
+
+    Read-only disassembly; retain no subprocess resources. Reject a selected module
+    without a real ASan access-hook relocation. Compiler/fixture symbols do not count.
+    Caller serializes report mutation and artifact directory; no production mutation.
+    """
+    definitions = {symbol: module for module in report['modules'] for symbol in module['symbols']}
+    for module in report['modules']:
+        module['asan_access_hook_relocations'] = 0
+    disassembly = subprocess.check_output(['objdump', '-dr', str(binary)], text=True, timeout=180)
+    symbol = ''
+    for line in disassembly.splitlines():
+        match = re.match(r'^[0-9a-f]+ <(.+)>:', line)
+        if match:
+            symbol = match[1]
+        if re.search(r'R_\w+\s+__asan_(?:report_load|report_store|load|store|memcpy|memmove|memset)', line):
+            if symbol in definitions:
+                definitions[symbol]['asan_access_hook_relocations'] += 1
+    for module in report['modules']:
+        assert module['asan_access_hook_relocations'] > 0, 'no actual ASan accesses in ' + module['source']
+        module['instrumented_definitions'] = len(module['symbols'])
+    output.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
 
 
 def main():
@@ -118,6 +227,7 @@ def main():
     source, output = arguments.source, arguments.output.resolve()
     assert source.name == 'venus_icd.zig', 'additional module integration requires its own dependency contract'
     output.mkdir(parents=True, exist_ok=True)
+    inventories = source_inventory(source)
     warnings = ['-Wall', '-Wextra', '-Wpedantic', '-Werror']
     includes = ['-Iinclude', '-Itests/vgpu/encoder', '-Ibuild/venus_protocol',
                 '-Isubmodules/venus_protocol/tests', '-Isubmodules/venus_protocol/include']
@@ -131,13 +241,14 @@ def main():
                             for name in ('libasan.so', 'libubsan.so')})
     runtime = [item for path in runtime_paths for item in ('-L' + path,)] + ['-lasan', '-lubsan']
     environment = dict(os.environ, ASAN_OPTIONS='detect_leaks=1:abort_on_error=1:halt_on_error=1',
-                       UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
+                       LSAN_OPTIONS='exitcode=23', UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
     run(['zig', 'build-obj', str(source), '-Iinclude', '-Isubmodules/venus_protocol/include',
          '-O', 'Debug', '-fPIC', '-fcompiler-rt', '-lc',
          '-femit-llvm-ir=' + str(output / 'native_original.ll'), '-femit-bin=' + str(output / 'native_original.o')])
-    native_report = instrument(source, output / 'native_original.ll', output / 'native_sanitized.ll')
+    native_report = instrument(source, output / 'native_original.ll', output / 'native_sanitized.ll', inventories)
     run(['clang-19', '-Wno-override-module', '-fPIC', '-fsanitize=address', '-g', '-c',
          str(output / 'native_sanitized.ll'), '-o', str(output / 'native_sanitized.o')])
+    verify_access_hooks(output / 'native_sanitized.o', native_report, output / 'native_sanitized.ll')
     symbols = subprocess.check_output(['nm', '-u', str(output / 'native_sanitized.o')], text=True)
     assert '__asan_report_store' in symbols and '__asan_report_load' in symbols
     run(['cc', '-std=c11', '-D_GNU_SOURCE', '-O1', '-g', *warnings, *safety, *includes,
@@ -148,14 +259,20 @@ def main():
     run(['zig', 'test', str(source), '-Iinclude', '-Isubmodules/venus_protocol/include',
          str(output / 'native_oracle.o'), *dependencies, *oracles, '-lc', '-O', 'Debug', '--test-no-exec',
          '-femit-llvm-ir=' + str(output / 'test_original.ll'), '-femit-bin=' + str(output / 'test_original'), *runtime])
-    test_report = instrument(source, output / 'test_original.ll', output / 'test_sanitized.ll')
+    test_report = instrument(source, output / 'test_original.ll', output / 'test_sanitized.ll', inventories)
     run(['clang-19', '-Wno-override-module', '-fPIC', '-fsanitize=address', '-g', '-c',
          str(output / 'test_sanitized.ll'), '-o', str(output / 'test_sanitized.o')])
+    verify_access_hooks(output / 'test_sanitized.o', test_report, output / 'test_sanitized.ll')
     run(['zig', 'cc', str(output / 'test_sanitized.o'), str(output / 'native_oracle.o'),
          *dependencies, *oracles, *runtime, '-pthread', '-ldl', '-lm', '-o', str(output / 'test_runner')])
     run([str(output / 'test_runner')], env=environment)
-    summary = {name: {key: value for key, value in report.items() if key != 'symbols'}
-               for name, report in (('native', native_report), ('zig_tests', test_report))}
+    summary = {}
+    for name, report in (('native', native_report), ('zig_tests', test_report)):
+        compact = {key: value for key, value in report.items() if key not in ('symbols', 'modules')}
+        compact['modules'] = [{key: value for key, value in module.items()
+                               if key not in ('symbols', 'runtime_functions')}
+                              for module in report['modules']]
+        summary[name] = compact
     print(json.dumps(summary, indent=2), flush=True)
 
 
