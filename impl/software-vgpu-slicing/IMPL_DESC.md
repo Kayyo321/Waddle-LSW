@@ -3831,3 +3831,54 @@ writers. Independent pinned generated C encoders compare end/draw scalar extreme
 and ordinary/maximum copy arrays. Negative tests cover individual subresource,
 offset, extent, alignment, destination bounds and metadata failure paths. This
 wire milestone gives no graphics rendering or DXVK acceptance credit.
+
+### Owned command compatibility metadata
+
+`venus_compute_state.zig` supplies a fixed64-owner command metadata registry,
+reserved before native command buffer allocation. On x86_64, each command profile
+is19504 bytes, each occupied owner slot19512 bytes, and the complete registry
+1248768 bytes. Each of six stage push profiles occupies408 bytes. These are owned
+by-value definitions with no heap allocation, borrowed pointer retention or
+layout-handle retention. The ICD mutex serializes all table accesses. One-based
+slot allocation uses the checked profile registry helpers; ordinary host creation
+failure refunds every reservation, while uncertain transport/native identity
+failure retains reservations until binding abandonment. Native command free and
+pool destruction release and scrub the owner only after validated acknowledgment.
+Pool reset, individual reset and successful begin scrub the metadata in place and
+retain its reservation because native command buffer identity remains live.
+
+Each profile owns one copied descriptor pipeline-layout definition, sixteen bound
+set tokens, one bound pipeline token, and six independent push-stage definitions.
+Descriptor binding is valid before pipeline binding. Compatibility for setN
+compares normalized binding definitions for every set0..N and complete push-range
+values; unrelated higher-set definitions do not overrestrict compatibility. On a
+new descriptor binding, lower bindings disturb when compatibility for firstSet
+fails and upper bindings disturb when compatibility for the new lastSet fails.
+Surviving upper bindings preserve their original suffix definitions, including
+unbound intermediate set definitions, in the merged owned layout snapshot. New
+sets replace only their addressed tokens. Empty binding changes no state. Native
+acknowledgment precedes publication; malformed input leaves the metadata unchanged.
+Pipeline binding records the pipeline token without disturbing descriptor sets;
+dispatch separately proves compatibility of the currently bound definitions.
+
+Push commands also support recording before a pipeline bind. Each requested core
+stage records its complete copied push-range definition and a128-bit initialized
+byte map; compatible partial writes accumulate and incompatible definition changes
+clear only that stage's old map. Whole requested range coverage is proved before
+any mutation. The maps represent recorded initialization rather than shader
+reflection: the Vulkan caller remains responsible for initialization of statically
+used values. No arbitrary requirement to initialize unused declared ranges occurs.
+
+Submission rescans referenced descriptor sets against their current element
+values and validates current bound buffer identities/usage/alignment/ranges. It
+adds those buffers to a provisional submission ticket before native submission,
+with no in-flight publication until success. Thus valid descriptor updates between
+recording and submission retain current resources rather than stale earlier
+snapshots. Pending sets reject mutation. Transport/error paths cannot publish a
+partial ticket. Explicit transfer and barrier references preserve their existing
+recorded resource lifetime rules. Dynamic descriptor offsets remain an explicit
+initial public-command restriction until their lifetime metadata is implemented.
+Tests cover all64 reservations, exhaustion/reuse/scrub, compatible and incompatible
+prefix/suffix disturbances, independent snapshots, per-stage partial push writes,
+range changes and malformed ranges. Native and Windows Zig test artifacts compile
+without heap storage; production coverage must remain at least90%.
