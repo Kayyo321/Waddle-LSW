@@ -2361,8 +2361,8 @@ both outputs. Transport errors do not produce Vulkan handles.
 Fixed query request builder accepts commands3(features),6(properties),8(memory),
 a nonzero existing host physical-device ID and caller-provided private output.
 Each command has reply flag1, physical ID and nonnull output pointer tag1.
-Property partial output carries exact array tags3,3,2,2,2 for limits arrays;
-feature partial output is empty; memory partial output carries tags32 and16.
+Property and feature partial outputs are empty; memory partial output carries
+tags32 and16.
 These tags come from the pinned generated partial encoders, not native padding.
 
 All wire outputs and length metadata must be disjoint from each other and input;
@@ -2376,3 +2376,10 @@ compare exact immutable C generator output, exercise every truncated reply,
 identity/result/tag/count mutations, alias/overflow and capacity preservation.
 Native Linux/Windows ABI, allocator, sanitizers and >=90% production line/branch
 coverage gate this module. No ICD/device/DXVK milestone is accepted by helpers alone.
+
+Physical query transactions now match the independent immutable guest C generator
+in native tests. Every truncated fill/error reply, wrong command/result/tag/count/
+identity, duplicate/zero/overflow IDs and output alias/capacity boundary is tested.
+Local ASan/LSan/UBSan pass, Zig allocator tests leak zero bytes, Windows fixtures
+cross-link. Production coverage100% lines/90% branches. Native Windows execution
+and application-facing dispatch acceptance remain separately required.

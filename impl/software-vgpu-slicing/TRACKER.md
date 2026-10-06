@@ -1208,10 +1208,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     loader/device/API implementation or DXVK acceptance is claimed by these tests.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify physical enumeration dispatch transactions`
+- **Commit `92eb676`**: `docs(vgpu): specify physical enumeration dispatch transactions`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Define bounded count/fill physical-device enumeration and fixed
     query request serialization, reserved identities and reply preservation before
     connecting application-facing dispatch. Full ICD/device/DXVK remains required.
   - **Verification**: Cross-check pinned generated guest/renderer schemas, command
     IDs, partial fixed arrays and output handle preallocation; implementation pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): encode bounded physical enumeration transactions`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Implement count/fill request encoding, reserved identity reply
+    validation and fixed-query partial packets in allocation-free Zig; compare
+    independent pinned C generator and add native Linux/Windows CI gates.
+  - **Verification**: All3 allocator tests and native C/ASan/LSan/UBSan pass;
+    production coverage100% lines/90% branches; Windows fixtures cross-link.
+    Full ICD/device/API/DXVK acceptance remains required; no helper milestone credit.

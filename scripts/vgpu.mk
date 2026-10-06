@@ -732,3 +732,34 @@ build/vgpu_instance_wire_test.exe: tests/vgpu/instance_wire.c build/venus_instan
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuInstanceOracleIncludes) $< build/venus_instance_wire_windows.lib -o $@
 
 vgpu-windows: build/vgpu_instance_wire_test.exe
+
+# Core query transactions compare independent immutable guest encoders.
+VgpuQueryWireHeaders = include/waddle/venus_query_wire.h include/waddle/venus_values.h tests/vgpu/encoder/vn_cs.h
+build/venus_query_wire.o: src/vgpu/venus_query_wire.zig $(VgpuQueryWireHeaders) | build
+	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/venus_query_oracle.o: tests/vgpu/query_wire.c $(VgpuQueryWireHeaders) | build vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -DVgpuQueryOracle -c $< -o $@
+
+build/vgpu_query_wire_test: tests/vgpu/query_wire.c build/venus_query_wire.o build/venus_query_oracle.o
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) $< build/venus_query_wire.o -o $@
+
+.PHONY: vgpu-query-wire-test vgpu-query-wire-sanitizers vgpu-query-wire-coverage
+vgpu-query-wire-test: build/vgpu_query_wire_test
+	./build/vgpu_query_wire_test
+	$(ZIG) test src/vgpu/venus_query_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_query_oracle.o
+
+vgpu-query-wire-sanitizers: build/venus_query_wire.o build/venus_query_oracle.o
+	$(CC) $(VgpuReceiverSanitizers) $(VgpuInstanceOracleIncludes) tests/vgpu/query_wire.c build/venus_query_wire.o -o build/vgpu_query_wire_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_query_wire_sanitized
+
+vgpu-query-wire-coverage: build/venus_query_oracle.o
+	python3 tests/av/coverage.py venus_query_wire
+
+build/venus_query_wire_windows.lib: src/vgpu/venus_query_wire.zig $(VgpuQueryWireHeaders) | build
+	$(ZIG) build-lib $< $(VgpuInstanceWireIncludes) -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_query_wire_test.exe: tests/vgpu/query_wire.c build/venus_query_wire_windows.lib | vgpu-protocol
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuInstanceOracleIncludes) $< build/venus_query_wire_windows.lib -o $@
+
+vgpu-windows: build/vgpu_query_wire_test.exe
