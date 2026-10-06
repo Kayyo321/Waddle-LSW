@@ -16,3 +16,6 @@
 	path = submodules/vulkan_loader
 	url = https://github.com/KhronosGroup/Vulkan-Loader.git
 	shallow = true
+[submodule "submodules/dxvk"]
+	path = submodules/dxvk
+	url = https://github.com/doitsujin/dxvk.git
