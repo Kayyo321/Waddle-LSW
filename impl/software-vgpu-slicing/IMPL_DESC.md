@@ -1103,11 +1103,15 @@ line/branch coverage and sanitizer/allocator/native Windows codec/runtime gates.
 venus_context_manager_t is a caller-owned fixed array of eight worker slots,
 configured by a trusted host count (1..8) and aggregate mapping byte ceiling
 (4096..8GiB). init/free are symmetric; it allocates no heap. Each slot retains a
-worker, a duplicate CLOEXEC mapping fd and the stat device/inode/size identity and validated ring capacity/offsets.
+worker, a duplicate CLOEXEC mapping fd and the stat device/inode/size identity
+and validated ring capacity/offsets.
 Only the controller thread mutates the manager. Context IDs are monotonic nonzero
 u64 handles allocated by the controller; never native renderer IDs or guest
-pointers. Freed handles never address a reused slot; wrap exhaustion returns
-RingLimit. Each worker has a separate mapping/control socket, renderer singleton,
+pointers. Freed handles never address a reused slot during the same initialized
+manager
+lifetime; wrap exhaustion returns RingLimit. Handles are scoped to that lifetime
+and must all be discarded before free/reinit, which starts a new handle domain.
+Each worker has a separate mapping/control socket, renderer singleton,
 bootstrap context/resource 1, quotas, reply scratch and fence identities. Thus
 the same Venus and registry object IDs may coexist across independent contexts.
 A trusted launcher binds each guest context to its private endpoints; multiplexed
@@ -1150,3 +1154,33 @@ portable fixtures. Graphics presentation and OpenCL remain Tasks #4/#5.
 The 20% multi-context milestone is split into 10% for the verified bounded native
 controller API/ownership/fault coverage, and 10% for simultaneous real worker
 execution, independent resource/reply identity and crash/restart stress in CI.
+
+
+### Task #2 completed receiver acceptance
+
+The host-side receiver is implemented and verified: public Venus context/reply
+ownership (10%), bounded resource registry and runtime request routing (30%),
+GPU fence/workload/deadline/recovery gates (25%), and pinned capability decoding,
+negotiation and bounded isolated multi-context execution (35%). All together are
+100% of Task #2. Native Linux and native Windows portable fixtures passed in
+Software vGPU run 37400635748 at commit 75d39cd. The new context controller is
+Linux-specific and ran its ownership/coverage and eight-worker integration gates
+in the Linux job. Runtime/request negotiation ran in both jobs. Local verification
+also executed the NVIDIA RTX 5080 timestamp workload and all existing transport,
+receiver, worker, service, codec and runtime safety/coverage suites.
+
+Independent context tests perform three rounds of eight live workers plus one
+replacement per round (27 launches), with identical resource/CPU fence IDs,
+distinct resource contents, profile rejection/retry, real CPU replies, one killed
+worker, continued operation of seven peers, fresh negotiation and complete
+shutdown. Every parent descriptor returns to the initial baseline. Native Linux
+fault fixtures additionally perform 128 handle reuse cycles and preserve failed
+shutdown ownership. C context lines are 100% covered and branches 96.61%; request,
+capability, transport and receiver gates all exceed 90%. ASan/LSan/UBSan and Zig
+allocator checks pass with zero reported leaks. GPU timestamp results establish
+real GPU command completion; no guest presentation or OpenCL completion is claimed.
+
+A Windows guest ICD/WDDM driver and its context-to-endpoint binding remain Task
+#3. Device-memory DMA-BUF presentation remains Task #4, compute remoting Task #5.
+Physical hypervisor/driver testing remains the existing delegated user validation
+scope. Completion here authorizes no merge or completion of the remaining feature.

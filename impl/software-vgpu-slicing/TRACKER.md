@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 90% | Negotiation passed Linux/native Windows CI; isolated context ownership verified; simultaneous worker CI remains |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `38.0%`
+**Total Feature Completion**: `40.0%`
 
 ## Commit History & Progress Log
 
@@ -607,7 +607,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
 
 - **Commit `ae50f3d`**: `Updated README.md`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
-  - **Summary**: Independent user documentation commit during receiver work;
+  - **Summary**: Independent documentation commit outside receiver work;
     no software vGPU task credit or receiver source change.
 
 - **Commit `75d39cd`**: `test(vgpu): verify simultaneous isolated context execution`
@@ -623,7 +623,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Native Windows negotiation fixtures have passed; remaining Linux CI is running.
 
 
-- **Commit (current; resolve by subject)**: `chore(vgpu): complete standalone negotiation build dependencies`
+- **Commit `24f83f3`**: `chore(vgpu): complete standalone negotiation build dependencies`
   - **Task Impact**: +10% to TODO: #2 (+2.0% overall) for negotiated runtime acceptance.
   - **Summary**: Make standalone runtime sanitizer/coverage targets build the
     capability object they link, and track context consumer header dependencies.
@@ -633,3 +633,25 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     coverage and sanitizer CI passed at `35076e2`:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37400157106 .
     Simultaneous context runtime acceptance is the final 10% gate.
+
+
+- **Commit `62b6393`**: `Ok look something changed in the README.md`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Independent documentation commit outside receiver work; no
+    vGPU source changes or task credit.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): record completed host receiver acceptance`
+  - **Task Impact**: +10% to TODO: #2 (+2.0% overall) for simultaneous context runtime acceptance.
+  - **Summary**: Mark only TODO #2 complete; record exact host receiver scope,
+    context handle lifetime and verification evidence. Remaining feature tasks
+    and feature Time Ended remain unchanged because the feature is incomplete.
+  - **Verification**: Linux and native Windows Software vGPU gates passed at
+    `75d39cd`, including negotiated request/runtime, eight-worker execution,
+    isolated ownership, crash/restart stress, descriptor baseline, sanitizer,
+    allocator, coverage, legacy transport and software Vulkan GPU fixtures:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37400635748 .
+    Full local host receiver suite and NVIDIA RTX 5080 hardware timestamp workload
+    pass; context C coverage 100% lines/96.61% branches, RPC 100%/97.14%,
+    dispatch 99.10%/93.94%, receiver 100%/98.76%, request Zig 98.39%/100%.
+    Formatting and diff checks pass. README changes were independent commits.
+  - **TODO #2 Completed At**: 2026-10-06T01:50:12Z

@@ -20,6 +20,7 @@ typedef struct venus_context_slot_t {
 /** @brief Caller-owned fixed manager, zero before init; fields read-only.
  * @note Sole controller thread, no concurrent calls/copies. No heap allocation.
  * Owns slots until free succeeds; caller mappings/streams are never released.
+ * Handles belong to one init/free lifetime; discard all before reinitializing.
  */
 typedef struct venus_context_manager_t {
     venus_context_slot_t slots[VenusContextMaxCount]; /**< Independent worker owners. */
