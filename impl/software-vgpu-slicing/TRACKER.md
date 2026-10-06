@@ -1459,7 +1459,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     exact allocation/free/bind wire, actual cached requirements and overflow-safe
     range validation, relationship teardown and independent/real-worker gates.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): allocate private memory and bind core buffers`
+- **Commit `18350fb`**: `feat(vgpu): allocate private memory and bind core buffers`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; mapping/commands/DXVK pending).
   - **Summary**: Add exact device-parented memory allocation/free, fixed per-slot
     generation metadata, cached actual buffer requirements, type/alignment/range
@@ -1475,3 +1475,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and sanitizers; pinned Linux loader and sanitized loader execute the same public
     API with their independent oracle backend. Native Windows fixture/DLL cross-link
     succeeds. Updated-head native CI remains required; TODO #3 remains40%.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify native loader production worker proof`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify real loader/shared ICD dispatch through the actual
+    negotiated worker, explicit borrowed callback and owned library/environment
+    lifetimes, two-session object cycles and independent loader milestone gates.

@@ -2796,3 +2796,36 @@ returned compatible memory type, allocate actual requirements size, bind offset0
 retire GPU work, destroy buffer then free memory. All native, Windows, safety and
 >=90% coverage gates remain required. No completion credit for full memory or
 DXVK is granted until mapping, command execution and application acceptance work.
+
+### Native loader with the production negotiated worker
+
+The loader/manifest gate additionally uses the real native loader and shared ICD
+with the production negotiated worker, replacing the independent encoder backend
+only for this integration variant. Keep the existing static ICD and raw wire
+fixtures as separate regression gates. No host Vulkan passthrough is permitted:
+all public instance/device/queue/fence/buffer/memory operations must traverse the
+borrowed venus_guest_exchange backend and out-of-process receiver session.
+
+A test-only compile variant owns two dlopen library handles: the exact absolute
+pinned Vulkan loader path and build/libwaddle_vulkan_experimental.so. Resolve only
+owned bind/unbind/abandon exports from the ICD; obtain public vkGetInstanceProcAddr
+from the loader. Function pointer storage uses memcpy with explicit size equality
+checks; failed lookup reports test failure. Set private VK_DRIVER_FILES manifest
+before loading either library and restore the owned saved environment copy at
+exit. Missing original variable is restored as absent. No system installation,
+registry mutation or privileged loader bypass occurs. No caller pointer or library
+handle outlives the test process teardown.
+
+Run eight public instance/device/queue/GPU-idle/fence/buffer/allocation/binding
+cycles in each of two separately negotiated production worker sessions. The loader
+creates its real dispatch tables from the experimental ICD ABI and manifest;
+callbacks use the actual transport and receiver. Healthy destruction retires all
+objects before unbind; failures stop/retire the guest before ICD abandonment and
+library close. The loader remains open until all instances are destroyed, and ICD
+remains open until all callbacks/bindings have ended. Close loader before ICD to
+prevent dispatch tables retaining unloaded callbacks. Native Linux normal and
+ASan/LSan/UBSan integration plus existing native Windows pinned loader DLL/manifest
+ABI execution are required before loader10% credit. This gate verifies actual
+loader dispatch through device creation; full command/mapping/graphics/compute
+and DXVK remain their independent incomplete milestones. The manifest remains
+explicitly experimental until those milestones pass.
