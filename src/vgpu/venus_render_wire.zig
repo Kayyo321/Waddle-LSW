@@ -3,6 +3,9 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("vulkan/vulkan.h");
 });
+/// Private push byte ceiling256; caller validates actual host maxPushConstantsSize.
+/// Immutable scalar limit; no allocation or ownership, concurrent readers are safe.
+pub const MaxPushBytes: u32 = 256;
 /// Maximum owned encoded packet bytes; no allocation or mutable shared storage.
 pub const MaxBytes: usize = 8192;
 /// Owned bounded scratch writer. All methods borrow exclusive self for the call; no pointers retained.
@@ -396,7 +399,7 @@ pub fn create_descriptor_layout(info: *const c.VkDescriptorSetLayoutCreateInfo, 
 }
 /// Encode pipeline layout. [in] info/ranges borrowed; set_ids translated IDs replace native handles.
 /// [in] device_id/layout_id translated nonzero identities. Returns owned packet or Invalid/Limit.
-/// No allocation/retention; validates core128-byte push constants; caller tracks child layout ownership.
+/// No allocation/retention; validates bounded256-byte push constants; caller tracks child layout ownership.
 pub fn create_pipeline_layout(info: *const c.VkPipelineLayoutCreateInfo, set_ids: []const u64, device_id: u64, layout_id: u64) !writer_t {
     if (device_id == 0 or layout_id == 0) return error.Invalid;
     if (info.sType != c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO or info.pNext != null or
@@ -406,7 +409,7 @@ pub fn create_pipeline_layout(info: *const c.VkPipelineLayoutCreateInfo, set_ids
     for (set_ids) |id| if (id == 0) return error.Invalid;
     if (info.pushConstantRangeCount != 0) for (info.pPushConstantRanges[0..info.pushConstantRangeCount], 0..) |range, index| {
         if (range.stageFlags == 0 or range.stageFlags & ~@as(u32, 0x3f) != 0 or range.size == 0 or
-            range.offset % 4 != 0 or range.size % 4 != 0 or range.offset >= 128 or range.size > 128 - range.offset) return error.Invalid;
+            range.offset % 4 != 0 or range.size % 4 != 0 or range.offset >= MaxPushBytes or range.size > MaxPushBytes - range.offset) return error.Invalid;
         for (info.pPushConstantRanges[0..index]) |previous| if (range.stageFlags & previous.stageFlags != 0) return error.Invalid;
     };
     var writer = writer_t{};
@@ -440,7 +443,7 @@ test "descriptor and pipeline layouts match pinned oracle" {
     var count = venus_render_test_descriptor_layout(&descriptor, &expected);
     try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
     const set_layouts = [_]c.VkDescriptorSetLayout{@ptrFromInt(42)};
-    const ranges = [_]c.VkPushConstantRange{.{ .stageFlags = 32, .size = 128 }};
+    const ranges = [_]c.VkPushConstantRange{.{ .stageFlags = 32, .size = 256 }};
     var pipeline: c.VkPipelineLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &set_layouts, .pushConstantRangeCount = 1, .pPushConstantRanges = &ranges };
     writer = try create_pipeline_layout(&pipeline, &.{42}, 7, 43);
     count = venus_render_test_pipeline_layout(&pipeline, &expected);
@@ -654,7 +657,7 @@ test "layout scalar zero limits and independent push stages exercise both valida
     pipeline.pPushConstantRanges = &ranges;
     _ = try create_pipeline_layout(&pipeline, &.{}, 7, 43);
     pipeline.pushConstantRangeCount = 1;
-    for ([_]c.VkPushConstantRange{ .{ .stageFlags = 0, .size = 4 }, .{ .stageFlags = 1, .size = 0 }, .{ .stageFlags = 1, .offset = 1, .size = 4 }, .{ .stageFlags = 1, .offset = 0, .size = 1 }, .{ .stageFlags = 1, .offset = 128, .size = 4 }, .{ .stageFlags = 1, .offset = 124, .size = 8 } }) |range_value| {
+    for ([_]c.VkPushConstantRange{ .{ .stageFlags = 0, .size = 4 }, .{ .stageFlags = 1, .size = 0 }, .{ .stageFlags = 1, .offset = 1, .size = 4 }, .{ .stageFlags = 1, .offset = 0, .size = 1 }, .{ .stageFlags = 1, .offset = 256, .size = 4 }, .{ .stageFlags = 1, .offset = 252, .size = 8 } }) |range_value| {
         ranges[0] = range_value;
         try std.testing.expectError(error.Invalid, create_pipeline_layout(&pipeline, &.{}, 7, 43));
     }
@@ -738,10 +741,13 @@ test "compute pipeline packets match independent shader stage and array encoder"
     try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
     name[255] = 'x';
     try std.testing.expectError(error.Limit, create_compute_pipeline(&info, 7, 42, 43, 44));
-    const Valid = blk: { info.stage.pName = "main"; break :blk info; };
+    const Valid = blk: {
+        info.stage.pName = "main";
+        break :blk info;
+    };
     for (0..17) |index| {
         info = Valid;
-        var ids = [_]u64{7,42,43,44};
+        var ids = [_]u64{ 7, 42, 43, 44 };
         switch (index) {
             0...3 => ids[index] = 0,
             4 => info.sType = 0,
@@ -759,10 +765,19 @@ test "compute pipeline packets match independent shader stage and array encoder"
             16 => info.stage.pName = "",
             else => unreachable,
         }
-        try std.testing.expectError(error.Invalid, create_compute_pipeline(&info,ids[0],ids[1],ids[2],ids[3]));
+        try std.testing.expectError(error.Invalid, create_compute_pipeline(&info, ids[0], ids[1], ids[2], ids[3]));
     }
     info = Valid;
     const BadUtf8 = [_:0]u8{0xff};
     info.stage.pName = &BadUtf8;
-    try std.testing.expectError(error.Invalid, create_compute_pipeline(&info,7,42,43,44));
+    try std.testing.expectError(error.Invalid, create_compute_pipeline(&info, 7, 42, 43, 44));
+}
+
+test "pipeline layout final push word matches independent generated encoder" {
+    const ranges = [_]c.VkPushConstantRange{.{ .stageFlags = 32, .offset = 252, .size = 4 }};
+    const info: c.VkPipelineLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .pushConstantRangeCount = 1, .pPushConstantRanges = &ranges };
+    var expected: [MaxBytes]u8 = undefined;
+    const count = venus_render_test_pipeline_layout(&info, &expected);
+    const writer = try create_pipeline_layout(&info, &.{}, 7, 43);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
 }
