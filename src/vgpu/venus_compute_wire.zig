@@ -1,6 +1,9 @@
 //! Owned core command packets. Caller validates device capabilities, profiles and GPU lifetimes.
 const std = @import("std");
 const render_wire = @import("venus_render_wire.zig");
+/// Private push byte ceiling256 from the packet layer; caller checks actual host limits.
+/// Immutable scalar bound with no allocation or ownership, safe for concurrent readers.
+pub const MaxPushBytes = render_wire.MaxPushBytes;
 /// Owned 8192-byte packet, no allocation. Each writer is exclusively borrowed while encoding.
 pub const writer_t = render_wire.writer_t;
 /// Maximum descriptor sets per pipeline layout; no heap allocations.
@@ -45,12 +48,12 @@ pub fn bind_descriptor_sets(command_id: u64, layout_id: u64, bind_point: u32, fi
     return writer;
 }
 /// Encode push bytes. [in] nonzero translated command/layout IDs; values borrowed, never retained.
-/// [in] stage_flags positive core mask; offset and byte length four-aligned within core128 bytes.
+/// [in] stage_flags positive core mask; offset and byte length four-aligned within bounded256 bytes.
 /// Returns owned packet or Invalid/Limit; no allocation, locking or shared mutable state.
 /// Caller validates declared range coverage and compatibility with the eventual bound pipeline.
 pub fn push_constants(command_id: u64, layout_id: u64, stage_flags: u32, offset: u32, values: []const u8) !writer_t {
     if (command_id == 0 or layout_id == 0 or stage_flags == 0 or stage_flags & ~@as(u32, 0x3f) != 0 or offset % 4 != 0 or values.len == 0 or values.len % 4 != 0) return error.Invalid;
-    if (offset > 128 or values.len > 128 - offset) return error.Limit;
+    if (offset > MaxPushBytes or values.len > MaxPushBytes - offset) return error.Limit;
     var writer = writer_t{};
     writer.header(132, command_id) catch unreachable;
     append(&writer, u64, layout_id);
@@ -99,12 +102,15 @@ test "generated oracle command packets ordinary static and maximum" {
     }
     const static_size = venus_compute_test_bind_sets(0, 15, 1, &ids, 0, &offsets, &bytes);
     try compare(try bind_descriptor_sets(7, 43, 0, 15, ids[0..1], &.{}), bytes[0..static_size]);
-    var values: [128]u8 = undefined;
+    var values: [256]u8 = undefined;
     for (&values, 0..) |*value, index| value.* = @intCast(index);
-    for ([_]usize{ 4, 128 }) |count| {
+    for ([_]usize{ 4, 128, 256 }) |count| {
         const size = venus_compute_test_push(0x20, 0, count, &values, &bytes);
         try compare(try push_constants(7, 43, 0x20, 0, values[0..count]), bytes[0..size]);
     }
+    const final_count = venus_compute_test_push(0x20, 252, 4, &values, &bytes);
+    try compare(try push_constants(7, 43, 0x20, 252, values[0..4]), bytes[0..final_count]);
+    try std.testing.expectEqual(@as(usize, 300), (try push_constants(7, 43, 0x20, 0, &values)).used);
     for ([_][3]u32{ .{ 0, 0, 0 }, .{ 64, 1, 1 }, .{ 0xffffffff, 0xffffffff, 0xffffffff } }) |groups| {
         const size = venus_compute_test_dispatch(&groups, &bytes);
         try compare(try dispatch(7, groups), bytes[0..size]);
@@ -125,7 +131,7 @@ test "invalid identities enums counts and push ranges fail before encoding" {
     try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{}, &.{}));
     try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{}, offsets[0..1]));
     try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{0}, &.{}));
-    const values = [_]u8{0} ** 132;
+    const values = [_]u8{0} ** 260;
     try std.testing.expectError(error.Invalid, push_constants(0, 43, 1, 0, values[0..4]));
     try std.testing.expectError(error.Invalid, push_constants(7, 0, 1, 0, values[0..4]));
     try std.testing.expectError(error.Invalid, push_constants(7, 43, 0, 0, values[0..4]));
@@ -133,7 +139,17 @@ test "invalid identities enums counts and push ranges fail before encoding" {
     try std.testing.expectError(error.Invalid, push_constants(7, 43, 1, 1, values[0..4]));
     try std.testing.expectError(error.Invalid, push_constants(7, 43, 1, 0, values[0..0]));
     try std.testing.expectError(error.Invalid, push_constants(7, 43, 1, 0, values[0..3]));
-    try std.testing.expectError(error.Limit, push_constants(7, 43, 1, 132, values[0..4]));
+    try std.testing.expectError(error.Limit, push_constants(7, 43, 1, 260, values[0..4]));
     try std.testing.expectError(error.Limit, push_constants(7, 43, 1, 0, &values));
+    try std.testing.expectError(error.Limit, push_constants(7, 43, 1, 256, values[0..4]));
+    try std.testing.expectError(error.Limit, push_constants(7, 43, 1, 252, values[0..8]));
     try std.testing.expectError(error.Invalid, dispatch(0, .{ 1, 1, 1 }));
+}
+
+test "runtime descriptor and dispatch failures preserve scalar guard coverage" {
+    const ids = [_]u64{ 42, 0 };
+    try std.testing.expectError(error.Invalid, @call(.never_inline, bind_descriptor_sets, .{ 7, 43, 1, 0, ids[0..], &[_]u32{} }));
+    const many = [_]u32{0} ** 1025;
+    try std.testing.expectError(error.Limit, @call(.never_inline, bind_descriptor_sets, .{ 7, 43, 1, 0, ids[0..1], many[0..] }));
+    try std.testing.expectError(error.Invalid, @call(.never_inline, dispatch, .{ 0, [_]u32{ 1, 1, 1 } }));
 }

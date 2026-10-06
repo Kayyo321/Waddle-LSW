@@ -27,7 +27,7 @@ size_t venus_compute_test_bind_sets(uint32_t point,uint32_t first,size_t count,c
     return encoder.used;
 }
 /** @brief Encode push constants with borrowed canonical values; no retention.
- * @param[in] stages/offset Core stage mask and byte offset. @param[in] size/values Nonnull size<=128.
+ * @param[in] stages/offset Core stage mask and byte offset. @param[in] size/values Nonnull size<=256.
  * @param[out] bytes Exclusive8192 scratch. @return Initialized bytes, no allocation, sole test thread. */
 size_t venus_compute_test_push(uint32_t stages,uint32_t offset,size_t size,const unsigned char *values,unsigned char *bytes) {
     struct instance_encoder_t encoder = {.bytes=bytes,.capacity=8192};
