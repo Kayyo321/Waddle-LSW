@@ -273,12 +273,18 @@ test "private prefix, exact-once reply and 128 allocation-free state cycles" {
             &owner, &view, &length,
         }));
         fixture.status = c.RingAgain;
-        try std.testing.expectEqual(c.RingAgain, @call(.never_inline, venus_command_poll, .{&owner}));
+        try std.testing.expectEqual(
+            c.RingAgain,
+            @call(.never_inline, venus_command_poll, .{&owner}),
+        );
         try std.testing.expectEqual(@as(u32, c.RequestPoll), fixture.kind);
         fixture.status = 0;
         try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_poll, .{&owner}));
         try std.testing.expectEqual(@as(u32, c.CommandReady), owner.state);
-        try std.testing.expectEqual(c.RingInvalid, @call(.never_inline, venus_command_poll, .{&owner}));
+        try std.testing.expectEqual(
+            c.RingInvalid,
+            @call(.never_inline, venus_command_poll, .{&owner}),
+        );
         try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_take, .{
             &owner, &view, &length,
         }));
@@ -314,9 +320,12 @@ test "initialization bounds and every pairwise alias reject without changes" {
         .{ 0, 32 },  .{ 40, 32 }, .{ 45, 32 }, .{ MaxBytes + 4, 32 },
         .{ 128, 0 }, .{ 128, 3 }, .{ 128, 5 }, .{ 128, MaxBytes + 4 },
     };
-    for (extents) |extent| try std.testing.expectEqual(c.RingInvalid, @call(.never_inline, venus_command_init, .{
-        &owner, fixture_t.exchange, &fixture, &tx, extent[0], &rx, extent[1],
-    }));
+    for (extents) |extent| try std.testing.expectEqual(
+        c.RingInvalid,
+        @call(.never_inline, venus_command_init, .{
+            &owner, fixture_t.exchange, &fixture, &tx, extent[0], &rx, extent[1],
+        }),
+    );
     try std.testing.expectEqual(c.RingInvalid, @call(.never_inline, venus_command_init, .{
         &owner, null, &fixture, &tx, tx.len, &rx, rx.len,
     }));
@@ -423,7 +432,10 @@ test "submission retry, terminal statuses, zero fence and malformed reply shapes
             try std.testing.expectEqual(status, @call(.never_inline, venus_command_start, .{
                 &owner, &VersionCommand, 16,
             }));
-            try std.testing.expectEqual(status, @call(.never_inline, venus_command_poll, .{&owner}));
+            try std.testing.expectEqual(
+                status,
+                @call(.never_inline, venus_command_poll, .{&owner}),
+            );
             var view: ?*const anyopaque = null;
             var length: usize = 0;
             try std.testing.expectEqual(status, @call(.never_inline, venus_command_take, .{
@@ -484,13 +496,19 @@ test "reply retries retain accepted CPU fence and every reply failure is sticky"
             &owner, &VersionCommand, 16,
         }));
         fixture.status = status;
-        try std.testing.expectEqual(status, @call(.never_inline, venus_command_poll, .{&owner}));
+        try std.testing.expectEqual(
+            status,
+            @call(.never_inline, venus_command_poll, .{&owner}),
+        );
         try std.testing.expectEqual(@as(u32, c.RequestReply), fixture.kind);
         try std.testing.expectEqual(@as(u64, 1), owner.cpu_fence);
         if (status == c.RingAgain) {
             try std.testing.expectEqual(@as(u32, c.CommandSubmitted), owner.state);
             fixture.status = 0;
-            try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_poll, .{&owner}));
+            try std.testing.expectEqual(
+                c.RingOk,
+                @call(.never_inline, venus_command_poll, .{&owner}),
+            );
         } else try std.testing.expectEqual(@as(u32, c.CommandLost), owner.state);
     }
     fixture.status = 0;
@@ -504,6 +522,9 @@ test "reply retries retain accepted CPU fence and every reply failure is sticky"
             &owner, &VersionCommand, 16,
         }));
         fixture.corrupt = @intCast(corrupt);
-        try std.testing.expectEqual(c.RingCorrupt, @call(.never_inline, venus_command_poll, .{&owner}));
+        try std.testing.expectEqual(
+            c.RingCorrupt,
+            @call(.never_inline, venus_command_poll, .{&owner}),
+        );
     }
 }

@@ -1058,7 +1058,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     TODO #3 still35%, and unrequested OpenCL TODO #5 remains pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): own bounded serialized guest command replies`
+- **Commit `425bb0e`**: `feat(vgpu): own bounded serialized guest command replies`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Add documented allocation-free Zig command owner, exclusive
     submission/reply staging, pinned prefix, retained CPU fence and exact-once
@@ -1067,3 +1067,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     buffer overlap/overflow, callback statuses and malformed successful shapes.
     Native Linux C ABI, ASan/LSan/UBSan and Windows cross-link pass. Production
     lines100%, branches91.67%. Public Vulkan dispatch/DXVK remain pending.
+
+
+- **Commit (current; resolve by subject)**: `refactor(vgpu): keep command tests within the column limit`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Format six long test assertions with explicit trailing commas
+    so zig fmt preserves the100-column repository limit.
+  - **Verification**: All5 Zig command tests and line-length audit pass; behavior
+    and production code are unchanged.
