@@ -2189,7 +2189,7 @@ it does not cancel the underlying receiver, which its caller must abandon.
 
 ### Bounded core physical-device reply decoding (TODO #3)
 
-Core queries3(properties),5(memory properties) and6(features) use private completed
+Core queries6(properties),8(memory properties) and3(features) use private completed
 reply snapshots from the exclusive command owner. Each begins command(u32), nonnull
 output pointer tag(u64=1), then the pinned schema's fixed struct fields. Native C
 padding is never copied from wire. Scalars use little-endian4/8-byte words; floats
@@ -2226,3 +2226,17 @@ Protocol generation normalizes generated CRLF to LF on every platform before the
 byte-for-byte receiver comparison. Submodule source is never rewritten; native
 Windows CI checks out dependencies with core.autocrlf=false. Generation remains
 offline, and no schema/content difference is permitted by line-end normalization.
+
+
+Decoder implementation uses allocation-free Zig reflection only over pinned fixed
+native value types; variable/pointer output types are compile errors. An independent
+pinned renderer C encoder provides complete output structs, with static assertions
+for all three command IDs. Its test-only bounded writer replaces the upstream test
+writer; upstream decoder/handle helpers are compile-only and never invoked. Only
+unused-parameter diagnostics inside that immutable test header are suppressed.
+Four allocator-backed tests cover every truncated prefix, semantic mutations,
+multiple live memory types, overlap and address overflow. Native C ABI and sanitized
+fixtures pass; production coverage is100% lines and90% branches. Windows cross-link
+passes; native Windows execution is gated in CI. No public ICD/API credit is awarded
+for these helpers alone. The earlier design command numbering is corrected to the
+actual pinned enum; serializer tests assert this mapping rather than assuming it.

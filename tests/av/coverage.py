@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 mode=sys.argv[1]
-assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects')
+assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values')
 if mode == 'av_video':
     import gzip
     output=Path.cwd()/'build/coverage/av/video'
@@ -34,11 +34,12 @@ if mode == 'av_video':
         print(f'av_video production {kind} coverage: {percent:.2f}% ({covered}/{len(entries)})',flush=True)
         assert percent>=90
     sys.exit(0)
-source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects') else 'src/av/')+mode+'.zig'
-root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects') else 'av')/mode
+source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values') else 'src/av/')+mode+'.zig'
+root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values') else 'av')/mode
 if output.exists(): shutil.rmtree(output)
 output.mkdir(parents=True)
-subprocess.run(['zig','test',source,'-Iinclude','-lc','-O','ReleaseSafe','--test-no-exec',
+extra_args = ['-Isubmodules/venus_protocol/include', 'build/venus_values_oracle.o'] if mode == 'venus_values' else []
+subprocess.run(['zig','test',source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
  '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')],check=True)
 
 ir=(output/'test.ll').read_text()
@@ -122,7 +123,7 @@ instrumented.append('declare void @waddle_branch_hit(i32, i32)')
 (output/'branches.json').write_text(json.dumps(records,indent=2))
 assert records,'no source branches instrumented'
 subprocess.run(['clang-19','-Wno-override-module','-c',str(output/'instrumented.ll'),'-o',str(output/'test.o')],check=True)
-subprocess.run(['zig','cc',str(output/'test.o'),'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
+subprocess.run(['zig','cc',str(output/'test.o'),*(['build/venus_values_oracle.o'] if mode == 'venus_values' else []),'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
 env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output)
 subprocess.run([str(output/'runner')],env=env,check=True)
 hits=set()

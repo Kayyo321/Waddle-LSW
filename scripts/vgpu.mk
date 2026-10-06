@@ -666,3 +666,36 @@ build/vgpu_objects_test.exe: tests/vgpu/objects.c build/venus_objects_windows.li
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< build/venus_objects_windows.lib -o $@
 
 vgpu-windows: build/vgpu_objects_test.exe
+
+# Fixed Vulkan replies use the immutable schema and an independent C encoder oracle.
+VgpuValuesIncludes = -Iinclude -Isubmodules/venus_protocol/include
+VgpuValuesOracleIncludes = -Itests/vgpu/encoder -Ibuild/venus_renderer_protocol $(VgpuValuesIncludes) -Isubmodules/venus_protocol/include/vulkan
+VgpuValuesHeaders = include/waddle/venus_values.h tests/vgpu/encoder/vkr_cs.h
+build/venus_values.o: src/vgpu/venus_values.zig $(VgpuValuesHeaders) | build
+	$(ZIG) build-obj $< $(VgpuValuesIncludes) -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/venus_values_oracle.o: tests/vgpu/values.c $(VgpuValuesHeaders) | build vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuValuesOracleIncludes) -DVgpuValuesOracle -c $< -o $@
+
+build/vgpu_values_test: tests/vgpu/values.c build/venus_values.o build/venus_values_oracle.o
+	$(CC) $(CFLAGS) $(VgpuValuesOracleIncludes) $< build/venus_values.o -o $@
+
+.PHONY: vgpu-values-test vgpu-values-sanitizers vgpu-values-coverage
+vgpu-values-test: build/vgpu_values_test
+	./build/vgpu_values_test
+	$(ZIG) test src/vgpu/venus_values.zig $(VgpuValuesIncludes) -lc build/venus_values_oracle.o
+
+vgpu-values-sanitizers: build/venus_values.o build/venus_values_oracle.o
+	$(CC) $(VgpuReceiverSanitizers) $(VgpuValuesOracleIncludes) tests/vgpu/values.c build/venus_values.o -o build/vgpu_values_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_values_sanitized
+
+vgpu-values-coverage: build/venus_values_oracle.o
+	python3 tests/av/coverage.py venus_values
+
+build/venus_values_windows.lib: src/vgpu/venus_values.zig $(VgpuValuesHeaders) | build
+	$(ZIG) build-lib $< $(VgpuValuesIncludes) -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_values_test.exe: tests/vgpu/values.c build/venus_values_windows.lib | vgpu-protocol
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuValuesOracleIncludes) $< build/venus_values_windows.lib -o $@
+
+vgpu-windows: build/vgpu_values_test.exe

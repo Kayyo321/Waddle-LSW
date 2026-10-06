@@ -1136,9 +1136,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     encodings; public ICD instance/device dispatch and DXVK remain independent gates.
 
 
-- **Commit (current; resolve by subject)**: `chore(vgpu): canonicalize generated protocol line endings`
+- **Commit `d4c7059`**: `chore(vgpu): canonicalize generated protocol line endings`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Normalize generated headers to LF before immutable receiver
     comparison so Windows text-mode output retains the exact pinned schema.
   - **Verification**: Offline generation matches all39 receiver headers and37
     guest headers. Pinned source files are unchanged; no runtime progress credited.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): decode bounded native Vulkan query values`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Add allocation-free Zig native property/feature/memory conversion
+    with exact tags, bounded reads, semantic checks and preserved failure output.
+    Compare independent pinned C encoder output and gate Linux/Windows ABI tests.
+    Correct design IDs to pinned properties6/features3/memory8.
+  - **Verification**: Four allocator tests, native C, ASan/LSan/UBSan and Windows
+    cross-link pass; production lines100%, branches90%. Public ICD/API dispatch
+    and DXVK remain unfinished; no completion credit from decoder helpers alone.
