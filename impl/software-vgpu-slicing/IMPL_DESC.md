@@ -3462,3 +3462,50 @@ exchange callbacks; an atomic issue marker synchronizes thread readiness. This
 is a mutex/concurrency regression, separate from the existing actual production
 worker GPU proofs. Run native fixture, Zig coverage, sanitizers, Windows ABI CI
 and real static/shared-loader worker lifecycle checks.
+
+### Actual device-memory copy mapping transport (TODO #3)
+
+The pinned receiver installs NULL dispatch for Vulkan Map/Unmap/Flush/Invalidate.
+Commands23..26 must never be sent. Blob zero is independent CPU SHM and cannot
+back a Vulkan allocation. Mapping instead exports the actual nonzero memory
+identity once using ResourceMap, then copies through bounded RequestRead/Write.
+Public resource_map owns the native map; receiver resource_free or receiver
+destruction unmaps exactly once before unref. CPU blobs retain exact-extent
+validation; device mappings may expose a larger page-rounded extent, but copying
+is bounded exclusively by the declared resource size, never the native padding.
+Missing ResourceMap rejects reads/writes before any native mapping. GPU work must
+be retired and externally synchronized by the Vulkan caller before host access.
+Only actual HOST_VISIBLE|HOST_COHERENT host types support this copy path: host
+noncoherent cache maintenance cannot be implemented by unsupported commands.
+The guest advertises supported visible types with HOST_COHERENT removed, requiring
+explicit guest flush/invalidate; unsupported visible types lose HOST_VISIBLE.
+
+The ICD owns at most64 exported resources IDs2..65. Export remains attached until
+FreeMemory, across unmap/remap. Map shadow storage is allocation-owned, bounded
+to16MiB and freed deterministically on unmap/free/retired-backend abandonment.
+Serializers allocate no storage. Map validates the whole request before export,
+reads bounded4096-byte chunks and publishes a guest pointer only after success.
+Flush writes and invalidate reads validated mapped ranges in bounded chunks.
+Unmap does not implicitly flush noncoherent memory. Free retires the resource
+before native memory; uncertain transport ownership survives until abandonment.
+Native tests must exercise remapping, wrong types/ranges, failure cleanup and
+resource exhaustion. A production worker must verify GPU fill/readback and guest
+write/flush/GPU consumption before any mapping completion credit.
+
+### Independent image wire codecs (TODO #3)
+
+A pure Zig module owns bounded8192-byte writer storage, checked little-endian
+encoding, and no global state, allocation, locks or retained caller pointers.
+Image creation encodes command54 using translated device/image IDs and canonical
+core create info: null pNext, zero flags, type0..2, nonzero extents/mip/layer/usage,
+core tiling0..1, one-bit samples1..64 and UNDEFINED/PREINITIALIZED initial layout.
+Exclusive sharing ignores the family pointer and serializes zero arrays.
+Concurrent sharing requires2..16 distinct families; ICD validates device families.
+View creation validates core view type0..6, component swizzles0..6 and nonzero
+aspect/level/layer ranges. Barrier encoding translates image identity and rejects
+unsupported chains/access masks/layouts or empty subresource ranges. Partial
+writers on error are discarded before transport. The ICD owns all live handles
+and tracks image/view/memory references in the existing retirement bitsets.
+Independent generated C encoders verify image, view and barrier bytes; tests
+cover malformed values, duplicate families, counts and writer exhaustion.
+Codecs alone earn no runtime or DXVK completion credit.
