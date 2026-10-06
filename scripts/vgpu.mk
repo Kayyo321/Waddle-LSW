@@ -880,3 +880,18 @@ vgpu-render-wire-coverage: build/venus_render_wire_oracle.o
 
 vgpu-icd-test: vgpu-render-wire-test
 vgpu-icd-coverage: vgpu-render-wire-coverage
+
+# One-shot libc allocation failure is exercised outside Zig's testing allocator.
+build/vgpu_icd_mapping_fault_test: tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -DVgpuMappingAllocationFaults $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -Wl,--wrap=posix_memalign -o $@
+
+.PHONY: vgpu-icd-mapping-fault-test vgpu-icd-mapping-fault-sanitizers
+vgpu-icd-mapping-fault-test: build/vgpu_icd_mapping_fault_test
+	./build/vgpu_icd_mapping_fault_test
+
+vgpu-icd-mapping-fault-sanitizers: $(VgpuIcdObjects) build/venus_values_oracle.o
+	$(CC) $(VgpuReceiverSanitizers) $(VgpuInstanceOracleIncludes) -DVgpuMappingAllocationFaults tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -Wl,--wrap=posix_memalign -o build/vgpu_icd_mapping_fault_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_icd_mapping_fault_sanitized
+
+vgpu-icd-test: vgpu-icd-mapping-fault-test
+vgpu-icd-sanitizers: vgpu-icd-mapping-fault-sanitizers
