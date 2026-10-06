@@ -202,6 +202,7 @@ device-stress: build/waddle
 
 include scripts/av.mk
 
+include scripts/mesa_cpu_cache.mk
 include scripts/vgpu.mk
 include scripts/vgpu_dxvk.mk
 include scripts/vgpu_workloads.mk
