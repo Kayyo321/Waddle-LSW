@@ -21,6 +21,18 @@ const device_cache_t = struct {
     queues: [64]u64 = [_]u64{0} ** 64,
     rings: [64]u32 = [_]u32{0} ** 64,
 };
+const resource_state_t = struct {
+    id: u64 = 0,
+    allocation_size: u64 = 0,
+    type_index: u32 = 0,
+    bound_memory: u64 = 0,
+    requirements: c.VkMemoryRequirements = std.mem.zeroes(c.VkMemoryRequirements),
+};
+var resource_states = [_]resource_state_t{.{}} ** 512;
+fn resource_state(record: [*c]const c.venus_object_t) *resource_state_t {
+    for (slots, 0..) |slot, index| if (slot.id == record.*.id) return &resource_states[index];
+    unreachable;
+}
 const QueueTimelineTag: u32 = 1000384005;
 var ring_slots = [_]bool{false} ** 64;
 var device_caches = [_]device_cache_t{.{}} ** 16;
@@ -49,6 +61,7 @@ fn clear() void {
     device_caches = [_]device_cache_t{.{}} ** 16;
     ring_slots = [_]bool{false} ** 64;
     gpu_fences = [_]u64{0} ** 64;
+    resource_states = [_]resource_state_t{.{}} ** 512;
     lost = c.RingOk;
 }
 /// Borrow one exclusive negotiated backend; public header defines ownership/deadlines/threads.
@@ -1051,6 +1064,7 @@ fn create_buffer(
         _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_BUFFER, 0);
         return result;
     }
+    resource_state(record).* = .{ .id = record.*.id };
     output.* = @ptrFromInt(record.*.handle);
     return c.VK_SUCCESS;
 }
@@ -1089,6 +1103,7 @@ fn destroy_buffer(
         _ = failure(c.RingCorrupt);
         return;
     }
+    resource_state(record).* = .{};
     std.debug.assert(
         c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_BUFFER, 0) == c.RingOk,
     );
@@ -1113,23 +1128,190 @@ fn buffer_requirements(
         c.VK_OBJECT_TYPE_BUFFER,
         parent.id,
     ) orelse return;
+    const value = query_buffer_requirements(parent.id, record.id) orelse return;
+    resource_state(record).requirements = value;
+    output.* = value;
+}
+fn query_buffer_requirements(device_id: u64, buffer_id: u64) ?c.VkMemoryRequirements {
     var writer = writer_t{};
-    writer.header(30, parent.id);
-    writer.put(u64, record.id);
+    writer.header(30, device_id);
+    writer.put(u64, buffer_id);
     writer.put(u64, 1);
-    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    const reply = transact(writer.bytes[0..writer.used]) orelse return null;
     var reader = reader_t{ .bytes = reply };
     const value = fixed_value(c.VkMemoryRequirements, &reader, 30) catch {
         _ = failure(c.RingCorrupt);
-        return;
+        return null;
     };
     if (value.size == 0 or value.alignment == 0 or
         value.alignment & (value.alignment - 1) != 0 or value.memoryTypeBits == 0)
     {
         _ = failure(c.RingCorrupt);
+        return null;
+    }
+    return value;
+}
+/// Allocate private device memory with exact host identity validation.
+/// @param[in] device Nonnull private live parent, borrowed for call.
+/// @param[in] info Nonnull canonical allocation info, borrowed; no pNext supported.
+/// @param[in] allocator Nullable unused callbacks, no pointer retained.
+/// @param[out] output Nonnull borrowed token storage; NULL on failure.
+/// @return Host result, local initialization/exhaustion or sticky device loss.
+/// @note Mutex serialized, no local allocation; owns host memory until validated free.
+fn allocate_memory(
+    device: c.VkDevice,
+    info: [*c]const c.VkMemoryAllocateInfo,
+    allocator: [*c]const c.VkAllocationCallbacks,
+    output: [*c]c.VkDeviceMemory,
+) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or
+        info.*.sType != c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO or info.*.pNext != null or
+        info.*.allocationSize == 0 or info.*.memoryTypeIndex >= 32) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_DEVICE_MEMORY,
+        parent.id,
+        0,
+        &record,
+    ) != c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var writer = writer_t{};
+    writer.header(21, parent.id);
+    writer.put(u64, 1);
+    writer.put(u32, c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+    writer.put(u64, 0);
+    writer.put(u64, info.*.allocationSize);
+    writer.put(u32, info.*.memoryTypeIndex);
+    writer.put(u64, 0);
+    writer.put(u64, 1);
+    writer.put(u64, record.*.id);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = identity_reply(reply, 21, record.*.id, true) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0) return failure(c.RingCorrupt);
+    if (result != c.VK_SUCCESS) {
+        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE_MEMORY, 0);
+        return result;
+    }
+    resource_state(record).* = .{
+        .id = record.*.id,
+        .allocation_size = info.*.allocationSize,
+        .type_index = info.*.memoryTypeIndex,
+    };
+    output.* = @ptrFromInt(record.*.handle);
+    return c.VK_SUCCESS;
+}
+/// Free memory after all private bound buffers and GPU uses are retired.
+/// @param[in] device Nullable private parent, borrowed; invalid handle ignored.
+/// @param[in] memory_handle Nullable private token; consumed only after exact host free.
+/// @param[in] allocator Nullable unused callbacks; no pointer retained.
+/// @note Mutex serialized, allocation-free. Loss retains ownership until abandonment.
+fn free_memory(
+    device: c.VkDevice,
+    memory_handle: c.VkDeviceMemory,
+    allocator: [*c]const c.VkAllocationCallbacks,
+) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or memory_handle == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(
+        @intFromPtr(memory_handle.?),
+        c.VK_OBJECT_TYPE_DEVICE_MEMORY,
+        parent.id,
+    ) orelse return;
+    for (resource_states) |state| if (state.bound_memory == record.handle) return;
+    var writer = writer_t{};
+    writer.header(22, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 22) {
+        _ = failure(c.RingCorrupt);
         return;
     }
-    output.* = value;
+    resource_state(record).* = .{};
+    std.debug.assert(
+        c.venus_objects_release(
+            &objects,
+            record.handle,
+            c.VK_OBJECT_TYPE_DEVICE_MEMORY,
+            0,
+        ) == c.RingOk,
+    );
+}
+/// Bind a buffer to memory_handle using actual host requirements and overflow-safe bounds.
+/// @param[in] device Nonnull private parent, borrowed for call.
+/// @param[in] buffer Nonnull private unbound buffer of this device.
+/// @param[in] memory_handle Nonnull private allocation of this device, retained by buffer.
+/// @param[in] offset Byte offset aligned to requirements, within allocation extent.
+/// @return Host result, local initialization error or sticky device loss.
+/// @note Mutex serialized, allocation-free; publishes relationship only after success.
+fn bind_buffer_memory(
+    device: c.VkDevice,
+    buffer: c.VkBuffer,
+    memory_handle: c.VkDeviceMemory,
+    offset: u64,
+) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (device == null or buffer == null or memory_handle == null)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const buffer_record = child_object(
+        @intFromPtr(buffer.?),
+        c.VK_OBJECT_TYPE_BUFFER,
+        parent.id,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const memory_record = child_object(
+        @intFromPtr(memory_handle.?),
+        c.VK_OBJECT_TYPE_DEVICE_MEMORY,
+        parent.id,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const buffer_state = resource_state(buffer_record);
+    const memory_state = resource_state(memory_record);
+    if (buffer_state.bound_memory != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (buffer_state.requirements.size == 0) {
+        const value = query_buffer_requirements(parent.id, buffer_record.id) orelse
+            return c.VK_ERROR_DEVICE_LOST;
+        buffer_state.requirements = value;
+    }
+    const requirements = buffer_state.requirements;
+    if (requirements.memoryTypeBits & (@as(u32, 1) << @as(
+        u5,
+        @intCast(memory_state.type_index),
+    )) == 0 or offset % requirements.alignment != 0 or
+        offset > memory_state.allocation_size or
+        requirements.size > memory_state.allocation_size - offset) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = writer_t{};
+    writer.header(28, parent.id);
+    writer.put(u64, buffer_record.id);
+    writer.put(u64, memory_record.id);
+    writer.put(u64, offset);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = result_reply(reply, 28, 0);
+    if (result == c.VK_SUCCESS) buffer_state.bound_memory = memory_record.handle;
+    return result;
 }
 fn encode_fences(command_id: u32, device: c.VkDevice, fences: []const c.VkFence) ?writer_t {
     if (device == null or fences.len == 0 or fences.len > 64) return null;
@@ -1310,6 +1492,9 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkQueueWaitIdle", &queue_wait_idle },
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateBuffer", &create_buffer },
+        .{ "vkAllocateMemory", &allocate_memory },
+        .{ "vkFreeMemory", &free_memory },
+        .{ "vkBindBufferMemory", &bind_buffer_memory },
         .{ "vkDestroyBuffer", &destroy_buffer },
         .{ "vkGetBufferMemoryRequirements", &buffer_requirements },
         .{ "vkDestroyFence", &destroy_fence },

@@ -1453,8 +1453,25 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     eight device/queue/fence cycles and strict Windows cross-link pass. Full latest
     branch CI remains required independently of this dependency acceptance.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify device memory allocation and buffer binding`
+- **Commit `70b62cd`**: `docs(vgpu): specify device memory allocation and buffer binding`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify private memory ownership, per-slot generation metadata,
     exact allocation/free/bind wire, actual cached requirements and overflow-safe
     range validation, relationship teardown and independent/real-worker gates.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): allocate private memory and bind core buffers`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; mapping/commands/DXVK pending).
+  - **Summary**: Add exact device-parented memory allocation/free, fixed per-slot
+    generation metadata, cached actual buffer requirements, type/alignment/range
+    checks using subtraction, and relationship publication only after host success.
+    Retire bound relationships after validated buffer destruction; refuse premature
+    memory free and device destruction while children remain.
+  - **Verification**: Pinned independent encoders compare commands21/22/28;
+    native allocation rollback, unsupported tags/type bounds, offset overflow,
+    type mismatch, wrong parents, rebinding,505-allocation exhaustion, cached query
+    failure and every command's malformed/transport result path pass. ASan/LSan/
+    UBSan reports zero leaks; production coverage99.58% lines/93.83% branches.
+    Actual two-session worker allocation/binding/GPU idle/destruction passes normal
+    and sanitizers; pinned Linux loader and sanitized loader execute the same public
+    API with their independent oracle backend. Native Windows fixture/DLL cross-link
+    succeeds. Updated-head native CI remains required; TODO #3 remains40%.

@@ -235,7 +235,20 @@ static int icd_cycles(venus_guest_t *guest) {
         VkMemoryRequirements buffer_memory = {0};
         requirements(device, buffer, &buffer_memory);
         if (buffer_memory.size < 4096 || !buffer_memory.alignment || !buffer_memory.memoryTypeBits) goto fail;
+        PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)device_proc(device, "vkAllocateMemory");
+        PFN_vkFreeMemory release = (PFN_vkFreeMemory)device_proc(device, "vkFreeMemory");
+        PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)device_proc(device, "vkBindBufferMemory");
+        if (!allocate || !release || !bind) goto fail;
+        uint32_t memory_type = 0;
+        while (!(buffer_memory.memoryTypeBits & (1u << memory_type))) memory_type++;
+        VkMemoryAllocateInfo allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = buffer_memory.size, .memoryTypeIndex = memory_type};
+        VkDeviceMemory buffer_allocation = NULL;
+        if (allocate(device, &allocation, NULL, &buffer_allocation) != VK_SUCCESS ||
+            !buffer_allocation || bind(device, buffer, buffer_allocation, 0) != VK_SUCCESS ||
+            device_idle(device) != VK_SUCCESS) goto fail;
         destroy_buffer(device, buffer, NULL);
+        release(device, buffer_allocation, NULL);
 
         destroy_device(device, NULL);
         if (device_proc(device, "vkDestroyDevice"))
