@@ -2066,3 +2066,12 @@ This component does not change timeline GPU synchronization or advertise ICD/DXV
 completion. Unit tests must cover every state/error, aliases, bounds, zero fence,
 wrong reply identity, all callback statuses and repeated start/poll/take churn, with
 Zig allocator zero leaks and native Linux/Windows ABI fixtures.
+
+
+TODO #4 final runtime acceptance is now verified. Linux and native Windows jobs at
+59d31bd succeeded (GitHub Actions run37477413111), including remote hardware binary
+compilation, native wire/ABI tests, ownership safety and coverage gates. Local real
+RTX5080 normal/sanitized mapped guest runs verified48 frames over3 fresh contexts
+per run, exact releases/rejections and FD baselines. This completes the specified
+standalone export/presentation scope; physical VM/compositor acceptance remains
+explicitly downstream. TODO #3 ICD/DXVK is not credited by this acceptance.

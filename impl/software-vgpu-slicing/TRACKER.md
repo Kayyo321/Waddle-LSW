@@ -14,12 +14,12 @@
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 35% | Guest frontend and bounded userland adapter/DLL native CI pass; full Vulkan ICD and DXVK pending |
-| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 95% | Export, metadata, presenter and credential-bound FD channel verified; worker export service and guest release acknowledgement routing pending; hardware image/native Wayland mock verified |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 
-**Total Feature Completion**: `63.0%`
+**Total Feature Completion**: `63.75%`
 
 ## Commit History & Progress Log
 
@@ -1038,9 +1038,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and native ABI gates remain pending before final TODO #4 acceptance credit.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify serialized guest command reply ownership`
+- **Commit `b9dc18e`**: `docs(vgpu): specify serialized guest command reply ownership`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify allocation-free exclusive command/reply staging, fixed
     pinned reply-stream prefix, CPU completion state and bounded reply identity.
   - **Verification**: Cross-checked pinned SetReplyCommandStreamMESA encoding and
     production Submit/Poll/Reply semantics. No loader or DXVK credit assigned.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): accept verified production presentation milestone`
+  - **Task Impact**: +5% to TODO: #4 (+0.75% overall); TODO #4 now100%.
+  - **Summary**: Accept final guest/production-worker/native Wayland release gate
+    after mapped hardware and sanitized fresh-context runtime verification.
+  - **Verification**: Linux and native Windows CI at59d31bd both passed, run
+    37477413111. Hardware normal/sanitized runs each verified48 frames over3 fresh
+    contexts with45 releases/3 import rejections and descriptor baselines. Existing
+    protocol/memory ownership coverage gates remain above90%; no pixel copying.
+    Physical compositor/VM acceptance remains downstream; standalone ICD/DXVK
+    TODO #3 still35%, and unrequested OpenCL TODO #5 remains pending.
