@@ -18,7 +18,8 @@ fn finish(writer: *writer_t, output_id: u64) void {
 }
 /// Encode a core single-color render pass. [in] info/arrays borrowed accessible for this call.
 /// [in] device_id/pass_id nonzero translated host identities; no native handle is retained.
-/// Returns owned packet or Invalid before publication; no allocation or shared mutable state.
+/// Returns owned packet or Invalid before publication; LOAD requires a defined initial layout.
+/// No allocation or shared mutable state.
 /// Caller validates host format support and maintains compatible image/command lifetimes.
 pub fn create_render_pass(info: *const c.VkRenderPassCreateInfo, device_id: u64, pass_id: u64) !writer_t {
     if (device_id == 0 or pass_id == 0 or info.sType != c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO or
@@ -28,6 +29,7 @@ pub fn create_render_pass(info: *const c.VkRenderPassCreateInfo, device_id: u64,
     const attachment = info.pAttachments[0];
     if (attachment.flags != 0 or (attachment.format != c.VK_FORMAT_R8G8B8A8_UNORM and attachment.format != c.VK_FORMAT_B8G8R8A8_UNORM) or
         attachment.samples != c.VK_SAMPLE_COUNT_1_BIT or attachment.loadOp > 2 or attachment.storeOp > 1 or
+        (attachment.loadOp == c.VK_ATTACHMENT_LOAD_OP_LOAD and attachment.initialLayout == c.VK_IMAGE_LAYOUT_UNDEFINED) or
         attachment.stencilLoadOp > 2 or attachment.stencilStoreOp > 1 or
         (attachment.initialLayout != 0 and attachment.initialLayout != 1 and attachment.initialLayout != 2) or
         (attachment.finalLayout != 1 and attachment.finalLayout != 2 and attachment.finalLayout != 5)) return error.Invalid;
@@ -307,6 +309,33 @@ test "render pass begin clear union bytes and area bounds match pinned oracle" {
             info = initial;
             @field(info.renderArea.extent, field) = value;
             try std.testing.expectError(error.Invalid, begin_render_pass(&info, 8, 42, 44, 0));
+        }
+    }
+}
+
+test "color LOAD rejects undefined initial contents while clear and defined LOAD match oracle" {
+    var attachment = attachment_fixture();
+    var reference: c.VkAttachmentReference = .{ .attachment = 0, .layout = 2 };
+    var subpass: c.VkSubpassDescription = .{ .colorAttachmentCount = 1, .pColorAttachments = &reference };
+    const info: c.VkRenderPassCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO, .attachmentCount = 1, .pAttachments = &attachment, .subpassCount = 1, .pSubpasses = &subpass };
+    var expected: [8192]u8 = undefined;
+    for ([_]c.VkFormat{ c.VK_FORMAT_R8G8B8A8_UNORM, c.VK_FORMAT_B8G8R8A8_UNORM }) |format| {
+        attachment.format = format;
+        attachment.loadOp = c.VK_ATTACHMENT_LOAD_OP_LOAD;
+        attachment.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+        try std.testing.expectError(error.Invalid, create_render_pass(&info, 7, 42));
+        for ([_]c.VkImageLayout{ c.VK_IMAGE_LAYOUT_GENERAL, c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL }) |layout| {
+            attachment.initialLayout = layout;
+            const writer = try create_render_pass(&info, 7, 42);
+            const size = venus_graphics_test_pass(&info, &expected);
+            try std.testing.expectEqualSlices(u8, expected[0..size], writer.bytes[0..writer.used]);
+        }
+        attachment.initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+        for ([_]c.VkAttachmentLoadOp{ c.VK_ATTACHMENT_LOAD_OP_CLEAR, c.VK_ATTACHMENT_LOAD_OP_DONT_CARE }) |load_op| {
+            attachment.loadOp = load_op;
+            const writer = try create_render_pass(&info, 7, 42);
+            const size = venus_graphics_test_pass(&info, &expected);
+            try std.testing.expectEqualSlices(u8, expected[0..size], writer.bytes[0..writer.used]);
         }
     }
 }
