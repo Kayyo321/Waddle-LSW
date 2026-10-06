@@ -76,6 +76,21 @@ size_t venus_values_test_encode(uint32_t kind, void *bytes, size_t capacity) {
     }
     return encoder.used;
 }
+/** @brief Encode an exact caller-provided core physical properties reply independently.
+ * @param[in] properties Nonnull borrowed native value; no input pointers retained.
+ * @param[out] bytes Nonnull exclusive writable bytes[capacity], initialized prefix on success.
+ * @param[in] capacity Actual accessible extent, at least4096; otherwise zero result.
+ * @return Encoded reply byte extent, zero for invalid local arguments.
+ * @note Test-only renderer oracle, allocation-free, thread-safe on disjoint output storage.
+ */
+size_t venus_values_test_properties(const VkPhysicalDeviceProperties *properties, void *bytes, size_t capacity) {
+    if (!properties || !bytes || capacity < 4096) return 0;
+    struct fixture_encoder_t encoder = {.bytes = bytes, .capacity = capacity};
+    const uint32_t kind = 6; const uint64_t pointer_tag = 1;
+    vn_encode_uint32_t(&encoder, &kind); vn_encode_uint64_t(&encoder, &pointer_tag);
+    vn_encode_VkPhysicalDeviceProperties(&encoder, properties);
+    return encoder.used;
+}
 #ifndef VgpuValuesOracle
 int main(void) {
     unsigned char bytes[4096];
@@ -99,6 +114,22 @@ int main(void) {
         assert(venus_values_features_decode(&features, bytes, prefix) == RingCorrupt);
         assert(!memcmp(&features, &before, sizeof(features)));
     }
+    VkPhysicalDeviceProperties native = {.apiVersion = VK_API_VERSION_1_0};
+    native.limits.minUniformBufferOffsetAlignment = 16;
+    native.limits.minStorageBufferOffsetAlignment = 32;
+    native.limits.maxUniformBufferRange = 256;
+    native.limits.maxStorageBufferRange = 4096;
+    native.limits.maxComputeWorkGroupCount[0] = 8;
+    native.limits.maxComputeWorkGroupCount[1] = 9;
+    native.limits.maxComputeWorkGroupCount[2] = 10;
+    count = venus_values_test_properties(&native, bytes, sizeof(bytes));
+    assert(count && venus_values_properties_decode(&properties, bytes, count) == RingOk);
+    assert(properties.limits.minUniformBufferOffsetAlignment == 16 && properties.limits.minStorageBufferOffsetAlignment == 32);
+    assert(properties.limits.maxUniformBufferRange == 256 && properties.limits.maxStorageBufferRange == 4096);
+    assert(properties.limits.maxComputeWorkGroupCount[0] == 8 && properties.limits.maxComputeWorkGroupCount[2] == 10);
+    assert(!venus_values_test_properties(NULL, bytes, sizeof(bytes)));
+    assert(!venus_values_test_properties(&native, NULL, sizeof(bytes)));
+    assert(!venus_values_test_properties(&native, bytes, sizeof(bytes) - 1));
     return 0;
 }
 #endif
