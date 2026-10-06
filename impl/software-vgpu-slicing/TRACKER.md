@@ -494,9 +494,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Separate application artwork update; no vGPU task credit.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify real Venus queue acceptance`
+- **Commit `c1d9c07`**: `docs(vgpu): specify real Venus queue acceptance`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Specify bounded Zig fixture serialization/parsing, physical
     device selection, queue timeline association, CPU/GPU ordering, ownership
     and software CI evidence. Split bootstrap (2%) from verified workload (6%)
     without treating empty submissions as GPU workload execution.
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): preserve libc lookup across Zig objects`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Compile Linux C-linked Zig objects with libc so a freestanding
+    weak getauxval implementation cannot override system startup/driver lookups.
+    Add regression checks for both runtime and receiver link sets and CI gates.
+  - **Verification**: Original object reproduces null auxiliary-vector lookup;
+    corrected objects pass regression and ASan/LSan/UBSan tests. Existing transport,
+    receiver, request, runtime, service and mapped/exec suites plus sanitizers pass.

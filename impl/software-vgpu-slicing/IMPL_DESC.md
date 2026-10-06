@@ -984,3 +984,10 @@ performance evidence. Run both normal and owned-C ASan/LSan/UBSan fixtures, plus
 Zig allocator/serialization failure tests. Hardware credit requires explicit
 local hardware success in addition to green CI; the later workload gate remains
 pending until output is read and checked after actual queue completion.
+
+All Linux Zig objects linked into libc C processes compile with `-lc`. Do not
+link freestanding weak auxiliary-vector implementations into these processes:
+they interpose system getauxval and invalidate program-header/page metadata.
+Regression fixtures link each distinct runtime/receiver object set and require
+nonzero AT_PHDR/AT_PHNUM plus AT_PAGESZ matching sysconf. Windows target objects
+retain their existing ABI/compiler options.

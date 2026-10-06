@@ -2,7 +2,7 @@
 .PHONY: vgpu-test vgpu-sanitizers
 
 build/venus_bounds.o: src/vgpu/venus_bounds.zig | build
-	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
 build/vgpu_ring_test: tests/vgpu/ring.c src/vgpu/venus_ring.c src/vgpu/venus_bounds.h include/waddle/venus_ring.h build/venus_bounds.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/ring.c src/vgpu/venus_ring.c build/venus_bounds.o $(LDFLAGS) -o $@
@@ -98,7 +98,7 @@ vgpu-windows: build/vgpu_wait_test.exe
 
 # Bounded lifecycle codec is independent of the ring metadata codec.
 build/venus_control.o: src/vgpu/venus_control.zig | build
-	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
 build/vgpu_session_test: tests/vgpu/session.c src/vgpu/venus_session.c include/waddle/venus_session.h src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control.o build/venus_bounds.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/session.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control.o build/venus_bounds.o $(LDFLAGS) -o $@
@@ -117,7 +117,7 @@ VgpuReceiverLibraries = -L$(VgpuRendererBuildDirectory)/src -Wl,-rpath,'$$ORIGIN
 VgpuReceiverSanitizers = -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer
 
 build/venus_receiver_bounds.o: src/vgpu/venus_receiver_bounds.zig | build
-	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
 build/vgpu_receiver_owner_test: tests/vgpu/receiver_owner.c src/vgpu/venus_receiver.c src/vgpu/venus_receiver_bounds.h include/waddle/venus_receiver.h build/venus_receiver_bounds.o | $(VgpuRendererBuildDirectory)/build.ninja
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/receiver_owner.c build/venus_receiver_bounds.o $(LDFLAGS) -pthread -o $@
@@ -170,7 +170,7 @@ vgpu-integration-sanitizers: build/vgpu_service_fixture_sanitized build/waddle_v
 # Request codec reuses and includes the exported Zig resource-bound helpers.
 # Link this object alone (not also venus_receiver_bounds.o) in dispatch binaries.
 build/venus_request.o: src/vgpu/venus_request.zig src/vgpu/venus_receiver_bounds.zig | build
-	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
 build/vgpu_request_test: tests/vgpu/request.c include/waddle/venus_request.h build/venus_request.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/vgpu/request.c build/venus_request.o $(LDFLAGS) -o $@
@@ -269,3 +269,22 @@ build/waddle_vgpu_worker_sanitized: src/vgpu/worker_main.c $(VgpuServiceSources)
 	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) $(VgpuReceiverIncludes) src/vgpu/worker_main.c $(VgpuServiceSources) $(VgpuServiceObjects) $(VgpuReceiverLibraries) -o $@
 
 build/waddle_vgpu_worker_sanitized: include/waddle/venus_service.h include/waddle/venus_worker.h include/waddle/venus_receiver.h include/waddle/venus_request.h include/waddle/venus_rpc.h include/waddle/venus_dispatch.h include/waddle/venus_channel.h include/waddle/venus_session.h include/waddle/venus_region.h include/waddle/venus_ring.h src/vgpu/venus_rpc_internal.h src/vgpu/venus_receiver_bounds.h src/vgpu/venus_stream.h
+
+# Linux C ABI objects use libc; freestanding weak getauxval must not interpose.
+VgpuLibcRuntimeObjects = build/venus_bounds.o build/venus_control.o build/venus_request.o
+build/vgpu_libc_runtime_test: tests/vgpu/libc_boundary.c $(VgpuLibcRuntimeObjects) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/vgpu/libc_boundary.c $(VgpuLibcRuntimeObjects) -o $@
+
+build/vgpu_libc_receiver_test: tests/vgpu/libc_boundary.c build/venus_receiver_bounds.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/vgpu/libc_boundary.c build/venus_receiver_bounds.o -o $@
+
+.PHONY: vgpu-libc-test vgpu-libc-sanitizers
+vgpu-libc-test: build/vgpu_libc_runtime_test build/vgpu_libc_receiver_test
+	./build/vgpu_libc_runtime_test
+	./build/vgpu_libc_receiver_test
+
+vgpu-libc-sanitizers: $(VgpuLibcRuntimeObjects) build/venus_receiver_bounds.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) tests/vgpu/libc_boundary.c $(VgpuLibcRuntimeObjects) -o build/vgpu_libc_runtime_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_libc_runtime_sanitized
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) tests/vgpu/libc_boundary.c build/venus_receiver_bounds.o -o build/vgpu_libc_receiver_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_libc_receiver_sanitized
