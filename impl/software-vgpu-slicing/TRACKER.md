@@ -1319,7 +1319,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     identities, exact envelope shapes and a monotonic whole-call deadline. Preserve
     sole frontend ownership and session retirement on any terminal failure.
 
-- **Commit (current; resolve by subject)**: `fix(ci): include pinned ICD encoder oracle on Windows`
+- **Commit `e41eda8`**: `fix(ci): include pinned ICD encoder oracle on Windows`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Add the encoder shim/generated driver/test hook include directories
     to the native Windows ICD fixture's direct compiler invocation. Make targets
@@ -1327,3 +1327,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Exact same directories pass local Windows cross-link; native
     job112393470812 identified missing vn_cs.h before executing the fixture.
     Updated-head native Windows verification remains required.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): wait for explicit GPU retirement in ICD idle calls`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; full synchronization gate pending).
+  - **Summary**: Resolve queue/device idle through negotiated GPU fence issue/poll
+    envelopes; validate successful shapes and strictly increasing per-ring IDs.
+    Bound the entire call with a monotonic timer, retain sticky loss ownership on
+    deadline/transport/peer failure, and serialize the borrowed frontend.
+  - **Verification**: Pending issue/retirement, malformed flags/poll argument, zero
+    and replayed identities, transport failure and both timeout phases pass under
+    native ASan/LSan/UBSan and three Zig tests. Production lines99.54%, branches
+    92.53%; Windows tests/DLL cross-link. Actual two-session worker queue/device
+    idle integration passes normal and sanitizers with explicit GPU retirement.
+    Native Windows and updated-head GitHub CI remain required. TODO #3 remains40%;
+    complete graphics/compute/memory APIs, public synchronization objects and real
+    DXVK execution are pending.

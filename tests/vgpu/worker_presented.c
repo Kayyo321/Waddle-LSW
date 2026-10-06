@@ -190,12 +190,17 @@ static int icd_cycles(venus_guest_t *guest) {
             (PFN_vkGetDeviceQueue)device_proc(device, "vkGetDeviceQueue");
         PFN_vkDestroyDevice destroy_device =
             (PFN_vkDestroyDevice)device_proc(device, "vkDestroyDevice");
-        if (!get_queue || !destroy_device)
+        PFN_vkDeviceWaitIdle device_idle =
+            (PFN_vkDeviceWaitIdle)device_proc(device, "vkDeviceWaitIdle");
+        PFN_vkQueueWaitIdle queue_idle =
+            (PFN_vkQueueWaitIdle)device_proc(device, "vkQueueWaitIdle");
+        if (!get_queue || !destroy_device || !device_idle || !queue_idle)
             goto fail;
         VkQueue queue = NULL, repeated = NULL;
         get_queue(device, family, 0, &queue);
         get_queue(device, family, 0, &repeated);
-        if (!queue || queue != repeated)
+        if (!queue || queue != repeated || queue_idle(queue) != VK_SUCCESS ||
+            device_idle(device) != VK_SUCCESS)
             goto fail;
         destroy_device(device, NULL);
         if (device_proc(device, "vkDestroyDevice"))

@@ -48,6 +48,7 @@ fn clear() void {
     caches = [_]instance_cache_t{.{}} ** MaxInstances;
     device_caches = [_]device_cache_t{.{}} ** 16;
     ring_slots = [_]bool{false} ** 64;
+    gpu_fences = [_]u64{0} ** 64;
     lost = c.RingOk;
 }
 /// Borrow one exclusive negotiated backend; public header defines ownership/deadlines/threads.
@@ -854,11 +855,85 @@ fn enumerate_version(version: [*c]u32) callconv(.C) c_int {
     version.* = 1 << 22;
     return c.VK_SUCCESS;
 }
+const IdleDeadlineNs: u64 = std.time.ns_per_s;
+var gpu_fences = [_]u64{0} ** 64;
+fn gpu_exchange(kind: u32, ring: u32, fence: u64, response: *c.venus_request_t) c_int {
+    var request = std.mem.zeroes(c.venus_request_t);
+    request.kind = kind;
+    request.argument_zero = ring;
+    request.argument_one = fence;
+    response.* = std.mem.zeroes(c.venus_request_t);
+    const status = command.exchange.?(command.context, &request, null, 0, response, null, 0);
+    if (status != c.RingOk) return status;
+    if (response.kind != kind or response.direction != 1 or response.status != 0 or
+        response.resource_id != 0 or response.flags != 0 or response.payload_bytes != 0 or
+        response.argument_one != 0 or (kind == c.RequestGpuPoll and response.argument_zero != 0))
+        return c.RingCorrupt;
+    return c.RingOk;
+}
+fn ring_idle(ring: u32, timer: *std.time.Timer) c_int {
+    var fence: u64 = 0;
+    while (true) {
+        if (timer.read() >= IdleDeadlineNs) return failure(c.RingTimeout);
+        var response: c.venus_request_t = undefined;
+        const kind: u32 = if (fence == 0) c.RequestGpuFence else c.RequestGpuPoll;
+        const status = gpu_exchange(kind, ring, fence, &response);
+        if (timer.read() >= IdleDeadlineNs) return failure(c.RingTimeout);
+        if (status == c.RingOk) {
+            if (fence != 0) return c.VK_SUCCESS;
+            if (response.argument_zero <= gpu_fences[ring]) return failure(c.RingCorrupt);
+            fence = response.argument_zero;
+            gpu_fences[ring] = fence;
+        } else if (status != c.RingAgain) {
+            return failure(status);
+        }
+        if (status == c.RingAgain) std.time.sleep(std.time.ns_per_ms);
+    }
+}
+/// Wait for actual retirement of every initialized queue in the borrowed device.
+/// @param[in] device Nullable private handle, validated without dereference.
+/// @return VK_SUCCESS or sticky VK_ERROR_DEVICE_LOST on invalid/clock/deadline/peer errors.
+/// @note Mutex serialized; no allocation; pending GPU loss requires receiver retirement/abandon.
+fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const entry = device_cache(@intFromPtr(device.?)) orelse return c.VK_ERROR_DEVICE_LOST;
+    var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
+    for (entry.rings) |ring| if (ring != 0) {
+        const result = ring_idle(ring, &timer);
+        if (result != c.VK_SUCCESS) return result;
+    };
+    return c.VK_SUCCESS;
+}
+/// Wait for actual GPU retirement of the queue using its receiver timeline.
+/// @param[in] queue Nullable private handle, validated without dereference.
+/// @return VK_SUCCESS or VK_ERROR_DEVICE_LOST; same deadline/lifetime contract as device idle.
+/// @note No allocation; binding mutex held across issue/poll. CPU completion is separate.
+fn queue_wait_idle(queue: c.VkQueue) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (queue == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const record = object(
+        @intFromPtr(queue.?),
+        c.VK_OBJECT_TYPE_QUEUE,
+    ) orelse return c.VK_ERROR_DEVICE_LOST;
+    for (&device_caches) |*entry| {
+        if (entry.handle == 0) continue;
+        for (entry.queues, 0..) |handle, index| if (handle == record.handle) {
+            var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
+            return ring_idle(entry.rings[index], &timer);
+        };
+    }
+    return failure(c.RingCorrupt);
+}
 fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
     const Entries = .{
         .{ "vkGetDeviceProcAddr", &get_device_proc },
         .{ "vkDestroyDevice", &destroy_device },
         .{ "vkGetDeviceQueue", &get_device_queue },
+        .{ "vkDeviceWaitIdle", &device_wait_idle },
+        .{ "vkQueueWaitIdle", &queue_wait_idle },
     };
     inline for (Entries) |entry| if (std.mem.eql(u8, name, entry[0])) return @ptrCast(entry[1]);
     return null;

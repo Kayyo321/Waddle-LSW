@@ -51,6 +51,11 @@ typedef struct fixture_t {
     uint32_t device_count;
     unsigned fail_fill;
     const VkDeviceCreateInfo *device_info;
+    uint64_t gpu_issued[64];
+    uint32_t gpu_pending;
+    uint32_t gpu_issue_pending;
+    uint32_t gpu_corrupt;
+    int32_t gpu_failure;
 } fixture_t;
 static uint32_t read_u32(const void *bytes) {
     uint32_t value;
@@ -69,6 +74,33 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                     void *output, size_t capacity) {
     fixture_t *fixture = context;
     *response = (venus_request_t){.kind = request->kind, .direction = 1};
+    if (request->kind == RequestGpuFence || request->kind == RequestGpuPoll) {
+        assert(!input && !length && !output && !capacity && request->argument_zero > 0 &&
+               request->argument_zero < 64);
+        if (fixture->gpu_failure)
+            return fixture->gpu_failure;
+        if (request->kind == RequestGpuFence) {
+            assert(!request->argument_one);
+            if (fixture->gpu_issue_pending) {
+                fixture->gpu_issue_pending--;
+                return RingAgain;
+            }
+            response->argument_zero = ++fixture->gpu_issued[request->argument_zero];
+            if (fixture->gpu_corrupt == 1)
+                response->argument_zero = 0;
+        } else {
+            assert(request->argument_one == fixture->gpu_issued[request->argument_zero]);
+            if (fixture->gpu_pending) {
+                fixture->gpu_pending--;
+                return RingAgain;
+            }
+        }
+        if (fixture->gpu_corrupt == 2)
+            response->flags = 1;
+        if (fixture->gpu_corrupt == 3 && request->kind == RequestGpuPoll)
+            response->argument_zero = 1;
+        return RingOk;
+    }
     if (request->kind == RequestSubmit) {
         assert(input && length >= 44 && !output && !capacity);
         const unsigned char *bytes = (const unsigned char *)input + 36;
@@ -353,7 +385,12 @@ static void healthy(fixture_t *fixture) {
             (PFN_vkGetDeviceQueue)device_lookup(device_handle, "vkGetDeviceQueue");
         PFN_vkDestroyDevice device_destroy =
             (PFN_vkDestroyDevice)device_lookup(device_handle, "vkDestroyDevice");
-        assert(get_queue && device_destroy);
+        PFN_vkDeviceWaitIdle device_idle =
+            (PFN_vkDeviceWaitIdle)device_lookup(device_handle, "vkDeviceWaitIdle");
+        PFN_vkQueueWaitIdle queue_idle =
+            (PFN_vkQueueWaitIdle)device_lookup(device_handle, "vkQueueWaitIdle");
+        assert(get_queue && device_destroy && device_idle && queue_idle);
+        assert(device_idle(device_handle) == VK_SUCCESS);
         assert(lookup_external(instance, "vkDestroyDevice"));
         VkQueue first_queue = NULL, second = NULL;
         get_queue(device_handle, 0, 0, &first_queue);
@@ -369,12 +406,21 @@ static void healthy(fixture_t *fixture) {
         get_queue(NULL, 0, 0, &repeat);
         get_queue((VkDevice)(uintptr_t)1, 0, 0, &repeat);
         get_queue(device_handle, 0, 0, NULL);
+        fixture->gpu_pending = 1;
+        fixture->gpu_issue_pending = 1;
+        assert(queue_idle(first_queue) == VK_SUCCESS);
+        assert(device_idle(device_handle) == VK_SUCCESS);
+        assert(queue_idle(NULL) == VK_ERROR_DEVICE_LOST);
+        assert(queue_idle((VkQueue)(uintptr_t)1) == VK_ERROR_DEVICE_LOST);
+        assert(device_idle(NULL) == VK_ERROR_DEVICE_LOST);
+        assert(device_idle((VkDevice)(uintptr_t)1) == VK_ERROR_DEVICE_LOST);
         destroy(instance); /* Parent remains live until its device is retired. */
         assert(lookup_external(instance, "vkDestroyInstance"));
         device_destroy(NULL, NULL);
         device_destroy((VkDevice)(uintptr_t)1, NULL);
         device_destroy(device_handle, NULL);
         assert(!device_lookup(device_handle, "vkDestroyDevice"));
+        assert(queue_idle(first_queue) == VK_ERROR_DEVICE_LOST);
         get_queue(device_handle, 0, 0, &repeat);
         assert(!repeat);
         device_destroy(device_handle, NULL);
@@ -445,6 +491,54 @@ static void concurrent(void) {
         assert(pthread_join(threads[index], NULL) == 0);
 #endif
     assert(venus_icd_unbind() == RingOk);
+}
+static void idle_failures(void) {
+    for (unsigned scenario = 0; scenario < 7; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        VkPhysicalDevice physical[2];
+        uint32_t count = 2;
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(
+                   instance, "vkEnumeratePhysicalDevices"))(instance, &count, physical) ==
+               VK_SUCCESS);
+        float priority = 0.5f;
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                              .queueCount = 1,
+                                              .pQueuePriorities = &priority};
+        VkDeviceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                                   .queueCreateInfoCount = 1,
+                                   .pQueueCreateInfos = &queue_info};
+        VkDevice device = NULL;
+        assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(
+                   physical[0], &info, NULL, &device) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup =
+            (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkQueueWaitIdle queue_idle = (PFN_vkQueueWaitIdle)lookup(device, "vkQueueWaitIdle");
+        PFN_vkDeviceWaitIdle device_idle = (PFN_vkDeviceWaitIdle)lookup(device, "vkDeviceWaitIdle");
+        VkQueue queue = NULL;
+        ((PFN_vkGetDeviceQueue)lookup(device, "vkGetDeviceQueue"))(device, 0, 0, &queue);
+        assert(queue);
+        if (scenario < 3)
+            fixture.gpu_corrupt = scenario + 1;
+        else if (scenario == 3)
+            fixture.gpu_failure = RingClosed;
+        else if (scenario == 4)
+            fixture.gpu_pending = UINT32_MAX;
+        else if (scenario == 5)
+            fixture.gpu_issue_pending = UINT32_MAX;
+        else {
+            assert(queue_idle(queue) == VK_SUCCESS);
+            memset(fixture.gpu_issued, 0,
+                   sizeof(fixture.gpu_issued)); /* Replay accepted identity. */
+        }
+        assert((scenario % 2 ? device_idle(device) : queue_idle(queue)) == VK_ERROR_DEVICE_LOST);
+        assert(queue_idle(queue) == VK_ERROR_DEVICE_LOST);
+        assert(device_idle(device) == VK_ERROR_DEVICE_LOST);
+        assert(venus_icd_unbind() == RingAgain);
+        venus_icd_abandon(); /* Fake backend has no external GPU resources. */
+        assert(venus_icd_unbind() == RingOk);
+    }
 }
 static void device_failures(void) {
     const uint32_t Commands[] = {11, 12, 155};
@@ -840,6 +934,7 @@ int main(void) {
     fixture.reply_again = 2;
     healthy(&fixture);
     concurrent();
+    idle_failures();
     device_failures();
     failures();
     venus_icd_abandon();
