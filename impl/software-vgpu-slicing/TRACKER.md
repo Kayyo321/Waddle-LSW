@@ -433,10 +433,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Actual receiver worker integration, guest restart notification and real GPU
     execution remain pending; process shutdown tests do not prove GPU recovery.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define isolated receiver service execution`
+- **Commit `6ec88a2`**: `docs(vgpu): define isolated receiver service execution`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Specified trusted service policy, inherited mapping validation,
     random session identity, symmetric bootstrap/teardown, closure notification
     and fresh mapping/stream/worker restart requirements.
   - **Verification**: Kept parent process shutdown budgets mandatory for blocked
     SDK teardown; mock restart does not prove physical GPU recovery.
+
+- **Commit (current; resolve by subject)**: `fix(build): declare worker coverage object prerequisite`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Build the transport bounds object before worker coverage linking
+    on a clean checkout; avoid reliance on unrelated earlier targets.
+  - **Verification**: Diagnosed missing object in Linux CI run `37395678271`;
+    worker functional and sanitizer tests passed there. Local worker coverage
+    passes at 98.35% lines and 94.26% branches.

@@ -229,5 +229,5 @@ vgpu-worker-sanitizers:
 	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/worker.c -o build/vgpu_worker_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_worker_sanitized
 
-vgpu-worker-coverage:
+vgpu-worker-coverage: build/venus_bounds.o
 	python3 tests/vgpu/coverage.py worker
