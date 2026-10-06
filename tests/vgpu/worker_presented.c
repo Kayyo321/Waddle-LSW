@@ -322,6 +322,22 @@ static int icd_cycles(venus_guest_t *guest) {
 #endif
         destroy_buffer(device, buffer, NULL);
         release(device, buffer_allocation, NULL);
+        PFN_vkCreateCommandPool create_pool =
+            (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
+        PFN_vkDestroyCommandPool destroy_pool =
+            (PFN_vkDestroyCommandPool)device_proc(device, "vkDestroyCommandPool");
+        PFN_vkResetCommandPool reset_pool =
+            (PFN_vkResetCommandPool)device_proc(device, "vkResetCommandPool");
+        if (!create_pool || !destroy_pool || !reset_pool) goto fail;
+        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = family};
+        VkCommandPool pool = NULL;
+        if (create_pool(device, &pool_info, NULL, &pool) != VK_SUCCESS || !pool ||
+            reset_pool(device, pool, 0) != VK_SUCCESS ||
+            reset_pool(device, pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT) != VK_SUCCESS)
+            goto fail;
+        destroy_pool(device, pool, NULL);
+
 
         destroy_device(device, NULL);
         cleanup_device = NULL;

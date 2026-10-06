@@ -1498,8 +1498,23 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and DLL ABI are green. Latest native Linux integration CI remains required
     before the loader10% milestone; full command/mapping/DXVK remains incomplete.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify core command pool ownership`
+- **Commit `45c8494`**: `docs(vgpu): specify core command pool ownership`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify bounded pool flags/family validation, exact host identity,
     private device ownership, reset results and child retirement boundary with
     independent encoder and actual worker/loader verification gates.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch core command pool lifecycles`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; command-buffer execution pending).
+  - **Summary**: Add device-parented pool tokens, core flags/configured-family
+    validation, exact host creation/destruction/reset, fixed pool metadata and
+    implicit command-buffer child retirement after validated host destruction.
+  - **Verification**: Pinned independent encoders compare commands85..87;
+    all core flag combinations, unknown families/flags/tags/chains, native negative
+    creation rollback,507-pool exhaustion, foreign/stale handles and device-child
+    ordering pass. Every command's transport/malformed paths and reset negative/
+    unexpected-positive/device-loss results pass ASan/LSan/UBSan, no leaks.
+    Production coverage99.11% lines/93.70% branches; actual two-session worker
+    create/reset/destroy cycles pass normal/sanitizers, Windows fixtures/DLL
+    cross-link. Updated actual-loader local runs and native CI remain required.
+    Full recording/submission, memory mapping and DXVK acceptance remain pending.

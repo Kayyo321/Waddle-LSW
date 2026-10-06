@@ -26,6 +26,8 @@ const resource_state_t = struct {
     allocation_size: u64 = 0,
     type_index: u32 = 0,
     bound_memory: u64 = 0,
+    pool_family: u32 = 0,
+    pool_flags: u32 = 0,
     requirements: c.VkMemoryRequirements = std.mem.zeroes(c.VkMemoryRequirements),
 };
 var resource_states = [_]resource_state_t{.{}} ** 512;
@@ -1313,6 +1315,157 @@ fn bind_buffer_memory(
     if (result == c.VK_SUCCESS) buffer_state.bound_memory = memory_record.handle;
     return result;
 }
+/// Create a core command pool with private device parent and configured queue family.
+/// @param[in] device Nonnull live private parent, borrowed for call.
+/// @param[in] info Nonnull canonical native info, no pNext; flags0..3 supported.
+/// @param[in] allocator Nullable unused callbacks, no pointer retained.
+/// @param[out] output Nonnull borrowed handle storage, NULL on failure.
+/// @return Host result, initialization/exhaustion error or sticky device loss.
+/// @note Allocation-free, mutex serialized; owned until validated host destruction.
+fn create_command_pool(
+    device: c.VkDevice,
+    info: [*c]const c.VkCommandPoolCreateInfo,
+    allocator: [*c]const c.VkAllocationCallbacks,
+    output: [*c]c.VkCommandPool,
+) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or
+        info.*.sType != c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO or info.*.pNext != null or
+        info.*.flags & ~@as(u32, 3) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const entry = device_cache(parent.handle).?;
+    if (std.mem.indexOfScalar(
+        u32,
+        entry.families[0..entry.family_count],
+        info.*.queueFamilyIndex,
+    ) == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_COMMAND_POOL,
+        parent.id,
+        0,
+        &record,
+    ) != c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var writer = writer_t{};
+    writer.header(85, parent.id);
+    writer.put(u64, 1);
+    writer.put(u32, c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO);
+    writer.put(u64, 0);
+    writer.put(u32, info.*.flags);
+    writer.put(u32, info.*.queueFamilyIndex);
+    writer.put(u64, 0);
+    writer.put(u64, 1);
+    writer.put(u64, record.*.id);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = identity_reply(reply, 85, record.*.id, true) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0) return failure(c.RingCorrupt);
+    if (result != c.VK_SUCCESS) {
+        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_COMMAND_POOL, 0);
+        return result;
+    }
+    resource_state(record).* = .{
+        .id = record.*.id,
+        .pool_family = info.*.queueFamilyIndex,
+        .pool_flags = info.*.flags,
+    };
+    output.* = @ptrFromInt(record.*.handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy a quiescent pool and its implicit command-buffer children.
+/// @param[in] device Nullable private parent, borrowed; invalid handle ignored.
+/// @param[in] pool Nullable private device-owned token; consumed after exact reply.
+/// @param[in] allocator Nullable unused callbacks, no pointer retained.
+/// @note Mutex serialized, allocation-free; caller retires pending GPU uses first.
+/// Transport/peer loss retains all uncertain identities until receiver abandonment.
+fn destroy_command_pool(
+    device: c.VkDevice,
+    pool: c.VkCommandPool,
+    allocator: [*c]const c.VkAllocationCallbacks,
+) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or pool == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(
+        @intFromPtr(pool.?),
+        c.VK_OBJECT_TYPE_COMMAND_POOL,
+        parent.id,
+    ) orelse return;
+    for (slots) |child|
+        if (child.parent_id == record.id and child.kind != c.VK_OBJECT_TYPE_COMMAND_BUFFER) return;
+    var writer = writer_t{};
+    writer.header(86, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 86) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    for (&slots, 0..) |*child, index| if (child.parent_id == record.id) {
+        resource_states[index] = .{};
+        std.debug.assert(
+            c.venus_objects_release(
+                &objects,
+                child.handle,
+                c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+                1,
+            ) == c.RingOk,
+        );
+    };
+    resource_state(record).* = .{};
+    std.debug.assert(
+        c.venus_objects_release(
+            &objects,
+            record.handle,
+            c.VK_OBJECT_TYPE_COMMAND_POOL,
+            0,
+        ) == c.RingOk,
+    );
+}
+/// Reset a quiescent pool after exact device-parent validation.
+/// @param[in] device Nullable private parent, borrowed for call.
+/// @param[in] pool Nullable private device-owned token, no ownership transfer.
+/// @param[in] flags Core0/1 release-resources flags only.
+/// @return Host result, local initialization error or sticky device loss.
+/// @note Mutex serialized, allocation-free; caller ensures no child is pending GPU use.
+fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (device == null or pool == null or flags > 1) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const record = child_object(
+        @intFromPtr(pool.?),
+        c.VK_OBJECT_TYPE_COMMAND_POOL,
+        parent.id,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = writer_t{};
+    writer.header(87, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u32, flags);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    return result_reply(reply, 87, 0);
+}
 fn encode_fences(command_id: u32, device: c.VkDevice, fences: []const c.VkFence) ?writer_t {
     if (device == null or fences.len == 0 or fences.len > 64) return null;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return null;
@@ -1492,6 +1645,9 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkQueueWaitIdle", &queue_wait_idle },
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateBuffer", &create_buffer },
+        .{ "vkCreateCommandPool", &create_command_pool },
+        .{ "vkDestroyCommandPool", &destroy_command_pool },
+        .{ "vkResetCommandPool", &reset_command_pool },
         .{ "vkAllocateMemory", &allocate_memory },
         .{ "vkFreeMemory", &free_memory },
         .{ "vkBindBufferMemory", &bind_buffer_memory },
