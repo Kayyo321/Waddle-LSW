@@ -100,20 +100,24 @@ static int render_node_presence(void) {
 /** @brief Classify normal enumeration or exact confirmed no-GPU error.
  * @param[in] status Native enumeration result. @param[in] count Initialized count.
  * @param[in] render_nodes Zero confirms absence; one presence; minus one namespace error.
- * @return One for success or INIT_FAILED/count0/confirmed-absence only, zero otherwise.
+ * @param[in] require_device Nonzero requires successful positive device count.
+ * @return One for accepted enumeration, zero for any invalid result. Default mode
+ * also accepts INIT_FAILED/count0/confirmed-absence; required mode never does.
  * @note Pure, allocation-free, thread-safe. No API error or directory failure suppressed.
  */
-static int enumeration_valid(VkResult status, uint32_t count, int render_nodes) {
+static int enumeration_valid(VkResult status, uint32_t count, int render_nodes, int require_device) {
+    if (require_device) return status == VK_SUCCESS && count > 0;
     return status == VK_SUCCESS ||
         (status == VK_ERROR_INITIALIZATION_FAILED && count == 0 && render_nodes == 0);
 }
 /** @brief Run one ordinary instance enumeration/destruction and verify actual driver unload.
  * @param[in] driver_path Nonnull accessible absolute driver path, borrowed for call.
- * @return Zero for exact successful teardown, one for any loader/API/unload failure.
+ * @param[in] require_device Nonzero requires positive successful enumeration.
+ * @return Zero for exact successful acquisition/teardown, one for any loader/API/unload failure.
  * @note All errors retire acquired ownership, including temporary directory storage;
  * no GPU selection occurs here: caller supplies the manifest through normal loader configuration.
  */
-static int run_cycle(const char *driver_path) {
+static int run_cycle(const char *driver_path, int require_device) {
     vulkan_fixture_t fixture = {0};
     int result = 1;
     fixture.library = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
@@ -136,12 +140,26 @@ static int run_cycle(const char *driver_path) {
     }
     uint32_t count = 0;
     status = fixture.enumerate(fixture.instance, &count, NULL);
-    const int render_nodes = status == VK_ERROR_INITIALIZATION_FAILED && count == 0
+    const int render_nodes = !require_device && status == VK_ERROR_INITIALIZATION_FAILED && count == 0
         ? render_node_presence() : -1;
-    if (!enumeration_valid(status, count, render_nodes)) {
-        fprintf(stderr, "Vulkan physical enumeration failed: %d\n", status);
+    if (!enumeration_valid(status, count, render_nodes, require_device)) {
+        fprintf(stderr, "Vulkan physical enumeration failed: result=%d count=%u require_device=%d\n",
+            status, count, require_device);
         goto done;
     }
+    void *participating = dlopen(driver_path, RTLD_NOW | RTLD_NOLOAD);
+    if (!participating) {
+        fprintf(stderr, "Intended Mesa driver was not resident after physical enumeration\n");
+        goto done;
+    }
+    const int probe_status = dlclose(participating);
+    participating = NULL;
+    if (probe_status) {
+        fprintf(stderr, "Participating driver probe close failed: %s\n", dlerror());
+        goto done;
+    }
+    printf("Mesa physical enumeration: result=%d count=%u require_device=%d\n",
+        status, count, require_device);
     /* The native loader returns INIT_FAILED when all ICDs report zero devices.
      * Confirm namespace absence before accepting that legitimate headless path;
      * enumeration still probes the same RADV CPU topology initialization. */
@@ -160,19 +178,21 @@ done:
     return result;
 }
 /** @brief Execute three independent real driver retirement cycles.
- * @param[in] argc Exactly two. @param[in] argv Nonnull borrowed terminated strings;
+ * @param[in] argc Two or three. @param[in] argv Nonnull borrowed terminated strings;
  * argv[1] is the absolute patched driver path selected by the caller's Vulkan manifest.
+ * Optional argv[2] is exactly --require-device; other options fail before acquisition.
  * @return Zero only when every Vulkan call and actual unload succeeds, one otherwise.
  * @note Single thread; temporary directory allocation closed before return.
  * ASan/LSan enforce fixture and vendor allocation cleanup.
  */
 int main(int argc, char **argv) {
-    if (argc != 2 || !argv[1] || argv[1][0] != '/') {
-        fprintf(stderr, "Usage: mesa_cpu_cache ABSOLUTE_DRIVER_LIBRARY\n");
+    if ((argc != 2 && argc != 3) || !argv[1] || argv[1][0] != '/' ||
+        (argc == 3 && (!argv[2] || strcmp(argv[2], "--require-device")))) {
+        fprintf(stderr, "Usage: mesa_cpu_cache ABSOLUTE_DRIVER_LIBRARY [--require-device]\n");
         return 1;
     }
     for (unsigned cycle = 0; cycle < TeardownCycles; cycle++)
-        if (run_cycle(argv[1])) return 1;
+        if (run_cycle(argv[1], argc == 3)) return 1;
     puts("Mesa CPU cache: three ordinary Vulkan teardown cycles and actual driver unload passed");
     return 0;
 }

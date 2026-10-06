@@ -55,9 +55,11 @@ build/vgpu_mesa_cpu_cache_test: tests/vgpu/mesa_cpu_cache.c | build
 .PHONY: mesa-cpu-cache-test mesa-cpu-cache-sanitizers
 mesa-cpu-cache-test: mesa-cpu-cache build/vgpu_mesa_cpu_cache_test
 	VK_DRIVER_FILES="$(CURDIR)/$(MesaCpuManifest)" ./build/vgpu_mesa_cpu_cache_test "$(CURDIR)/$(MesaCpuLibrary)"
+	VK_DRIVER_FILES="$(CURDIR)/$(MesaCpuLavapipeManifest)" ./build/vgpu_mesa_cpu_cache_test "$(CURDIR)/$(MesaCpuLavapipeLibrary)" --require-device
 
 # Real driver allocations are intercepted by the instrumented C fixture. The
 # vendor C/C++ library keeps ordinary native build flags and remains unloadable.
 mesa-cpu-cache-sanitizers: mesa-cpu-cache
 	$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/mesa_cpu_cache.c -ldl -o build/vgpu_mesa_cpu_cache_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 VK_DRIVER_FILES="$(CURDIR)/$(MesaCpuManifest)" ./build/vgpu_mesa_cpu_cache_sanitized "$(CURDIR)/$(MesaCpuLibrary)"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 VK_DRIVER_FILES="$(CURDIR)/$(MesaCpuLavapipeManifest)" ./build/vgpu_mesa_cpu_cache_sanitized "$(CURDIR)/$(MesaCpuLavapipeLibrary)" --require-device
