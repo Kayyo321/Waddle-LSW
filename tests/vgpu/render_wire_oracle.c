@@ -4,6 +4,8 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "vn_protocol_driver_image.h"
 #include "vn_protocol_driver_shader_module.h"
+#include "vn_protocol_driver_descriptor_set_layout.h"
+#include "vn_protocol_driver_pipeline_layout.h"
 #include "vn_protocol_driver_image_view.h"
 #include "vn_protocol_driver_command_buffer.h"
 #pragma GCC diagnostic pop
@@ -53,5 +55,29 @@ size_t venus_render_test_shader(const VkShaderModuleCreateInfo *info, unsigned c
     struct instance_encoder_t encoder = {.bytes = bytes, .capacity = 8192};
     VkShaderModule module = (VkShaderModule)(uintptr_t)42;
     vn_encode_vkCreateShaderModule(&encoder, 1, (VkDevice)(uintptr_t)7, info, NULL, &module);
+    return encoder.used;
+}
+
+/** @brief Encode valid descriptor_layout with pinned generator.
+ * @param[in] info Nonnull borrowed canonical record and arrays for call.
+ * @param[out] bytes Nonnull exclusive8192-byte scratch.
+ * @return Initialized bytes; allocation-free, sole calling test thread.
+ */
+size_t venus_render_test_descriptor_layout(const VkDescriptorSetLayoutCreateInfo *info, unsigned char *bytes) {
+    struct instance_encoder_t encoder = {.bytes = bytes, .capacity = 8192};
+    VkDescriptorSetLayout handle = (VkDescriptorSetLayout)(uintptr_t)42;
+    vn_encode_vkCreateDescriptorSetLayout(&encoder, 1, (VkDevice)(uintptr_t)7, info, NULL, &handle);
+    return encoder.used;
+}
+
+/** @brief Encode valid pipeline_layout with pinned generator.
+ * @param[in] info Nonnull borrowed canonical record and arrays for call.
+ * @param[out] bytes Nonnull exclusive8192-byte scratch.
+ * @return Initialized bytes; allocation-free, sole calling test thread.
+ */
+size_t venus_render_test_pipeline_layout(const VkPipelineLayoutCreateInfo *info, unsigned char *bytes) {
+    struct instance_encoder_t encoder = {.bytes = bytes, .capacity = 8192};
+    VkPipelineLayout handle = (VkPipelineLayout)(uintptr_t)43;
+    vn_encode_vkCreatePipelineLayout(&encoder, 1, (VkDevice)(uintptr_t)7, info, NULL, &handle);
     return encoder.used;
 }

@@ -341,3 +341,126 @@ test "shader exact maximum packet fits and one word beyond fails before derefere
     info.codeSize += 4;
     try std.testing.expectError(error.Limit, create_shader_module(&info, 7, 42));
 }
+
+/// Encode core descriptor layout without immutable samplers. [in] info/bindings borrowed for call.
+/// [in] IDs translated nonzero host identities. Returns owned packet or Invalid/Limit.
+/// No allocations, retained pointers or shared state; caller tracks layout lifetime and host capabilities.
+pub fn create_descriptor_layout(info: *const c.VkDescriptorSetLayoutCreateInfo, device_id: u64, layout_id: u64) !writer_t {
+    if (info.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO or info.pNext != null or
+        info.flags != 0 or info.bindingCount > 64 or (info.bindingCount != 0 and info.pBindings == null)) return error.Invalid;
+    if (info.bindingCount != 0) for (info.pBindings[0..info.bindingCount], 0..) |binding, index| {
+        if (binding.descriptorType > 10 or binding.descriptorCount == 0 or binding.descriptorCount > 1024 or
+            binding.stageFlags == 0 or binding.stageFlags & ~@as(u32, 0x3f) != 0 or binding.pImmutableSamplers != null) return error.Invalid;
+        for (info.pBindings[0..index]) |previous| if (previous.binding == binding.binding) return error.Invalid;
+    };
+    var writer = writer_t{};
+    try writer.header(72, device_id);
+    try writer.put(u64, 1);
+    try writer.put(u32, c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO);
+    try writer.put(u64, 0);
+    try writer.put(u32, 0);
+    try writer.put(u32, info.bindingCount);
+    try writer.put(u64, info.bindingCount);
+    if (info.bindingCount != 0) for (info.pBindings[0..info.bindingCount]) |binding| {
+        try writer.put(u32, binding.binding);
+        try writer.put(u32, binding.descriptorType);
+        try writer.put(u32, binding.descriptorCount);
+        try writer.put(u32, binding.stageFlags);
+        try writer.put(u64, 0);
+    };
+    try finish_create(&writer, layout_id);
+    return writer;
+}
+/// Encode pipeline layout. [in] info/ranges borrowed; set_ids translated IDs replace native handles.
+/// [in] device_id/layout_id translated nonzero identities. Returns owned packet or Invalid/Limit.
+/// No allocation/retention; validates core128-byte push constants; caller tracks child layout ownership.
+pub fn create_pipeline_layout(info: *const c.VkPipelineLayoutCreateInfo, set_ids: []const u64, device_id: u64, layout_id: u64) !writer_t {
+    if (info.sType != c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO or info.pNext != null or
+        info.flags != 0 or info.setLayoutCount > 16 or set_ids.len != info.setLayoutCount or
+        info.pushConstantRangeCount > 32 or
+        (info.pushConstantRangeCount != 0 and info.pPushConstantRanges == null)) return error.Invalid;
+    for (set_ids) |id| if (id == 0) return error.Invalid;
+    if (info.pushConstantRangeCount != 0) for (info.pPushConstantRanges[0..info.pushConstantRangeCount], 0..) |range, index| {
+        if (range.stageFlags == 0 or range.stageFlags & ~@as(u32, 0x3f) != 0 or range.size == 0 or
+            range.offset % 4 != 0 or range.size % 4 != 0 or range.offset >= 128 or range.size > 128 - range.offset) return error.Invalid;
+        for (info.pPushConstantRanges[0..index]) |previous| if (range.stageFlags & previous.stageFlags != 0) return error.Invalid;
+    };
+    var writer = writer_t{};
+    try writer.header(68, device_id);
+    try writer.put(u64, 1);
+    try writer.put(u32, c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
+    try writer.put(u64, 0);
+    try writer.put(u32, 0);
+    try writer.put(u32, info.setLayoutCount);
+    try writer.put(u64, set_ids.len);
+    for (set_ids) |id| try writer.put(u64, id);
+    try writer.put(u32, info.pushConstantRangeCount);
+    try writer.put(u64, info.pushConstantRangeCount);
+    if (info.pushConstantRangeCount != 0) for (info.pPushConstantRanges[0..info.pushConstantRangeCount]) |range| {
+        try writer.put(u32, range.stageFlags);
+        try writer.put(u32, range.offset);
+        try writer.put(u32, range.size);
+    };
+    try finish_create(&writer, layout_id);
+    return writer;
+}
+extern fn venus_render_test_descriptor_layout(*const c.VkDescriptorSetLayoutCreateInfo, [*]u8) usize;
+extern fn venus_render_test_pipeline_layout(*const c.VkPipelineLayoutCreateInfo, [*]u8) usize;
+test "descriptor and pipeline layouts match pinned oracle" {
+    const binding: c.VkDescriptorSetLayoutBinding = .{ .binding = 3, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT };
+    var descriptor: c.VkDescriptorSetLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &binding };
+    var expected: [MaxBytes]u8 = undefined;
+    var writer = try create_descriptor_layout(&descriptor, 7, 42);
+    var count = venus_render_test_descriptor_layout(&descriptor, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    const set_layouts = [_]c.VkDescriptorSetLayout{@ptrFromInt(42)};
+    const ranges = [_]c.VkPushConstantRange{.{ .stageFlags = 32, .size = 128 }};
+    var pipeline: c.VkPipelineLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1, .pSetLayouts = &set_layouts, .pushConstantRangeCount = 1, .pPushConstantRanges = &ranges };
+    writer = try create_pipeline_layout(&pipeline, &.{42}, 7, 43);
+    count = venus_render_test_pipeline_layout(&pipeline, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    descriptor.bindingCount = 0;
+    writer = try create_descriptor_layout(&descriptor, 7, 42);
+    count = venus_render_test_descriptor_layout(&descriptor, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    pipeline.setLayoutCount = 0;
+    pipeline.pushConstantRangeCount = 0;
+    writer = try create_pipeline_layout(&pipeline, &.{}, 7, 43);
+    count = venus_render_test_pipeline_layout(&pipeline, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+}
+test "layout malformed arrays duplicate bindings and push ranges reject" {
+    var bindings = [_]c.VkDescriptorSetLayoutBinding{ .{ .binding = 0, .descriptorType = 7, .descriptorCount = 1, .stageFlags = 32 }, .{ .binding = 0, .descriptorType = 7, .descriptorCount = 1, .stageFlags = 32 } };
+    var info: c.VkDescriptorSetLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 2, .pBindings = &bindings };
+    try std.testing.expectError(error.Invalid, create_descriptor_layout(&info, 7, 42));
+    info.bindingCount = 1;
+    inline for (.{ "descriptorType", "descriptorCount", "stageFlags" }) |name| {
+        const previous = @field(bindings[0], name);
+        @field(bindings[0], name) = 0xffffffff;
+        try std.testing.expectError(error.Invalid, create_descriptor_layout(&info, 7, 42));
+        @field(bindings[0], name) = previous;
+    }
+    bindings[0].pImmutableSamplers = @ptrFromInt(8);
+    try std.testing.expectError(error.Invalid, create_descriptor_layout(&info, 7, 42));
+    bindings[0].pImmutableSamplers = null;
+    info.pBindings = null;
+    try std.testing.expectError(error.Invalid, create_descriptor_layout(&info, 7, 42));
+    info.bindingCount = 65;
+    try std.testing.expectError(error.Invalid, create_descriptor_layout(&info, 7, 42));
+    var ranges = [_]c.VkPushConstantRange{ .{ .stageFlags = 32, .size = 4 }, .{ .stageFlags = 32, .size = 4 } };
+    var pipeline: c.VkPipelineLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .pushConstantRangeCount = 2, .pPushConstantRanges = &ranges };
+    try std.testing.expectError(error.Invalid, create_pipeline_layout(&pipeline, &.{}, 7, 43));
+    pipeline.pushConstantRangeCount = 1;
+    inline for (.{ "stageFlags", "offset", "size" }) |name| {
+        const previous = @field(ranges[0], name);
+        @field(ranges[0], name) = 0xffffffff;
+        try std.testing.expectError(error.Invalid, create_pipeline_layout(&pipeline, &.{}, 7, 43));
+        @field(ranges[0], name) = previous;
+    }
+    try std.testing.expectError(error.Invalid, create_pipeline_layout(&pipeline, &.{42}, 7, 43));
+    pipeline.setLayoutCount = 1;
+    try std.testing.expectError(error.Invalid, create_pipeline_layout(&pipeline, &.{0}, 7, 43));
+    pipeline.setLayoutCount = 0;
+    pipeline.pPushConstantRanges = null;
+    try std.testing.expectError(error.Invalid, create_pipeline_layout(&pipeline, &.{}, 7, 43));
+}
