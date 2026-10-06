@@ -27,6 +27,7 @@ const resource_state_t = struct {
     allocation_size: u64 = 0,
     type_index: u32 = 0,
     bound_memory: u64 = 0,
+    memory_offset: u64 = 0,
     buffer_size: u64 = 0,
     buffer_usage: u32 = 0,
     buffer_references: [8]u64 = [_]u64{0} ** 8,
@@ -1152,11 +1153,19 @@ fn buffer_requirements(
         c.VK_OBJECT_TYPE_BUFFER,
         parent.id,
     ) orelse return;
-    const value = query_buffer_requirements(parent.id, record.id) orelse return;
+    const value = query_buffer_requirements(
+        parent.id,
+        record.id,
+        resource_state(record).buffer_size,
+    ) orelse return;
     resource_state(record).requirements = value;
     output.* = value;
 }
-fn query_buffer_requirements(device_id: u64, buffer_id: u64) ?c.VkMemoryRequirements {
+fn query_buffer_requirements(
+    device_id: u64,
+    buffer_id: u64,
+    minimum_size: u64,
+) ?c.VkMemoryRequirements {
     var writer = writer_t{};
     writer.header(30, device_id);
     writer.put(u64, buffer_id);
@@ -1167,7 +1176,7 @@ fn query_buffer_requirements(device_id: u64, buffer_id: u64) ?c.VkMemoryRequirem
         _ = failure(c.RingCorrupt);
         return null;
     };
-    if (value.size == 0 or value.alignment == 0 or
+    if (value.size < minimum_size or value.size == 0 or value.alignment == 0 or
         value.alignment & (value.alignment - 1) != 0 or value.memoryTypeBits == 0)
     {
         _ = failure(c.RingCorrupt);
@@ -1316,8 +1325,11 @@ fn bind_buffer_memory(
     const memory_state = resource_state(memory_record);
     if (buffer_state.bound_memory != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
     if (buffer_state.requirements.size == 0) {
-        const value = query_buffer_requirements(parent.id, buffer_record.id) orelse
-            return c.VK_ERROR_DEVICE_LOST;
+        const value = query_buffer_requirements(
+            parent.id,
+            buffer_record.id,
+            buffer_state.buffer_size,
+        ) orelse return c.VK_ERROR_DEVICE_LOST;
         buffer_state.requirements = value;
     }
     const requirements = buffer_state.requirements;
@@ -1334,7 +1346,10 @@ fn bind_buffer_memory(
     writer.put(u64, offset);
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = result_reply(reply, 28, 0);
-    if (result == c.VK_SUCCESS) buffer_state.bound_memory = memory_record.handle;
+    if (result == c.VK_SUCCESS) {
+        buffer_state.bound_memory = memory_record.handle;
+        buffer_state.memory_offset = offset;
+    }
     return result;
 }
 /// Create a core command pool with private device parent and configured queue family.
@@ -1805,6 +1820,106 @@ fn fill_buffer(
     const index = resource_index(target.?);
     state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
 }
+/// Record byte-granular bounded buffer copies after complete alias-range validation.
+/// @param[in] command_buffer Nullable private borrowed Recording handle.
+/// @param[in] source Nullable same-device bound TRANSFER_SRC token, borrowed.
+/// @param[in] destination Nullable same-device bound TRANSFER_DST token, borrowed.
+/// @param[in] count Number of borrowed regions,1..64; no partial recording on invalid input.
+/// @param[in] regions Nonnull accessible array of count byte ranges; no pointer retained.
+/// @return Void; local invalid Recording inputs invalidate recording; loss poisons binding.
+/// @note Mutex serialized, no heap allocation. Caller supplies native synchronization.
+fn copy_buffer(
+    command_buffer: c.VkCommandBuffer,
+    source: c.VkBuffer,
+    destination: c.VkBuffer,
+    count: u32,
+    regions: [*c]const c.VkBufferCopy,
+) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(
+        @intFromPtr(command_buffer.?),
+        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+    ) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    const source_record = if (source != null) child_object(
+        @intFromPtr(source.?),
+        c.VK_OBJECT_TYPE_BUFFER,
+        pool.parent_id,
+    ) else null;
+    const destination_record = if (destination != null) child_object(
+        @intFromPtr(destination.?),
+        c.VK_OBJECT_TYPE_BUFFER,
+        pool.parent_id,
+    ) else null;
+    if (source_record == null or destination_record == null or
+        count == 0 or count > 64 or regions == null)
+    {
+        state.command_state = .Invalid;
+        return;
+    }
+    const source_state = resource_state(source_record.?);
+    const destination_state = resource_state(destination_record.?);
+    if (source_state.bound_memory == 0 or destination_state.bound_memory == 0 or
+        source_state.buffer_usage & 1 == 0 or destination_state.buffer_usage & 2 == 0)
+    {
+        state.command_state = .Invalid;
+        return;
+    }
+    for (regions[0..count]) |region| {
+        if (region.size == 0 or region.srcOffset >= source_state.buffer_size or
+            region.dstOffset >= destination_state.buffer_size or
+            region.size > source_state.buffer_size - region.srcOffset or
+            region.size > destination_state.buffer_size - region.dstOffset)
+        {
+            state.command_state = .Invalid;
+            return;
+        }
+    }
+    if (source_state.bound_memory == destination_state.bound_memory) {
+        for (regions[0..count]) |source_region| {
+            const source_start = source_state.memory_offset + source_region.srcOffset;
+            for (regions[0..count]) |destination_region| {
+                const destination_start =
+                    destination_state.memory_offset + destination_region.dstOffset;
+                if (source_start < destination_start + destination_region.size and
+                    destination_start < source_start + source_region.size)
+                {
+                    state.command_state = .Invalid;
+                    return;
+                }
+            }
+        }
+    }
+    var writer = writer_t{};
+    writer.header(112, record.id);
+    writer.put(u64, source_record.?.id);
+    writer.put(u64, destination_record.?.id);
+    writer.put(u32, count);
+    writer.put(u64, count);
+    for (regions[0..count]) |region| {
+        writer.put(u64, region.srcOffset);
+        writer.put(u64, region.dstOffset);
+        writer.put(u64, region.size);
+    }
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 112) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    for ([_]*c.venus_object_t{ source_record.?, destination_record.? }) |buffer_record| {
+        const index = resource_index(buffer_record);
+        state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+    }
+}
 /// Reset an individual nonpending buffer from a reset-capable private pool.
 /// @param[in] buffer Nonnull private borrowed handle; no ownership transfer.
 /// @param[in] flags0/1 release-resources only.
@@ -2018,6 +2133,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkFreeCommandBuffers", &free_command_buffers },
         .{ "vkBeginCommandBuffer", &begin_command_buffer },
         .{ "vkCmdFillBuffer", &fill_buffer },
+        .{ "vkCmdCopyBuffer", &copy_buffer },
         .{ "vkEndCommandBuffer", &end_command_buffer },
         .{ "vkResetCommandBuffer", &reset_command_buffer },
         .{ "vkDestroyCommandPool", &destroy_command_pool },

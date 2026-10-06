@@ -346,8 +346,10 @@ static int icd_cycles(venus_guest_t *guest) {
             (PFN_vkResetCommandBuffer)device_proc(device, "vkResetCommandBuffer");
         PFN_vkCmdFillBuffer fill_buffer =
             (PFN_vkCmdFillBuffer)device_proc(device, "vkCmdFillBuffer");
+        PFN_vkCmdCopyBuffer copy_buffer =
+            (PFN_vkCmdCopyBuffer)device_proc(device, "vkCmdCopyBuffer");
         if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer ||
-            !fill_buffer)
+            !fill_buffer || !copy_buffer)
             goto fail;
         VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
@@ -357,6 +359,8 @@ static int icd_cycles(venus_guest_t *guest) {
         if (allocate_buffers(device, &command_info, commands) != VK_SUCCESS || !commands[0] ||
             !commands[1] || begin_buffer(commands[0], &begin_info) != VK_SUCCESS) goto fail;
         fill_buffer(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
+        const VkBufferCopy copy_region = {.srcOffset = 0, .dstOffset = 2048, .size = 1024};
+        copy_buffer(commands[0], buffer, buffer, 1, &copy_region);
         if (end_buffer(commands[0]) != VK_SUCCESS || reset_buffer(commands[0], 0) != VK_SUCCESS ||
             begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
             end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)

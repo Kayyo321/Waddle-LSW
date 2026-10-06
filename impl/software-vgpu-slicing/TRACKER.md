@@ -1599,7 +1599,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     loader fixture and DLL cross-link pass. Native Windows latest CI remains
     required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded buffer copy and alias validation`
+- **Commit `1f50cff`**: `docs(vgpu): specify bounded buffer copy and alias validation`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify exact command112, byte-granular bounded region arrays,
     requested-size requirements validation and binding-offset overflow proof.
@@ -1607,3 +1607,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     buffers and shared recording lifetime rules.
   - **Verification**: Inspect pinned encoder and versioned Vulkan1.4.307 common
     validity; implementation/execution gates remain pending. TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): record bounded buffer copies with allocation alias checks`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; GPU submission pending).
+  - **Summary**: Dispatch command112 only after validating every1..64 region,
+    same-device bound transfer usage and requested-size bounds. Retain successful
+    memory binding offsets; reject undersized host requirements while preserving
+    caller output. Check all source/destination interval pairs for same-allocation
+    aliases, including distinct buffers, and retain both recording dependencies.
+  - **Verification**: Independent pinned encoder, byte-sized/64-region copies,
+    zero/65/null guards, bad-final-region no-partial dispatch, overflow/range,
+    foreign/unbound/usage guards, cross-index alias overlap, legal adjacency and
+    distinct allocation tests pass. Six Zig tests and zero-leak ASan/LSan/UBSan
+    pass; coverage99.72% lines/94.12% branches. Actual static/shared-loader worker
+    fill/copy recording passes normal/sanitized and failure cleanup; pinned native
+    Linux loader public copy dispatch passes normal/sanitized. Windows fixture,
+    DLL and loader fixture cross-link pass. Latest CI remains required. TODO #3
+    stays50%; actual submission/full API/mapping/DXVK still pending.

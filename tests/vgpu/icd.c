@@ -186,6 +186,20 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                             &queue_info, &queue);
                 assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
             }
+        } else if (fixture->command == 112) {
+            unsigned char expected[2048];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            uint32_t count = read_u32(bytes + 32);
+            assert(count > 0 && count <= 64);
+            VkBufferCopy regions[64];
+            for (uint32_t index = 0; index < count; index++)
+                regions[index] = (VkBufferCopy){read_u64(bytes + 44 + index * 24),
+                    read_u64(bytes + 52 + index * 24), read_u64(bytes + 60 + index * 24)};
+            vn_encode_vkCmdCopyBuffer(&encoder, 1,
+                (VkCommandBuffer)(uintptr_t)read_u64(bytes + 8),
+                (VkBuffer)(uintptr_t)read_u64(bytes + 16),
+                (VkBuffer)(uintptr_t)read_u64(bytes + 24), count, regions);
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 118) {
             unsigned char expected[64];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -299,7 +313,8 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 vn_encode_vkGetBufferMemoryRequirements(&encoder, 1, device,
                                           (VkBuffer)(uintptr_t)read_u64(bytes + 16), &value);
                 put_u64(fixture->reply + 4, fixture->requirements_fault == 1 ? 0 : 1);
-                put_u64(fixture->reply + 12, fixture->requirements_fault == 2 ? 0 : 8192);
+                put_u64(fixture->reply + 12, fixture->requirements_fault == 2 ? 0 :
+                    fixture->requirements_fault == 6 ? 1 : 8192);
                 put_u64(fixture->reply + 20, fixture->requirements_fault == 3 ? 0 :
                                             fixture->requirements_fault == 4 ? 3 : 256);
                 put_u32(fixture->reply + 28, fixture->requirements_fault == 5 ? 0 : 7);
@@ -1177,10 +1192,10 @@ static void buffer_contract(void) {
         assert(value.size == 8192 && value.alignment == 256 && value.memoryTypeBits == 7);
         memset(&value, 0xa5, sizeof(value));
         VkMemoryRequirements saved; memcpy(&saved, &value, sizeof(saved));
-        if (scenario < 5) fixture.requirements_fault = scenario + 1;
+        if (scenario < 6) fixture.requirements_fault = scenario + 1;
         if (scenario == 8) fixture.corrupt_command = 30;
         if (scenario == 9) fixture.fail_command = 30;
-        if (scenario < 5 || scenario == 8 || scenario == 9) {
+        if (scenario < 6 || scenario == 8 || scenario == 9) {
             requirements(device, buffer, &value);
             assert(!memcmp(&saved, &value, sizeof(saved)));
             venus_icd_abandon(); continue;
@@ -1414,6 +1429,175 @@ static void pool_contract(void) {
         if (scenario == 9 || scenario == 10) { venus_icd_abandon(); continue; }
         assert(reset_pool(device, pool, 0) == VK_ERROR_INITIALIZATION_FAILED);
         destroy_pool(device, pool, NULL);
+        destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
+static void copy_buffer_contract(void) {
+    for (unsigned scenario = 0; scenario < 5; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2;
+        VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,
+            "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 1, .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &device_info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)lookup(device, "vkCreateCommandPool");
+        PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)lookup(device, "vkDestroyCommandPool");
+        PFN_vkResetCommandPool reset_pool = (PFN_vkResetCommandPool)lookup(device, "vkResetCommandPool");
+        PFN_vkAllocateCommandBuffers allocate = (PFN_vkAllocateCommandBuffers)lookup(device, "vkAllocateCommandBuffers");
+        PFN_vkFreeCommandBuffers release = (PFN_vkFreeCommandBuffers)lookup(device, "vkFreeCommandBuffers");
+        PFN_vkBeginCommandBuffer begin = (PFN_vkBeginCommandBuffer)lookup(device, "vkBeginCommandBuffer");
+        PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)lookup(device, "vkEndCommandBuffer");
+        PFN_vkResetCommandBuffer reset = (PFN_vkResetCommandBuffer)lookup(device, "vkResetCommandBuffer");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
+        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+        fixture.pool_info = &pool_info;
+        VkCommandPool pool = NULL, other_pool = NULL;
+        assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+        pool_info.flags = 0;
+        assert(create_pool(device, &pool_info, NULL, &other_pool) == VK_SUCCESS);
+        VkCommandBufferAllocateInfo info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
+        fixture.command_allocate = &info;
+        PFN_vkCmdCopyBuffer copy = (PFN_vkCmdCopyBuffer)lookup(device, "vkCmdCopyBuffer");
+        PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)lookup(device, "vkCreateBuffer");
+        PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)lookup(device, "vkDestroyBuffer");
+        PFN_vkAllocateMemory allocate_memory = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+        PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+        PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)lookup(device, "vkBindBufferMemory");
+        assert(copy && create_buffer && destroy_buffer && allocate_memory && free_memory && bind);
+        VkCommandBuffer buffers[2] = {NULL, NULL};
+        assert(allocate(device, &info, buffers) == VK_SUCCESS);
+        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        fixture.command_begin = &begin_info;
+        VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 4099, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        fixture.buffer_info = &buffer_info;
+        VkBuffer source = NULL, destination = NULL, alias = NULL, unbound = NULL;
+        VkBuffer foreign_buffer = NULL, wrong_usage = NULL;
+        assert(create_buffer(device, &buffer_info, NULL, &source) == VK_SUCCESS);
+        assert(create_buffer(device, &buffer_info, NULL, &destination) == VK_SUCCESS);
+        assert(create_buffer(device, &buffer_info, NULL, &alias) == VK_SUCCESS);
+        assert(create_buffer(device, &buffer_info, NULL, &unbound) == VK_SUCCESS);
+        assert(create_buffer(foreign, &buffer_info, NULL, &foreign_buffer) == VK_SUCCESS);
+        buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        assert(create_buffer(device, &buffer_info, NULL, &wrong_usage) == VK_SUCCESS);
+        VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = 32768, .memoryTypeIndex = 0};
+        fixture.memory_info = &memory_info;
+        VkDeviceMemory memory = NULL, distinct_memory = NULL;
+        assert(allocate_memory(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+        assert(allocate_memory(device, &memory_info, NULL, &distinct_memory) == VK_SUCCESS);
+        assert(bind(device, source, memory, 0) == VK_SUCCESS);
+        assert(bind(device, destination, memory, 8192) == VK_SUCCESS);
+        assert(bind(device, alias, memory, 0) == VK_SUCCESS);
+        assert(bind(device, wrong_usage, memory, 16384) == VK_SUCCESS);
+        VkBufferCopy regions[64] = {{.srcOffset = 1, .dstOffset = 3, .size = 7}};
+        unsigned submissions = fixture.submissions;
+        copy(NULL, source, destination, 1, regions);
+        copy((VkCommandBuffer)(uintptr_t)1, source, destination, 1, regions);
+        copy(buffers[0], source, destination, 1, regions);
+        assert(fixture.submissions == submissions);
+        const VkBuffer Invalid[] = {NULL, (VkBuffer)(uintptr_t)1, unbound, foreign_buffer, wrong_usage};
+        for (unsigned index = 0; index < sizeof(Invalid) / sizeof(*Invalid); index++) {
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            copy(buffers[0], Invalid[index], destination, 1, regions);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            copy(buffers[0], source, Invalid[index], 1, regions);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        }
+        for (unsigned index = 0; index < 3; index++) {
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            copy(buffers[0], source, destination, index == 0 ? 0 : index == 1 ? 65 : 1,
+                 index == 2 ? NULL : regions);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        }
+        const VkBufferCopy InvalidRegions[] = {
+            {0, 0, 0}, {4099, 0, 1}, {0, 4099, 1}, {0, 0, UINT64_MAX},
+            {4096, 0, 4}, {0, 4096, 4}, {UINT64_MAX, 0, 1}, {0, UINT64_MAX, 1}};
+        for (unsigned index = 0; index < sizeof(InvalidRegions) / sizeof(*InvalidRegions); index++) {
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            copy(buffers[0], source, destination, 1, &InvalidRegions[index]);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        }
+        regions[0] = (VkBufferCopy){0, 128, 16};
+        regions[1] = (VkBufferCopy){128, 256, 16};
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        submissions = fixture.submissions;
+        copy(buffers[0], source, alias, 2, regions); /* Cross-index overlap. */
+        assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        regions[0] = (VkBufferCopy){0, 0, 1};
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        submissions = fixture.submissions;
+        copy(buffers[0], source, source, 1, regions);
+        assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        if (scenario == 0) fixture.fail_command = 112;
+        if (scenario == 1) fixture.corrupt_command = 112;
+        regions[0] = (VkBufferCopy){1, 3, 7};
+        copy(buffers[0], source, destination, 1, regions);
+        if (scenario < 2) {
+            assert(end(buffers[0]) == VK_ERROR_DEVICE_LOST);
+            venus_icd_abandon(); continue;
+        }
+        regions[0] = (VkBufferCopy){0, 16, 16};
+        copy(buffers[0], source, source, 1, regions); /* Legal adjacent intervals. */
+        for (unsigned index = 0; index < 64; index++)
+            regions[index] = (VkBufferCopy){index, 1024 + index, 1};
+        copy(buffers[0], source, destination, 64, regions);
+        assert(end(buffers[0]) == VK_SUCCESS);
+        submissions = fixture.submissions;
+        copy(buffers[0], source, destination, 1, regions);
+        assert(fixture.submissions == submissions);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        regions[63].srcOffset = 4099;
+        submissions = fixture.submissions;
+        copy(buffers[0], source, destination, 64, regions);
+        assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        regions[63].srcOffset = 63;
+        assert(begin(buffers[1], &begin_info) == VK_SUCCESS);
+        copy(buffers[1], source, destination, 64, regions);
+        if (scenario == 4) assert(reset_pool(device, pool, 0) == VK_SUCCESS);
+        if (scenario == 2) {
+            destroy_buffer(device, source, NULL); source = NULL;
+        } else {
+            destroy_buffer(device, destination, NULL); destination = NULL;
+        }
+        assert(end(buffers[1]) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(begin(buffers[1], &begin_info) == VK_SUCCESS && end(buffers[1]) == VK_SUCCESS);
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VkBuffer distinct = NULL;
+        assert(create_buffer(device, &buffer_info, NULL, &distinct) == VK_SUCCESS);
+        assert(bind(device, distinct, distinct_memory, 0) == VK_SUCCESS);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        regions[0] = (VkBufferCopy){0, 0, 4099};
+        copy(buffers[0], alias, distinct, 1, regions); /* Different allocations. */
+        assert(end(buffers[0]) == VK_SUCCESS && reset(buffers[0], 0) == VK_SUCCESS);
+        destroy_buffer(device, source, NULL); destroy_buffer(device, destination, NULL);
+        destroy_buffer(device, alias, NULL); destroy_buffer(device, distinct, NULL);
+        destroy_buffer(device, unbound, NULL); destroy_buffer(device, wrong_usage, NULL);
+        destroy_buffer(foreign, foreign_buffer, NULL);
+        free_memory(device, memory, NULL); free_memory(device, distinct_memory, NULL);
+        release(device, pool, 2, buffers);
+        destroy_pool(device, pool, NULL); destroy_pool(device, other_pool, NULL);
         destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
         assert(venus_icd_unbind() == RingOk);
     }
@@ -2188,7 +2372,7 @@ static void loader_fixture(void) {
         PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)device_proc(device, "vkBindBufferMemory");
         assert(create_buffer && destroy_buffer && requirements && allocate && release && bind);
         VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = 4096, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+            .size = 4096, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
         fixture.buffer_info = &buffer_info;
         VkBuffer buffer = NULL;
         assert(create_buffer(device, &buffer_info, NULL, &buffer) == VK_SUCCESS && buffer);
@@ -2224,6 +2408,10 @@ static void loader_fixture(void) {
         PFN_vkCmdFillBuffer fill = (PFN_vkCmdFillBuffer)device_proc(device, "vkCmdFillBuffer");
         assert(fill && begin(commands[0], &begin_info) == VK_SUCCESS);
         fill(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
+        PFN_vkCmdCopyBuffer copy = (PFN_vkCmdCopyBuffer)device_proc(device, "vkCmdCopyBuffer");
+        const VkBufferCopy copy_region = {.srcOffset = 0, .dstOffset = 2048, .size = 1024};
+        assert(copy);
+        copy(commands[0], buffer, buffer, 1, &copy_region);
         assert(end(commands[0]) == VK_SUCCESS);
         assert(reset(commands[0], 0) == VK_SUCCESS);
         free_buffers(device, pool, 1, commands);
@@ -2266,6 +2454,7 @@ int main(void) {
     pool_contract();
     command_buffer_contract();
     fill_buffer_contract();
+    copy_buffer_contract();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();
