@@ -2185,3 +2185,38 @@ Vulkan loader-word compatibility is checked by native Linux helpers; Windows
 executes C ABI and Zig tests. Public ICD dispatch and DXVK are still required.
 The registry detects contradictory private count/storage as Corrupt before writes;
 it does not cancel the underlying receiver, which its caller must abandon.
+
+
+### Bounded core physical-device reply decoding (TODO #3)
+
+Core queries3(properties),5(memory properties) and6(features) use private completed
+reply snapshots from the exclusive command owner. Each begins command(u32), nonnull
+output pointer tag(u64=1), then the pinned schema's fixed struct fields. Native C
+padding is never copied from wire. Scalars use little-endian4/8-byte words; floats
+are IEEE754 bits and must be finite. Every fixed array begins exact u64 element
+count; primitive arrays are packed and padded to4-byte wire alignment, struct arrays
+serialize each field recursively without native tail padding. The pinned Vulkan
+headers define native destination layout; x86_64 is the sole supported guest ABI.
+
+Properties include fixed256-byte device name and16-byte pipeline UUID, nested limits
+and sparse flags. Reject missing NUL/invalid UTF8 name, invalid device kind beyond
+CPU(4), Vulkan variant other than0, API below1.0 and non-boolean sparse flags. Feature
+fields are all VkBool32, strictly0/1. Memory type count must be1..32 and heap count
+1..16; every live type heapIndex must be below heap count. Unused array entries are
+still decoded as fixed protocol entries, but only live indices constrain semantics.
+
+Public decode functions borrow private immutable input[length] and a disjoint native
+output record for the call. They first decode to a private zero local record and
+validate every field/array bound/semantic rule before assigning caller output. NULL
+arguments return Invalid; malformed/truncated/semantic replies return Corrupt and
+preserve output. Input maximum16MiB; extra bytes after the known fixed reply prefix
+are ignored, because receiver resource reads return requested capacity, not an
+actual command-written byte count. No trailing data is interpreted, no allocation
+occurs, and no native wire pointer is dereferenced. These are sole-call/thread-safe
+on disjoint storage; the frontend separately serializes transport ownership.
+
+Tests must compare against independent pinned C serializer output, reject every
+truncated prefix and mutated array/pointer/command tag, preserve output on failure,
+validate float/name/boolean/memory-index semantics, and pass allocator/sanitizer,
+native Windows ABI and at least90% production line/branch gates. Integrate real
+production-worker queries before claiming any full instance/device dispatch credit.

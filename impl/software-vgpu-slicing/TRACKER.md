@@ -1118,7 +1118,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     from coverage. Complete ICD/device dispatch and DXVK still pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): accept native Vulkan object ownership milestone`
+- **Commit `bd311f6`**: `docs(vgpu): accept native Vulkan object ownership milestone`
   - **Task Impact**: +5% to TODO: #3 (+1.25% overall); TODO #3 now40%.
   - **Summary**: Accept the documented identity/lifetime storage milestone after
     local allocator/sanitizer/coverage verification and native Linux/Windows CI.
@@ -1126,3 +1126,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     actual loader-word helpers, allocator churn, sanitizer and98.75% branch/100%
     line coverage; Windows executes native ABI and Zig state tests. This accepts
     storage only; public ICD instance/device/API dispatch and DXVK remain pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded physical-device reply decoding`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify exact core property/feature/memory reply layouts, fixed
+    array tags, scalar padding, semantic validation and preserved output behavior.
+  - **Verification**: Cross-check pinned command IDs and generated field/array
+    encodings; public ICD instance/device dispatch and DXVK remain independent gates.
