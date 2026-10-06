@@ -1,4 +1,5 @@
-/** @file worker_presented.c @brief Real presented worker exec, negotiation and channel isolation.
+/** @file worker_presented.c @brief Real presented worker exec, negotiation and
+ * channel isolation.
  */
 #include "waddle/venus_command.h"
 #include "waddle/venus_frame.h"
@@ -108,7 +109,8 @@ static int instance_cycle(venus_guest_t *guest) {
     result = 0;
 cleanup:
     if (result)
-        venus_guest_free(guest); /* Abandon transport before forgetting any outstanding object. */
+        venus_guest_free(guest); /* Abandon transport before forgetting any
+                                    outstanding object. */
     venus_command_free(&command);
     venus_objects_free(&objects);
     return result;
@@ -155,6 +157,49 @@ static int icd_cycles(venus_guest_t *guest) {
                 !memory_value.memoryTypeCount || !memory_value.memoryHeapCount)
                 goto fail;
         }
+        PFN_vkGetPhysicalDeviceQueueFamilyProperties queue_properties =
+            (PFN_vkGetPhysicalDeviceQueueFamilyProperties)venus_icd_get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+        PFN_vkCreateDevice create_device =
+            (PFN_vkCreateDevice)venus_icd_get_instance_proc_addr(instance, "vkCreateDevice");
+        PFN_vkGetDeviceProcAddr device_proc =
+            (PFN_vkGetDeviceProcAddr)venus_icd_get_instance_proc_addr(instance,
+                                                                      "vkGetDeviceProcAddr");
+        if (!queue_properties || !create_device || !device_proc)
+            goto fail;
+        uint32_t family_count = 64;
+        VkQueueFamilyProperties families[64] = {0};
+        queue_properties(devices[0], &family_count, families);
+        uint32_t family = 0;
+        while (family < family_count && !families[family].queueCount)
+            family++;
+        if (!family_count || family_count > 64 || family == family_count)
+            goto fail;
+        float priority = 0.5f;
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                              .queueFamilyIndex = family,
+                                              .queueCount = 1,
+                                              .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                                          .queueCreateInfoCount = 1,
+                                          .pQueueCreateInfos = &queue_info};
+        VkDevice device = NULL;
+        if (create_device(devices[0], &device_info, NULL, &device) != VK_SUCCESS || !device)
+            goto fail;
+        PFN_vkGetDeviceQueue get_queue =
+            (PFN_vkGetDeviceQueue)device_proc(device, "vkGetDeviceQueue");
+        PFN_vkDestroyDevice destroy_device =
+            (PFN_vkDestroyDevice)device_proc(device, "vkDestroyDevice");
+        if (!get_queue || !destroy_device)
+            goto fail;
+        VkQueue queue = NULL, repeated = NULL;
+        get_queue(device, family, 0, &queue);
+        get_queue(device, family, 0, &repeated);
+        if (!queue || queue != repeated)
+            goto fail;
+        destroy_device(device, NULL);
+        if (device_proc(device, "vkDestroyDevice"))
+            goto fail;
         PFN_vkDestroyInstance destroy =
             (PFN_vkDestroyInstance)venus_icd_get_instance_proc_addr(instance, "vkDestroyInstance");
         if (!destroy)
@@ -282,7 +327,7 @@ cleanup:
     return result;
 }
 int main(void) {
-    alarm(20);
+    alarm(60);
     unsigned baseline = descriptors();
     if (!baseline)
         return 1;
@@ -291,6 +336,7 @@ int main(void) {
             fprintf(stderr, "Presented worker binding failed: mode=%u\n", corrupt);
             return 1;
         }
-    puts("Presented production worker negotiation, isolation and unknown-release shutdown passed");
+    puts("Presented production worker negotiation, isolation and unknown-release "
+         "shutdown passed");
     return 0;
 }

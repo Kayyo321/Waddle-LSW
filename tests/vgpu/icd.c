@@ -1,5 +1,12 @@
-/** @file icd.c @brief Native experimental ICD dispatch/lifecycle/loss fixture. */
+/** @file icd.c @brief Native experimental ICD dispatch/lifecycle/loss fixture.
+ */
+#include "vn_cs.h"
 #include "waddle/venus_icd.h"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#include "vn_protocol_driver_device.h"
+#include "vn_protocol_driver_queue.h"
+#pragma GCC diagnostic pop
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,7 +19,8 @@
 #include <dlfcn.h>
 #include <stdlib.h>
 #endif
-/** @brief Test-only immutable renderer encoder oracle, borrows output for the call.
+/** @brief Test-only immutable renderer encoder oracle, borrows output for the
+ * call.
  * @param[in] kind Pinned query3/6/8.
  * @param[out] bytes Nonnull output[capacity], exclusive to test.
  * @param[in] capacity Actual accessible extent, at least4096.
@@ -26,7 +34,8 @@ negotiate_external(uint32_t *version) __asm__("vk_icdNegotiateLoaderICDInterface
 /** @brief External Vulkan loader ABI alias; pointers are static/borrowed. */
 extern PFN_vkVoidFunction lookup_external(VkInstance instance,
                                           const char *name) __asm__("vk_icdGetInstanceProcAddr");
-/** @brief Test backend owns only its private reply bytes; no native Vulkan implementation. */
+/** @brief Test backend owns only its private reply bytes; no native Vulkan
+ * implementation. */
 typedef struct fixture_t {
     unsigned char reply[4096];
     uint32_t submissions;
@@ -41,6 +50,7 @@ typedef struct fixture_t {
     int32_t transport_failure;
     uint32_t device_count;
     unsigned fail_fill;
+    const VkDeviceCreateInfo *device_info;
 } fixture_t;
 static uint32_t read_u32(const void *bytes) {
     uint32_t value;
@@ -87,6 +97,44 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     memcpy(fixture->reply + 28, bytes + 36, 16);
                 }
             }
+        } else if (fixture->command == 11 || fixture->command == 155) {
+            const size_t identity_offset = fixture->command == 11 ? 16 : 12;
+            if (fixture->command == 11)
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+            put_u64(fixture->reply + identity_offset - 8, 1);
+            put_u64(fixture->reply + identity_offset,
+                    read_u64((const unsigned char *)input + length - 8));
+            if (fixture->command == 11 && fixture->device_info) {
+                unsigned char expected[4096];
+                struct instance_encoder_t encoder = {.bytes = expected,
+                                                     .capacity = sizeof(expected)};
+                VkDevice device = (VkDevice)(uintptr_t)read_u64(fixture->reply + 16);
+                vn_encode_vkCreateDevice(&encoder, 1,
+                                         (VkPhysicalDevice)(uintptr_t)read_u64(bytes + 8),
+                                         fixture->device_info, NULL, &device);
+                assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+            }
+            if (fixture->command == 155) {
+                unsigned char expected[4096];
+                struct instance_encoder_t encoder = {.bytes = expected,
+                                                     .capacity = sizeof(expected)};
+                VkQueue queue = (VkQueue)(uintptr_t)read_u64(bytes + 72);
+                VkDeviceQueueTimelineInfoMESA timeline = {
+                    .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_TIMELINE_INFO_MESA,
+                    .ringIdx = read_u32(bytes + 48)};
+                VkDeviceQueueInfo2 queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2,
+                                                 .pNext = &timeline,
+                                                 .queueFamilyIndex = read_u32(bytes + 56),
+                                                 .queueIndex = read_u32(bytes + 60)};
+                vn_encode_vkGetDeviceQueue2(&encoder, 1, (VkDevice)(uintptr_t)read_u64(bytes + 8),
+                                            &queue_info, &queue);
+                assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+            }
+        } else if (fixture->command == 12) {
+            unsigned char expected[4096];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            vn_encode_vkDestroyDevice(&encoder, 1, (VkDevice)(uintptr_t)read_u64(bytes + 8), NULL);
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command != 1) {
             assert(
                 venus_values_test_encode(fixture->command, fixture->reply, sizeof(fixture->reply)));
@@ -219,6 +267,8 @@ static void healthy(fixture_t *fixture) {
             (PFN_vkGetPhysicalDeviceFormatProperties)lookup_external(
                 instance, "vkGetPhysicalDeviceFormatProperties");
         VkFormatProperties format_value = {0};
+        format(devices[0], VK_FORMAT_R8G8B8A8_UNORM, NULL);
+        format(NULL, VK_FORMAT_R8G8B8A8_UNORM, &format_value);
         format(devices[0], VK_FORMAT_R8G8B8A8_UNORM, &format_value);
         assert(format_value.optimalTilingFeatures == VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
         format(devices[0], VK_FORMAT_R8G8B8A8_UNORM, NULL);
@@ -228,6 +278,8 @@ static void healthy(fixture_t *fixture) {
             (PFN_vkGetPhysicalDeviceImageFormatProperties)lookup_external(
                 instance, "vkGetPhysicalDeviceImageFormatProperties");
         VkImageFormatProperties image_value = {0};
+        assert(image(NULL, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+                     VK_IMAGE_USAGE_SAMPLED_BIT, 0, &image_value) == VK_ERROR_DEVICE_LOST);
         assert(image(devices[0], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D,
                      VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, 0,
                      &image_value) == VK_SUCCESS);
@@ -245,6 +297,9 @@ static void healthy(fixture_t *fixture) {
         queues(devices[0], &count, &queue);
         assert(count == 1 && queue.queueCount == 1 && queue.timestampValidBits == 64);
         queues(devices[0], NULL, NULL);
+        queues(NULL, &count, &queue);
+        count = 65;
+        queues(devices[0], &count, &queue);
         count = 0;
         queues(devices[0], &count, &queue);
         assert(count == 0);
@@ -259,6 +314,8 @@ static void healthy(fixture_t *fixture) {
         sparse(devices[0], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, VK_SAMPLE_COUNT_1_BIT,
                VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_TILING_OPTIMAL, &count, &sparse_value);
         assert(count == 1 && sparse_value.imageGranularity.width == 64);
+        sparse(NULL, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, VK_SAMPLE_COUNT_1_BIT,
+               VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_TILING_OPTIMAL, &count, &sparse_value);
         sparse(devices[0], VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, VK_SAMPLE_COUNT_1_BIT,
                VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_TILING_OPTIMAL, NULL, NULL);
         PFN_vkEnumerateDeviceExtensionProperties device_extensions =
@@ -272,8 +329,55 @@ static void healthy(fixture_t *fixture) {
             (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
         VkDevice device_handle = (VkDevice)(uintptr_t)1;
         assert(device_create(devices[0], NULL, NULL, &device_handle) ==
-                   VK_ERROR_FEATURE_NOT_PRESENT &&
+                   VK_ERROR_INITIALIZATION_FAILED &&
                !device_handle);
+        float priorities[2] = {0.25f, 0.75f};
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                              .queueFamilyIndex = 0,
+                                              .queueCount = 2,
+                                              .pQueuePriorities = priorities};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                                          .queueCreateInfoCount = 1,
+                                          .pQueueCreateInfos = &queue_info};
+        fixture->device_info = &device_info;
+        assert(device_create(devices[0], &device_info, NULL, &device_handle) == VK_SUCCESS);
+        fixture->device_info = NULL;
+        assert(device_handle);
+        PFN_vkGetDeviceProcAddr device_lookup =
+            (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        assert(!device_lookup(NULL, "vkDestroyDevice"));
+        assert(!device_lookup((VkDevice)(uintptr_t)1, "vkDestroyDevice"));
+        assert(!device_lookup(device_handle, NULL));
+        assert(!device_lookup(device_handle, "vkCreateBuffer"));
+        PFN_vkGetDeviceQueue get_queue =
+            (PFN_vkGetDeviceQueue)device_lookup(device_handle, "vkGetDeviceQueue");
+        PFN_vkDestroyDevice device_destroy =
+            (PFN_vkDestroyDevice)device_lookup(device_handle, "vkDestroyDevice");
+        assert(get_queue && device_destroy);
+        assert(lookup_external(instance, "vkDestroyDevice"));
+        VkQueue first_queue = NULL, second = NULL;
+        get_queue(device_handle, 0, 0, &first_queue);
+        get_queue(device_handle, 0, 1, &second);
+        assert(first_queue && second && first_queue != second);
+        VkQueue repeat = NULL;
+        get_queue(device_handle, 0, 0, &repeat);
+        assert(repeat == first_queue);
+        get_queue(device_handle, 1, 0, &repeat);
+        assert(!repeat);
+        get_queue(device_handle, 0, 2, &repeat);
+        assert(!repeat);
+        get_queue(NULL, 0, 0, &repeat);
+        get_queue((VkDevice)(uintptr_t)1, 0, 0, &repeat);
+        get_queue(device_handle, 0, 0, NULL);
+        destroy(instance); /* Parent remains live until its device is retired. */
+        assert(lookup_external(instance, "vkDestroyInstance"));
+        device_destroy(NULL, NULL);
+        device_destroy((VkDevice)(uintptr_t)1, NULL);
+        device_destroy(device_handle, NULL);
+        assert(!device_lookup(device_handle, "vkDestroyDevice"));
+        get_queue(device_handle, 0, 0, &repeat);
+        assert(!repeat);
+        device_destroy(device_handle, NULL);
         assert(properties.vendorID == 42 && features.robustBufferAccess && memory.memoryTypeCount);
         get_properties((VkPhysicalDevice)(uintptr_t)1, &properties);
         get_properties(NULL, &properties);
@@ -340,6 +444,170 @@ static void concurrent(void) {
     for (unsigned index = 0; index < 4; index++)
         assert(pthread_join(threads[index], NULL) == 0);
 #endif
+    assert(venus_icd_unbind() == RingOk);
+}
+static void device_failures(void) {
+    const uint32_t Commands[] = {11, 12, 155};
+    for (unsigned scenario = 0; scenario < 6; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        VkPhysicalDevice physical[2];
+        uint32_t count = 2;
+        PFN_vkEnumeratePhysicalDevices enumerate =
+            (PFN_vkEnumeratePhysicalDevices)lookup_external(instance, "vkEnumeratePhysicalDevices");
+        assert(enumerate(instance, &count, physical) == VK_SUCCESS);
+        PFN_vkCreateDevice device_create =
+            (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        PFN_vkGetDeviceProcAddr device_proc =
+            (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        float priority = 0.5f;
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                              .queueCount = 1,
+                                              .pQueuePriorities = &priority};
+        VkDeviceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                                   .queueCreateInfoCount = 1,
+                                   .pQueueCreateInfos = &queue_info};
+        VkDevice device = NULL;
+        assert(device_create(physical[0], &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(device_create(NULL, &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(device_create((VkPhysicalDevice)(uintptr_t)1, &info, NULL, &device) ==
+               VK_ERROR_INITIALIZATION_FAILED);
+        VkBaseInStructure chain = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO};
+        info.pNext = &chain;
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_EXTENSION_NOT_PRESENT);
+        chain.sType = VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO;
+        chain.pNext = &chain;
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_EXTENSION_NOT_PRESENT);
+        info.pNext = NULL;
+        info.enabledLayerCount = 1;
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_LAYER_NOT_PRESENT);
+        info.enabledLayerCount = 0;
+        info.enabledExtensionCount = 1;
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_EXTENSION_NOT_PRESENT);
+        info.enabledExtensionCount = 0;
+        queue_info.queueCount = 0;
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+        queue_info.queueCount = 1;
+        fixture.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        fixture.create_result = VK_SUCCESS;
+        const uint32_t command = Commands[scenario % 3];
+        if (command != 11)
+            assert(device_create(physical[0], &info, NULL, &device) == VK_SUCCESS);
+        if (scenario < 3)
+            fixture.corrupt_command = command;
+        else
+            fixture.fail_command = command;
+        if (command == 11) {
+            assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_DEVICE_LOST);
+        } else if (command == 12) {
+            ((PFN_vkDestroyDevice)device_proc(device, "vkDestroyDevice"))(device, NULL);
+        } else {
+            VkQueue queue = NULL;
+            ((PFN_vkGetDeviceQueue)device_proc(device, "vkGetDeviceQueue"))(device, 0, 0, &queue);
+            assert(!queue);
+        }
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_DEVICE_LOST);
+        assert(venus_icd_unbind() == RingAgain);
+        venus_icd_abandon();
+    }
+    fixture_t fixture = fresh();
+    assert(venus_icd_bind(exchange, &fixture) == RingOk);
+    VkInstance instance = create();
+    VkPhysicalDevice physical[2];
+    uint32_t count = 2;
+    assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(
+               instance, "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+    PFN_vkCreateDevice device_create =
+        (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+    PFN_vkGetDeviceProcAddr device_proc =
+        (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+    float priorities[16];
+    for (unsigned index = 0; index < 16; index++)
+        priorities[index] = 0.5f;
+    VkDeviceQueueCreateInfo queues[16];
+    for (unsigned index = 0; index < 16; index++)
+        queues[index] =
+            (VkDeviceQueueCreateInfo){.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                      .queueFamilyIndex = index,
+                                      .queueCount = 1,
+                                      .pQueuePriorities = priorities};
+    VkDeviceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                               .queueCreateInfoCount = 1,
+                               .pQueueCreateInfos = queues};
+    VkDevice device;
+    VkDevice devices[16];
+    for (unsigned index = 0; index < 16; index++)
+        assert(device_create(physical[0], &info, NULL, &devices[index]) == VK_SUCCESS);
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_OUT_OF_HOST_MEMORY);
+    for (unsigned index = 0; index < 16; index++)
+        ((PFN_vkDestroyDevice)device_proc(devices[index], "vkDestroyDevice"))(devices[index], NULL);
+    info.queueCreateInfoCount = 0;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    info.queueCreateInfoCount = 17;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    info.queueCreateInfoCount = 1;
+    info.sType = 0;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    info.flags = 1;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    info.flags = 0;
+    info.pQueueCreateInfos = NULL;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    info.pQueueCreateInfos = queues;
+    for (unsigned invalid = 0; invalid < 5; invalid++) {
+        queues[0].queueCount = 1;
+        queues[0].flags = 0;
+        queues[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queues[0].pQueuePriorities = priorities;
+        queues[0].pNext = NULL;
+        if (invalid == 0)
+            queues[0].sType = 0;
+        if (invalid == 1)
+            queues[0].flags = 1;
+        if (invalid == 2)
+            queues[0].queueCount = 17;
+        if (invalid == 3)
+            queues[0].pQueuePriorities = NULL;
+        if (invalid == 4)
+            queues[0].pNext = &info;
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    }
+    queues[0].pNext = NULL;
+    queues[0].pQueuePriorities = priorities;
+    priorities[0] = -1;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    priorities[0] = 2;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    priorities[0] = 0.5f;
+    info.queueCreateInfoCount = 2;
+    queues[1].queueFamilyIndex = 0;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    queues[1].queueFamilyIndex = 1;
+    info.queueCreateInfoCount = 16;
+    for (unsigned index = 0; index < 16; index++)
+        queues[index].queueCount = 16;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    info.queueCreateInfoCount = 1;
+    VkPhysicalDeviceFeatures features = {.robustBufferAccess = 2};
+    info.pEnabledFeatures = &features;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
+    features.robustBufferAccess = 1;
+    for (unsigned index = 0; index < 4; index++) {
+        assert(device_create(physical[0], &info, NULL, &devices[index]) == VK_SUCCESS);
+        PFN_vkGetDeviceQueue get_queue =
+            (PFN_vkGetDeviceQueue)device_proc(devices[index], "vkGetDeviceQueue");
+        for (unsigned queue_index = 0; queue_index < 16; queue_index++) {
+            VkQueue queue = NULL;
+            get_queue(devices[index], 0, queue_index, &queue);
+            assert((queue != NULL) == (index * 16 + queue_index < 63));
+        }
+    }
+    for (unsigned index = 0; index < 4; index++)
+        ((PFN_vkDestroyDevice)device_proc(devices[index], "vkDestroyDevice"))(devices[index], NULL);
+    destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
 static void failures(void) {
@@ -559,7 +827,8 @@ static void loader_fixture(void) {
     saved = NULL;
     assert(dlclose(loader) == 0);
     assert(dlclose(library) == 0);
-    puts("System Vulkan loader: manifest discovery, dispatch and eight instance lifecycles passed");
+    puts("System Vulkan loader: manifest discovery, dispatch and eight instance "
+         "lifecycles passed");
 }
 #endif
 int main(void) {
@@ -571,11 +840,13 @@ int main(void) {
     fixture.reply_again = 2;
     healthy(&fixture);
     concurrent();
+    device_failures();
     failures();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();
 #endif
-    puts("ICD native instance dispatch: 128 cycles, exact loader aliases and sticky loss passed");
+    puts("ICD native instance dispatch: 128 cycles, exact loader aliases and "
+         "sticky loss passed");
     return 0;
 }

@@ -1,4 +1,4 @@
-/** @file venus_icd.h @brief Experimental standalone Vulkan loader/instance interface. */
+/** @file venus_icd.h @brief Experimental standalone Vulkan loader and bounded dispatch interface. */
 #ifndef WaddleVenusIcdH
 /** @brief Include guard; no ownership or storage. */
 #define WaddleVenusIcdH
@@ -30,7 +30,7 @@ void venus_icd_abandon(void);
  * @note Allocation-free, thread-safe; does not advertise complete Vulkan API support.
  */
 VkResult venus_icd_negotiate_loader(uint32_t *version);
-/** @brief Resolve global/implemented instance functions with exact Vulkan calling ABI.
+/** @brief Resolve global/implemented instance and device functions with exact Vulkan calling ABI.
  * @param[in] instance NULL for globals, otherwise a live ICD instance; not dereferenced.
  * @param[in] name Nullable, accessible NUL-terminated byte string, at most256 bytes.
  * @return Borrowed static function pointer or NULL for unsupported/invalid lookup.

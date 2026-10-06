@@ -1286,7 +1286,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     identity, exact pinned command11/12/17/19/20 semantics, error rollback, teardown
     and verification before implementation. Full dispatch and DXVK remain pending.
 
-- **Commit (current; resolve by subject)**: `fix(test): recognize compiler stack canary coverage guards`
+- **Commit `a086ca8`**: `fix(test): recognize compiler stack canary coverage guards`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Exclude branches whose compiler-generated destination calls
     __stack_chk_fail, matching the existing exclusion for compiler panic guards.
@@ -1295,3 +1295,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     tests; 99.49% production lines and93.29% branches with the device increment.
     Commit53158a7 has all eight GitHub checks green. New device code remains under
     local verification and is not yet credited toward full dispatch acceptance.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch bounded device and queue lifecycles`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; complete runtime gate pending).
+  - **Summary**: Add bounded core device creation/destruction and stable cached queue
+    dispatch. Validate native queue counts/priorities/features, strip loader-only
+    device chain records, reserve identities and release negative creation results.
+    Enforce parent teardown order,16 device caches and63 exclusive queue ring indices.
+    Initialize queues through pinned command155 and required Venus timeline info;
+    never submit forbidden legacy queue/idle commands. Idle/fence APIs remain pending.
+  - **Verification**: Pinned C encoder compares device/queue/destruction packets;
+    native128-cycle churn,16-device/63-ring limits, invalid input and transport/reply
+    failure cases pass. Three Zig tests pass, production coverage99.50% lines and
+    93.29% branches. ASan/LSan/UBSan local/native and actual two-worker-session device
+    create/queue/cache/destroy integration pass; Windows DLL/tests cross-link.
+    Raise integration deadline20s to60s for16 actual host device lifecycles. Native
+    Windows/updated-head GitHub checks remain required. TODO #3 stays40%; complete
+    graphics/compute/memory/synchronization dispatch and actual DXVK remain pending.

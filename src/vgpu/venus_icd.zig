@@ -1,4 +1,4 @@
-//! Experimental bounded Vulkan instance dispatch; device/DXVK support is separately gated.
+//! Experimental bounded Vulkan dispatch; full device API/DXVK support is separately gated.
 const std = @import("std");
 const c = @cImport({
     @cInclude("waddle/venus_icd.h");
@@ -13,6 +13,17 @@ const instance_cache_t = struct {
     count: u32 = 0,
     physical: [MaxDevices]u64 = [_]u64{0} ** MaxDevices,
 };
+const device_cache_t = struct {
+    handle: u64 = 0,
+    family_count: usize = 0,
+    families: [16]u32 = [_]u32{0} ** 16,
+    counts: [16]u32 = [_]u32{0} ** 16,
+    queues: [64]u64 = [_]u64{0} ** 64,
+    rings: [64]u32 = [_]u32{0} ** 64,
+};
+const QueueTimelineTag: u32 = 1000384005;
+var ring_slots = [_]bool{false} ** 64;
+var device_caches = [_]device_cache_t{.{}} ** 16;
 var mutex = std.Thread.Mutex{};
 var namespace_id: u32 = 1;
 var command = std.mem.zeroes(c.venus_command_t);
@@ -35,6 +46,8 @@ fn clear() void {
     c.venus_command_free(&command);
     c.venus_objects_free(&objects);
     caches = [_]instance_cache_t{.{}} ** MaxInstances;
+    device_caches = [_]device_cache_t{.{}} ** 16;
+    ring_slots = [_]bool{false} ** 64;
     lost = c.RingOk;
 }
 /// Borrow one exclusive negotiated backend; public header defines ownership/deadlines/threads.
@@ -191,6 +204,15 @@ fn destroy_instance(
     const handle = if (instance) |value| @intFromPtr(value) else return;
     const entry = cache(handle) orelse return;
     const record = object(handle, c.VK_OBJECT_TYPE_INSTANCE).?;
+    // Refuse invalid parent-before-child teardown before any host submission.
+    for (slots) |child| {
+        if (child.kind == c.VK_OBJECT_TYPE_DEVICE) {
+            for (entry.physical[0..entry.count]) |physical| {
+                if (object(physical, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE).?.id == child.parent_id)
+                    return;
+            }
+        }
+    }
     var encoded: [24]u8 = undefined;
     var written: usize = 0;
     std.debug.assert(
@@ -515,18 +537,248 @@ fn sparse_properties(
         _ = failure(c.RingCorrupt);
     };
 }
-/// Device creation fails explicitly while device APIs are pending; output NULL, no transport.
+const writer_t = struct {
+    bytes: [8192]u8 = undefined,
+    used: usize = 0,
+    fn put(self: *writer_t, comptime word_t: type, word: word_t) void {
+        std.debug.assert(@sizeOf(word_t) <= self.bytes.len - self.used);
+        std.mem.writeInt(word_t, self.bytes[self.used..][0..@sizeOf(word_t)], word, .little);
+        self.used += @sizeOf(word_t);
+    }
+    fn header(self: *writer_t, command_id: u32, id: u64) void {
+        self.put(u32, command_id);
+        self.put(u32, 1);
+        self.put(u64, id);
+    }
+};
+fn device_cache(handle: u64) ?*device_cache_t {
+    if (object(handle, c.VK_OBJECT_TYPE_DEVICE) == null) return null;
+    for (&device_caches) |*entry| if (entry.handle == handle) return entry;
+    return null;
+}
+fn encode_device(info: *const c.VkDeviceCreateInfo, physical_id: u64, id: u64) !writer_t {
+    if (info.sType != c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO or info.flags != 0 or
+        info.queueCreateInfoCount == 0 or info.queueCreateInfoCount > 16 or
+        info.pQueueCreateInfos == null) return error.Invalid;
+    if (info.enabledLayerCount != 0) return error.Layer;
+    if (info.enabledExtensionCount != 0) return error.Extension;
+    var next = info.pNext;
+    var links: usize = 0;
+    while (next != null) {
+        const link: *const c.VkBaseInStructure = @ptrCast(@alignCast(next.?));
+        if (links == 32 or link.sType != c.VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO)
+            return error.Extension;
+        links += 1;
+        next = link.pNext;
+    }
+    var writer = writer_t{};
+    writer.header(11, physical_id);
+    writer.put(u64, 1);
+    writer.put(u32, c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
+    writer.put(u64, 0);
+    writer.put(u32, 0);
+    writer.put(u32, info.queueCreateInfoCount);
+    writer.put(u64, info.queueCreateInfoCount);
+    var total: u32 = 0;
+    for (info.pQueueCreateInfos[0..info.queueCreateInfoCount], 0..) |queue, index| {
+        if (queue.sType != c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO or
+            queue.pNext != null or queue.flags != 0 or queue.queueCount == 0 or
+            queue.queueCount > 16 or queue.pQueuePriorities == null) return error.Invalid;
+        for (info.pQueueCreateInfos[0..index]) |previous| {
+            if (previous.queueFamilyIndex == queue.queueFamilyIndex) return error.Invalid;
+        }
+        total += queue.queueCount;
+        if (total > 64) return error.Invalid;
+        writer.put(u32, c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO);
+        writer.put(u64, 0);
+        writer.put(u32, 0);
+        writer.put(u32, queue.queueFamilyIndex);
+        writer.put(u32, queue.queueCount);
+        writer.put(u64, queue.queueCount);
+        for (queue.pQueuePriorities[0..queue.queueCount]) |priority| {
+            if (!std.math.isFinite(priority) or priority < 0 or priority > 1) return error.Invalid;
+            writer.put(u32, @bitCast(priority));
+        }
+    }
+    writer.put(u32, 0);
+    writer.put(u64, 0);
+    writer.put(u32, 0);
+    writer.put(u64, 0);
+    writer.put(u64, @intFromBool(info.pEnabledFeatures != null));
+    if (info.pEnabledFeatures != null) {
+        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| {
+            const boolean = @field(info.pEnabledFeatures.*, field.name);
+            if (boolean > 1) return error.Invalid;
+            writer.put(u32, boolean);
+        }
+    }
+    writer.put(u64, 0);
+    writer.put(u64, 1);
+    writer.put(u64, id);
+    return writer;
+}
+fn identity_reply(bytes: []const u8, command_id: u32, id: u64, has_result: bool) !i32 {
+    var reader = reader_t{ .bytes = bytes };
+    if (try reader.scalar(u32) != command_id) return error.Value;
+    const result = if (has_result) try reader.scalar(i32) else 0;
+    if (try reader.scalar(u64) != 1 or try reader.scalar(u64) != id) return error.Value;
+    return result;
+}
+/// Borrowed native input, allocation-free serialized reservation/publication; NULL output on error.
+/// Canonical core queues/features only; unknown extension/layer chains explicitly rejected.
+/// @param[in] physical Nonnull live private physical handle, validated without dereference.
+/// @param[in] info Nonnull borrowed accessible native structs/priorities/features for this call.
+/// @param[in] allocator Nullable borrowed callbacks; no allocations performed or retained.
+/// @param[out] output Nonnull borrowed writable handle, NULL on any error.
+/// @return Native host result, initialization/layer/extension/host-memory errors or device loss.
 fn create_device(
     physical: c.VkPhysicalDevice,
     info: [*c]const c.VkDeviceCreateInfo,
     allocator: [*c]const c.VkAllocationCallbacks,
     output: [*c]c.VkDevice,
 ) callconv(.C) c_int {
-    _ = physical;
-    _ = info;
     _ = allocator;
-    if (output != null) output.* = null;
-    return c.VK_ERROR_FEATURE_NOT_PRESENT;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (physical == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(physical.?),
+        c.VK_OBJECT_TYPE_PHYSICAL_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var available: ?*device_cache_t = null;
+    for (&device_caches) |*entry| if (entry.handle == 0) {
+        available = entry;
+        break;
+    };
+    const entry = available orelse return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, parent.id, 1, &record) !=
+        c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    const encoded = encode_device(@ptrCast(info), parent.id, record.*.id) catch |err| {
+        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1);
+        return switch (err) {
+            error.Layer => c.VK_ERROR_LAYER_NOT_PRESENT,
+            error.Extension => c.VK_ERROR_EXTENSION_NOT_PRESENT,
+            else => c.VK_ERROR_INITIALIZATION_FAILED,
+        };
+    };
+    const reply = transact(encoded.bytes[0..encoded.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = identity_reply(reply, 11, record.*.id, true) catch
+        return failure(c.RingCorrupt);
+    if (result != c.VK_SUCCESS) {
+        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1);
+        return result;
+    }
+    entry.* = .{ .handle = record.*.handle, .family_count = info.*.queueCreateInfoCount };
+    for (info.*.pQueueCreateInfos[0..entry.family_count], 0..) |queue, index| {
+        entry.families[index] = queue.queueFamilyIndex;
+        entry.counts[index] = queue.queueCount;
+    }
+    output.* = @ptrFromInt(entry.handle);
+    return c.VK_SUCCESS;
+}
+/// Borrowed output cleared for invalid/lost calls; stable queue identity lasts until device retire.
+/// @param[in] device Nullable validated private device handle, not dereferenced.
+/// @param[in] family Queue family requested during device creation.
+/// @param[in] index Zero-based index below that family's requested count.
+/// @param[out] output Nullable borrowed handle storage; NULL on invalid/lost/capacity failure.
+/// Mutex serialized, no allocations; reply identity must match a private reservation.
+fn get_device_queue(
+    device: c.VkDevice,
+    family: u32,
+    index: u32,
+    output: [*c]c.VkQueue,
+) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return;
+    output.* = null;
+    if (device == null or lost != c.RingOk) return;
+    const entry = device_cache(@intFromPtr(device.?)) orelse return;
+    var offset: usize = 0;
+    var position: ?usize = null;
+    for (entry.families[0..entry.family_count], 0..) |number, family_index| {
+        if (family == number and index < entry.counts[family_index]) position = offset + index;
+        offset += entry.counts[family_index];
+    }
+    const queue_index = position orelse return;
+    if (entry.queues[queue_index] != 0) {
+        output.* = @ptrFromInt(entry.queues[queue_index]);
+        return;
+    }
+    var available_ring: ?u32 = null;
+    for (ring_slots[1..], 1..) |occupied, ring_index| if (!occupied) {
+        available_ring = @intCast(ring_index);
+        break;
+    };
+    const ring_index = available_ring orelse return;
+    const parent = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    var queue: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_QUEUE, parent.id, 1, &queue) !=
+        c.RingOk) return;
+    var writer = writer_t{};
+    ring_slots[ring_index] = true;
+    writer.header(155, parent.id);
+    writer.put(u64, 1);
+    writer.put(u32, c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2);
+    writer.put(u64, 1);
+    writer.put(u32, QueueTimelineTag);
+    writer.put(u64, 0);
+    writer.put(u32, ring_index);
+    writer.put(u32, 0);
+    writer.put(u32, family);
+    writer.put(u32, index);
+    writer.put(u64, 1);
+    writer.put(u64, queue.*.id);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    _ = identity_reply(reply, 155, queue.*.id, false) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    entry.queues[queue_index] = queue.*.handle;
+    entry.rings[queue_index] = ring_index;
+    output.* = @ptrFromInt(queue.*.handle);
+}
+/// Retire host device then private queues/device; loss retains reservations.
+/// @param[in] device Nullable private handle, foreign/retired handles ignored without dereference.
+/// @param[in] allocator Nullable borrowed callback input; no callbacks or allocations performed.
+/// Allocation-free/mutex serialized; caller must first destroy any future nonqueue children.
+fn destroy_device(
+    device: c.VkDevice,
+    allocator: [*c]const c.VkAllocationCallbacks,
+) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null) return;
+    const entry = device_cache(@intFromPtr(device.?)) orelse return;
+    const record = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    var writer = writer_t{};
+    writer.header(12, record.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const reply_command = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (reply_command != 12) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    for (entry.queues) |handle| if (handle != 0) {
+        std.debug.assert(c.venus_objects_release(&objects, handle, c.VK_OBJECT_TYPE_QUEUE, 1) ==
+            c.RingOk);
+    };
+    std.debug.assert(c.venus_objects_release(&objects, entry.handle, c.VK_OBJECT_TYPE_DEVICE, 1) ==
+        c.RingOk);
+    for (entry.rings) |ring| if (ring != 0) {
+        ring_slots[ring] = false;
+    };
+    entry.* = .{};
 }
 /// Empty supported device extension list; no allocation; invalid handles/layers rejected.
 fn device_extensions(
@@ -602,11 +854,26 @@ fn enumerate_version(version: [*c]u32) callconv(.C) c_int {
     version.* = 1 << 22;
     return c.VK_SUCCESS;
 }
-/// Device functions remain unsupported until separately implemented; no ownership/state.
-fn get_device_proc(device: c.VkDevice, name: [*c]const u8) callconv(.C) c.PFN_vkVoidFunction {
-    _ = device;
-    _ = name;
+fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
+    const Entries = .{
+        .{ "vkGetDeviceProcAddr", &get_device_proc },
+        .{ "vkDestroyDevice", &destroy_device },
+        .{ "vkGetDeviceQueue", &get_device_queue },
+    };
+    inline for (Entries) |entry| if (std.mem.eql(u8, name, entry[0])) return @ptrCast(entry[1]);
     return null;
+}
+/// Resolve implemented device functions for a validated live device; no native pointer dereference.
+/// Mutex serialized, static borrowed function pointers remain accessible for process lifetime.
+/// @param[in] device Nullable handle; must validate as live to resolve any procedure.
+/// @param[in] name Nullable accessible NUL-terminated native bytes, at most256 bytes.
+/// @return Borrowed static function pointer or NULL for unsupported/invalid inputs.
+fn get_device_proc(device: c.VkDevice, name: [*c]const u8) callconv(.C) c.PFN_vkVoidFunction {
+    const valid_name = bounded_name(name) orelse return null;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or device_cache(@intFromPtr(device.?)) == null) return null;
+    return device_proc(valid_name);
 }
 fn bounded_name(name: [*c]const u8) ?[]const u8 {
     if (name == null) return null;
@@ -651,7 +918,7 @@ export fn venus_icd_get_instance_proc_addr(
         .{ "vkGetDeviceProcAddr", &get_device_proc },
     };
     inline for (Entries) |entry| if (std.mem.eql(u8, name, entry[0])) return @ptrCast(entry[1]);
-    return physical_proc(name);
+    return physical_proc(name) orelse device_proc(name);
 }
 /// Physical query lookup; header defines validated instance and supported procedure scope.
 export fn venus_icd_get_physical_proc_addr(
@@ -743,4 +1010,119 @@ test "bounded fixed and array replies reject every truncation and invalid tags" 
     std.mem.writeInt(i32, bytes[4..8], -11, .little);
     reader = .{ .bytes = &bytes };
     try std.testing.expectEqual(@as(i32, -11), try image_value(&reader, &image));
+}
+test "bounded device input validation and identity reply truncations" {
+    var priorities = [_]f32{ 0.25, 0.75 } ** 8;
+    var queues = [_]c.VkDeviceQueueCreateInfo{.{
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .queueFamilyIndex = 0,
+        .queueCount = 1,
+        .pQueuePriorities = &priorities,
+    }} ** 16;
+    var feature = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+    var info = c.VkDeviceCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &queues,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = null,
+        .enabledExtensionCount = 0,
+        .ppEnabledExtensionNames = null,
+        .pEnabledFeatures = &feature,
+    };
+    _ = try encode_device(&info, 1, 2);
+    feature.robustBufferAccess = 2;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    feature.robustBufferAccess = 1;
+    info.enabledLayerCount = 1;
+    try std.testing.expectError(error.Layer, encode_device(&info, 1, 2));
+    info.enabledLayerCount = 0;
+    info.enabledExtensionCount = 1;
+    try std.testing.expectError(error.Extension, encode_device(&info, 1, 2));
+    info.enabledExtensionCount = 0;
+    var link = c.VkBaseInStructure{
+        .sType = c.VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
+        .pNext = null,
+    };
+    info.pNext = &link;
+    _ = try encode_device(&info, 1, 2);
+    link.pNext = &link;
+    try std.testing.expectError(error.Extension, encode_device(&info, 1, 2));
+    link.pNext = null;
+    link.sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    try std.testing.expectError(error.Extension, encode_device(&info, 1, 2));
+    info.pNext = null;
+    info.queueCreateInfoCount = 2;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    for (&queues, 0..) |*queue, index| queue.queueFamilyIndex = @intCast(index);
+    info.queueCreateInfoCount = 16;
+    for (&queues) |*queue| queue.queueCount = 16;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    for (&queues) |*queue| queue.queueCount = 4;
+    _ = try encode_device(&info, 1, 2);
+    info.queueCreateInfoCount = 1;
+    for ([_]f32{ -1, 2, std.math.inf(f32), std.math.nan(f32) }) |priority| {
+        priorities[0] = priority;
+        try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    }
+    priorities[0] = 0.5;
+    queues[0].pQueuePriorities = null;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    queues[0].pQueuePriorities = &priorities;
+    queues[0].queueCount = 0;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    queues[0].queueCount = 17;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    queues[0].queueCount = 1;
+    queues[0].flags = 1;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    queues[0].flags = 0;
+    queues[0].pNext = &link;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    queues[0].pNext = null;
+    queues[0].sType = 0;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    queues[0].sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    info.sType = 0;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    info.sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    info.flags = 1;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    info.flags = 0;
+    info.queueCreateInfoCount = 0;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    info.queueCreateInfoCount = 17;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    info.queueCreateInfoCount = 1;
+    info.pQueueCreateInfos = null;
+    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    var bytes: [24]u8 = undefined;
+    std.mem.writeInt(u32, bytes[0..4], 11, .little);
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+    std.mem.writeInt(u64, bytes[16..24], 2, .little);
+    try std.testing.expectEqual(@as(i32, 0), try identity_reply(&bytes, 11, 2, true));
+    for (0..24) |length| {
+        if (identity_reply(bytes[0..length], 11, 2, true)) |_| {
+            return error.AcceptedTruncation;
+        } else |_| {}
+    }
+    for ([_]usize{ 0, 8, 16 }) |offset| {
+        bytes[offset] ^= 1;
+        try std.testing.expectError(error.Value, identity_reply(&bytes, 11, 2, true));
+        bytes[offset] ^= 1;
+    }
+    std.mem.writeInt(u32, bytes[0..4], 155, .little);
+    std.mem.writeInt(u64, bytes[4..12], 1, .little);
+    std.mem.writeInt(u64, bytes[12..20], 2, .little);
+    _ = try identity_reply(bytes[0..20], 155, 2, false);
+    for (0..20) |length| {
+        if (identity_reply(bytes[0..length], 155, 2, false)) |_| {
+            return error.AcceptedTruncation;
+        } else |_| {}
+    }
 }

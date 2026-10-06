@@ -2528,8 +2528,7 @@ CI; final Linux consumer verification must pass on the corrected commit.
 
 ### Bounded ICD device and queue lifecycle increment
 
-This increment implements core device creation, queue identity, device/queue idle,
-and destruction. It does not satisfy the separate command, memory, synchronization
+This increment implements core device creation, queue identity and destruction. It does not satisfy the separate command, memory, synchronization
 or DXVK acceptance gates. No additional extensions are advertised. Native caller
 inputs remain borrowed for one serialized call; the ICD allocates no heap memory.
 Device creation accepts one through16 unique queue families, one through16 queues
@@ -2550,11 +2549,16 @@ pinned generated order; feature structs serialize55 separate32-bit boolean words
 Allocator pointers are always encoded as0; guest callbacks are never sent to host.
 
 GetDeviceQueue validates a family/index requested at creation. Each pair receives
-one reserved identity through command17, validates reply command17/tag1/identity,
+one reserved identity through command155 (vkGetDeviceQueue2), validates reply
+command155/tag1/identity,
 and caches that handle. Repeated queries return the same handle without submission.
-Invalid calls clear a nonnull output and submit nothing. Queue/device idle use
-commands19/20, respectively, validate the command and signed native result, and
-return transport corruption/loss as VK_ERROR_DEVICE_LOST. Device destruction sends
+Invalid calls clear a nonnull output and submit nothing. The pinned renderer forbids legacy command17 and direct idle commands19/20.
+The queue info includes private timeline tag1000384005, null terminal pNext and
+one reserved ring index1..63. Ring indices are process-binding exclusive, allocated
+once at queue initialization and released only after validated host device destruction.
+There are64 ring occupancy bits; index0 remains CPU-only. Exhaustion clears the
+queue output without submission. Device/queue idle APIs remain pending fence-based
+implementation; they are not resolved or sent as forbidden direct commands. Device destruction sends
 command12 first and validates its reply before releasing queue records then device
 record/cache. Instance destruction while a device child remains does not submit
 anything; caller must destroy children first. Binding mutex covers every lifecycle

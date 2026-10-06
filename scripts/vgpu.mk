@@ -771,7 +771,7 @@ build/venus_icd.o: src/vgpu/venus_icd.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
 build/vgpu_icd_test: tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o
-	$(CC) $(CFLAGS) $(VgpuInstanceWireIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -o $@
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -o $@
 
 .PHONY: vgpu-icd-test vgpu-icd-sanitizers
 vgpu-icd-test: build/vgpu_icd_test build/vgpu_icd_loader_test
@@ -779,7 +779,7 @@ vgpu-icd-test: build/vgpu_icd_test build/vgpu_icd_loader_test
 	./build/vgpu_icd_loader_test
 
 vgpu-icd-sanitizers: $(VgpuIcdObjects) build/venus_values_oracle.o
-	$(CC) $(VgpuReceiverSanitizers) $(VgpuInstanceWireIncludes) tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -o build/vgpu_icd_sanitized
+	$(CC) $(VgpuReceiverSanitizers) $(VgpuInstanceOracleIncludes) tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -o build/vgpu_icd_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_icd_sanitized
 
 build/venus_icd_windows.lib: src/vgpu/venus_icd.zig $(VgpuIcdHeaders) | build
@@ -790,7 +790,7 @@ build/venus_values_oracle_windows.obj: tests/vgpu/values.c | build vgpu-protocol
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuValuesOracleIncludes) -DVgpuValuesOracle -c $< -o $@
 
 build/vgpu_icd_test.exe: tests/vgpu/icd.c $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj
-	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuInstanceWireIncludes) $< $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj -o $@
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuInstanceOracleIncludes) $< $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj -o $@
 
 vgpu-windows: build/vgpu_icd_test.exe
 
@@ -810,13 +810,13 @@ build/venus_icd_windows.obj: src/vgpu/venus_icd.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
 
 build/vgpu_icd_loader_test: tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o build/waddle_vulkan_experimental.json
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DVgpuIcdLoader $(VgpuInstanceWireIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -ldl -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DVgpuIcdLoader $(VgpuInstanceOracleIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -ldl -o $@
 
 vgpu-icd-test: build/vgpu_icd_loader_test
 
 
-build/venus_icd_oracle.o: tests/vgpu/icd.c $(VgpuIcdHeaders)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuInstanceWireIncludes) -Dmain=venus_icd_native_fixture -c $< -o $@
+build/venus_icd_oracle.o: tests/vgpu/icd.c $(VgpuIcdHeaders) | vgpu-protocol
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuInstanceOracleIncludes) -Dmain=venus_icd_native_fixture -c $< -o $@
 
 .PHONY: vgpu-icd-coverage
 vgpu-icd-coverage: build/venus_icd_oracle.o $(VgpuIcdObjects) build/venus_values_oracle.o
