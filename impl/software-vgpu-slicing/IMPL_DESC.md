@@ -4351,15 +4351,15 @@ Owned production change is confined to src/vgpu/venus_features_native.zig. It in
 
 Public interface:
 
-    pub fn publish_features2(output: *c.VkPhysicalDeviceFeatures2,
+    pub fn publish_features2(output: ?*anyopaque,
         chain: *const chain_t, nodes: []const node_t, core: []const u32) !void;
 
-The existing wire result field is named result_t.core ([55]u32), not core_flags. Integration passes &decoded.core and decoded.nodes[0..decoded.count]. output is a nonnull initialized accessible caller-owned native Features2 object. chain is the snapshot collected from exactly output.pNext during the same operation; all linked headers/links remain immutable until return. The function rejects wrong outer tag or misalignment before reading other outer fields. A successful call borrows every input until return and retains no pointers. Externally synchronized exclusive output access is required.
+The existing wire result field is named result_t.core ([55]u32), not core_flags. Integration passes &decoded.core and decoded.nodes[0..decoded.count]. output is a borrowed nullable untyped address; null returns Invalid. A nonnull address must designate an initialized accessible caller-owned native Features2 object. Reject null and integer alignment before casting to the aligned native type. chain is the snapshot collected from exactly output.pNext during the same operation; all linked headers/links remain immutable until return. The function rejects wrong outer tag or misalignment before reading other outer fields. A successful call borrows every input until return and retains no pointers. Externally synchronized exclusive output access is required.
 
 Input snapshot/flag storage must not overlap any target object. All native records, including unknown objects whose extents cannot be inferred from their header, must be distinct accessible initialized non-overlapping objects. This explicit precondition preserves unknown payloads without guessing their sizes. In addition, publication defensively rejects overlaps among recognized targets (existing behavior) and between each recognized target's full native extent and the entire outer Features2 object, including its header and padding. Full outer extent rather than features-only range prevents named chain assignments from corrupting outer sType/pNext/padding. Compute interval endpoints with checked usize addition before publication; never dereference a caller address after alignment/quota failure.
 
 Validation is one complete phase before any native write:
-1. Verify outer pointer alignment and sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2.
+1. Reject null and integer address misalignment before creating any typed native pointer, then verify sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2. A typed aligned pointer argument permits compiler alignment assumptions and cannot establish this rejection guarantee; optimized negative tests must prove the untyped entry checks happen before dereference.
 2. Require core.len == 55; validate all55 words are0 or1, including the last word.
 3. Call an extracted private validate_batch(chain,nodes) with identical current count/tag/schema/Boolean/null/alignment/header/duplicate/recognized-overlap behavior. Existing public publish_batch reuses the same validator.
 4. Validate every recognized native target interval against the full outer object interval; reject any overlap.
