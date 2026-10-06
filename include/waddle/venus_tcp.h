@@ -3,6 +3,7 @@
 /** @brief Include guard, no storage or ownership. */
 #define WaddleVenusTcpH
 #include "venus_request.h"
+#include "venus_capabilities.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
@@ -210,6 +211,134 @@ venus_ring_status_t venus_tcp_random(void *bytes, size_t length);
  * @param[in] length Exact owner extent. No allocation/retention; thread-safe on disjoint bytes.
  */
 void venus_tcp_scrub(void *bytes, size_t length);
+/** @brief Caller-owned noncopyable sequential client, initialized from zero.
+ * No hidden heap/thread; fixed private staging and authoritative host snapshot.
+ * All fields are private/read-only to callers. Socket and record remain alive
+ * while a bound ICD borrows the callback; retirement/abandon precedes free.
+ */
+typedef struct venus_tcp_client_t {
+    venus_tcp_socket_t socket; /**< Owned native socket until terminal/retirement/free. */
+    uint64_t session; /**< Copied nonzero authenticated identity, retained after socket loss. */
+    uint64_t next_sequence; /**< Next nonzero outer identity; UINT64_MAX means exhausted. */
+    uint32_t timeout_ms; /**< Immutable whole exchange maximum1..60000ms. */
+    venus_ring_status_t lost; /**< Sticky terminal failure, RingOk while usable. */
+    venus_capabilities_t capabilities; /**< Copied authoritative actual negotiated host snapshot. */
+    uint8_t tx[VenusTcpMaxCommandBytes]; /**< Exclusive private submission staging. */
+    uint8_t rx[VenusTcpMaxReplyBytes]; /**< Exclusive private response staging. */
+} venus_tcp_client_t;
+/** @brief Authenticate one actual host session before callback binding/discovery.
+ * @param[in,out] client Nonnull empty caller record, unchanged on failure.
+ * @param[in] config Nonnull immutable validated private config, borrowed only for call.
+ * @param[in] cancel Nullable borrowed release-set flag, alive through call only.
+ * @return Ok; Invalid local arguments/live owner; existing protocol/transport status.
+ * Sole owner thread; one fixed5s handshake deadline, no heap or retained config/token.
+ * Success owns socket and copied capabilities; call retire/free only after ICD quiescence.
+ */
+venus_ring_status_t venus_tcp_client_init(venus_tcp_client_t *client,
+    const venus_tcp_config_t *config, const _Atomic uint32_t *cancel);
+/** @brief Actual framed callback with exact existing command exchange signature.
+ * @param[in,out] context Nonnull initialized exclusive client, borrowed while ICD bound.
+ * @param[in] request Nonnull sequence-zero immutable decoded request, admitted subset.
+ * @param[in] input Nullable for length zero, borrowed private input[length].
+ * @param[in] length Exact payload extent. @param[out] response Nonnull disjoint
+ * private record, zeroed on failure after alias validation. @param[out] output
+ * Nullable only for capacity zero; unchanged until complete valid successful response.
+ * @param[in] capacity Exact successful read/reply capacity, at most4096; zero otherwise.
+ * @return Actual receiver Ring status; local Invalid before publication; terminal
+ * network/protocol loss is sticky. Sole thread; no input retention/heap/reentrancy.
+ * Input/output may alias each other; no argument overlaps owner/request/response.
+ */
+venus_ring_status_t venus_tcp_client_exchange(void *context, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity);
+/** @brief Framed callback with an additional active-call cancellation borrow.
+ * @param[in,out] client Nonnull exclusive initialized owner. Other buffer parameters
+ * match venus_tcp_client_exchange exactly. @param[in] cancel Nullable release-set
+ * atomic flag borrowed only through this call. @return Same callback status.
+ * No pointer retention/thread/heap; use this from an owned bootstrap adapter.
+ */
+venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
+    const venus_request_t *request, const void *input, size_t length,
+    venus_request_t *response, void *output, size_t capacity, const _Atomic uint32_t *cancel);
+/** @brief Await actual host retirement after successful quiescent ICD unbind.
+ * @param[in,out] client Nonnull live exclusive owner, application callbacks stopped.
+ * @param[in] cancel Nullable release-set atomic flag borrowed through call.
+ * @return Ok only for validated established-session retirement Ack; otherwise
+ * sticky loss with no claim of worker retirement. No heap or retained pointer.
+ * Success closes socket, preserves public accounting identity and marks Closed.
+ */
+venus_ring_status_t venus_tcp_client_retire(venus_tcp_client_t *client, const _Atomic uint32_t *cancel);
+/** @brief Close/scrub/reset owner after trusted retirement or unbound standalone use.
+ * @param[in,out] client Nullable empty/live owner; callbacks must already stop.
+ * Caller must unbind, or externally verify exact host retirement then abandon,
+ * before freeing an ICD-borrowed context. Idempotent, no heap/thread or fake Ack.
+ */
+void venus_tcp_client_free(venus_tcp_client_t *client);
+/** @brief Borrowed actual negotiated frontend type; complete definition in venus_guest.h. */
+typedef struct venus_guest_t venus_guest_t;
+/** @brief Sole-thread authenticated server owner, zero-initialize and never copy.
+ * No heap/thread; accepted socket belongs to this owner after authentication.
+ * Actual guest/worker/controller remain externally owned and must retire before Ack.
+ */
+typedef struct venus_tcp_server_t {
+    venus_tcp_socket_t socket; /**< Owned accepted native connection. */
+    uint64_t session; /**< Nonzero CSPRNG authenticated receiver identity. */
+    uint64_t next_sequence; /**< Exact next outer request sequence, never wraps. */
+    uint64_t handshake_deadline; /**< Original whole5s authentication/negotiation deadline. */
+    uint32_t timeout_ms; /**< Immutable1..60000ms whole operation budget. */
+    uint32_t ready; /**< One only after actual capability/profile negotiation Ack. */
+    uint32_t eof; /**< One for clean pre-header EOF, socket retained for actual retirement Ack. */
+    venus_ring_status_t lost; /**< Sticky terminal result, RingOk while usable. */
+    uint8_t nonce[16]; /**< Copied client nonce echoed once; no borrowed pointer. */
+    uint8_t tx[VenusTcpMaxCommandBytes]; /**< Private acquired receiver-command staging. */
+    uint8_t rx[VenusTcpMaxReplyBytes]; /**< Private actual receiver-response staging. */
+} venus_tcp_server_t;
+/** @brief Admit exactly one token-authenticated client before creating any worker.
+ * @param[in,out] server Nonnull empty owner, unchanged on failure.
+ * @param[in,out] accepted Nonnull disjoint live socket; consumed/zeroed after
+ * valid local argument admission, including peer authentication failure.
+ * @param[in] token Nonnull borrowed private32-byte launch capability, never retained/logged.
+ * @param[in] timeout_ms Whole operation maximum1..60000ms.
+ * @param[in] cancel Nullable atomic flag, borrowed for call. @return Existing Ring status.
+ * No heap/thread; success owns socket/session/nonce, failure closes moved socket.
+ */
+venus_ring_status_t venus_tcp_server_authenticate(venus_tcp_server_t *server,
+    venus_tcp_socket_t *accepted, const uint8_t *token, uint32_t timeout_ms,
+    const _Atomic uint32_t *cancel);
+/** @brief Send actual compatible receiver capset and validate exact guest declaration.
+ * @param[in,out] server Nonnull authenticated unnegotiated sole-thread owner.
+ * @param[in] guest Nonnull live actual negotiated frontend, borrowed only for call.
+ * @param[in] capabilities Nonnull immutable captured actual160-byte wire snapshot,
+ * must exactly match decoded guest capabilities. @param[in] cancel Nullable borrowed atomic flag.
+ * @return Existing Ring status; failure is terminal and closes socket, no fabricated capset.
+ * Uses remaining original5s handshake deadline; no allocation or retained guest pointer.
+ */
+venus_ring_status_t venus_tcp_server_negotiate(venus_tcp_server_t *server,
+    const venus_guest_t *guest, const uint8_t *capabilities, const _Atomic uint32_t *cancel);
+/** @brief Forward at most one exact framed request to the actual borrowed guest.
+ * @param[in,out] server Nonnull ready exclusive owner. @param[in,out] guest
+ * Nonnull live negotiated actual frontend; configured timeout must cover server maximum.
+ * @param[in] cancel Nullable borrowed atomic flag, alive through call only.
+ * @return Ok for completed framed ordinary result; Closed/eof1 with retained socket
+ * for clean pre-header EOF; otherwise sticky terminal status and closed socket.
+ * Entire acquisition, guest remaining RPC budget and response use one deadline.
+ * No heap/thread/retained guest or payload pointer; never synthesizes receiver replies.
+ */
+venus_ring_status_t venus_tcp_server_step(venus_tcp_server_t *server,
+    venus_guest_t *guest, const _Atomic uint32_t *cancel);
+/** @brief Acknowledge actual externally proven controller retirement, then close socket.
+ * @param[in,out] server Nonnull clean-eof owner; callbacks/app calls already stopped.
+ * @param[in] cancel Nullable call-borrowed atomic flag. @return Existing Ring status.
+ * Caller MUST already stop/reap exact actual worker and release guest/channel/mapping
+ * ownership; this function does not retire a renderer and must never fake that proof.
+ * Sole thread, no heap; Ack uses established identity under a fresh configured deadline.
+ */
+venus_ring_status_t venus_tcp_server_ack_retired(venus_tcp_server_t *server,
+    const _Atomic uint32_t *cancel);
+/** @brief Close/scrub/reset socket owner, independently of borrowed actual controller.
+ * @param[in,out] server Nullable zero/live owner, sole thread after calls stop.
+ * Idempotent; no heap/thread or implicit worker retirement/acknowledgment.
+ */
+void venus_tcp_server_free(venus_tcp_server_t *server);
 _Static_assert(sizeof(venus_tcp_client_hello_t) == 48, "TCP private hello ABI");
 _Static_assert(sizeof(venus_tcp_server_hello_t) == 184, "TCP private server ABI");
 #endif
