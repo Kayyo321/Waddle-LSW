@@ -36,3 +36,16 @@ $(MesaCpuManifest): $(MesaCpuLibrary) scripts/mesa_cpu_cache.mk
 	python3 -c 'import json,pathlib,sys; pathlib.Path(sys.argv[2]).write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path(sys.argv[1]).resolve()),"api_version":"1.3.0"}},indent=2)+"\n")' "$(MesaCpuLibrary)" "$@"
 
 mesa-cpu-cache: mesa-cpu-cache-pin $(MesaCpuManifest)
+
+build/vgpu_mesa_cpu_cache_test: tests/vgpu/mesa_cpu_cache.c | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< -ldl -o $@
+
+.PHONY: mesa-cpu-cache-test mesa-cpu-cache-sanitizers
+mesa-cpu-cache-test: mesa-cpu-cache build/vgpu_mesa_cpu_cache_test
+	VK_DRIVER_FILES="$(CURDIR)/$(MesaCpuManifest)" ./build/vgpu_mesa_cpu_cache_test "$(CURDIR)/$(MesaCpuLibrary)"
+
+# Real driver allocations are intercepted by the instrumented C fixture. The
+# vendor C/C++ library keeps ordinary native build flags and remains unloadable.
+mesa-cpu-cache-sanitizers: mesa-cpu-cache
+	$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror -g -O1 -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/mesa_cpu_cache.c -ldl -o build/vgpu_mesa_cpu_cache_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 VK_DRIVER_FILES="$(CURDIR)/$(MesaCpuManifest)" ./build/vgpu_mesa_cpu_cache_sanitized "$(CURDIR)/$(MesaCpuLibrary)"
