@@ -3382,3 +3382,47 @@ non-loss errors release the reservation and remain retryable. Output stays NULL
 for all errors, and abandon may reclaim uncertain identity only after the old
 receiver is retired. This corrects the earlier device path that incorrectly
 released loss reservations and accepted positive constructor statuses.
+
+### Device-time reservation for infallible queue retrieval
+
+GetDeviceQueue is a void core entry point: exhaustion must be detected by
+CreateDevice before native work, rather than returning NULL for a valid requested
+queue after device creation succeeds. Validate the complete native create input,
+then reserve one private dispatchable queue slot and one receiver timeline ring
+for every requested queue. The global rings remain1..63; all device requests
+compete for these fixed resources. Local inability to reserve the entire set
+returns OUT_OF_HOST_MEMORY, rolls back all partial slots/rings and the device
+slot, leaves output NULL and sends no native CreateDevice. Existing configured
+queue totals up to64 remain valid input; a request for64 necessarily exhausts the
+63-ring implementation capacity and returns memory exhaustion before host work.
+
+A stack-local device_cache_t stages requested families/counts, private queue
+handles, rings and per-queue ready=false state. On native SUCCESS publish the
+whole cache/device. Known non-loss native failure rolls back the whole staged
+reservation; malformed/transport/device-loss paths retain reservations and ring
+ownership under sticky loss until backend retirement/abandon. Unpublished staged
+handles never escape to the caller. An uncertain device prevents ordinary unbind
+through its retained registry entries; abandon clears the complete registry/ring
+ledger after receiver retirement.
+
+GetDeviceQueue validates family/index and consumes its already-owned queue slot
+and ring. A ready queue returns its stable handle with no wire operation. An
+unready queue issues command155 with its pre-reserved identity/ring; only exact
+acknowledgment marks ready and initializes queue metadata/family for submission.
+Failure returns NULL and poisons the binding, without losing reservations.
+There is no allocation, slot reservation or ring search in this void call. Idle
+fences only ready queues because uninitialized receiver timeline rings do not
+exist. DestroyDevice releases all private queues/rings, including never-requested
+ones, after native device retirement. Pending submission tickets still prohibit
+device destruction. Namespace generations, queue readiness and ring ownership
+reset only at symmetric destruction or retired-backend abandon.
+
+Test all63 ring reservations across multiple devices before any GetDeviceQueue,
+then prove a further CreateDevice fails without native dispatch. Destroy an
+unretrieved device, reserve its freed capacity, retrieve every queue and verify
+stable repeat identities. Fill private object slots with nonqueue children,
+ensure a new device reservation rolls back without leaking partial slots/rings,
+and verify already-created queues can still be retrieved when the registry is
+otherwise full. Adjust capacity tests to charge pre-reserved queues even before
+retrieval. Run native codec fixtures, allocation-free Zig coverage, sanitizers,
+Windows native ABI checks and actual worker/shared-loader lifecycle tests.

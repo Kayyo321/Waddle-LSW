@@ -1770,7 +1770,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     sanitized plus forced-failure cleanup. Windows fixture/DLL/loader cross-link
     passes. Full graphics/compute/mapping/DXVK gates pending; TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `fix(vgpu): retain device creation identities after uncertain results`
+- **Commit `f1f83e5`**: `fix(vgpu): retain device creation identities after uncertain results`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Treat native device loss and unexpected positive constructor
     statuses as sticky loss/corruption, retaining the uncertain device slot until
@@ -1778,3 +1778,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: New native loss/positive-result tests reject further commands
     without transport access. Nine Zig tests, native loader fixture and zero-leak
     ASan/LSan/UBSan pass; coverage99.63% lines/94.55% branches. TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify device-time queue capacity reservation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify transactional private queue/ring reservation during
+    CreateDevice, rollback before native dispatch, ready-only idle and loss
+    retention. Void GetDeviceQueue consumes pre-reserved resources with stable
+    identity; valid retrieval cannot fail due to later registry/ring exhaustion.
+  - **Verification**: Native ABI result/error boundary and fixed object/ring
+    capacity inspected; implementation and lifecycle/capacity tests pending.
