@@ -26,12 +26,14 @@ typedef enum fixture_mode_t {
     FixtureBadSequence,
     FixtureBadHeader,
     FixturePartialRequest,
-    FixtureWorkerStop
+    FixtureWorkerStop,
+    FixtureCooperativeStop
 } fixture_mode_t;
 
 static int fixture_report_fd = -1;
 static uint64_t last_identity;
 static const char *service_fixture_path = "build/vgpu_service_fixture";
+static const char *production_worker_path = "build/waddle_vgpu_worker";
 
 static int guest_exchange(venus_rpc_t *rpc, venus_request_t request, const void *input,
                           void *output, size_t output_bytes, uint32_t status) {
@@ -105,7 +107,7 @@ static int guest_run(void *inherited, int descriptor, int stream, fixture_mode_t
     if (fixture_report_fd >= 0 && write(fixture_report_fd, &session.session_id,
                                         sizeof(session.session_id)) != sizeof(session.session_id))
         goto cleanup;
-    if (!guest_resources(&rpc))
+    if (mode != FixtureCooperativeStop && !guest_resources(&rpc))
         goto cleanup;
     for (uint32_t sequence = 1; sequence <= RoundTrips; sequence++) {
         /* Pinned Venus stream/resource one, real instance-version command. */
@@ -129,7 +131,7 @@ static int guest_run(void *inherited, int descriptor, int stream, fixture_mode_t
             reply[0] != 137 || reply[1] != 0 || reply[2] != 1 || reply[3] != 0 ||
             reply[4] < (1u << 22))
             goto cleanup;
-        if (mode == FixtureWorkerStop) {
+        if (mode == FixtureWorkerStop || mode == FixtureCooperativeStop) {
             if (write(fixture_report_fd, "R", 1) != 1)
                 goto cleanup;
             venus_ring_status_t terminal;
@@ -298,7 +300,8 @@ static int isolated_fixture(fixture_mode_t mode) {
     venus_worker_t worker = {0};
     venus_region_view_t view = {0};
     char executable[PATH_MAX];
-    if (!realpath(service_fixture_path, executable))
+    if (!realpath(mode == FixtureCooperativeStop ? production_worker_path : service_fixture_path,
+                  executable))
         return 1;
     descriptor = memfd_create("waddle_isolated_test", MFD_CLOEXEC);
     if (descriptor < 0 || ftruncate(descriptor, MockMappingBytes) != 0)
@@ -345,17 +348,25 @@ static int isolated_fixture(fixture_mode_t mode) {
                 last_identity = identity;
             } else if (count >= 0)
                 goto cleanup;
-        } else if (mode == FixtureWorkerStop && !stopped) {
+        } else if ((mode == FixtureWorkerStop || mode == FixtureCooperativeStop) && !stopped) {
             char ready;
             ssize_t count = read(reports[0], &ready, 1);
             if (count == 1) {
-                if (ready != 'R' || venus_worker_destroy(&worker, 1000) != RingOk)
+                if (ready != 'R')
                     goto cleanup;
-                stopped = 1;
+                if (mode == FixtureCooperativeStop) {
+                    if (kill(worker.process_id, SIGTERM) != 0)
+                        goto cleanup;
+                    stopped = 2; /* Poll production cooperative exit without escalation. */
+                } else {
+                    if (venus_worker_destroy(&worker, 1000) != RingOk)
+                        goto cleanup;
+                    stopped = 1;
+                }
             } else if (count == 0)
                 goto cleanup;
         }
-        if (stopped)
+        if (stopped == 1)
             break;
         venus_ring_status_t status = venus_worker_poll(&worker);
         if (status == RingClosed) {
@@ -372,7 +383,7 @@ static int isolated_fixture(fixture_mode_t mode) {
         const struct timespec Pause = {0, 1000000};
         nanosleep(&Pause, NULL);
     }
-    if (stopped) {
+    if (stopped == 1) {
         /* Forced termination may precede cooperative ring closure. Controller
          * closes its validated views before exposing the mapping as terminal. */
         venus_ring_close(&view.commands);
@@ -412,6 +423,9 @@ int main(void) {
     const char *configured_fixture = getenv("WADDLE_SERVICE_FIXTURE");
     if (configured_fixture)
         service_fixture_path = configured_fixture;
+    configured_fixture = getenv("WADDLE_PRODUCTION_WORKER");
+    if (configured_fixture)
+        production_worker_path = configured_fixture;
     alarm(30);
     for (int mode = FixtureNormal; mode <= FixturePartialRequest; mode++) {
         if (run_fixture((fixture_mode_t)mode) != 0) {
@@ -419,7 +433,7 @@ int main(void) {
             return 1;
         }
     }
-    for (int mode = FixtureNormal; mode <= FixtureWorkerStop; mode++)
+    for (int mode = FixtureNormal; mode <= FixtureCooperativeStop; mode++)
         if (isolated_fixture((fixture_mode_t)mode) != 0) {
             fprintf(stderr, "Isolated service/restart failed: mode=%d\n", mode);
             return 1;

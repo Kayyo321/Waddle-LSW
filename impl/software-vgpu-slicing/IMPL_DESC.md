@@ -941,3 +941,9 @@ random session ID; old resources/handles are never reused. Real mock integration
 must exercise exec'd service CPU/resource operations, malformed/truncated sessions,
 closure visibility, bounded controller cleanup and repeated fresh launches. This
 verifies recovery plumbing, not physical GPU reset or success after device loss.
+
+The integrated cancellation fixture also execs the production default-policy worker,
+completes a real CPU query, then sends SIGTERM to its owned child identity and polls
+for cooperative exit without escalation. Require exit status zero, both rings closed
+and guest terminal notification. Instrument production executable and parent with
+ASan/LSan/UBSan in addition to the configurable service fixture.

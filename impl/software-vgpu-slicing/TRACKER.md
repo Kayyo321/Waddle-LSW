@@ -449,7 +449,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     worker functional and sanitizer tests passed there. Local worker coverage
     passes at 98.35% lines and 94.26% branches.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): run receiver in isolated mapped service`
+- **Commit `623f17e`**: `feat(vgpu): run receiver in isolated mapped service`
   - **Task Impact**: +0% to TODO: #2 (+0% overall); the separate process/service
     acceptance gates await CI before progress credit.
   - **Summary**: Added a trusted worker executable and symmetric service ownership
@@ -461,3 +461,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     pass locally; service production coverage 100% lines and 98.65% branches.
     All acquisition failures release owned memory and retain borrowed descriptors.
     Native Windows framing is unchanged; physical GPU queue evidence remains pending.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): exercise production worker cancellation`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall); CI acceptance pending.
+  - **Summary**: Launch the actual default-policy executable, execute a real
+    Venus CPU query, send SIGTERM and observe a cooperative zero-status exit,
+    closed rings and guest notification without forced termination.
+  - **Verification**: Normal and ASan/LSan/UBSan integrated tests pass with the
+    production executable instrumented separately from its parent.
