@@ -3599,3 +3599,26 @@ caller-owned barrier append validates capacity for the complete record before
 any mutation. Independent upstream oracle lengths and maximum valid packets must
 verify each capacity calculation; oversized requests fail before array access.
 This preserves honest coverage of input error paths without lowering thresholds.
+
+### Guide audit and actual hardware evidence
+
+Commit3560d34 verifies actual NVIDIA GeForce RTX5080 data through direct and
+shared-loader production workers, normal and ASan/LSan/UBSan, sixteen repeated
+lifecycles per path. Every byte of65536-byte GPU updates is checked after
+invalidation; guest4096-byte pattern writes followed by flush, a disjoint GPU
+copy and completed fence/invalidation match source and destination. Forced
+post-map failure verifies abandonment cleanup. The same64-byte transport ring
+and eight cycles per fixture are preserved; the whole-test watchdog is300s
+after measuring approximately184s normal runtime. No larger ring hides limits.
+
+Generator publication uses temporary owned directories, validates exact pinned
+receiver headers before publication and atomically replaces changed files only.
+Unchanged generated headers retain bytes/mtimes; concurrent generations therefore
+cannot truncate compiler input. Temporary directories always release at scope exit.
+
+The guide's equal remaining45% allocation cannot duplicate the preexisting25%
+standalone adapter credit. Original milestone accounting remains authoritative:
+instance/device/procedure support and bounded runtime/real DXVK gates must pass
+before TODO#3 reaches100%. A native DXVK runner also needs negotiated frontend
+binding before its loader creates an ICD instance; the black-box DLL harness
+does not manufacture that backend bootstrap or infer production execution.
