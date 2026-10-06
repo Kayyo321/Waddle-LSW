@@ -3647,7 +3647,7 @@ Input/resolve/depth/preserve attachments are absent. At most16 dependencies have
 subpass0 or EXTERNAL endpoints, not both EXTERNAL, nonzero core stage masks, core
 access masks and optional BY_REGION. Packet size204+28*dependency_count<=652.
 Framebuffer command80 borrows one translated view and render-pass ID, nonzero
-width/height and layers1; packet104 bytes. Begin command133 uses translated
+width/height bounded to1..4096 and layers1; packet104 bytes. Begin command133 uses translated
 command/render-pass/framebuffer identities, nonnegative origin, nonzero bounded
 area and one borrowed clear value; INLINE contents only, packet116 bytes. Clear
 union encoding preserves the pinned tags0/2, array count4 and raw32-bit color
@@ -3668,8 +3668,12 @@ The ICD reserves32 descriptor-layout metadata slots and32 pipeline-layout slots.
 A descriptor layout normalizes at most64 binding records {binding,type,count,
 stage_flags}; immutable samplers remain unsupported in this initial profile.
 Each pipeline layout owns copies of up to16 normalized descriptor layouts and32
-validated push ranges. Dedicated fixed tables (~570KiB) avoid embedding maximum
-layout arrays in all512 generic resource records. Generic resource metadata
+validated push ranges. On x86_64, descriptor-layout storage occupies33,280 bytes
+and pipeline-layout storage541,440 bytes:574,720 bytes combined. Dedicated
+fixed tables avoid embedding maximum layout arrays in all512 generic resource
+records. The complete registry occupies2,119,424 bytes (about2.021MiB), including
+1,082,880 bytes for64 pipeline snapshots and461,824 bytes for128 set snapshots.
+These are static owned tables with no heap allocations. Generic resource metadata
 contains only a one-based profile slot index; zero means no profile. Reservation
 precedes native creation. Ordinary native failure rolls back both reservations;
 transport uncertainty retains identity/profile until retired-backend abandonment.
