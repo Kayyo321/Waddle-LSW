@@ -17,7 +17,7 @@ jobs:
       - name: Install transport build and coverage tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential clang-19 llvm-19 python3 python3-yaml python3-mako meson ninja-build pkg-config libvulkan-dev libepoxy-dev libdrm-dev mesa-vulkan-drivers libwayland-dev wayland-protocols
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential clang-19 llvm-19 python3 python3-yaml python3-mako meson ninja-build cmake pkg-config libvulkan-dev libepoxy-dev libdrm-dev mesa-vulkan-drivers libwayland-dev wayland-protocols
           git config --global --add safe.directory '*'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -30,7 +30,7 @@ jobs:
           tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Check out immutable Venus renderer dependency
-        run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol
+        run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol submodules/vulkan_loader
       - name: Build Venus renderer without dependency downloads
         run: make vgpu-renderer
       - name: Verify pinned guest encoder against exact receiver schema
@@ -56,6 +56,8 @@ jobs:
         run: make vgpu-values-test vgpu-values-sanitizers vgpu-values-coverage
       - name: Verify experimental ICD loader and instance dispatch
         run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
+      - name: Verify pinned native loader instance device and fence discovery
+        run: make vgpu-native-loader-test vgpu-native-loader-sanitizers
       - name: Verify guest Vulkan object identity and lifetime
         run: make vgpu-objects-test vgpu-objects-sanitizers vgpu-objects-coverage
       - name: Verify exclusive serialized guest command ownership
@@ -114,7 +116,7 @@ jobs:
       - name: Check out pinned signed-driver declarations
         run: |
           git config --global core.autocrlf false
-          git submodule update --init --depth 1 submodules/looking_glass submodules/venus_protocol submodules/virglrenderer
+          git submodule update --init --depth 1 submodules/looking_glass submodules/venus_protocol submodules/virglrenderer submodules/vulkan_loader
       - name: Provision native Windows protocol generator
         run: python -m pip install PyYAML==6.0.2 Mako==1.3.8 MarkupSafe==3.0.2
       - name: Build and run native Windows transport and allocator tests
@@ -305,4 +307,20 @@ jobs:
           ./build/vgpu_frame_codec_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_frame.zig -Iinclude -lc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows pinned loader manifest and device dispatch
+        shell: pwsh
+        run: |
+          $loader_include = (Resolve-Path scripts/vulkan_loader.cmake).Path
+          cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_windows -A x64 "-DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$loader_include" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/vendor/vulkan_loader_windows --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c 'import json,pathlib; pathlib.Path("build/waddle_vulkan_experimental_windows.json").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("build/waddle_vulkan_experimental.dll").resolve()),"api_version":"1.0.0"}},indent=2)+"\n")'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -ladvapi32 -o build/vgpu_icd_loader_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:WADDLE_TEST_VULKAN_LOADER = (Resolve-Path build/vendor/vulkan_loader_windows/loader/Release/vulkan-1.dll).Path
+          ./build/vgpu_icd_loader_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

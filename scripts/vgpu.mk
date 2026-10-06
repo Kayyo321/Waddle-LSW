@@ -827,3 +827,28 @@ build/vgpu_icd_dll_test.exe: tests/vgpu/icd_dll.c build/waddle_vulkan_experiment
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuInstanceWireIncludes) $< -o $@
 
 vgpu-windows: build/vgpu_icd_dll_test.exe
+
+# Private pinned native loader; existing protocol headers, no dependency downloads/install.
+.PHONY: vgpu-native-loader
+vgpu-native-loader: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan_loader.cmake
+	cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$(CURDIR)/scripts/vulkan_loader.cmake -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DBUILD_WSI_XCB_SUPPORT=OFF -DBUILD_WSI_XLIB_SUPPORT=OFF -DBUILD_WSI_XLIB_XRANDR_SUPPORT=OFF -DBUILD_WSI_WAYLAND_SUPPORT=OFF
+	cmake --build build/vendor/vulkan_loader --parallel 4
+
+.PHONY: vgpu-native-loader-test
+vgpu-native-loader-test: vgpu-native-loader build/vgpu_icd_loader_test
+	WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader/loader/libvulkan.so.1" ./build/vgpu_icd_loader_test
+
+build/waddle_vulkan_experimental_windows.json: build/waddle_vulkan_experimental.dll
+	python3 -c 'import json,pathlib; pathlib.Path("$@").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("$<").resolve()),"api_version":"1.0.0"}},indent=2)+"\n")'
+
+build/vgpu_icd_loader_test.exe: tests/vgpu/icd.c $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj build/waddle_vulkan_experimental_windows.json
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader $(VgpuInstanceOracleIncludes) $< $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj -ladvapi32 -o $@
+
+build/vgpu_icd_loader_sanitized: tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o build/waddle_vulkan_experimental.json
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -DVgpuIcdLoader $(VgpuInstanceOracleIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -ldl -o $@
+
+.PHONY: vgpu-native-loader-sanitizers
+vgpu-native-loader-sanitizers: build/vgpu_icd_loader_sanitized
+	cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$(CURDIR)/scripts/vulkan_loader.cmake -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DBUILD_WSI_XCB_SUPPORT=OFF -DBUILD_WSI_XLIB_SUPPORT=OFF -DBUILD_WSI_XLIB_XRANDR_SUPPORT=OFF -DBUILD_WSI_WAYLAND_SUPPORT=OFF -DLOADER_ENABLE_ADDRESS_SANITIZER=ON
+	cmake --build build/vendor/vulkan_loader_sanitized --parallel 4
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader_sanitized/loader/libvulkan.so.1" ./build/vgpu_icd_loader_sanitized

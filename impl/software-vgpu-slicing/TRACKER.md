@@ -18,7 +18,7 @@
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
-| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | In Progress | 0% | 30% | Immutable public v1.4.307 pin/license audited; offline build/native execution pending |
+| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | In Progress | 0% | 65% | Offline Linux normal/sanitized loader and device/fence discovery pass; Windows native runtime pending |
 
 **Total Feature Completion**: `65.0%`
 
@@ -1380,7 +1380,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     compatibility, test-only offline build boundary using existing pinned headers,
     private DLL/manifest lifetime and real loader device/fence verification gates.
 
-- **Commit (current; resolve by subject)**: `chore(deps): pin native Vulkan loader to v1.4.307`
+- **Commit `5135652`**: `chore(deps): pin native Vulkan loader to v1.4.307`
   - **Task Impact**: +30% to TODO: #8; +0% to TODO: #3 (+0% overall).
   - **Summary**: Add public HTTPS KhronosGroup/Vulkan-Loader under submodules/vulkan_loader
     at0508dee4ff864f5034ae6b7f68d34cb2822b827d, with shallow clone preference.
@@ -1389,3 +1389,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Public tag/commit resolves upstream, exact detached checkout
     is clean; no loose vendor files, source changes or runtime substitutions.
     Offline build and actual native loader acceptance remain pending.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): verify native loader device and fence dispatch`
+  - **Task Impact**: +35% to TODO: #8; +0% to TODO: #3 (+0% overall).
+  - **Summary**: Build the pinned loader offline with the existing exact header307
+    target, no downloads/codegen/install or vendor edits. Extend dynamic loader
+    fixture to eight instance/device/queue/idle/fence cycles, portable owned library
+    handles/environment snapshots, private Windows manifest and medium-integrity
+    test process behavior that preserves upstream elevated-search protections.
+    Gate Linux pinned loader safety and native Windows DLL discovery in CI.
+  - **Verification**: System/pinned Linux loader device discovery passes; build an
+    ASan-enabled pinned loader and run fixture with ASan/LSan/UBSan, zero leaks.
+    Native Windows fixture cross-links with strict warnings and explicit Advapi32.
+    Workflow parses. The native oracle backend remains explicitly fake; production
+    worker runtime remains separately verified. Native Windows/updated-head CI
+    required before completing dependency task or loader ABI milestone credit.

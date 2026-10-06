@@ -17,8 +17,10 @@
 #include <pthread.h>
 #endif
 #ifdef VgpuIcdLoader
-#include <dlfcn.h>
 #include <stdlib.h>
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 #endif
 /** @brief Test-only immutable renderer encoder oracle, borrows output for the
  * call.
@@ -1107,24 +1109,138 @@ static void failures(void) {
 typedef venus_ring_status_t (*binding_t)(venus_command_exchange_t, void *);
 /** @brief Dynamic unbinding function owns no storage. */
 typedef venus_ring_status_t (*unbinding_t)(void);
+#ifdef _WIN32
+/** @brief Native test library handle; caller owns until library_close. */
+typedef HMODULE loader_library_t;
+#else
+/** @brief Native test library handle; caller owns until library_close. */
+typedef void *loader_library_t;
+#endif
+/** @brief Open a private native test library; NULL on loader error, caller closes once. */
+static loader_library_t library_open(const char *path) {
+#ifdef _WIN32
+    return LoadLibraryA(path);
+#else
+    return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+#endif
+}
+/** @brief Resolve borrowed code address; NULL missing symbol, no ownership/retention. */
+static void *library_symbol(loader_library_t library, const char *name) {
+#ifdef _WIN32
+    FARPROC symbol = GetProcAddress(library, name);
+    void *address = NULL;
+    _Static_assert(sizeof(address) == sizeof(symbol), "Native loader pointer ABI");
+    memcpy(&address, &symbol, sizeof(address));
+    return address;
+#else
+    return dlsym(library, name);
+#endif
+}
+/** @brief Close one nonnull test library after all objects and backend bindings retire. */
+static void library_close(loader_library_t library) {
+#ifdef _WIN32
+    assert(FreeLibrary(library));
+#else
+    assert(dlclose(library) == 0);
+#endif
+}
+/** @brief Snapshot nullable environment string; caller frees returned owned copy once. */
+static char *save_environment(const char *name) {
+#ifdef _WIN32
+    SetLastError(ERROR_SUCCESS);
+    DWORD bytes = GetEnvironmentVariableA(name, NULL, 0);
+    if (!bytes) {
+        DWORD error = GetLastError();
+        if (error == ERROR_ENVVAR_NOT_FOUND)
+            return NULL;
+        assert(error == ERROR_SUCCESS);
+        bytes = 1;
+    }
+    char *copy = malloc(bytes);
+    assert(copy);
+    copy[0] = 0;
+    DWORD written = GetEnvironmentVariableA(name, copy, bytes);
+    assert(written < bytes);
+#else
+    const char *value = getenv(name);
+    if (!value)
+        return NULL;
+    size_t bytes = strlen(value) + 1;
+    char *copy = malloc(bytes);
+    assert(copy);
+    memcpy(copy, value, bytes);
+#endif
+    return copy;
+}
+/** @brief Set/remove this test process's environment, borrowed inputs, no retained storage. */
+static void set_environment(const char *name, const char *value) {
+#ifdef _WIN32
+    assert(SetEnvironmentVariableA(name, value));
+#else
+    assert(value ? setenv(name, value, 1) == 0 : unsetenv(name) == 0);
+#endif
+}
+#ifdef _WIN32
+/** @brief Lower only this short-lived test process's integrity to obey loader environment policy.
+ * @note Owns/closes token and allocated SID; no system registry/token changes, no guard bypass.
+ * Native Windows CI can start elevated; upstream ignores manifest overrides at high integrity.
+ */
+static void medium_integrity(void) {
+    HANDLE token = NULL;
+    assert(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY | TOKEN_ADJUST_DEFAULT, &token));
+    _Alignas(TOKEN_MANDATORY_LABEL) unsigned char bytes[256];
+    DWORD written = 0;
+    assert(GetTokenInformation(token, TokenIntegrityLevel, bytes, sizeof(bytes), &written));
+    const TOKEN_MANDATORY_LABEL *current = (const TOKEN_MANDATORY_LABEL *)bytes;
+    DWORD count = *GetSidSubAuthorityCount(current->Label.Sid);
+    assert(count);
+    DWORD level = *GetSidSubAuthority(current->Label.Sid, count - 1);
+    if (level >= SECURITY_MANDATORY_HIGH_RID) {
+        SID_IDENTIFIER_AUTHORITY authority = SECURITY_MANDATORY_LABEL_AUTHORITY;
+        PSID sid = NULL;
+        assert(AllocateAndInitializeSid(&authority, 1, SECURITY_MANDATORY_MEDIUM_RID, 0, 0, 0, 0, 0,
+                                        0, 0, &sid));
+        TOKEN_MANDATORY_LABEL label = {.Label = {.Sid = sid, .Attributes = SE_GROUP_INTEGRITY}};
+        assert(SetTokenInformation(token, TokenIntegrityLevel, &label,
+                                   (DWORD)sizeof(label) + GetLengthSid(sid)));
+        assert(FreeSid(sid) == NULL);
+        sid = NULL;
+    }
+    assert(CloseHandle(token));
+    token = NULL;
+}
+#endif
 static void loader_fixture(void) {
-    void *library = dlopen("build/libwaddle_vulkan_experimental.so", RTLD_NOW | RTLD_LOCAL);
-    void *loader = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
+#ifdef _WIN32
+    medium_integrity();
+    const char *icd_path = "build/waddle_vulkan_experimental.dll";
+    const char *manifest_path = "build/waddle_vulkan_experimental_windows.json";
+#else
+    const char *icd_path = "build/libwaddle_vulkan_experimental.so";
+    const char *manifest_path = "build/waddle_vulkan_experimental.json";
+#endif
+    loader_library_t library = library_open(icd_path);
+    const char *loader_path = getenv("WADDLE_TEST_VULKAN_LOADER");
+#ifdef _WIN32
+    assert(loader_path); /* Native CI must select the exact private pinned loader. */
+#else
+    if (!loader_path)
+        loader_path = "libvulkan.so.1";
+#endif
+    loader_library_t loader = library_open(loader_path);
     assert(library && loader);
     binding_t bind = NULL;
     unbinding_t unbind = NULL;
     PFN_vkGetInstanceProcAddr lookup = NULL;
-    void *address = dlsym(library, "venus_icd_bind");
+    void *address = library_symbol(library, "venus_icd_bind");
     memcpy(&bind, &address, sizeof(bind));
-    address = dlsym(library, "venus_icd_unbind");
+    address = library_symbol(library, "venus_icd_unbind");
     memcpy(&unbind, &address, sizeof(unbind));
-    address = dlsym(loader, "vkGetInstanceProcAddr");
+    address = library_symbol(loader, "vkGetInstanceProcAddr");
     memcpy(&lookup, &address, sizeof(lookup));
     assert(bind && unbind && lookup);
-    const char *previous = getenv("VK_DRIVER_FILES");
-    char *saved = previous ? strdup(previous) : NULL;
-    assert(!previous || saved);
-    assert(setenv("VK_DRIVER_FILES", "build/waddle_vulkan_experimental.json", 1) == 0);
+    char *saved = save_environment("VK_DRIVER_FILES");
+    set_environment("VK_DRIVER_FILES", manifest_path);
     fixture_t fixture = fresh();
     assert(bind(exchange, &fixture) == RingOk);
     VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -1148,18 +1264,70 @@ static void loader_fixture(void) {
         assert(properties);
         properties(devices[0], &value);
         assert(value.vendorID == 42);
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup(instance, "vkCreateDevice");
+        PFN_vkGetDeviceProcAddr device_proc =
+            (PFN_vkGetDeviceProcAddr)lookup(instance, "vkGetDeviceProcAddr");
+        float priority = 0.5f;
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                              .queueCount = 1,
+                                              .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                                          .queueCreateInfoCount = 1,
+                                          .pQueueCreateInfos = &queue_info};
+        VkDevice device = NULL;
+        assert(create_device && device_proc);
+        fixture.device_info = &device_info;
+        result = create_device(devices[0], &device_info, NULL, &device);
+        fixture.device_info = NULL;
+        if (result != VK_SUCCESS)
+            fprintf(stderr, "loader device create failed: %d\n", result);
+        assert(result == VK_SUCCESS && device);
+        PFN_vkGetDeviceQueue get_queue =
+            (PFN_vkGetDeviceQueue)device_proc(device, "vkGetDeviceQueue");
+        PFN_vkQueueWaitIdle queue_idle =
+            (PFN_vkQueueWaitIdle)device_proc(device, "vkQueueWaitIdle");
+        PFN_vkDeviceWaitIdle device_idle =
+            (PFN_vkDeviceWaitIdle)device_proc(device, "vkDeviceWaitIdle");
+        PFN_vkCreateFence create_fence = (PFN_vkCreateFence)device_proc(device, "vkCreateFence");
+        PFN_vkDestroyFence destroy_fence =
+            (PFN_vkDestroyFence)device_proc(device, "vkDestroyFence");
+        PFN_vkGetFenceStatus fence_status =
+            (PFN_vkGetFenceStatus)device_proc(device, "vkGetFenceStatus");
+        PFN_vkWaitForFences wait_fences =
+            (PFN_vkWaitForFences)device_proc(device, "vkWaitForFences");
+        PFN_vkResetFences reset_fences = (PFN_vkResetFences)device_proc(device, "vkResetFences");
+        PFN_vkDestroyDevice destroy_device =
+            (PFN_vkDestroyDevice)device_proc(device, "vkDestroyDevice");
+        assert(get_queue && queue_idle && device_idle && create_fence && destroy_fence &&
+               fence_status && wait_fences && reset_fences && destroy_device);
+        VkQueue queue = NULL, repeated = NULL;
+        get_queue(device, 0, 0, &queue);
+        get_queue(device, 0, 0, &repeated);
+        assert(queue && repeated == queue);
+        assert(queue_idle(queue) == VK_SUCCESS && device_idle(device) == VK_SUCCESS);
+        VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                                        .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+        VkFence fence = NULL;
+        assert(create_fence(device, &fence_info, NULL, &fence) == VK_SUCCESS && fence);
+        assert(fence_status(device, fence) == VK_SUCCESS);
+        assert(wait_fences(device, 1, &fence, VK_TRUE, 0) == VK_SUCCESS);
+        assert(reset_fences(device, 1, &fence) == VK_SUCCESS);
+        assert(fence_status(device, fence) == VK_NOT_READY);
+        assert(wait_fences(device, 1, &fence, VK_TRUE, 0) == VK_TIMEOUT);
+        destroy_fence(device, fence, NULL);
+        destroy_device(device, NULL);
         PFN_vkDestroyInstance destroy =
             (PFN_vkDestroyInstance)lookup(instance, "vkDestroyInstance");
         assert(destroy);
         destroy(instance, NULL);
     }
     assert(unbind() == RingOk);
-    assert(saved ? setenv("VK_DRIVER_FILES", saved, 1) == 0 : unsetenv("VK_DRIVER_FILES") == 0);
+    set_environment("VK_DRIVER_FILES", saved);
     free(saved);
     saved = NULL;
-    assert(dlclose(loader) == 0);
-    assert(dlclose(library) == 0);
-    puts("System Vulkan loader: manifest discovery, dispatch and eight instance "
+    library_close(loader);
+    library_close(library);
+    puts("Native Vulkan loader: manifest discovery and eight instance/device/queue/fence "
          "lifecycles passed");
 }
 #endif

@@ -2673,3 +2673,11 @@ teardown site after all Vulkan objects retire. Any receiver failure retires sess
 before clearing ICD state. No DXVK or full API completion is inferred from loader
 acceptance. Allocate a zero-weight dependency task to audit addition, offline build
 and native execution, with commit-pinned progress attribution.
+
+Native Windows loader fixture policy: when CI starts with a high-integrity token,
+lower only the short-lived test process to medium integrity before private loader
+manifest discovery. Query its token, allocate a medium integrity SID, apply the
+lower label, free SID and close token deterministically. The upstream loader
+correctly ignores environment overrides at high integrity; do not bypass or disable
+that guard. No system token, registry entry or installed loader/driver is changed.
+The test may read its build artifacts after lowering; no registry writes are needed.
