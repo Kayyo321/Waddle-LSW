@@ -2622,6 +2622,75 @@ static void framebuffer_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup
  * @note No heap allocation. Both shader identities and creating layout/pass retire
  * before pipeline destruction, proving the compiled object owns scalar snapshots.
  */
+/** @brief Exercise acknowledged graphics binding and deterministic profile reset/reuse.
+ * @param[in] device/pipeline Live borrowed compatible device/pipeline identities.
+ * @param[in] lookup Immutable dispatcher. @param[in,out] fixture Sole-thread backend.
+ * @note Owns command pool/buffer until explicit retirement; borrowed info pointers cleared.
+ */
+static void graphics_bind_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
+                                   fixture_t *fixture, VkPipeline pipeline) {
+    PFN_vkCreateCommandPool create_pool =
+        (PFN_vkCreateCommandPool)lookup(device, "vkCreateCommandPool");
+    PFN_vkDestroyCommandPool destroy_pool =
+        (PFN_vkDestroyCommandPool)lookup(device, "vkDestroyCommandPool");
+    PFN_vkAllocateCommandBuffers allocate =
+        (PFN_vkAllocateCommandBuffers)lookup(device, "vkAllocateCommandBuffers");
+    PFN_vkFreeCommandBuffers free_commands =
+        (PFN_vkFreeCommandBuffers)lookup(device, "vkFreeCommandBuffers");
+    PFN_vkBeginCommandBuffer begin =
+        (PFN_vkBeginCommandBuffer)lookup(device, "vkBeginCommandBuffer");
+    PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)lookup(device, "vkEndCommandBuffer");
+    PFN_vkResetCommandBuffer reset =
+        (PFN_vkResetCommandBuffer)lookup(device, "vkResetCommandBuffer");
+    PFN_vkCmdBindPipeline bind = (PFN_vkCmdBindPipeline)lookup(device, "vkCmdBindPipeline");
+    VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                                         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+    fixture->pool_info = &pool_info;
+    VkCommandPool pool;
+    assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+    VkCommandBufferAllocateInfo allocation = {.sType =
+                                                  VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                                              .commandPool = pool,
+                                              .commandBufferCount = 1};
+    fixture->command_allocate = &allocation;
+    VkCommandBuffer command;
+    VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    fixture->command_begin = &begin_info;
+    assert(allocate(device, &allocation, &command) == VK_SUCCESS);
+    for (unsigned iteration = 0; iteration < 16; ++iteration) {
+        assert(begin(command, &begin_info) == VK_SUCCESS);
+        unsigned before = fixture->submissions;
+        bind(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        assert(fixture->submissions == before + (iteration ? 1 : 2) && fixture->command == 93);
+        assert(end(command) == VK_SUCCESS);
+        assert(reset(command, 0) == VK_SUCCESS);
+    }
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+        assert(begin(command, &begin_info) == VK_SUCCESS);
+        unsigned before = fixture->submissions;
+        bind(command,
+             scenario == 0   ? 2
+             : scenario == 1 ? VK_PIPELINE_BIND_POINT_COMPUTE
+                             : VK_PIPELINE_BIND_POINT_GRAPHICS,
+             scenario == 2   ? NULL
+             : scenario == 3 ? (VkPipeline)(uintptr_t)42
+                             : pipeline);
+        assert(fixture->submissions == before && end(command) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset(command, 0) == VK_SUCCESS);
+    }
+    free_commands(device, pool, 1, &command);
+    assert(allocate(device, &allocation, &command) == VK_SUCCESS);
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    unsigned before = fixture->submissions;
+    bind(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    assert(fixture->submissions == before + 1);
+    assert(end(command) == VK_SUCCESS);
+    destroy_pool(device, pool, NULL);
+    fixture->pool_info = NULL;
+    fixture->command_allocate = NULL;
+    fixture->command_begin = NULL;
+}
+
 static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
                                        fixture_t *fixture) {
 #define LoadGraphics(type, variable, name)                                                         \
@@ -2803,6 +2872,8 @@ static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr 
     assert(create_pipeline(device, NULL, 1, &info, NULL, &(VkPipeline){0}) ==
            VK_ERROR_INITIALIZATION_FAILED);
     assert(fixture->submissions == before);
+    graphics_bind_contract(device, lookup, fixture, pipeline);
+    before = fixture->submissions;
     destroy_pipeline(device, pipeline, NULL);
     assert(fixture->submissions == before + 1);
     destroy_pipeline(device, pipeline, NULL);
