@@ -23,7 +23,8 @@ static venus_ring_status_t negotiate(venus_receiver_t *receiver, venus_rpc_t *rp
 }
 
 static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc,
-                                    const venus_request_t *request, venus_request_t *response) {
+                                    const venus_request_t *request, venus_request_t *response,
+                                    const venus_dispatch_presentation_t *presentation) {
     if (request->kind == RequestNegotiate)
         return negotiate(receiver, rpc);
     if (!rpc->negotiated && request->kind != RequestCapabilities)
@@ -44,6 +45,9 @@ static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc
                                               request->argument_zero, request->argument_one,
                                               request->flags);
     case RequestFree:
+        if (presentation &&
+            presentation->resource_busy(presentation->context, request->resource_id))
+            return RingAgain;
         return venus_receiver_resource_free(receiver, request->resource_id);
     case RequestRead:
         response->payload_bytes = (uint32_t)request->argument_one;
@@ -59,14 +63,23 @@ static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc
         return venus_receiver_gpu_poll(receiver, (uint32_t)request->argument_zero,
                                        request->argument_one);
     case RequestPresent:
+        return presentation
+                   ? presentation->submit(presentation->context, rpc->buffer,
+                                          request->payload_bytes, (uint32_t)request->argument_zero,
+                                          request->argument_one)
+                   : RingInvalid;
     case RequestPresentPoll:
-        return RingInvalid; /* Requires an explicitly trusted native presentation binding. */
-    default:                /* Codec validation leaves only Poll. */
+        if (!presentation)
+            return RingInvalid;
+        response->payload_bytes = 32;
+        return presentation->take(presentation->context, request->argument_zero, rpc->buffer, 32);
+    default: /* Codec validation leaves only Poll. */
         return venus_receiver_poll(receiver);
     }
 }
 
-static venus_ring_status_t serve_request(venus_rpc_t *rpc, venus_receiver_t *receiver) {
+static venus_ring_status_t serve_request(venus_rpc_t *rpc, venus_receiver_t *receiver,
+                                         const venus_dispatch_presentation_t *presentation) {
     unsigned char header[VenusRequestHeaderBytes];
     venus_ring_status_t result = venus_rpc_transfer(rpc, header, sizeof(header), 0, 0);
     if (result != RingOk)
@@ -94,7 +107,7 @@ static venus_ring_status_t serve_request(venus_rpc_t *rpc, venus_receiver_t *rec
     if (request.kind == RequestReply || request.kind == RequestRead)
         limited |= request.argument_one > rpc->buffer_bytes;
     venus_request_t response = {.kind = request.kind, .direction = 1, .sequence = request.sequence};
-    result = limited ? RingLimit : dispatch(receiver, rpc, &request, &response);
+    result = limited ? RingLimit : dispatch(receiver, rpc, &request, &response, presentation);
     if (result != RingOk) {
         response.payload_bytes = 0;
         response.argument_zero = 0;
@@ -124,25 +137,39 @@ static venus_ring_status_t serve_request(venus_rpc_t *rpc, venus_receiver_t *rec
 
 /** @brief Call-scoped borrowed health state; never retained by the runtime. */
 typedef struct runtime_health_t {
-    venus_receiver_t *receiver;     /**< Borrowed live owner. */
-    const _Atomic uint32_t *cancel; /**< Optional borrowed cancellation flag. */
+    venus_receiver_t *receiver;                        /**< Borrowed live owner. */
+    const _Atomic uint32_t *cancel;                    /**< Optional borrowed cancellation flag. */
+    const venus_dispatch_presentation_t *presentation; /**< Optional call-scoped binding. */
 } runtime_health_t;
 static venus_ring_status_t check_health(void *context) {
     runtime_health_t *health = context;
-    return venus_receiver_health(health->receiver, health->cancel);
+    venus_ring_status_t status = venus_receiver_health(health->receiver, health->cancel);
+    if (status == RingOk && health->presentation)
+        status = health->presentation->pump(health->presentation->context);
+    return status;
 }
-venus_ring_status_t venus_dispatch_serve(venus_rpc_t *rpc, venus_receiver_t *receiver,
-                                         uint32_t timeout_ms) {
-    if (!receiver)
+venus_ring_status_t
+venus_dispatch_serve_presented(venus_rpc_t *rpc, venus_receiver_t *receiver,
+                               const venus_dispatch_presentation_t *presentation,
+                               uint32_t timeout_ms) {
+    if (!receiver ||
+        (presentation && (!presentation->context || !presentation->submit || !presentation->take ||
+                          !presentation->resource_busy || !presentation->pump)))
         return RingInvalid;
     venus_ring_status_t result = venus_rpc_begin(rpc, SessionHost, timeout_ms);
     if (result != RingOk)
         return result;
-    runtime_health_t health = {.receiver = receiver, .cancel = rpc->channel->cancel};
+    runtime_health_t health = {
+        .receiver = receiver, .cancel = rpc->channel->cancel, .presentation = presentation};
     rpc->monitor = check_health;
     rpc->monitor_context = &health;
-    result = serve_request(rpc, receiver);
+    result = serve_request(rpc, receiver, presentation);
     rpc->monitor = NULL;
     rpc->monitor_context = NULL;
     return result;
+}
+
+venus_ring_status_t venus_dispatch_serve(venus_rpc_t *rpc, venus_receiver_t *receiver,
+                                         uint32_t timeout_ms) {
+    return venus_dispatch_serve_presented(rpc, receiver, NULL, timeout_ms);
 }

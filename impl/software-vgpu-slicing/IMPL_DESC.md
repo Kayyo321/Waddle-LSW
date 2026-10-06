@@ -1812,3 +1812,14 @@ Monitor/context pointers are cleared on every return and retain no call-scoped
 binding after serve. Pending release records remain owned by the worker's lease
 module, which processes a bounded three packets per sample. The portable callback
 boundary keeps Linux DMA-BUF operations out of Windows ABI validation builds.
+
+
+Optional bound dispatch is now implemented and retains the unbound compatibility
+wrapper. Guest RPC response-size policy reserves exactly32 bytes for completion
+polls and rejects too-small output before any publication. Portable native tests
+cover all missing binding callbacks/context, both operations before negotiation,
+all response statuses/terminal errors, resource busy/free behavior, bounded pump
+sampling and receiver-health precedence. Every returned path clears monitor/context.
+Linux normal/sanitized runs, coverage and Windows x86_64 cross-link pass; dispatch
+production coverage99.24% lines/95.65% branches. Production service construction of
+this binding, worker FD launch and controller retry are not yet integrated.

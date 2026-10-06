@@ -92,6 +92,8 @@ venus_ring_status_t venus_rpc_transfer(venus_rpc_t *rpc, void *bytes, size_t len
 static size_t response_bytes(const venus_request_t *request) {
     if (request->kind == RequestCapabilities)
         return 160;
+    if (request->kind == RequestPresentPoll)
+        return 32;
     if (request->kind == RequestReply || request->kind == RequestRead)
         return (size_t)request->argument_one;
     return 0;

@@ -908,9 +908,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     consume payload and return Invalid with no receiver calls. Bound routing pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify optional bound presentation dispatch`
+- **Commit `ae2e60d`**: `docs(vgpu): specify optional bound presentation dispatch`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Define trusted sole-thread submit/take/busy/pump callbacks, resource
     free guards, portable unbound behavior and bounded health-monitor integration.
   - **Verification**: Request and unbound RPC tests/coverage/sanitizers pass; earlier
     Linux/native Windows CI passed at beba08e, run37406662469. Bound routing pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): route bounded presentation requests through trusted dispatch`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Route negotiated frame/release requests through complete trusted
+    bindings, guard resource frees, pump acknowledgements during receiver health
+    checks and validate guest RPC release response capacity before publication.
+  - **Verification**: Linux normal/ASan/LSan/UBSan runtime and Windows cross-link
+    pass; dispatch coverage99.24% lines/95.65% branches, RPC exceeds90%. Test partial
+    bindings, pre-negotiation rejection, all local/terminal outcomes, release bytes,
+    busy guards and health-pump loss with cleared call-scoped monitor pointers.
+    Production service/worker launch and controller acknowledgement retry pending.

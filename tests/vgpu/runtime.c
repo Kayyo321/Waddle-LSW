@@ -268,6 +268,140 @@ static void unbound_presentation(void) {
         }
     }
 }
+static int presentation_calls, presentation_busy, pump_calls;
+static venus_ring_status_t presentation_status, pump_status;
+static venus_ring_status_t bound_submit(void *context, const void *bytes, size_t length,
+                                        uint32_t timeline, uint64_t fence) {
+    assert(context == &receiver_cookie && bytes && length == 1216 && timeline == 1 && fence == 1);
+    const unsigned char *input = bytes;
+    for (size_t index = 0; index < length; index++)
+        assert(input[index] == 0x31);
+    presentation_calls++;
+    return presentation_status;
+}
+static venus_ring_status_t bound_take(void *context, uint64_t frame, void *bytes, size_t length) {
+    assert(context == &receiver_cookie && frame == 1 && bytes && length == 32);
+    presentation_calls++;
+    if (presentation_status == RingOk)
+        memset(bytes, 0x42, length);
+    return presentation_status;
+}
+static int bound_busy(const void *context, uint32_t resource) {
+    assert(context == &receiver_cookie && resource == 2);
+    presentation_calls++;
+    return presentation_busy;
+}
+static venus_ring_status_t bound_pump(void *context) {
+    assert(context == &receiver_cookie);
+    pump_calls++;
+    return pump_status;
+}
+static void bound_presentation(void) {
+    unsigned char presentation[1216];
+    const venus_dispatch_presentation_t Binding = {.context = &receiver_cookie,
+                                                   .submit = bound_submit,
+                                                   .take = bound_take,
+                                                   .resource_busy = bound_busy,
+                                                   .pump = bound_pump};
+    for (unsigned field = 0; field < 5; field++) {
+        reset(SessionHost);
+        venus_dispatch_presentation_t invalid = Binding;
+        switch (field) {
+        case 0:
+            invalid.context = NULL;
+            break;
+        case 1:
+            invalid.submit = NULL;
+            break;
+        case 2:
+            invalid.take = NULL;
+            break;
+        case 3:
+            invalid.resource_busy = NULL;
+            break;
+        case 4:
+            invalid.pump = NULL;
+            break;
+        }
+        assert(venus_dispatch_serve_presented(&rpc, (venus_receiver_t *)&receiver_cookie, &invalid,
+                                              1000) == RingInvalid);
+        assert(!incoming_position && !outgoing_bytes && !calls);
+    }
+    const venus_ring_status_t Results[] = {RingOk,    RingAgain,  RingInvalid,
+                                           RingLimit, RingClosed, RingCorrupt};
+    const uint32_t Wire[] = {RequestSuccess, RequestAgain, RequestInvalid, RequestLimit};
+    for (uint32_t kind = RequestPresent; kind <= RequestPresentPoll; kind++) {
+        for (unsigned index = 0; index < sizeof(Results) / sizeof(*Results); index++) {
+            reset_buffer(SessionHost, presentation, sizeof(presentation));
+            presentation_calls = pump_calls = 0;
+            presentation_status = Results[index];
+            pump_status = RingOk;
+            venus_request_t request = {.kind = kind, .sequence = 1, .argument_zero = 1}, response;
+            if (kind == RequestPresent) {
+                request.payload_bytes = sizeof(presentation);
+                request.argument_one = 1;
+            }
+            prepare(request);
+            venus_ring_status_t status = venus_dispatch_serve_presented(
+                &rpc, (venus_receiver_t *)&receiver_cookie, &Binding, 1000);
+            assert(!rpc.monitor && !rpc.monitor_context && !calls && presentation_calls == 1);
+            assert(pump_calls && incoming_position == incoming_bytes);
+            if (index >= 4) {
+                assert_terminal(status, RingCorrupt);
+                continue;
+            }
+            assert(status == RingOk);
+            drain_peer();
+            assert(venus_request_decode(&response, peer_output, 64) == RingOk);
+            assert(response.status == Wire[index]);
+            assert(response.payload_bytes == (!index && kind == RequestPresentPoll ? 32 : 0));
+            for (size_t offset = 64; offset < outgoing_bytes; offset++)
+                assert(peer_output[offset] == 0x42);
+        }
+    }
+    for (presentation_busy = 0; presentation_busy < 2; presentation_busy++) {
+        reset(SessionHost);
+        presentation_calls = pump_calls = 0;
+        pump_status = RingOk;
+        venus_request_t request = request_for(RequestFree), response;
+        request.sequence = 1;
+        prepare(request);
+        assert(venus_dispatch_serve_presented(&rpc, (venus_receiver_t *)&receiver_cookie, &Binding,
+                                              1000) == RingOk);
+        assert(presentation_calls == 1 && calls == !presentation_busy);
+        drain_peer();
+        assert(venus_request_decode(&response, peer_output, 64) == RingOk);
+        assert(response.status == (presentation_busy ? RequestAgain : RequestSuccess));
+    }
+    for (unsigned mode = 0; mode < 3; mode++) {
+        reset(SessionHost);
+        presentation_calls = pump_calls = 0;
+        pump_status = mode ? RingCorrupt : RingClosed;
+        if (mode == 2)
+            health_status = RingTimeout;
+        venus_request_t request = request_for(RequestPoll);
+        request.sequence = 1;
+        prepare(request);
+        venus_ring_status_t status = venus_dispatch_serve_presented(
+            &rpc, (venus_receiver_t *)&receiver_cookie, &Binding, 1000);
+        assert_terminal(status, mode == 2 ? RingTimeout : pump_status);
+        assert(!rpc.monitor && !rpc.monitor_context && !presentation_calls && !calls);
+        assert(mode == 2 ? !pump_calls : pump_calls);
+    }
+    reset(SessionGuest);
+    venus_request_t request = {.kind = RequestPresentPoll, .argument_zero = 1}, response;
+    venus_request_t reply = {
+        .kind = RequestPresentPoll, .direction = 1, .sequence = 1, .payload_bytes = 32};
+    unsigned char output[32];
+    prepare(reply);
+    assert(venus_rpc_exchange(&rpc, &request, NULL, 0, &response, output, 31, 1000) == RingInvalid);
+    assert(!incoming_position && !outgoing_bytes);
+    assert(venus_rpc_exchange(&rpc, &request, NULL, 0, &response, output, 32, 1000) == RingOk);
+    assert(response.payload_bytes == 32);
+    for (unsigned index = 0; index < sizeof(output); index++)
+        assert(output[index] == 0x42);
+    venus_rpc_free(&rpc);
+}
 static void host_failures(void) {
     reset(SessionHost);
     assert(venus_dispatch_serve(&rpc, NULL, 1000) == RingInvalid);
@@ -520,6 +654,7 @@ int main(void) {
     negotiation();
     host_operations();
     unbound_presentation();
+    bound_presentation();
     host_failures();
     health_failures();
     guest_operations();
