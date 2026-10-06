@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 /** @brief Fixed bound for instrumented codec branches; no allocation ownership. */
-enum { MaxBranches = 4096, MaxEdges = 32 };
+enum { MaxBranches = 16384, MaxEdges = 32 };
 static _Atomic unsigned char hits[MaxBranches][MaxEdges];
 /** @brief Record an instrumented source conditional edge in a concurrent test.
  * @param[in] branch Bounded metadata index. @param[in] edge Bounded branch outcome.

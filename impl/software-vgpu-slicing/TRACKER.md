@@ -1706,7 +1706,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     single same-head coverage abort remains without a confirmed cause; parallel
     ce01f55 run passed that gate and failed job is retried. TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify binary semaphore ownership and pending references`
+- **Commit `c9bafe7`**: `docs(vgpu): specify binary semaphore ownership and pending references`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify canonical core binary semaphore commands40/41, exact
     transactional identities, negative rollback and uncertain loss retention.
@@ -1715,3 +1715,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspect pinned semaphore encoders and existing private
     object/identity transaction contracts; implementation/execution pending.
     TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): expand coverage recorder for CI instrumentation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Increase fixed atomic site capacity from4096 to16384 without
+    changing edge limits, generated metadata guards or coverage thresholds.
+    CI diagnostics identify4712 sites exceeding4096; local compiler emits fewer.
+    The recorder owns512KiB static storage, performs no dynamic allocation and
+    rejects out-of-range sites before indexing. TODO #3 remains50%.
+  - **Verification**: Strict C boundary probe accepts16383/31 and aborts on
+    16384/0 and0/32. Latest native ICD coverage remains required.
