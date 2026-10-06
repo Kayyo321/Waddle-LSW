@@ -44,6 +44,7 @@ const command_state_t = enum { Initial, Recording, Executable, Invalid, Pending 
 const resource_state_t = struct {
     id: u64 = 0,
     profile_index: u8 = 0,
+    pipeline_bind_point: u32 = 0,
     descriptor_max_sets: u32 = 0,
     descriptor_live_sets: u32 = 0,
     descriptor_capacity: [11]u32 = [_]u32{0} ** 11,
@@ -1539,6 +1540,7 @@ fn destroy_render_resource(device: c.VkDevice, handle: u64, kind: u32, command_i
     };
     if (kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT) std.debug.assert(profiles.release_slot(&profile_registry.descriptor_layouts, resource_state(record).profile_index));
     if (kind == c.VK_OBJECT_TYPE_PIPELINE_LAYOUT) std.debug.assert(profiles.release_slot(&profile_registry.pipeline_layouts, resource_state(record).profile_index));
+    if (kind == c.VK_OBJECT_TYPE_PIPELINE) std.debug.assert(profiles.release_slot(&profile_registry.pipelines, resource_state(record).profile_index));
     resource_state(record).* = .{};
     std.debug.assert(c.venus_objects_release(&objects, handle, kind, 0) == c.RingOk);
 }
@@ -1558,6 +1560,52 @@ fn destroy_image_view(device: c.VkDevice, view: c.VkImageView, allocator: [*c]co
     defer mutex.unlock();
     destroy_render_resource(device, if (view) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_IMAGE_VIEW, 58);
 }
+/// Create one core compute pipeline from same-device private shader/layout definitions.
+/// [in] device nonnull borrowed; cache must be NULL; count1, infos nonnull borrowed for call.
+/// [in] allocator nullable unused; [out] output nonnull count1 writable token storage.
+/// Validated count1 failures clear output; unsupported counts leave output untouched.
+/// Returns native result/local invalid/OOM/sticky loss; mutex serialized, allocation-free.
+/// The successful pipeline owns a copied layout profile; shader/layout tokens may then retire.
+fn create_compute_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCache, count: u32, infos: [*c]const c.VkComputePipelineCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkPipeline) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    // Unsupported counts are rejected before accessing caller arrays or output extents.
+    if (count != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or pipeline_cache != null or infos == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const info = &infos[0];
+    if (info.stage.module == null or info.layout == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const shader = child_object(@intFromPtr(info.stage.module.?), c.VK_OBJECT_TYPE_SHADER_MODULE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const layout = child_object(@intFromPtr(info.layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = render_wire.create_compute_pipeline(@ptrCast(info), parent.id, shader.id, layout.id, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    const profile = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(layout).profile_index).?.*;
+    const index = profiles.reserve_slot(&profile_registry.pipelines, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_PIPELINE, &writer, &handle);
+    if (result != c.VK_SUCCESS) {
+        if (lost == c.RingOk) std.debug.assert(profiles.release_slot(&profile_registry.pipelines, index));
+        return result;
+    }
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_PIPELINE, parent.id).?);
+    state.profile_index = index;
+    state.pipeline_bind_point = 1;
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy a quiescent pipeline. [in] nullable private tokens/callbacks borrowed for call.
+/// Void; pending resources remain owned. Exact host acknowledgment retires metadata and identity.
+/// Mutex serialized, no allocation; destroying recorded pipeline invalidates affected commands.
+fn destroy_pipeline(device: c.VkDevice, pipeline: c.VkPipeline, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    destroy_render_resource(device, if (pipeline) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_PIPELINE, 67);
+}
+
 /// Query actual image requirements. [in] nullable private tokens borrowed; [out] nullable storage.
 /// Void; output preserved on failure. Mutex serialized, allocation-free; malformed host reply poisons binding.
 fn image_requirements(device: c.VkDevice, image: c.VkImage, output: [*c]c.VkMemoryRequirements) callconv(.C) void {
@@ -3627,6 +3675,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateSemaphore", &create_semaphore },
         .{ "vkDestroySemaphore", &destroy_semaphore },
+        .{ "vkCreateComputePipelines", &create_compute_pipelines },
+        .{ "vkDestroyPipeline", &destroy_pipeline },
         .{ "vkCreateShaderModule", &create_shader_module },
         .{ "vkDestroyShaderModule", &destroy_shader_module },
         .{ "vkCreateDescriptorSetLayout", &create_descriptor_layout },
