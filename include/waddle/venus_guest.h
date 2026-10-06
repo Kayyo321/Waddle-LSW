@@ -41,6 +41,23 @@ venus_ring_status_t venus_guest_init(venus_guest_t *guest, venus_rpc_t *rpc, uin
 venus_ring_status_t venus_guest_exchange(venus_guest_t *guest, const venus_request_t *request,
                                          const void *input, size_t length,
                                          venus_request_t *response, void *output, size_t capacity);
+/** @brief Exchange using a shorter call-scoped whole-RPC deadline budget.
+ * @param[in,out] guest Nonnull live sole-thread frontend; configured timeout is immutable.
+ * @param[in] request Nonnull immutable sequence-zero request, excluding negotiation/capability.
+ * @param[in] input Nullable only for length zero; private borrowed input[length].
+ * @param[in] length Exact request payload extent, subject to existing RPC alias/bounds.
+ * @param[out] response Nonnull disjoint private record, zeroed on failure as in legacy API.
+ * @param[out] output Nullable only for capacity zero; private output[capacity], unchanged on failure.
+ * @param[in] capacity Actual accessible response extent, subject to existing RPC alias/bounds.
+ * @param[in] timeout_ms Budget1..guest->timeout_ms, at most60000, not retained or written to guest.
+ * @return Existing frontend status; Invalid null/local budget before publication;
+ * sticky existing loss and acknowledged terminal retirement retain legacy precedence.
+ * @note No allocation/copy of live frontend/RPC, no retained payload; sole submission thread.
+ * The budget covers the entire existing RPC exchange without resetting after partial ring progress.
+ */
+venus_ring_status_t venus_guest_exchange_timeout(venus_guest_t *guest, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity,
+    uint32_t timeout_ms);
 /** @brief Close borrowed RPC and reset local frontend without freeing its storage.
  * @param[in,out] guest Nullable zero/live frontend, sole thread after calls stop.
  * @note Idempotent, no allocation; caller releases channel/stream/mapping afterward.

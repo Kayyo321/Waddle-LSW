@@ -64,9 +64,9 @@ venus_ring_status_t venus_guest_init(venus_guest_t *guest, venus_rpc_t *rpc, uin
     return RingOk;
 }
 
-venus_ring_status_t venus_guest_exchange(venus_guest_t *guest, const venus_request_t *request,
+venus_ring_status_t venus_guest_exchange_timeout(venus_guest_t *guest, const venus_request_t *request,
                                          const void *input, size_t length,
-                                         venus_request_t *response, void *output, size_t capacity) {
+                                         venus_request_t *response, void *output, size_t capacity, uint32_t timeout_ms) {
     if (!response)
         return RingInvalid;
     memset(response, 0, sizeof(*response));
@@ -74,10 +74,12 @@ venus_ring_status_t venus_guest_exchange(venus_guest_t *guest, const venus_reque
         return RingInvalid;
     if (guest->lost != RingOk)
         return guest->lost;
+    if (!timeout_ms || timeout_ms > guest->timeout_ms || timeout_ms > 60000)
+        return RingInvalid;
     if (request->kind == RequestCapabilities || request->kind == RequestNegotiate)
         return RingInvalid;
     venus_ring_status_t status = venus_rpc_exchange(guest->rpc, request, input, length, response,
-                                                    output, capacity, guest->timeout_ms);
+                                                    output, capacity, timeout_ms);
     if (status == RingOk)
         status = operation_status(response->status);
     if (status == RingCorrupt || status == RingClosed || status == RingCancelled ||
@@ -86,6 +88,12 @@ venus_ring_status_t venus_guest_exchange(venus_guest_t *guest, const venus_reque
         venus_rpc_free(guest->rpc);
     }
     return status;
+}
+
+venus_ring_status_t venus_guest_exchange(venus_guest_t *guest, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity) {
+    return venus_guest_exchange_timeout(guest, request, input, length, response, output, capacity,
+                                       guest ? guest->timeout_ms : 0);
 }
 
 void venus_guest_free(venus_guest_t *guest) {
