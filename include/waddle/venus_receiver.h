@@ -167,4 +167,27 @@ venus_ring_status_t venus_receiver_gpu_fence(venus_receiver_t *receiver, uint32_
  */
 venus_ring_status_t venus_receiver_gpu_poll(const venus_receiver_t *receiver, uint32_t timeline,
                                             uint64_t fence);
+/** @brief Default host CPU/GPU fence retirement budget in milliseconds. */
+#define VenusReceiverDefaultTimeoutMs 5000u
+/** @brief Configure trusted host fence budgets only while all work is quiescent.
+ * @param[in,out] receiver Nonnull live session-thread-owned record.
+ * @param[in] cpu_ms CPU decoder budget, 1..60000ms.
+ * @param[in] gpu_ms Per-GPU-queue budget, 1..60000ms.
+ * @return RingOk, RingInvalid for ranges/null, RingAgain for pending CPU/GPU,
+ * RingCorrupt for poison; no allocation or ownership transfer.
+ * @note Guests cannot change policy; this does not reset pending deadlines.
+ */
+venus_ring_status_t venus_receiver_timeouts(venus_receiver_t *receiver, uint32_t cpu_ms,
+                                            uint32_t gpu_ms);
+/** @brief Check independent absolute fence deadlines and cancellation.
+ * @param[in,out] receiver Nonnull live session-thread-owned record.
+ * @param[in] cancel Nullable borrowed atomic cancellation flag, acquire-read,
+ * retained only for call. Nonzero poisons owner and returns Cancelled.
+ * @return RingOk healthy (not completion), RingInvalid null, RingCorrupt poisoned
+ * or clock error, RingTimeout newly expired pending fence, RingCancelled cancel.
+ * @note Allocation-free. Failure requires destruction/new session; cannot preempt
+ * blocked SDK/kernel calls. Runtime must sample during framing/waits.
+ */
+venus_ring_status_t venus_receiver_health(venus_receiver_t *receiver,
+                                          const _Atomic uint32_t *cancel);
 #endif

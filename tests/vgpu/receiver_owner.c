@@ -6,8 +6,28 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <time.h>
 #include <virglrenderer.h>
 #include <venus_hw.h>
+
+static uint64_t clock_ms = 1000;
+static int clock_mode;
+static int fixture_clock_gettime(clockid_t clock, struct timespec *now) {
+    assert(clock == CLOCK_MONOTONIC);
+    if (clock_mode == 1)
+        return -1;
+    now->tv_sec = (time_t)(clock_ms / 1000);
+    now->tv_nsec = (long)(clock_ms % 1000) * 1000000;
+    if (clock_mode == 2)
+        now->tv_sec = -1;
+    if (clock_mode == 3)
+        now->tv_nsec = -1;
+    if (clock_mode == 4)
+        now->tv_nsec = 1000000000;
+    if (clock_mode == 5)
+        now->tv_sec = (time_t)(UINT64_MAX / 1000 + 1);
+    return 0;
+}
 
 static int fault;
 static int fence_inline;
@@ -197,6 +217,7 @@ static int fixture_fence(uint32_t context, uint32_t flags, uint32_t ring, uint64
 #define virgl_renderer_resource_unref fixture_unref
 #define virgl_renderer_submit_cmd fixture_submit
 #define virgl_renderer_context_create_fence fixture_fence
+#define clock_gettime fixture_clock_gettime
 #include "venus_receiver.c"
 
 static void no_resources(void) {
@@ -204,6 +225,8 @@ static void no_resources(void) {
 }
 static void create(venus_receiver_t **receiver) {
     fault = 0;
+    clock_ms = 1000;
+    clock_mode = 0;
     assert(venus_receiver_create(receiver, 64, 4096) == RingOk);
     assert(*receiver);
 }
@@ -367,6 +390,87 @@ static void test_gpu_fences(void) {
     }
 }
 
+static void test_health(void) {
+    venus_receiver_t *receiver = NULL;
+    const uint32_t Commands[] = {137, 0};
+    uint64_t fence;
+    _Atomic uint32_t cancel = 0;
+    assert(venus_receiver_health(NULL, NULL) == RingInvalid);
+    assert(venus_receiver_timeouts(NULL, 1, 1) == RingInvalid);
+    create(&receiver);
+    assert(venus_receiver_timeouts(receiver, 0, 1) == RingInvalid);
+    assert(venus_receiver_timeouts(receiver, 60001, 1) == RingInvalid);
+    assert(venus_receiver_timeouts(receiver, 1, 0) == RingInvalid);
+    assert(venus_receiver_timeouts(receiver, 1, 60001) == RingInvalid);
+    assert(venus_receiver_timeouts(receiver, 5, 10) == RingOk);
+    assert(venus_receiver_submit(receiver, Commands, sizeof(Commands), &fence) == RingOk);
+    assert(venus_receiver_timeouts(receiver, 1, 1) == RingAgain);
+    clock_ms = 1004;
+    assert(venus_receiver_health(receiver, &cancel) == RingOk);
+    assert(venus_receiver_poll(receiver) == RingAgain);
+    assert(receiver->cpu_deadline_ms == 1005);
+    clock_ms = 1005;
+    assert(venus_receiver_health(receiver, NULL) == RingTimeout);
+    assert(venus_receiver_health(receiver, NULL) == RingCorrupt);
+    assert(venus_receiver_timeouts(receiver, 1, 1) == RingCorrupt);
+    venus_receiver_destroy(&receiver);
+    no_resources();
+    create(&receiver);
+    assert(venus_receiver_timeouts(receiver, 5, 10) == RingOk);
+    assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingOk);
+    assert(venus_receiver_timeouts(receiver, 5, 10) == RingAgain);
+    clock_ms = 1005;
+    assert(venus_receiver_gpu_fence(receiver, 2, &fence) == RingOk);
+    clock_ms = 1010;
+    callback_table->write_context_fence(callback_cookie, 1, 1, 1);
+    assert(venus_receiver_health(receiver, NULL) == RingOk);
+    assert(receiver->gpu_deadline_ms[2] == 1015);
+    clock_ms = 1015;
+    assert(venus_receiver_health(receiver, NULL) == RingTimeout);
+    venus_receiver_destroy(&receiver);
+    no_resources();
+    create(&receiver);
+    assert(venus_receiver_timeouts(receiver, 1, 1) == RingOk);
+    assert(venus_receiver_submit(receiver, Commands, sizeof(Commands), &fence) == RingOk);
+    clock_ms = 1001;
+    callback_table->write_context_fence(callback_cookie, 1, 0, 1);
+    assert(venus_receiver_health(receiver, NULL) == RingOk);
+    assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingOk);
+    clock_ms = 1002;
+    callback_table->write_context_fence(callback_cookie, 1, 1, 1);
+    assert(venus_receiver_health(receiver, NULL) == RingOk);
+    atomic_store_explicit(&cancel, 1, memory_order_release);
+    assert(venus_receiver_health(receiver, &cancel) == RingCancelled);
+    venus_receiver_destroy(&receiver);
+    no_resources();
+    for (int mode = 0; mode <= 7; mode++) {
+        create(&receiver);
+        assert(venus_receiver_health(receiver, NULL) == RingOk);
+        clock_mode = mode <= 5 ? mode : 0;
+        if (mode == 0)
+            clock_ms = 0;
+        if (mode == 6)
+            clock_ms = 999;
+        if (mode == 7)
+            clock_ms = UINT64_MAX - 2000;
+        if (mode < 7)
+            assert(venus_receiver_health(receiver, NULL) == RingCorrupt);
+        else
+            assert(venus_receiver_submit(receiver, Commands, sizeof(Commands), &fence) ==
+                   RingCorrupt);
+        venus_receiver_destroy(&receiver);
+        no_resources();
+    }
+    for (int gpu = 0; gpu < 2; gpu++) {
+        create(&receiver);
+        clock_mode = gpu ? 0 : 1;
+        clock_ms = gpu ? UINT64_MAX - 2000 : 1000;
+        assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingCorrupt && !fence);
+        venus_receiver_destroy(&receiver);
+        no_resources();
+    }
+}
+
 int main(void) {
     venus_receiver_t *receiver = NULL;
     venus_receiver_destroy(NULL);
@@ -453,5 +557,6 @@ int main(void) {
     no_resources();
     test_resources();
     test_gpu_fences();
+    test_health();
     return 0;
 }

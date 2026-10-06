@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 #include <virglrenderer.h>
 #include <venus_hw.h>
 
@@ -31,8 +32,13 @@ struct venus_receiver_t {
     void *commands;                /**< Owned aligned scratch, freed after renderer cleanup. */
     void *reply;                   /**< Borrowed upstream resource map, explicitly unmapped. */
     uint64_t reply_bytes;          /**< Actual validated upstream mapped extent. */
-    uint64_t submitted;            /**< Session-thread-only most recently submitted CPU fence. */
-    _Atomic uint64_t retired;      /**< Callback release/session acquire fence completion. */
+    uint64_t cpu_deadline_ms;      /**< Absolute pending CPU deadline, session-thread-only. */
+    uint64_t gpu_deadline_ms[VenusReceiverTimelineCount]; /**< Per-queue absolute budgets. */
+    uint64_t last_clock_ms;                               /**< Last validated monotonic sample. */
+    uint32_t cpu_timeout_ms;                              /**< Trusted host CPU policy. */
+    uint32_t gpu_timeout_ms;                              /**< Trusted host per-queue GPU policy. */
+    uint64_t submitted;       /**< Session-thread-only most recently submitted CPU fence. */
+    _Atomic uint64_t retired; /**< Callback release/session acquire fence completion. */
     _Atomic uint64_t gpu_issued[VenusReceiverTimelineCount];  /**< Published queue fence IDs. */
     _Atomic uint64_t gpu_retired[VenusReceiverTimelineCount]; /**< Callback retired maximum. */
     _Atomic int failed;        /**< Public failure or unexpected callback identity. */
@@ -49,6 +55,18 @@ static atomic_flag receiver_claim = ATOMIC_FLAG_INIT;
 #define BootstrapContextId 1u
 /** @brief Single reply blob ID; bound to BootstrapContextId. */
 #define BootstrapReplyId 1u
+
+static int sample_clock(venus_receiver_t *receiver, uint64_t *milliseconds) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 || now.tv_sec < 0 || now.tv_nsec < 0 ||
+        now.tv_nsec >= 1000000000 || (uint64_t)now.tv_sec > (UINT64_MAX - 999) / 1000)
+        return 0;
+    *milliseconds = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+    if (!*milliseconds || *milliseconds < receiver->last_clock_ms)
+        return 0;
+    receiver->last_clock_ms = *milliseconds;
+    return 1;
+}
 
 static void legacy_fence(void *cookie, uint32_t fence) {
     (void)fence;
@@ -128,6 +146,8 @@ venus_ring_status_t venus_receiver_create(venus_receiver_t **output, uint32_t co
     if (!receiver->commands)
         goto fail;
     receiver->command_capacity = command_capacity;
+    receiver->cpu_timeout_ms = VenusReceiverDefaultTimeoutMs;
+    receiver->gpu_timeout_ms = VenusReceiverDefaultTimeoutMs;
     receiver->resource_limit = VenusReceiverDefaultResourceBytes;
     receiver->resource_count_limit = VenusReceiverMaxResources;
     receiver->callbacks.version = 3;
@@ -206,6 +226,10 @@ venus_ring_status_t venus_receiver_submit(venus_receiver_t *receiver, const void
     if (venus_receiver_command_copy(receiver->commands, receiver->command_capacity, commands,
                                     length) != 0)
         return RingInvalid;
+    uint64_t now;
+    if (!sample_clock(receiver, &now) || now > UINT64_MAX - receiver->cpu_timeout_ms)
+        goto fail;
+    receiver->cpu_deadline_ms = now + receiver->cpu_timeout_ms;
     if (receiver->submitted == UINT64_MAX ||
         virgl_renderer_submit_cmd(receiver->commands, BootstrapContextId, (int)(length / 4)) != 0)
         goto fail;
@@ -370,12 +394,59 @@ venus_ring_status_t venus_receiver_gpu_fence(venus_receiver_t *receiver, uint32_
     uint64_t issued = atomic_load_explicit(&receiver->gpu_issued[timeline], memory_order_acquire);
     if (atomic_load_explicit(&receiver->gpu_retired[timeline], memory_order_acquire) < issued)
         return RingAgain;
-    if (issued == UINT64_MAX)
+    uint64_t now;
+    if (issued == UINT64_MAX || !sample_clock(receiver, &now) ||
+        now > UINT64_MAX - receiver->gpu_timeout_ms)
         return poison_receiver(receiver);
+    receiver->gpu_deadline_ms[timeline] = now + receiver->gpu_timeout_ms;
     atomic_store_explicit(&receiver->gpu_issued[timeline], issued + 1, memory_order_release);
     if (virgl_renderer_context_create_fence(BootstrapContextId, 0, timeline, issued + 1) != 0)
         return poison_receiver(receiver);
     *fence = issued + 1;
+    return RingOk;
+}
+
+venus_ring_status_t venus_receiver_timeouts(venus_receiver_t *receiver, uint32_t cpu_ms,
+                                            uint32_t gpu_ms) {
+    if (!cpu_ms || cpu_ms > 60000 || !gpu_ms || gpu_ms > 60000)
+        return RingInvalid;
+    venus_ring_status_t result = venus_receiver_poll(receiver);
+    if (result != RingOk)
+        return result;
+    for (uint32_t timeline = 1; timeline < VenusReceiverTimelineCount; timeline++)
+        if (atomic_load_explicit(&receiver->gpu_retired[timeline], memory_order_acquire) <
+            atomic_load_explicit(&receiver->gpu_issued[timeline], memory_order_acquire))
+            return RingAgain;
+    receiver->cpu_timeout_ms = cpu_ms;
+    receiver->gpu_timeout_ms = gpu_ms;
+    return RingOk;
+}
+
+venus_ring_status_t venus_receiver_health(venus_receiver_t *receiver,
+                                          const _Atomic uint32_t *cancel) {
+    if (!receiver)
+        return RingInvalid;
+    if (atomic_load_explicit(&receiver->failed, memory_order_acquire))
+        return RingCorrupt;
+    if (cancel && atomic_load_explicit(cancel, memory_order_acquire)) {
+        (void)poison_receiver(receiver);
+        return RingCancelled;
+    }
+    uint64_t now;
+    if (!sample_clock(receiver, &now))
+        return poison_receiver(receiver);
+    int expired =
+        atomic_load_explicit(&receiver->retired, memory_order_acquire) < receiver->submitted &&
+        now >= receiver->cpu_deadline_ms;
+    for (uint32_t timeline = 1; timeline < VenusReceiverTimelineCount; timeline++)
+        expired |=
+            atomic_load_explicit(&receiver->gpu_retired[timeline], memory_order_acquire) <
+                atomic_load_explicit(&receiver->gpu_issued[timeline], memory_order_acquire) &&
+            now >= receiver->gpu_deadline_ms[timeline];
+    if (expired) {
+        (void)poison_receiver(receiver);
+        return RingTimeout;
+    }
     return RingOk;
 }
 

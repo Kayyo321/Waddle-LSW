@@ -9,10 +9,12 @@
  * copy/use concurrently. All borrowed storage outlives calls and free.
  */
 typedef struct venus_rpc_t {
-    venus_channel_t *channel; /**< Borrowed ready lifecycle and ring owner. */
-    unsigned char *buffer;    /**< Borrowed exclusive private scratch. */
-    uint32_t buffer_bytes;    /**< Immutable actual private buffer extent. */
-    uint64_t next_sequence;   /**< Next exchange ID; zero means terminal. */
+    venus_channel_t *channel;      /**< Borrowed ready lifecycle and ring owner. */
+    unsigned char *buffer;         /**< Borrowed exclusive private scratch. */
+    uint32_t buffer_bytes;         /**< Immutable actual private buffer extent. */
+    venus_wait_callback_t monitor; /**< Private nullable host health callback, call-scoped. */
+    void *monitor_context;         /**< Private borrowed stack cookie, cleared on serve return. */
+    uint64_t next_sequence;        /**< Next exchange ID; zero means terminal. */
 } venus_rpc_t;
 /** @brief Initialize framing after complete readiness delivery.
  * @param[out] rpc Nonnull zero private record, unchanged on error.

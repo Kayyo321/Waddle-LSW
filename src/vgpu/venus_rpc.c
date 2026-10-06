@@ -50,6 +50,16 @@ venus_ring_status_t venus_rpc_begin(venus_rpc_t *rpc, venus_session_role_t role,
     return result == RingOk ? RingOk : venus_rpc_fail(rpc, result);
 }
 
+static venus_ring_status_t runtime_wait(void *context) {
+    venus_rpc_t *rpc = context;
+    if (rpc->monitor) {
+        venus_ring_status_t result = rpc->monitor(rpc->monitor_context);
+        if (result != RingOk)
+            return result;
+    }
+    return venus_channel_wait(rpc->channel);
+}
+
 venus_ring_status_t venus_rpc_transfer(venus_rpc_t *rpc, void *bytes, size_t length, int writing,
                                        int payload) {
     venus_session_t *session = rpc->channel->session;
@@ -60,13 +70,11 @@ venus_ring_status_t venus_rpc_transfer(venus_rpc_t *rpc, void *bytes, size_t len
         size_t chunk = length - completed;
         if (chunk > ring->capacity)
             chunk = ring->capacity;
-        venus_ring_status_t result = venus_channel_wait(rpc->channel);
+        venus_ring_status_t result = runtime_wait(rpc);
         if (result == RingOk) {
             unsigned char *position = (unsigned char *)bytes + completed;
-            result =
-                writing
-                    ? venus_ring_write_wait(ring, position, chunk, venus_channel_wait, rpc->channel)
-                    : venus_ring_read_wait(ring, position, chunk, venus_channel_wait, rpc->channel);
+            result = writing ? venus_ring_write_wait(ring, position, chunk, runtime_wait, rpc)
+                             : venus_ring_read_wait(ring, position, chunk, runtime_wait, rpc);
         }
         if (result != RingOk) {
             if (!writing && result == RingClosed &&

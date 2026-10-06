@@ -12,6 +12,8 @@ static venus_channel_t channel;
 static venus_rpc_t rpc;
 static venus_ring_status_t wait_error, deadline_error, receiver_status;
 static int eof, calls;
+static int health_calls, health_after;
+static venus_ring_status_t health_status;
 static uint64_t fence_value;
 static int receiver_cookie;
 
@@ -125,6 +127,13 @@ venus_ring_status_t venus_receiver_gpu_poll(const venus_receiver_t *receiver, ui
     return receiver_status;
 }
 
+venus_ring_status_t venus_receiver_health(venus_receiver_t *receiver,
+                                          const _Atomic uint32_t *cancel) {
+    assert(receiver && cancel == channel.cancel);
+    health_calls++;
+    return health_after && health_calls < health_after ? RingOk : health_status;
+}
+
 static void reset(venus_session_role_t role) {
     memset(&session, 0, sizeof(session));
     memset(&channel, 0, sizeof(channel));
@@ -132,7 +141,8 @@ static void reset(venus_session_role_t role) {
     memset(scratch, 0x5a, sizeof(scratch));
     incoming_bytes = incoming_position = outgoing_bytes = 0;
     wait_error = deadline_error = receiver_status = RingOk;
-    eof = calls = 0;
+    eof = calls = health_calls = health_after = 0;
+    health_status = RingOk;
     fence_value = 1;
     assert(venus_region_init(mapping, sizeof(mapping), 64) == RingOk);
     assert(venus_session_init(&session, role, mapping, sizeof(mapping),
@@ -173,7 +183,10 @@ static void prepare(venus_request_t value) {
     incoming_bytes = 64 + value.payload_bytes;
 }
 static venus_ring_status_t serve(void) {
-    return venus_dispatch_serve(&rpc, (venus_receiver_t *)(void *)&receiver_cookie, 1000);
+    venus_ring_status_t result =
+        venus_dispatch_serve(&rpc, (venus_receiver_t *)(void *)&receiver_cookie, 1000);
+    assert(!rpc.monitor && !rpc.monitor_context);
+    return result;
 }
 static void assert_terminal(venus_ring_status_t result, venus_ring_status_t expected) {
     assert(result == expected);
@@ -264,6 +277,22 @@ static void host_failures(void) {
     fence_value = 0;
     assert_terminal(serve(), RingCorrupt); /* Bad SDK success cannot escape wire validation. */
 }
+static void health_failures(void) {
+    for (int mode = 0; mode < 3; mode++) {
+        reset(SessionHost);
+        venus_request_t request = request_for(RequestPoll);
+        request.sequence = 1;
+        prepare(request);
+        health_status = mode == 1 ? RingCancelled : RingTimeout;
+        if (mode == 2) {
+            incoming_bytes = 7;
+            health_after = 2; /* Expire during nested ring backpressure retry. */
+        }
+        assert_terminal(serve(), mode == 1 ? RingCancelled : RingTimeout);
+        assert(calls == 0 && session.reason == (mode == 1 ? StopCancel : StopDeadline));
+    }
+}
+
 static void guest_operations(void) {
     unsigned char input[8], output[160];
     memset(input, 0x31, sizeof(input));
@@ -403,6 +432,7 @@ static void local_errors(void) {
 int main(void) {
     host_operations();
     host_failures();
+    health_failures();
     guest_operations();
     guest_failures();
     local_errors();

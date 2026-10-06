@@ -39,15 +39,9 @@ static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc
     }
 }
 
-venus_ring_status_t venus_dispatch_serve(venus_rpc_t *rpc, venus_receiver_t *receiver,
-                                         uint32_t timeout_ms) {
-    if (!receiver)
-        return RingInvalid;
-    venus_ring_status_t result = venus_rpc_begin(rpc, SessionHost, timeout_ms);
-    if (result != RingOk)
-        return result;
+static venus_ring_status_t serve_request(venus_rpc_t *rpc, venus_receiver_t *receiver) {
     unsigned char header[VenusRequestHeaderBytes];
-    result = venus_rpc_transfer(rpc, header, sizeof(header), 0, 0);
+    venus_ring_status_t result = venus_rpc_transfer(rpc, header, sizeof(header), 0, 0);
     if (result != RingOk)
         return result;
     venus_request_t request;
@@ -98,5 +92,30 @@ venus_ring_status_t venus_dispatch_serve(venus_rpc_t *rpc, venus_receiver_t *rec
         result = venus_rpc_transfer(rpc, rpc->buffer, response.payload_bytes, 1, 1);
     if (result == RingOk)
         rpc->next_sequence++;
+    return result;
+}
+
+/** @brief Call-scoped borrowed health state; never retained by the runtime. */
+typedef struct runtime_health_t {
+    venus_receiver_t *receiver;     /**< Borrowed live owner. */
+    const _Atomic uint32_t *cancel; /**< Optional borrowed cancellation flag. */
+} runtime_health_t;
+static venus_ring_status_t check_health(void *context) {
+    runtime_health_t *health = context;
+    return venus_receiver_health(health->receiver, health->cancel);
+}
+venus_ring_status_t venus_dispatch_serve(venus_rpc_t *rpc, venus_receiver_t *receiver,
+                                         uint32_t timeout_ms) {
+    if (!receiver)
+        return RingInvalid;
+    venus_ring_status_t result = venus_rpc_begin(rpc, SessionHost, timeout_ms);
+    if (result != RingOk)
+        return result;
+    runtime_health_t health = {.receiver = receiver, .cancel = rpc->channel->cancel};
+    rpc->monitor = check_health;
+    rpc->monitor_context = &health;
+    result = serve_request(rpc, receiver);
+    rpc->monitor = NULL;
+    rpc->monitor_context = NULL;
     return result;
 }

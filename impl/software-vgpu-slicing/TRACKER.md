@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 48% | Bounded runtime/native fixtures and GPU fence ownership verified; hardware queue, recovery and multi-context milestones remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 51% | GPU wire/native fixtures verified; health deadlines implemented, CI pending; hardware queue, isolated recovery and multi-context milestones remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `29.6%`
+**Total Feature Completion**: `30.2%`
 
 ## Commit History & Progress Log
 
@@ -386,9 +386,25 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     branches 97.73%; dispatch lines 98.78%, branches 93.75%. Native CI is pending.
     Mock routing does not prove real GPU queue execution or bounded hang recovery.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify receiver health deadline policy`
+- **Commit `1c488f7`**: `docs(vgpu): specify receiver health deadline policy`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Defined independent absolute fence budgets, host-only policy,
     monotonic clock/cancellation poison and scoped runtime health callbacks.
   - **Verification**: Distinguished bounded health sampling from preempting SDK
     calls and isolated worker recovery, which remain separate requirements.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): enforce absolute receiver health deadlines`
+  - **Task Impact**: +3% to TODO: #2 (+0.6% overall) for verified GPU wire CI;
+    health's separate 3% gate awaits current CI.
+  - **Summary**: Armed independent absolute CPU/per-queue GPU budgets, added
+    quiescent host-only policy and clock/cancellation/expiry poison. Scoped health
+    callbacks now run before chunks and inside backpressure retries, and are
+    cleared on every host serve return. Poll exchanges cannot extend fence budgets.
+  - **Verification**: Receiver/runtime tests, sanitizers, coverage, Windows
+    cross-link and independent real CPU/resource mock integration passed. Receiver
+    lines 100%, branches 98.76%; RPC lines 100%, branches 97.79%; dispatch lines
+    98.92%, branches 93.75%. Clock/range/regression/overflow, exact retirement/expiry,
+    independent queues, repeated polling, cancellation and callback lifetime covered.
+    GPU wire Linux/native Windows CI passed at `fb16a1d` in
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37394675981 .
+    Current health CI, real GPU execution and isolated worker recovery remain pending.
