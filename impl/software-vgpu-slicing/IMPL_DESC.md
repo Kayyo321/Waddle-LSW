@@ -3526,3 +3526,23 @@ the executable; cross-compilation alone is never DXVK acceptance. No DXVK source
 is vendored or modified. Native external DLL leak auditing and production ICD
 execution remain required. Current supported API1.0 without extensions does not
 meet DXVK1.10.3's1.1 or DXVK2.7.1's1.3 feature requirements.
+
+### Shader and compute layout wire bounds (TODO #3)
+
+Shader module command59 accepts core flags0/null chain, borrowed nonnull SPIR-V
+code20..8112 bytes divisible by4. Validate magic0x07230203, version1.0..1.6 with
+reserved bytes zero, nonzero ID bound, schema0 and each instruction's nonzero
+word count fitting remaining words. Host validates shader semantics; the codec
+only proves structural bounds. Exactly8112 bytes plus80 bytes command overhead
+fits the8192-byte writer; larger code fails before any payload dereference.
+No chunking, allocation or caller pointer retention occurs. Independent generated
+encoder tests compare ordinary and exact-capacity packets and malformed headers/
+instruction truncation. Runtime shader ownership and execution remain separate.
+
+Descriptor layouts are bounded to64 canonical core bindings and reject immutable
+samplers until sampler identity ownership exists. Pipeline layouts accept at most
+16 translated set identities and32 push ranges with4-byte aligned offsets/sizes
+and a128-byte core guaranteed bound. Compute creation is one pipeline, null cache,
+no derivatives or specialization, a bounded256-byte UTF8 entry name, and translated
+shader/layout identities. These constraints define initial supported increments;
+they do not imply full DXVK compatibility or real GPU execution.

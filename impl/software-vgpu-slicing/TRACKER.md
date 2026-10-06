@@ -1844,3 +1844,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
 The documentation synchronization commit is identified by its unique subject
 `docs(vgpu): record guide audit and native DXVK acceptance contract`; +0% to TODO
 #3 and overall. No runtime completion is inferred from codecs or cross-builds.
+
+- **Commit `97a934a`**: `docs(vgpu): record guide audit and native DXVK acceptance contract`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Synchronize guide audit and native DXVK runtime requirements.
+- **Commit `871b64f`**: `feat(vgpu): copy bounded mapped device-memory resources`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Native mapped-resource copies, permission and padded extent guards
+    pass ownership tests and ASan/LSan/UBSan; receiver coverage100% lines,98.91%
+    branches. Actual ICD mapped GPU bytes remain an independent acceptance gate.
+- **Commit `aacf99d`**: `feat(vgpu): validate and encode bounded SPIR-V modules`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Seven image/shader codec tests pass, including generated oracle
+    comparisons and8192-byte boundary. Shader runtime integration pending.
+
+The specification/audit commit is identified by unique subject
+`docs(vgpu): specify bounded shader and compute layout encoders`; +0% to TODO#3
+and overall, since no runtime gate is accepted by wire codecs alone.
