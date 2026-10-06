@@ -660,6 +660,31 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
             } else vn_encode_vkDestroyRenderPass(&encoder, 1, device,
                 (VkRenderPass)(uintptr_t)read_u64(bytes + 16), NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 116) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkCommandBuffer command = (VkCommandBuffer)(uintptr_t)read_u64(bytes + 8);
+            const uint32_t count = read_u32(bytes + 36);
+            assert(count > 0 && count <= 64 && length == 36 + 48 + 56 * count);
+            VkBufferImageCopy regions[64];
+            for (uint32_t index = 0; index < count; ++index) {
+                const unsigned char *record = bytes + 48 + 56 * index;
+                regions[index] = (VkBufferImageCopy){
+                    .bufferOffset = read_u64(record),
+                    .bufferRowLength = read_u32(record + 8),
+                    .bufferImageHeight = read_u32(record + 12),
+                    .imageSubresource = {read_u32(record + 16), read_u32(record + 20),
+                                         read_u32(record + 24), read_u32(record + 28)},
+                    .imageOffset = {(int32_t)read_u32(record + 32), (int32_t)read_u32(record + 36),
+                                    (int32_t)read_u32(record + 40)},
+                    .imageExtent = {read_u32(record + 44), read_u32(record + 48),
+                                    read_u32(record + 52)}};
+            }
+            vn_encode_vkCmdCopyImageToBuffer(
+                &encoder, 1, command, (VkImage)(uintptr_t)read_u64(bytes + 16),
+                read_u32(bytes + 24), (VkBuffer)(uintptr_t)read_u64(bytes + 28), count, regions);
+
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 106) {
             assert(length == 36 + 32);
             unsigned char expected[32];
@@ -3103,6 +3128,406 @@ static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr 
     fixture->graphics_info = NULL;
 }
 
+/** @brief Bounded image readback validation, mapped destination and pending lifetimes.
+ * @param[in] device/lookup Live borrowed device and resolver.
+ * @param[in,out] fixture Sole-thread native mock. No GPU pixel claim; create infos borrowed
+ * only during synchronous calls. Owns/retire target graph, pool, buffers and mappings.
+ * @note Tight color1..64 regions; overlap rejects, half-open adjacency permits. Shared
+ * allocation alias uses image requirements span, not invented image byte layout.
+ */
+static void image_readback_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
+                                    fixture_t *fixture) {
+    PFN_vkCreateRenderPass create_pass =
+        (PFN_vkCreateRenderPass)lookup(device, "vkCreateRenderPass");
+    PFN_vkDestroyRenderPass destroy_pass =
+        (PFN_vkDestroyRenderPass)lookup(device, "vkDestroyRenderPass");
+    PFN_vkCreateFramebuffer create_fb =
+        (PFN_vkCreateFramebuffer)lookup(device, "vkCreateFramebuffer");
+    PFN_vkDestroyFramebuffer destroy_fb =
+        (PFN_vkDestroyFramebuffer)lookup(device, "vkDestroyFramebuffer");
+    PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
+    PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
+    PFN_vkGetImageMemoryRequirements requirements =
+        (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
+    PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+    PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+    PFN_vkBindImageMemory bind = (PFN_vkBindImageMemory)lookup(device, "vkBindImageMemory");
+    PFN_vkCreateImageView create_view = (PFN_vkCreateImageView)lookup(device, "vkCreateImageView");
+    PFN_vkDestroyImageView destroy_view =
+        (PFN_vkDestroyImageView)lookup(device, "vkDestroyImageView");
+    assert(create_fb && destroy_fb);
+    VkAttachmentDescription attachment = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+                                          .samples = VK_SAMPLE_COUNT_1_BIT,
+                                          .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                          .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                          .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                          .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                                          .finalLayout = VK_IMAGE_LAYOUT_GENERAL};
+    VkAttachmentReference color = {.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    .colorAttachmentCount = 1,
+                                    .pColorAttachments = &color};
+    VkRenderPassCreateInfo pass_info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+                                        .attachmentCount = 1,
+                                        .pAttachments = &attachment,
+                                        .subpassCount = 1,
+                                        .pSubpasses = &subpass};
+    fixture->render_pass_info = &pass_info;
+    VkRenderPass pass;
+    assert(create_pass(device, &pass_info, NULL, &pass) == VK_SUCCESS);
+    VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                    .imageType = VK_IMAGE_TYPE_2D,
+                                    .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                    .extent = {64, 64, 1},
+                                    .mipLevels = 1,
+                                    .arrayLayers = 1,
+                                    .samples = VK_SAMPLE_COUNT_1_BIT,
+                                    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                             VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
+    fixture->image_info = &image_info;
+    VkImage image;
+    assert(create_image(device, &image_info, NULL, &image) == VK_SUCCESS);
+    VkMemoryRequirements memory_requirements = {0};
+    requirements(device, image, &memory_requirements);
+    assert(memory_requirements.size);
+    VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                        .allocationSize = memory_requirements.size};
+    fixture->memory_info = &memory_info;
+    VkDeviceMemory memory;
+    assert(allocate(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+    assert(bind(device, image, memory, 0) == VK_SUCCESS);
+    VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                       .image = image,
+                                       .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                                       .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                       .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+    fixture->view_info = &view_info;
+    VkImageView view;
+    assert(create_view(device, &view_info, NULL, &view) == VK_SUCCESS);
+    VkFramebufferCreateInfo info = {.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                                    .renderPass = pass,
+                                    .attachmentCount = 1,
+                                    .pAttachments = &view,
+                                    .width = 64,
+                                    .height = 64,
+                                    .layers = 1};
+    fixture->framebuffer_info = &info;
+#define LoadReadback(type, variable, name)                                                         \
+    type variable = (type)lookup(device, name);                                                    \
+    assert(variable)
+    LoadReadback(PFN_vkCreateCommandPool, create_pool, "vkCreateCommandPool");
+    LoadReadback(PFN_vkDestroyCommandPool, destroy_pool, "vkDestroyCommandPool");
+    LoadReadback(PFN_vkAllocateCommandBuffers, allocate_commands, "vkAllocateCommandBuffers");
+    LoadReadback(PFN_vkBeginCommandBuffer, begin, "vkBeginCommandBuffer");
+    LoadReadback(PFN_vkEndCommandBuffer, end, "vkEndCommandBuffer");
+    LoadReadback(PFN_vkResetCommandBuffer, reset, "vkResetCommandBuffer");
+    LoadReadback(PFN_vkCmdBeginRenderPass, begin_pass, "vkCmdBeginRenderPass");
+    LoadReadback(PFN_vkCmdCopyImageToBuffer, copy, "vkCmdCopyImageToBuffer");
+    LoadReadback(PFN_vkCreateBuffer, create_buffer, "vkCreateBuffer");
+    LoadReadback(PFN_vkDestroyBuffer, destroy_buffer, "vkDestroyBuffer");
+    LoadReadback(PFN_vkBindBufferMemory, bind_buffer, "vkBindBufferMemory");
+    LoadReadback(PFN_vkMapMemory, map, "vkMapMemory");
+    LoadReadback(PFN_vkUnmapMemory, unmap, "vkUnmapMemory");
+    LoadReadback(PFN_vkInvalidateMappedMemoryRanges, invalidate, "vkInvalidateMappedMemoryRanges");
+    LoadReadback(PFN_vkQueueSubmit, submit, "vkQueueSubmit");
+    LoadReadback(PFN_vkQueueWaitIdle, idle, "vkQueueWaitIdle");
+    LoadReadback(PFN_vkGetDeviceQueue, get_queue, "vkGetDeviceQueue");
+#undef LoadReadback
+    VkFramebuffer framebuffer;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_SUCCESS);
+    fixture->mapping_enabled = 1;
+    memory_info.allocationSize = 16384;
+    VkDeviceMemory destination_memory;
+    assert(allocate(device, &memory_info, NULL, &destination_memory) == VK_SUCCESS);
+    VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                      .size = 16384,
+                                      .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    fixture->buffer_info = &buffer_info;
+    VkBuffer buffer;
+    assert(create_buffer(device, &buffer_info, NULL, &buffer) == VK_SUCCESS);
+    const uint64_t original_requirements_size = fixture->requirements_size;
+    fixture->requirements_size = buffer_info.size;
+    assert(bind_buffer(device, buffer, destination_memory, 0) == VK_SUCCESS);
+    fixture->requirements_size = original_requirements_size;
+    void *mapped = NULL;
+    assert(map(device, destination_memory, 0, VK_WHOLE_SIZE, 0, &mapped) == VK_SUCCESS && mapped);
+    memset(mapped, 0xa5, 16384);
+    VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                                         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+    fixture->pool_info = &pool_info;
+    VkCommandPool pool;
+    assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+    VkCommandBufferAllocateInfo allocation = {.sType =
+                                                  VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                                              .commandPool = pool,
+                                              .commandBufferCount = 1};
+    fixture->command_allocate = &allocation;
+    VkCommandBuffer command;
+    assert(allocate_commands(device, &allocation, &command) == VK_SUCCESS);
+    VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    fixture->command_begin = &begin_info;
+    VkClearValue clear = {0};
+    VkRenderPassBeginInfo render_info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                                         .renderPass = pass,
+                                         .framebuffer = framebuffer,
+                                         .renderArea = {.extent = {64, 64}},
+                                         .clearValueCount = 1,
+                                         .pClearValues = &clear};
+    const VkBufferImageCopy valid = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                                     .imageExtent = {1, 1, 1}};
+    const unsigned inactive_submissions = fixture->submissions;
+    copy(NULL, image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &valid);
+    copy((VkCommandBuffer)(uintptr_t)1, image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &valid);
+    copy(command, image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &valid);
+    assert(fixture->submissions == inactive_submissions);
+    for (unsigned scenario = 0; scenario < 21; ++scenario) {
+        assert(begin(command, &begin_info) == VK_SUCCESS);
+        VkBufferImageCopy region = valid;
+        uint32_t count = 1;
+        const VkBufferImageCopy *regions = &region;
+        VkImage selected_image = image;
+        VkBuffer selected_buffer = buffer;
+        VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL;
+        if (scenario == 0)
+            count = 0;
+        if (scenario == 1) {
+            count = 65;
+            regions = (void *)(uintptr_t)1;
+        }
+        if (scenario == 2)
+            regions = NULL;
+        if (scenario == 3)
+            selected_image = NULL;
+        if (scenario == 4)
+            selected_image = (VkImage)(uintptr_t)1;
+        if (scenario == 5)
+            selected_buffer = NULL;
+        if (scenario == 6)
+            selected_buffer = (VkBuffer)(uintptr_t)1;
+        if (scenario == 7)
+            layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        if (scenario == 8)
+            region.bufferOffset = 1;
+        if (scenario == 9)
+            region.bufferOffset = 16384;
+        if (scenario == 10)
+            region.bufferRowLength = 64;
+        if (scenario == 11)
+            region.bufferImageHeight = 64;
+        if (scenario == 12)
+            region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        if (scenario == 13)
+            region.imageSubresource.mipLevel = 1;
+        if (scenario == 14)
+            region.imageSubresource.baseArrayLayer = 1;
+        if (scenario == 15)
+            region.imageSubresource.layerCount = 2;
+        if (scenario == 16)
+            region.imageOffset.x = -1;
+        if (scenario == 17)
+            region.imageOffset.y = 64;
+        if (scenario == 18)
+            region.imageExtent.depth = 2;
+        if (scenario == 19)
+            region.imageExtent.width = 0;
+        if (scenario == 20)
+            begin_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
+        const unsigned before = fixture->submissions;
+        copy(command, selected_image, layout, selected_buffer, count, regions);
+        assert(fixture->submissions == before);
+        assert(end(command) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset(command, 0) == VK_SUCCESS);
+    }
+    VkBufferImageCopy regions[64];
+    for (unsigned index = 0; index < 64; ++index) {
+        regions[index] = valid;
+        regions[index].bufferOffset = index * 4;
+        regions[index].imageOffset.x = index;
+    }
+    /* Same destination bytes are forbidden even when image source regions differ. */
+    regions[1].bufferOffset = 0;
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    unsigned before = fixture->submissions;
+    copy(command, image, VK_IMAGE_LAYOUT_GENERAL, buffer, 2, regions);
+    assert(fixture->submissions == before);
+    assert(end(command) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset(command, 0) == VK_SUCCESS);
+    regions[1].bufferOffset = 4;
+    for (unsigned count = 1; count <= 64; count = count == 1 ? 2 : 64) {
+        assert(begin(command, &begin_info) == VK_SUCCESS);
+        before = fixture->submissions;
+        copy(command, image,
+             count == 2 ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL, buffer,
+             count, regions);
+        assert(fixture->submissions == before + 1 && fixture->command == 116);
+        assert(end(command) == VK_SUCCESS);
+        assert(reset(command, 0) == VK_SUCCESS);
+        if (count == 64)
+            break;
+    }
+    /* Requirements8192 bytes determine conservative shared-allocation source span. */
+    VkDeviceMemory shared_memory;
+    assert(allocate(device, &memory_info, NULL, &shared_memory) == VK_SUCCESS);
+    VkImage shared_image;
+    assert(create_image(device, &image_info, NULL, &shared_image) == VK_SUCCESS);
+    assert(bind(device, shared_image, shared_memory, 0) == VK_SUCCESS);
+    buffer_info.size = 256;
+    VkBuffer alias_buffer, adjacent_buffer;
+    assert(create_buffer(device, &buffer_info, NULL, &alias_buffer) == VK_SUCCESS);
+    assert(bind_buffer(device, alias_buffer, shared_memory, 0) == VK_SUCCESS);
+    assert(create_buffer(device, &buffer_info, NULL, &adjacent_buffer) == VK_SUCCESS);
+    assert(bind_buffer(device, adjacent_buffer, shared_memory, fixture->requirements_size) ==
+           VK_SUCCESS);
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    before = fixture->submissions;
+    copy(command, shared_image, VK_IMAGE_LAYOUT_GENERAL, alias_buffer, 1, &valid);
+    assert(fixture->submissions == before);
+    assert(end(command) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset(command, 0) == VK_SUCCESS);
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    copy(command, shared_image, VK_IMAGE_LAYOUT_GENERAL, adjacent_buffer, 1, &valid);
+    assert(end(command) == VK_SUCCESS);
+    assert(reset(command, 0) == VK_SUCCESS);
+    destroy_buffer(device, alias_buffer, NULL);
+    destroy_buffer(device, adjacent_buffer, NULL);
+    destroy_image(device, shared_image, NULL);
+    free_memory(device, shared_memory, NULL);
+    /* BGRA uses the same four-byte tight color profile. */
+    image_info.format = VK_FORMAT_B8G8R8A8_UNORM;
+    VkImage alternate_image;
+    assert(create_image(device, &image_info, NULL, &alternate_image) == VK_SUCCESS);
+    assert(bind(device, alternate_image, memory, 0) == VK_SUCCESS);
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    copy(command, alternate_image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &valid);
+    assert(end(command) == VK_SUCCESS);
+    assert(reset(command, 0) == VK_SUCCESS);
+    destroy_image(device, alternate_image, NULL);
+    image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    /* Live source with wrong usage, live unbound source, and live unbound/wrong-usage destinations.
+     */
+    for (unsigned scenario = 0; scenario < 4; ++scenario) {
+        VkImage selected_image = image;
+        VkBuffer selected_buffer = buffer;
+        VkImage temporary_image = NULL;
+        VkBuffer temporary_buffer = NULL;
+        if (scenario < 2) {
+            image_info.usage = scenario == 0 ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                                             : VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            assert(create_image(device, &image_info, NULL, &temporary_image) == VK_SUCCESS);
+            selected_image = temporary_image;
+            if (scenario == 0)
+                assert(bind(device, temporary_image, memory, 0) == VK_SUCCESS);
+        } else {
+            buffer_info.usage =
+                scenario == 2 ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT : VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            assert(create_buffer(device, &buffer_info, NULL, &temporary_buffer) == VK_SUCCESS);
+            selected_buffer = temporary_buffer;
+            if (scenario == 2)
+                assert(bind_buffer(device, temporary_buffer, destination_memory, 0) == VK_SUCCESS);
+        }
+        assert(begin(command, &begin_info) == VK_SUCCESS);
+        before = fixture->submissions;
+        copy(command, selected_image, VK_IMAGE_LAYOUT_GENERAL, selected_buffer, 1, &valid);
+        assert(fixture->submissions == before);
+        assert(end(command) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset(command, 0) == VK_SUCCESS);
+        destroy_image(device, temporary_image, NULL);
+        destroy_buffer(device, temporary_buffer, NULL);
+    }
+    image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    /* Resolve genuinely foreign live identities rather than arbitrary integer sentinels. */
+    const VkDeviceCreateInfo *saved_device_info = fixture->device_info;
+    VkInstance foreign_instance = create();
+    uint32_t physical_count = 2;
+    VkPhysicalDevice physical[2];
+    assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(
+               foreign_instance, "vkEnumeratePhysicalDevices"))(foreign_instance, &physical_count,
+                                                                physical) == VK_SUCCESS);
+    const float priority = 1;
+    VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                          .queueCount = 1,
+                                          .pQueuePriorities = &priority};
+    VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                                      .queueCreateInfoCount = 1,
+                                      .pQueueCreateInfos = &queue_info};
+    fixture->device_info = &device_info;
+    VkDevice foreign_device;
+    assert(((PFN_vkCreateDevice)lookup_external(foreign_instance, "vkCreateDevice"))(
+               physical[0], &device_info, NULL, &foreign_device) == VK_SUCCESS);
+    VkImage foreign_image;
+    VkBuffer foreign_buffer;
+    assert(create_image(foreign_device, &image_info, NULL, &foreign_image) == VK_SUCCESS);
+    assert(create_buffer(foreign_device, &buffer_info, NULL, &foreign_buffer) == VK_SUCCESS);
+    for (unsigned scenario = 0; scenario < 2; ++scenario) {
+        assert(begin(command, &begin_info) == VK_SUCCESS);
+        before = fixture->submissions;
+        copy(command, scenario ? image : foreign_image, VK_IMAGE_LAYOUT_GENERAL,
+             scenario ? foreign_buffer : buffer, 1, &valid);
+        assert(fixture->submissions == before);
+        assert(end(command) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset(command, 0) == VK_SUCCESS);
+    }
+    destroy_image(foreign_device, foreign_image, NULL);
+    destroy_buffer(foreign_device, foreign_buffer, NULL);
+    ((PFN_vkDestroyDevice)lookup(foreign_device, "vkDestroyDevice"))(foreign_device, NULL);
+    destroy(foreign_instance);
+    fixture->device_info = saved_device_info;
+    /* A stale source identity is rejected without reading any native payload. */
+    VkImage stale_image;
+    assert(create_image(device, &image_info, NULL, &stale_image) == VK_SUCCESS);
+    destroy_image(device, stale_image, NULL);
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    before = fixture->submissions;
+    copy(command, stale_image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &valid);
+    assert(fixture->submissions == before);
+    assert(end(command) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset(command, 0) == VK_SUCCESS);
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    copy(command, image, VK_IMAGE_LAYOUT_GENERAL, buffer, 64, regions);
+    assert(end(command) == VK_SUCCESS);
+    VkQueue queue;
+    get_queue(device, 0, 0, &queue);
+    assert(queue);
+    VkSubmitInfo submission = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                               .commandBufferCount = 1,
+                               .pCommandBuffers = &command};
+    assert(submit(queue, 1, &submission, NULL) == VK_SUCCESS);
+    before = fixture->submissions;
+    destroy_image(device, image, NULL);
+    destroy_buffer(device, buffer, NULL);
+    free_memory(device, memory, NULL);
+    free_memory(device, destination_memory, NULL);
+    destroy_pool(device, pool, NULL);
+    assert(fixture->submissions == before);
+    assert(idle(queue) == VK_SUCCESS);
+    assert(reset(command, 0) == VK_SUCCESS);
+    VkMappedMemoryRange mapped_range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                                        .memory = destination_memory,
+                                        .size = VK_WHOLE_SIZE};
+    assert(invalidate(device, 1, &mapped_range) == VK_SUCCESS);
+    unmap(device, destination_memory);
+    destroy_pool(device, pool, NULL);
+    destroy_buffer(device, buffer, NULL);
+    free_memory(device, destination_memory, NULL);
+    destroy_fb(device, framebuffer, NULL);
+    destroy_view(device, view, NULL);
+    destroy_image(device, image, NULL);
+    free_memory(device, memory, NULL);
+    destroy_pass(device, pass, NULL);
+    assert(fixture->mapping_creates == fixture->mapping_frees);
+    fixture->mapping_enabled = 0;
+    fixture->render_pass_info = NULL;
+    fixture->framebuffer_info = NULL;
+    fixture->image_info = NULL;
+    fixture->view_info = NULL;
+    fixture->memory_info = NULL;
+    fixture->buffer_info = NULL;
+    fixture->pool_info = NULL;
+    fixture->command_allocate = NULL;
+    fixture->command_begin = NULL;
+}
+
 /** @brief Standalone render-pass begin/end frontend contract, no draw/copy APIs required.
  * @param[in] device Live borrowed device; lookup immutable device resolver.
  * @param[in,out] fixture Sole-thread fake backend; create infos borrowed only during calls.
@@ -3443,7 +3868,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) { render_pass_contract(device, lookup, &fixture); framebuffer_contract(device, lookup, &fixture); graphics_pipeline_contract(device, lookup, &fixture); renderpass_begin_end_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
+        if (scenario == 0) { render_pass_contract(device, lookup, &fixture); framebuffer_contract(device, lookup, &fixture); graphics_pipeline_contract(device, lookup, &fixture); renderpass_begin_end_contract(device, lookup, &fixture); image_readback_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");

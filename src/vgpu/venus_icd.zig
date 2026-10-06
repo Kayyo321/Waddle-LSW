@@ -3251,6 +3251,70 @@ fn draw(command_buffer: c.VkCommandBuffer, vertex_count: u32, instance_count: u3
     command_reference(state, pipeline);
 }
 
+/// Copy bounded color image to bound transfer buffer. [in] nullable borrowed command/image/buffer;
+/// regions accessible count1..64 records for this call, no retention. Layout GENERAL/TRANSFER_SRC.
+/// Void; rejects inside pass, usages/sample/format/ranges before native work. Exact opcode116 ack
+/// retains image/buffer and both memories until GPU retirement. Mutex serialized, allocation-free.
+fn copy_image_to_buffer(command_buffer: c.VkCommandBuffer, image: c.VkImage, layout: u32, buffer: c.VkBuffer, count: u32, regions: [*c]const c.VkBufferImageCopy) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    if (graphics_recording(state).active_format != 0 or image == null or buffer == null or count == 0 or count > 64 or regions == null) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const image_record = child_object(@intFromPtr(image.?), c.VK_OBJECT_TYPE_IMAGE, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const buffer_record = child_object(@intFromPtr(buffer.?), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const image_state = resource_state(image_record);
+    const buffer_state = resource_state(buffer_record);
+    if (image_state.image_type != c.VK_IMAGE_TYPE_2D or image_state.image_samples != 1 or
+        (image_state.image_format != 37 and image_state.image_format != 44) or
+        image_state.image_usage & c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT == 0 or
+        buffer_state.buffer_usage & c.VK_BUFFER_USAGE_TRANSFER_DST_BIT == 0) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const image_memory = child_object(image_state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const buffer_memory = child_object(buffer_state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const writer = graphics_command_wire.copy_image_to_buffer(record.id, image_record.id, buffer_record.id, layout,
+        image_state.image_extent[0], image_state.image_extent[1], buffer_state.buffer_size,
+        @ptrCast(regions[0..count])) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (image_state.bound_memory == buffer_state.bound_memory) {
+        const source_start = image_state.memory_offset;
+        const source_end = source_start + image_state.requirements.size;
+        for (regions[0..count]) |region| {
+            const destination_start = buffer_state.memory_offset + region.bufferOffset;
+            const byte_count = @as(u64, region.imageExtent.width) * region.imageExtent.height * 4;
+            const destination_end = destination_start + byte_count;
+            if (destination_start < source_end and source_start < destination_end) {
+                state.command_state = .Invalid;
+                return;
+            }
+        }
+    }
+    if (!command_acknowledged(&writer, 116)) return;
+    for ([_]*c.venus_object_t{ image_record, buffer_record, image_memory, buffer_memory }) |target| command_reference(state, target);
+}
+
 fn outside_render_pass(state: *resource_state_t) bool {
     if (state.command_profile_index == 0 or graphics_recording(state).active_format == 0) return true;
     state.command_state = .Invalid;
@@ -4280,6 +4344,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCmdBeginRenderPass", &begin_render_pass },
         .{ "vkCmdEndRenderPass", &end_render_pass },
         .{ "vkCmdDraw", &draw },
+        .{ "vkCmdCopyImageToBuffer", &copy_image_to_buffer },
         .{ "vkCmdBindPipeline", &bind_pipeline },
         .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
         .{ "vkCmdPushConstants", &push_constants },
@@ -5196,7 +5261,7 @@ test "compute and graphics acknowledgments publish no references or state change
             return c.RingOk;
         }
     };
-    for (0..8) |operation| for (0..3) |mode| {
+    for (0..9) |operation| for (0..3) |mode| {
         var fixture = fixture_t{ .mode = mode };
         try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
         defer venus_icd_abandon();
@@ -5234,6 +5299,8 @@ test "compute and graphics acknowledgments publish no references or state change
         var view: [*c]c.venus_object_t = null;
         var image: [*c]c.venus_object_t = null;
         var allocation: [*c]c.venus_object_t = null;
+        var copy_target: [*c]c.venus_object_t = null;
+        var copy_memory: [*c]c.venus_object_t = null;
         if (operation >= 5) {
             try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_RENDER_PASS, device.*.id, 0, &pass));
             try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_FRAMEBUFFER, device.*.id, 0, &framebuffer));
@@ -5243,13 +5310,19 @@ test "compute and graphics acknowledgments publish no references or state change
             resource_state(pass).* = .{ .render_format = 37, .render_final_layout = c.VK_IMAGE_LAYOUT_GENERAL };
             resource_state(framebuffer).* = .{ .render_format = 37, .framebuffer_view = view.*.handle, .framebuffer_extent = .{ 64, 64 } };
             resource_state(view).* = .{ .view_image = image.*.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
-            resource_state(image).* = .{ .bound_memory = allocation.*.handle, .image_type = c.VK_IMAGE_TYPE_2D, .image_samples = 1, .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .image_levels = 1, .image_layers = 1, .image_extent = .{ 64, 64, 1 } };
-            if (operation >= 6) graphics_recording(resource_state(recording)).active_format = 37;
+            resource_state(image).* = .{ .bound_memory = allocation.*.handle, .image_type = c.VK_IMAGE_TYPE_2D, .image_samples = 1, .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .image_levels = 1, .image_layers = 1, .image_extent = .{ 64, 64, 1 } };
+            if (operation == 6 or operation == 7) graphics_recording(resource_state(recording)).active_format = 37;
             if (operation == 7) {
                 graphics_recording(resource_state(recording)).pipeline = pipeline.*.handle;
                 graphics_recording(resource_state(recording)).pipeline_format = 37;
             }
         }
+        if (operation == 8) {
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &copy_target));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &copy_memory));
+            resource_state(copy_target).* = .{ .buffer_size = 16384, .buffer_usage = c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, .bound_memory = copy_memory.*.handle };
+        }
+        const copy_region: c.VkBufferImageCopy = .{ .imageSubresource = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 }, .imageExtent = .{ .width = 64, .height = 64, .depth = 1 } };
         const clear_value = std.mem.zeroes(c.VkClearValue);
         const begin_info: c.VkRenderPassBeginInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = @ptrFromInt(if (pass == null) 1 else pass.*.handle), .framebuffer = @ptrFromInt(if (framebuffer == null) 1 else framebuffer.*.handle), .renderArea = .{ .extent = .{ .width = 64, .height = 64 } }, .clearValueCount = 1, .pClearValues = &clear_value };
         const command_handle: c.VkCommandBuffer = @ptrFromInt(recording.*.handle);
@@ -5296,15 +5369,16 @@ test "compute and graphics acknowledgments publish no references or state change
             5 => begin_render_pass(command_handle, &begin_info, c.VK_SUBPASS_CONTENTS_INLINE),
             6 => end_render_pass(command_handle),
             7 => draw(command_handle, 3, 1, 0, 0),
+            8 => copy_image_to_buffer(command_handle, @ptrFromInt(image.*.handle), c.VK_IMAGE_LAYOUT_GENERAL, @ptrFromInt(copy_target.*.handle), 1, &copy_region),
             else => unreachable,
         }
         if (operation >= 5) {
-            const expected_active: u32 = if (operation == 5) (if (mode == 0) 37 else 0) else if (operation == 6) (if (mode == 0) 0 else 37) else 37;
+            const expected_active: u32 = if (operation == 5) (if (mode == 0) 37 else 0) else if (operation == 6) (if (mode == 0) 0 else 37) else if (operation == 7) 37 else 0;
             try std.testing.expectEqual(expected_active, graphics_recording(resource_state(recording)).active_format);
-            if (operation == 5 and mode == 0) {
+            if ((operation == 5 or operation == 8) and mode == 0) {
                 var referenced: usize = 0;
                 for (resource_state(recording).buffer_references) |word| referenced += @popCount(word);
-                try std.testing.expectEqual(@as(usize, 5), referenced);
+                try std.testing.expectEqual(@as(usize, if (operation == 5) 5 else 4), referenced);
             }
         }
         try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 1) c.RingClosed else c.RingCorrupt), lost);

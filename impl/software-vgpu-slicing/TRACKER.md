@@ -2387,6 +2387,18 @@ This synchronization commit is identified by subject `docs(vgpu): audit physical
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Record native/Windows exact storage ledger, overlap ownership preconditions, structured Boolean ABI assertions and corrected production-only sanitizer/coverage evidence. No hardware feature or API advertisement credit.
 
-- **Commit (this entry, resolved by subject)**: `docs(vgpu): specify atomic core and Features2 native publication`
+- **Commit `6da5c26`**: `docs(vgpu): specify atomic core and Features2 native publication`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify entire core55 and known-chain validation before any caller write, exact named-member Boolean ABI, whole-outer extent overlap rejection, native canary/failure tests and Linux/Windows storage proof. This adds no procedure or API advertisement.
+
+- **Commit `b649a99`**: `docs(vgpu): validate Features2 addresses before aligned native casts`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify nullable untyped address validation before native cast after optimized typed-pointer negative test exposed alignment-check folding.
+
+- **Commit `303f0cb`**: `feat(vgpu): publish core and chained Features2 outputs atomically`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); actual raw feature transport and advertisement remain pending.
+  - **Summary**: Prevalidate core55, known-chain batch and whole240-byte outer overlap before named-member writes. All28 Debug/ReleaseSafe/sanitizer tests and Windows crosscompile pass; branch98.51% (66/67), line98.44% (63/64). Actual Windows11 execution also passes28 tests, exits0; local/guest SHA256 eae63eafc1cda05101ad9f82fc914fff728bf0c397c3ea841e9b7b3df212d679, evidence build/windows11_vm/features_native_units.log.
+
+- **Commit (this entry, resolved by subject)**: `feat(vgpu): record bounded acknowledged image buffer readback`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); actual physical triangle and DXVK acceptance remain pending.
+  - **Summary**: Validate live RGBA/BGRA2D sample1 transfer owners and1..64 bounded tight regions before116. Reject inside-pass, invalid/foreign/stale/unbound/usages, destination overlap and conservative shared-allocation source-span intersections; permit exact adjacency. Publish exact image/buffer/both memory references only after ACK; failed replies preserve state. Independent generated encoder, mapped destination, pending ownership, native/shared128 lifecycles, ASan/LSan/UBSan and Windows object pass;74 Zig tests, fresh C-oracle production branch90.13% (2055/2280), line99.08% (2382/2404).
