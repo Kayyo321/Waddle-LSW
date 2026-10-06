@@ -1411,7 +1411,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     experimental API1.0, keep host query data private until validated, and preserve
     the separate complete runtime/DXVK acceptance requirements.
 
-- **Commit (current; resolve by subject)**: `fix(vgpu): enforce experimental public API version ceiling`
+- **Commit `4e61936`**: `fix(vgpu): enforce experimental public API version ceiling`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Reject unsupported instance API requests before object reservation
     or host submission. Decode physical properties privately, reject invalid host
@@ -1421,3 +1421,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     outputs on invalid host versions, 128 healthy cycles and independent newer-host
     encoder pass. ASan/LSan/UBSan reports no leaks; Zig tests pass; production
     coverage99.63% lines/93.35% branches. Updated native loader/Windows CI required.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify core buffer ownership and requirements`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify private buffer identity, bounded sharing inputs, exact
+    create/destroy/query wire fields, staged host requirements and failure
+    ownership. Full memory execution and DXVK acceptance remain required.

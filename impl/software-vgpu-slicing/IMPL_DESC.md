@@ -2695,3 +2695,54 @@ variant, major other than1 or minor greater than0 return VK_ERROR_INCOMPATIBLE_D
 before reserving/submitting. Zero version defaults to1.0, patch values in1.0 are
 accepted. This ceiling does not imply that the unfinished ICD implements every
 core1.0 API; test-only discovery and full runtime acceptance remain distinct.
+
+### Public core buffer ownership and memory requirements
+
+The next API increment implements core vkCreateBuffer50, vkDestroyBuffer51 and
+vkGetBufferMemoryRequirements30 with private device-parented nondispatchable
+buffer tokens. It does not bind, map, submit or manufacture memory; those APIs
+require subsequent implementations. Every native pointer is borrowed only during
+its call under the ICD mutex. No dynamic allocation or caller pointer retention
+occurs. The existing512-slot identity registry owns each reserved token and keeps
+its identity until exact host destruction succeeds or the caller retires the
+receiver before abandonment. Device destruction refuses these live children.
+
+Creation requires a live private device, accessible canonical create info tag12,
+no pNext, flags0 (sparse/protected/external behavior unsupported), size>0 and a
+nonzero core1.0 usage mask confined to bits0..8. Exclusive sharing ignores the
+native family pointer and serializes count0, array length0. Concurrent sharing
+requires2..16 distinct families present in the device's configured queue families,
+an accessible family array and no duplicates. Invalid inputs clear the caller
+output and fail initialization before reserving an identity or submitting bytes.
+The wire is command50/flags1/device-id64/pointer-tag1/tag12/pNext0/flags32/size64/
+usage32/sharing-mode32/family-count32/array-length64/optional-family32[]/
+allocator-tag0/output-tag1/reserved-buffer-id64; all words little endian.
+Successful replies require command50/result0/pointer-tag1/exact reserved identity.
+Negative host creation results retire the local reservation, except device loss
+poisons the binding and retains uncertain ownership. Unexpected positive results,
+wrong identity, truncation and transport loss poison the binding. No fallback
+host-native buffer handle is ever exposed.
+
+Destruction validates the exact live device parent and token before command51/
+flags1/device-id64/buffer-id64/allocator-tag0. Null, stale or foreign handles do
+nothing. Only a command51 reply retires the token. The caller must retire GPU use
+before destruction. Transport/corrupt reply preserves uncertain ownership until
+receiver retirement and abandonment; later public calls report device loss.
+
+Requirements sends command30/flags1/device-id64/buffer-id64/output-tag1; the native
+VkMemoryRequirements partial encoding has no fields. Decode into private staged
+storage: command30/tag1/size64/alignment64/memoryTypeBits32. Require size>0,
+alignment>0 and a power of two, and memoryTypeBits nonzero. Preserve caller output
+on invalid handles, truncated reply, wrong command/tag, invalid requirements or
+transport loss. Publish native fields only after complete validation. Requirements
+are the host's actual values, not guessed from requested size. Trailing command
+reply region bytes remain permitted by the negotiated response-slot contract.
+
+Verification compares all three requests with independent pinned generated C
+encoders, covers exclusive/concurrent sharing and invalid masks/families, tests
+native negative creation rollback and every malformed/transport path, stale/
+foreign parents, registry exhaustion and parent destruction ordering. Actual
+negotiated worker integration creates/queries/destroys buffers in each device
+lifecycle. Native Windows ABI, normal/sanitized stress and >=90% production line
+and branch coverage remain mandatory. These callbacks alone do not satisfy the
+full memory/graphics/compute milestone or real DXVK acceptance.
