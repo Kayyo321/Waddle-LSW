@@ -38,7 +38,8 @@ pub const buffer_write_t = struct {
     /// Nonempty borrowed accessible immutable buffer records, one per descriptor; maximum64.
     buffers: []const buffer_info_t,
 };
-/// Canonical descriptor copy; caller verifies both same-device sets, types, exact binding ranges and GPU quiescence.
+/// Canonical descriptor copy; caller verifies same-device sets, matching types and exact binding ranges.
+/// Only destination must be quiescent; pending source and undefined/destroyed-resource references may be copied.
 /// No pointers, allocation or ownership transfer; same-binding overlap rejects before packet construction.
 pub const copy_t = struct {
     /// Nonzero translated source set identity, externally retained.
