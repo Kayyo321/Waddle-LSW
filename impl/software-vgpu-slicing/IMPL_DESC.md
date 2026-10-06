@@ -3372,3 +3372,13 @@ and branch coverage, Windows native ABI gates and actual pinned shared loader to
 out-of-process production worker. Submit the worker's fill/barrier/copy/update/
 host-read command stream and wait for real completion before releasing buffers.
 None of these bounded increments grants full API or DXVK milestone credit.
+
+
+Device creation result handling uses the same sticky uncertainty boundary as
+other constructors. VK_ERROR_DEVICE_LOST marks RingClosed and retains the reserved
+device identity; any positive non-SUCCESS native status marks RingCorrupt and
+retains it. No additional command can be sent after either. Known negative
+non-loss errors release the reservation and remain retryable. Output stays NULL
+for all errors, and abandon may reclaim uncertain identity only after the old
+receiver is retired. This corrects the earlier device path that incorrectly
+released loss reservations and accepted positive constructor statuses.

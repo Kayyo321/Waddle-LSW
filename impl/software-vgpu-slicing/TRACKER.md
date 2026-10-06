@@ -1751,7 +1751,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     dispatch. Implementation, oracle coverage and actual GPU worker submission
     remain pending; TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): submit native queues and retain references until GPU proof`
+- **Commit `df4299b`**: `feat(vgpu): submit native queues and retain references until GPU proof`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Encode command18 with canonical bounded submit arrays and primary
     command/family/device/state checks. Publish128 fixed tickets only on native
@@ -1769,3 +1769,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     binary signal/wait with native fence completion before release, normal and
     sanitized plus forced-failure cleanup. Windows fixture/DLL/loader cross-link
     passes. Full graphics/compute/mapping/DXVK gates pending; TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): retain device creation identities after uncertain results`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Treat native device loss and unexpected positive constructor
+    statuses as sticky loss/corruption, retaining the uncertain device slot until
+    receiver retirement/abandon. Preserve known negative rollback and NULL output.
+  - **Verification**: New native loss/positive-result tests reject further commands
+    without transport access. Nine Zig tests, native loader fixture and zero-leak
+    ASan/LSan/UBSan pass; coverage99.63% lines/94.55% branches. TODO #3 stays50%.

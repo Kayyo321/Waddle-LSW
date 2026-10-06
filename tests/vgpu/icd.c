@@ -1042,7 +1042,7 @@ static void idle_failures(void) {
 }
 static void device_failures(void) {
     const uint32_t Commands[] = {11, 12, 155};
-    for (unsigned scenario = 0; scenario < 6; scenario++) {
+    for (unsigned scenario = 0; scenario < 8; scenario++) {
         fixture_t fixture = fresh();
         assert(venus_icd_bind(exchange, &fixture) == RingOk);
         VkInstance instance = create();
@@ -1086,6 +1086,15 @@ static void device_failures(void) {
         fixture.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
         assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
         fixture.create_result = VK_SUCCESS;
+        if (scenario >= 6) {
+            fixture.create_result = scenario == 6 ? VK_ERROR_DEVICE_LOST : VK_NOT_READY;
+            assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_DEVICE_LOST && !device);
+            fixture.create_result = VK_SUCCESS;
+            unsigned before = fixture.submissions;
+            assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_DEVICE_LOST && !device);
+            assert(fixture.submissions == before && venus_icd_unbind() == RingAgain);
+            venus_icd_abandon(); continue;
+        }
         const uint32_t command = Commands[scenario % 3];
         if (command != 11)
             assert(device_create(physical[0], &info, NULL, &device) == VK_SUCCESS);

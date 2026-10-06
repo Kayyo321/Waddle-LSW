@@ -753,6 +753,8 @@ fn create_device(
     const reply = transact(encoded.bytes[0..encoded.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = identity_reply(reply, 11, record.*.id, true) catch
         return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0) return failure(c.RingCorrupt);
     if (result != c.VK_SUCCESS) {
         _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1);
         return result;
