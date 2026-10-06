@@ -84,53 +84,53 @@ fn compare(writer: writer_t, bytes: []const u8) !void {
 }
 test "generated oracle command packets ordinary empty and maximum" {
     var bytes: [8192]u8 = undefined;
-    for ([_]u32{0,1}) |point| {
+    for ([_]u32{ 0, 1 }) |point| {
         const count = venus_compute_test_bind_pipeline(point, &bytes);
-        try compare(try bind_pipeline(7,42,point), bytes[0..count]);
+        try compare(try bind_pipeline(7, 42, point), bytes[0..count]);
     }
     var ids: [16]u64 = undefined;
-    for (&ids,0..) |*id,index| id.* = 42 + index;
+    for (&ids, 0..) |*id, index| id.* = 42 + index;
     var offsets: [1024]u32 = undefined;
-    for (&offsets,0..) |*offset,index| offset.* = @intCast(index*256);
-    for ([_]usize{0,1,16}) |count| {
+    for (&offsets, 0..) |*offset, index| offset.* = @intCast(index * 256);
+    for ([_]usize{ 0, 1, 16 }) |count| {
         const dynamic_count: usize = if (count == 16) 1024 else count;
-        const size = venus_compute_test_bind_sets(1,0,count,&ids,dynamic_count,&offsets,&bytes);
-        try compare(try bind_descriptor_sets(7,43,1,0,ids[0..count],offsets[0..dynamic_count]),bytes[0..size]);
+        const size = venus_compute_test_bind_sets(1, 0, count, &ids, dynamic_count, &offsets, &bytes);
+        try compare(try bind_descriptor_sets(7, 43, 1, 0, ids[0..count], offsets[0..dynamic_count]), bytes[0..size]);
     }
     var values: [128]u8 = undefined;
-    for (&values,0..) |*value,index| value.* = @intCast(index);
-    for ([_]usize{4,128}) |count| {
-        const size = venus_compute_test_push(0x20,0,count,&values,&bytes);
-        try compare(try push_constants(7,43,0x20,0,values[0..count]),bytes[0..size]);
+    for (&values, 0..) |*value, index| value.* = @intCast(index);
+    for ([_]usize{ 4, 128 }) |count| {
+        const size = venus_compute_test_push(0x20, 0, count, &values, &bytes);
+        try compare(try push_constants(7, 43, 0x20, 0, values[0..count]), bytes[0..size]);
     }
-    for ([_][3]u32{.{0,0,0},.{64,1,1},.{0xffffffff,0xffffffff,0xffffffff}}) |groups| {
-        const size = venus_compute_test_dispatch(&groups,&bytes);
-        try compare(try dispatch(7,groups),bytes[0..size]);
+    for ([_][3]u32{ .{ 0, 0, 0 }, .{ 64, 1, 1 }, .{ 0xffffffff, 0xffffffff, 0xffffffff } }) |groups| {
+        const size = venus_compute_test_dispatch(&groups, &bytes);
+        try compare(try dispatch(7, groups), bytes[0..size]);
     }
 }
 test "invalid identities enums counts and push ranges fail before encoding" {
-    try std.testing.expectError(error.Invalid,bind_pipeline(0,42,0));
-    try std.testing.expectError(error.Invalid,bind_pipeline(7,0,0));
-    try std.testing.expectError(error.Invalid,bind_pipeline(7,42,2));
+    try std.testing.expectError(error.Invalid, bind_pipeline(0, 42, 0));
+    try std.testing.expectError(error.Invalid, bind_pipeline(7, 0, 0));
+    try std.testing.expectError(error.Invalid, bind_pipeline(7, 42, 2));
     const ids = [_]u64{42} ** 17;
     const offsets = [_]u32{0} ** 1025;
-    try std.testing.expectError(error.Invalid,bind_descriptor_sets(0,43,1,0,&.{},&.{}));
-    try std.testing.expectError(error.Invalid,bind_descriptor_sets(7,0,1,0,&.{},&.{}));
-    try std.testing.expectError(error.Invalid,bind_descriptor_sets(7,43,2,0,&.{},&.{}));
-    try std.testing.expectError(error.Invalid,bind_descriptor_sets(7,43,1,16,&.{},&.{}));
-    try std.testing.expectError(error.Limit,bind_descriptor_sets(7,43,1,0,&ids,&.{}));
-    try std.testing.expectError(error.Limit,bind_descriptor_sets(7,43,1,0,ids[0..1],&offsets));
-    try std.testing.expectError(error.Invalid,bind_descriptor_sets(7,43,1,0,&.{},offsets[0..1]));
-    try std.testing.expectError(error.Invalid,bind_descriptor_sets(7,43,1,0,&.{0},&.{}));
+    try std.testing.expectError(error.Invalid, bind_descriptor_sets(0, 43, 1, 0, &.{}, &.{}));
+    try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 0, 1, 0, &.{}, &.{}));
+    try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 2, 0, &.{}, &.{}));
+    try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 16, &.{}, &.{}));
+    try std.testing.expectError(error.Limit, bind_descriptor_sets(7, 43, 1, 0, &ids, &.{}));
+    try std.testing.expectError(error.Limit, bind_descriptor_sets(7, 43, 1, 0, ids[0..1], &offsets));
+    try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{}, offsets[0..1]));
+    try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{0}, &.{}));
     const values = [_]u8{0} ** 132;
-    try std.testing.expectError(error.Invalid,push_constants(0,43,1,0,values[0..4]));
-    try std.testing.expectError(error.Invalid,push_constants(7,0,1,0,values[0..4]));
-    try std.testing.expectError(error.Invalid,push_constants(7,43,0,0,values[0..4]));
-    try std.testing.expectError(error.Invalid,push_constants(7,43,64,0,values[0..4]));
-    try std.testing.expectError(error.Invalid,push_constants(7,43,1,1,values[0..4]));
-    try std.testing.expectError(error.Invalid,push_constants(7,43,1,0,values[0..0]));
-    try std.testing.expectError(error.Invalid,push_constants(7,43,1,0,values[0..3]));
-    try std.testing.expectError(error.Limit,push_constants(7,43,1,132,values[0..4]));
-    try std.testing.expectError(error.Limit,push_constants(7,43,1,0,&values));
-    try std.testing.expectError(error.Invalid,dispatch(0,.{1,1,1}));
+    try std.testing.expectError(error.Invalid, push_constants(0, 43, 1, 0, values[0..4]));
+    try std.testing.expectError(error.Invalid, push_constants(7, 0, 1, 0, values[0..4]));
+    try std.testing.expectError(error.Invalid, push_constants(7, 43, 0, 0, values[0..4]));
+    try std.testing.expectError(error.Invalid, push_constants(7, 43, 64, 0, values[0..4]));
+    try std.testing.expectError(error.Invalid, push_constants(7, 43, 1, 1, values[0..4]));
+    try std.testing.expectError(error.Invalid, push_constants(7, 43, 1, 0, values[0..0]));
+    try std.testing.expectError(error.Invalid, push_constants(7, 43, 1, 0, values[0..3]));
+    try std.testing.expectError(error.Limit, push_constants(7, 43, 1, 132, values[0..4]));
+    try std.testing.expectError(error.Limit, push_constants(7, 43, 1, 0, &values));
+    try std.testing.expectError(error.Invalid, dispatch(0, .{ 1, 1, 1 }));
 }
