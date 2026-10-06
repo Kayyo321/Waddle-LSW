@@ -21,8 +21,7 @@
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
 | #10     | Pin and build Mesa RADV CPU cache lifecycle repair for zero-leak native driver enumeration | In Progress | 0% | 50% | Immutable Mesa pin and offline patched build verified; repeated unload passes; full production CI pending |
-
-| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 0% | Native CI loader exists; local guest discovery/bootstrap remain required for DXVK |
+| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned offline x64 loader build and actual ISO-VM medium-integrity discovery verified; real receiver bootstrap and GPU/DXVK remain pending |
 
 **Total Feature Completion**: `68.75%`
 
@@ -2296,10 +2295,78 @@ This synchronization commit is identified by subject `docs(vgpu): audit physical
   - **Task Impact**: +0% to TODO: #3 and prerequisite #10 (+0% overall).
   - **Summary**: Publish exact acknowledged render-pass ownership with independent native encoder checks; native/shared128cycles, safety and Windows object pass. ICD branch90.03%, line99.22%. Graphics and native DXVK acceptance remain pending.
 
-- **Commit (this entry, resolved by subject)**: `docs(vgpu): record host push and render pass verification`
+- **Commit `a0343f6`**: `docs(vgpu): record host push and render pass verification`
   - **Task Impact**: +0% to TODO: #3 and #10 (+0% overall).
   - **Summary**: Record actual-host push and render-pass milestones, plus four clean full16 worker paths using all host ICDs and the repaired matching RADV. Mesa production CI remains pending; graphics/DXVK completion not credited prematurely.
 
-- **Commit (this entry, resolved by subject)**: `feat(vgpu): acknowledge render pass recording and active command guards`
+- **Commit `40f1061`**: `feat(vgpu): acknowledge render pass recording and active command guards`
   - **Task Impact**: +0% to TODO: #3 (+0% overall); physical graphics and DXVK acceptance remain pending.
   - **Summary**: Begin/end publish compatible pass state and five owned references only after exact opcode acknowledgments. Active passes reject transfer/compute/barrier commands and command-buffer completion; secondary recording, malformed areas and sampled final-layout usage are validated. Independent generated encoder checks and 25 invalid native cases pass through 128 direct/shared lifecycles. Transport/corrupt replies preserve state and references. ASan/LSan/UBSan gates and Windows object compile pass; 74 Zig tests, production branch90.17% (2018/2238), line99.15% (2331/2351).
+
+- **Commit `886198f`**: `docs(vgpu): require defined load contents and disjoint graphics copies`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Record independent graphics audit findings before implementation: preserved attachment contents need defined initial layout, destination copy regions must not overlap, and shared allocation source image spans must remain disjoint from readback spans. Specify bounded half-open comparisons and failure-before-transmission without speculative optimal-image addressing. Affects TODO: #3 (+0%).
+
+- **Commit `bf9e71f`**: `fix(vgpu): reject color LOAD from undefined render pass contents`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Apply VkAttachmentDescription-format-06699 before encoding the bounded color pass: LOAD cannot consume an undefined initial layout. Preserve CLEAR and DONT_CARE from undefined contents and LOAD from GENERAL or COLOR_ATTACHMENT_OPTIMAL.
+
+- **Commit `72f405c`**: `docs(vgpu): specify Mesa unload proof on hosts without render nodes`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Document exact pinned-loader initialization error for zero-device RADV enumeration and verify absence of DRM render nodes before recognizing it. Retain instance destruction, complete driver unload, three lifetimes and zero sanitizer diagnostics; preserve every production worker gate. Affects TODO: #10 (+0% pending clean CI).
+
+- **Commit `f25dd48`**: `docs(vgpu): require actual graphics queue flags and pass ordering`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Specify immutable bounded raw queue-family capability caching, primary-only render passes and local rejection of compute/transfer/barrier operations inside the canonical pass. Preserve acknowledged lifecycle scrubbing and actual host flags without capability fabrication. Affects TODO: #3 (+0%).
+
+- **Commit `71e7523`**: `feat(vgpu): validate actual attachment metadata before framebuffer creation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Copy image extent/sample and view subresource/component metadata after native identity publication. Resolve canonical bound color attachments, matching formats, selected mip dimensions, single layers and identity components before reserving framebuffer ownership. Preserve quiescent view retirement and copied pass compatibility. Independently compare create/destroy bytes and test NULL/stale identities, headers, bounds, MSAA/1D/non-color images, subviews, swizzles and ordinary OOM rollback. Native/shared128cycles, ASan/LSan/UBSan and Windows object pass. ICD branch90.40%, line99.28%. Affects TODO: #3 (+0% pending complete physical graphics).
+
+- **Commit `29be25c`**: `fix(vgpu): verify Mesa teardown on a confirmed headless host`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Handle the native loader exact VK_ERROR_INITIALIZATION_FAILED/count0 result only when /dev/dri is absent or a successfully inspected directory has no renderD* entries. Directory open/read/close errors fail closed, and every acquired DIR is deterministically closed and NULLed.
+
+- **Commit `8ae7928`**: `fix(vgpu): reject overlapping image readback destination spans`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Preflight every pair of half-open destination spans before serialization. Prior buffer bounds prove endpoint additions cannot overflow. Reject identical,partial andcontained destination intersections while preserving adjacent spans and overlapping source reads.
+
+- **Commit `f8c7d12`**: `feat(vgpu): expose bounded vertexless graphics pipeline creation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Translate one canonical vertex/fragment static triangle pipeline with exact632-byte generated protocol encoding. Validate all native headers and live device-owned shader/layout/pass tokens before reserving the shared64-pipeline metadata quota; copy empty layout and pass compatibility so creating parents may retire. Ordinary host failures roll back quota; uncertain ownership survives until retired abandon. Independently compare native packet bytes and test unsupported states, NULL/stale identities, OOM rollback and copied definition retirement. Native/shared128cycles, ASan/LSan/UBSan and Windows object pass. ICD branch90.41%, line99.29%. Affects TODO: #3 (+0% pending actual graphics dispatch).
+
+- **Commit `9146d4e`**: `docs(vgpu): specify bounded failure-only driver unload diagnostics`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Preserve the original failing worker exit and unsuppressed sanitizer gate while collecting one existing-binary link-map diagnostic. Bound artifacts at8MiB with explicit omitted middle, retain7days, and forbid cleanup preload, driver selection changes or rerun acceptance credit. Affects TODO: #10 (+0%).
+
+- **Commit `296943e`**: `ci(vgpu): retain failed worker loader maps without changing gate status`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: When the complete presented-worker native/sanitizer gate fails, save its exact exit status and rerun the existing sanitized production binary once with LD_DEBUG=files. Keep the same worker,hostICDs,RADV repair and normal ownership teardown; rerun success never receives acceptance credit.
+
+- **Commit `43623da`**: `docs(vgpu): verify native and Windows graphics metadata storage bounds`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Record measured416-byte resource and1280-byte device records,46080 fixed added graphics bytes and4398336 bytes across the specified metadata categories. Distinguish padding-adjusted ABI from estimates and identify static ownership/scrubbing boundaries without claiming a whole-process memory bound. Affects TODO: #3 (+0%).
+
+- **Commit `70c1937`**: `docs(vgpu): require shader-read usage for implicit final attachment transitions`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Document actual image usage validation before beginning a pass whose final layout is shader-read-only. Prevent an invalid implicit transition while preserving canonical general/color attachment paths and acknowledgment-before-state publication. Affects TODO: #3 (+0%).
+
+- **Commit `4883684`**: `feat(vgpu): bind graphics pipelines using actual queue capabilities`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Keep graphics binding state independent of compute descriptors/pushes and publish only after exact opcode93 acknowledgment. Cache raw64-family host queue flags only after complete reply/count validation; reject compute-only families, impossible host counts and corrupt replies. Own1024 bytes of fixed graphics state and scrub on native reset/free/pool retirement or abandoned receiver. Exercise repeated native binding/reset/reuse, stale/wrong pipeline tokens, capability cache immutability, missing family/queue data, corrupt acknowledgment and transport failure without state publication. Native/shared128cycles, ASan/LSan/UBSan and Windows object pass. ICD69tests branch90.26%, line99.26%. Affects TODO: #3 (+0% pending draw/physical acceptance).
+
+- **Commit `fad6cf2`**: `docs(vgpu): specify private Windows loader and real receiver bootstrap prerequisites`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Define offline pinned MinGW loader build, actual guest-path manifests, required runtime imports and interactive medium-integrity discovery. Allocate zero-weight prerequisite11 and retain same-process backend binding plus truthful Vulkan1.3/WSI gates before native DXVK acceptance. Do not replace delegated physical IVSHMEM integration with a TCP claim. Affects TODO: #11 (+0%).
+
+- **Commit `1584200`**: `chore(vgpu): crossbuild pinned native Windows Vulkan loader offline`
+  - **Task Impact**: +40% to prerequisite #11 (+0% overall); immutable offline Windows loader build and PE/import checks passed.
+  - **Summary**: Add an owned MinGW x86_64 Windows CMake toolchain using base-system GCC, C++, windres and an explicit target sysroot search policy. Add a private Ninja release target against the immutable Vulkan loader and existing pinned header307 compatibility boundary, with tests, dependency updates and Vulkan code generation disabled. Keep upstream Windows integrity checks and extension trampoline assembly enabled; do not install globally or alter vendor sources.
+
+- **Commit `c97ac02`**: `docs(vgpu): specify bounded native feature chain publication`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); acceptance gates remain pending.
+  - **Summary**: Define64-header/8-known-node traversal, unknown-node payload preservation, cycle/duplicate quotas and transactional typed Boolean publication before modern feature queries. Require exact native ABI sizes, one-hot/malformed-last tests and90% coverage without receiver binding or API/extension advertisement. Affects TODO: #3 (+0%).
+
+- **Commit (this entry, resolved by subject)**: `docs(vgpu): audit graphics and real Windows loader verification`
+  - **Task Impact**: +20% to prerequisite #11 (+0% overall); actual medium-integrity guest discovery passed. +0% to TODO: #3 and prerequisite #10.
+  - **Summary**: Actual installed Windows11 build26300.9457 ran unmodified pinned loader against the private ICD with eight loader lifecycles and128 ICD dispatch cycles; all six deployed hashes match isolated source1584200. Evidence build/windows11_vm/windows_loader_discovery.log and windows_loader_deployment.json. This verifies native discovery with an owned mock callback, not real GPU/DXVK. CI37542450701 and37542446871: Windows passed, Linux native full16 passed, first sanitized production lifetime still leaked128B through an unloaded unknown driver; standalone repaired RADV gate passed. Retain #10 at50% pending exact loader-map diagnostics and clean full production CI.
