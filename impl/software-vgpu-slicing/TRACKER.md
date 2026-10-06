@@ -727,7 +727,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Preserve allocation FD ownership and prohibit freeing active
     listener cookies or CPU fallback; window roles and worker handoff stay separate.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): own asynchronous Wayland DMA-BUF presentation`
+- **Commit `8a065bd`**: `feat(vgpu): own asynchronous Wayland DMA-BUF presentation`
   - **Task Impact**: +30% to TODO: #4 (+4.5% overall): 25% presenter ownership
     and 5% native image-validation CI; +5% to TODO: #3 (+1.25% overall) for
     integrated/native guest frontend acceptance.
@@ -736,9 +736,17 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     damage, independent frame pacing/buffer release and safe display-loss teardown.
   - **Verification**: Linux unit/fault/churn tests, actual generated Wayland
     protocol compilation and ASan/LSan/UBSan pass. Presenter production lines
-    99.07%, branches 94.12%; image/damage Zig lines/branches 100%.
+    99.07%, branches 94.23%; image/damage Zig lines/branches 100%.
     Tests cover acquired descriptor/proxy faults, import rejection, three owned
     buffers, both callback orders, stale frames, teardown refusal and abandonment.
     Guest/image codec Linux and native Windows CI passed at 4ca8195:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37402655882 .
     Hardware allocation/export, worker FD handoff and full ICD/DXVK remain pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define standalone render-only adapter lifetimes`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify userland render/compute/no-scanout adapter identity,
+    bounded negotiated context bindings, nonreused handles and fence-ordered
+    registered-allocation teardown; distinguish this stub from kernel installation.
+  - **Verification**: Preserve host quota/codec authority and explicit lost-context
+    discard without remote requests or undocumented ownership transfer.

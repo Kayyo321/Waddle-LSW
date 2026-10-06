@@ -1405,3 +1405,43 @@ normal free refusal, disconnected abandonment and repeated churn. Native mock
 protocol callbacks plus actual generated-protocol compilation, sanitizer/allocator
 and >=90% production coverage are required; real GPU/compositor display remains
 its final integrated acceptance gate.
+
+
+### Userland render-only adapter stub (Task #3 standalone scope)
+
+venus_wddm_t is a portable caller-owned adapter model, not a kernel miniport or
+registered Windows display device. It advertises render/compute and no scanout,
+retains a caller-supplied nonzero adapter LUID, and binds at most eight distinct
+negotiated guest frontends. One submission thread owns all mutation; caller
+serializes application threads. It owns no heap, guest mapping, frontend or native
+Vulkan device. Contexts borrow frontends until explicit destruction/discard.
+Handles are nonzero monotonically increasing u64 identities shared across contexts
+and allocations during one initialized adapter lifetime; never recycled. Exhaustion
+returns Limit; stale handles never address reused slots. Init/free symmetry resets
+handle domain only after all contexts are released; discard all old handles then.
+
+Each context has a fixed 64-entry allocation ledger. An allocation wraps existing
+nonzero Venus device-memory blob identity and a registered host resource ID 2..65,
+not a native guest pointer. Creation sends Create through the frontend; host Zig
+codec/quota validation remains authoritative. Local slot/handle is published only
+after successful host acquisition, preserving host Again/Invalid/Limit/loss status.
+Allocation destruction requires a previously-issued nonzero GPU fence/timeline:
+GpuPoll must retire before Free is sent. Free still requires CPU quiescence and
+caller destruction of Vulkan image/resource references. No implicit wait, map or
+copy occurs. Successful Free clears local ledger only then. If the renderer/guest
+session is lost, explicit context discard clears local handles without remote
+requests because all old-session objects must be abandoned, never reused.
+
+Context destroy refuses live allocations (Again) and releases only its borrowed
+binding; it does not destroy the caller-owned frontend. Adapter free refuses live
+contexts (Again), leaving all state unchanged. This stub supplies deterministic
+userland context/allocation ownership for native ABI/mapped fixtures. It does not
+implement OS adapter discovery, KMD callbacks, interrupts, kernel scheduling or
+DWM device registration under the user's standalone acceptance scope. ICD object
+serialization and actual DXVK usage remain their separate milestones.
+
+Acceptance covers adapter identity/version/capabilities, all fixed slot/handle
+limits, duplicate frontend bindings, stale handle reuse, host acquisition failures,
+GPU retirement/CPU free backpressure, lost-context discard, reuse/churn and symmetric
+teardown. Linux sanitizer/coverage and x86_64 Windows cross-link/native CI are
+required; reserve 5% of the 25% stub milestone for native CI acceptance.
