@@ -3875,10 +3875,15 @@ used values. No arbitrary requirement to initialize unused declared ranges occur
 Submission rescans referenced descriptor sets against their current element
 values and validates current bound buffer identities/usage/alignment/ranges. It
 adds those buffers to a provisional submission ticket before native submission,
-with no in-flight publication until success. Thus valid descriptor updates between
-recording and submission retain current resources rather than stale earlier
-snapshots. Pending sets reject mutation. Transport/error paths cannot publish a
-partial ticket. Explicit transfer and barrier references preserve their existing
+with no in-flight publication until success. For the current core binding flags0,
+a successful destination update invalidates every recording/executable command
+that bound, accessed or modified that set; reset and re-record are required before
+submission. Pending destination updates are prohibited. A copy source may be
+pending, undefined, or reference a destroyed resource: copying does not use that
+resource, and undefined/stale source elements become undefined at the destination.
+Only destination sets trigger invalidation. These rules follow the
+[Khronos update contract](https://docs.vulkan.org/refpages/latest/refpages/source/vkUpdateDescriptorSets.html).
+Transport/error paths cannot publish a partial ticket. Explicit transfer and barrier references preserve their existing
 recorded resource lifetime rules. Dynamic descriptor offsets remain an explicit
 initial public-command restriction until their lifetime metadata is implemented.
 Tests cover all64 reservations, exhaustion/reuse/scrub, compatible and incompatible
@@ -3921,3 +3926,11 @@ and receiver encoders will compare request and reply prefixes, including all
 requested nodes, node order permutations, every truncation length, malformed
 tags and every boolean corruption. Native/Windows ABI checks, sanitizer oracle
 execution and unchanged90% coverage gates precede any runtime API advertisement.
+
+Buffer descriptor writes ignore `pImageInfo` and `pTexelBufferView`. They are
+canonicalized absent on the wire without dereferencing, inspecting or rejecting
+arbitrary ignored native pointers. All meaningful buffer arrays remain bounded
+and validated before effects. Whole update batches stage writes first and copies
+second in input order, invalidate destination recordings only after native
+acknowledgment, and leave source-only recordings untouched. Invalid batches and
+transport/corrupt replies publish no staged metadata or local invalidation.
