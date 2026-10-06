@@ -912,3 +912,14 @@ vgpu-icd-profiles-coverage:
 
 vgpu-icd-test: vgpu-descriptor-wire-test vgpu-icd-profiles-test
 vgpu-icd-coverage: vgpu-descriptor-wire-coverage vgpu-icd-profiles-coverage
+
+# Single-color render pass packets are validated against the pinned serializer.
+build/venus_graphics_wire_oracle.o: tests/vgpu/graphics_wire_oracle.c tests/vgpu/encoder/vn_cs.h | vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -c $< -o $@
+.PHONY: vgpu-graphics-wire-test vgpu-graphics-wire-coverage
+vgpu-graphics-wire-test: build/venus_graphics_wire_oracle.o build/venus_render_wire_oracle.o
+	$(ZIG) test src/vgpu/venus_graphics_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_graphics_wire_oracle.o build/venus_render_wire_oracle.o
+vgpu-graphics-wire-coverage: build/venus_graphics_wire_oracle.o build/venus_render_wire_oracle.o
+	python3 tests/av/coverage.py venus_graphics_wire
+vgpu-icd-test: vgpu-graphics-wire-test
+vgpu-icd-coverage: vgpu-graphics-wire-coverage
