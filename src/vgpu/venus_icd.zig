@@ -5,6 +5,9 @@ const profiles = @import("venus_icd_profiles.zig");
 var profile_registry = profiles.registry_t{};
 // Mutex-owned230400-byte batch staging; no native pointers, scrubbed after every call and abandon.
 var descriptor_allocation_snapshots = [_]profiles.descriptor_set_t{.{}} ** 64;
+// Mutex-owned460800/98304-byte transactional staging, scrubbed on every return/abandon.
+var descriptor_update_snapshots = [_]profiles.descriptor_set_t{.{}} ** 128;
+var descriptor_wire_buffers: [64][64]descriptor_wire.buffer_info_t = std.mem.zeroes([64][64]descriptor_wire.buffer_info_t);
 const render_wire = @import("venus_render_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
@@ -26,6 +29,10 @@ const instance_cache_t = struct {
 };
 const device_cache_t = struct {
     handle: u64 = 0,
+    descriptor_limits_ready: bool = false,
+    descriptor_alignments: [2]u64 = [_]u64{0} ** 2,
+    descriptor_ranges: [2]u32 = [_]u32{0} ** 2,
+    compute_group_limits: [3]u32 = [_]u32{0} ** 3,
     family_count: usize = 0,
     families: [16]u32 = [_]u32{0} ** 16,
     counts: [16]u32 = [_]u32{0} ** 16,
@@ -153,6 +160,8 @@ fn clear() void {
     gpu_fences = [_]u64{0} ** 64;
     profile_registry = .{};
     @memset(&descriptor_allocation_snapshots, .{});
+    @memset(&descriptor_update_snapshots, .{});
+    @memset(std.mem.asBytes(&descriptor_wire_buffers), 0);
     resource_states = [_]resource_state_t{.{}} ** 512;
     submission_tickets = [_]submission_ticket_t{.{}} ** 128;
     submission_sequence = 0;
@@ -1939,6 +1948,135 @@ fn free_descriptor_sets(device: c.VkDevice, pool_handle: c.VkDescriptorPool, cou
     return result;
 }
 
+// Called with the global mutex; cache only a fully validated host properties reply.
+fn ensure_descriptor_limits(parent: *const c.venus_object_t) bool {
+    const entry = device_cache(parent.handle) orelse return false;
+    if (entry.descriptor_limits_ready) return true;
+    var physical: c.VkPhysicalDevice = null;
+    for (slots) |slot| if (slot.id == parent.parent_id and slot.kind == c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) {
+        physical = @ptrFromInt(slot.handle);
+        break;
+    };
+    const reply = query(physical, 6) orelse return false;
+    var value: c.VkPhysicalDeviceProperties = undefined;
+    if (c.venus_values_properties_decode(&value, reply.ptr, reply.len) != c.RingOk) {
+        _ = failure(c.RingCorrupt);
+        return false;
+    }
+    const alignments = [_]u64{ value.limits.minUniformBufferOffsetAlignment, value.limits.minStorageBufferOffsetAlignment };
+    const ranges = [_]u32{ value.limits.maxUniformBufferRange, value.limits.maxStorageBufferRange };
+    for (alignments, ranges) |alignment, range| if (alignment == 0 or alignment & (alignment - 1) != 0 or range == 0) {
+        _ = failure(c.RingCorrupt);
+        return false;
+    };
+    for (value.limits.maxComputeWorkGroupCount) |limit| if (limit == 0) {
+        _ = failure(c.RingCorrupt);
+        return false;
+    };
+    entry.descriptor_alignments = alignments;
+    entry.descriptor_ranges = ranges;
+    entry.compute_group_limits = value.limits.maxComputeWorkGroupCount;
+    entry.descriptor_limits_ready = true;
+    return true;
+}
+// Caller validates/caches host limits first; checks copied token against its current resource owner.
+fn descriptor_buffer_valid(parent: *const c.venus_object_t, descriptor: *const profiles.descriptor_t) bool {
+    if (descriptor.descriptor_type < 6 or descriptor.descriptor_type > 9 or descriptor.buffer == 0) return false;
+    const record = child_object(descriptor.buffer, c.VK_OBJECT_TYPE_BUFFER, parent.id) orelse return false;
+    const state = resource_state(record);
+    const uniform = descriptor.descriptor_type == 6 or descriptor.descriptor_type == 8;
+    const kind: usize = if (uniform) 0 else 1;
+    const usage: u32 = if (uniform) c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT else c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    if (state.bound_memory == 0 or state.buffer_usage & usage == 0 or descriptor.offset >= state.buffer_size or descriptor.range == 0) return false;
+    const extent = if (descriptor.range == std.math.maxInt(u64)) state.buffer_size - descriptor.offset else descriptor.range;
+    const entry = device_cache(parent.handle).?;
+    std.debug.assert(entry.descriptor_limits_ready);
+    return descriptor.offset % entry.descriptor_alignments[kind] == 0 and extent <= state.buffer_size - descriptor.offset and extent <= entry.descriptor_ranges[kind];
+}
+fn descriptor_span(profile: *profiles.descriptor_set_t, binding: u32, first: u32, count: u32) ?[]profiles.descriptor_t {
+    if (count == 0 or count > 64) return null;
+    for (profile.descriptors[0..profile.descriptor_count], 0..) |descriptor, index| if (descriptor.binding == binding and descriptor.array_element == first) {
+        if (count > profile.descriptor_count - index) return null;
+        const span = profile.descriptors[index..][0..count];
+        for (span, 0..) |element, offset| if (element.binding != binding or element.array_element != @as(u64, first) + offset) return null;
+        return span;
+    };
+    return null;
+}
+/// Transactionally update buffer descriptors/copies. [in] nullable device, bounded borrowed immutable arrays.
+/// counts0 permit null; maximum64 operations,64 elements/write. Void; malformed/unsupported calls ignored.
+/// Mutex serialized; fixed scrubbed staging owns no input pointers, metadata publishes after native prefix ack.
+/// Writes validate actual limits, resource usage/bounds/parent. Pending destinations reject; copy sources may be pending/undefined.
+/// Core destination updates invalidate referencing recording/executable commands after acknowledgment.
+fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]const c.VkWriteDescriptorSet, copy_count: u32, copies: [*c]const c.VkCopyDescriptorSet) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    defer @memset(&descriptor_update_snapshots, .{});
+    defer @memset(std.mem.asBytes(&descriptor_wire_buffers), 0);
+    if (device == null or lost != c.RingOk or write_count > 64 or copy_count > 64 or (write_count != 0 and writes == null) or (copy_count != 0 and copies == null) or (write_count == 0 and copy_count == 0)) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    if (!ensure_descriptor_limits(parent)) return;
+    var touched = [_]bool{false} ** 128;
+    for (profile_registry.sets, &descriptor_update_snapshots) |entry, *snapshot| snapshot.* = entry.profile;
+    var encoded_writes: [64]descriptor_wire.buffer_write_t = undefined;
+    var encoded_copies: [64]descriptor_wire.copy_t = undefined;
+    if (write_count != 0) for (writes[0..write_count], 0..) |write, index| {
+        if (write.sType != c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET or write.pNext != null or write.descriptorType < 6 or write.descriptorType > 9 or write.descriptorCount == 0 or write.descriptorCount > 64 or write.pBufferInfo == null) return;
+        const record = descriptor_set_for(write.dstSet, parent.id) orelse return;
+        if (!descriptor_set_idle(record)) return;
+        const slot = resource_state(record).profile_index - 1;
+        const destination = descriptor_span(&descriptor_update_snapshots[slot], write.dstBinding, write.dstArrayElement, write.descriptorCount) orelse return;
+        for (write.pBufferInfo[0..write.descriptorCount], destination, 0..) |buffer, *descriptor, element| {
+            if (descriptor.descriptor_type != write.descriptorType) return;
+            descriptor.buffer = if (buffer.buffer) |value| @intFromPtr(value) else 0;
+            descriptor.offset = buffer.offset;
+            descriptor.range = buffer.range;
+            if (!descriptor_buffer_valid(parent, descriptor)) return;
+            const buffer_record = child_object(descriptor.buffer, c.VK_OBJECT_TYPE_BUFFER, parent.id).?;
+            descriptor_wire_buffers[index][element] = .{ .buffer_id = buffer_record.id, .offset = buffer.offset, .range = buffer.range };
+        }
+        touched[slot] = true;
+        encoded_writes[index] = .{ .set_id = record.id, .binding = write.dstBinding, .array_element = write.dstArrayElement, .descriptor_type = write.descriptorType, .buffers = descriptor_wire_buffers[index][0..write.descriptorCount] };
+    };
+    if (copy_count != 0) for (copies[0..copy_count], 0..) |copy, index| {
+        if (copy.sType != c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET or copy.pNext != null or copy.descriptorCount == 0 or copy.descriptorCount > 64) return;
+        const source_record = descriptor_set_for(copy.srcSet, parent.id) orelse return;
+        const destination_record = descriptor_set_for(copy.dstSet, parent.id) orelse return;
+        if (!descriptor_set_idle(destination_record)) return;
+        const source_slot = resource_state(source_record).profile_index - 1;
+        const destination_slot = resource_state(destination_record).profile_index - 1;
+        const source = descriptor_span(&descriptor_update_snapshots[source_slot], copy.srcBinding, copy.srcArrayElement, copy.descriptorCount) orelse return;
+        const destination = descriptor_span(&descriptor_update_snapshots[destination_slot], copy.dstBinding, copy.dstArrayElement, copy.descriptorCount) orelse return;
+        if (source_slot == destination_slot and copy.srcBinding == copy.dstBinding and @as(u64, copy.srcArrayElement) < @as(u64, copy.dstArrayElement) + copy.descriptorCount and @as(u64, copy.dstArrayElement) < @as(u64, copy.srcArrayElement) + copy.descriptorCount) return;
+        for (source, destination) |descriptor, *target| {
+            if (target.descriptor_type != descriptor.descriptor_type) return;
+            // A copied reference does not use its resource. Undefined/destroyed sources legally yield undefined targets.
+            const defined = descriptor.buffer != 0 and child_object(descriptor.buffer, c.VK_OBJECT_TYPE_BUFFER, parent.id) != null;
+            target.buffer = if (defined) descriptor.buffer else 0;
+            target.offset = if (defined) descriptor.offset else 0;
+            target.range = if (defined) descriptor.range else 0;
+        }
+        touched[destination_slot] = true;
+        encoded_copies[index] = .{ .source_set = source_record.id, .source_binding = copy.srcBinding, .source_element = copy.srcArrayElement, .destination_set = destination_record.id, .destination_binding = copy.dstBinding, .destination_element = copy.dstArrayElement, .count = copy.descriptorCount };
+    };
+    var writer = descriptor_wire.update_sets(parent.id, encoded_writes[0..write_count], encoded_copies[0..copy_count]) catch return;
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != 79) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    for (touched, 0..) |modified, index| if (modified) {
+        profile_registry.sets[index].profile = descriptor_update_snapshots[index];
+        for (slots, 0..) |slot, resource_slot| if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET and resource_states[resource_slot].profile_index == index + 1) {
+            const bit = @as(u64, 1) << @as(u6, @intCast(resource_slot % 64));
+            for (&resource_states) |*recording| if ((recording.command_state == .Recording or recording.command_state == .Executable) and recording.buffer_references[resource_slot / 64] & bit != 0) {
+                recording.command_state = .Invalid;
+                recording.buffer_references = [_]u64{0} ** 8;
+            };
+        };
+    };
+}
+
 /// Allocate private device memory with exact host identity validation.
 /// @param[in] device Nonnull private live parent, borrowed for call.
 /// @param[in] info Nonnull canonical allocation info, borrowed; no pNext supported.
@@ -3500,6 +3638,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkResetDescriptorPool", &reset_descriptor_pool },
         .{ "vkAllocateDescriptorSets", &allocate_descriptor_sets },
         .{ "vkFreeDescriptorSets", &free_descriptor_sets },
+        .{ "vkUpdateDescriptorSets", &update_descriptor_sets },
         .{ "vkCreateImage", &create_image },
         .{ "vkDestroyImage", &destroy_image },
         .{ "vkGetImageMemoryRequirements", &image_requirements },
@@ -4290,4 +4429,83 @@ test "pending descriptor sets protect pool ownership and exact retirement refund
     try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
     try std.testing.expect(descriptor_set_for(handles[0], device.*.id) == null);
     try std.testing.expect(descriptor_pool_for(@ptrCast(recording)) == null);
+}
+
+test "descriptor staging publishes only acknowledged metadata and scrubs every outcome" {
+    const fixture_t = struct {
+        mode: usize,
+        captured: bool = false,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                if (length < 40 or std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little) != 79) return c.RingCorrupt;
+                fixture.captured = true;
+                if (fixture.mode == 1) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], if (fixture.mode == 2) 78 else 79, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..11) |mode| {
+        var fixture = fixture_t{ .mode = mode };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var device: [*c]c.venus_object_t = null;
+        var pool: [*c]c.venus_object_t = null;
+        var set: [*c]c.venus_object_t = null;
+        var destination_set: [*c]c.venus_object_t = null;
+        var buffer: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &pool));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &set));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &destination_set));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &buffer));
+        device_caches[0] = .{ .handle = device.*.handle, .descriptor_limits_ready = true, .descriptor_alignments = .{ 16, 16 }, .descriptor_ranges = .{ 256, 512 } };
+        const kind: u32 = if (mode == 4 or mode == 5) 6 else 7;
+        const layout = try profiles.normalize_bindings(&.{.{ .binding = 3, .descriptor_type = kind, .descriptor_count = 1, .stage_flags = 32 }});
+        var profile = try profiles.create_set_profile(&layout);
+        if (mode == 7 or mode == 8 or mode == 10) {
+            profile.descriptors[0].buffer = if (mode == 10) 1 else buffer.*.handle;
+            profile.descriptors[0].range = 64;
+        }
+        resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, profile);
+        resource_state(destination_set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&layout));
+        resource_state(buffer).* = .{ .buffer_size = 512, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, .bound_memory = 1 };
+        if (mode == 3 or mode == 7) resource_state(set).inflight_count = 1;
+        if (mode == 8) resource_state(destination_set).inflight_count = 1;
+        var observers: [2][*c]c.venus_object_t = undefined;
+        for (&observers, 0..) |*observer, observer_index| {
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, device.*.id, 1, observer));
+            const observed = resource_index(if (mode >= 7 and observer_index == 1) destination_set else set);
+            resource_state(observer.*).command_state = if (observer_index == 0) .Recording else .Executable;
+            resource_state(observer.*).buffer_references[observed / 64] |= @as(u64, 1) << @as(u6, @intCast(observed % 64));
+        }
+        const info: c.VkDescriptorBufferInfo = .{ .buffer = @ptrFromInt(buffer.*.handle), .offset = 16, .range = if (mode == 5) 257 else 128 };
+        const initial: c.VkWriteDescriptorSet = .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set.*.handle), .dstBinding = 3, .descriptorCount = 1, .descriptorType = kind, .pBufferInfo = &info };
+        var writes = [_]c.VkWriteDescriptorSet{initial} ** 2;
+        writes[1].dstBinding = 99;
+        const copy: c.VkCopyDescriptorSet = .{ .sType = c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET, .srcSet = @ptrFromInt(set.*.handle), .srcBinding = 3, .dstSet = @ptrFromInt(destination_set.*.handle), .dstBinding = 3, .descriptorCount = 1 };
+        if (mode >= 7) update_descriptor_sets(@ptrFromInt(device.*.handle), 0, null, 1, &copy) else update_descriptor_sets(@ptrFromInt(device.*.handle), if (mode == 6) 2 else 1, &writes, 0, null);
+        const expected_success = mode == 0 or mode == 4;
+        const current = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
+        try std.testing.expectEqual(if (expected_success) buffer.*.handle else profile.descriptors[0].buffer, current.descriptors[0].buffer);
+        try std.testing.expectEqual(expected_success or mode == 1 or mode == 2 or mode == 7 or mode == 9 or mode == 10, fixture.captured);
+        const copied = profiles.get_profile(&profile_registry.sets, resource_state(destination_set).profile_index).?;
+        try std.testing.expectEqual(if (mode == 7) buffer.*.handle else @as(u64, 0), copied.descriptors[0].buffer);
+        try std.testing.expectEqual(mode != 1 and mode != 2, lost == c.RingOk);
+        for (observers, 0..) |observer, observer_index| {
+            const invalidated = expected_success or ((mode == 7 or mode == 9 or mode == 10) and observer_index == 1);
+            try std.testing.expectEqual(if (invalidated) command_state_t.Invalid else if (observer_index == 0) command_state_t.Recording else command_state_t.Executable, resource_state(observer).command_state);
+        }
+        for (std.mem.asBytes(&descriptor_update_snapshots)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+        for (std.mem.asBytes(&descriptor_wire_buffers)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+    }
 }

@@ -70,6 +70,13 @@ int __wrap_posix_memalign(void **output, size_t alignment, size_t size) {
  * @note Allocation-free, synchronous; defined in independent values fixture.
  */
 size_t venus_values_test_encode(uint32_t kind, void *bytes, size_t capacity);
+/** @brief Independent renderer oracle for exact core properties.
+ * @param[in] properties Nonnull borrowed native value, no retention.
+ * @param[out] bytes Nonnull exclusive accessible bytes[capacity].
+ * @param[in] capacity At least4096. @return Encoded prefix extent, zero invalid arguments.
+ * @note Allocation-free, synchronous; disjoint outputs thread-safe.
+ */
+size_t venus_values_test_properties(const VkPhysicalDeviceProperties *properties, void *bytes, size_t capacity);
 /** @brief External Vulkan loader ABI alias, no storage or ownership. */
 extern VkResult
 negotiate_external(uint32_t *version) __asm__("vk_icdNegotiateLoaderICDInterfaceVersion");
@@ -101,6 +108,11 @@ typedef struct fixture_t {
     const VkPipelineLayoutCreateInfo *pipeline_layout_info;
     const VkDescriptorPoolCreateInfo *descriptor_pool_info;
     const VkDescriptorSetAllocateInfo *descriptor_allocate_info;
+    const VkWriteDescriptorSet *descriptor_writes;
+    const VkCopyDescriptorSet *descriptor_copies;
+    uint32_t descriptor_write_count;
+    uint32_t descriptor_copy_count;
+    unsigned descriptor_properties;
     unsigned requirements_fault;
     uint64_t requirements_size;
     const void *update_data;
@@ -496,6 +508,36 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 put_u32(fixture->reply + 4, (uint32_t)fixture->bind_result);
             }
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 79) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkWriteDescriptorSet writes[64]; VkCopyDescriptorSet copies[64];
+            VkDescriptorBufferInfo buffers[64][64];
+            size_t cursor = 28;
+            assert(read_u32(bytes + 16) == fixture->descriptor_write_count);
+            for (uint32_t index = 0; index < fixture->descriptor_write_count; index++) {
+                writes[index] = fixture->descriptor_writes[index];
+                writes[index].dstSet = (VkDescriptorSet)(uintptr_t)read_u64(bytes + cursor + 12);
+                /* Vulkan ignores non-buffer arrays for these buffer descriptor types. */
+                writes[index].pImageInfo = NULL; writes[index].pTexelBufferView = NULL;
+                for (uint32_t element = 0; element < writes[index].descriptorCount; element++) {
+                    buffers[index][element] = writes[index].pBufferInfo[element];
+                    buffers[index][element].buffer = (VkBuffer)(uintptr_t)read_u64(bytes + cursor + 52 + element * 24);
+                }
+                writes[index].pBufferInfo = buffers[index];
+                cursor += 60 + 24 * writes[index].descriptorCount;
+            }
+            assert(read_u32(bytes + cursor) == fixture->descriptor_copy_count);
+            cursor += 12;
+            for (uint32_t index = 0; index < fixture->descriptor_copy_count; index++) {
+                copies[index] = fixture->descriptor_copies[index];
+                copies[index].srcSet = (VkDescriptorSet)(uintptr_t)read_u64(bytes + cursor + 12);
+                copies[index].dstSet = (VkDescriptorSet)(uintptr_t)read_u64(bytes + cursor + 28);
+                cursor += 48;
+            }
+            vn_encode_vkUpdateDescriptorSets(&encoder, 1, (VkDevice)(uintptr_t)read_u64(bytes + 8),
+                fixture->descriptor_write_count, writes, fixture->descriptor_copy_count, copies);
+            assert(cursor == length - 36 && encoder.used == cursor && !memcmp(expected, bytes, cursor));
         } else if (fixture->command >= 74 && fixture->command <= 78) {
             unsigned char expected[8192];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -713,6 +755,19 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
         }
         if (fixture->command == 8 && fixture->mapping_enabled && !fixture->mapping_noncoherent)
             put_u32(fixture->reply + 24, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        if (fixture->command == 6 && fixture->descriptor_properties) {
+            VkPhysicalDeviceProperties properties = {.apiVersion = VK_API_VERSION_1_0};
+            properties.limits.minUniformBufferOffsetAlignment = 16;
+            properties.limits.minStorageBufferOffsetAlignment = 32;
+            properties.limits.maxUniformBufferRange = 256;
+            properties.limits.maxStorageBufferRange = 4096;
+            for (unsigned axis = 0; axis < 3; axis++) properties.limits.maxComputeWorkGroupCount[axis] = 8;
+            if (fixture->descriptor_properties == 2) properties.limits.minUniformBufferOffsetAlignment = 0;
+            if (fixture->descriptor_properties == 3) properties.limits.minStorageBufferOffsetAlignment = 3;
+            if (fixture->descriptor_properties == 4) properties.limits.maxStorageBufferRange = 0;
+            if (fixture->descriptor_properties == 5) properties.limits.maxComputeWorkGroupCount[2] = 0;
+            assert(venus_values_test_properties(&properties, fixture->reply, sizeof(fixture->reply)));
+        }
         if (fixture->command == 6 && fixture->properties_override)
             put_u32(fixture->reply + 12, fixture->properties_version);
         if (fixture->command == fixture->corrupt_command) {
@@ -1548,6 +1603,140 @@ static void device_failures(void) {
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
+/** @brief Reject malformed host limits before descriptor arithmetic, preserving sticky loss. */
+static void descriptor_limits_contract(void) {
+    for (unsigned mode = 2; mode <= 7; mode++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2; VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance, "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        const VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueCount = 1, .pQueuePriorities = &priority};
+        const VkDeviceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue};
+        fixture.device_info = &info;
+        VkDevice device;
+        assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &info, NULL, &device) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkUpdateDescriptorSets update = (PFN_vkUpdateDescriptorSets)lookup(device, "vkUpdateDescriptorSets");
+        fixture.descriptor_properties = mode;
+        if (mode == 6) fixture.corrupt_command = 6;
+        if (mode == 7) fixture.fail_command = 6;
+        const VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        update(device, 1, &write, 0, NULL);
+        assert(fixture.command == 6);
+        assert(((PFN_vkDeviceWaitIdle)lookup(device, "vkDeviceWaitIdle"))(device) == VK_ERROR_DEVICE_LOST);
+        unsigned before = fixture.submissions;
+        update(device, 1, &write, 0, NULL);
+        assert(fixture.submissions == before);
+        /* Fake receiver is retired here; uncertain frontend ownership clears only at abandon. */
+        venus_icd_abandon();
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
+
+/** @brief Validate native buffer update/copy packets and actual host bounds without descriptor retention. */
+static void descriptor_update_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture,
+                                      VkDescriptorSet source_set, VkDescriptorSet destination_set) {
+    PFN_vkUpdateDescriptorSets update = (PFN_vkUpdateDescriptorSets)lookup(device, "vkUpdateDescriptorSets");
+    PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)lookup(device, "vkCreateBuffer");
+    PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)lookup(device, "vkDestroyBuffer");
+    PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+    PFN_vkFreeMemory release = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+    PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)lookup(device, "vkBindBufferMemory");
+    assert(update);
+    fixture->descriptor_properties = 1;
+    VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = 4096, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
+    fixture->buffer_info = &buffer_info;
+    VkBuffer buffers[4];
+    for (unsigned index = 0; index < 3; index++) assert(create_buffer(device, &buffer_info, NULL, &buffers[index]) == VK_SUCCESS);
+    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    assert(create_buffer(device, &buffer_info, NULL, &buffers[3]) == VK_SUCCESS);
+    VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = 65536};
+    fixture->memory_info = &memory_info;
+    VkDeviceMemory memory;
+    assert(allocate(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+    assert(bind(device, buffers[0], memory, 0) == VK_SUCCESS);
+    assert(bind(device, buffers[1], memory, 16384) == VK_SUCCESS);
+    assert(bind(device, buffers[3], memory, 32768) == VK_SUCCESS);
+    VkDescriptorBufferInfo infos[2] = {{buffers[0], 64, 128}, {buffers[1], 128, VK_WHOLE_SIZE}};
+    VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = source_set,
+        .dstBinding = 3, .descriptorCount = 2, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = infos};
+    VkCopyDescriptorSet copy = {.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET, .srcSet = source_set,
+        .srcBinding = 3, .dstSet = destination_set, .dstBinding = 3, .descriptorCount = 2};
+    fixture->descriptor_writes = &write; fixture->descriptor_write_count = 1;
+    fixture->descriptor_copies = &copy; fixture->descriptor_copy_count = 1;
+    unsigned before = fixture->submissions;
+    update(NULL, 1, &write, 0, NULL); update((VkDevice)(uintptr_t)1, 1, &write, 0, NULL);
+    update(device, 0, NULL, 0, NULL); update(device, 65, (void *)(uintptr_t)1, 0, NULL);
+    update(device, 0, NULL, 65, (void *)(uintptr_t)1); update(device, 1, NULL, 0, NULL); update(device, 0, NULL, 1, NULL);
+    assert(fixture->submissions == before);
+    update(device, 1, &write, 1, &copy); /* One properties query, then exact update packet. */
+    assert(fixture->submissions == before + 2 && fixture->command == 79);
+    before = fixture->submissions;
+    fixture->descriptor_copy_count = 0;
+    const VkWriteDescriptorSet original = write;
+    write.sType = 0; update(device, 1, &write, 0, NULL); write = original;
+    write.pNext = (void *)(uintptr_t)1; update(device, 1, &write, 0, NULL); write = original;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE; update(device, 1, &write, 0, NULL); write = original;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT; update(device, 1, &write, 0, NULL); write = original;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; update(device, 1, &write, 0, NULL); write = original;
+    write.descriptorCount = 0; update(device, 1, &write, 0, NULL); write = original;
+    write.descriptorCount = 65; update(device, 1, &write, 0, NULL); write = original;
+    write.pBufferInfo = NULL; update(device, 1, &write, 0, NULL); write = original;
+
+    write.dstSet = NULL; update(device, 1, &write, 0, NULL); write = original;
+    write.dstSet = (VkDescriptorSet)(uintptr_t)1; update(device, 1, &write, 0, NULL); write = original;
+    write.dstBinding = 9; update(device, 1, &write, 0, NULL); write = original;
+    write.dstArrayElement = 1; update(device, 1, &write, 0, NULL); write = original;
+    const VkDescriptorBufferInfo saved = infos[0];
+    infos[0].buffer = NULL; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    infos[0].buffer = (VkBuffer)(uintptr_t)1; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    infos[0].buffer = buffers[2]; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    infos[0].buffer = buffers[3]; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    infos[0].offset = 1; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    infos[0].offset = 4096; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    infos[0].range = 0; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    infos[0].range = 4096; update(device, 1, &write, 0, NULL); infos[0] = saved;
+    assert(fixture->submissions == before);
+    /* Ignored native arrays can carry arbitrary tokens; canonical wire emits absent arrays. */
+    write.pImageInfo = (void *)(uintptr_t)1; write.pTexelBufferView = (void *)(uintptr_t)1;
+    update(device, 1, &write, 0, NULL); write = original;
+    assert(fixture->submissions == before + 1); before = fixture->submissions;
+    fixture->descriptor_write_count = 0; fixture->descriptor_copy_count = 1;
+    const VkCopyDescriptorSet original_copy = copy;
+    copy.sType = 0; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.pNext = (void *)(uintptr_t)1; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.descriptorCount = 0; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.descriptorCount = 65; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.srcSet = NULL; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.dstSet = NULL; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.srcBinding = 9; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.dstBinding = 9; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    copy.dstSet = source_set; update(device, 0, NULL, 1, &copy); copy = original_copy;
+    assert(fixture->submissions == before);
+    update(device, 0, NULL, 1, &copy); assert(fixture->submissions == before + 1);
+    /* Codec aggregate limit is enforced for otherwise-valid repeated updates/copies. */
+    VkWriteDescriptorSet many_writes[64]; VkCopyDescriptorSet many_copies[64];
+    for (unsigned index = 0; index < 64; index++) { many_writes[index] = write; many_copies[index] = copy; }
+    before = fixture->submissions;
+    update(device, 64, many_writes, 64, many_copies);
+    assert(fixture->submissions == before);
+    /* Descriptors do not artificially retain an application buffer after GPU retirement. */
+    destroy_buffer(device, buffers[0], NULL);
+    before = fixture->submissions;
+    update(device, 1, &write, 0, NULL);
+    assert(fixture->submissions == before);
+    update(device, 0, NULL, 1, &copy); /* Copying a destroyed resource reference legally makes destination undefined. */
+    assert(fixture->submissions == before + 1);
+    for (unsigned index = 1; index < 4; index++) destroy_buffer(device, buffers[index], NULL);
+    release(device, memory, NULL);
+    fixture->descriptor_properties = 0; fixture->buffer_info = NULL; fixture->memory_info = NULL;
+    fixture->descriptor_writes = NULL; fixture->descriptor_copies = NULL;
+    fixture->descriptor_write_count = 0; fixture->descriptor_copy_count = 0;
+}
+
 /** @brief Verify transactional set publication, pool quota refunds and implicit ownership retirement. */
 static void descriptor_lifecycle_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
     PFN_vkCreateDescriptorSetLayout create_layout = (PFN_vkCreateDescriptorSetLayout)lookup(device, "vkCreateDescriptorSetLayout");
@@ -1644,6 +1833,7 @@ static void descriptor_lifecycle_contract(VkDevice device, PFN_vkGetDeviceProcAd
     assert(free_sets(device, pools[0], 64, sets[0]) == VK_SUCCESS);
     assert(free_sets(device, pools[0], 1, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
     assert(allocate(device, &info, sets[2]) == VK_SUCCESS);
+    descriptor_update_contract(device, lookup, fixture, sets[2][0], sets[2][1]);
     /* Original layout may retire while sets retain copied definitions. */
     destroy_layout(device, layout, NULL);
     assert(reset_pool(NULL, pools[1], 0) == VK_ERROR_INITIALIZATION_FAILED);
@@ -4128,6 +4318,7 @@ int main(void) {
     version_contract();
     buffer_contract();
     image_contract();
+    descriptor_limits_contract();
     memory_contract();
     mapping_contract();
     pool_contract();
