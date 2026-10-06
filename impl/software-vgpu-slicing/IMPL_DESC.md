@@ -2850,3 +2850,49 @@ exit2 denotes descriptor baseline mismatch and other statuses fail the gate.
 Descriptor baselines are audited even on this expected failure path. No stale
 application handle is passed back through the native loader after destruction;
 that private-handle lookup regression remains in the separate static ICD variant.
+
+### Core command-pool ownership and reset
+
+Implement vkCreateCommandPool85, vkDestroyCommandPool86 and vkResetCommandPool87
+with private device-parented nondispatchable pool tokens. Queue family must exist
+in the successfully created device's configured families. Canonical native tag39,
+no pNext and core flags0..3 (TRANSIENT/RESET_COMMAND_BUFFER) are supported; protected
+pool flags and unknown bits fail initialization before reservation or submission.
+All pointers are call-borrowed, allocator callbacks unused, operations mutex
+serialized and allocation-free. Fixed slot metadata records pool queue family and
+creation flags for the subsequent command-buffer state machine. Existing memory/
+buffer metadata remains isolated by exact live registry slot generation.
+
+Creation wire is command85/flags1/device64/info-tag1/tag39/pNext0/pool-flags32/
+family32/allocator-tag0/output-tag1/reserved-pool64. Validate exact signed result,
+reply command85, output tag1 and reserved ID. Publish the private token and pool
+metadata only on success. Native negative creation errors roll back the local
+reservation; host DEVICE_LOST, unexpected positive status, corrupt identity,
+truncation and transport loss preserve uncertain ownership and poison binding.
+Caller output is NULL on any failure; registry exhaustion returns host-memory error.
+
+Destruction validates exact device parent and token; null/stale/foreign handles
+are ignored. Caller must retire GPU execution using this pool first. Send command86/
+flags1/device64/pool64/allocator-tag0. An exact command86 reply permits implicit
+local command-buffer child retirement before releasing the pool and its metadata;
+only COMMAND_BUFFER dispatchable children are valid. Current public allocation
+callbacks do not yet create these children; the next increment owns their lifecycle
+and reset state. Corrupt/transport replies keep all uncertain identities until
+receiver retirement and abandonment. Parent device destruction refuses live pools.
+
+Reset validates exact device parent, pool and flags0/1 (RELEASE_RESOURCES only)
+and sends command87/flags1/device64/pool64/reset-flags32. Exact command87/result0
+permits resetting child command-buffer recording state to Initial in the next
+increment. Negative host results leave metadata unchanged. Host DEVICE_LOST,
+unexpected positive statuses and malformed/transport replies poison binding.
+Local invalid input returns initialization failure; an already lost binding returns
+DEVICE_LOST. Caller must ensure no command buffer is pending GPU use before reset.
+
+Compare all three commands with independent pinned generated C encoders; test
+supported flags/families, invalid tags/next chains/families/parents, creation error
+rollback, registry exhaustion, stale pool tokens and device-before-child refusal.
+Exercise every malformed/transport command path and reset result semantics.
+Actual worker and actual loader variants create/reset/destroy pools in each device
+cycle. Native Windows runtime, sanitizers, exact ownership and >=90% production
+line/branch coverage remain required. This does not complete command-buffer
+recording/submission, graphics/compute, mapping or real DXVK acceptance.

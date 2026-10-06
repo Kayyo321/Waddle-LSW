@@ -1482,7 +1482,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     negotiated worker, explicit borrowed callback and owned library/environment
     lifetimes, two-session object cycles and independent loader milestone gates.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): drive production workers through the native loader`
+- **Commit `11ca7e7`**: `test(vgpu): drive production workers through the native loader`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; updated native CI required).
   - **Summary**: Add actual pinned loader/shared ICD production worker variant,
     owned library/environment lifetimes, original host driver environment before
@@ -1497,3 +1497,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     regressions pass; workflow YAML parses. Native Windows18350fb loader dispatch
     and DLL ABI are green. Latest native Linux integration CI remains required
     before the loader10% milestone; full command/mapping/DXVK remains incomplete.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify core command pool ownership`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify bounded pool flags/family validation, exact host identity,
+    private device ownership, reset results and child retirement boundary with
+    independent encoder and actual worker/loader verification gates.
