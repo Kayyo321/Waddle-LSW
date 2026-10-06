@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 mode=sys.argv[1]
-assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command')
+assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects')
 if mode == 'av_video':
     import gzip
     output=Path.cwd()/'build/coverage/av/video'
@@ -34,8 +34,8 @@ if mode == 'av_video':
         print(f'av_video production {kind} coverage: {percent:.2f}% ({covered}/{len(entries)})',flush=True)
         assert percent>=90
     sys.exit(0)
-source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command') else 'src/av/')+mode+'.zig'
-root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command') else 'av')/mode
+source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects') else 'src/av/')+mode+'.zig'
+root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects') else 'av')/mode
 if output.exists(): shutil.rmtree(output)
 output.mkdir(parents=True)
 subprocess.run(['zig','test',source,'-Iinclude','-lc','-O','ReleaseSafe','--test-no-exec',
@@ -56,7 +56,8 @@ def scope_name(index):
         if not parent: return ''
         index=int(parent[1])
     return ''
-codecs=set(re.findall(r'(?:export )?fn (\w+)\(', Path(source).read_text()))
+source_text = Path(source).read_text().split('// Test-only fixtures.', 1)[0]
+codecs=set(re.findall(r'(?:export )?fn (\w+)\(', source_text))
 line_sites={}
 records=[];instrumented=[];traps=0
 # Treat multiline switch instructions as one LLVM instruction.

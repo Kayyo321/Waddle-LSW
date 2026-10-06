@@ -1097,10 +1097,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     35% and the feature remains In Progress with Time Ended TBD.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify Vulkan object identity and lifetime storage`
+- **Commit `2adb81b`**: `docs(vgpu): specify Vulkan object identity and lifetime storage`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Subdivide remaining runtime milestones and specify loader headers,
     dispatchable address validation, namespaced nondispatchable identities, parent
     lifetime rules and bounded allocation-free storage before implementation.
   - **Verification**: Cross-check Vulkan loader header ABI and existing per-worker
     object ID isolation; no new runtime or DXVK credit claimed by this design.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): retain bounded guest Vulkan object identities`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; native CI acceptance pending).
+  - **Summary**: Add documented caller-owned Zig registry with loader-first-word
+    layout, monotonic host IDs, namespaced application tokens, bounded dispatchable
+    address lookup, exact kinds and parent/child retirement. Add native ABI/CI gates.
+  - **Verification**: Four Zig tests include4096 allocator-backed lifecycle cycles,
+    boundaries, namespaces, counter exhaustion and private metadata fault injection.
+    Native Linux loader header helpers, C ABI, ASan/LSan/UBSan and Windows cross-link
+    pass. Production lines100%, branches98.75%; exclude test-only helper assertions
+    from coverage. Complete ICD/device dispatch and DXVK still pending.

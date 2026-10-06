@@ -2161,3 +2161,18 @@ no locks, no atomic publication and no shared-memory/native pointer serializatio
 Tests must cover zero/full/exhausted storage, address boundaries/alignment, both
 handle forms, namespaces, exact kind, parent blocking, ID monotonicity, loader header
 replacement, invalid parents and repeated reserve/release with allocator zero leaks.
+
+
+Object registry is now implemented in allocation-free Zig with documented C ABI.
+Contradictory private live_count/storage returns Corrupt instead of panicking or
+mutating a record; caller must abandon its old receiver. Record address validation
+never dereferences arbitrary application handles. Native Linux fixtures cross-check
+first-word compatibility using the installed Vulkan loader header's magic helpers;
+Windows fixture validates the same widths/layout/tokens without requiring Vulkan
+SDK runtime installation. Four Zig tests perform4096 allocator-backed cycles plus
+namespaces, wrong representation/kind, exhausted counters and metadata fault injection.
+ASan/LSan/UBSan and Windows cross-link pass; production coverage100% lines/98.75%
+branches. The coverage collector respects an explicit test-only fixture boundary,
+so test assertion failure branches are not labeled production paths. Native CI
+acceptance is still required before the5% ownership milestone; loader/device/API
+and DXVK remain independently unimplemented, without completion credit.

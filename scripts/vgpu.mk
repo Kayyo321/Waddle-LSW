@@ -639,3 +639,30 @@ build/vgpu_command_test.exe: tests/vgpu/command.c build/venus_command_windows.li
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< build/venus_command_windows.lib -o $@
 
 vgpu-windows: build/vgpu_command_test.exe
+
+# Caller-owned loader/object records; no native Vulkan library linkage.
+build/venus_objects.o: src/vgpu/venus_objects.zig include/waddle/venus_objects.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/vgpu_objects_test: tests/vgpu/objects.c build/venus_objects.o include/waddle/venus_objects.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< build/venus_objects.o -o $@
+
+.PHONY: vgpu-objects-test vgpu-objects-sanitizers vgpu-objects-coverage
+vgpu-objects-test: build/vgpu_objects_test
+	./build/vgpu_objects_test
+	$(ZIG) test src/vgpu/venus_objects.zig -Iinclude -lc
+
+vgpu-objects-sanitizers: build/venus_objects.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) tests/vgpu/objects.c build/venus_objects.o -o build/vgpu_objects_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_objects_sanitized
+
+vgpu-objects-coverage:
+	python3 tests/av/coverage.py venus_objects
+
+build/venus_objects_windows.lib: src/vgpu/venus_objects.zig include/waddle/venus_objects.h | build
+	$(ZIG) build-lib $< -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_objects_test.exe: tests/vgpu/objects.c build/venus_objects_windows.lib
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< build/venus_objects_windows.lib -o $@
+
+vgpu-windows: build/vgpu_objects_test.exe
