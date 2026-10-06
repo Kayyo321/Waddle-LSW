@@ -21,7 +21,7 @@ comptime {
 
 /// in: nullable immutable private layout; returns 0 valid, -1 invalid.
 /// Pure, allocation-free, no ownership transfer; thread-safe on immutable data.
-export fn venus_dmabuf_layout_validate(input: ?*const layout_t) c_int {
+pub export fn venus_dmabuf_layout_validate(input: ?*const layout_t) c_int {
     const layout = input orelse return -1;
     if (layout.width == 0 or layout.width > 16384 or layout.height == 0 or layout.height > 16384) return -1;
     const planar = switch (layout.fourcc) {
@@ -50,7 +50,7 @@ export fn venus_dmabuf_layout_validate(input: ?*const layout_t) c_int {
 /// in: nullable immutable private table/tranche byte slices and requested pair;
 /// returns 0 matched, 1 absent, -1 NULL, -2 invalid lengths/indices. Validates all
 /// indices before success. Pure/thread-safe/allocation-free, no retained storage.
-export fn venus_dmabuf_feedback_match(table_pointer: ?[*]const u8, table_bytes: usize, index_pointer: ?[*]const u8, index_bytes: usize, fourcc: u32, modifier: u64) c_int {
+pub export fn venus_dmabuf_feedback_match(table_pointer: ?[*]const u8, table_bytes: usize, index_pointer: ?[*]const u8, index_bytes: usize, fourcc: u32, modifier: u64) c_int {
     const table_start = table_pointer orelse return -1;
     const index_start = index_pointer orelse return -1;
     if (table_bytes == 0 or table_bytes > MaxTableBytes or table_bytes % 16 != 0 or index_bytes == 0 or index_bytes > MaxIndexBytes or index_bytes % 2 != 0) return -2;
@@ -70,7 +70,7 @@ export fn venus_dmabuf_feedback_match(table_pointer: ?[*]const u8, table_bytes: 
 const damage_t = extern struct { x: i32, y: i32, width: i32, height: i32 };
 /// in: image extent and nullable immutable damage[count]; returns 0 valid,
 /// -1 null/invalid geometry. Pure/thread-safe/allocation-free, no retained data.
-export fn venus_dmabuf_damage_validate(width: u32, height: u32, pointer: ?[*]const damage_t, count: usize) c_int {
+pub export fn venus_dmabuf_damage_validate(width: u32, height: u32, pointer: ?[*]const damage_t, count: usize) c_int {
     const damage = pointer orelse return -1;
     if (width == 0 or width > 16384 or height == 0 or height > 16384 or count == 0 or count > 64) return -1;
     for (damage[0..count]) |rectangle| {

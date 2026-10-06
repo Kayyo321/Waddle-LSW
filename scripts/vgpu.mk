@@ -480,3 +480,33 @@ build/vgpu_wddm_dll_test.exe: tests/vgpu/wddm_dll.c $(VgpuWddmHeaders) build/wad
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/wddm_dll.c -o $@
 
 vgpu-windows: build/vgpu_wddm_dll_test.exe
+
+# Presentation metadata is portable; FD ownership is Linux/controller-only.
+VgpuFrameHeaders = include/waddle/venus_frame.h include/waddle/venus_dmabuf.h include/waddle/venus_ring.h
+build/venus_frame.o: src/vgpu/venus_frame.zig src/vgpu/venus_dmabuf.zig $(VgpuFrameHeaders) | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/venus_frame_windows.lib: src/vgpu/venus_frame.zig src/vgpu/venus_dmabuf.zig $(VgpuFrameHeaders) | build
+	$(ZIG) build-lib $< -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_frame_test: tests/vgpu/frame.c src/vgpu/venus_frame_linux.c $(VgpuFrameHeaders) build/venus_frame.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/frame.c build/venus_frame.o -o $@
+
+build/vgpu_frame_codec_test.exe: tests/vgpu/frame_codec.c $(VgpuFrameHeaders) build/venus_frame_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/frame_codec.c build/venus_frame_windows.lib -o $@
+
+.PHONY: vgpu-frame-test vgpu-frame-sanitizers vgpu-frame-coverage
+vgpu-frame-test: build/vgpu_frame_test
+	./build/vgpu_frame_test
+	$(ZIG) test src/vgpu/venus_frame.zig -Iinclude -lc
+
+vgpu-frame-sanitizers: build/venus_frame.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/frame.c build/venus_frame.o -o build/vgpu_frame_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_frame_sanitized
+	$(ZIG) test src/vgpu/venus_frame.zig -Iinclude -lc
+
+vgpu-frame-coverage: build/venus_frame.o build/venus_bounds.o
+	python3 tests/vgpu/coverage.py frame_linux
+	python3 tests/av/coverage.py venus_frame
+
+vgpu-windows: build/vgpu_frame_codec_test.exe

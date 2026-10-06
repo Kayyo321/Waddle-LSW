@@ -13,12 +13,12 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 30% | Guest frontend verified; bounded userland adapter stub/DLL cross-link passes, native DLL CI pending; full Vulkan/DXVK pending |
-| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 60% | Export, native image/feedback validation and Wayland ownership verified; worker FD handoff and end-to-end GPU presentation pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 35% | Guest frontend and bounded userland adapter/DLL native CI pass; full Vulkan ICD and DXVK pending |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 70% | Export, metadata, presenter and credential-bound FD channel verified; worker/surface/release routing and end-to-end GPU presentation pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `56.5%`
+**Total Feature Completion**: `59.25%`
 
 ## Commit History & Progress Log
 
@@ -763,10 +763,27 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     absence of kernel DriverEntry/internal frontend exports; CI acceptance pending.
     This implements the user-authorized stub scope, not an installed WDDM driver.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify credential-bound presentation FD handoff`
+- **Commit `1c42a82`**: `docs(vgpu): specify credential-bound presentation FD handoff`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Define a separate trusted seqpacket/SCM_RIGHTS channel, exact
     bounded Zig frame schema, kernel credential/context checks, descriptor rollback
     and the separate worker/surface/release runtime integration requirement.
   - **Verification**: No host FD enters the guest ring; borrowed socket/native
     identity lifetime and every malformed-message cleanup obligation are explicit.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): transfer presentation frames with credential-bound FDs`
+  - **Task Impact**: +10% to TODO: #4 (+1.5% overall) for bounded codec/native FD
+    ownership; +5% to TODO: #3 (+1.25% overall) for native adapter/DLL acceptance.
+  - **Summary**: Add exact Zig image/damage frame codec and separate nonblocking
+    seqpacket SCM_RIGHTS/SCM_CREDENTIALS bridge with sender/context/count checks,
+    CLOEXEC receipt and full acquired-FD rollback on corruption/truncation.
+  - **Verification**: Real Linux same/process-separated packets, duplicate-plane
+    FDs, all surplus/truncated FD counts, wrong PID/UID/context, malformed payloads,
+    syscall faults and 128 churn cycles pass with descriptor baseline and
+    ASan/LSan/UBSan. Native C coverage 96.77% lines/90.74% branches; Zig frame
+    100%/100%; Windows codec cross-link passes. Worker/service routing remains pending.
+    Native adapter tests and actual restricted-export DLL loading passed in both
+    Linux/Windows CI at b7e7a48:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37403866555 .
+    Wayland presenter CI passed at 8a065bd:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37403394245 .

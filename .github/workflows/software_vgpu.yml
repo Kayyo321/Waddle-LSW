@@ -52,6 +52,8 @@ jobs:
         run: make vgpu-present-test vgpu-present-sanitizers vgpu-present-coverage
       - name: Verify standalone render-only adapter ownership
         run: make vgpu-wddm-test vgpu-wddm-sanitizers vgpu-wddm-coverage
+      - name: Verify credential-bound frame descriptor handoff
+        run: make vgpu-frame-test vgpu-frame-sanitizers vgpu-frame-coverage
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership
@@ -179,4 +181,16 @@ jobs:
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/wddm_dll.c -o build/vgpu_wddm_dll_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_wddm_dll_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows presentation frame codec ABI
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_frame.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_frame_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/frame_codec.c build/venus_frame_windows.lib -o build/vgpu_frame_codec_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_frame_codec_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_frame.zig -Iinclude -lc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
