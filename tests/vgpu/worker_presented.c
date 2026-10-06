@@ -10,6 +10,8 @@
 #include "waddle/venus_worker.h"
 #include "shaders/compute_shader.h"
 #include "shaders/compute_push_shader.h"
+#include "shaders/triangle_vertex_shader.h"
+#include "shaders/triangle_fragment_shader.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -27,7 +29,8 @@ typedef enum fixture_workload_t {
     MappingWorkload, /**< Exact-byte mapped CPU/GPU transfer workload. */
     ImageWorkload, /**< Native image/view lifecycle and subsequent image commands. */
     ComputeWorkload, /**< Actual shader dispatch and exact mapped output comparison. */
-    ComputePushWorkload /**< Actual distinct runtime push bias and shader result proof. */
+    ComputePushWorkload, /**< Actual distinct runtime push bias and shader result proof. */
+    TriangleWorkload /**< Real graphics rendering and noncoherent RGBA readback. */
 } fixture_workload_t;
 static fixture_workload_t selected_workload = FullWorkload;
 static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *) = venus_icd_bind;
@@ -194,7 +197,7 @@ cleanup:
 static PFN_vkVoidFunction compute_proc(VkDevice device, PFN_vkGetDeviceProcAddr device_proc,
     const char *name) {
     PFN_vkVoidFunction function = device_proc(device, name);
-    if (!function) fprintf(stderr, "ICD compute acceptance missing entry point: %s\n", name);
+    if (!function) fprintf(stderr, "ICD production acceptance missing entry point: %s\n", name);
     return function;
 }
 /** @brief Execute actual storage-buffer shader and compare every result word.
@@ -426,6 +429,292 @@ cleanup:
     return result;
 }
 
+/** @brief Render owned red triangle over blue and verify noncoherent readback.
+ * @param[in] device Borrowed live device, retained by caller through return.
+ * @param[in] queue Borrowed graphics-capable queue belonging to family.
+ * @param[in] family Existing graphics queue family index.
+ * @param[in] supported_memory Nonnull borrowed queried properties with validated counts.
+ * @param[in] device_proc Nonnull borrowed live device dispatch lookup.
+ * @return 0 on exact center/corner RGBA bytes, 1 on acquisition or GPU failure.
+ * @details Single-threaded. This function owns every acquired local resource;
+ * cleanup waits submitted work then releases dependencies before their owners.
+ * No borrowed arrays survive the synchronous recording calls.
+ */
+static int triangle_probe(VkDevice device, VkQueue queue, uint32_t family,
+    const VkPhysicalDeviceMemoryProperties *supported_memory, PFN_vkGetDeviceProcAddr device_proc) {
+    PFN_vkCreateImage create_image = (PFN_vkCreateImage)compute_proc(device, device_proc, "vkCreateImage");
+    if (!create_image) return 1;
+    PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)compute_proc(device, device_proc, "vkDestroyImage");
+    if (!destroy_image) return 1;
+    PFN_vkGetImageMemoryRequirements get_image_memory_requirements = (PFN_vkGetImageMemoryRequirements)compute_proc(device, device_proc, "vkGetImageMemoryRequirements");
+    if (!get_image_memory_requirements) return 1;
+    PFN_vkBindImageMemory bind_image_memory = (PFN_vkBindImageMemory)compute_proc(device, device_proc, "vkBindImageMemory");
+    if (!bind_image_memory) return 1;
+    PFN_vkCreateImageView create_image_view = (PFN_vkCreateImageView)compute_proc(device, device_proc, "vkCreateImageView");
+    if (!create_image_view) return 1;
+    PFN_vkDestroyImageView destroy_image_view = (PFN_vkDestroyImageView)compute_proc(device, device_proc, "vkDestroyImageView");
+    if (!destroy_image_view) return 1;
+    PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)compute_proc(device, device_proc, "vkCreateBuffer");
+    if (!create_buffer) return 1;
+    PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)compute_proc(device, device_proc, "vkDestroyBuffer");
+    if (!destroy_buffer) return 1;
+    PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements = (PFN_vkGetBufferMemoryRequirements)compute_proc(device, device_proc, "vkGetBufferMemoryRequirements");
+    if (!get_buffer_memory_requirements) return 1;
+    PFN_vkBindBufferMemory bind_buffer_memory = (PFN_vkBindBufferMemory)compute_proc(device, device_proc, "vkBindBufferMemory");
+    if (!bind_buffer_memory) return 1;
+    PFN_vkAllocateMemory allocate_memory = (PFN_vkAllocateMemory)compute_proc(device, device_proc, "vkAllocateMemory");
+    if (!allocate_memory) return 1;
+    PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)compute_proc(device, device_proc, "vkFreeMemory");
+    if (!free_memory) return 1;
+    PFN_vkMapMemory map_memory = (PFN_vkMapMemory)compute_proc(device, device_proc, "vkMapMemory");
+    if (!map_memory) return 1;
+    PFN_vkUnmapMemory unmap_memory = (PFN_vkUnmapMemory)compute_proc(device, device_proc, "vkUnmapMemory");
+    if (!unmap_memory) return 1;
+    PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = (PFN_vkFlushMappedMemoryRanges)compute_proc(device, device_proc, "vkFlushMappedMemoryRanges");
+    if (!flush_mapped_memory_ranges) return 1;
+    PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges = (PFN_vkInvalidateMappedMemoryRanges)compute_proc(device, device_proc, "vkInvalidateMappedMemoryRanges");
+    if (!invalidate_mapped_memory_ranges) return 1;
+    PFN_vkCreateShaderModule create_shader_module = (PFN_vkCreateShaderModule)compute_proc(device, device_proc, "vkCreateShaderModule");
+    if (!create_shader_module) return 1;
+    PFN_vkDestroyShaderModule destroy_shader_module = (PFN_vkDestroyShaderModule)compute_proc(device, device_proc, "vkDestroyShaderModule");
+    if (!destroy_shader_module) return 1;
+    PFN_vkCreatePipelineLayout create_pipeline_layout = (PFN_vkCreatePipelineLayout)compute_proc(device, device_proc, "vkCreatePipelineLayout");
+    if (!create_pipeline_layout) return 1;
+    PFN_vkDestroyPipelineLayout destroy_pipeline_layout = (PFN_vkDestroyPipelineLayout)compute_proc(device, device_proc, "vkDestroyPipelineLayout");
+    if (!destroy_pipeline_layout) return 1;
+    PFN_vkCreateRenderPass create_render_pass = (PFN_vkCreateRenderPass)compute_proc(device, device_proc, "vkCreateRenderPass");
+    if (!create_render_pass) return 1;
+    PFN_vkDestroyRenderPass destroy_render_pass = (PFN_vkDestroyRenderPass)compute_proc(device, device_proc, "vkDestroyRenderPass");
+    if (!destroy_render_pass) return 1;
+    PFN_vkCreateFramebuffer create_framebuffer = (PFN_vkCreateFramebuffer)compute_proc(device, device_proc, "vkCreateFramebuffer");
+    if (!create_framebuffer) return 1;
+    PFN_vkDestroyFramebuffer destroy_framebuffer = (PFN_vkDestroyFramebuffer)compute_proc(device, device_proc, "vkDestroyFramebuffer");
+    if (!destroy_framebuffer) return 1;
+    PFN_vkCreateGraphicsPipelines create_graphics_pipelines = (PFN_vkCreateGraphicsPipelines)compute_proc(device, device_proc, "vkCreateGraphicsPipelines");
+    if (!create_graphics_pipelines) return 1;
+    PFN_vkDestroyPipeline destroy_pipeline = (PFN_vkDestroyPipeline)compute_proc(device, device_proc, "vkDestroyPipeline");
+    if (!destroy_pipeline) return 1;
+    PFN_vkCreateCommandPool create_command_pool = (PFN_vkCreateCommandPool)compute_proc(device, device_proc, "vkCreateCommandPool");
+    if (!create_command_pool) return 1;
+    PFN_vkDestroyCommandPool destroy_command_pool = (PFN_vkDestroyCommandPool)compute_proc(device, device_proc, "vkDestroyCommandPool");
+    if (!destroy_command_pool) return 1;
+    PFN_vkAllocateCommandBuffers allocate_command_buffers = (PFN_vkAllocateCommandBuffers)compute_proc(device, device_proc, "vkAllocateCommandBuffers");
+    if (!allocate_command_buffers) return 1;
+    PFN_vkBeginCommandBuffer begin_command_buffer = (PFN_vkBeginCommandBuffer)compute_proc(device, device_proc, "vkBeginCommandBuffer");
+    if (!begin_command_buffer) return 1;
+    PFN_vkEndCommandBuffer end_command_buffer = (PFN_vkEndCommandBuffer)compute_proc(device, device_proc, "vkEndCommandBuffer");
+    if (!end_command_buffer) return 1;
+    PFN_vkCmdBindPipeline cmd_bind_pipeline = (PFN_vkCmdBindPipeline)compute_proc(device, device_proc, "vkCmdBindPipeline");
+    if (!cmd_bind_pipeline) return 1;
+    PFN_vkCmdBeginRenderPass cmd_begin_render_pass = (PFN_vkCmdBeginRenderPass)compute_proc(device, device_proc, "vkCmdBeginRenderPass");
+    if (!cmd_begin_render_pass) return 1;
+    PFN_vkCmdEndRenderPass cmd_end_render_pass = (PFN_vkCmdEndRenderPass)compute_proc(device, device_proc, "vkCmdEndRenderPass");
+    if (!cmd_end_render_pass) return 1;
+    PFN_vkCmdDraw cmd_draw = (PFN_vkCmdDraw)compute_proc(device, device_proc, "vkCmdDraw");
+    if (!cmd_draw) return 1;
+    PFN_vkCmdPipelineBarrier cmd_pipeline_barrier = (PFN_vkCmdPipelineBarrier)compute_proc(device, device_proc, "vkCmdPipelineBarrier");
+    if (!cmd_pipeline_barrier) return 1;
+    PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer = (PFN_vkCmdCopyImageToBuffer)compute_proc(device, device_proc, "vkCmdCopyImageToBuffer");
+    if (!cmd_copy_image_to_buffer) return 1;
+    PFN_vkCreateFence create_fence = (PFN_vkCreateFence)compute_proc(device, device_proc, "vkCreateFence");
+    if (!create_fence) return 1;
+    PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)compute_proc(device, device_proc, "vkDestroyFence");
+    if (!destroy_fence) return 1;
+    PFN_vkQueueSubmit queue_submit = (PFN_vkQueueSubmit)compute_proc(device, device_proc, "vkQueueSubmit");
+    if (!queue_submit) return 1;
+    PFN_vkWaitForFences wait_for_fences = (PFN_vkWaitForFences)compute_proc(device, device_proc, "vkWaitForFences");
+    if (!wait_for_fences) return 1;
+    PFN_vkQueueWaitIdle queue_wait_idle = (PFN_vkQueueWaitIdle)compute_proc(device, device_proc, "vkQueueWaitIdle");
+    if (!queue_wait_idle) return 1;
+    int result = 1, submitted = 0;
+    const char *stage = "image acquisition";
+    VkImage image = NULL;
+    VkDeviceMemory image_memory = NULL, buffer_memory = NULL;
+    VkImageView view = NULL;
+    VkBuffer buffer = NULL;
+    void *mapped = NULL;
+    VkShaderModule vertex = NULL, fragment = NULL;
+    VkPipelineLayout pipeline_layout = NULL;
+    VkRenderPass render_pass = NULL;
+    VkFramebuffer framebuffer = NULL;
+    VkPipeline pipeline = NULL;
+    VkCommandPool command_pool = NULL;
+    VkFence fence = NULL;
+    const VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .extent = {64, 64, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL, .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
+    if (create_image(device, &image_info, NULL, &image) != VK_SUCCESS || !image) goto cleanup;
+    VkMemoryRequirements image_requirements = {0};
+    get_image_memory_requirements(device, image, &image_requirements);
+    uint32_t image_type = VK_MAX_MEMORY_TYPES;
+    for (uint32_t index = 0; index < supported_memory->memoryTypeCount; index++) {
+        if (image_requirements.memoryTypeBits & (UINT32_C(1) << index)) { image_type = index; break; }
+    }
+    if (!image_requirements.size || image_type == VK_MAX_MEMORY_TYPES) goto cleanup;
+    const VkMemoryAllocateInfo image_allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = image_requirements.size, .memoryTypeIndex = image_type};
+    if (allocate_memory(device, &image_allocation, NULL, &image_memory) != VK_SUCCESS || !image_memory ||
+        bind_image_memory(device, image, image_memory, 0) != VK_SUCCESS) goto cleanup;
+    const VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1}};
+    if (create_image_view(device, &view_info, NULL, &view) != VK_SUCCESS || !view) goto cleanup;
+    stage = "noncoherent readback buffer acquisition";
+    const VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = 16384, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto cleanup;
+    VkMemoryRequirements buffer_requirements = {0};
+    get_buffer_memory_requirements(device, buffer, &buffer_requirements);
+    uint32_t buffer_type = VK_MAX_MEMORY_TYPES;
+    for (uint32_t index = 0; index < supported_memory->memoryTypeCount; index++) {
+        const VkMemoryPropertyFlags flags = supported_memory->memoryTypes[index].propertyFlags;
+        if ((buffer_requirements.memoryTypeBits & (UINT32_C(1) << index)) &&
+            (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !(flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            buffer_type = index; break;
+        }
+    }
+    if (buffer_requirements.size < 16384 || buffer_type == VK_MAX_MEMORY_TYPES) goto cleanup;
+    const VkMemoryAllocateInfo buffer_allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = buffer_requirements.size, .memoryTypeIndex = buffer_type};
+    if (allocate_memory(device, &buffer_allocation, NULL, &buffer_memory) != VK_SUCCESS || !buffer_memory ||
+        bind_buffer_memory(device, buffer, buffer_memory, 0) != VK_SUCCESS ||
+        map_memory(device, buffer_memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS || !mapped) goto cleanup;
+    memset(mapped, 0xa5, 16384);
+    const VkMappedMemoryRange mapped_range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+        .memory = buffer_memory, .size = VK_WHOLE_SIZE};
+    stage = "triangle mapped poison and flush";
+    if (flush_mapped_memory_ranges(device, 1, &mapped_range) != VK_SUCCESS) goto cleanup;
+#ifdef VgpuIcdLoader
+    if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto cleanup;
+#endif
+    stage = "shader and render pass acquisition";
+    const VkShaderModuleCreateInfo vertex_info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(TriangleVertexShader), .pCode = TriangleVertexShader};
+    const VkShaderModuleCreateInfo fragment_info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(TriangleFragmentShader), .pCode = TriangleFragmentShader};
+    if (create_shader_module(device, &vertex_info, NULL, &vertex) != VK_SUCCESS || !vertex ||
+        create_shader_module(device, &fragment_info, NULL, &fragment) != VK_SUCCESS || !fragment) goto cleanup;
+    const VkPipelineLayoutCreateInfo layout_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    if (create_pipeline_layout(device, &layout_info, NULL, &pipeline_layout) != VK_SUCCESS || !pipeline_layout) goto cleanup;
+    const VkAttachmentDescription attachment = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+        .samples = VK_SAMPLE_COUNT_1_BIT, .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE, .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, .finalLayout = VK_IMAGE_LAYOUT_GENERAL};
+    const VkAttachmentReference color = {.attachment = 0, .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    const VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1, .pColorAttachments = &color};
+    const VkRenderPassCreateInfo pass_info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1, .pAttachments = &attachment, .subpassCount = 1, .pSubpasses = &subpass};
+    if (create_render_pass(device, &pass_info, NULL, &render_pass) != VK_SUCCESS || !render_pass) goto cleanup;
+    const VkFramebufferCreateInfo framebuffer_info = {.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = render_pass, .attachmentCount = 1, .pAttachments = &view, .width = 64, .height = 64, .layers = 1};
+    if (create_framebuffer(device, &framebuffer_info, NULL, &framebuffer) != VK_SUCCESS || !framebuffer) goto cleanup;
+    stage = "graphics pipeline acquisition";
+    const VkPipelineShaderStageCreateInfo stages[2] = {
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_VERTEX_BIT,
+         .module = vertex, .pName = "main"},
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+         .module = fragment, .pName = "main"}};
+    const VkPipelineVertexInputStateCreateInfo vertex_input = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    const VkPipelineInputAssemblyStateCreateInfo assembly = {.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
+    const VkViewport viewport = {.width = 64, .height = 64, .maxDepth = 1};
+    const VkRect2D scissor = {.extent = {64, 64}};
+    const VkPipelineViewportStateCreateInfo viewport_state = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1, .pViewports = &viewport, .scissorCount = 1, .pScissors = &scissor};
+    const VkPipelineRasterizationStateCreateInfo rasterization = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL, .cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE, .lineWidth = 1};
+    const VkPipelineMultisampleStateCreateInfo multisample = {.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
+    const VkPipelineColorBlendAttachmentState blend_attachment = {.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+    const VkPipelineColorBlendStateCreateInfo blend = {.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1, .pAttachments = &blend_attachment};
+    const VkGraphicsPipelineCreateInfo pipeline_info = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .stageCount = 2, .pStages = stages, .pVertexInputState = &vertex_input, .pInputAssemblyState = &assembly,
+        .pViewportState = &viewport_state, .pRasterizationState = &rasterization, .pMultisampleState = &multisample,
+        .pColorBlendState = &blend, .layout = pipeline_layout, .renderPass = render_pass, .basePipelineIndex = -1};
+    if (create_graphics_pipelines(device, NULL, 1, &pipeline_info, NULL, &pipeline) != VK_SUCCESS || !pipeline) goto cleanup;
+    const VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .queueFamilyIndex = family};
+    if (create_command_pool(device, &pool_info, NULL, &command_pool) != VK_SUCCESS || !command_pool) goto cleanup;
+    const VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = command_pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
+    VkCommandBuffer command = NULL;
+    if (allocate_command_buffers(device, &command_info, &command) != VK_SUCCESS || !command) goto cleanup;
+    const VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    if (begin_command_buffer(command, &begin_info) != VK_SUCCESS) goto cleanup;
+    stage = "triangle command recording";
+    const VkClearValue clear = {.color = {.float32 = {0, 0, 1, 1}}};
+    const VkRenderPassBeginInfo pass_begin = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = render_pass, .framebuffer = framebuffer, .renderArea = {.extent = {64, 64}},
+        .clearValueCount = 1, .pClearValues = &clear};
+    cmd_bind_pipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    cmd_begin_render_pass(command, &pass_begin, VK_SUBPASS_CONTENTS_INLINE);
+    cmd_draw(command, 3, 1, 0, 0);
+    cmd_end_render_pass(command);
+    const VkImageMemoryBarrier image_barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_GENERAL, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image, .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1}};
+    cmd_pipeline_barrier(command, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, NULL, 0, NULL, 1, &image_barrier);
+    const VkBufferImageCopy region = {.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1},
+        .imageExtent = {64, 64, 1}};
+    cmd_copy_image_to_buffer(command, image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &region);
+    const VkBufferMemoryBarrier buffer_barrier = {.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = buffer, .size = 16384};
+    cmd_pipeline_barrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 0, NULL, 1, &buffer_barrier, 0, NULL);
+    const VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (end_command_buffer(command) != VK_SUCCESS ||
+        create_fence(device, &fence_info, NULL, &fence) != VK_SUCCESS || !fence) goto cleanup;
+    const VkSubmitInfo submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1, .pCommandBuffers = &command};
+    stage = "triangle submission";
+    if (queue_submit(queue, 1, &submit, fence) != VK_SUCCESS) goto cleanup;
+    submitted = 1;
+    if (wait_for_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
+        queue_wait_idle(queue) != VK_SUCCESS) goto cleanup;
+    submitted = 0;
+    stage = "triangle mapped RGBA comparison";
+    if (invalidate_mapped_memory_ranges(device, 1, &mapped_range) != VK_SUCCESS) goto cleanup;
+    const unsigned char *pixels = mapped;
+    const size_t sample_offsets[2] = {(32 * 64 + 32) * 4, 0};
+    const unsigned char expected[2][4] = {{255, 0, 0, 255}, {0, 0, 255, 255}};
+    for (size_t sample = 0; sample < 2; sample++) {
+        if (memcmp(pixels + sample_offsets[sample], expected[sample], 4)) {
+            fprintf(stderr, "ICD triangle sample %zu: got [%u,%u,%u,%u], expected [%u,%u,%u,%u]\n", sample,
+                pixels[sample_offsets[sample]], pixels[sample_offsets[sample] + 1],
+                pixels[sample_offsets[sample] + 2], pixels[sample_offsets[sample] + 3],
+                expected[sample][0], expected[sample][1], expected[sample][2], expected[sample][3]);
+            goto cleanup;
+        }
+    }
+    result = 0;
+cleanup:
+    if (result) fprintf(stderr, "ICD triangle acceptance failed: %s\n", stage);
+    if (submitted) (void)queue_wait_idle(queue);
+    if (fence) { destroy_fence(device, fence, NULL); fence = NULL; }
+    if (command_pool) { destroy_command_pool(device, command_pool, NULL); command_pool = NULL; }
+    if (pipeline) { destroy_pipeline(device, pipeline, NULL); pipeline = NULL; }
+    if (framebuffer) { destroy_framebuffer(device, framebuffer, NULL); framebuffer = NULL; }
+    if (render_pass) { destroy_render_pass(device, render_pass, NULL); render_pass = NULL; }
+    if (pipeline_layout) { destroy_pipeline_layout(device, pipeline_layout, NULL); pipeline_layout = NULL; }
+    if (fragment) { destroy_shader_module(device, fragment, NULL); fragment = NULL; }
+    if (vertex) { destroy_shader_module(device, vertex, NULL); vertex = NULL; }
+    if (mapped) { unmap_memory(device, buffer_memory); mapped = NULL; }
+    if (buffer) { destroy_buffer(device, buffer, NULL); buffer = NULL; }
+    if (buffer_memory) { free_memory(device, buffer_memory, NULL); buffer_memory = NULL; }
+    if (view) { destroy_image_view(device, view, NULL); view = NULL; }
+    if (image) { destroy_image(device, image, NULL); image = NULL; }
+    if (image_memory) { free_memory(device, image_memory, NULL); image_memory = NULL; }
+    return result;
+}
+
 static int icd_cycles(venus_guest_t *guest, int corrupt) {
 #ifdef VgpuIcdLoader
     /* Host receiver is already initialized with its original driver environment. */
@@ -500,7 +789,8 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         uint32_t family = 0;
         while (family < family_count && (!families[family].queueCount ||
             ((selected_workload == ComputeWorkload || selected_workload == ComputePushWorkload) &&
-             !(families[family].queueFlags & VK_QUEUE_COMPUTE_BIT))))
+             !(families[family].queueFlags & VK_QUEUE_COMPUTE_BIT)) ||
+            (selected_workload == TriangleWorkload && !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))))
             family++;
         if (family == family_count) goto fail;
         float priority = 0.5f;
@@ -855,6 +1145,9 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
                 selected_workload == ComputePushWorkload, 37 + iteration * 19 + (uint32_t)corrupt * 257))
             goto fail;
 
+        if (selected_workload == TriangleWorkload &&
+            triangle_probe(device, queue, family, &supported_memory, device_proc)) goto fail;
+
         destroy_device(device, NULL);
         cleanup_device = NULL;
 #ifndef VgpuIcdLoader
@@ -1009,8 +1302,9 @@ int main(void) {
         else if (!strcmp(workload, "image")) selected_workload = ImageWorkload;
         else if (!strcmp(workload, "compute")) selected_workload = ComputeWorkload;
         else if (!strcmp(workload, "compute_push")) selected_workload = ComputePushWorkload;
+        else if (!strcmp(workload, "triangle")) selected_workload = TriangleWorkload;
         else {
-            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping, image, compute or compute_push\n", stderr);
+            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping, image, compute, compute_push or triangle\n", stderr);
             return 2;
         }
     }
