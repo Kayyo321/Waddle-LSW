@@ -3,6 +3,14 @@
 #include "linux_dmabuf_server.h"
 #include "waddle/venus_frame.h"
 #include "waddle/venus_surface.h"
+#ifdef VgpuRemoteImage
+#include "waddle/venus_guest.h"
+#include "waddle/venus_worker.h"
+#include <dirent.h>
+#include <limits.h>
+#include <stdio.h>
+#include <sys/wait.h>
+#endif
 #include <assert.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -22,6 +30,7 @@ typedef struct server_t {
     struct wl_display *display;
     struct wl_listener disconnected;
     struct stat allocation;
+    int identity_known; /**< Local source identity or first remote import snapshot. */
     uint32_t offset, stride;
     _Atomic int reject;
     unsigned commits, damage, imports, rejects;
@@ -57,6 +66,10 @@ static void plane_request(struct wl_client *client, struct wl_resource *resource
            stride == import->server->stride && !high && !low);
     struct stat metadata;
     assert(!fstat(fd, &metadata));
+    if (!import->server->identity_known) {
+        import->server->allocation = metadata;
+        import->server->identity_known = 1;
+    }
     assert(metadata.st_dev == import->server->allocation.st_dev &&
            metadata.st_ino == import->server->allocation.st_ino);
     import->fd = fd; // Real libwayland SCM_RIGHTS ownership, no pixel map/copy.
@@ -229,13 +242,66 @@ static void completed(void *context, const venus_frame_t *frame, venus_ring_stat
     client->completed_frame = frame->frame;
     client->status = status;
 }
+#ifdef VgpuRemoteImage
+/** @brief Call-scoped guest/controller fixture state; owned by run_remote. */
+typedef struct remote_fixture_t {
+    venus_guest_t guest;   /**< Caller-owned negotiated frontend. */
+    venus_worker_t worker; /**< Owned unreaped receiver process. */
+    int frame_fd;          /**< Borrowed controller native endpoint through callback. */
+} remote_fixture_t;
+static venus_ring_status_t guest_call(void *context, const venus_request_t *request,
+                                      const void *input, size_t length, venus_request_t *response,
+                                      void *output, size_t capacity) {
+    remote_fixture_t *remote = context;
+    return venus_guest_exchange(&remote->guest, request, input, length, response, output, capacity);
+}
+static venus_ring_status_t guest_frame(remote_fixture_t *remote, const venus_frame_t *frame) {
+    unsigned char bytes[VenusFrameBytes];
+    assert(venus_frame_encode(frame, bytes, sizeof(bytes)) == RingOk);
+    const venus_request_t Request = {.kind = RequestPresent,
+                                     .payload_bytes = sizeof(bytes),
+                                     .argument_zero = 1,
+                                     .argument_one = 1};
+    venus_request_t response;
+    return guest_call(remote, &Request, bytes, sizeof(bytes), &response, NULL, 0);
+}
+static void guest_busy(remote_fixture_t *remote) {
+    const venus_request_t Request = {.kind = RequestFree, .resource_id = 2};
+    venus_request_t response;
+    assert(guest_call(remote, &Request, NULL, 0, &response, NULL, 0) == RingAgain);
+}
+static void guest_release(remote_fixture_t *remote, uint64_t frame, venus_release_t *release) {
+    const venus_request_t Request = {.kind = RequestPresentPoll, .argument_zero = frame};
+    unsigned char bytes[VenusReleaseBytes];
+    venus_request_t response;
+    venus_ring_status_t status;
+    unsigned attempts = 0;
+    do {
+        status = guest_call(remote, &Request, NULL, 0, &response, bytes, sizeof(bytes));
+        assert(++attempts <= 1000);
+        if (status == RingAgain)
+            usleep(1000);
+    } while (status == RingAgain);
+    assert(status == RingOk && response.payload_bytes == sizeof(bytes));
+    assert(venus_release_decode(release, bytes, sizeof(bytes)) == RingOk);
+    assert(guest_call(remote, &Request, NULL, 0, &response, bytes, sizeof(bytes)) == RingInvalid);
+}
+#endif
 static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t size,
                          uint64_t extent, void *context) {
+#ifdef VgpuRemoteImage
+    remote_fixture_t *remote = context;
+#else
     (void)context;
+    assert(source >= 0);
+#endif
     assert(offset <= UINT32_MAX && stride <= UINT32_MAX);
     server_t server = {.offset = (uint32_t)offset, .stride = (uint32_t)stride};
     atomic_init(&server.reject, 0);
-    assert(!fstat(source, &server.allocation));
+    if (source >= 0) {
+        assert(!fstat(source, &server.allocation));
+        server.identity_known = 1;
+    }
     server.display = wl_display_create();
     assert(server.display);
     assert(wl_global_create(server.display, &wl_compositor_interface, 4, &server, bind_compositor));
@@ -257,11 +323,20 @@ static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t 
     assert(wl_display_roundtrip(display) >= 0 && client.compositor && client.dmabuf);
     struct wl_surface *surface = wl_compositor_create_surface(client.compositor);
     assert(surface);
-    int bridge[2];
-    assert(!socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, bridge));
-    assert(venus_frame_prepare(bridge[0]) == RingOk);
+    int bridge[2] = {-1, -1};
+    int32_t worker_pid = getpid();
+#ifdef VgpuRemoteImage
+    if (remote) {
+        bridge[1] = remote->frame_fd;
+        worker_pid = remote->worker.process_id;
+    } else
+#endif
+    {
+        assert(!socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, bridge));
+        assert(venus_frame_prepare(bridge[0]) == RingOk);
+    }
     venus_surface_t *presenter = NULL;
-    assert(venus_surface_create_acknowledged(&presenter, bridge[1], getpid(), 1, display,
+    assert(venus_surface_create_acknowledged(&presenter, bridge[1], worker_pid, 1, display,
                                              client.dmabuf, surface, completed, &client) == RingOk);
     assert(wl_display_roundtrip(display) >= 0); // Real table FD and array events.
     venus_frame_t frame = {.context = 1,
@@ -279,7 +354,21 @@ static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t 
     for (uint64_t sequence = 1; sequence <= 16; sequence++) {
         atomic_store_explicit(&server.reject, sequence == 8, memory_order_release);
         frame.frame = sequence;
-        assert(venus_frame_send(bridge[0], &frame, &source, 1) == RingOk);
+#ifdef VgpuRemoteImage
+        if (remote) {
+            if (sequence == 1) {
+                venus_frame_t invalid = frame;
+                invalid.context = 2;
+                assert(guest_frame(remote, &invalid) == RingInvalid);
+                invalid.context = 1;
+                invalid.layout.planes[0].extent *= 2;
+                assert(guest_frame(remote, &invalid) == RingInvalid);
+            }
+            assert(guest_frame(remote, &frame) == RingOk);
+            guest_busy(remote);
+        } else
+#endif
+            assert(venus_frame_send(bridge[0], &frame, &source, 1) == RingOk);
         assert(venus_surface_poll(presenter) == RingOk);
         unsigned attempts = 0;
         while (client.completed_frame != sequence) {
@@ -288,9 +377,20 @@ static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t 
         }
         assert(client.status == (sequence == 8 ? RingInvalid : RingOk));
         venus_release_t release;
-        assert(venus_release_receive(bridge[0], getpid(), 1, &release) == RingAgain);
+#ifdef VgpuRemoteImage
+        if (remote)
+            guest_busy(remote); // Compositor release alone is not guest consumption.
+        else
+#endif
+            assert(venus_release_receive(bridge[0], getpid(), 1, &release) == RingAgain);
         assert(venus_surface_poll(presenter) == RingAgain); // Flush ack before next native receipt.
-        assert(venus_release_receive(bridge[0], getpid(), 1, &release) == RingOk);
+#ifdef VgpuRemoteImage
+        if (remote) {
+            guest_busy(remote); // Authenticated ack retains lease until operation13 consumption.
+            guest_release(remote, sequence, &release);
+        } else
+#endif
+            assert(venus_release_receive(bridge[0], getpid(), 1, &release) == RingOk);
         assert(release.context == 1 && release.frame == sequence &&
                release.status == client.status);
         assert(wl_display_roundtrip(display) >= 0); // Drain independent frame callback/destroys.
@@ -306,8 +406,10 @@ static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t 
     assert(server.imports == 15 && server.rejects == 1 && server.commits == 15 &&
            server.damage == 15);
     wl_display_destroy(server.display);
-    close(bridge[0]);
-    close(bridge[1]);
+    if (source >= 0) {
+        close(bridge[0]);
+        close(bridge[1]);
+    }
     return 0;
 }
 
@@ -322,8 +424,124 @@ extern int venus_gpu_image_fixture_run(int (*present)(int, uint64_t, uint64_t, u
                                                       void *),
                                        void *context);
 #endif
+#ifdef VgpuRemoteImage
+/** @brief Run bounded remote image packets through borrowed negotiated exchange.
+ * @param[in] exchange Nonnull call-scoped guest callback borrowing bounded buffers.
+ * @param[in,out] guest Nonnull borrowed callback state retained for run.
+ * @param[in] present Nonnull callback borrows queried layout, no native FD.
+ * @param[in,out] context Nullable borrowed presentation callback state.
+ * @return Zero success/one failure; caller destroys old worker on failure.
+ * @note Sole guest/controller thread, no retained storage or host renderer ownership.
+ */
+extern int venus_gpu_remote_image_fixture_run(
+    venus_ring_status_t (*exchange)(void *, const venus_request_t *, const void *, size_t,
+                                    venus_request_t *, void *, size_t),
+    void *guest, int (*present)(uint64_t, uint64_t, uint64_t, uint64_t, void *), void *context);
+static int present_remote(uint64_t offset, uint64_t stride, uint64_t size, uint64_t extent,
+                          void *context) {
+    return present_image(-1, offset, stride, size, extent, context);
+}
+static unsigned remote_descriptors(void) {
+    DIR *directory = opendir("/proc/self/fd");
+    assert(directory);
+    unsigned count = 0;
+    while (readdir(directory))
+        count++;
+    assert(!closedir(directory));
+    return count;
+}
+static int run_remote(void) {
+    int result = 1, mapping_fd = -1, streams[2] = {-1, -1}, frames[2] = {-1, -1};
+    void *mapping = MAP_FAILED;
+    remote_fixture_t remote = {.frame_fd = -1};
+    venus_session_t session = {0};
+    venus_channel_t channel = {0};
+    venus_rpc_t rpc = {0};
+    unsigned char scratch[4096];
+    char executable[PATH_MAX];
+    const char *configured = getenv("WADDLE_PRODUCTION_WORKER");
+    if (!realpath(configured ? configured : "build/waddle_vgpu_worker", executable))
+        goto cleanup;
+    mapping_fd = memfd_create("mapped-image-fixture", MFD_CLOEXEC);
+    if (mapping_fd < 0 || ftruncate(mapping_fd, 4096))
+        goto cleanup;
+    mapping = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, mapping_fd, 0);
+    if (mapping == MAP_FAILED || venus_region_init(mapping, 4096, 64) != RingOk ||
+        socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, streams) ||
+        socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, frames) ||
+        venus_frame_prepare(frames[0]) != RingOk || venus_frame_prepare(frames[1]) != RingOk)
+        goto cleanup;
+    if (venus_worker_create_presented(&remote.worker, executable, mapping_fd, streams[1], frames[1],
+                                      1) != RingOk)
+        goto cleanup;
+    close(streams[1]);
+    streams[1] = -1;
+    close(frames[1]);
+    frames[1] = -1;
+    remote.frame_fd = frames[0];
+    if (venus_session_init(&session, SessionGuest, mapping, 4096, 0) != RingOk ||
+        venus_channel_init(&channel, &session, streams[0], NULL) != RingOk ||
+        venus_channel_deadline(&channel, 5000) != RingOk ||
+        venus_channel_handshake(&channel) != RingOk ||
+        venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) != RingOk ||
+        venus_guest_init(&remote.guest, &rpc, 5000) != RingOk)
+        goto cleanup;
+    result = venus_gpu_remote_image_fixture_run(guest_call, &remote, present_remote, &remote);
+    venus_guest_free(&remote.guest);
+    venus_rpc_free(&rpc);
+    venus_channel_free(&channel);
+    close(streams[0]);
+    streams[0] = -1;
+    if (!result) {
+        for (unsigned attempt = 0;; attempt++) {
+            venus_ring_status_t status = venus_worker_poll(&remote.worker);
+            if (status == RingClosed) {
+                if (!WIFEXITED(remote.worker.exit_status) || WEXITSTATUS(remote.worker.exit_status))
+                    result = 1;
+                break;
+            }
+            if (status != RingAgain || attempt >= 5000) {
+                result = 1;
+                break;
+            }
+            usleep(1000);
+        }
+    }
+cleanup:
+    venus_guest_free(&remote.guest);
+    venus_rpc_free(&rpc);
+    venus_channel_free(&channel);
+    if (venus_worker_destroy(&remote.worker, 1000) != RingOk)
+        result = 1;
+    for (unsigned index = 0; index < 2; index++) {
+        if (streams[index] >= 0)
+            close(streams[index]);
+        if (frames[index] >= 0)
+            close(frames[index]);
+    }
+    venus_region_detach(&session.region);
+    if (mapping != MAP_FAILED)
+        munmap(mapping, 4096);
+    if (mapping_fd >= 0)
+        close(mapping_fd);
+    return result;
+}
+#endif
 int main(int argc, char **argv) {
-    alarm(30);
+    alarm(90);
+#ifdef VgpuRemoteImage
+    if (argc == 2 && !strcmp(argv[1], "--require-hardware")) {
+        unsigned baseline = remote_descriptors();
+        for (unsigned iteration = 0; iteration < 3; iteration++) {
+            int status = run_remote();
+            if (status)
+                return status;
+            assert(remote_descriptors() == baseline);
+        }
+        puts("Mapped guest/worker hardware image, Wayland release and fresh-context churn passed");
+        return 0;
+    }
+#endif
 #ifdef VgpuHardwareImage
     if (argc == 2 && !strcmp(argv[1], "--require-hardware"))
         return venus_gpu_image_fixture_run(present_image, NULL);

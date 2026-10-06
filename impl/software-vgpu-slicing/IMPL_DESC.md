@@ -2000,3 +2000,25 @@ cover exact request fields for all forwarded operations, callback corruption/sta
 propagation and NULL/early failure boundaries. Existing hardware timestamp/image and
 sanitized local paths pass. Fixture lines are within100 columns and zig fmt checks
 pass. Successful mapped remote image presentation still requires its C harness.
+
+
+Mapped remote image harness now runs three fresh production worker/guest contexts,
+with16 frames in each. Every context negotiates before executing real image/queue
+commands through mapped rings, publishes45 successful imports and3 controlled
+import rejections across the complete run, and verifies resource2 remains busy
+before release, after compositor completion and after native acknowledgement until
+guest operation13 consumes it. Duplicate polls return Invalid; subsequent image
+reuse succeeds. Wrong context and inflated DMA-BUF extent fail before valid frame1
+publication, demonstrating validation rollback without consuming its identity.
+
+Remote guest receives no native descriptor. The mock learns backing inode/device
+from its first imported FD and requires every later plane/frame in that context to
+match; this is continuity validation, not an independent guest FD comparison. Kernel
+allocation extent is independently checked by the production export owner. No image
+pixels are mapped/copied. All worker, stream, mapping and native endpoints have one
+owner; final worker retirement restores process FD baseline after each fresh context.
+A90-second alarm bounds the complete three-context fixture. Both normal and sanitized
+worker/client runs pass on RTX5080, along with local/native regression paths. CI
+compiles the remote hardware binary without pretending hosted runners expose a GPU.
+Native Windows ABI and Linux CI remain separate final acceptance gates. This test
+has no Vulkan loader, ICD or DXVK functionality and awards no TODO #3 progress.

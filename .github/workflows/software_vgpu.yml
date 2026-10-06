@@ -63,7 +63,7 @@ jobs:
       - name: Verify worker surface binding ownership
         run: make vgpu-surface-test vgpu-surface-sanitizers vgpu-surface-coverage
       - name: Verify native Wayland wire and frame FD integration
-        run: make vgpu-present-integration vgpu-present-integration-sanitizers build/vgpu_image_integration
+        run: make vgpu-present-integration vgpu-present-integration-sanitizers build/vgpu_image_integration build/vgpu_remote_image_integration
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership

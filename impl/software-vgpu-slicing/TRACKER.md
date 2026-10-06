@@ -1014,7 +1014,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     production worker fixture and final runtime acceptance remain pending.
 
 
-- **Commit (current; resolve by subject)**: `test(vgpu): add explicit guest transport backend to the GPU fixture`
+- **Commit `8984e9d`**: `test(vgpu): add explicit guest transport backend to the GPU fixture`
   - **Task Impact**: +0% to TODO: #4; +0% to TODO: #3 (+0% overall).
   - **Summary**: Add private receiver/negotiated guest backends with exact request
     fields, shared image preparation/teardown and metadata-only remote callback.
@@ -1023,3 +1023,16 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     malformed replies, status propagation and argument failures. Existing local
     timestamp and image native/hardware paths pass normal and ASan/LSan/UBSan.
     Successful mapped remote image/Wayland fixture remains pending; no ICD credit.
+
+
+- **Commit (current; resolve by subject)**: `test(vgpu): verify mapped guest production worker hardware presentation`
+  - **Task Impact**: +0% to TODO: #4; +0% to TODO: #3 (+0% overall).
+  - **Summary**: Route real guest Vulkan image creation through an exec-isolated
+    production worker, native DMA-BUF export, acknowledged Wayland surface and
+    exact-once guest release polling. Add fresh-context descriptor-baseline churn.
+  - **Verification**: Three contexts and48 frames per normal/sanitized execution
+    pass on RTX5080:45 successful releases and3 import rejections, wrong-context
+    and inflated-extent rejection, resource busy before completion consumption,
+    duplicate completion rejection, subsequent reuse and healthy worker teardown.
+    Existing native/local hardware regressions pass ASan/LSan/UBSan. CI compilation
+    and native ABI gates remain pending before final TODO #4 acceptance credit.
