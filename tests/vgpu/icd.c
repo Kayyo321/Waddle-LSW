@@ -979,14 +979,24 @@ static void fence_failures(void) {
     PFN_vkWaitForFences wait_fences = (PFN_vkWaitForFences)lookup(device, "vkWaitForFences");
     VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
                                     .flags = VK_FENCE_CREATE_SIGNALED_BIT};
-    VkFence fences[508], extra = NULL;
-    for (unsigned index = 0; index < 508; index++)
+    VkFence fences[507], extra = NULL;
+    for (unsigned index = 0; index < 507; index++)
         assert(create_fence(device, &fence_info, NULL, &fences[index]) == VK_SUCCESS);
     assert(create_fence(device, &fence_info, NULL, &extra) == VK_ERROR_OUT_OF_HOST_MEMORY &&
            !extra);
+    VkQueue reserved_queue = NULL;
+    ((PFN_vkGetDeviceQueue)lookup(device, "vkGetDeviceQueue"))(device,0,0,&reserved_queue);
+    assert(reserved_queue);
+    destroy_fence(device,fences[506],NULL);
+    VkDevice rejected = NULL;
+    unsigned before = fixture.submissions;
+    assert(((PFN_vkCreateDevice)lookup_external(instance,"vkCreateDevice"))(
+        physical[0],&info,NULL,&rejected) == VK_ERROR_OUT_OF_HOST_MEMORY && !rejected);
+    assert(fixture.submissions == before);
+    assert(create_fence(device,&fence_info,NULL,&fences[506]) == VK_SUCCESS);
     assert(wait_fences(device, 64, fences, VK_TRUE, 0) == VK_SUCCESS);
     assert(reset_fences(device, 64, fences) == VK_SUCCESS);
-    for (unsigned index = 0; index < 508; index++)
+    for (unsigned index = 0; index < 507; index++)
         destroy_fence(device, fences[index], NULL);
     ((PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice"))(device, NULL);
     destroy(instance);
@@ -1199,7 +1209,14 @@ static void device_failures(void) {
     assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
     features.robustBufferAccess = 1;
     for (unsigned index = 0; index < 4; index++) {
+        queues[0].queueCount = index == 3 ? 15 : 16;
         assert(device_create(physical[0], &info, NULL, &devices[index]) == VK_SUCCESS);
+    }
+    queues[0].queueCount = 1;
+    unsigned before = fixture.submissions;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_OUT_OF_HOST_MEMORY && !device);
+    assert(fixture.submissions == before);
+    for (unsigned index = 0; index < 4; index++) {
         PFN_vkGetDeviceQueue get_queue =
             (PFN_vkGetDeviceQueue)device_proc(devices[index], "vkGetDeviceQueue");
         for (unsigned queue_index = 0; queue_index < 16; queue_index++) {
@@ -1210,6 +1227,15 @@ static void device_failures(void) {
     }
     for (unsigned index = 0; index < 4; index++)
         ((PFN_vkDestroyDevice)device_proc(devices[index], "vkDestroyDevice"))(devices[index], NULL);
+    info.queueCreateInfoCount = 4;
+    for (unsigned index = 0; index < 4; index++) queues[index].queueCount = 16;
+    before = fixture.submissions;
+    assert(device_create(physical[0],&info,NULL,&device) == VK_ERROR_OUT_OF_HOST_MEMORY && !device);
+    assert(fixture.submissions == before);
+    info.queueCreateInfoCount = 1; queues[0].queueCount = 1;
+    assert(device_create(physical[0],&info,NULL,&device) == VK_SUCCESS);
+    assert(((PFN_vkDeviceWaitIdle)device_proc(device,"vkDeviceWaitIdle"))(device) == VK_SUCCESS);
+    ((PFN_vkDestroyDevice)device_proc(device,"vkDestroyDevice"))(device,NULL);
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
@@ -1318,12 +1344,12 @@ static void buffer_contract(void) {
         if (scenario == 10) fixture.corrupt_command = 51;
         if (scenario == 11) fixture.fail_command = 51;
         if (scenario == 12) {
-            VkBuffer buffers[506];
-            for (unsigned index = 0; index < 506; index++)
+            VkBuffer buffers[502];
+            for (unsigned index = 0; index < 502; index++)
                 assert(create_buffer(device, &info, NULL, &buffers[index]) == VK_SUCCESS);
             VkBuffer exhausted = NULL;
             assert(create_buffer(device, &info, NULL, &exhausted) == VK_ERROR_OUT_OF_HOST_MEMORY && !exhausted);
-            for (unsigned index = 0; index < 506; index++) destroy_buffer(device, buffers[index], NULL);
+            for (unsigned index = 0; index < 502; index++) destroy_buffer(device, buffers[index], NULL);
         }
         destroy_buffer(device, buffer, NULL);
         if (scenario == 10 || scenario == 11) { venus_icd_abandon(); continue; }
@@ -1415,12 +1441,12 @@ static void memory_contract(void) {
             venus_icd_abandon(); continue;
         }
         if (scenario == 9) {
-            VkDeviceMemory allocations[505];
-            for (unsigned index = 0; index < 505; index++)
+            VkDeviceMemory allocations[503];
+            for (unsigned index = 0; index < 503; index++)
                 assert(allocate(device, &memory_info, NULL, &allocations[index]) == VK_SUCCESS);
             VkDeviceMemory exhausted = NULL;
             assert(allocate(device, &memory_info, NULL, &exhausted) == VK_ERROR_OUT_OF_HOST_MEMORY && !exhausted);
-            for (unsigned index = 0; index < 505; index++) release(device, allocations[index], NULL);
+            for (unsigned index = 0; index < 503; index++) release(device, allocations[index], NULL);
         }
         assert(bind(device, buffer, memory, 1) == VK_ERROR_INITIALIZATION_FAILED);
         assert(bind(device, buffer, memory, UINT64_MAX - 255) == VK_ERROR_INITIALIZATION_FAILED);
@@ -1531,12 +1557,12 @@ static void pool_contract(void) {
             venus_icd_abandon(); continue;
         }
         if (scenario == 8) {
-            VkCommandPool pools[506];
-            for (unsigned index = 0; index < 506; index++)
+            VkCommandPool pools[504];
+            for (unsigned index = 0; index < 504; index++)
                 assert(create_pool(device, &info, NULL, &pools[index]) == VK_SUCCESS);
             VkCommandPool exhausted = NULL;
             assert(create_pool(device, &info, NULL, &exhausted) == VK_ERROR_OUT_OF_HOST_MEMORY && !exhausted);
-            for (unsigned index = 0; index < 506; index++) destroy_pool(device, pools[index], NULL);
+            for (unsigned index = 0; index < 504; index++) destroy_pool(device, pools[index], NULL);
         }
         if (scenario == 9) fixture.fail_command = 86;
         if (scenario == 10) fixture.corrupt_command = 86;
@@ -2435,14 +2461,14 @@ static void semaphore_contract(void) {
         if (scenario == 7) fixture.fail_command = 41;
         if (scenario == 8) fixture.corrupt_command = 41;
         if (scenario == 9) {
-            VkSemaphore extra[506];
-            for (unsigned index = 0; index < 506; index++)
+            VkSemaphore extra[504];
+            for (unsigned index = 0; index < 504; index++)
                 assert(create_semaphore(device, &info, NULL, &extra[index]) == VK_SUCCESS);
             VkSemaphore exhausted = NULL;
             submissions = fixture.submissions;
             assert(create_semaphore(device, &info, NULL, &exhausted) == VK_ERROR_OUT_OF_HOST_MEMORY && !exhausted);
             assert(fixture.submissions == submissions);
-            for (unsigned index = 0; index < 506; index++) release(device, extra[index], NULL);
+            for (unsigned index = 0; index < 504; index++) release(device, extra[index], NULL);
         }
         release(device, semaphore, (const void *)(uintptr_t)1);
         if (scenario == 7 || scenario == 8) { venus_icd_abandon(); continue; }
@@ -2612,12 +2638,12 @@ static void command_buffer_contract(void) {
             assert(allocate(device, &info, batches[7]) == VK_ERROR_OUT_OF_HOST_MEMORY);
             assert(fixture.submissions == submissions);
             for (unsigned index = 0; index < 64; index++) assert(!batches[7][index]);
-            info.commandBufferCount = 57;
+            info.commandBufferCount = 55;
             assert(allocate(device, &info, batches[7]) == VK_SUCCESS);
             info.commandBufferCount = 1;
             assert(allocate(device, &info, buffers) == VK_ERROR_OUT_OF_HOST_MEMORY && !buffers[0]);
             for (unsigned index = 0; index < 7; index++) release(device, pool, 64, batches[index]);
-            release(device, pool, 57, batches[7]);
+            release(device, pool, 55, batches[7]);
         }
         info.commandBufferCount = 2; info.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
         assert(allocate(device, &info, buffers) == VK_SUCCESS);

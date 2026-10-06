@@ -20,6 +20,7 @@ const device_cache_t = struct {
     counts: [16]u32 = [_]u32{0} ** 16,
     queues: [64]u64 = [_]u64{0} ** 64,
     rings: [64]u32 = [_]u32{0} ** 64,
+    ready: [64]bool = [_]bool{false} ** 64,
 };
 const command_state_t = enum { Initial, Recording, Executable, Invalid, Pending };
 const resource_state_t = struct {
@@ -750,28 +751,58 @@ fn create_device(
             else => c.VK_ERROR_INITIALIZATION_FAILED,
         };
     };
+    var staged = device_cache_t{ .handle = record.*.handle, .family_count = info.*.queueCreateInfoCount };
+    var queue_index: usize = 0;
+    for (info.*.pQueueCreateInfos[0..staged.family_count], 0..) |queue_info, family_index| {
+        staged.families[family_index] = queue_info.queueFamilyIndex;
+        staged.counts[family_index] = queue_info.queueCount;
+        for (0..queue_info.queueCount) |_| {
+            var ring: ?u32 = null;
+            for (ring_slots[1..], 1..) |occupied, ring_index| if (!occupied) {
+                ring = @intCast(ring_index);
+                break;
+            };
+            if (ring == null) {
+                release_device_reservation(&staged, record);
+                return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+            }
+            var queue: [*c]c.venus_object_t = null;
+            if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_QUEUE, record.*.id, 1, &queue) != c.RingOk) {
+                release_device_reservation(&staged, record);
+                return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+            }
+            ring_slots[ring.?] = true;
+            staged.queues[queue_index] = queue.*.handle;
+            staged.rings[queue_index] = ring.?;
+            queue_index += 1;
+        }
+    }
     const reply = transact(encoded.bytes[0..encoded.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = identity_reply(reply, 11, record.*.id, true) catch
         return failure(c.RingCorrupt);
     if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
     if (result > 0) return failure(c.RingCorrupt);
     if (result != c.VK_SUCCESS) {
-        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1);
+        release_device_reservation(&staged, record);
         return result;
     }
-    entry.* = .{ .handle = record.*.handle, .family_count = info.*.queueCreateInfoCount };
-    for (info.*.pQueueCreateInfos[0..entry.family_count], 0..) |queue, index| {
-        entry.families[index] = queue.queueFamilyIndex;
-        entry.counts[index] = queue.queueCount;
-    }
+    entry.* = staged;
     output.* = @ptrFromInt(entry.handle);
     return c.VK_SUCCESS;
+}
+fn release_device_reservation(entry: *const device_cache_t, device: [*c]c.venus_object_t) void {
+    for (entry.queues, 0..) |handle, index| if (handle != 0) {
+        std.debug.assert(c.venus_objects_release(&objects, handle, c.VK_OBJECT_TYPE_QUEUE, 1) == c.RingOk);
+        ring_slots[entry.rings[index]] = false;
+    };
+    std.debug.assert(c.venus_objects_release(&objects, device.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1) == c.RingOk);
 }
 /// Borrowed output cleared for invalid/lost calls; stable queue identity lasts until device retire.
 /// @param[in] device Nullable validated private device handle, not dereferenced.
 /// @param[in] family Queue family requested during device creation.
 /// @param[in] index Zero-based index below that family's requested count.
-/// @param[out] output Nullable borrowed handle storage; NULL on invalid/lost/capacity failure.
+/// @param[out] output Nullable borrowed handle storage; NULL on invalid/lost calls.
+/// CreateDevice already reserves all valid requested private queue/ring capacity.
 /// Mutex serialized, no allocations; reply identity must match a private reservation.
 fn get_device_queue(
     device: c.VkDevice,
@@ -792,22 +823,14 @@ fn get_device_queue(
         offset += entry.counts[family_index];
     }
     const queue_index = position orelse return;
-    if (entry.queues[queue_index] != 0) {
+    if (entry.ready[queue_index]) {
         output.* = @ptrFromInt(entry.queues[queue_index]);
         return;
     }
-    var available_ring: ?u32 = null;
-    for (ring_slots[1..], 1..) |occupied, ring_index| if (!occupied) {
-        available_ring = @intCast(ring_index);
-        break;
-    };
-    const ring_index = available_ring orelse return;
+    const ring_index = entry.rings[queue_index];
     const parent = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
-    var queue: [*c]c.venus_object_t = null;
-    if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_QUEUE, parent.id, 1, &queue) !=
-        c.RingOk) return;
+    const queue = object(entry.queues[queue_index], c.VK_OBJECT_TYPE_QUEUE).?;
     var writer = writer_t{};
-    ring_slots[ring_index] = true;
     writer.header(155, parent.id);
     writer.put(u64, 1);
     writer.put(u32, c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2);
@@ -826,8 +849,7 @@ fn get_device_queue(
         return;
     };
     resource_state(queue).* = .{ .id = queue.*.id, .queue_family = family };
-    entry.queues[queue_index] = queue.*.handle;
-    entry.rings[queue_index] = ring_index;
+    entry.ready[queue_index] = true;
     output.* = @ptrFromInt(queue.*.handle);
 }
 /// Retire host device then private queues/device; loss retains reservations.
@@ -2472,7 +2494,7 @@ fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
     if (device == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const entry = device_cache(@intFromPtr(device.?)) orelse return c.VK_ERROR_DEVICE_LOST;
     var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
-    for (entry.rings, 0..) |ring, index| if (ring != 0) {
+    for (entry.rings, 0..) |ring, index| if (entry.ready[index]) {
         const result = ring_idle(ring, &timer);
         if (result != c.VK_SUCCESS) return result;
         retire_queue(entry.queues[index]);

@@ -1779,7 +1779,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     without transport access. Nine Zig tests, native loader fixture and zero-leak
     ASan/LSan/UBSan pass; coverage99.63% lines/94.55% branches. TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify device-time queue capacity reservation`
+- **Commit `5b493fc`**: `docs(vgpu): specify device-time queue capacity reservation`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify transactional private queue/ring reservation during
     CreateDevice, rollback before native dispatch, ready-only idle and loss
@@ -1787,3 +1787,19 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     identity; valid retrieval cannot fail due to later registry/ring exhaustion.
   - **Verification**: Native ABI result/error boundary and fixed object/ring
     capacity inspected; implementation and lifecycle/capacity tests pending.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): reserve all requested queues before native device creation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Stage every requested queue identity and timeline ring before
+    CreateDevice. Fully roll back partial local/known native failures; retain
+    uncertain reservations on sticky loss. GetDeviceQueue consumes reserved
+    capacity and publishes only validated native readiness; Device idle fences
+    initialized queues only and destruction releases unretrieved reservations.
+  - **Verification**: Native fixtures reserve63 rings before retrieval, reject an
+    extra device without native dispatch, roll back64-ring and object exhaustion,
+    and retrieve queues with otherwise-full registry. Capacity tests charge all
+    pre-reserved queues. Nine Zig tests, ASan/LSan/UBSan, coverage99.63% lines/
+    94.82% branches pass. Actual static/shared-loader production worker normal/
+    sanitized execution plus injected-failure cleanup pass; Windows fixture/DLL/
+    loader cross-link passes. All eight CI checks on previous df4299b are green;
+    latest-head checks still required. TODO #3 remains50%.
