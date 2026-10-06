@@ -12,7 +12,7 @@ Unlike traditional full-screen virtual machine viewers, Waddle-LSW tracks indivi
 
 ## Waddle Usage
 
-<img align="left" width="180" height="180" alt="Waddle-LSW Application Icon" src="imgs/default-window-icon.png" style="margin-right: 24px; margin-bottom: 20px;">
+<img align="right" width="180" height="180" alt="Waddle-LSW Application Icon" src="imgs/default-window-icon.png" style="margin-left: 24px; margin-bottom: 20px;">
 
 The `waddle` command provides access to the Windows guest and subsystem controls:
 
@@ -21,7 +21,7 @@ The `waddle` command provides access to the Windows guest and subsystem controls
 - Start, inspect, or stop the subsystem with `waddle start`, `waddle status`, or `waddle stop`.
 - Check shared directory mappings and read/write access with `waddle fs test`.
 
-<br clear="left" />
+<br clear="right" />
 
 ```bash
 # Launch interactive Windows shell (auto-starts background subsystem)
