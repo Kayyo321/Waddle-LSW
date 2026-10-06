@@ -64,7 +64,7 @@ pub fn bind_sets(state: *command_profile_t, layout: *const profiles.pipeline_lay
     if (state.descriptor_layout_ready) {
         for (&state.sets, 0..) |*token, index| {
             if (index >= first and index <= last) continue;
-            const required = if (index < first) first else last;
+            const required = if (index < first) index else last;
             if (!layouts_compatible(&state.descriptor_layout, layout, required)) token.* = 0;
         }
     }
@@ -199,4 +199,16 @@ test "all profile extent and push coverage boundary directions remain checked" {
     try std.testing.expectError(error.Invalid, fixture_t.test_push_bytes(&state, &definition, 32, 12, 4));
     definition.push_count = 0;
     try std.testing.expectError(error.Invalid, fixture_t.test_push_bytes(&state, &definition, 32, 0, 4));
+}
+
+test "rebinding higher incompatible set preserves compatible lower set" {
+    var state = command_profile_t{};
+    const original = try fixture_layout(0, 32);
+    var changed = original;
+    changed.sets[1] = (try fixture_layout(1, 32)).sets[1];
+    try fixture_t.test_bind_sets(&state, &original, 0, &.{ 42, 43 });
+    try fixture_t.test_bind_sets(&state, &changed, 1, &.{44});
+    try std.testing.expectEqualSlices(u64, &.{ 42, 44 }, state.sets[0..2]);
+    try std.testing.expect(fixture_t.test_layouts_compatible(&original, &state.descriptor_layout, 0));
+    try std.testing.expect(!fixture_t.test_layouts_compatible(&original, &state.descriptor_layout, 1));
 }
