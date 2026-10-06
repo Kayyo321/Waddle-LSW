@@ -389,7 +389,28 @@ static int icd_cycles(venus_guest_t *guest) {
         memory_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
         pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
             0, 1, &memory_barrier, 0, NULL, 0, NULL);
-        if (end_buffer(commands[0]) != VK_SUCCESS || reset_buffer(commands[0], 0) != VK_SUCCESS ||
+        PFN_vkQueueSubmit submit = (PFN_vkQueueSubmit)device_proc(device, "vkQueueSubmit");
+        PFN_vkCreateSemaphore create_signal = (PFN_vkCreateSemaphore)device_proc(device, "vkCreateSemaphore");
+        PFN_vkDestroySemaphore destroy_signal = (PFN_vkDestroySemaphore)device_proc(device, "vkDestroySemaphore");
+        const VkSemaphoreCreateInfo signal_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkSemaphore signal = NULL;
+        fence_info.flags = 0; fence = NULL;
+        if (!submit || !create_signal || !destroy_signal ||
+            create_signal(device, &signal_info, NULL, &signal) != VK_SUCCESS || !signal ||
+            create_fence(device, &fence_info, NULL, &fence) != VK_SUCCESS || !fence ||
+            end_buffer(commands[0]) != VK_SUCCESS) goto fail;
+        const VkSubmitInfo signal_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1, .pCommandBuffers = commands,
+            .signalSemaphoreCount = 1, .pSignalSemaphores = &signal};
+        const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        const VkSubmitInfo wait_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = 1, .pWaitSemaphores = &signal, .pWaitDstStageMask = &wait_stage};
+        if (submit(queue, 1, &signal_submit, NULL) != VK_SUCCESS ||
+            submit(queue, 1, &wait_submit, fence) != VK_SUCCESS ||
+            wait_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
+            queue_idle(queue) != VK_SUCCESS) goto fail;
+        destroy_signal(device, signal, NULL); destroy_fence(device, fence, NULL);
+        if (reset_buffer(commands[0], 0) != VK_SUCCESS ||
             begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
             end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)
             goto fail;

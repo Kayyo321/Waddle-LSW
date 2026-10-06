@@ -1741,7 +1741,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows fixture/DLL/loader cross-link passes. Queue submission and full API/
     mapping/DXVK remain pending; TODO #3 stays50%. Latest CI required.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify queue submission and proven GPU retirement`
+- **Commit `d307716`**: `docs(vgpu): specify queue submission and proven GPU retirement`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify command18 canonical binary submits, exact bounded arrays,
     primary/family/state validation and128 fixed reference tickets. Define real
@@ -1750,3 +1750,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspect pinned queue encoder and renderer native QueueSubmit
     dispatch. Implementation, oracle coverage and actual GPU worker submission
     remain pending; TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): submit native queues and retain references until GPU proof`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Encode command18 with canonical bounded submit arrays and primary
+    command/family/device/state checks. Publish128 fixed tickets only on native
+    success; track each unique command/semaphore/fence reference. Actual fence
+    proofs retire the queue prefix, actual idle proofs retire matching queues;
+    wait-any polls individual statuses. Refuse pending destruction/reset/free,
+    retain simultaneous references and invalidate final ONE_TIME completion.
+    Guard sequence wrap before dispatch; abandon clears only after backend retire.
+  - **Verification**: Pinned native encoder checks zero/one/16 records, aggregate
+    64 arrays, ignored pointers and exact bytes. Native guards, negative/corrupt/
+    transport results,128-ticket exhaustion and pending lifetimes pass. Nine Zig
+    tests include queue-prefix versus simultaneous/ONE_TIME retirement and wrap;
+    coverage99.63% lines/94.53% branches and ASan/LSan/UBSan pass. Actual static/
+    pinned shared-loader worker executes fill/barrier/copy/full-size update and
+    binary signal/wait with native fence completion before release, normal and
+    sanitized plus forced-failure cleanup. Windows fixture/DLL/loader cross-link
+    passes. Full graphics/compute/mapping/DXVK gates pending; TODO #3 stays50%.

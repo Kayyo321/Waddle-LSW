@@ -3319,7 +3319,7 @@ from native GetFenceStatus; signaled fence is rejected before submitting work.
 #### Fixed ticket ownership and lifecycle
 
 A global fixed array of128 submission_ticket_t records owns no heap or handles.
-Each ticket contains queue handle, optional fence handle and512 reference bits
+Each ticket contains queue handle, monotonic global submission sequence, optional fence handle and512 reference bits
 (8 u64 words) selecting private registry slots. A queue handle0 marks a free
 entry. Aggregate repeated appearances within one native submission contribute
 one lifetime reference per object; distinct submissions contribute distinct
@@ -3342,7 +3342,10 @@ because both execute under the same mutex.
 Queue idle's actual receiver timeline fence/poll success retires all tickets for
 that queue; Device idle retires each queue only after that queue's successful
 proof. A later queue failure retains unproven tickets. Native fence status SUCCESS
-retires tickets carrying that fence. Wait-all SUCCESS retires requested fences;
+retires that ticket and all earlier tickets on its queue. Sequence values are
+assigned only after native success, never wrap (UINT64_MAX returns host-memory
+exhaustion before dispatch), and clear only on retired-backend abandon/unbind.
+Wait-all SUCCESS retires requested fences and their proven queue prefixes;
 wait-any SUCCESS polls individual native fence statuses and retires only those
 proven signaled. ResetFence/DestroyFence refuse in-flight references before wire
 access; semaphore destruction already does so. Pending command buffer reset/free,

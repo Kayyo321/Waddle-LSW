@@ -73,6 +73,8 @@ typedef struct fixture_t {
     int32_t command_result;
     unsigned command_array_fault;
     unsigned semaphore_fault;
+    int32_t submit_result;
+    uint64_t submit_fence;
     uint64_t gpu_issued[64];
     uint32_t gpu_pending;
     uint32_t gpu_issue_pending;
@@ -190,6 +192,52 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                             &queue_info, &queue);
                 assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
             }
+        } else if (fixture->command == 18) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            const uint32_t submit_count = read_u32(bytes + 16);
+            assert(submit_count <= 16 && read_u64(bytes + 20) == submit_count);
+            VkSubmitInfo infos[16] = {0};
+            VkSemaphore waits[16][64], signals[16][64];
+            VkPipelineStageFlags stages[16][64];
+            VkCommandBuffer buffers[16][64];
+            size_t offset = 28;
+            for (uint32_t index = 0; index < submit_count; index++) {
+                VkSubmitInfo *info = &infos[index];
+                assert(read_u32(bytes + offset) == VK_STRUCTURE_TYPE_SUBMIT_INFO &&
+                       read_u64(bytes + offset + 4) == 0);
+                info->sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; offset += 12;
+                info->waitSemaphoreCount = read_u32(bytes + offset); offset += 4;
+                assert(info->waitSemaphoreCount <= 64 && read_u64(bytes + offset) == info->waitSemaphoreCount);
+                offset += 8;
+                for (uint32_t item = 0; item < info->waitSemaphoreCount; item++, offset += 8)
+                    waits[index][item] = (VkSemaphore)(uintptr_t)read_u64(bytes + offset);
+                assert(read_u64(bytes + offset) == info->waitSemaphoreCount); offset += 8;
+                for (uint32_t item = 0; item < info->waitSemaphoreCount; item++, offset += 4)
+                    stages[index][item] = read_u32(bytes + offset);
+                if (info->waitSemaphoreCount) {
+                    info->pWaitSemaphores = waits[index]; info->pWaitDstStageMask = stages[index];
+                }
+                info->commandBufferCount = read_u32(bytes + offset); offset += 4;
+                assert(info->commandBufferCount <= 64 && read_u64(bytes + offset) == info->commandBufferCount);
+                offset += 8;
+                for (uint32_t item = 0; item < info->commandBufferCount; item++, offset += 8)
+                    buffers[index][item] = (VkCommandBuffer)(uintptr_t)read_u64(bytes + offset);
+                if (info->commandBufferCount) info->pCommandBuffers = buffers[index];
+                info->signalSemaphoreCount = read_u32(bytes + offset); offset += 4;
+                assert(info->signalSemaphoreCount <= 64 && read_u64(bytes + offset) == info->signalSemaphoreCount);
+                offset += 8;
+                for (uint32_t item = 0; item < info->signalSemaphoreCount; item++, offset += 8)
+                    signals[index][item] = (VkSemaphore)(uintptr_t)read_u64(bytes + offset);
+                if (info->signalSemaphoreCount) info->pSignalSemaphores = signals[index];
+            }
+            fixture->submit_fence = read_u64(bytes + offset); offset += 8;
+            assert(offset == length - 36);
+            vn_encode_vkQueueSubmit(&encoder, 1, (VkQueue)(uintptr_t)read_u64(bytes + 8),
+                                   submit_count, submit_count ? infos : NULL,
+                                   (VkFence)(uintptr_t)fixture->submit_fence);
+            assert(encoder.used == offset && !memcmp(expected, bytes, offset));
+            put_u32(fixture->reply + 4, (uint32_t)fixture->submit_result);
         } else if (fixture->command == 40 || fixture->command == 41) {
             unsigned char expected[128];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -2070,6 +2118,250 @@ static void fill_buffer_contract(void) {
         assert(venus_icd_unbind() == RingOk);
     }
 }
+static void queue_submit_contract(void) {
+    for (unsigned scenario = 0; scenario < 8; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2;
+        VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,
+            "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priorities[2] = {1,1};
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 2, .pQueuePriorities = priorities};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue_info};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &device_info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkQueueSubmit submit = (PFN_vkQueueSubmit)lookup(device, "vkQueueSubmit");
+        PFN_vkGetDeviceQueue get_queue = (PFN_vkGetDeviceQueue)lookup(device, "vkGetDeviceQueue");
+        PFN_vkQueueWaitIdle idle = (PFN_vkQueueWaitIdle)lookup(device, "vkQueueWaitIdle");
+        PFN_vkDeviceWaitIdle device_idle = (PFN_vkDeviceWaitIdle)lookup(device, "vkDeviceWaitIdle");
+        PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)lookup(device, "vkCreateCommandPool");
+        PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)lookup(device, "vkDestroyCommandPool");
+        PFN_vkResetCommandPool reset_pool = (PFN_vkResetCommandPool)lookup(device, "vkResetCommandPool");
+        PFN_vkAllocateCommandBuffers allocate = (PFN_vkAllocateCommandBuffers)lookup(device, "vkAllocateCommandBuffers");
+        PFN_vkFreeCommandBuffers release = (PFN_vkFreeCommandBuffers)lookup(device, "vkFreeCommandBuffers");
+        PFN_vkBeginCommandBuffer begin = (PFN_vkBeginCommandBuffer)lookup(device, "vkBeginCommandBuffer");
+        PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)lookup(device, "vkEndCommandBuffer");
+        PFN_vkResetCommandBuffer reset = (PFN_vkResetCommandBuffer)lookup(device, "vkResetCommandBuffer");
+        PFN_vkCreateSemaphore create_semaphore = (PFN_vkCreateSemaphore)lookup(device, "vkCreateSemaphore");
+        PFN_vkDestroySemaphore destroy_semaphore = (PFN_vkDestroySemaphore)lookup(device, "vkDestroySemaphore");
+        PFN_vkCreateFence create_fence = (PFN_vkCreateFence)lookup(device, "vkCreateFence");
+        PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)lookup(device, "vkDestroyFence");
+        PFN_vkGetFenceStatus status = (PFN_vkGetFenceStatus)lookup(device, "vkGetFenceStatus");
+        PFN_vkResetFences reset_fences = (PFN_vkResetFences)lookup(device, "vkResetFences");
+        PFN_vkWaitForFences wait = (PFN_vkWaitForFences)lookup(device, "vkWaitForFences");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
+        assert(submit && get_queue && idle && device_idle);
+        VkQueue queues[2] = {NULL,NULL};
+        get_queue(device, 0, 0, &queues[0]); get_queue(device, 0, 1, &queues[1]);
+        assert(queues[0] && queues[1]);
+        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+        fixture.pool_info = &pool_info;
+        VkCommandPool pool = NULL, foreign_pool = NULL;
+        assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+        assert(create_pool(foreign, &pool_info, NULL, &foreign_pool) == VK_SUCCESS);
+        VkCommandBufferAllocateInfo allocation = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .commandBufferCount = 2};
+        fixture.command_allocate = &allocation;
+        VkCommandBuffer commands[2] = {NULL,NULL}, foreign_command = NULL, secondary = NULL;
+        assert(allocate(device, &allocation, commands) == VK_SUCCESS);
+        allocation.commandPool = foreign_pool; allocation.commandBufferCount = 1;
+        assert(allocate(foreign, &allocation, &foreign_command) == VK_SUCCESS);
+        allocation.commandPool = pool; allocation.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+        assert(allocate(device, &allocation, &secondary) == VK_SUCCESS);
+        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        fixture.command_begin = &begin_info;
+        for (unsigned index = 0; index < 2; index++)
+            assert(begin(commands[index], &begin_info) == VK_SUCCESS && end(commands[index]) == VK_SUCCESS);
+        assert(begin(foreign_command, &begin_info) == VK_SUCCESS && end(foreign_command) == VK_SUCCESS);
+        VkSemaphoreCreateInfo semaphore_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkSemaphore semaphores[2] = {NULL,NULL}, foreign_semaphore = NULL;
+        for (unsigned index = 0; index < 2; index++)
+            assert(create_semaphore(device, &semaphore_info, NULL, &semaphores[index]) == VK_SUCCESS);
+        assert(create_semaphore(foreign, &semaphore_info, NULL, &foreign_semaphore) == VK_SUCCESS);
+        VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkFence fences[2] = {NULL,NULL}, foreign_fence = NULL;
+        for (unsigned index = 0; index < 2; index++)
+            assert(create_fence(device, &fence_info, NULL, &fences[index]) == VK_SUCCESS);
+        assert(create_fence(foreign, &fence_info, NULL, &foreign_fence) == VK_SUCCESS);
+        VkSubmitInfo info = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1, .pCommandBuffers = commands};
+        VkPipelineStageFlags stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        unsigned before = fixture.submissions;
+        assert(submit(NULL,0,NULL,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(submit((VkQueue)(uintptr_t)1,0,NULL,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(submit(queues[0],1,NULL,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(submit(queues[0],17,(const void *)(uintptr_t)1,NULL) == VK_ERROR_OUT_OF_HOST_MEMORY);
+        info.sType = 0; assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; info.pNext = &info;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED); info.pNext = NULL;
+        info.waitSemaphoreCount = 65; assert(submit(queues[0],1,&info,NULL) == VK_ERROR_OUT_OF_HOST_MEMORY);
+        info.waitSemaphoreCount = 0; info.signalSemaphoreCount = 65;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_OUT_OF_HOST_MEMORY); info.signalSemaphoreCount = 0;
+        info.commandBufferCount = 65; assert(submit(queues[0],1,&info,NULL) == VK_ERROR_OUT_OF_HOST_MEMORY);
+        info.commandBufferCount = 1; info.pCommandBuffers = NULL;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        VkCommandBuffer invalid_command = NULL; info.pCommandBuffers = &invalid_command;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        invalid_command = (VkCommandBuffer)(uintptr_t)1;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pCommandBuffers = &foreign_command; assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pCommandBuffers = &secondary; assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pCommandBuffers = commands; info.waitSemaphoreCount = 1;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pWaitSemaphores = semaphores;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pWaitDstStageMask = &stage; stage = 0;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        stage = 0x20000; assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        stage = VK_PIPELINE_STAGE_TRANSFER_BIT; info.pWaitSemaphores = &foreign_semaphore;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        VkSemaphore invalid_semaphore = NULL; info.pWaitSemaphores = &invalid_semaphore;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        invalid_semaphore = (VkSemaphore)(uintptr_t)1;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.waitSemaphoreCount = 0; info.signalSemaphoreCount = 1;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pSignalSemaphores = &invalid_semaphore;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        invalid_semaphore = NULL; assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pSignalSemaphores = &foreign_semaphore;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        info.signalSemaphoreCount = 0;
+        assert(submit(queues[0],1,&info,foreign_fence) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(submit(queues[0],1,&info,(VkFence)(uintptr_t)1) == VK_ERROR_INITIALIZATION_FAILED);
+        VkCommandBuffer duplicates[2] = {commands[0],commands[0]};
+        info.commandBufferCount = 2; info.pCommandBuffers = duplicates;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(fixture.submissions == before);
+        info.commandBufferCount = 1; info.pCommandBuffers = commands;
+        fixture.submit_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        assert(reset(commands[0],0) == VK_SUCCESS);
+        assert(begin(commands[0],&begin_info) == VK_SUCCESS && end(commands[0]) == VK_SUCCESS);
+        fixture.submit_result = VK_SUCCESS;
+        if (scenario < 4) {
+            if (scenario == 0) fixture.fail_command = 18;
+            if (scenario == 1) fixture.corrupt_command = 18;
+            if (scenario == 2) fixture.submit_result = VK_ERROR_DEVICE_LOST;
+            if (scenario == 3) fixture.submit_result = VK_NOT_READY;
+            assert(submit(queues[0],1,&info,NULL) == VK_ERROR_DEVICE_LOST);
+            assert(submit(queues[0],1,&info,NULL) == VK_ERROR_DEVICE_LOST);
+            venus_icd_abandon(); continue;
+        }
+        info.waitSemaphoreCount = 1; info.pWaitSemaphores = semaphores; info.pWaitDstStageMask = &stage;
+        info.signalSemaphoreCount = 1; info.pSignalSemaphores = semaphores + 1;
+        assert(submit(queues[0],1,&info,fences[0]) == VK_SUCCESS);
+        uint64_t first_id = fixture.submit_fence;
+        assert(first_id && first_id < 4096);
+        before = fixture.submissions;
+        assert(reset(commands[0],0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset_pool(device,pool,0) == VK_ERROR_INITIALIZATION_FAILED);
+        release(device,pool,1,commands); destroy_pool(device,pool,NULL);
+        destroy_semaphore(device,semaphores[0],NULL); destroy_semaphore(device,semaphores[1],NULL);
+        destroy_fence(device,fences[0],NULL);
+        assert(reset_fences(device,1,fences) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(submit(queues[0],0,NULL,fences[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(fixture.submissions == before);
+        assert(status(device,fences[0]) == VK_NOT_READY);
+        assert(reset(commands[0],0) == VK_ERROR_INITIALIZATION_FAILED);
+        fixture.fence_ready[first_id] = 1;
+        assert(status(device,fences[0]) == VK_SUCCESS);
+        assert(reset(commands[0],0) == VK_SUCCESS);
+        /* A natively signaled fence cannot be submitted until reset. */
+        assert(submit(queues[0],0,NULL,fences[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset_fences(device,1,fences) == VK_SUCCESS);
+        info.waitSemaphoreCount = 0; info.signalSemaphoreCount = 0;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        assert(begin(commands[0],&begin_info) == VK_SUCCESS && end(commands[0]) == VK_SUCCESS);
+        assert(submit(queues[0],1,&info,NULL) == VK_SUCCESS);
+        assert(idle(queues[0]) == VK_SUCCESS);
+        assert(submit(queues[0],1,&info,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+        assert(begin(commands[0],&begin_info) == VK_SUCCESS && end(commands[0]) == VK_SUCCESS);
+        info.commandBufferCount = 2; info.pCommandBuffers = duplicates;
+        assert(submit(queues[0],1,&info,NULL) == VK_SUCCESS);
+        assert(submit(queues[1],1,&info,NULL) == VK_SUCCESS);
+        assert(idle(queues[0]) == VK_SUCCESS && reset(commands[0],0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(idle(queues[1]) == VK_SUCCESS && reset(commands[0],0) == VK_SUCCESS);
+        begin_info.flags = 0;
+        assert(begin(commands[0],&begin_info) == VK_SUCCESS && end(commands[0]) == VK_SUCCESS);
+        info.commandBufferCount = 1; info.pCommandBuffers = commands;
+        assert(submit(queues[0],1,&info,fences[0]) == VK_SUCCESS); first_id = fixture.submit_fence;
+        info.pCommandBuffers = commands + 1;
+        assert(submit(queues[1],1,&info,fences[1]) == VK_SUCCESS);
+        uint64_t second_id = fixture.submit_fence;
+        assert(wait(device,2,fences,VK_TRUE,0) == VK_TIMEOUT);
+        fixture.fence_ready[first_id] = 1;
+        assert(wait(device,2,fences,VK_FALSE,0) == VK_SUCCESS);
+        assert(reset_fences(device,1,fences) == VK_SUCCESS);
+        assert(reset_fences(device,1,fences+1) == VK_ERROR_INITIALIZATION_FAILED);
+        fixture.fence_ready[second_id] = 1;
+        /* Re-signal the first already completed fence for native wait-all. */
+        fixture.fence_ready[first_id] = 1;
+        assert(wait(device,2,fences,VK_TRUE,0) == VK_SUCCESS);
+        assert(reset(commands[1],0) == VK_SUCCESS);
+        for (unsigned index = 0; index < 128; index++) assert(submit(queues[0],0,(const void *)(uintptr_t)1,NULL) == VK_SUCCESS);
+        assert(submit(queues[0],0,NULL,NULL) == VK_ERROR_OUT_OF_HOST_MEMORY);
+        before = fixture.submissions; destroy_device(device,NULL); assert(fixture.submissions == before);
+        assert(device_idle(device) == VK_SUCCESS);
+        VkSubmitInfo empty[16];
+        for (unsigned index = 0; index < 16; index++) empty[index] = (VkSubmitInfo){.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pWaitSemaphores = (const void *)(uintptr_t)1, .pWaitDstStageMask = (const void *)(uintptr_t)1,
+            .pCommandBuffers = (const void *)(uintptr_t)1, .pSignalSemaphores = (const void *)(uintptr_t)1};
+        assert(submit(queues[0],16,empty,NULL) == VK_SUCCESS && idle(queues[0]) == VK_SUCCESS);
+        if (scenario == 7) {
+            VkSemaphore bounded_semaphores[64] = {0};
+            VkCommandBuffer bounded_commands[64];
+            VkPipelineStageFlags bounded_stages[64];
+            begin_info.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+            assert(begin(commands[0],&begin_info) == VK_SUCCESS && end(commands[0]) == VK_SUCCESS);
+            for (unsigned index = 0; index < 64; index++) {
+                assert(create_semaphore(device,&semaphore_info,NULL,&bounded_semaphores[index]) == VK_SUCCESS);
+                bounded_commands[index] = commands[0]; bounded_stages[index] = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            }
+            VkSubmitInfo bounded = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .signalSemaphoreCount = 64, .pSignalSemaphores = bounded_semaphores};
+            assert(submit(queues[0],1,&bounded,NULL) == VK_SUCCESS);
+            bounded.waitSemaphoreCount = 64; bounded.pWaitSemaphores = bounded_semaphores;
+            bounded.pWaitDstStageMask = bounded_stages; bounded.commandBufferCount = 64;
+            bounded.pCommandBuffers = bounded_commands;
+            assert(submit(queues[0],1,&bounded,NULL) == VK_SUCCESS);
+            VkSubmitInfo excessive[2] = {bounded,bounded};
+            before = fixture.submissions;
+            assert(submit(queues[0],2,excessive,NULL) == VK_ERROR_OUT_OF_HOST_MEMORY);
+            assert(fixture.submissions == before && idle(queues[0]) == VK_SUCCESS);
+            assert(reset(commands[0],0) == VK_SUCCESS);
+            for (unsigned index = 0; index < 64; index++) destroy_semaphore(device,bounded_semaphores[index],NULL);
+        }
+        if (scenario == 4 || scenario == 5) {
+            fixture.fence_override = 1;
+            fixture.fence_result = scenario == 4 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_ERROR_DEVICE_LOST;
+            assert(submit(queues[0],0,NULL,fences[1]) == fixture.fence_result);
+            fixture.fence_override = 0;
+            if (scenario == 5) { venus_icd_abandon(); continue; }
+        }
+        release(device,pool,2,commands); release(device,pool,1,&secondary);
+        release(foreign,foreign_pool,1,&foreign_command);
+        destroy_pool(device,pool,NULL); destroy_pool(foreign,foreign_pool,NULL);
+        for (unsigned index = 0; index < 2; index++) {
+            destroy_semaphore(device,semaphores[index],NULL); destroy_fence(device,fences[index],NULL);
+        }
+        destroy_semaphore(foreign,foreign_semaphore,NULL); destroy_fence(foreign,foreign_fence,NULL);
+        destroy_device(device,NULL); destroy_device(foreign,NULL); destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
+
 static void semaphore_contract(void) {
     for (unsigned scenario = 0; scenario < 12; scenario++) {
         fixture_t fixture = fresh();
@@ -2900,6 +3192,7 @@ int main(void) {
     update_buffer_contract();
     pipeline_barrier_contract();
     semaphore_contract();
+    queue_submit_contract();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();

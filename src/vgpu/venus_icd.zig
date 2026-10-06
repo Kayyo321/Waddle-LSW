@@ -32,6 +32,7 @@ const resource_state_t = struct {
     buffer_size: u64 = 0,
     buffer_usage: u32 = 0,
     buffer_references: [8]u64 = [_]u64{0} ** 8,
+    queue_family: u32 = 0,
     pool_family: u32 = 0,
     pool_flags: u32 = 0,
     command_state: command_state_t = .Initial,
@@ -40,6 +41,47 @@ const resource_state_t = struct {
     requirements: c.VkMemoryRequirements = std.mem.zeroes(c.VkMemoryRequirements),
 };
 var resource_states = [_]resource_state_t{.{}} ** 512;
+const submission_ticket_t = struct {
+    queue: u64 = 0,
+    sequence: u64 = 0,
+    fence: u64 = 0,
+    references: [8]u64 = [_]u64{0} ** 8,
+};
+var submission_tickets = [_]submission_ticket_t{.{}} ** 128;
+var submission_sequence: u64 = 0;
+fn include_reference(ticket: *submission_ticket_t, record: *const c.venus_object_t) bool {
+    const index = resource_index(record);
+    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+    const repeated = ticket.references[index / 64] & bit != 0;
+    ticket.references[index / 64] |= bit;
+    return repeated;
+}
+fn retire_ticket(ticket: *submission_ticket_t) void {
+    for (&resource_states, 0..) |*state, index| {
+        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+        if (ticket.references[index / 64] & bit == 0) continue;
+        std.debug.assert(slots[index].id != 0 and state.inflight_count != 0);
+        state.inflight_count -= 1;
+        if (slots[index].kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER and state.inflight_count == 0)
+            state.command_state = if (state.command_flags & 1 != 0) .Invalid else .Executable;
+    }
+    ticket.* = .{};
+}
+fn retire_queue(handle: u64) void {
+    for (&submission_tickets) |*ticket| if (ticket.queue == handle) retire_ticket(ticket);
+}
+fn retire_fence(handle: u64) void {
+    var queue: u64 = 0;
+    var sequence: u64 = 0;
+    for (submission_tickets) |ticket| if (ticket.queue != 0 and ticket.fence == handle) {
+        queue = ticket.queue;
+        sequence = ticket.sequence;
+        break;
+    };
+    if (queue == 0) return;
+    for (&submission_tickets) |*ticket|
+        if (ticket.queue == queue and ticket.sequence <= sequence) retire_ticket(ticket);
+}
 fn resource_index(record: [*c]const c.venus_object_t) usize {
     for (slots, 0..) |slot, index| if (slot.id == record.*.id) return index;
     unreachable;
@@ -80,6 +122,8 @@ fn clear() void {
     ring_slots = [_]bool{false} ** 64;
     gpu_fences = [_]u64{0} ** 64;
     resource_states = [_]resource_state_t{.{}} ** 512;
+    submission_tickets = [_]submission_ticket_t{.{}} ** 128;
+    submission_sequence = 0;
     @memset(&update_encoded, 0);
     lost = c.RingOk;
 }
@@ -779,6 +823,7 @@ fn get_device_queue(
         _ = failure(c.RingCorrupt);
         return;
     };
+    resource_state(queue).* = .{ .id = queue.*.id, .queue_family = family };
     entry.queues[queue_index] = queue.*.handle;
     entry.rings[queue_index] = ring_index;
     output.* = @ptrFromInt(queue.*.handle);
@@ -797,6 +842,10 @@ fn destroy_device(
     if (device == null) return;
     const entry = device_cache(@intFromPtr(device.?)) orelse return;
     const record = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    for (submission_tickets) |ticket| {
+        if (ticket.queue != 0 and object(ticket.queue, c.VK_OBJECT_TYPE_QUEUE).?.parent_id == record.id)
+            return;
+    }
     for (slots) |child| {
         if (child.id != 0 and child.parent_id == record.id and child.kind != c.VK_OBJECT_TYPE_QUEUE)
             return;
@@ -815,6 +864,7 @@ fn destroy_device(
         return;
     }
     for (entry.queues) |handle| if (handle != 0) {
+        resource_state(object(handle, c.VK_OBJECT_TYPE_QUEUE).?).* = .{};
         std.debug.assert(c.venus_objects_release(&objects, handle, c.VK_OBJECT_TYPE_QUEUE, 1) ==
             c.RingOk);
     };
@@ -966,6 +1016,7 @@ fn create_fence(
         _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_FENCE, 0);
         return result;
     }
+    resource_state(record).* = .{ .id = record.*.id };
     output.* = @ptrFromInt(record.*.handle);
     return c.VK_SUCCESS;
 }
@@ -989,6 +1040,7 @@ fn destroy_fence(
         c.VK_OBJECT_TYPE_FENCE,
         parent.id,
     ) orelse return;
+    if (resource_state(record).inflight_count != 0) return;
     var writer = writer_t{};
     writer.header(36, parent.id);
     writer.put(u64, record.id);
@@ -1003,6 +1055,7 @@ fn destroy_fence(
         _ = failure(c.RingCorrupt);
         return;
     }
+    resource_state(record).* = .{};
     std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_FENCE, 0) ==
         c.RingOk);
 }
@@ -2282,6 +2335,10 @@ fn reset_fences(device: c.VkDevice, count: u32, fences: [*c]const c.VkFence) cal
     if (count == 0 or count > 64 or fences == null) return c.VK_ERROR_DEVICE_LOST;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const writer = encode_fences(37, device, fences[0..count]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE).?;
+    for (fences[0..count]) |fence|
+        if (resource_state(child_object(@intFromPtr(fence.?), c.VK_OBJECT_TYPE_FENCE, parent.id).?).inflight_count != 0)
+            return c.VK_ERROR_INITIALIZATION_FAILED;
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     return result_reply(reply, 37, 0);
 }
@@ -2303,12 +2360,18 @@ fn get_fence_status(device: c.VkDevice, fence: c.VkFence) callconv(.C) c_int {
         c.VK_OBJECT_TYPE_FENCE,
         parent.id,
     ) orelse return c.VK_ERROR_DEVICE_LOST;
+    return fence_status_locked(parent, record);
+}
+fn fence_status_locked(parent: *const c.venus_object_t, record: *const c.venus_object_t) c_int {
     var writer = writer_t{};
     writer.header(38, parent.id);
     writer.put(u64, record.id);
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
-    return result_reply(reply, 38, c.VK_NOT_READY);
+    const result = result_reply(reply, 38, c.VK_NOT_READY);
+    if (result == c.VK_SUCCESS) retire_fence(record.handle);
+    return result;
 }
+
 fn wait_round(device: c.VkDevice, fences: []const c.VkFence, all: u32) c_int {
     mutex.lock();
     defer mutex.unlock();
@@ -2317,7 +2380,19 @@ fn wait_round(device: c.VkDevice, fences: []const c.VkFence, all: u32) c_int {
     writer.put(u32, all);
     writer.put(u64, 0);
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
-    return result_reply(reply, 39, c.VK_TIMEOUT);
+    const result = result_reply(reply, 39, c.VK_TIMEOUT);
+    if (result != c.VK_SUCCESS) return result;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE).?;
+    for (fences) |fence| {
+        const record = child_object(@intFromPtr(fence.?), c.VK_OBJECT_TYPE_FENCE, parent.id).?;
+        if (all != 0) {
+            retire_fence(record.handle);
+        } else {
+            const status = fence_status_locked(parent, record);
+            if (status != c.VK_SUCCESS and status != c.VK_NOT_READY) return status;
+        }
+    }
+    return result;
 }
 /// Wait with nonblocking host rounds and the caller's monotonic timeout.
 /// @param[in] device Nonnull live parent, must remain live throughout call.
@@ -2395,9 +2470,10 @@ fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
     if (device == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const entry = device_cache(@intFromPtr(device.?)) orelse return c.VK_ERROR_DEVICE_LOST;
     var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
-    for (entry.rings) |ring| if (ring != 0) {
+    for (entry.rings, 0..) |ring, index| if (ring != 0) {
         const result = ring_idle(ring, &timer);
         if (result != c.VK_SUCCESS) return result;
+        retire_queue(entry.queues[index]);
     };
     return c.VK_SUCCESS;
 }
@@ -2417,11 +2493,146 @@ fn queue_wait_idle(queue: c.VkQueue) callconv(.C) c_int {
         if (entry.handle == 0) continue;
         for (entry.queues, 0..) |handle, index| if (handle == record.handle) {
             var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
-            return ring_idle(entry.rings[index], &timer);
+            const result = ring_idle(entry.rings[index], &timer);
+            if (result == c.VK_SUCCESS) retire_queue(record.handle);
+            return result;
         };
     }
     return failure(c.RingCorrupt);
 }
+/// Submit bounded canonical core work to the native host queue.
+/// @param[in] queue Nonnull initialized private queue, borrowed until device destruction.
+/// @param[in] count Number of borrowed submit records0..16; aggregate arrays each at most64.
+/// @param[in] submits Nullable iff count0; accessible records/arrays, retained only during call.
+/// @param[in] fence Nullable unsignaled device-owned fence; retained until actual completion.
+/// @return Native result, initialization/capacity error or sticky device loss.
+/// @note Mutex serialized, allocation-free. Success owns fixed pending tickets until GPU proof.
+fn queue_submit(
+    queue: c.VkQueue,
+    count: u32,
+    submits: [*c]const c.VkSubmitInfo,
+    fence: c.VkFence,
+) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (queue == null or (count != 0 and submits == null)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (count > 16) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    const record = object(@intFromPtr(queue.?), c.VK_OBJECT_TYPE_QUEUE) orelse
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (resource_state(record).id != record.id) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var available: ?*submission_ticket_t = null;
+    for (&submission_tickets) |*ticket| if (ticket.queue == 0) {
+        available = ticket;
+        break;
+    };
+    const target = available orelse return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (submission_sequence == std.math.maxInt(u64)) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var staged = submission_ticket_t{ .queue = record.handle };
+    var fence_record: ?*c.venus_object_t = null;
+    if (fence != null) {
+        fence_record = child_object(@intFromPtr(fence.?), c.VK_OBJECT_TYPE_FENCE, record.parent_id) orelse
+            return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (resource_state(fence_record.?).inflight_count != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        staged.fence = fence_record.?.handle;
+        _ = include_reference(&staged, fence_record.?);
+    }
+    var waits: u32 = 0;
+    var signals: u32 = 0;
+    var buffers: u32 = 0;
+    if (count != 0) for (submits[0..count]) |info| {
+        if (info.sType != c.VK_STRUCTURE_TYPE_SUBMIT_INFO or info.pNext != null)
+            return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (info.waitSemaphoreCount > 64 - waits or info.signalSemaphoreCount > 64 - signals or
+            info.commandBufferCount > 64 - buffers) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        waits += info.waitSemaphoreCount;
+        signals += info.signalSemaphoreCount;
+        buffers += info.commandBufferCount;
+        if ((info.waitSemaphoreCount != 0 and (info.pWaitSemaphores == null or info.pWaitDstStageMask == null)) or
+            (info.signalSemaphoreCount != 0 and info.pSignalSemaphores == null) or
+            (info.commandBufferCount != 0 and info.pCommandBuffers == null))
+            return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (info.waitSemaphoreCount != 0) for (info.pWaitSemaphores[0..info.waitSemaphoreCount], 0..) |semaphore, index| {
+            if (semaphore == null or info.pWaitDstStageMask[index] == 0 or
+                info.pWaitDstStageMask[index] & ~@as(u32, 0x1ffff) != 0)
+                return c.VK_ERROR_INITIALIZATION_FAILED;
+            const child = child_object(@intFromPtr(semaphore.?), c.VK_OBJECT_TYPE_SEMAPHORE, record.parent_id) orelse
+                return c.VK_ERROR_INITIALIZATION_FAILED;
+            _ = include_reference(&staged, child);
+        };
+        if (info.signalSemaphoreCount != 0) for (info.pSignalSemaphores[0..info.signalSemaphoreCount]) |semaphore| {
+            if (semaphore == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+            const child = child_object(@intFromPtr(semaphore.?), c.VK_OBJECT_TYPE_SEMAPHORE, record.parent_id) orelse
+                return c.VK_ERROR_INITIALIZATION_FAILED;
+            _ = include_reference(&staged, child);
+        };
+        if (info.commandBufferCount != 0) for (info.pCommandBuffers[0..info.commandBufferCount]) |buffer| {
+            if (buffer == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+            const child = object(@intFromPtr(buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse
+                return c.VK_ERROR_INITIALIZATION_FAILED;
+            const pool = command_pool_for(child) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+            const state = resource_state(child);
+            if (pool.parent_id != record.parent_id or resource_state(pool).pool_family != resource_state(record).queue_family or
+                state.command_level != 0 or (state.command_state != .Executable and
+                !(state.command_state == .Pending and state.command_flags & 4 != 0)))
+                return c.VK_ERROR_INITIALIZATION_FAILED;
+            if (include_reference(&staged, child) and state.command_flags & 4 == 0)
+                return c.VK_ERROR_INITIALIZATION_FAILED;
+        };
+    };
+    if (fence_record) |selected| {
+        const parent = object(device_cache_for_queue(record).handle, c.VK_OBJECT_TYPE_DEVICE).?;
+        const status = fence_status_locked(parent, selected);
+        if (status == c.VK_SUCCESS) return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (status != c.VK_NOT_READY) return status;
+    }
+    var writer = writer_t{};
+    writer.header(18, record.id);
+    writer.put(u32, count);
+    writer.put(u64, count);
+    if (count != 0) for (submits[0..count]) |info| {
+        writer.put(u32, c.VK_STRUCTURE_TYPE_SUBMIT_INFO);
+        writer.put(u64, 0);
+        writer.put(u32, info.waitSemaphoreCount);
+        writer.put(u64, info.waitSemaphoreCount);
+        if (info.waitSemaphoreCount != 0) for (info.pWaitSemaphores[0..info.waitSemaphoreCount]) |semaphore|
+            writer.put(u64, child_object(@intFromPtr(semaphore.?), c.VK_OBJECT_TYPE_SEMAPHORE, record.parent_id).?.id);
+        writer.put(u64, info.waitSemaphoreCount);
+        if (info.waitSemaphoreCount != 0) for (info.pWaitDstStageMask[0..info.waitSemaphoreCount]) |stage| writer.put(u32, stage);
+        writer.put(u32, info.commandBufferCount);
+        writer.put(u64, info.commandBufferCount);
+        if (info.commandBufferCount != 0) for (info.pCommandBuffers[0..info.commandBufferCount]) |buffer|
+            writer.put(u64, object(@intFromPtr(buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER).?.id);
+        writer.put(u32, info.signalSemaphoreCount);
+        writer.put(u64, info.signalSemaphoreCount);
+        if (info.signalSemaphoreCount != 0) for (info.pSignalSemaphores[0..info.signalSemaphoreCount]) |semaphore|
+            writer.put(u64, child_object(@intFromPtr(semaphore.?), c.VK_OBJECT_TYPE_SEMAPHORE, record.parent_id).?.id);
+    };
+    writer.put(u64, if (fence_record) |selected| selected.id else 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = result_reply(reply, 18, 0);
+    if (result == c.VK_SUCCESS) {
+        submission_sequence += 1;
+        staged.sequence = submission_sequence;
+        target.* = staged;
+        for (&resource_states, 0..) |*state, index| {
+            const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+            if (staged.references[index / 64] & bit == 0) continue;
+            std.debug.assert(state.inflight_count < submission_tickets.len);
+            state.inflight_count += 1;
+            if (slots[index].kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER) state.command_state = .Pending;
+        }
+    }
+    return result;
+}
+fn device_cache_for_queue(record: *const c.venus_object_t) *device_cache_t {
+    for (&device_caches) |*entry| if (entry.handle != 0) {
+        const parent = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+        if (parent.id == record.parent_id) return entry;
+    };
+    unreachable;
+}
+
 fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
     const Entries = .{
         .{ "vkGetDeviceProcAddr", &get_device_proc },
@@ -2429,6 +2640,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkGetDeviceQueue", &get_device_queue },
         .{ "vkDeviceWaitIdle", &device_wait_idle },
         .{ "vkQueueWaitIdle", &queue_wait_idle },
+        .{ "vkQueueSubmit", &queue_submit },
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateSemaphore", &create_semaphore },
         .{ "vkDestroySemaphore", &destroy_semaphore },
@@ -3024,4 +3236,63 @@ test "constructor identities allow null only after negative native results" {
     try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
     std.mem.writeInt(u32, bytes[4..8], 1, .little);
     try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
+}
+
+test "fence completion retires a queue prefix while simultaneous references remain pending" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
+            return c.RingInvalid;
+        }
+    };
+    var context: u8 = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &context));
+    defer venus_icd_abandon();
+    var records: [7][*c]c.venus_object_t = [_][*c]c.venus_object_t{null} ** 7;
+    const Kinds = [_]u32{ c.VK_OBJECT_TYPE_DEVICE, c.VK_OBJECT_TYPE_QUEUE, c.VK_OBJECT_TYPE_QUEUE, c.VK_OBJECT_TYPE_COMMAND_BUFFER, c.VK_OBJECT_TYPE_COMMAND_BUFFER, c.VK_OBJECT_TYPE_SEMAPHORE, c.VK_OBJECT_TYPE_FENCE };
+    for (Kinds, 0..) |kind, index| {
+        const dispatchable: u32 = if (index < 5) 1 else 0;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            kind,
+            if (index == 0) 0 else records[0].*.id,
+            dispatchable,
+            &records[index],
+        ));
+    }
+    const first = resource_state(records[3]);
+    const second = resource_state(records[4]);
+    const semaphore = resource_state(records[5]);
+    const fence = resource_state(records[6]);
+    first.* = .{ .inflight_count = 3, .command_state = .Pending, .command_flags = 4 };
+    second.* = .{ .inflight_count = 1, .command_state = .Pending, .command_flags = 1 };
+    semaphore.inflight_count = 2;
+    fence.inflight_count = 1;
+    submission_tickets[0] = .{ .queue = records[1].*.handle, .sequence = 1 };
+    submission_tickets[1] = .{ .queue = records[1].*.handle, .sequence = 2, .fence = records[6].*.handle };
+    submission_tickets[2] = .{ .queue = records[2].*.handle, .sequence = 3 };
+    for (submission_tickets[0..3], 0..) |_, index| _ = include_reference(&submission_tickets[index], records[3]);
+    _ = include_reference(&submission_tickets[0], records[5]);
+    _ = include_reference(&submission_tickets[1], records[6]);
+    _ = include_reference(&submission_tickets[2], records[4]);
+    _ = include_reference(&submission_tickets[2], records[5]);
+    retire_fence(records[6].*.handle);
+    try std.testing.expectEqual(@as(u32, 1), first.inflight_count);
+    try std.testing.expectEqual(command_state_t.Pending, first.command_state);
+    try std.testing.expectEqual(@as(u32, 1), semaphore.inflight_count);
+    try std.testing.expectEqual(@as(u32, 0), fence.inflight_count);
+    try std.testing.expectEqual(@as(u64, 0), submission_tickets[0].queue);
+    try std.testing.expectEqual(@as(u64, 0), submission_tickets[1].queue);
+    retire_queue(records[2].*.handle);
+    try std.testing.expectEqual(command_state_t.Executable, first.command_state);
+    try std.testing.expectEqual(command_state_t.Invalid, second.command_state);
+    try std.testing.expectEqual(@as(u32, 0), semaphore.inflight_count);
+    resource_state(records[1]).id = records[1].*.id;
+    submission_sequence = std.math.maxInt(u64);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), queue_submit(
+        @ptrFromInt(records[1].*.handle),
+        0,
+        null,
+        null,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
 }
