@@ -2,11 +2,13 @@
  */
 #include "vn_cs.h"
 #include "waddle/venus_icd.h"
+#include "shaders/compute_shader.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wpointer-arith"
 #include "vn_protocol_driver_buffer.h"
 #include "vn_protocol_driver_image.h"
+#include "vn_protocol_driver_shader_module.h"
 #include "vn_protocol_driver_image_view.h"
 #include "vn_protocol_driver_device.h"
 #include "vn_protocol_driver_command_buffer.h"
@@ -90,6 +92,7 @@ typedef struct fixture_t {
     const VkBufferCreateInfo *buffer_info;
     const VkImageCreateInfo *image_info;
     const VkImageViewCreateInfo *view_info;
+    const VkShaderModuleCreateInfo *shader_info;
     unsigned requirements_fault;
     uint64_t requirements_size;
     const void *update_data;
@@ -484,6 +487,20 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     (VkDeviceMemory)(uintptr_t)read_u64(bytes + 24), read_u64(bytes + 32));
                 put_u32(fixture->reply + 4, (uint32_t)fixture->bind_result);
             }
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 59 || fixture->command == 60) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 59) {
+                assert(fixture->shader_info);
+                VkShaderModule shader = (VkShaderModule)(uintptr_t)read_u64(bytes + length - 44);
+                vn_encode_vkCreateShaderModule(&encoder, 1, device, fixture->shader_info, NULL, &shader);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, 1);
+                put_u64(fixture->reply + 16, (uintptr_t)shader);
+            } else vn_encode_vkDestroyShaderModule(&encoder, 1, device,
+                (VkShaderModule)(uintptr_t)read_u64(bytes + 16), NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 54 || fixture->command == 55 || fixture->command == 57 || fixture->command == 58 || fixture->command == 31 || fixture->command == 29) {
             unsigned char expected[8192];
@@ -1457,6 +1474,41 @@ static void device_failures(void) {
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
+static void shader_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
+    PFN_vkCreateShaderModule create_shader = (PFN_vkCreateShaderModule)lookup(device, "vkCreateShaderModule");
+    PFN_vkDestroyShaderModule destroy_shader = (PFN_vkDestroyShaderModule)lookup(device, "vkDestroyShaderModule");
+    assert(create_shader && destroy_shader);
+    VkShaderModuleCreateInfo info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(ComputeShader), .pCode = ComputeShader};
+    fixture->shader_info = &info;
+    VkShaderModule shader = NULL;
+    unsigned before = fixture->submissions;
+    assert(create_shader(device, NULL, NULL, &shader) == VK_ERROR_INITIALIZATION_FAILED && !shader);
+    assert(create_shader(NULL, &info, NULL, &shader) == VK_ERROR_INITIALIZATION_FAILED && !shader);
+    assert(create_shader(device, &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_shader((VkDevice)(uintptr_t)1, &info, NULL, &shader) == VK_ERROR_INITIALIZATION_FAILED && !shader);
+    info.flags = 1;
+    assert(create_shader(device, &info, NULL, &shader) == VK_ERROR_INITIALIZATION_FAILED && !shader);
+    info.flags = 0;
+    info.codeSize = 8192;
+    assert(create_shader(device, &info, NULL, &shader) == VK_ERROR_OUT_OF_HOST_MEMORY && !shader);
+    info.codeSize = sizeof(ComputeShader);
+    info.pCode = NULL;
+    assert(create_shader(device, &info, NULL, &shader) == VK_ERROR_INITIALIZATION_FAILED && !shader);
+    info.pCode = ComputeShader;
+    assert(fixture->submissions == before);
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(create_shader(device, &info, NULL, &shader) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !shader);
+    fixture->create_result = VK_SUCCESS;
+    assert(create_shader(device, &info, NULL, &shader) == VK_SUCCESS && shader);
+    destroy_shader(device, shader, NULL);
+    before = fixture->submissions;
+    destroy_shader(device, shader, NULL);
+    destroy_shader(NULL, shader, NULL);
+    destroy_shader(device, NULL, NULL);
+    assert(fixture->submissions == before);
+    fixture->shader_info = NULL;
+}
 static void image_contract(void) {
     for (unsigned scenario = 0; scenario < 8; scenario++) {
         fixture_t fixture = fresh();
@@ -1474,6 +1526,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        if (scenario == 0) shader_contract(device, lookup, &fixture);
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");

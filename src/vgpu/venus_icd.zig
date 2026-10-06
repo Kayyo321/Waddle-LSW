@@ -1595,6 +1595,33 @@ fn bind_image_memory(device: c.VkDevice, image: c.VkImage, memory_handle: c.VkDe
     }
     return result;
 }
+/// Create bounded core shader module. [in] device/info nonnull borrowed, callbacks nullable unused.
+/// [out] output nonnull, NULL on failure. Returns host/local invalid/limit/OOM/loss.
+/// Mutex serialized, allocation-free; host owns semantic SPIR-V validation and execution.
+fn create_shader_module(device: c.VkDevice, info: [*c]const c.VkShaderModuleCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkShaderModule) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = render_wire.create_shader_module(@ptrCast(info), parent.id, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_SHADER_MODULE, &writer, &handle);
+    if (result == c.VK_SUCCESS) output.* = @ptrFromInt(handle);
+    return result;
+}
+/// Destroy shader token. [in] nullable device/module/callbacks borrowed for call.
+/// Void; invalid/inflight ignored. Mutex serialized, exact acknowledgment retires ownership.
+fn destroy_shader_module(device: c.VkDevice, shader: c.VkShaderModule, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    destroy_render_resource(device, if (shader) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_SHADER_MODULE, 60);
+}
+
 /// Allocate private device memory with exact host identity validation.
 /// @param[in] device Nonnull private live parent, borrowed for call.
 /// @param[in] info Nonnull canonical allocation info, borrowed; no pNext supported.
@@ -3145,6 +3172,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateSemaphore", &create_semaphore },
         .{ "vkDestroySemaphore", &destroy_semaphore },
+        .{ "vkCreateShaderModule", &create_shader_module },
+        .{ "vkDestroyShaderModule", &destroy_shader_module },
         .{ "vkCreateImage", &create_image },
         .{ "vkDestroyImage", &destroy_image },
         .{ "vkGetImageMemoryRequirements", &image_requirements },
