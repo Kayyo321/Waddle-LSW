@@ -2109,3 +2109,55 @@ ABI and Zig state tests. This does not implement public ICD loader dispatch,
 Vulkan object/memory lifetimes, complete command/device entry points or DXVK
 execution. TODO #3 remains35%; TODO #4 remains100% from its separately verified
 presentation scope. Feature completion stays63.75%, with no feature merge/PR.
+
+
+### Guest Vulkan object ownership (TODO #3)
+
+The remaining35% Vulkan runtime milestone is audited as object identity/lifetime
+storage5%, instance/device/procedure dispatch10%, and complete bounded graphics/
+compute command, memory and synchronization support20%. Loader manifest/interface
+remains10% and real DXVK execution20%; completed frontend10%/userland adapter25%
+are unchanged. Object storage credit requires native Linux/Windows ABI tests,
+allocator/sanitizer churn and at least90% production line/branch coverage. It does
+not prove loader/device or DXVK execution; those keep their independent gates.
+
+venus_objects_t borrows a private caller-owned array of1..4096 venus_object_t records
+and a nonnull frontend context. It allocates nothing; callers keep both live through
+free and serialize accesses. Init requires a zero owner and a nonzero namespace
+that is never reused among this process's sessions. It clears all supplied records,
+rejects overflow/overlap with owner, and snapshots capacity. Namespace generation
+belongs to the ICD lifecycle owner and must fail before32-bit wrap, never reuse.
+
+Each40-byte x86_64 record has loader_data(uintptr_t) at0, host id(uint64_t) at8,
+application handle(uint64_t) at16, parent id(uint64_t) at24, kind(uint32_t) at32,
+dispatchable(uint32_t) at36. Host IDs monotonically increase from1, never reused,
+and stop beforeUINT32_MAX. Dispatchable handles are record addresses with first
+word initially0x01CDC0DE; the Vulkan loader may replace only that first word.
+Nondispatchable handles are namespace<<32 | host_id; foreign namespaces therefore
+cannot collide with an existing object in another session. Both forms are validated
+against live private records and exact kind/dispatchability, without dereferencing
+application-provided pointers. Dispatchable addresses must be aligned to a record
+start within the snapshotted array; in-range retired/foreign/wrong-kind handles fail.
+Application use of a destroyed dispatchable handle after its address is reused is
+invalid Vulkan usage; host IDs still never reuse, preventing stale reply identities.
+
+Reserve requires nonzero kind, dispatchability0/1 and either parent0 or a live
+parent host ID. Children always have later IDs than their existing parent, making
+cycles impossible. Full storage or exhausted identity counter returns Limit before
+mutation. Returned record is borrowed and immutable except loader_data replacement
+by the loader. Release validates the application handle, then returns Again while
+any live record names it as parent. On success it clears the record and decrements
+live count. Vulkan device/pool destruction must explicitly destroy/release children
+before parent retirement; discard after receiver loss uses free instead. Lookup by
+host ID supplies only a currently live matching-kind record, never allocates, and
+is the decoder's future translation boundary. Malformed host replies must still be
+validated by bounded protocol decoders before invoking this trusted registry.
+
+Free clears records and owner without calling transport or freeing their storage.
+The caller first destroys host objects normally or abandons the complete receiver
+session. It cannot silently cancel live Vulkan work. Pointer/count output parameters
+are private and disjoint from owner/storage. All operations are sole-owner-thread,
+no locks, no atomic publication and no shared-memory/native pointer serialization.
+Tests must cover zero/full/exhausted storage, address boundaries/alignment, both
+handle forms, namespaces, exact kind, parent blocking, ID monotonicity, loader header
+replacement, invalid parents and repeated reserve/release with allocator zero leaks.

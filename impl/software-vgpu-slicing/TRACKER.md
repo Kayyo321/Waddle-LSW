@@ -1087,7 +1087,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ownership coverage remains100% lines/91.67% branches. Loader/DXVK pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record native command ownership verification`
+- **Commit `7872808`**: `docs(vgpu): record native command ownership verification`
   - **Task Impact**: +0% to TODO: #3; +0% to TODO: #4 (+0% overall).
   - **Summary**: Record successful native Linux/Windows command owner verification
     without crediting unfinished public ICD dispatch, object/memory lifetimes or DXVK.
@@ -1095,3 +1095,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     include real production-worker queries, sanitizer and coverage checks; native
     Windows executes C ABI and Zig state tests. TODO #4 remains100%; TODO #3 remains
     35% and the feature remains In Progress with Time Ended TBD.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify Vulkan object identity and lifetime storage`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Subdivide remaining runtime milestones and specify loader headers,
+    dispatchable address validation, namespaced nondispatchable identities, parent
+    lifetime rules and bounded allocation-free storage before implementation.
+  - **Verification**: Cross-check Vulkan loader header ABI and existing per-worker
+    object ID isolation; no new runtime or DXVK credit claimed by this design.
