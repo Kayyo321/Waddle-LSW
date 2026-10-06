@@ -224,6 +224,10 @@ static int icd_cycles(venus_guest_t *guest) {
             if (property_value.apiVersion < VK_API_VERSION_1_0 || !property_value.deviceName[0] ||
                 !memory_value.memoryTypeCount || !memory_value.memoryHeapCount)
                 goto fail;
+            if (!iteration && !index) {
+                printf("ICD mapped-memory acceptance device: %s\n", property_value.deviceName);
+                fflush(stdout);
+            }
         }
         PFN_vkGetPhysicalDeviceQueueFamilyProperties queue_properties =
             (PFN_vkGetPhysicalDeviceQueueFamilyProperties)icd_lookup(
@@ -319,14 +323,33 @@ static int icd_cycles(venus_guest_t *guest) {
         PFN_vkFreeMemory release = (PFN_vkFreeMemory)device_proc(device, "vkFreeMemory");
         PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)device_proc(device, "vkBindBufferMemory");
         if (!allocate || !release || !bind) goto fail;
+        VkPhysicalDeviceMemoryProperties supported_memory = {0};
+        memory(devices[0], &supported_memory);
         uint32_t memory_type = 0;
-        while (!(buffer_memory.memoryTypeBits & (1u << memory_type))) memory_type++;
+        while (memory_type < supported_memory.memoryTypeCount &&
+               (!(buffer_memory.memoryTypeBits & (1u << memory_type)) ||
+                !(supported_memory.memoryTypes[memory_type].propertyFlags &
+                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)))
+            memory_type++;
+        if (memory_type == supported_memory.memoryTypeCount) goto fail;
         VkMemoryAllocateInfo allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .allocationSize = buffer_memory.size, .memoryTypeIndex = memory_type};
         VkDeviceMemory buffer_allocation = NULL;
         if (allocate(device, &allocation, NULL, &buffer_allocation) != VK_SUCCESS ||
             !buffer_allocation || bind(device, buffer, buffer_allocation, 0) != VK_SUCCESS ||
             device_idle(device) != VK_SUCCESS) goto fail;
+        PFN_vkMapMemory map_memory = (PFN_vkMapMemory)device_proc(device, "vkMapMemory");
+        PFN_vkUnmapMemory unmap_memory = (PFN_vkUnmapMemory)device_proc(device, "vkUnmapMemory");
+        PFN_vkFlushMappedMemoryRanges flush_memory =
+            (PFN_vkFlushMappedMemoryRanges)device_proc(device, "vkFlushMappedMemoryRanges");
+        PFN_vkInvalidateMappedMemoryRanges invalidate_memory =
+            (PFN_vkInvalidateMappedMemoryRanges)device_proc(device, "vkInvalidateMappedMemoryRanges");
+        void *mapped = NULL;
+        if (!map_memory || !unmap_memory || !flush_memory || !invalidate_memory ||
+            map_memory(device, buffer_allocation, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS ||
+            !mapped) goto fail;
+        const VkMappedMemoryRange mapped_range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = buffer_allocation, .size = VK_WHOLE_SIZE};
 #ifdef VgpuIcdLoader
         if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
 #endif
@@ -409,8 +432,40 @@ static int icd_cycles(venus_guest_t *guest) {
             submit(queue, 1, &wait_submit, fence) != VK_SUCCESS ||
             wait_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
             queue_idle(queue) != VK_SUCCESS) goto fail;
+        /* Compare receiver storage, rather than trusting fence retirement alone. */
+        if (invalidate_memory(device, 1, &mapped_range) != VK_SUCCESS ||
+            memcmp(mapped, update_data, sizeof(update_data))) goto fail;
+        unsigned char upload[4096];
+        for (unsigned index = 0; index < sizeof(upload); index++)
+            upload[index] = (unsigned char)(index * 17 + iteration);
+        memcpy(mapped, upload, sizeof(upload));
+        memset((unsigned char *)mapped + 32768, 0, sizeof(upload));
+        if (flush_memory(device, 1, &mapped_range) != VK_SUCCESS ||
+            reset_fences(device, 1, &fence) != VK_SUCCESS ||
+            begin_buffer(commands[1], &begin_info) != VK_SUCCESS) goto fail;
+        memory_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+        memory_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        pipeline_barrier(commands[1], VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &memory_barrier, 0, NULL, 0, NULL);
+        const VkBufferCopy upload_copy = {.srcOffset = 0, .dstOffset = 32768, .size = sizeof(upload)};
+        copy_buffer(commands[1], buffer, buffer, 1, &upload_copy);
+        memory_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        memory_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        pipeline_barrier(commands[1], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+            0, 1, &memory_barrier, 0, NULL, 0, NULL);
+        const VkSubmitInfo upload_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1, .pCommandBuffers = &commands[1]};
+        if (end_buffer(commands[1]) != VK_SUCCESS ||
+            submit(queue, 1, &upload_submit, fence) != VK_SUCCESS ||
+            wait_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
+            invalidate_memory(device, 1, &mapped_range) != VK_SUCCESS ||
+            memcmp(mapped, upload, sizeof(upload)) ||
+            memcmp((unsigned char *)mapped + 32768, upload, sizeof(upload))) goto fail;
+        unmap_memory(device, buffer_allocation);
+        mapped = NULL;
         destroy_signal(device, signal, NULL); destroy_fence(device, fence, NULL);
         if (reset_buffer(commands[0], 0) != VK_SUCCESS ||
+            reset_buffer(commands[1], 0) != VK_SUCCESS ||
             begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
             end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)
             goto fail;
@@ -566,7 +621,9 @@ cleanup:
     return result;
 }
 int main(void) {
-    alarm(180);
+    /* Sixteen full-allocation transfer cycles intentionally fragment over the
+     * 64-byte stress ring; keep a finite watchdog above that added workload. */
+    alarm(300);
     int result = 1;
     unsigned baseline = descriptors();
     if (!baseline) goto cleanup;
