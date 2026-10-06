@@ -153,15 +153,15 @@ build/vgpu_channel_test.exe: tests/vgpu/channel_windows.c $(VgpuChannelSources) 
 
 vgpu-windows: build/vgpu_channel_test.exe
 
-build/vgpu_integration_test: tests/vgpu/integration.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o | vgpu-renderer
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/integration.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
+build/vgpu_integration_test: tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o | vgpu-renderer
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
 
 .PHONY: vgpu-integration vgpu-integration-sanitizers
 vgpu-integration: build/vgpu_integration_test
 	RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_test
 
-vgpu-integration-sanitizers: build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o vgpu-renderer
-	$(CC) $(CPPFLAGS) $(VgpuReceiverIncludes) $(VgpuReceiverSanitizers) tests/vgpu/integration.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o $(VgpuReceiverLibraries) -o build/vgpu_integration_sanitized
+vgpu-integration-sanitizers: build/venus_bounds.o build/venus_control.o build/venus_request.o vgpu-renderer
+	$(CC) $(CPPFLAGS) $(VgpuReceiverIncludes) $(VgpuReceiverSanitizers) tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o $(VgpuReceiverLibraries) -o build/vgpu_integration_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_sanitized
 
 # Request codec reuses and includes the exported Zig resource-bound helpers.
@@ -192,3 +192,24 @@ build/vgpu_request_test.exe: tests/vgpu/request.c include/waddle/venus_request.h
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/request.c build/venus_request_windows.lib -o $@
 
 vgpu-windows: build/vgpu_request_test.exe
+
+VgpuRuntimeSources = src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c
+VgpuRuntimeFixtureSources = $(VgpuRuntimeSources) src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c
+build/vgpu_runtime_test: tests/vgpu/runtime.c $(VgpuRuntimeFixtureSources) include/waddle/venus_rpc.h include/waddle/venus_dispatch.h build/venus_request.o build/venus_bounds.o build/venus_control.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/runtime.c $(VgpuRuntimeFixtureSources) build/venus_request.o build/venus_bounds.o build/venus_control.o -o $@
+
+.PHONY: vgpu-runtime-test vgpu-runtime-sanitizers vgpu-runtime-coverage
+vgpu-runtime-test: build/vgpu_runtime_test
+	./build/vgpu_runtime_test
+
+vgpu-runtime-sanitizers: build/venus_request.o build/venus_bounds.o build/venus_control.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/runtime.c $(VgpuRuntimeFixtureSources) build/venus_request.o build/venus_bounds.o build/venus_control.o -o build/vgpu_runtime_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_runtime_sanitized
+
+build/vgpu_runtime_test.exe: tests/vgpu/runtime.c $(VgpuRuntimeFixtureSources) include/waddle/venus_rpc.h include/waddle/venus_dispatch.h build/venus_request_windows.lib build/venus_bounds_windows.lib build/venus_control_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/runtime.c $(VgpuRuntimeFixtureSources) build/venus_request_windows.lib build/venus_bounds_windows.lib build/venus_control_windows.lib -o $@
+
+vgpu-windows: build/vgpu_runtime_test.exe
+
+vgpu-runtime-coverage: build/venus_request.o build/venus_bounds.o build/venus_control.o
+	python3 tests/vgpu/runtime_coverage.py

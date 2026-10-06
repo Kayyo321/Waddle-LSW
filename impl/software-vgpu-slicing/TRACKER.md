@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 25% | Bounded resource registry, declared-storage quotas and CPU SHM ownership verified; runtime dispatch/session/GPU integration pending |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 30% | Resource ownership and portable request codec verified; bounded runtime implemented, native CI pending; multi-context/GPU milestones remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `25.0%`
+**Total Feature Completion**: `26.0%`
 
 ## Commit History & Progress Log
 
@@ -305,10 +305,28 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows execution remains pending. Resource commit `8766015` passed both jobs
     in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392534083 .
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define sequential receiver runtime ownership`
+- **Commit `aa0d30d`**: `docs(vgpu): define sequential receiver runtime ownership`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Specified private bounded framing, chunked payloads, explicit
     operation deadlines, consumed sequence rules, output preservation, quota-safe
     dispatch and terminal failures without an unreadable response guarantee.
   - **Verification**: Reviewed against codec limits, channel lifecycle and receiver
     ownership; integrated implementation and runtime acceptance remain pending.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch bounded sequential receiver exchanges`
+  - **Task Impact**: +5% to TODO: #2 (+1.0% overall) for verified portable codec;
+    runtime's separate 10% acceptance gate awaits native CI.
+  - **Summary**: Added allocation-free caller-buffer RPC ownership, streamed
+    private framing, exact echoed response validation, sequence exhaustion and
+    terminal closure. Routed all eight operations to the existing receiver;
+    oversized transfers return Limit without dispatch. Replaced the temporary
+    integration envelopes with real protocol resource/CPU execution exchanges.
+  - **Verification**: `make vgpu-runtime-test vgpu-runtime-sanitizers
+    vgpu-runtime-coverage build/vgpu_runtime_test.exe vgpu-integration
+    vgpu-integration-sanitizers` passed. RPC lines 100%, branches 97.73%; dispatch
+    lines 98.70%, branches 93.48%. ASan/LSan/UBSan report no findings. Independent
+    mapped-process/UNIX tests cover real SHM quota/refund/reuse, payloads larger
+    than the ring, real CPU Venus replies, stale/malformed/truncated requests and
+    peer crashes. Native runtime execution is queued; no GPU execution claim.
+    Codec Linux/native Windows CI succeeded at `b6e825e` in
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392958717 .

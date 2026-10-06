@@ -715,6 +715,8 @@ snapshotted ring capacity; no shared field determines an allocation. A partial
 control frame prevents extending the operation deadline. Header copies use exactly
 64 private bytes. EOF while awaiting a new header with no queued bytes is Closed;
 EOF after any consumed/queued header bytes, or while a declared payload is pending,
+is Corrupt. If the native channel already recorded Disconnect before truncation
+was identified, its first close reason remains Disconnect while the RPC result
 is Corrupt. All terminal transfer/codec/sequence/renderer errors close both rings
 and clear the next sequence. Restart requires a new mapping/session/receiver.
 UINT64_MAX is reserved as exhaustion: attempting that next ID closes with Corrupt

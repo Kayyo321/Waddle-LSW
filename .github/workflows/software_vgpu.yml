@@ -37,6 +37,8 @@ jobs:
         run: make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
+      - name: Verify bounded receiver runtime and failure paths
+        run: make vgpu-runtime-test vgpu-runtime-sanitizers vgpu-runtime-coverage
       - name: Verify independent mapped-file guest and real Venus replies
         run: make vgpu-integration vgpu-integration-sanitizers
       - name: Verify ring safety and independent-process ordering
@@ -105,4 +107,8 @@ jobs:
           ./build/vgpu_request_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_request.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/runtime.c src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c build/venus_request_windows.lib build/venus_bounds_windows.lib build/venus_control_windows.lib -o build/vgpu_runtime_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_runtime_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
