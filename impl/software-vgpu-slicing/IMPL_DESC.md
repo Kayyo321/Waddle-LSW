@@ -2642,3 +2642,34 @@ parents, negative creation rollback, and corrupt/transport failures. Run actual
 worker signaled fence/status/wait/reset/timeout/destroy cycles, sanitizers, Zig
 allocator and90% coverage/native Windows CI. Public queue submission and semaphore
 objects remain separate runtime work; this increment alone earns no full API credit.
+
+### Pinned native Vulkan loader verification dependency
+
+Add the public HTTPS Khronos Vulkan-Loader upstream as submodules/vulkan_loader,
+pinned to0508dee4ff864f5034ae6b7f68d34cb2822b827d (upstream v1.4.307).
+This exact commit exists in the public tag and matches the already pinned Venus
+protocol Vulkan header version307. Its source license is Apache-2.0, with explicitly
+more permissive per-file exceptions preserved upstream; Apache-2.0 is compatible
+with this repository's GPL-3.0 distribution. Retain upstream licenses/notices and
+make no vendor source edits. This is a test-only native loader build dependency,
+not a replacement for the standalone ICD, negotiated transport or host renderer.
+
+Build loader C sources using CMake/base native toolchains, tests disabled and
+UPDATE_DEPS=OFF so no loose dependency downloads are permitted. A repository-owned
+CMake integration target points Vulkan::Headers at existing pinned Venus protocol
+include files; do not vendor another header copy or generate new schema bindings.
+Build artifacts remain under ignored build/vendor/vulkan_loader; no system DLL,
+registry, global driver manifest or installed Vulkan driver is modified. Windows
+CI builds a native x64 vulkan-1.dll and loads its exact private path, with the
+experimental ICD manifest restricted to one generated build artifact. Linux can
+exercise the same pinned loader in addition to the existing system loader.
+
+The test boundary must verify real manifest discovery, loader ABI negotiation,
+instance/physical/device dispatch, cached queue handles and fence lifecycle through
+actual loader entrypoints. Backends remain explicitly named fake native oracle or
+actual negotiated worker; only the latter demonstrates host Vulkan execution.
+Every opened library, saved environment string and backend binding has one owned
+teardown site after all Vulkan objects retire. Any receiver failure retires session
+before clearing ICD state. No DXVK or full API completion is inferred from loader
+acceptance. Allocate a zero-weight dependency task to audit addition, offline build
+and native execution, with commit-pinned progress attribution.

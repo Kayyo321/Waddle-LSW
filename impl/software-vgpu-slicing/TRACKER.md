@@ -18,6 +18,7 @@
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
+| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Pending | 0% | 0% | Test-only v1.4.307 dependency; no runtime/DXVK completion implied |
 
 **Total Feature Completion**: `65.0%`
 
@@ -1357,7 +1358,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Native thread fixtures and coverage gates remain enforced;
     no production runtime, threshold or ownership policy changes.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch core fence objects and caller timed waits`
+- **Commit `27c93da`**: `feat(vgpu): dispatch core fence objects and caller timed waits`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; full synchronization gate pending).
   - **Summary**: Add device-parented nondispatchable fence create/destroy/reset/status
     and any/all waits. Validate native counts/flags/parents before serialization;
@@ -1372,3 +1373,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     normal and sanitizers; Windows test/DLL cross-link succeeds. Updated-head native
     CI remains required. Prior4620bf9 vGPU Linux and Windows checks are green; CLI
     pending. TODO #3 remains40%; full API dispatch and real DXVK are still pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify pinned native loader acceptance`
+  - **Task Impact**: +0% to TODO: #3; +0% to TODO: #8 (+0% overall).
+  - **Summary**: Specify the exact public Vulkan-Loader v1.4.307 SHA, Apache-2.0/GPL-3.0
+    compatibility, test-only offline build boundary using existing pinned headers,
+    private DLL/manifest lifetime and real loader device/fence verification gates.
