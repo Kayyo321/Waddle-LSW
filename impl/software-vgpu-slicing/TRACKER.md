@@ -18,7 +18,7 @@
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
-| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | In Progress | 0% | 65% | Offline Linux normal/sanitized loader and device/fence discovery pass; Windows native runtime pending |
+| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 
 **Total Feature Completion**: `65.0%`
 
@@ -1428,7 +1428,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     create/destroy/query wire fields, staged host requirements and failure
     ownership. Full memory execution and DXVK acceptance remain required.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch core buffers and host memory requirements`
+- **Commit `40fa600`**: `feat(vgpu): dispatch core buffers and host memory requirements`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; full memory execution pending).
   - **Summary**: Add private device-parented buffers, bounded exclusive/concurrent
     sharing, exact creation identity and host destruction, staged validated actual
@@ -1441,3 +1441,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     branches. Actual two-session worker create/query/destroy cycles pass normal
     and sanitizers; native Windows fixtures/DLL cross-link and pinned Linux loader
     pass. Native updated-head CI and full runtime/DXVK remain required.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): record native loader dependency acceptance`
+  - **Task Impact**: +35% to TODO: #8; +0% to TODO: #3 (+0% overall).
+  - **Summary**: Complete loader dependency build/runtime acceptance with the exact
+    pinned offline loader and existing headers. Preserve pending full ICD/runtime
+    and DXVK gates; this zero-weight dependency task does not claim them complete.
+  - **Verification**:2326afc GitHub native Windows job112407789435 passes all
+    dispatch/DLL/manifest tests. Linux jobs112407789703 and112407762126 both pass
+    pinned loader discovery and its ASan/LSan/UBSan fixture. Local Linux loader
+    eight device/queue/fence cycles and strict Windows cross-link pass. Full latest
+    branch CI remains required independently of this dependency acceptance.
