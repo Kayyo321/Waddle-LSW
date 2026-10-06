@@ -186,6 +186,7 @@ static int icd_cycles(venus_guest_t *guest) {
     VkDevice cleanup_device = NULL;
     PFN_vkDestroyInstance cleanup_destroy_instance = NULL;
     PFN_vkDestroyDevice cleanup_destroy_device = NULL;
+    const char *image_stage = NULL;
     VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     for (unsigned iteration = 0; iteration < 8; iteration++) {
         VkInstance instance = NULL;
@@ -475,6 +476,58 @@ static int icd_cycles(venus_guest_t *guest) {
         destroy_buffer(device, buffer, NULL);
         release(device, buffer_allocation, NULL);
 
+        /* Exercise actual receiver image and view ownership independently of
+         * mapped transfer storage. Destruction must retire each dependency. */
+        PFN_vkCreateImage create_image = (PFN_vkCreateImage)device_proc(device, "vkCreateImage");
+        PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)device_proc(device, "vkDestroyImage");
+        PFN_vkGetImageMemoryRequirements image_requirements =
+            (PFN_vkGetImageMemoryRequirements)device_proc(device, "vkGetImageMemoryRequirements");
+        PFN_vkBindImageMemory bind_image = (PFN_vkBindImageMemory)device_proc(device, "vkBindImageMemory");
+        PFN_vkCreateImageView create_view =
+            (PFN_vkCreateImageView)device_proc(device, "vkCreateImageView");
+        PFN_vkDestroyImageView destroy_view =
+            (PFN_vkDestroyImageView)device_proc(device, "vkDestroyImageView");
+        image_stage = "entry-point lookup";
+        if (!create_image || !destroy_image || !image_requirements || !bind_image ||
+            !create_view || !destroy_view) goto fail;
+        const VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_B8G8R8A8_UNORM,
+            .extent = {64, 64, 1}, .mipLevels = 1, .arrayLayers = 1,
+            .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+        VkImage image = NULL;
+        image_stage = "image creation";
+        if (create_image(device, &image_info, NULL, &image) != VK_SUCCESS || !image) goto fail;
+        VkMemoryRequirements image_memory = {0};
+        image_stage = "memory requirements";
+        image_requirements(device, image, &image_memory);
+        if (!image_memory.size || !image_memory.alignment || !image_memory.memoryTypeBits) goto fail;
+        uint32_t image_type = 0;
+        while (image_type < supported_memory.memoryTypeCount &&
+               !(image_memory.memoryTypeBits & (1u << image_type)))
+            image_type++;
+        if (image_type == supported_memory.memoryTypeCount) goto fail;
+        const VkMemoryAllocateInfo image_allocation_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = image_memory.size, .memoryTypeIndex = image_type};
+        VkDeviceMemory image_allocation = NULL;
+        image_stage = "allocation and bind";
+        if (allocate(device, &image_allocation_info, NULL, &image_allocation) != VK_SUCCESS ||
+            !image_allocation || bind_image(device, image, image_allocation, 0) != VK_SUCCESS)
+            goto fail;
+        const VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = image_info.format,
+            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .levelCount = 1, .layerCount = 1}};
+        VkImageView image_view = NULL;
+        image_stage = "view creation";
+        if (create_view(device, &view_info, NULL, &image_view) != VK_SUCCESS || !image_view)
+            goto fail;
+        destroy_view(device, image_view, NULL);
+        destroy_image(device, image, NULL);
+        release(device, image_allocation, NULL);
+        image_stage = "device teardown after image release";
+
         destroy_device(device, NULL);
         cleanup_device = NULL;
 #ifndef VgpuIcdLoader
@@ -487,6 +540,7 @@ static int icd_cycles(venus_guest_t *guest) {
             goto fail;
         destroy(instance, NULL);
         cleanup_instance = NULL;
+        image_stage = NULL;
 #ifndef VgpuIcdLoader
         if (icd_lookup(instance, "vkDestroyInstance"))
             goto fail;
@@ -499,6 +553,7 @@ static int icd_cycles(venus_guest_t *guest) {
         return 0;
     }
 fail:
+    if (image_stage) fprintf(stderr, "ICD image acceptance failed: %s\n", image_stage);
     /* Release loader-owned CPU dispatch tables even when host ownership is uncertain. */
     if (cleanup_device && cleanup_destroy_device) cleanup_destroy_device(cleanup_device, NULL);
     if (cleanup_instance && cleanup_destroy_instance) cleanup_destroy_instance(cleanup_instance, NULL);
