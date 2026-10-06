@@ -87,6 +87,17 @@ typedef struct fixture_t {
     uint32_t fence_pending;
     unsigned properties_override;
     uint32_t properties_version;
+    unsigned mapping_enabled;
+    unsigned mapping_noncoherent;
+    uint32_t mapping_fail_kind;
+    int32_t mapping_failure;
+    unsigned mapping_corrupt;
+    uint32_t mapping_creates;
+    uint32_t mapping_frees;
+    uint32_t mapping_reads;
+    uint32_t mapping_writes;
+    unsigned char mapping_live[64];
+    unsigned char mapping_storage[32768];
     unsigned fence_override;
     int32_t fence_result;
 } fixture_t;
@@ -107,6 +118,34 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                     void *output, size_t capacity) {
     fixture_t *fixture = context;
     *response = (venus_request_t){.kind = request->kind, .direction = 1};
+    if (request->kind >= RequestCreate && request->kind <= RequestWrite) {
+        assert(fixture->mapping_enabled && request->resource_id >= 2 && request->resource_id <= 65);
+        if (request->kind == fixture->mapping_fail_kind) return fixture->mapping_failure;
+        unsigned slot = request->resource_id - 2;
+        if (request->kind == RequestCreate) {
+            assert(!input && !length && !output && !capacity && request->flags == 1 &&
+                request->argument_zero && request->argument_one && request->argument_one % 4096 == 0);
+            assert(!fixture->mapping_live[slot]);
+            fixture->mapping_live[slot] = 1; fixture->mapping_creates++;
+        } else if (request->kind == RequestFree) {
+            assert(fixture->mapping_live[slot] && !input && !output);
+            fixture->mapping_live[slot] = 0; fixture->mapping_frees++;
+        } else {
+            assert(fixture->mapping_live[slot] && request->argument_one <= 4096 &&
+                request->argument_zero <= sizeof(fixture->mapping_storage) - request->argument_one);
+            if (request->kind == RequestRead) {
+                assert(output && capacity == request->argument_one && !input && !length);
+                memcpy(output, fixture->mapping_storage + request->argument_zero, capacity);
+                response->payload_bytes = (uint32_t)capacity; fixture->mapping_reads++;
+            } else {
+                assert(input && length == request->argument_one && !output && !capacity);
+                memcpy(fixture->mapping_storage + request->argument_zero, input, length);
+                fixture->mapping_writes++;
+            }
+        }
+        if (fixture->mapping_corrupt) response->flags = 1;
+        return RingOk;
+    }
     if (request->kind == RequestGpuFence || request->kind == RequestGpuPoll) {
         assert(!input && !length && !output && !capacity && request->argument_zero > 0 &&
                request->argument_zero < 64);
@@ -499,6 +538,8 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 (fixture->command == 33 && read_u32(bytes + 44) == 0))
                 put_u64(fixture->reply + 16, 0);
         }
+        if (fixture->command == 8 && fixture->mapping_enabled && !fixture->mapping_noncoherent)
+            put_u32(fixture->reply + 24, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         if (fixture->command == 6 && fixture->properties_override)
             put_u32(fixture->reply + 12, fixture->properties_version);
         if (fixture->command == fixture->corrupt_command) {
@@ -1567,6 +1608,115 @@ static void memory_contract(void) {
         release(device, memory, NULL);
         if (scenario == 6 || scenario == 7) { venus_icd_abandon(); continue; }
         release(device, memory, NULL);
+        destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
+static void mapping_contract(void) {
+    for (unsigned scenario = 0; scenario < 14; scenario++) {
+        fixture_t fixture = fresh(); fixture.mapping_enabled = 1;
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2; VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance, "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueCount = 1, .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &device_info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+        PFN_vkFreeMemory release = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+        PFN_vkMapMemory map = (PFN_vkMapMemory)lookup(device, "vkMapMemory");
+        PFN_vkUnmapMemory unmap = (PFN_vkUnmapMemory)lookup(device, "vkUnmapMemory");
+        PFN_vkFlushMappedMemoryRanges flush = (PFN_vkFlushMappedMemoryRanges)lookup(device, "vkFlushMappedMemoryRanges");
+        PFN_vkInvalidateMappedMemoryRanges invalidate = (PFN_vkInvalidateMappedMemoryRanges)lookup(device, "vkInvalidateMappedMemoryRanges");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
+        assert(map && unmap && flush && invalidate);
+        VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = 16384, .memoryTypeIndex = 0};
+        if (scenario == 13) memory_info.allocationSize = 16777217;
+        fixture.memory_info = &memory_info;
+        VkDeviceMemory memory = NULL;
+        assert(allocate(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+        void *pointer = (void *)(uintptr_t)1;
+        assert(map(device, memory, 0, 1, 0, NULL) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(NULL, memory, 0, 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED && !pointer);
+        assert(map((VkDevice)(uintptr_t)1, memory, 0, 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(device, NULL, 0, 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(foreign, memory, 0, 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(device, memory, 0, 1, 1, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(device, memory, 0, 0, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(device, memory, memory_info.allocationSize, 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(device, memory, 1, UINT64_MAX - 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        if (scenario == 1) fixture.mapping_noncoherent = 1;
+        if (scenario == 2) { fixture.mapping_fail_kind = RequestCreate; fixture.mapping_failure = RingLimit; }
+        if (scenario == 3) { fixture.mapping_fail_kind = RequestCreate; fixture.mapping_failure = RingCorrupt; }
+        if (scenario == 4) { fixture.mapping_fail_kind = RequestRead; fixture.mapping_failure = RingInvalid; }
+        if (scenario == 5) fixture.mapping_corrupt = 1;
+        if (scenario == 6) fixture.corrupt_command = 8;
+        if (scenario == 1 || scenario == 2 || scenario == 3 || scenario == 4 || scenario == 5 || scenario == 6 || scenario == 13) {
+            VkResult expected = scenario == 3 || scenario == 5 || scenario == 6 ? VK_ERROR_DEVICE_LOST : VK_ERROR_MEMORY_MAP_FAILED;
+            assert(map(device, memory, 0, VK_WHOLE_SIZE, 0, &pointer) == expected && !pointer);
+            venus_icd_abandon(); continue;
+        }
+        assert(map(device, memory, 0, VK_WHOLE_SIZE, 0, &pointer) == VK_SUCCESS && pointer);
+        assert((uintptr_t)pointer % 4096 == 0 && fixture.mapping_reads == 4);
+        void *duplicate = NULL;
+        assert(map(device, memory, 0, 1, 0, &duplicate) == VK_ERROR_MEMORY_MAP_FAILED && !duplicate);
+        memset(pointer, 0x5a, 16384);
+        VkMappedMemoryRange range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, .memory = memory, .offset = 0, .size = VK_WHOLE_SIZE};
+        assert(flush(NULL, 1, &range) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(flush((VkDevice)(uintptr_t)1, 1, &range) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(flush(foreign, 1, &range) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(flush(device, 65, &range) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(flush(device, 1, NULL) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(flush(device, 0, NULL) == VK_SUCCESS);
+        for (unsigned invalid = 0; invalid < 9; invalid++) {
+            VkMappedMemoryRange invalid_range = range;
+            if (invalid == 0) invalid_range.sType = 0;
+            if (invalid == 1) invalid_range.pNext = &range;
+            if (invalid == 2) invalid_range.memory = NULL;
+            if (invalid == 3) invalid_range.memory = (VkDeviceMemory)(uintptr_t)1;
+            if (invalid == 4) invalid_range.offset = 16384;
+            if (invalid == 5) invalid_range.size = 0;
+            if (invalid == 6) invalid_range.size = 16385;
+            if (invalid == 7) invalid_range.offset = UINT64_MAX;
+            if (invalid == 8) invalid_range.size = UINT64_MAX - 1;
+            unsigned writes = fixture.mapping_writes;
+            VkMappedMemoryRange ranges[2] = {range, invalid_range};
+            assert(flush(device, 2, ranges) == VK_ERROR_MEMORY_MAP_FAILED && writes == fixture.mapping_writes);
+        }
+        if (scenario == 7 || scenario == 8) { fixture.mapping_fail_kind = RequestWrite; fixture.mapping_failure = scenario == 7 ? RingInvalid : RingClosed; }
+        VkResult expected_flush = scenario == 7 ? VK_ERROR_MEMORY_MAP_FAILED : scenario == 8 ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
+        assert(flush(device, 1, &range) == expected_flush);
+        if (scenario == 8) { venus_icd_abandon(); continue; }
+        fixture.mapping_fail_kind = 0;
+        assert(flush(device, 1, &range) == VK_SUCCESS);
+        assert(fixture.mapping_storage[0] == 0x5a && fixture.mapping_storage[16383] == 0x5a);
+        memset(fixture.mapping_storage, 0x37, 16384);
+        if (scenario == 9) { fixture.mapping_fail_kind = RequestRead; fixture.mapping_failure = RingTimeout; }
+        if (scenario == 10) fixture.mapping_corrupt = 1;
+        assert(invalidate(device, 1, &range) == (scenario == 9 || scenario == 10 ? VK_ERROR_DEVICE_LOST : VK_SUCCESS));
+        if (scenario == 9 || scenario == 10) { venus_icd_abandon(); continue; }
+        assert(((unsigned char *)pointer)[0] == 0x37 && ((unsigned char *)pointer)[16383] == 0x37);
+        unmap(NULL, memory); unmap((VkDevice)(uintptr_t)1, memory); unmap(device, NULL); unmap(foreign, memory);
+        unmap(device, memory); unmap(device, memory);
+        assert(flush(device, 1, &range) == VK_ERROR_MEMORY_MAP_FAILED);
+        assert(map(device, memory, 4096, 8192, 0, &pointer) == VK_SUCCESS && fixture.mapping_creates == 1);
+        range.offset = 0; range.size = 4096;
+        assert(flush(device, 1, &range) == VK_ERROR_MEMORY_MAP_FAILED);
+        range.offset = 4096; range.size = VK_WHOLE_SIZE;
+        assert(flush(device, 1, &range) == VK_ERROR_MEMORY_MAP_FAILED);
+        range.size = 8192;
+        assert(flush(device, 1, &range) == VK_SUCCESS);
+        if (scenario == 11) { fixture.mapping_fail_kind = RequestFree; fixture.mapping_failure = RingCorrupt; }
+        if (scenario == 12) fixture.fail_command = 22;
+        release(device, memory, NULL);
+        if (scenario == 11 || scenario == 12) { venus_icd_abandon(); continue; }
+        assert(fixture.mapping_frees == 1);
         destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
         assert(venus_icd_unbind() == RingOk);
     }
@@ -3314,6 +3464,7 @@ int main(void) {
     version_contract();
     buffer_contract();
     memory_contract();
+    mapping_contract();
     pool_contract();
     command_buffer_contract();
     fill_buffer_contract();

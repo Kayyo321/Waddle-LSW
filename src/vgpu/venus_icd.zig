@@ -1,5 +1,10 @@
 //! Experimental bounded Vulkan dispatch; full device API/DXVK support is separately gated.
 const std = @import("std");
+const builtin = @import("builtin");
+const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
+const MaxMappedBytes: u64 = 16777216;
+const MappingChunkBytes: usize = 4096;
+var mapping_slots = [_]bool{false} ** 64;
 const c = @cImport({
     @cInclude("waddle/venus_icd.h");
     @cInclude("waddle/venus_objects.h");
@@ -29,6 +34,10 @@ const resource_state_t = struct {
     idle_refs: u32 = 0,
     allocation_size: u64 = 0,
     type_index: u32 = 0,
+    mapping_resource: u32 = 0,
+    mapped_bytes: ?[]align(4096) u8 = null,
+    mapped_offset: u64 = 0,
+    mapped_size: u64 = 0,
     bound_memory: u64 = 0,
     memory_offset: u64 = 0,
     buffer_size: u64 = 0,
@@ -117,6 +126,8 @@ const exchange_t = *const fn (
     usize,
 ) callconv(.C) c_int;
 fn clear() void {
+    for (&resource_states) |*state| release_shadow(state);
+    mapping_slots = [_]bool{false} ** 64;
     c.venus_command_free(&command);
     c.venus_objects_free(&objects);
     caches = [_]instance_cache_t{.{}} ** MaxInstances;
@@ -940,6 +951,8 @@ fn properties(
         return;
     }
     staged.apiVersion = c.VK_API_VERSION_1_0;
+    staged.limits.nonCoherentAtomSize = 1;
+    staged.limits.minMemoryMapAlignment = 4096;
     output.* = staged;
 }
 /// Query actual host core features; same serialized/preserved-output contract as properties.
@@ -966,6 +979,13 @@ fn memory(
     const reply = query(physical, 8) orelse return;
     if (c.venus_values_memory_decode(output, reply.ptr, reply.len) != c.RingOk) {
         _ = failure(c.RingCorrupt);
+        return;
+    }
+    // Copy-backed mappings require explicit flush/invalidate, never promise coherence.
+    for (output.*.memoryTypes[0..output.*.memoryTypeCount]) |*memory_type| {
+        if (memory_type.propertyFlags & c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT == 0)
+            memory_type.propertyFlags &= ~@as(u32, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+        memory_type.propertyFlags &= ~@as(u32, c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }
 }
 /// Enumerate empty supported instance extensions; borrowed output, no allocation or transport.
@@ -1446,6 +1466,16 @@ fn free_memory(
         parent.id,
     ) orelse return;
     for (resource_states) |state| if (state.bound_memory == record.handle) return;
+    const state = resource_state(record);
+    if (state.mapping_resource != 0) {
+        var request = std.mem.zeroes(c.venus_request_t);
+        request.kind = c.RequestFree;
+        request.resource_id = state.mapping_resource;
+        if (mapping_exchange(&request, null, 0, null, 0) != c.RingOk) return;
+        mapping_slots[state.mapping_resource - 2] = false;
+        state.mapping_resource = 0;
+    }
+    release_shadow(state);
     var writer = writer_t{};
     writer.header(22, parent.id);
     writer.put(u64, record.id);
@@ -1469,6 +1499,175 @@ fn free_memory(
             0,
         ) == c.RingOk,
     );
+}
+fn release_shadow(state: *resource_state_t) void {
+    if (state.mapped_bytes) |bytes| MappingAllocator.free(bytes);
+    state.mapped_bytes = null;
+    state.mapped_offset = 0;
+    state.mapped_size = 0;
+}
+fn mapping_exchange(request: *const c.venus_request_t, input: ?*const anyopaque, length: usize, output: ?*anyopaque, capacity: usize) c_int {
+    if (lost != c.RingOk or command.exchange == null) return c.RingClosed;
+    var response = std.mem.zeroes(c.venus_request_t);
+    const status = command.exchange.?(command.context, request, input, length, &response, output, capacity);
+    if (status != c.RingOk) {
+        if (status != c.RingInvalid and status != c.RingLimit and status != c.RingAgain)
+            _ = failure(status);
+        return status;
+    }
+    if (response.kind != request.kind or response.direction != 1 or response.status != 0 or
+        response.resource_id != 0 or response.flags != 0 or response.argument_zero != 0 or
+        response.argument_one != 0 or response.payload_bytes != capacity)
+    {
+        _ = failure(c.RingCorrupt);
+        return c.RingCorrupt;
+    }
+    return c.RingOk;
+}
+fn copy_mapping(state: *resource_state_t, offset: u64, size: u64, writing: bool) c_int {
+    const bytes = state.mapped_bytes.?;
+    var cursor: u64 = offset;
+    var remaining = size;
+    while (remaining != 0) {
+        const count: usize = @intCast(@min(remaining, MappingChunkBytes));
+        var request = std.mem.zeroes(c.venus_request_t);
+        request.kind = if (writing) c.RequestWrite else c.RequestRead;
+        request.resource_id = state.mapping_resource;
+        request.argument_zero = cursor;
+        request.argument_one = count;
+        request.payload_bytes = if (writing) @intCast(count) else 0;
+        const pointer = bytes[@intCast(cursor)..].ptr;
+        const status = mapping_exchange(&request, if (writing) pointer else null, if (writing) count else 0, if (writing) null else pointer, if (writing) 0 else count);
+        if (status != c.RingOk) return status;
+        cursor += count;
+        remaining -= count;
+    }
+    return c.RingOk;
+}
+/// Map a bounded noncoherent shadow of actual exported Vulkan allocation storage.
+/// @param[in] device Nonnull borrowed private parent; memory must belong to it.
+/// @param[in] memory_handle Nonnull owned allocation token, retained until free.
+/// @param[in] offset Byte offset strictly inside allocation; flags must be zero.
+/// @param[in] size Nonzero range or VK_WHOLE_SIZE; bounded by allocation.
+/// @param[out] output Nonnull writable pointer storage, NULL on all failures.
+/// @return SUCCESS, MEMORY_MAP_FAILED for invalid bounds/export/quota, host OOM, or device loss.
+/// @note Mutex serialized. ICD owns shadow until unmap/free/abandon; caller externally synchronizes GPU access.
+fn map_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory, offset: u64, size: u64, flags: u32, output: [*c]?*anyopaque) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_MEMORY_MAP_FAILED;
+    output.* = null;
+    if (device == null or memory_handle == null or flags != 0) return c.VK_ERROR_MEMORY_MAP_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_MEMORY_MAP_FAILED;
+    const record = child_object(@intFromPtr(memory_handle.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id) orelse return c.VK_ERROR_MEMORY_MAP_FAILED;
+    const state = resource_state(record);
+    if (state.mapped_bytes != null or offset >= state.allocation_size or size == 0 or state.allocation_size > MaxMappedBytes)
+        return c.VK_ERROR_MEMORY_MAP_FAILED;
+    const count = if (size == std.math.maxInt(u64)) state.allocation_size - offset else size;
+    if (count > state.allocation_size - offset) return c.VK_ERROR_MEMORY_MAP_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var physical: ?*c.venus_object_t = null;
+    for (&slots) |*slot| if (slot.id == parent.parent_id and slot.kind == c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) {
+        physical = slot;
+        break;
+    };
+    const reply = query(@ptrFromInt(physical.?.handle), 8) orelse return c.VK_ERROR_DEVICE_LOST;
+    var properties_value: c.VkPhysicalDeviceMemoryProperties = undefined;
+    if (c.venus_values_memory_decode(&properties_value, reply.ptr, reply.len) != c.RingOk)
+        return failure(c.RingCorrupt);
+    if (state.type_index >= properties_value.memoryTypeCount or
+        properties_value.memoryTypes[state.type_index].propertyFlags &
+        (c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) !=
+        (c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+        return c.VK_ERROR_MEMORY_MAP_FAILED;
+    const bytes = MappingAllocator.alignedAlloc(u8, 4096, @intCast(state.allocation_size)) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    state.mapped_bytes = bytes;
+    if (state.mapping_resource == 0) {
+        var slot_index: ?usize = null;
+        for (mapping_slots, 0..) |occupied, index| if (!occupied) {
+            slot_index = index;
+            break;
+        };
+        if (slot_index == null) {
+            release_shadow(state);
+            return c.VK_ERROR_MEMORY_MAP_FAILED;
+        }
+        var request = std.mem.zeroes(c.venus_request_t);
+        request.kind = c.RequestCreate;
+        request.resource_id = @intCast(slot_index.? + 2);
+        request.flags = 1;
+        request.argument_zero = record.id;
+        request.argument_one = (state.allocation_size + 4095) & ~@as(u64, 4095);
+        const status = mapping_exchange(&request, null, 0, null, 0);
+        if (status != c.RingOk) {
+            release_shadow(state);
+            return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_MEMORY_MAP_FAILED;
+        }
+        mapping_slots[slot_index.?] = true;
+        state.mapping_resource = request.resource_id;
+    }
+    const status = copy_mapping(state, offset, count, false);
+    if (status != c.RingOk) {
+        release_shadow(state);
+        return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    state.mapped_offset = offset;
+    state.mapped_size = count;
+    output.* = bytes[@intCast(offset)..].ptr;
+    return c.VK_SUCCESS;
+}
+/// Release only the ICD-owned shadow; export survives remap until memory free.
+/// @param[in] device Nullable borrowed parent, invalid/stale handles ignored.
+/// @param[in] memory_handle Nullable token; no implicit noncoherent flush.
+/// @note Mutex serialized, allocation-free serializer; pointer expires upon return.
+fn unmap_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or memory_handle == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(@intFromPtr(memory_handle.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id) orelse return;
+    release_shadow(resource_state(record));
+}
+fn mapped_ranges(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMemoryRange, writing: bool) c_int {
+    if (device == null or count > 64 or (count != 0 and ranges == null)) return c.VK_ERROR_MEMORY_MAP_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_MEMORY_MAP_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    // Validate the complete array before the first host side effect.
+    if (count != 0) for (ranges[0..count]) |range| {
+        if (range.sType != c.VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE or range.pNext != null or range.memory == null)
+            return c.VK_ERROR_MEMORY_MAP_FAILED;
+        const record = child_object(@intFromPtr(range.memory.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id) orelse return c.VK_ERROR_MEMORY_MAP_FAILED;
+        const state = resource_state(record);
+        if (state.mapped_bytes == null or range.offset < state.mapped_offset or range.offset >= state.mapped_offset + state.mapped_size or range.size == 0)
+            return c.VK_ERROR_MEMORY_MAP_FAILED;
+        const size = if (range.size == std.math.maxInt(u64)) state.allocation_size - range.offset else range.size;
+        if (size > state.mapped_offset + state.mapped_size - range.offset) return c.VK_ERROR_MEMORY_MAP_FAILED;
+    };
+    if (count != 0) for (ranges[0..count]) |range| {
+        const state = resource_state(child_object(@intFromPtr(range.memory.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id).?);
+        const size = if (range.size == std.math.maxInt(u64)) state.allocation_size - range.offset else range.size;
+        const status = copy_mapping(state, range.offset, size, writing);
+        if (status != c.RingOk) return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_MEMORY_MAP_FAILED;
+    };
+    return c.VK_SUCCESS;
+}
+/// Copy validated noncoherent mapped ranges to actual receiver allocation storage.
+/// @param[in] device Borrowed live parent; ranges borrowed count entries, NULL only for zero.
+/// @return SUCCESS, MEMORY_MAP_FAILED for local range/resource errors, or sticky DEVICE_LOST.
+/// @note Mutex serialized, no allocation; caller synchronizes GPU access and shadow writers.
+fn flush_memory(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMemoryRange) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    return mapped_ranges(device, count, ranges, true);
+}
+/// Acquire actual receiver allocation bytes into validated noncoherent shadow ranges.
+/// @param[in] device Borrowed live parent; ranges borrowed count entries, NULL only for zero.
+/// @return SUCCESS, MEMORY_MAP_FAILED for local range/resource errors, or sticky DEVICE_LOST.
+/// @note Mutex serialized, no allocation; caller waits GPU completion before invalidation.
+fn invalidate_memory(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMemoryRange) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    return mapped_ranges(device, count, ranges, false);
 }
 /// Bind a buffer to memory_handle using actual host requirements and overflow-safe bounds.
 /// @param[in] device Nonnull private parent, borrowed for call.
@@ -2725,6 +2924,10 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkResetCommandPool", &reset_command_pool },
         .{ "vkAllocateMemory", &allocate_memory },
         .{ "vkFreeMemory", &free_memory },
+        .{ "vkMapMemory", &map_memory },
+        .{ "vkUnmapMemory", &unmap_memory },
+        .{ "vkFlushMappedMemoryRanges", &flush_memory },
+        .{ "vkInvalidateMappedMemoryRanges", &invalidate_memory },
         .{ "vkBindBufferMemory", &bind_buffer_memory },
         .{ "vkDestroyBuffer", &destroy_buffer },
         .{ "vkGetBufferMemoryRequirements", &buffer_requirements },
