@@ -49,7 +49,7 @@ if mode == 'venus_icd':
                      'build/venus_query_wire.o','build/venus_values.o','build/venus_values_oracle.o',
                      'build/venus_render_wire_oracle.o','build/venus_descriptor_wire_oracle.o',
                      'build/venus_compute_wire_oracle.o', 'build/venus_graphics_wire_oracle.o',
-                     'build/venus_graphics_pipeline_wire_oracle.o']
+                     'build/venus_graphics_pipeline_wire_oracle.o', 'build/venus_graphics_command_wire_oracle.o']
 extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle else []
 subprocess.run(['zig','test',source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
  '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')],check=True)

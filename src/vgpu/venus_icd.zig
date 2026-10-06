@@ -16,6 +16,7 @@ const graphics_wire = @import("venus_graphics_wire.zig");
 const graphics_state = @import("venus_graphics_state.zig");
 var graphics_recordings = [_]graphics_state.recording_t{.{}} ** 64;
 const graphics_pipeline_wire = @import("venus_graphics_pipeline_wire.zig");
+const graphics_command_wire = @import("venus_graphics_command_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 const MaxMappedBytes: u64 = 16777216;
@@ -3077,6 +3078,7 @@ fn end_command_buffer(buffer: c.VkCommandBuffer) callconv(.C) c_int {
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const state = resource_state(record);
     if (state.command_state != .Recording) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (state.command_profile_index != 0) graphics_state.finish(graphics_recording(state)) catch return c.VK_ERROR_INITIALIZATION_FAILED;
     var writer = writer_t{};
     writer.header(91, record.id);
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
@@ -3137,6 +3139,94 @@ fn graphics_family_supported(pool: *const c.venus_object_t) bool {
     const entry = device_cache(device.?.handle).?;
     const family = resource_state(pool).pool_family;
     return family < entry.graphics_queue_count and entry.graphics_queue_flags[family] & c.VK_QUEUE_GRAPHICS_BIT != 0;
+}
+/// Begin canonical inline color pass. [in] nullable borrowed command/info/clear array; contents INLINE.
+/// Void; invalid recording/dependencies invalidate locally. Native acknowledgment precedes copied state
+/// and pass/framebuffer/view/image/memory references. No caller pointers retained; mutex serialized.
+fn begin_render_pass(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkRenderPassBeginInfo, contents: u32) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    if (state.command_level != 0 or info == null or info.*.renderPass == null or info.*.framebuffer == null) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const pass = child_object(@intFromPtr(info.*.renderPass.?), c.VK_OBJECT_TYPE_RENDER_PASS, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const framebuffer = child_object(@intFromPtr(info.*.framebuffer.?), c.VK_OBJECT_TYPE_FRAMEBUFFER, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const framebuffer_state = resource_state(framebuffer);
+    const format = resource_state(pass).render_format;
+    const view = child_object(framebuffer_state.framebuffer_view, c.VK_OBJECT_TYPE_IMAGE_VIEW, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const writer = graphics_wire.begin_render_pass(@ptrCast(info), record.id, pass.id, framebuffer.id, contents) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (format != framebuffer_state.render_format or !framebuffer_attachment(view, framebuffer_state.framebuffer_extent[0], framebuffer_state.framebuffer_extent[1], format) or
+        @as(u32, @intCast(info.*.renderArea.offset.x)) > framebuffer_state.framebuffer_extent[0] or
+        @as(u32, @intCast(info.*.renderArea.offset.y)) > framebuffer_state.framebuffer_extent[1] or
+        info.*.renderArea.extent.width > framebuffer_state.framebuffer_extent[0] - @as(u32, @intCast(info.*.renderArea.offset.x)) or
+        info.*.renderArea.extent.height > framebuffer_state.framebuffer_extent[1] - @as(u32, @intCast(info.*.renderArea.offset.y))) {
+        state.command_state = .Invalid;
+        return;
+    }
+    if (!graphics_family_supported(pool)) {
+        if (lost == c.RingOk) state.command_state = .Invalid;
+        return;
+    }
+    const image = child_object(resource_state(view).view_image, c.VK_OBJECT_TYPE_IMAGE, pool.parent_id).?;
+    const image_state = resource_state(image);
+    if (resource_state(pass).render_final_layout == c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL and
+        image_state.image_usage & (c.VK_IMAGE_USAGE_SAMPLED_BIT | c.VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT) == 0) {
+        state.command_state = .Invalid;
+        return;
+    }
+    var staged = graphics_recording(state).*;
+    graphics_state.begin_pass(&staged, format) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    const allocation = child_object(resource_state(image).bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, 133)) return;
+    graphics_recording(state).* = staged;
+    for ([_]*c.venus_object_t{ pass, framebuffer, view, image, allocation }) |target| command_reference(state, target);
+}
+/// End active pass. [in] nullable borrowed command token. Invalid ordering invalidates locally.
+/// Void; exact opcode135 acknowledgment exits pass while preserving pipeline; mutex serialized.
+fn end_render_pass(command_buffer: c.VkCommandBuffer) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    var staged = graphics_recording(state).*;
+    graphics_state.end_pass(&staged) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    const writer = graphics_command_wire.end_render_pass(record.id) catch unreachable;
+    if (!command_acknowledged(&writer, 135)) return;
+    graphics_recording(state).* = staged;
+}
+fn outside_render_pass(state: *resource_state_t) bool {
+    if (state.command_profile_index == 0 or graphics_recording(state).active_format == 0) return true;
+    state.command_state = .Invalid;
+    return false;
 }
 fn graphics_recording(state: *const resource_state_t) *graphics_state.recording_t {
     std.debug.assert(state.command_profile_index != 0);
@@ -3266,6 +3356,7 @@ fn dispatch(command_buffer: c.VkCommandBuffer, x: u32, y: u32, z: u32) callconv(
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
     if (state.command_state != .Recording) return;
+    if (!outside_render_pass(state)) return;
     const pool = command_pool_for(record) orelse return;
     var parent: ?*c.venus_object_t = null;
     for (&slots) |*slot| if (slot.id == pool.parent_id and slot.kind == c.VK_OBJECT_TYPE_DEVICE) {
@@ -3363,6 +3454,7 @@ fn fill_buffer(
     ) orelse return;
     const state = resource_state(record);
     if (state.command_state != .Recording) return;
+    if (!outside_render_pass(state)) return;
     const pool = command_pool_for(record) orelse return;
     const target = if (buffer != null) child_object(
         @intFromPtr(buffer.?),
@@ -3425,6 +3517,7 @@ fn copy_buffer(
     ) orelse return;
     const state = resource_state(record);
     if (state.command_state != .Recording) return;
+    if (!outside_render_pass(state)) return;
     const pool = command_pool_for(record) orelse return;
     const source_record = if (source != null) child_object(
         @intFromPtr(source.?),
@@ -3525,6 +3618,7 @@ fn update_buffer(
     ) orelse return;
     const state = resource_state(record);
     if (state.command_state != .Recording) return;
+    if (!outside_render_pass(state)) return;
     const pool = command_pool_for(record) orelse return;
     const target = if (buffer != null) child_object(
         @intFromPtr(buffer.?),
@@ -3617,6 +3711,7 @@ fn pipeline_barrier(
     ) orelse return;
     const state = resource_state(record);
     if (state.command_state != .Recording) return;
+    if (!outside_render_pass(state)) return;
     const pool = command_pool_for(record) orelse return;
     if (source_stage == 0 or destination_stage == 0 or
         (source_stage | destination_stage) & ~@as(u32, 0x1ffff) != 0 or
@@ -4154,6 +4249,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateSemaphore", &create_semaphore },
         .{ "vkDestroySemaphore", &destroy_semaphore },
+        .{ "vkCmdBeginRenderPass", &begin_render_pass },
+        .{ "vkCmdEndRenderPass", &end_render_pass },
         .{ "vkCmdBindPipeline", &bind_pipeline },
         .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
         .{ "vkCmdPushConstants", &push_constants },
@@ -5047,7 +5144,7 @@ test "descriptor staging publishes only acknowledged metadata and scrubs every o
         for (std.mem.asBytes(&descriptor_wire_buffers)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
     }
 }
-test "compute acknowledged commands publish no references or push changes on transport and opcode failures" {
+test "compute and graphics acknowledgments publish no references or state changes on failures" {
     const fixture_t = struct {
         mode: usize,
         opcode: u32 = 0,
@@ -5070,7 +5167,7 @@ test "compute acknowledged commands publish no references or push changes on tra
             return c.RingOk;
         }
     };
-    for (0..5) |operation| for (0..3) |mode| {
+    for (0..7) |operation| for (0..3) |mode| {
         var fixture = fixture_t{ .mode = mode };
         try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
         defer venus_icd_abandon();
@@ -5089,20 +5186,39 @@ test "compute acknowledged commands publish no references or push changes on tra
         try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &descriptor_pool));
         try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, descriptor_pool.*.id, 0, &set));
         const empty = profiles.descriptor_layout_t{};
-        const definition = if (operation == 4) try profiles.normalize_pipeline(&.{}, &.{}) else try profiles.normalize_pipeline(&.{empty}, &.{.{ .stage_flags = 32, .offset = 0, .size = 4 }});
+        const definition = if (operation >= 4) try profiles.normalize_pipeline(&.{}, &.{}) else try profiles.normalize_pipeline(&.{empty}, &.{.{ .stage_flags = 32, .offset = 0, .size = 4 }});
         resource_state(layout).profile_index = try profiles.reserve_slot(&profile_registry.pipeline_layouts, definition);
         resource_state(pipeline).profile_index = try profiles.reserve_slot(&profile_registry.pipelines, definition);
-        resource_state(pipeline).pipeline_bind_point = if (operation == 4) 0 else 1;
+        resource_state(pipeline).pipeline_bind_point = if (operation >= 4) 0 else 1;
         resource_state(pipeline).render_format = 37;
         resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&empty));
         resource_state(recording).command_profile_index = try profiles.reserve_slot(&command_registry.commands, compute_state.command_profile_t{ .pipeline = pipeline.*.handle });
         resource_state(recording).command_state = .Recording;
         device_caches[0] = .{ .handle = device.*.handle, .descriptor_limits_ready = true, .compute_group_limits = .{ 8, 8, 8 } };
-        if (operation == 4) {
+        if (operation >= 4) {
             device_caches[0].graphics_queue_ready = true;
             device_caches[0].graphics_queue_count = 1;
             device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
         }
+        var pass: [*c]c.venus_object_t = null;
+        var framebuffer: [*c]c.venus_object_t = null;
+        var view: [*c]c.venus_object_t = null;
+        var image: [*c]c.venus_object_t = null;
+        var allocation: [*c]c.venus_object_t = null;
+        if (operation >= 5) {
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_RENDER_PASS, device.*.id, 0, &pass));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_FRAMEBUFFER, device.*.id, 0, &framebuffer));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE_VIEW, device.*.id, 0, &view));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE, device.*.id, 0, &image));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &allocation));
+            resource_state(pass).* = .{ .render_format = 37, .render_final_layout = c.VK_IMAGE_LAYOUT_GENERAL };
+            resource_state(framebuffer).* = .{ .render_format = 37, .framebuffer_view = view.*.handle, .framebuffer_extent = .{ 64, 64 } };
+            resource_state(view).* = .{ .view_image = image.*.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
+            resource_state(image).* = .{ .bound_memory = allocation.*.handle, .image_type = c.VK_IMAGE_TYPE_2D, .image_samples = 1, .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .image_levels = 1, .image_layers = 1, .image_extent = .{ 64, 64, 1 } };
+            if (operation == 6) graphics_recording(resource_state(recording)).active_format = 37;
+        }
+        const clear_value = std.mem.zeroes(c.VkClearValue);
+        const begin_info: c.VkRenderPassBeginInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = @ptrFromInt(if (pass == null) 1 else pass.*.handle), .framebuffer = @ptrFromInt(if (framebuffer == null) 1 else framebuffer.*.handle), .renderArea = .{ .extent = .{ .width = 64, .height = 64 } }, .clearValueCount = 1, .pClearValues = &clear_value };
         const command_handle: c.VkCommandBuffer = @ptrFromInt(recording.*.handle);
         const handles = [_]c.VkDescriptorSet{@ptrFromInt(set.*.handle)};
         const value: u32 = 42;
@@ -5144,7 +5260,18 @@ test "compute acknowledged commands publish no references or push changes on tra
             2 => push_constants(command_handle, @ptrFromInt(layout.*.handle), 32, 0, 4, &value),
             3 => dispatch(command_handle, 1, 1, 1),
             4 => bind_pipeline(command_handle, 0, @ptrFromInt(pipeline.*.handle)),
+            5 => begin_render_pass(command_handle, &begin_info, c.VK_SUBPASS_CONTENTS_INLINE),
+            6 => end_render_pass(command_handle),
             else => unreachable,
+        }
+        if (operation >= 5) {
+            const expected_active: u32 = if (operation == 5) (if (mode == 0) 37 else 0) else (if (mode == 0) 0 else 37);
+            try std.testing.expectEqual(expected_active, graphics_recording(resource_state(recording)).active_format);
+            if (operation == 5 and mode == 0) {
+                var referenced: usize = 0;
+                for (resource_state(recording).buffer_references) |word| referenced += @popCount(word);
+                try std.testing.expectEqual(@as(usize, 5), referenced);
+            }
         }
         try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 1) c.RingClosed else c.RingCorrupt), lost);
         if (mode != 0) {

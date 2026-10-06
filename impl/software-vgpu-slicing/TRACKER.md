@@ -2299,3 +2299,7 @@ This synchronization commit is identified by subject `docs(vgpu): audit physical
 - **Commit (this entry, resolved by subject)**: `docs(vgpu): record host push and render pass verification`
   - **Task Impact**: +0% to TODO: #3 and #10 (+0% overall).
   - **Summary**: Record actual-host push and render-pass milestones, plus four clean full16 worker paths using all host ICDs and the repaired matching RADV. Mesa production CI remains pending; graphics/DXVK completion not credited prematurely.
+
+- **Commit (this entry, resolved by subject)**: `feat(vgpu): acknowledge render pass recording and active command guards`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); physical graphics and DXVK acceptance remain pending.
+  - **Summary**: Begin/end publish compatible pass state and five owned references only after exact opcode acknowledgments. Active passes reject transfer/compute/barrier commands and command-buffer completion; secondary recording, malformed areas and sampled final-layout usage are validated. Independent generated encoder checks and 25 invalid native cases pass through 128 direct/shared lifecycles. Transport/corrupt replies preserve state and references. ASan/LSan/UBSan gates and Windows object compile pass; 74 Zig tests, production branch90.17% (2018/2238), line99.15% (2331/2351).
