@@ -2090,3 +2090,13 @@ branches rather than only compiler-specialized test copies. Production lines100%
 branches91.67%; native C ABI/ASan/LSan/UBSan and Windows x86_64 cross-link pass. CI
 executes the same ABI/test fixtures natively on Windows and gates Linux coverage.
 No Vulkan loader or DXVK completion credit is assigned to this backend alone.
+
+
+Real production-worker fixture now binds the command owner to the negotiated
+frontend and issues pinned EnumerateInstanceVersion command137 eight times per
+session. Each command has private reply-stream prefix, CPU completion wait bounded
+by1000 one-millisecond retries, exact command/result/output-pointer header validation
+and nonzero returned version. The C test inspects private fixture bytes only; it
+is not an application-facing Vulkan decoder. Two fresh worker sessions retain
+existing healthy exit and unknown-release shutdown checks plus FD baselines. Both
+normal and ASan/LSan/UBSan worker/client runs pass; no standalone ICD/DXVK credit.

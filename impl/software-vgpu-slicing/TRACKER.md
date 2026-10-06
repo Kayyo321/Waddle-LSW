@@ -1069,9 +1069,19 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     lines100%, branches91.67%. Public Vulkan dispatch/DXVK remain pending.
 
 
-- **Commit (current; resolve by subject)**: `refactor(vgpu): keep command tests within the column limit`
+- **Commit `b7c3025`**: `refactor(vgpu): keep command tests within the column limit`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Format six long test assertions with explicit trailing commas
     so zig fmt preserves the100-column repository limit.
   - **Verification**: All5 Zig command tests and line-length audit pass; behavior
     and production code are unchanged.
+
+
+- **Commit (current; resolve by subject)**: `test(vgpu): query real Vulkan versions through command ownership`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Bind the command owner to a negotiated frontend in the actual
+    exec-isolated production worker fixture; query pinned Vulkan instance version
+    eight times before existing presentation isolation/loss checks.
+  - **Verification**: Normal and ASan/LSan/UBSan production worker/client execution
+    pass with healthy/corrupt-release teardown and descriptor baselines. Command
+    ownership coverage remains100% lines/91.67% branches. Loader/DXVK pending.

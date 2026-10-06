@@ -1,5 +1,6 @@
 /** @file worker_presented.c @brief Real presented worker exec, negotiation and channel isolation.
  */
+#include "waddle/venus_command.h"
 #include "waddle/venus_frame.h"
 #include "waddle/venus_guest.h"
 #include "waddle/venus_worker.h"
@@ -9,6 +10,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
@@ -23,6 +25,41 @@ static unsigned descriptors(void) {
     if (closedir(directory))
         return 0;
     return count;
+}
+static venus_ring_status_t command_exchange(void *context, const venus_request_t *request,
+                                            const void *input, size_t length,
+                                            venus_request_t *response, void *output,
+                                            size_t capacity) {
+    return venus_guest_exchange(context, request, input, length, response, output, capacity);
+}
+static int query_version(venus_guest_t *guest) {
+    static const unsigned char VersionCommand[16] = {137, 0, 0, 0, 1, 0, 0, 0,
+                                                     1,   0, 0, 0, 0, 0, 0, 0};
+    static const unsigned char ReplyHeader[16] = {137, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0};
+    venus_command_t command = {0};
+    unsigned char tx[128], rx[32];
+    if (venus_command_init(&command, command_exchange, guest, tx, sizeof(tx), rx, sizeof(rx)) !=
+        RingOk)
+        return 1;
+    for (unsigned iteration = 0; iteration < 8; iteration++) {
+        if (venus_command_start(&command, VersionCommand, sizeof(VersionCommand)) != RingOk)
+            return 1; /* Caller abandons the entire old session on any failure. */
+        for (unsigned attempt = 0;; attempt++) {
+            venus_ring_status_t status = venus_command_poll(&command);
+            if (status == RingOk)
+                break;
+            if (status != RingAgain || attempt >= 1000)
+                return 1;
+            usleep(1000);
+        }
+        const void *view = NULL;
+        size_t bytes = 0;
+        if (venus_command_take(&command, &view, &bytes) != RingOk || bytes != sizeof(rx) ||
+            memcmp(view, ReplyHeader, sizeof(ReplyHeader)) || !rx[18])
+            return 1;
+    }
+    venus_command_free(&command);
+    return 0;
 }
 static int run_fixture(int corrupt) {
     int result = 1, mapping_fd = -1, streams[2] = {-1, -1}, frames[2] = {-1, -1};
@@ -59,6 +96,8 @@ static int run_fixture(int corrupt) {
         venus_channel_handshake(&channel) != RingOk ||
         venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) != RingOk ||
         venus_guest_init(&guest, &rpc, 5000) != RingOk)
+        goto cleanup;
+    if (query_version(&guest))
         goto cleanup;
     venus_frame_t frame = {.context = UINT64_MAX,
                            .frame = 1,
