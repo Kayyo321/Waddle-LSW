@@ -353,6 +353,20 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     (VkSemaphore)(uintptr_t)read_u64(bytes + 16), NULL);
             }
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 93 || fixture->command == 103 || fixture->command == 132 || fixture->command == 110) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder={.bytes=expected,.capacity=sizeof(expected)};
+            VkCommandBuffer command=(VkCommandBuffer)(uintptr_t)read_u64(bytes+8);
+            if(fixture->command==93) vn_encode_vkCmdBindPipeline(&encoder,1,command,read_u32(bytes+16),(VkPipeline)(uintptr_t)read_u64(bytes+20));
+            else if(fixture->command==110) vn_encode_vkCmdDispatch(&encoder,1,command,read_u32(bytes+16),read_u32(bytes+20),read_u32(bytes+24));
+            else if(fixture->command==132) vn_encode_vkCmdPushConstants(&encoder,1,command,(VkPipelineLayout)(uintptr_t)read_u64(bytes+16),read_u32(bytes+24),read_u32(bytes+28),read_u32(bytes+32),bytes+44);
+            else {
+                uint32_t count=read_u32(bytes+32);assert(count>0&&count<=16);
+                VkDescriptorSet sets[16];for(uint32_t item=0;item<count;++item)sets[item]=(VkDescriptorSet)(uintptr_t)read_u64(bytes+44+8*item);
+                assert(read_u32(bytes+44+8*count)==0);
+                vn_encode_vkCmdBindDescriptorSets(&encoder,1,command,read_u32(bytes+16),(VkPipelineLayout)(uintptr_t)read_u64(bytes+20),read_u32(bytes+28),count,sets,0,NULL);
+            }
+            assert(encoder.used==length-36&&!memcmp(expected,bytes,encoder.used));
         } else if (fixture->command == 126) {
             unsigned char expected[8192];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -1889,6 +1903,138 @@ static void descriptor_lifecycle_contract(VkDevice device, PFN_vkGetDeviceProcAd
     fixture->descriptor_layout_info = NULL; fixture->descriptor_pool_info = NULL; fixture->descriptor_allocate_info = NULL;
 }
 
+/** @brief Verify acknowledged compute recording and descriptor-only pending buffer retention. */
+static void compute_recording_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture,
+    VkPipeline pipeline, VkPipelineLayout layout, VkDescriptorSetLayout descriptor_layout) {
+#define LoadCompute(type, variable, name) type variable = (type)lookup(device, name); assert(variable)
+    LoadCompute(PFN_vkCreateDescriptorPool, create_descriptor_pool, "vkCreateDescriptorPool");
+    LoadCompute(PFN_vkDestroyDescriptorPool, destroy_descriptor_pool, "vkDestroyDescriptorPool");
+    LoadCompute(PFN_vkAllocateDescriptorSets, allocate_sets, "vkAllocateDescriptorSets");
+    LoadCompute(PFN_vkFreeDescriptorSets, free_sets, "vkFreeDescriptorSets");
+    LoadCompute(PFN_vkUpdateDescriptorSets, update_sets, "vkUpdateDescriptorSets");
+    LoadCompute(PFN_vkCreateBuffer, create_buffer, "vkCreateBuffer");
+    LoadCompute(PFN_vkDestroyBuffer, destroy_buffer, "vkDestroyBuffer");
+    LoadCompute(PFN_vkAllocateMemory, allocate_memory, "vkAllocateMemory");
+    LoadCompute(PFN_vkFreeMemory, free_memory, "vkFreeMemory");
+    LoadCompute(PFN_vkBindBufferMemory, bind_memory, "vkBindBufferMemory");
+    LoadCompute(PFN_vkCreateCommandPool, create_pool, "vkCreateCommandPool");
+    LoadCompute(PFN_vkDestroyCommandPool, destroy_pool, "vkDestroyCommandPool");
+    LoadCompute(PFN_vkAllocateCommandBuffers, allocate_commands, "vkAllocateCommandBuffers");
+    LoadCompute(PFN_vkBeginCommandBuffer, begin, "vkBeginCommandBuffer");
+    LoadCompute(PFN_vkEndCommandBuffer, end, "vkEndCommandBuffer");
+    LoadCompute(PFN_vkResetCommandBuffer, reset, "vkResetCommandBuffer");
+    LoadCompute(PFN_vkCmdBindPipeline, bind_pipeline, "vkCmdBindPipeline");
+    LoadCompute(PFN_vkCmdBindDescriptorSets, bind_sets, "vkCmdBindDescriptorSets");
+    LoadCompute(PFN_vkCmdDispatch, dispatch, "vkCmdDispatch");
+    LoadCompute(PFN_vkCmdPushConstants, push, "vkCmdPushConstants");
+    LoadCompute(PFN_vkQueueSubmit, submit, "vkQueueSubmit");
+    LoadCompute(PFN_vkQueueWaitIdle, idle, "vkQueueWaitIdle");
+    LoadCompute(PFN_vkGetDeviceQueue, get_queue, "vkGetDeviceQueue");
+#undef LoadCompute
+    fixture->descriptor_properties = 1;
+    VkDescriptorPoolSize size = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4};
+    VkDescriptorPoolCreateInfo descriptor_pool_info = {.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags=VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,.maxSets=2,.poolSizeCount=1,.pPoolSizes=&size};
+    fixture->descriptor_pool_info=&descriptor_pool_info; VkDescriptorPool descriptor_pool;
+    assert(create_descriptor_pool(device,&descriptor_pool_info,NULL,&descriptor_pool)==VK_SUCCESS);
+    VkDescriptorSetLayout set_layouts[2]={descriptor_layout,descriptor_layout};
+    VkDescriptorSetAllocateInfo set_info={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=descriptor_pool,
+        .descriptorSetCount=2,.pSetLayouts=set_layouts};
+    fixture->descriptor_allocate_info=&set_info;VkDescriptorSet sets[2];
+    assert(allocate_sets(device,&set_info,sets)==VK_SUCCESS);VkDescriptorSet set=sets[0];
+    VkBufferCreateInfo buffer_info={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=4096,.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    fixture->buffer_info=&buffer_info;VkBuffer buffer;assert(create_buffer(device,&buffer_info,NULL,&buffer)==VK_SUCCESS);
+    VkMemoryAllocateInfo memory_info={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=16384};
+    fixture->memory_info=&memory_info;VkDeviceMemory memory;assert(allocate_memory(device,&memory_info,NULL,&memory)==VK_SUCCESS);
+    assert(bind_memory(device,buffer,memory,0)==VK_SUCCESS);
+    VkDescriptorBufferInfo buffer_descriptor={buffer,0,256};
+    VkWriteDescriptorSet write={.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.descriptorCount=1,
+        .descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&buffer_descriptor};
+    fixture->descriptor_writes=&write;fixture->descriptor_write_count=1;fixture->descriptor_copy_count=0;
+    update_sets(device,1,&write,0,NULL);assert(fixture->command==79);
+    VkCommandPoolCreateInfo pool_info={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+    fixture->pool_info=&pool_info;VkCommandPool pool;assert(create_pool(device,&pool_info,NULL,&pool)==VK_SUCCESS);
+    VkCommandBufferAllocateInfo command_info={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=pool,.commandBufferCount=1};
+    fixture->command_allocate=&command_info;VkCommandBuffer command;assert(allocate_commands(device,&command_info,&command)==VK_SUCCESS);
+    VkCommandBufferBeginInfo begin_info={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};fixture->command_begin=&begin_info;
+    VkQueue queue;get_queue(device,0,0,&queue);assert(queue);
+    VkSubmitInfo submit_info={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&command};
+    unsigned ignored_before=fixture->submissions;
+    VkCommandBuffer ignored_commands[3]={NULL,(VkCommandBuffer)(uintptr_t)1,command};
+    for(unsigned index=0;index<3;++index){
+        bind_pipeline(ignored_commands[index],1,pipeline);
+        bind_sets(ignored_commands[index],1,layout,0,1,&set,0,NULL);
+        uint32_t ignored_value=1;push(ignored_commands[index],layout,32,0,4,&ignored_value);
+        dispatch(ignored_commands[index],1,1,1);
+    }
+    assert(fixture->submissions==ignored_before);
+    for(unsigned invalid=0;invalid<28;++invalid){
+        assert(begin(command,&begin_info)==VK_SUCCESS);unsigned before=fixture->submissions;
+        if(invalid==0)bind_pipeline(command,VK_PIPELINE_BIND_POINT_GRAPHICS,pipeline);
+        if(invalid==1)bind_pipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,NULL);
+        if(invalid==2)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,16,1,(void*)(uintptr_t)1,0,NULL);
+        if(invalid==3)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,0,(void*)(uintptr_t)1,0,NULL);
+        if(invalid==4)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,1,(void*)(uintptr_t)1);
+        if(invalid==5)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,NULL,0,NULL);
+        if(invalid==6)dispatch(command,1,1,1);
+        if(invalid==7)push(command,layout,32,1,4,(void*)(uintptr_t)1);
+        if(invalid==8)push(command,layout,32,0,132,(void*)(uintptr_t)1);
+        VkDescriptorSet stale_set=(VkDescriptorSet)(uintptr_t)1;
+        if(invalid==9)bind_sets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&set,0,NULL);
+        if(invalid==10)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,NULL,0,1,&set,0,NULL);
+        if(invalid==11)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,(VkPipelineLayout)(uintptr_t)1,0,1,&set,0,NULL);
+        if(invalid==12)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,1,1,&set,0,NULL);
+        if(invalid==13)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,17,(void*)(uintptr_t)1,0,NULL);
+        if(invalid==14)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&stale_set,0,NULL);
+        if(invalid==15)push(command,NULL,32,0,4,(void*)(uintptr_t)1);
+        if(invalid==16)push(command,(VkPipelineLayout)(uintptr_t)1,32,0,4,(void*)(uintptr_t)1);
+        if(invalid==17)push(command,layout,32,0,4,NULL);
+        if(invalid==18)push(command,layout,0,0,4,(void*)(uintptr_t)1);
+        if(invalid==19)push(command,layout,64,0,4,(void*)(uintptr_t)1);
+        if(invalid==20)push(command,layout,32,0,0,(void*)(uintptr_t)1);
+        if(invalid==21)push(command,layout,32,0,3,(void*)(uintptr_t)1);
+        if(invalid==22)push(command,layout,32,132,4,(void*)(uintptr_t)1);
+        if(invalid==23)push(command,layout,1,0,4,(void*)(uintptr_t)1);
+        if(invalid==24)push(command,layout,32,4,4,(void*)(uintptr_t)1);
+        if(invalid==25)bind_pipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,(VkPipeline)(uintptr_t)1);
+        if(invalid==26)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&sets[1],0,NULL);
+        if(invalid==26){bind_pipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);before=fixture->submissions;dispatch(command,1,1,1);}
+        if(invalid==27){bind_pipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);before=fixture->submissions;dispatch(command,9,1,1);}
+        assert(fixture->submissions==before);assert(end(command)==VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset(command,0)==VK_SUCCESS);
+    }
+    assert(begin(command,&begin_info)==VK_SUCCESS);
+    /* Ordinary Vulkan ordering permits descriptors and push writes before pipeline binding. */
+    /* The first bound set is never consumed and remains undefined. */
+    bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&sets[1],0,NULL);
+    bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,NULL);
+    uint32_t value=17;push(command,layout,32,0,sizeof(value),&value);assert(fixture->command==132);
+    bind_pipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);dispatch(command,8,1,1);assert(fixture->command==110);
+    assert(end(command)==VK_SUCCESS);
+    fixture->submit_result=VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(submit(queue,1,&submit_info,NULL)==VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    fixture->submit_result=VK_SUCCESS;
+    assert(submit(queue,1,&submit_info,NULL)==VK_SUCCESS);
+    unsigned before=fixture->submissions;
+    destroy_buffer(device,buffer,NULL);free_memory(device,memory,NULL);update_sets(device,1,&write,0,NULL);
+    assert(free_sets(device,descriptor_pool,1,&set)==VK_ERROR_INITIALIZATION_FAILED);
+    destroy_descriptor_pool(device,descriptor_pool,NULL);
+    assert(fixture->submissions==before);
+    assert(idle(queue)==VK_SUCCESS);
+    /* A successful core descriptor update invalidates the completed recorded binding. */
+    update_sets(device,1,&write,0,NULL);
+    before=fixture->submissions;assert(submit(queue,1,&submit_info,NULL)==VK_ERROR_INITIALIZATION_FAILED);assert(fixture->submissions==before);
+    assert(reset(command,0)==VK_SUCCESS);assert(begin(command,&begin_info)==VK_SUCCESS);
+    bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,0,1,&set,0,NULL);
+    bind_pipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);dispatch(command,1,1,1);assert(end(command)==VK_SUCCESS);
+    /* Destroying an actually consumed buffer invalidates an executable command. */
+    destroy_buffer(device,buffer,NULL);before=fixture->submissions;
+    assert(submit(queue,1,&submit_info,NULL)==VK_ERROR_INITIALIZATION_FAILED);assert(fixture->submissions==before);
+    destroy_pool(device,pool,NULL);destroy_descriptor_pool(device,descriptor_pool,NULL);free_memory(device,memory,NULL);
+    fixture->descriptor_pool_info=NULL;fixture->descriptor_allocate_info=NULL;fixture->descriptor_writes=NULL;fixture->descriptor_write_count=0;
+    fixture->buffer_info=NULL;fixture->memory_info=NULL;fixture->pool_info=NULL;fixture->command_allocate=NULL;fixture->command_begin=NULL;
+}
+
 /** @brief Verify copied pipeline lifetime, native failures and fixed64-owner exhaustion. */
 static void compute_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
     PFN_vkCreateShaderModule create_shader=(PFN_vkCreateShaderModule)lookup(device,"vkCreateShaderModule");
@@ -1903,14 +2049,18 @@ static void compute_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr l
     VkShaderModule shader; assert(create_shader(device,&shader_info,NULL,&shader)==VK_SUCCESS);
     PFN_vkCreateDescriptorSetLayout create_descriptor_layout=(PFN_vkCreateDescriptorSetLayout)lookup(device,"vkCreateDescriptorSetLayout");
     PFN_vkDestroyDescriptorSetLayout destroy_descriptor_layout=(PFN_vkDestroyDescriptorSetLayout)lookup(device,"vkDestroyDescriptorSetLayout");
-    VkDescriptorSetLayoutBinding binding={.binding=0,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=1,.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT};
-    VkDescriptorSetLayoutCreateInfo descriptor_info={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=1,.pBindings=&binding};
+    VkDescriptorSetLayoutBinding bindings[2]={{.binding=0,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=1,.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT},
+        {.binding=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptorCount=1,.stageFlags=VK_SHADER_STAGE_VERTEX_BIT}};
+    VkDescriptorSetLayoutCreateInfo descriptor_info={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=2,.pBindings=bindings};
     fixture->descriptor_layout_info=&descriptor_info;VkDescriptorSetLayout descriptor_layout;
     assert(create_descriptor_layout(device,&descriptor_info,NULL,&descriptor_layout)==VK_SUCCESS);
     VkPipelineLayoutCreateInfo layout_info={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.setLayoutCount=1,.pSetLayouts=&descriptor_layout};
     fixture->pipeline_layout_info=&layout_info;
     VkPipelineLayout layout; assert(create_layout(device,&layout_info,NULL,&layout)==VK_SUCCESS);
-    destroy_descriptor_layout(device,descriptor_layout,NULL);
+    VkPushConstantRange push_range={.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT,.size=4};
+    /* Pipeline layout already exists; create a matching push-capable replacement. */
+    destroy_layout(device,layout,NULL);layout_info.pushConstantRangeCount=1;layout_info.pPushConstantRanges=&push_range;
+    assert(create_layout(device,&layout_info,NULL,&layout)==VK_SUCCESS);
     VkComputePipelineCreateInfo info={.sType=VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
         .stage={.sType=VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,.stage=VK_SHADER_STAGE_COMPUTE_BIT,.module=shader,.pName="main"},.layout=layout};
     fixture->compute_info=&info;
@@ -1934,6 +2084,8 @@ static void compute_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr l
     before=fixture->submissions;
     assert(create(device,NULL,1,&info,NULL,&pipeline)==VK_ERROR_OUT_OF_HOST_MEMORY&&!pipeline);
     assert(fixture->submissions==before);
+    compute_recording_contract(device,lookup,fixture,pipelines[0],layout,descriptor_layout);
+    destroy_descriptor_layout(device,descriptor_layout,NULL);
     destroy_shader(device,shader,NULL);destroy_layout(device,layout,NULL);
     before=fixture->submissions;
     assert(create(device,NULL,1,&info,NULL,&pipeline)==VK_ERROR_INITIALIZATION_FAILED&&!pipeline);
@@ -2072,7 +2224,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) { compute_pipeline_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); }
+        if (scenario == 0) { shader_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");

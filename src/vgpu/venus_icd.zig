@@ -4813,3 +4813,94 @@ test "descriptor staging publishes only acknowledged metadata and scrubs every o
         for (std.mem.asBytes(&descriptor_wire_buffers)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
     }
 }
+test "compute acknowledged commands publish no references or push changes on transport and opcode failures" {
+    const fixture_t = struct {
+        mode: usize,
+        opcode: u32 = 0,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                if (length < 40) return c.RingInvalid;
+                fixture.opcode = std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little);
+                if (fixture.mode == 1) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], fixture.opcode + @as(u32, if (fixture.mode == 2) 1 else 0), .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..4) |operation| for (0..3) |mode| {
+        var fixture = fixture_t{ .mode = mode };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var device: [*c]c.venus_object_t = null;
+        var pool: [*c]c.venus_object_t = null;
+        var recording: [*c]c.venus_object_t = null;
+        var pipeline: [*c]c.venus_object_t = null;
+        var layout: [*c]c.venus_object_t = null;
+        var descriptor_pool: [*c]c.venus_object_t = null;
+        var set: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_POOL, device.*.id, 0, &pool));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.*.id, 1, &recording));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PIPELINE, device.*.id, 0, &pipeline));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, device.*.id, 0, &layout));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &descriptor_pool));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, descriptor_pool.*.id, 0, &set));
+        const empty = profiles.descriptor_layout_t{};
+        const definition = try profiles.normalize_pipeline(&.{empty}, &.{.{ .stage_flags = 32, .offset = 0, .size = 4 }});
+        resource_state(layout).profile_index = try profiles.reserve_slot(&profile_registry.pipeline_layouts, definition);
+        resource_state(pipeline).profile_index = try profiles.reserve_slot(&profile_registry.pipelines, definition);
+        resource_state(pipeline).pipeline_bind_point = 1;
+        resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&empty));
+        resource_state(recording).command_profile_index = try profiles.reserve_slot(&command_registry.commands, compute_state.command_profile_t{ .pipeline = pipeline.*.handle });
+        resource_state(recording).command_state = .Recording;
+        device_caches[0] = .{ .handle = device.*.handle, .descriptor_limits_ready = true, .compute_group_limits = .{ 8, 8, 8 } };
+        const command_handle: c.VkCommandBuffer = @ptrFromInt(recording.*.handle);
+        const handles = [_]c.VkDescriptorSet{@ptrFromInt(set.*.handle)};
+        const value: u32 = 42;
+        if (mode == 0 and operation == 0) {
+            resource_state(pipeline).pipeline_bind_point = 0;
+            bind_pipeline(command_handle, 1, @ptrFromInt(pipeline.*.handle));
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            resource_state(pipeline).pipeline_bind_point = 1;
+            resource_state(recording).command_state = .Recording;
+        }
+        if (mode == 0 and operation == 1) {
+            const profile = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
+            profile.layout = try profiles.normalize_bindings(&.{.{ .binding = 4, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
+            bind_descriptor_sets(command_handle, 1, @ptrFromInt(layout.*.handle), 0, 1, &handles, 0, null);
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            profile.layout = empty;
+            resource_state(recording).command_state = .Recording;
+        }
+        if (mode == 0 and operation == 3) {
+            const profile = profiles.get_profile(&profile_registry.pipelines, resource_state(pipeline).profile_index).?;
+            profile.sets[0] = try profiles.normalize_bindings(&.{.{ .binding = 0, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
+            dispatch(command_handle, 1, 1, 1);
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            profile.sets[0] = empty;
+            resource_state(recording).command_state = .Recording;
+        }
+        switch (operation) {
+            0 => bind_pipeline(command_handle, 1, @ptrFromInt(pipeline.*.handle)),
+            1 => bind_descriptor_sets(command_handle, 1, @ptrFromInt(layout.*.handle), 0, 1, &handles, 0, null),
+            2 => push_constants(command_handle, @ptrFromInt(layout.*.handle), 32, 0, 4, &value),
+            3 => dispatch(command_handle, 1, 1, 1),
+            else => unreachable,
+        }
+        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 1) c.RingClosed else c.RingCorrupt), lost);
+        if (mode != 0) {
+            try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
+            try std.testing.expect(!command_profile(recording).descriptor_layout_ready);
+            try std.testing.expectEqual(@as(u64, 0), command_profile(recording).pushes[5].initialized[0]);
+        } else if (operation == 2) try std.testing.expectEqual(@as(u64, 15), command_profile(recording).pushes[5].initialized[0]);
+    };
+}
