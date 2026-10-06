@@ -699,3 +699,36 @@ build/vgpu_values_test.exe: tests/vgpu/values.c build/venus_values_windows.lib |
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuValuesOracleIncludes) $< build/venus_values_windows.lib -o $@
 
 vgpu-windows: build/vgpu_values_test.exe
+
+# Initial core instance encoding and bounded transaction reply conversion.
+VgpuInstanceWireIncludes = -Iinclude -Isubmodules/venus_protocol/include
+VgpuInstanceOracleIncludes = -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests $(VgpuInstanceWireIncludes)
+VgpuInstanceWireHeaders = include/waddle/venus_instance_wire.h include/waddle/venus_values.h tests/vgpu/encoder/vn_cs.h
+build/venus_instance_wire.o: src/vgpu/venus_instance_wire.zig $(VgpuInstanceWireHeaders) | build
+	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/venus_instance_oracle.o: tests/vgpu/instance_wire.c $(VgpuInstanceWireHeaders) | build vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -DVgpuInstanceOracle -c $< -o $@
+
+build/vgpu_instance_wire_test: tests/vgpu/instance_wire.c build/venus_instance_wire.o build/venus_instance_oracle.o
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) $< build/venus_instance_wire.o -o $@
+
+.PHONY: vgpu-instance-wire-test vgpu-instance-wire-sanitizers vgpu-instance-wire-coverage
+vgpu-instance-wire-test: build/vgpu_instance_wire_test
+	./build/vgpu_instance_wire_test
+	$(ZIG) test src/vgpu/venus_instance_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_instance_oracle.o
+
+vgpu-instance-wire-sanitizers: build/venus_instance_wire.o build/venus_instance_oracle.o
+	$(CC) $(VgpuReceiverSanitizers) $(VgpuInstanceOracleIncludes) tests/vgpu/instance_wire.c build/venus_instance_wire.o -o build/vgpu_instance_wire_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_instance_wire_sanitized
+
+vgpu-instance-wire-coverage: build/venus_instance_oracle.o
+	python3 tests/av/coverage.py venus_instance_wire
+
+build/venus_instance_wire_windows.lib: src/vgpu/venus_instance_wire.zig $(VgpuInstanceWireHeaders) | build
+	$(ZIG) build-lib $< $(VgpuInstanceWireIncludes) -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_instance_wire_test.exe: tests/vgpu/instance_wire.c build/venus_instance_wire_windows.lib | vgpu-protocol
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuInstanceOracleIncludes) $< build/venus_instance_wire_windows.lib -o $@
+
+vgpu-windows: build/vgpu_instance_wire_test.exe

@@ -1165,10 +1165,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     including ASan/LSan/UBSan. This is actual receiver verification, not ICD/DXVK.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify core instance dispatch wire boundary`
+- **Commit `add3a30`**: `docs(vgpu): specify core instance dispatch wire boundary`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify production instance creation/destruction serialization,
     bounded name input, exact transaction replies, reservation rollback and
     unsupported initial core inputs before ICD lifecycle integration.
   - **Verification**: Cross-check command IDs and pinned guest encoding, including
     output host IDs and nullable application info. Full ICD/DXVK remains pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): serialize bounded core instance transactions`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Add production core create/destroy packets and exact creation
+    reply identity/result checks with preserved failure output. Compare independent
+    pinned guest serializer; add portable native ABI/sanitizer/coverage CI gates.
+  - **Verification**: Five allocator tests, native C and ASan/LSan/UBSan pass;
+    Windows cross-link passes. Production lines100%, branches95.59%. Prior fixed
+    query changes atb2d6354 pass Linux and native Windows CI run37488148604.
+    Public loader/device/API dispatch and DXVK remain pending with no helper credit.

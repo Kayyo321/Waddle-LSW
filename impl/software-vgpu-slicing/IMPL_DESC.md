@@ -2287,3 +2287,27 @@ Tests compare create packets against the immutable guest C generator and exercis
 nullable application-info/names, empty names, byte padding, max names/API, malformed
 input, buffer exhaustion, every truncated reply prefix and wrong host identity.
 Allocator, sanitizers, coverage and native Windows execution remain required.
+
+
+Initial instance wire implementation stages the complete request in a4096-byte
+private Zig stack writer before copying to caller output. Maximum core request is
+2176 bytes:128 fixed bytes including both name-count tags, plus two1024-byte padded
+names. Name length is enforced before copying; private scalar/padding bounds are
+asserted invariants, not recoverable public capacity errors. Public short capacity
+returns Limit and preserves output and prefix length. API0 normalizes to1.0 before
+encoding. Input structs and output metadata must be disjoint; nested strings remain
+borrowed caller-valid input through NUL. No application pointer is placed on wire.
+
+Five allocator-backed tests compare the independent pinned guest C serializer,
+including nullable info/names, maximal strings, padding and normalized API0. The
+oracle supplies real bounds/reserve/handle-ID hooks; vendor decoder and ring helpers
+are compile-only and never invoked. Real application IDs still require the separate
+registry; the oracle's integer-shaped test handle is never a production translation.
+Tests invoke exported ABI functions through volatile callbacks so LLVM cannot
+specialize away null/error paths from measured production functions. Coverage is
+100% lines and95.59% branches; native C and ASan/LSan/UBSan pass, Windows cross-link
+passes, native Windows execution is a CI gate. Full ICD/device/DXVK stays pending.
+
+The prior fixed physical-device decoder changes atb2d6354 passed both Linux and
+native Windows CI run37488148604. This confirms query conversion and real receiver
+fixtures only; no additional TODO #3 runtime milestone is accepted by these helpers.

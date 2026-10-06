@@ -48,6 +48,8 @@ jobs:
         run: make vgpu-capabilities-test vgpu-capabilities-sanitizers vgpu-capabilities-coverage
       - name: Verify image layouts and complete DMA-BUF feedback
         run: make vgpu-dmabuf-test vgpu-dmabuf-sanitizers vgpu-dmabuf-coverage
+      - name: Verify bounded core instance wire transactions
+        run: make vgpu-instance-wire-test vgpu-instance-wire-sanitizers vgpu-instance-wire-coverage
       - name: Verify bounded native Vulkan query replies
         run: make vgpu-values-test vgpu-values-sanitizers vgpu-values-coverage
       - name: Verify guest Vulkan object identity and lifetime
@@ -202,6 +204,20 @@ jobs:
           ./build/vgpu_values_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_values.zig -Iinclude -Isubmodules/venus_protocol/include -lc build/venus_values_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows core instance wire ABI
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -DVgpuInstanceOracle -c tests/vgpu/instance_wire.c -o build/venus_instance_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_instance_wire.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_instance_wire_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include tests/vgpu/instance_wire.c build/venus_instance_wire_windows.lib -o build/vgpu_instance_wire_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_instance_wire_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_instance_wire.zig -Iinclude -Isubmodules/venus_protocol/include -lc build/venus_instance_oracle.obj
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify native Windows Vulkan object storage ABI
