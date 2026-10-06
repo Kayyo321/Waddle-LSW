@@ -72,4 +72,73 @@ venus_ring_status_t venus_receiver_poll(const venus_receiver_t *receiver);
  */
 venus_ring_status_t venus_receiver_reply(const venus_receiver_t *receiver, uint64_t offset,
                                          void *output, size_t length);
+
+/** @brief Maximum additional registered resource count; fixed owner ledger. */
+#define VenusReceiverMaxResources 64u
+/** @brief Default additional registered-storage quota, separate from bootstrap. */
+#define VenusReceiverDefaultResourceBytes 67108864u
+/** @brief Resource storage flags; validated locally before SDK translation. */
+typedef enum venus_resource_flags_t {
+    ResourceMap = 1,        /**< CPU mapping allowed; required alone for blob zero SHM. */
+    ResourceShare = 2,      /**< Device storage may be shared externally. */
+    ResourceCrossDevice = 4 /**< Requires Share; device export must support DMA-BUF. */
+} venus_resource_flags_t;
+/** @brief Configure additional registry limits while empty and CPU-quiescent.
+ * @param[in,out] receiver Nonnull session-thread-owned live record.
+ * @param[in] count Maximum additional registered entries, 1..64.
+ * @param[in] bytes Maximum declared additional storage, 4096..one GiB.
+ * @return RingOk, RingInvalid for ranges/nonempty registry, or poll failure.
+ * @note No allocation; defaults 64/64MiB. Counts registered storage, not arbitrary
+ * Vulkan VRAM allocations. Bootstrap reply/scratch limits remain independent.
+ */
+venus_ring_status_t venus_receiver_resource_limits(venus_receiver_t *receiver, uint32_t count,
+                                                   uint64_t bytes);
+/** @brief Acquire bounded additional storage via the public Venus context ABI.
+ * @param[in,out] receiver Nonnull session-thread-owned record, CPU-quiescent.
+ * @param[in] resource_id Unique ledger ID, 2..65; zero/one reserved.
+ * @param[in] blob_id Zero for CPU SHM, otherwise an existing Venus device-memory ID.
+ * @param[in] bytes Nonzero page-aligned declared storage, at most one GiB.
+ * @param[in] flags ResourceMap/Share/CrossDevice only; CrossDevice requires Share;
+ * blob zero requires exactly ResourceMap.
+ * @return RingOk; RingInvalid for bounds/duplicate; RingLimit for quota; poll
+ * status for pending/poisoned owner; RingCorrupt on SDK failure (poisons owner).
+ * @note No per-resource Waddle allocation; ownership enters ledger only on success.
+ * Resource remains owned until explicit free or receiver destroy. GPU allocation
+ * must already exist for nonzero blob; no hard GPU VRAM isolation is implied.
+ */
+venus_ring_status_t venus_receiver_resource_create(venus_receiver_t *receiver, uint32_t resource_id,
+                                                   uint64_t blob_id, uint64_t bytes,
+                                                   uint32_t flags);
+/** @brief Release registered storage after all Venus references are destroyed.
+ * @param[in,out] receiver Nonnull CPU-quiescent session-thread-owned record.
+ * @param[in] resource_id Live registered ID, 2..65; bootstrap cannot be freed here.
+ * @return RingOk, RingInvalid for ID/not live, poll status, or RingCorrupt on
+ * unmap failure (poisons owner; cleanup accounting retained for destruction).
+ * @note Unmaps/unrefs, refunds declared quota and zeros entry. Caller must destroy
+ * any Venus ring/object referencing it first; no GPU queue completion is inferred.
+ */
+venus_ring_status_t venus_receiver_resource_free(venus_receiver_t *receiver, uint32_t resource_id);
+/** @brief Read a CPU SHM resource into private caller output after CPU completion.
+ * @param[in,out] receiver Nonnull live session-thread-owned record; lazy map owned.
+ * @param[in] resource_id Live CPU SHM ID, 2..65; device-memory copy unsupported.
+ * @param[in] offset Byte offset within declared extent.
+ * @param[out] output Nonnull disjoint private output[length], unchanged on failure.
+ * @param[in] length Nonzero bytes, must fit extent after offset.
+ * @return RingOk, RingInvalid, poll status, or RingCorrupt for poisoned SDK map.
+ * @note Zig validates bounds before mapping/copy; no native pointer escapes.
+ */
+venus_ring_status_t venus_receiver_resource_read(venus_receiver_t *receiver, uint32_t resource_id,
+                                                 uint64_t offset, void *output, size_t length);
+/** @brief Write private caller input into a CPU SHM resource after CPU completion.
+ * @param[in,out] receiver Nonnull live session-thread-owned record; lazy map owned.
+ * @param[in] resource_id Live CPU SHM ID, 2..65; device-memory copy unsupported.
+ * @param[in] offset Byte offset within declared extent.
+ * @param[in] input Nonnull immutable disjoint private input[length].
+ * @param[in] length Nonzero bytes, must fit extent after offset.
+ * @return RingOk, RingInvalid, poll status, or RingCorrupt for poisoned SDK map.
+ * @note No native pointer escapes; borrowed input retained only for this call.
+ */
+venus_ring_status_t venus_receiver_resource_write(venus_receiver_t *receiver, uint32_t resource_id,
+                                                  uint64_t offset, const void *input,
+                                                  size_t length);
 #endif

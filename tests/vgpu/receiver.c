@@ -36,6 +36,19 @@ int main(void) {
         memcpy(&blob_support, capabilities + 16, sizeof(blob_support));
         if (!blob_support)
             goto cleanup;
+        const uint8_t Input[] = {1, 2, 3, 4};
+        uint8_t output[4] = {0};
+        if (venus_receiver_resource_limits(receiver, 1, 4096) != RingOk ||
+            venus_receiver_resource_create(receiver, 2, 0, 4096, ResourceMap) != RingOk ||
+            venus_receiver_resource_create(receiver, 3, 0, 4096, ResourceMap) != RingLimit ||
+            venus_receiver_resource_write(receiver, 2, 4092, Input, sizeof(Input)) != RingOk ||
+            venus_receiver_resource_read(receiver, 2, 4092, output, sizeof(output)) != RingOk ||
+            memcmp(output, Input, sizeof(Input)) != 0 ||
+            venus_receiver_resource_free(receiver, 2) != RingOk ||
+            venus_receiver_resource_create(receiver, 65, 0, 4096, ResourceMap) != RingOk ||
+            venus_receiver_resource_read(receiver, 65, 0, output, sizeof(output)) != RingOk)
+            goto cleanup;
+        /* Resource 65 is mapped and released implicitly by each owner teardown. */
         for (int submission = 0; submission < 3; submission++) {
             uint64_t fence = 0;
             if (venus_receiver_submit(receiver, Commands, sizeof(Commands), &fence) != RingOk ||

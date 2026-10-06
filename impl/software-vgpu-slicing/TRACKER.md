@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 10% | Scoped public renderer/context/reply owner and real CPU dispatch verified; resource/session/GPU integration pending |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 25% | Bounded resource registry, declared-storage quotas and CPU SHM ownership verified; runtime dispatch/session/GPU integration pending |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `22.0%`
+**Total Feature Completion**: `25.0%`
 
 ## Commit History & Progress Log
 
@@ -264,10 +264,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Task #1 is complete for standalone development, with physical hypervisor
     testing explicitly delegated to the user; no real guest driver/GPU claim.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define receiver resource registry and quota`
+- **Commit `a2263c7`**: `docs(vgpu): define receiver resource registry and quota`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Specified bounded IDs/ledger, explicit declared-storage/count
     quotas, lazy CPU SHM copy ownership, refunds/reuse, poisoned map cleanup,
     and the distinction between registered storage and arbitrary Vulkan VRAM.
   - **Verification**: Reviewed public renderer create/map/unref behavior and
     separated resource ownership from subsequent wire dispatch/GPU export gates.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): bound receiver resource ownership and quotas`
+  - **Task Impact**: +15% to TODO: #2 (+3.0% overall).
+  - **Summary**: Implemented a fixed 64-entry resource ledger, Zig-validated IDs,
+    flags and copy bounds, declared-storage/count quotas, lazy CPU SHM mappings,
+    quota refunds and deterministic resource teardown, including SDK unmap errors.
+  - **Verification**: `make vgpu-receiver-test vgpu-receiver-sanitizers
+    vgpu-receiver-coverage vgpu-integration vgpu-integration-sanitizers` passed.
+    Owned receiver C lines 100%, branches 99.33%; Zig bounds lines/branches 100%.
+    ASan/LSan/UBSan and Zig allocator gates report no leaks. Real public renderer
+    CPU SHM copies and independent mapped-file/UNIX integration passed. Device
+    memory export, GPU completion and runtime wire dispatch remain separate gates.
