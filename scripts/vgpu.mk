@@ -819,7 +819,7 @@ build/venus_icd_oracle.o: tests/vgpu/icd.c $(VgpuIcdHeaders) | vgpu-protocol
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuInstanceOracleIncludes) -Dmain=venus_icd_native_fixture -c $< -o $@
 
 .PHONY: vgpu-icd-coverage
-vgpu-icd-coverage: build/venus_icd_oracle.o $(VgpuIcdObjects) build/venus_values_oracle.o
+vgpu-icd-coverage: build/venus_icd_oracle.o $(VgpuIcdObjects) build/venus_values_oracle.o build/venus_render_wire_oracle.o
 	python3 tests/av/coverage.py venus_icd
 
 
@@ -866,3 +866,17 @@ vgpu-loader-worker-sanitizers: $(VgpuPresentedWorkerObjects) build/waddle_vgpu_w
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader_sanitized/loader/libvulkan.so.1" WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_loader_worker_sanitized
 
 	@WADDLE_TEST_LOADER_FAILURE=1 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader_sanitized/loader/libvulkan.so.1" WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_loader_worker_sanitized; status=$$?; test $$status -eq 1
+
+# Independent image/shader/layout wire codec acceptance and source coverage.
+build/venus_render_wire_oracle.o: tests/vgpu/render_wire_oracle.c tests/vgpu/encoder/vn_cs.h | vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -c $< -o $@
+
+.PHONY: vgpu-render-wire-test vgpu-render-wire-coverage
+vgpu-render-wire-test: build/venus_render_wire_oracle.o
+	$(ZIG) test src/vgpu/venus_render_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_render_wire_oracle.o
+
+vgpu-render-wire-coverage: build/venus_render_wire_oracle.o
+	python3 tests/av/coverage.py venus_render_wire
+
+vgpu-icd-test: vgpu-render-wire-test
+vgpu-icd-coverage: vgpu-render-wire-coverage
