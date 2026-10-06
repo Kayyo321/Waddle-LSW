@@ -1636,3 +1636,43 @@ still-pending production worker service and guest release acknowledgement path.
 Surface callback lookup also rejects zero explicitly before comparing ledger entries;
 zero denotes an empty slot and must never report a false completion. The fixture
 checks both zero and unmatched nonzero callback identities without releasing metadata.
+
+
+### Worker presentation release protocol (Task #4)
+
+The reverse direction of the prepared native seqpacket channel carries a release
+packet with no file descriptors. This is a distinct packet type, not a shortened
+frame. Its exact 32-byte little-endian schema is: offset0 u32 magic0x57565231;
+offset4 u32 version1; offset8 u64 nonzero context; offset16 u64 nonzero frame;
+offset24 i32 completion status; offset28 u32 zero reserved. Accepted statuses are
+RingOk (wl_buffer.release), RingInvalid (import rejection or explicit unsubmitted
+cancellation), RingCancelled (owner teardown before submission), and RingClosed
+(confirmed display loss). Frame callbacks never produce an acknowledgement.
+Decoded native release records have natural eight-byte alignment, own no resources,
+and must never be cast over wire bytes. Encoding preserves output on invalid input;
+decoding zeroes output before validation. Both codecs are allocation-free and
+accept only the exact packet size. All other statuses, versions, identities and
+reserved values are corruption; no partial native output is published.
+
+Controller send borrows socket and immutable release record. RingOk means the
+kernel queued the complete packet; Again includes EINTR and leaves the record
+caller-owned for retry. The controller retains at most three release records,
+matching accepted frame slots, plus the single pending unsubmitted frame. A slot
+cannot be reused for new traffic until its acknowledgement is queued. Send errors
+terminate the presentation session; acknowledgements are not silently dropped.
+Worker receive validates exactly one kernel SCM_CREDENTIALS record against the
+retained controller PID, caller real UID and expected context. Any SCM_RIGHTS is
+corruption, and every received descriptor is closed before returning; truncation
+also fails, with excess descriptors closed by the kernel. Empty peer shutdown is
+Closed. Wrong sender, payload size, unknown ancillary data or context is Corrupt.
+The worker and controller retain each other's process identity for the whole
+channel lifetime; a PID that may have been reaped/reused is not an authentication
+input. Single native owner thread calls each socket operation, with no pixel maps.
+
+A worker lease holds the exact frame/resource IDs after successful send. Its
+resource registrations stay live until an authenticated matching release packet.
+Unknown or duplicate release IDs terminate the session without releasing another
+lease. Guest release polling acknowledges the final status once, then discards the
+completed lease; it cannot free a live presentation resource. This codec milestone
+alone implements none of the service lease, controller retry or guest poll gates;
+TODO #4 stays95% until those paths are integrated and verified.

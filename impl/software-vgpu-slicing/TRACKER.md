@@ -830,9 +830,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     hardware fixture; physical compositor scanout/pixel readback is not claimed.
     Production worker export and guest release acknowledgement remain pending.
 
-- **Commit (current; resolve by subject)**: `fix(vgpu): reject zero surface completion identities`
+- **Commit `beba08e`**: `fix(vgpu): reject zero surface completion identities`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Keep empty accepted-ledger entries from matching zero callback IDs.
   - **Verification**: Zero and unmatched nonzero callbacks prohibit further receives
     without reporting a completion; production line/branch coverage remains 100%,
     ASan/LSan/UBSan and native hardware/Wayland fixture pass.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify authenticated presentation release packets`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Specify exact reverse-channel release schema, allowed completion
+    statuses, sender validation, descriptor rollback and bounded retry ownership.
+  - **Verification**: Cross-checked surface callback outcomes and native frame
+    credential contract; worker leases, acknowledgement retry and guest polls remain
+    separate integration gates, with no runtime completion credit.
