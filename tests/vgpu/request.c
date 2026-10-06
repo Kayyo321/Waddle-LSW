@@ -50,7 +50,7 @@ int main(void) {
     for (size_t index = 0; index < sizeof(bytes); index++)
         assert(bytes[index] == 0x5a);
 
-    for (uint32_t kind = RequestCapabilities; kind <= RequestPoll; kind++) {
+    for (uint32_t kind = RequestCapabilities; kind <= RequestGpuPoll; kind++) {
         value = (venus_request_t){.kind = kind, .sequence = 1};
         if (kind == RequestSubmit)
             value.payload_bytes = 8;
@@ -64,6 +64,11 @@ int main(void) {
         }
         if (kind == RequestWrite)
             value.payload_bytes = 4;
+        if (kind == RequestGpuFence || kind == RequestGpuPoll) {
+            value.argument_zero = 1;
+            if (kind == RequestGpuPoll)
+                value.argument_one = 1;
+        }
         assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingOk);
         assert(venus_request_decode(&decoded, bytes, sizeof(bytes)) == RingOk);
         assert(memcmp(&decoded, &value, sizeof(value)) == 0);
@@ -99,13 +104,27 @@ int main(void) {
             value.argument_zero--;
             assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingOk);
         }
+        if (kind == RequestGpuFence || kind == RequestGpuPoll) {
+            reject_field(bytes, 40, 0);
+            reject_field(bytes, 40, 64);
+            reject_field(bytes, 44, 1); /* Reject u64 timeline before C narrowing. */
+            reject_field(bytes, 24, 4);
+            if (kind == RequestGpuFence)
+                reject_field(bytes, 48, 1);
+            else
+                reject_field(bytes, 48, 0);
+            value.argument_zero = 63;
+            if (kind == RequestGpuPoll)
+                value.argument_one = UINT64_MAX;
+            assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingOk);
+        }
         for (uint32_t status = RequestSuccess; status <= RequestLimit; status++) {
             value =
                 (venus_request_t){.kind = kind, .direction = 1, .sequence = 1, .status = status};
             if (status == RequestSuccess) {
                 if (kind == RequestCapabilities)
                     value.payload_bytes = 160;
-                if (kind == RequestSubmit)
+                if (kind == RequestSubmit || kind == RequestGpuFence)
                     value.argument_zero = 1;
                 if (kind == RequestRead || kind == RequestReply)
                     value.payload_bytes = 4;
@@ -123,7 +142,7 @@ int main(void) {
             } else if (kind == RequestCapabilities) {
                 reject_field(bytes, 24, 159);
                 reject_field(bytes, 24, 161);
-            } else if (kind == RequestSubmit) {
+            } else if (kind == RequestSubmit || kind == RequestGpuFence) {
                 reject_field(bytes, 40, 0);
                 reject_field(bytes, 24, 8);
             } else if (kind == RequestRead || kind == RequestReply) {

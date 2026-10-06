@@ -28,6 +28,12 @@ static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc
     case RequestWrite:
         return venus_receiver_resource_write(receiver, request->resource_id, request->argument_zero,
                                              rpc->buffer, request->payload_bytes);
+    case RequestGpuFence:
+        return venus_receiver_gpu_fence(receiver, (uint32_t)request->argument_zero,
+                                        &response->argument_zero);
+    case RequestGpuPoll:
+        return venus_receiver_gpu_poll(receiver, (uint32_t)request->argument_zero,
+                                       request->argument_one);
     default: /* Codec validation leaves only Poll. */
         return venus_receiver_poll(receiver);
     }

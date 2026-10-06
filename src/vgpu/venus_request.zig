@@ -18,13 +18,13 @@ const venus_request_t = extern struct {
 };
 
 fn valid_fields(value: *const venus_request_t) bool {
-    if (value.kind < 1 or value.kind > 8 or value.direction > 1 or value.sequence == 0 or value.payload_bytes > MaxPayload) return false;
+    if (value.kind < 1 or value.kind > 10 or value.direction > 1 or value.sequence == 0 or value.payload_bytes > MaxPayload) return false;
     if (value.direction == 1) {
         if (value.status > 7 or value.resource_id != 0 or value.flags != 0 or value.argument_one != 0) return false;
         if (value.status != 0) return value.payload_bytes == 0 and value.argument_zero == 0;
         return switch (value.kind) {
             1 => value.payload_bytes == 160 and value.argument_zero == 0,
-            2 => value.payload_bytes == 0 and value.argument_zero != 0,
+            2, 9 => value.payload_bytes == 0 and value.argument_zero != 0,
             3, 6 => value.payload_bytes != 0 and value.argument_zero == 0,
             else => value.payload_bytes == 0 and value.argument_zero == 0,
         };
@@ -40,6 +40,8 @@ fn valid_fields(value: *const venus_request_t) bool {
         5 => resource_policy_t.venus_receiver_resource_slot(value.resource_id) != 0 and value.flags == 0 and no_arguments and value.payload_bytes == 0,
         6, 7 => resource_policy_t.venus_receiver_resource_slot(value.resource_id) != 0 and value.flags == 0 and valid_range(value) and
             (if (value.kind == 6) value.payload_bytes == 0 else value.payload_bytes == value.argument_one),
+        9, 10 => plain and value.payload_bytes == 0 and value.argument_zero >= 1 and value.argument_zero < 64 and
+            (if (value.kind == 9) value.argument_one == 0 else value.argument_one != 0),
         else => unreachable,
     };
 }
@@ -117,6 +119,10 @@ fn good_request(kind: u32) venus_request_t {
             value.argument_one = 4;
             if (kind == 7) value.payload_bytes = 4;
         },
+        9, 10 => {
+            value.argument_zero = 1;
+            if (kind == 10) value.argument_one = 1;
+        },
         else => {},
     }
     return value;
@@ -130,7 +136,7 @@ fn good_response(kind: u32, status: u32) venus_request_t {
     value.status = status;
     if (status == 0) switch (kind) {
         1 => value.payload_bytes = 160,
-        2 => value.argument_zero = 1,
+        2, 9 => value.argument_zero = 1,
         3, 6 => value.payload_bytes = 4,
         else => {},
     };
@@ -141,7 +147,7 @@ test "all operation and status envelopes round trip without native padding" {
     const bytes = try std.testing.allocator.alloc(u8, HeaderBytes);
     defer std.testing.allocator.free(bytes);
     var decoded: venus_request_t = undefined;
-    for (1..9) |kind| {
+    for (1..11) |kind| {
         const request = good_request(@intCast(kind));
         try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_request_encode, .{ &request, bytes.ptr, bytes.len }));
         try std.testing.expectEqual(@as(u8, 0x80), bytes[16]);
@@ -173,7 +179,7 @@ test "invalid fields and wire mutations preserve all output guarantees" {
         for (bytes) |byte| try std.testing.expectEqual(@as(u8, 0x5a), byte);
         try std.testing.expectEqual(@as(c_int, -2), @call(.never_inline, venus_request_decode, .{ &decoded, bytes.ptr, length }));
     }
-    for (1..9) |kind| {
+    for (1..11) |kind| {
         for (0..2) |direction| {
             const base = if (direction == 0) good_request(@intCast(kind)) else good_response(@intCast(kind), 0);
             inline for (std.meta.fields(venus_request_t)) |field| {

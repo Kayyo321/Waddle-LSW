@@ -111,6 +111,20 @@ venus_ring_status_t venus_receiver_poll(const venus_receiver_t *receiver) {
     return receiver_status;
 }
 
+venus_ring_status_t venus_receiver_gpu_fence(venus_receiver_t *receiver, uint32_t timeline,
+                                             uint64_t *fence) {
+    assert(receiver && timeline == 1);
+    calls++;
+    *fence = receiver_status == RingOk ? fence_value : 0;
+    return receiver_status;
+}
+venus_ring_status_t venus_receiver_gpu_poll(const venus_receiver_t *receiver, uint32_t timeline,
+                                            uint64_t fence) {
+    assert(receiver && timeline == 1 && fence == 1);
+    calls++;
+    return receiver_status;
+}
+
 static void reset(venus_session_role_t role) {
     memset(&session, 0, sizeof(session));
     memset(&channel, 0, sizeof(channel));
@@ -143,6 +157,11 @@ static venus_request_t request_for(uint32_t kind) {
     }
     if (kind == RequestWrite)
         value.payload_bytes = 4;
+    if (kind == RequestGpuFence || kind == RequestGpuPoll) {
+        value.argument_zero = 1;
+        if (kind == RequestGpuPoll)
+            value.argument_one = 1;
+    }
     return value;
 }
 static size_t expected_bytes(uint32_t kind) {
@@ -165,7 +184,7 @@ static void assert_terminal(venus_ring_status_t result, venus_ring_status_t expe
 static void host_operations(void) {
     const venus_ring_status_t Results[] = {RingOk, RingAgain, RingInvalid, RingLimit};
     const uint32_t Wire[] = {RequestSuccess, RequestAgain, RequestInvalid, RequestLimit};
-    for (uint32_t kind = RequestCapabilities; kind <= RequestPoll; kind++) {
+    for (uint32_t kind = RequestCapabilities; kind <= RequestGpuPoll; kind++) {
         for (size_t index = 0; index < sizeof(Results) / sizeof(Results[0]); index++) {
             reset(SessionHost);
             venus_request_t request = request_for(kind), response;
@@ -248,14 +267,14 @@ static void host_failures(void) {
 static void guest_operations(void) {
     unsigned char input[8], output[160];
     memset(input, 0x31, sizeof(input));
-    for (uint32_t kind = RequestCapabilities; kind <= RequestPoll; kind++) {
+    for (uint32_t kind = RequestCapabilities; kind <= RequestGpuPoll; kind++) {
         for (uint32_t status = RequestSuccess; status <= RequestLimit; status++) {
             reset(SessionGuest);
             venus_request_t request = request_for(kind), response;
             venus_request_t reply = {.kind = kind, .direction = 1, .sequence = 1, .status = status};
             if (status == RequestSuccess) {
                 reply.payload_bytes = (uint32_t)expected_bytes(kind);
-                if (kind == RequestSubmit)
+                if (kind == RequestSubmit || kind == RequestGpuFence)
                     reply.argument_zero = 1;
             }
             prepare(reply);

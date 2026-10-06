@@ -367,9 +367,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393773120 and at
     `f99723a` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393832459 .
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define GPU fence protocol routing`
+- **Commit `59065fd`**: `docs(vgpu): define GPU fence protocol routing`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Defined GpuFence/GpuPoll extension fields, exact retirement
     semantics, matching-build requirement and separate wire/health/recovery gates.
   - **Verification**: Reviewed against bounded per-queue receiver APIs; no queue
     creation or hardware execution evidence is implied by the wire extension.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): route GPU fence requests through bounded runtime`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall); 3% GPU wire gate awaits native CI.
+  - **Summary**: Extended the codec with GpuFence/GpuPoll, validated u64 timelines
+    before narrowing and routed accepted private requests to per-queue APIs.
+    Retained zero-payload errors, explicit CPU/GPU separation and existing frames.
+    Corrected asynchronous worker acceptance semantics from pinned proxy source.
+  - **Verification**: Request/runtime unit, sanitizer, coverage and Windows
+    cross-link targets passed; independent mapped-process real CPU/resource
+    integration also passes. Codec lines 98.36%, branches 100%; RPC lines 100%,
+    branches 97.73%; dispatch lines 98.78%, branches 93.75%. Native CI is pending.
+    Mock routing does not prove real GPU queue execution or bounded hang recovery.

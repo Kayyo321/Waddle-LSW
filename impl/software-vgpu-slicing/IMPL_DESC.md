@@ -761,8 +761,13 @@ slots 1..63 require an already-created Venus VkQueue associated through
 VkDeviceQueueTimelineInfoMESA at queue creation. The public Waddle GPU fence API
 accepts only 1..63, validated in Zig before indexing; it never creates a queue or
 infers GPU completion from CPU retirement. Upstream validates actual association.
-An unassociated queue/public fence failure is terminal corruption, requiring a
-new receiver/session. Guest queue creation must complete its CPU fence first.
+An immediate public fence failure is terminal corruption, requiring a new
+receiver/session. With RENDER_SERVER the public submit call confirms delivery to
+an asynchronous worker, which validates queue association later. An unassociated
+queue can therefore leave a fence pending or cause a later transport failure;
+SDK acceptance alone does not validate queue existence. The health/deadline layer
+must terminate nonretiring fences. Guest queue creation must complete its CPU fence
+and validate its Vulkan reply before requesting GPU fences.
 
 The receiver embeds fixed 64-entry atomic issued/retired arrays (slot zero unused
 for GPU accounting). Initialization explicitly initializes each atomic; no fence
@@ -822,7 +827,9 @@ Host dispatch routes these operations to the documented receiver GPU APIs. Queue
 creation/association must precede GpuFence and complete its CPU decoder fence.
 Again is per-queue or CPU backpressure, requiring a new exchange sequence on retry.
 GpuPoll acquires only that GPU queue's retirement and does not substitute CPU Poll.
-A fence on an unassociated queue is a terminal SDK error. The guest still owns its
+Queue association failure in the asynchronous worker may surface as a later
+transport error or nonretiring fence, rather than an immediate SDK error. The
+remaining health/recovery layer must bound that failure. The guest still owns its
 Vulkan queue/object lifecycle; no native queue handle or host pointer is exposed.
 Native portable fixtures, SDK-boundary routing/error tests, codec size/field/fence
 boundaries, >=90% coverage and sanitizer gates are required for the 3% wire credit.

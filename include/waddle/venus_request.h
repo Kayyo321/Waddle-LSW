@@ -16,7 +16,9 @@ typedef enum venus_request_kind_t {
     RequestFree = 5,         /**< Free registered resource after references end. */
     RequestRead = 6,         /**< Copy completed CPU SHM into response payload. */
     RequestWrite = 7,        /**< Copy request payload into CPU SHM. */
-    RequestPoll = 8          /**< Acquire latest CPU submission completion. */
+    RequestPoll = 8,         /**< Acquire latest CPU submission completion. */
+    RequestGpuFence = 9,     /**< Fence an existing GPU queue, returns GPU identity. */
+    RequestGpuPoll = 10      /**< Acquire an explicitly issued GPU fence retirement. */
 } venus_request_kind_t;
 /** @brief Unsigned stable wire status codes, never native signed enum bytes. */
 typedef enum venus_request_status_t {
@@ -42,7 +44,7 @@ typedef struct venus_request_t {
     uint32_t status;        /**< Wire status; requests always Success. */
     uint32_t resource_id;   /**< Request resource ID 2..65, otherwise zero. */
     uint32_t flags;         /**< Create flags only; resource policy validated. */
-    uint64_t argument_zero; /**< Operation offset/blob/CPU fence, otherwise zero. */
+    uint64_t argument_zero; /**< Operation offset/blob/CPU or GPU fence, otherwise zero. */
     uint64_t argument_one;  /**< Requested bytes for resource/reply, otherwise zero. */
 } venus_request_t;
 /** @brief Validate and decode an immutable private envelope header.
