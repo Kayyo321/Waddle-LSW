@@ -22,6 +22,8 @@
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
 | #10     | Pin and build Mesa RADV CPU cache lifecycle repair for zero-leak native driver enumeration | In Progress | 0% | 50% | Immutable Mesa pin and offline patched build verified; repeated unload passes; full production CI pending |
 
+| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 0% | Native CI loader exists; local guest discovery/bootstrap remain required for DXVK |
+
 **Total Feature Completion**: `68.75%`
 
 ## Commit History & Progress Log
