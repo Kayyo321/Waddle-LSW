@@ -10,6 +10,32 @@ Unlike traditional full-screen virtual machine viewers, Waddle-LSW tracks indivi
 
 ---
 
+## Waddle Usage
+
+<img align="left" width="180" height="180" alt="Waddle-LSW Application Icon" src="imgs/default-window-icon.png">
+
+The `waddle` CLI provides command-line control for subsystem lifecycle management, guest process execution, and device configuration:
+
+- **Interactive Terminal**: Run `waddle` to start background services and open an interactive Windows ConPTY terminal session.
+- **Process Passthrough**: Execute commands directly inside the Windows guest using `waddle exec -- <command>`.
+- **Subsystem Lifecycle**: Manage background daemons and virtualization with `waddle start`, `waddle status`, and `waddle stop`.
+- **Filesystem Verification**: Validate VirtIO-FS shared directory mappings and read/write integrity with `waddle fs test`.
+
+<br clear="left" />
+
+```bash
+# Launch interactive Windows shell (auto-starts background subsystem)
+waddle
+
+# Execute a command inside the Windows guest
+waddle exec -- cmd.exe /c "dir C:\\"
+
+# Inspect subsystem daemon and VM status
+waddle status
+```
+
+---
+
 ## Getting Started & Repository Cloning
 
 Waddle-LSW utilizes **Git submodules** for all external dependencies to guarantee hermetic, reproducible, and offline-capable builds.
