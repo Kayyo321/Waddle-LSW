@@ -1,0 +1,15 @@
+// Owned Vulkan1.0 fixture: one invocation stores index*13 plus a runtime bias.
+// Dispatch exactly64 groups; storage output must cover256 bytes.
+// Generate: glslangValidator -V --target-env vulkan1.0 --vn ComputePushShader tests/vgpu/shaders/compute_push.comp -o build/compute_push_shader_generated.h
+#version 450
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0, std430) buffer output_buffer_t {
+    uint values[];
+} output_data;
+layout(push_constant) uniform push_data_t {
+    uint bias;
+} push_data;
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    output_data.values[index] = index * 13 + push_data.bias;
+}
