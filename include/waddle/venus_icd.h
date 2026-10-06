@@ -7,11 +7,13 @@
 /** @brief Bind the experimental ICD to one exclusive already negotiated frontend.
  * @param[in] exchange Nonnull borrowed callback, retained until unbind/abandon;
  * must support65620-byte command requests,4096-byte command replies,
- * RequestGpuFence/RequestGpuPoll,
+ * RequestGpuFence/RequestGpuPoll and RequestCreate/Free/Read/Write with
+ *4096-byte bounded copy payloads for host-coherent mapped resources,
  * bounded deadlines, and never reenter the ICD.
  * @param[in,out] context Nonnull borrowed callback state, remains live/exclusive.
  * @return RingOk; Invalid null/occupied binding; Limit namespace exhaustion.
- * @note No allocations; process-local mutex serializes all calls. Bind before loader
+ * @note Binding allocates no storage; mapping owns bounded shadows until unmap/
+ * free/abandon. A process-local mutex serializes all calls. Bind before loader
  * discovery. Caller owns frontend, channel, mapping and worker teardown.
  */
 venus_ring_status_t venus_icd_bind(venus_command_exchange_t exchange, void *context);

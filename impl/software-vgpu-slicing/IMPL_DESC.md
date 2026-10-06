@@ -3546,3 +3546,20 @@ and a128-byte core guaranteed bound. Compute creation is one pipeline, null cach
 no derivatives or specialization, a bounded256-byte UTF8 entry name, and translated
 shader/layout identities. These constraints define initial supported increments;
 they do not imply full DXVK compatibility or real GPU execution.
+
+Mapping public limits are nonCoherentAtomSize1 and minMemoryMapAlignment4096:
+the byte-copy transport makes any mapped-byte range cache-maintenance safe, and
+shadow allocation alignment4096 satisfies native mapped-pointer alignment. Each
+map decodes raw host memory properties independently of guest flag translation,
+so clearing public HOST_COHERENT never loses host coherency evidence. Map only
+reads the requested range; flush/invalidate arrays contain at most64 records and
+are completely validated before the first host side effect. Backend binding must
+support resource create/free/read/write in addition to command and GPU requests.
+Every read/write chunk is at most4096 bytes. Testing uses std.testing.allocator;
+production c_allocator allocations release on unmap/free/abandon including loss.
+
+Native ICD mapping fixtures cover malformed map/range arguments, remap/export
+reuse, actual host coherency rejection, transfer failures and abandonment. Nine
+Zig tests with native fixtures pass; ASan/LSan/UBSan pass with no reported leaks.
+Mapping-stage production coverage is99.53% lines and93.56% branches. These
+fixtures alone do not establish GPU data transfer or full API completion.
