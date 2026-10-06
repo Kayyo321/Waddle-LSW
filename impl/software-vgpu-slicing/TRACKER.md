@@ -1349,10 +1349,26 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     commands, device-parent validation, nonblocking receiver polls, caller timeout
     semantics and mutex release so another thread can signal pending fences.
 
-- **Commit (current; resolve by subject)**: `fix(test): record concurrent branch hits atomically`
+- **Commit `da388de`**: `fix(test): record concurrent branch hits atomically`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Use relaxed C11 atomic bytes in the fixed branch recorder so the
     four-thread native ICD fixture can record source edges without data races.
     Preserve bounds/abort behavior and the joined-thread exit report format.
   - **Verification**: Native thread fixtures and coverage gates remain enforced;
     no production runtime, threshold or ownership policy changes.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch core fence objects and caller timed waits`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; full synchronization gate pending).
+  - **Summary**: Add device-parented nondispatchable fence create/destroy/reset/status
+    and any/all waits. Validate native counts/flags/parents before serialization;
+    poll host waits with timeout0 and release the binding mutex between caller-timed
+    rounds. Refuse device retirement while nonqueue children remain.
+  - **Verification**: Independent pinned C encoders compare commands35..39. Native
+    signaled/unsignaled/reset/any/all/zero/finite/delayed waits, stale/foreign handles,
+    508-fence registry exhaustion, negative creation rollback and every command's
+    corrupt/transport path pass ASan/LSan/UBSan. Four Zig tests pass, including every
+    result-reply truncation; atomic coverage recorder reports99.63% lines/93.29%
+    branches. Actual two-worker-session fence lifecycle and GPU idle cycles pass
+    normal and sanitizers; Windows test/DLL cross-link succeeds. Updated-head native
+    CI remains required. Prior4620bf9 vGPU Linux and Windows checks are green; CLI
+    pending. TODO #3 remains40%; full API dispatch and real DXVK are still pending.

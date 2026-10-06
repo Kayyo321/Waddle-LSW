@@ -68,7 +68,7 @@ static inline void vn_cs_encoder_write(struct instance_encoder_t *encoder,
  * transfer.
  * @param[in] handle Nonnull address of test handle word, borrowed for call.
  * @param[in] kind Imported Vulkan object kind, must be INSTANCE or
- * PHYSICAL_DEVICE, DEVICE or QUEUE.
+ * PHYSICAL_DEVICE, DEVICE, QUEUE or FENCE.
  * @return Preassigned test host ID encoded in the native handle word.
  * @note Test-only; never used to validate application handles in the real ICD.
  */
@@ -76,7 +76,7 @@ static inline vn_object_id vn_cs_handle_load_id(const void **handle,
                                                 VkObjectType kind) {
   assert(kind == VK_OBJECT_TYPE_INSTANCE ||
          kind == VK_OBJECT_TYPE_PHYSICAL_DEVICE || kind == VK_OBJECT_TYPE_DEVICE ||
-         kind == VK_OBJECT_TYPE_QUEUE);
+         kind == VK_OBJECT_TYPE_QUEUE || kind == VK_OBJECT_TYPE_FENCE);
   uintptr_t id;
   memcpy(&id, handle, sizeof(id));
   return id;

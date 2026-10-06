@@ -5,6 +5,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "vn_protocol_driver_device.h"
+#include "vn_protocol_driver_fence.h"
 #include "vn_protocol_driver_queue.h"
 #pragma GCC diagnostic pop
 #include <assert.h>
@@ -56,6 +57,10 @@ typedef struct fixture_t {
     uint32_t gpu_issue_pending;
     uint32_t gpu_corrupt;
     int32_t gpu_failure;
+    unsigned char fence_ready[4096];
+    uint32_t fence_pending;
+    unsigned fence_override;
+    int32_t fence_result;
 } fixture_t;
 static uint32_t read_u32(const void *bytes) {
     uint32_t value;
@@ -162,6 +167,62 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                             &queue_info, &queue);
                 assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
             }
+        } else if (fixture->command >= 35 && fixture->command <= 39) {
+            unsigned char expected[4096];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 35) {
+                VkFence fence = (VkFence)(uintptr_t)read_u64(bytes + 56);
+                VkFenceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                                          .flags = read_u32(bytes + 36)};
+                vn_encode_vkCreateFence(&encoder, 1, device, &info, NULL, &fence);
+                uint64_t id = (uintptr_t)fence;
+                assert(id < 4096);
+                fixture->fence_ready[id] = !!info.flags;
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, 1);
+                put_u64(fixture->reply + 16, id);
+            } else if (fixture->command == 36 || fixture->command == 38) {
+                VkFence fence = (VkFence)(uintptr_t)read_u64(bytes + 16);
+                assert((uintptr_t)fence < 4096);
+                if (fixture->command == 36) {
+                    vn_encode_vkDestroyFence(&encoder, 1, device, fence, NULL);
+                    fixture->fence_ready[(uintptr_t)fence] = 0;
+                } else {
+                    vn_encode_vkGetFenceStatus(&encoder, 1, device, fence);
+                    put_u32(fixture->reply + 4,
+                            fixture->fence_ready[(uintptr_t)fence] ? VK_SUCCESS : VK_NOT_READY);
+                }
+            } else {
+                const uint32_t count = read_u32(bytes + 16);
+                assert(count > 0 && count <= 64 && read_u64(bytes + 20) == count);
+                VkFence fences[64];
+                uint32_t ready = 0;
+                for (uint32_t index = 0; index < count; index++) {
+                    uint64_t id = read_u64(bytes + 28 + index * 8);
+                    assert(id < 4096);
+                    fences[index] = (VkFence)(uintptr_t)id;
+                    ready += fixture->fence_ready[id];
+                    if (fixture->command == 37)
+                        fixture->fence_ready[id] = 0;
+                }
+                if (fixture->command == 37)
+                    vn_encode_vkResetFences(&encoder, 1, device, count, fences);
+                else {
+                    const uint32_t all = read_u32(bytes + 28 + count * 8);
+                    assert(all <= 1 && read_u64(bytes + 32 + count * 8) == 0);
+                    vn_encode_vkWaitForFences(&encoder, 1, device, count, fences, all, 0);
+                    int32_t result = (all ? ready == count : ready > 0) ? VK_SUCCESS : VK_TIMEOUT;
+                    if (fixture->fence_pending) {
+                        fixture->fence_pending--;
+                        result = VK_TIMEOUT;
+                    }
+                    put_u32(fixture->reply + 4, (uint32_t)result);
+                }
+            }
+            if (fixture->fence_override)
+                put_u32(fixture->reply + 4, (uint32_t)fixture->fence_result);
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 12) {
             unsigned char expected[4096];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -414,6 +475,40 @@ static void healthy(fixture_t *fixture) {
         assert(queue_idle((VkQueue)(uintptr_t)1) == VK_ERROR_DEVICE_LOST);
         assert(device_idle(NULL) == VK_ERROR_DEVICE_LOST);
         assert(device_idle((VkDevice)(uintptr_t)1) == VK_ERROR_DEVICE_LOST);
+        PFN_vkCreateFence fence_create =
+            (PFN_vkCreateFence)device_lookup(device_handle, "vkCreateFence");
+        PFN_vkDestroyFence fence_destroy =
+            (PFN_vkDestroyFence)device_lookup(device_handle, "vkDestroyFence");
+        PFN_vkResetFences fence_reset =
+            (PFN_vkResetFences)device_lookup(device_handle, "vkResetFences");
+        PFN_vkGetFenceStatus fence_status =
+            (PFN_vkGetFenceStatus)device_lookup(device_handle, "vkGetFenceStatus");
+        PFN_vkWaitForFences fence_wait =
+            (PFN_vkWaitForFences)device_lookup(device_handle, "vkWaitForFences");
+        assert(fence_create && fence_destroy && fence_reset && fence_status && fence_wait);
+        VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                                        .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+        VkFence fences[2] = {0};
+        assert(fence_create(device_handle, &fence_info, NULL, &fences[0]) == VK_SUCCESS);
+        fence_info.flags = 0;
+        assert(fence_create(device_handle, &fence_info, NULL, &fences[1]) == VK_SUCCESS);
+        assert(fences[0] && fences[1] && fences[0] != fences[1]);
+        assert(fence_status(device_handle, fences[0]) == VK_SUCCESS);
+        assert(fence_status(device_handle, fences[1]) == VK_NOT_READY);
+        assert(fence_wait(device_handle, 2, fences, VK_FALSE, 0) == VK_SUCCESS);
+        assert(fence_wait(device_handle, 2, fences, VK_TRUE, 0) == VK_TIMEOUT);
+        assert(fence_wait(device_handle, 1, fences + 1, VK_FALSE, 1000000) == VK_TIMEOUT);
+        fixture->fence_pending = 1;
+        assert(fence_wait(device_handle, 1, fences, VK_TRUE, UINT64_MAX) == VK_SUCCESS);
+        device_destroy(device_handle, NULL); /* Live nonqueue children block device retirement. */
+        assert(device_lookup(device_handle, "vkDestroyDevice"));
+        assert(fence_reset(device_handle, 2, fences) == VK_SUCCESS);
+        assert(fence_status(device_handle, fences[0]) == VK_NOT_READY);
+        assert(fence_wait(device_handle, 2, fences, VK_FALSE, 0) == VK_TIMEOUT);
+        fence_destroy(device_handle, fences[0], NULL);
+        assert(fence_status(device_handle, fences[0]) == VK_ERROR_DEVICE_LOST);
+        fence_destroy(device_handle, fences[0], NULL);
+        fence_destroy(device_handle, fences[1], NULL);
         destroy(instance); /* Parent remains live until its device is retired. */
         assert(lookup_external(instance, "vkDestroyInstance"));
         device_destroy(NULL, NULL);
@@ -490,6 +585,149 @@ static void concurrent(void) {
     for (unsigned index = 0; index < 4; index++)
         assert(pthread_join(threads[index], NULL) == 0);
 #endif
+    assert(venus_icd_unbind() == RingOk);
+}
+static void fence_failures(void) {
+    for (unsigned scenario = 0; scenario < 14; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        VkPhysicalDevice physical[2];
+        uint32_t count = 2;
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(
+                   instance, "vkEnumeratePhysicalDevices"))(instance, &count, physical) ==
+               VK_SUCCESS);
+        float priority = 0.5f;
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                              .queueCount = 1,
+                                              .pQueuePriorities = &priority};
+        VkDeviceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                                   .queueCreateInfoCount = 1,
+                                   .pQueueCreateInfos = &queue_info};
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device =
+            (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup =
+            (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkCreateFence create_fence = (PFN_vkCreateFence)lookup(device, "vkCreateFence");
+        PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)lookup(device, "vkDestroyFence");
+        PFN_vkResetFences reset_fences = (PFN_vkResetFences)lookup(device, "vkResetFences");
+        PFN_vkGetFenceStatus status = (PFN_vkGetFenceStatus)lookup(device, "vkGetFenceStatus");
+        PFN_vkWaitForFences wait_fences = (PFN_vkWaitForFences)lookup(device, "vkWaitForFences");
+        VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                                        .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+        VkFence invalid = NULL, fence = NULL;
+        assert(create_fence(device, &fence_info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(create_fence(NULL, &fence_info, NULL, &invalid) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(create_fence((VkDevice)(uintptr_t)1, &fence_info, NULL, &invalid) ==
+               VK_ERROR_INITIALIZATION_FAILED);
+        assert(create_fence(device, NULL, NULL, &invalid) == VK_ERROR_INITIALIZATION_FAILED);
+        fence_info.sType = 0;
+        assert(create_fence(device, &fence_info, NULL, &invalid) == VK_ERROR_INITIALIZATION_FAILED);
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence_info.flags = 2;
+        assert(create_fence(device, &fence_info, NULL, &invalid) == VK_ERROR_INITIALIZATION_FAILED);
+        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        fence_info.pNext = &info;
+        assert(create_fence(device, &fence_info, NULL, &invalid) == VK_ERROR_INITIALIZATION_FAILED);
+        fence_info.pNext = NULL;
+        fixture.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(create_fence(device, &fence_info, NULL, &invalid) == VK_ERROR_OUT_OF_DEVICE_MEMORY &&
+               !invalid);
+        fixture.create_result = VK_SUCCESS;
+        assert(create_fence(device, &fence_info, NULL, &fence) == VK_SUCCESS);
+        assert(status(foreign, fence) == VK_ERROR_DEVICE_LOST);
+        assert(status(NULL, fence) == VK_ERROR_DEVICE_LOST);
+        assert(status(device, NULL) == VK_ERROR_DEVICE_LOST);
+        assert(status((VkDevice)(uintptr_t)1, fence) == VK_ERROR_DEVICE_LOST);
+        assert(status(device, (VkFence)device) == VK_ERROR_DEVICE_LOST);
+        destroy_fence(foreign, fence, NULL);
+        destroy_fence(NULL, fence, NULL);
+        destroy_fence(device, NULL, NULL);
+        destroy_fence((VkDevice)(uintptr_t)1, fence, NULL);
+        assert(status(device, fence) == VK_SUCCESS);
+        assert(reset_fences(foreign, 1, &fence) == VK_ERROR_DEVICE_LOST);
+        assert(reset_fences(NULL, 1, &fence) == VK_ERROR_DEVICE_LOST);
+        assert(reset_fences(device, 0, &fence) == VK_ERROR_DEVICE_LOST);
+        assert(reset_fences(device, 65, &fence) == VK_ERROR_DEVICE_LOST);
+        assert(reset_fences(device, 1, NULL) == VK_ERROR_DEVICE_LOST);
+        assert(reset_fences(device, 1, &invalid) == VK_ERROR_DEVICE_LOST);
+        assert(wait_fences(device, 0, &fence, VK_TRUE, 0) == VK_ERROR_DEVICE_LOST);
+        assert(wait_fences(device, 65, &fence, VK_TRUE, 0) == VK_ERROR_DEVICE_LOST);
+        assert(wait_fences(device, 1, NULL, VK_TRUE, 0) == VK_ERROR_DEVICE_LOST);
+        assert(wait_fences(device, 1, &fence, 2, 0) == VK_ERROR_DEVICE_LOST);
+        assert(wait_fences(foreign, 1, &fence, VK_TRUE, 0) == VK_ERROR_DEVICE_LOST);
+        const uint32_t command = 35 + scenario % 5;
+        if (scenario < 5)
+            fixture.corrupt_command = command;
+        else if (scenario < 10)
+            fixture.fail_command = command;
+        else {
+            fixture.fence_override = 1;
+            fixture.fence_result = scenario == 10 ? VK_ERROR_DEVICE_LOST : VK_INCOMPLETE;
+        }
+        if (scenario >= 12) {
+            fixture.fence_override = 0;
+            fixture.create_result = scenario == 12 ? VK_ERROR_DEVICE_LOST : VK_NOT_READY;
+            assert(create_fence(device, &fence_info, NULL, &invalid) == VK_ERROR_DEVICE_LOST);
+        } else if (scenario >= 10)
+            assert(status(device, fence) == VK_ERROR_DEVICE_LOST);
+        else if (command == 35)
+            assert(create_fence(device, &fence_info, NULL, &invalid) == VK_ERROR_DEVICE_LOST &&
+                   !invalid);
+        else if (command == 36)
+            destroy_fence(device, fence, NULL);
+        else if (command == 37)
+            assert(reset_fences(device, 1, &fence) == VK_ERROR_DEVICE_LOST);
+        else if (command == 38)
+            assert(status(device, fence) == VK_ERROR_DEVICE_LOST);
+        else
+            assert(wait_fences(device, 1, &fence, VK_TRUE, 0) == VK_ERROR_DEVICE_LOST);
+        assert(status(device, fence) == VK_ERROR_DEVICE_LOST);
+        assert(reset_fences(device, 1, &fence) == VK_ERROR_DEVICE_LOST);
+        assert(wait_fences(device, 1, &fence, VK_TRUE, 0) == VK_ERROR_DEVICE_LOST);
+        assert(create_fence(device, &fence_info, NULL, &invalid) == VK_ERROR_DEVICE_LOST);
+        assert(venus_icd_unbind() == RingAgain);
+        venus_icd_abandon();
+    }
+    fixture_t fixture = fresh();
+    assert(venus_icd_bind(exchange, &fixture) == RingOk);
+    VkInstance instance = create();
+    VkPhysicalDevice physical[2];
+    uint32_t count = 2;
+    assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(
+               instance, "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+    float priority = 0.5f;
+    VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+                                     .queueCount = 1,
+                                     .pQueuePriorities = &priority};
+    VkDeviceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+                               .queueCreateInfoCount = 1,
+                               .pQueueCreateInfos = &queue};
+    VkDevice device = NULL;
+    assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(
+               physical[0], &info, NULL, &device) == VK_SUCCESS);
+    PFN_vkGetDeviceProcAddr lookup =
+        (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+    PFN_vkCreateFence create_fence = (PFN_vkCreateFence)lookup(device, "vkCreateFence");
+    PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)lookup(device, "vkDestroyFence");
+    PFN_vkResetFences reset_fences = (PFN_vkResetFences)lookup(device, "vkResetFences");
+    PFN_vkWaitForFences wait_fences = (PFN_vkWaitForFences)lookup(device, "vkWaitForFences");
+    VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                                    .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+    VkFence fences[508], extra = NULL;
+    for (unsigned index = 0; index < 508; index++)
+        assert(create_fence(device, &fence_info, NULL, &fences[index]) == VK_SUCCESS);
+    assert(create_fence(device, &fence_info, NULL, &extra) == VK_ERROR_OUT_OF_HOST_MEMORY &&
+           !extra);
+    assert(wait_fences(device, 64, fences, VK_TRUE, 0) == VK_SUCCESS);
+    assert(reset_fences(device, 64, fences) == VK_SUCCESS);
+    for (unsigned index = 0; index < 508; index++)
+        destroy_fence(device, fences[index], NULL);
+    ((PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice"))(device, NULL);
+    destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
 static void idle_failures(void) {
@@ -934,6 +1172,7 @@ int main(void) {
     fixture.reply_again = 2;
     healthy(&fixture);
     concurrent();
+    fence_failures();
     idle_failures();
     device_failures();
     failures();

@@ -757,6 +757,10 @@ fn destroy_device(
     if (device == null) return;
     const entry = device_cache(@intFromPtr(device.?)) orelse return;
     const record = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    for (slots) |child| {
+        if (child.id != 0 and child.parent_id == record.id and child.kind != c.VK_OBJECT_TYPE_QUEUE)
+            return;
+    }
     var writer = writer_t{};
     writer.header(12, record.id);
     writer.put(u64, 0);
@@ -855,6 +859,205 @@ fn enumerate_version(version: [*c]u32) callconv(.C) c_int {
     version.* = 1 << 22;
     return c.VK_SUCCESS;
 }
+fn child_object(handle: u64, kind: u32, parent_id: u64) ?*c.venus_object_t {
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_lookup(&objects, handle, kind, 0, &record) != c.RingOk or
+        record.*.parent_id != parent_id) return null;
+    return @ptrCast(record);
+}
+fn result_reply(bytes: []const u8, command_id: u32, pending: i32) c_int {
+    var reader = reader_t{ .bytes = bytes };
+    const received = reader.scalar(u32) catch return failure(c.RingCorrupt);
+    if (received != command_id) return failure(c.RingCorrupt);
+    const result = reader.scalar(i32) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0 and result != pending) return failure(c.RingCorrupt);
+    return result;
+}
+/// Create one device-owned nondispatchable fence without allocation.
+/// @param[in] device Nonnull live private device, validated without native dereference.
+/// @param[in] info Nonnull borrowed canonical flags0/1/no-extension native input.
+/// @param[in] allocator Nullable borrowed callbacks, not retained or invoked.
+/// @param[out] output Nonnull native handle storage, NULL on any failure.
+/// @return Host result, explicit local validation/memory errors or sticky device loss.
+/// @note Mutex serialized; publish only a validated host reservation. Caller owns the fence.
+fn create_fence(
+    device: c.VkDevice,
+    info: [*c]const c.VkFenceCreateInfo,
+    allocator: [*c]const c.VkAllocationCallbacks,
+    output: [*c]c.VkFence,
+) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO or
+        info.*.pNext != null or info.*.flags > 1) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_FENCE, parent.id, 0, &record) !=
+        c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var writer = writer_t{};
+    writer.header(35, parent.id);
+    writer.put(u64, 1);
+    writer.put(u32, c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO);
+    writer.put(u64, 0);
+    writer.put(u32, info.*.flags);
+    writer.put(u64, 0);
+    writer.put(u64, 1);
+    writer.put(u64, record.*.id);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = identity_reply(reply, 35, record.*.id, true) catch
+        return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0) return failure(c.RingCorrupt);
+    if (result != c.VK_SUCCESS) {
+        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_FENCE, 0);
+        return result;
+    }
+    output.* = @ptrFromInt(record.*.handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy a quiescent device-owned fence; invalid/foreign handles ignored.
+/// @param[in] device Nonnull live private parent; no native handle dereference.
+/// @param[in] fence Nullable private token, borrowed until successful host destruction.
+/// @param[in] allocator Nullable unused borrowed callbacks; no allocation or retained pointer.
+/// @note Mutex serialized; caller retires GPU references first. Loss retains ownership.
+fn destroy_fence(
+    device: c.VkDevice,
+    fence: c.VkFence,
+    allocator: [*c]const c.VkAllocationCallbacks,
+) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or fence == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(
+        @intFromPtr(fence.?),
+        c.VK_OBJECT_TYPE_FENCE,
+        parent.id,
+    ) orelse return;
+    var writer = writer_t{};
+    writer.header(36, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 36) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_FENCE, 0) ==
+        c.RingOk);
+}
+fn encode_fences(command_id: u32, device: c.VkDevice, fences: []const c.VkFence) ?writer_t {
+    if (device == null or fences.len == 0 or fences.len > 64) return null;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return null;
+    var writer = writer_t{};
+    writer.header(command_id, parent.id);
+    writer.put(u32, @intCast(fences.len));
+    writer.put(u64, fences.len);
+    for (fences) |fence| {
+        if (fence == null) return null;
+        const record = child_object(
+            @intFromPtr(fence.?),
+            c.VK_OBJECT_TYPE_FENCE,
+            parent.id,
+        ) orelse return null;
+        writer.put(u64, record.id);
+    }
+    return writer;
+}
+/// Reset1..64 device-owned fences after the caller retires their GPU work.
+/// @param[in] device Nonnull live private parent.
+/// @param[in] count Accessible native input count1..64; validated before slicing.
+/// @param[in] fences Nonnull borrowed immutable handles[count], retained only for call.
+/// @return Host result, local device error or sticky transport/peer device loss.
+/// @note Mutex serialized, allocation-free; never resets a foreign device's object.
+fn reset_fences(device: c.VkDevice, count: u32, fences: [*c]const c.VkFence) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (count == 0 or count > 64 or fences == null) return c.VK_ERROR_DEVICE_LOST;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const writer = encode_fences(37, device, fences[0..count]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    return result_reply(reply, 37, 0);
+}
+/// Poll one native fence without blocking host execution.
+/// @param[in] device Nonnull live private parent, not dereferenced as native pointer.
+/// @param[in] fence Nonnull device-owned token; borrowed until call ends.
+/// @return VK_SUCCESS, VK_NOT_READY, negative host result or sticky device loss.
+/// @note Mutex serialized, no allocation; CPU completion does not imply signaled GPU fence.
+fn get_fence_status(device: c.VkDevice, fence: c.VkFence) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or fence == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_DEVICE_LOST;
+    const record = child_object(
+        @intFromPtr(fence.?),
+        c.VK_OBJECT_TYPE_FENCE,
+        parent.id,
+    ) orelse return c.VK_ERROR_DEVICE_LOST;
+    var writer = writer_t{};
+    writer.header(38, parent.id);
+    writer.put(u64, record.id);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    return result_reply(reply, 38, c.VK_NOT_READY);
+}
+fn wait_round(device: c.VkDevice, fences: []const c.VkFence, all: u32) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = encode_fences(39, device, fences) orelse return c.VK_ERROR_DEVICE_LOST;
+    writer.put(u32, all);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    return result_reply(reply, 39, c.VK_TIMEOUT);
+}
+/// Wait with nonblocking host rounds and the caller's monotonic timeout.
+/// @param[in] device Nonnull live parent, must remain live throughout call.
+/// @param[in] count Input count1..64.
+/// @param[in] fences Nonnull borrowed immutable handles[count]; snapshot privately, no retention.
+/// @param[in] all Canonical0/1 any/all selection; waited fences must remain live.
+/// @param[in] timeout Nanoseconds, zero still polls once; UINT64_MAX effectively indefinite.
+/// @return VK_SUCCESS, VK_TIMEOUT or explicit negative host/local/device error.
+/// @note No allocation. Mutex released between rounds so other threads can submit signaling work.
+fn wait_fences(
+    device: c.VkDevice,
+    count: u32,
+    fences: [*c]const c.VkFence,
+    all: u32,
+    timeout: u64,
+) callconv(.C) c_int {
+    if (count == 0 or count > 64 or fences == null or all > 1) return c.VK_ERROR_DEVICE_LOST;
+    var snapshot: [64]c.VkFence = undefined;
+    @memcpy(snapshot[0..count], fences[0..count]);
+    var timer = std.time.Timer.start() catch {
+        mutex.lock();
+        defer mutex.unlock();
+        return failure(c.RingInvalid);
+    };
+    while (true) {
+        const result = wait_round(device, snapshot[0..count], all);
+        if (result != c.VK_TIMEOUT) return result;
+        const elapsed = timer.read();
+        if (elapsed >= timeout) return c.VK_TIMEOUT;
+        std.time.sleep(@min(std.time.ns_per_ms, timeout - elapsed));
+    }
+}
 const IdleDeadlineNs: u64 = std.time.ns_per_s;
 var gpu_fences = [_]u64{0} ** 64;
 fn gpu_exchange(kind: u32, ring: u32, fence: u64, response: *c.venus_request_t) c_int {
@@ -934,6 +1137,11 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkGetDeviceQueue", &get_device_queue },
         .{ "vkDeviceWaitIdle", &device_wait_idle },
         .{ "vkQueueWaitIdle", &queue_wait_idle },
+        .{ "vkCreateFence", &create_fence },
+        .{ "vkDestroyFence", &destroy_fence },
+        .{ "vkResetFences", &reset_fences },
+        .{ "vkGetFenceStatus", &get_fence_status },
+        .{ "vkWaitForFences", &wait_fences },
     };
     inline for (Entries) |entry| if (std.mem.eql(u8, name, entry[0])) return @ptrCast(entry[1]);
     return null;
@@ -1200,4 +1408,50 @@ test "bounded device input validation and identity reply truncations" {
             return error.AcceptedTruncation;
         } else |_| {}
     }
+}
+test "fence result replies reject truncation malformed tags and unexpected positive statuses" {
+    defer lost = c.RingOk;
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(u32, bytes[0..4], 38, .little);
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    for (0..8) |length| {
+        try std.testing.expectEqual(
+            @as(c_int, c.VK_ERROR_DEVICE_LOST),
+            @call(.never_inline, result_reply, .{ bytes[0..length], @as(u32, 38), @as(i32, 1) }),
+        );
+        try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+        lost = c.RingOk;
+    }
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], c.VK_NOT_READY, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_NOT_READY),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_HOST_MEMORY, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_DEVICE_LOST, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_DEVICE_LOST),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    lost = c.RingOk;
+    std.mem.writeInt(i32, bytes[4..8], c.VK_INCOMPLETE, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_DEVICE_LOST),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u32, bytes[0..4], 39, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_DEVICE_LOST),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
 }

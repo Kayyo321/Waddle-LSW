@@ -202,6 +202,27 @@ static int icd_cycles(venus_guest_t *guest) {
         if (!queue || queue != repeated || queue_idle(queue) != VK_SUCCESS ||
             device_idle(device) != VK_SUCCESS)
             goto fail;
+        PFN_vkCreateFence create_fence = (PFN_vkCreateFence)device_proc(device, "vkCreateFence");
+        PFN_vkDestroyFence destroy_fence =
+            (PFN_vkDestroyFence)device_proc(device, "vkDestroyFence");
+        PFN_vkResetFences reset_fences = (PFN_vkResetFences)device_proc(device, "vkResetFences");
+        PFN_vkGetFenceStatus fence_status =
+            (PFN_vkGetFenceStatus)device_proc(device, "vkGetFenceStatus");
+        PFN_vkWaitForFences wait_fences =
+            (PFN_vkWaitForFences)device_proc(device, "vkWaitForFences");
+        if (!create_fence || !destroy_fence || !reset_fences || !fence_status || !wait_fences)
+            goto fail;
+        VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+                                        .flags = VK_FENCE_CREATE_SIGNALED_BIT};
+        VkFence fence = NULL;
+        if (create_fence(device, &fence_info, NULL, &fence) != VK_SUCCESS || !fence ||
+            fence_status(device, fence) != VK_SUCCESS ||
+            wait_fences(device, 1, &fence, VK_TRUE, 0) != VK_SUCCESS ||
+            reset_fences(device, 1, &fence) != VK_SUCCESS ||
+            fence_status(device, fence) != VK_NOT_READY ||
+            wait_fences(device, 1, &fence, VK_TRUE, 0) != VK_TIMEOUT)
+            goto fail;
+        destroy_fence(device, fence, NULL);
         destroy_device(device, NULL);
         if (device_proc(device, "vkDestroyDevice"))
             goto fail;
