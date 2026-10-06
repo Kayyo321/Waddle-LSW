@@ -1025,7 +1025,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Successful mapped remote image/Wayland fixture remains pending; no ICD credit.
 
 
-- **Commit (current; resolve by subject)**: `test(vgpu): verify mapped guest production worker hardware presentation`
+- **Commit `59d31bd`**: `test(vgpu): verify mapped guest production worker hardware presentation`
   - **Task Impact**: +0% to TODO: #4; +0% to TODO: #3 (+0% overall).
   - **Summary**: Route real guest Vulkan image creation through an exec-isolated
     production worker, native DMA-BUF export, acknowledged Wayland surface and
@@ -1036,3 +1036,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     duplicate completion rejection, subsequent reuse and healthy worker teardown.
     Existing native/local hardware regressions pass ASan/LSan/UBSan. CI compilation
     and native ABI gates remain pending before final TODO #4 acceptance credit.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify serialized guest command reply ownership`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify allocation-free exclusive command/reply staging, fixed
+    pinned reply-stream prefix, CPU completion state and bounded reply identity.
+  - **Verification**: Cross-checked pinned SetReplyCommandStreamMESA encoding and
+    production Submit/Poll/Reply semantics. No loader or DXVK credit assigned.

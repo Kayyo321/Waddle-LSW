@@ -2022,3 +2022,47 @@ worker/client runs pass on RTX5080, along with local/native regression paths. CI
 compiles the remote hardware binary without pretending hosted runners expose a GPU.
 Native Windows ABI and Linux CI remain separate final acceptance gates. This test
 has no Vulkan loader, ICD or DXVK functionality and awards no TODO #3 progress.
+
+
+### Production serialized guest command owner (Task #3)
+
+venus_command_t borrows an exclusive negotiated guest exchange callback/context,
+private tx/rx buffers and their actual sizes. It allocates nothing and is never
+copied live. Initialize only a zero record, with callback/context nonnull, tx at
+least44 bytes, rx at least4 bytes, both multiples of4 and bounded by16MiB; buffers
+and owner must be pairwise disjoint and disjoint from frontend RPC scratch/mapping.
+The caller serializes all application threads across the entire start/poll/take
+interval; no other request may submit Venus commands or alter reply stream until
+take returns. This exclusivity is stronger than serializing individual RPC calls.
+
+Start accepts one privately encoded pinned command, length at least8 and multiple
+of4, with reply flag exactly1. The encoded command's own nested argument validation
+is the serializer's responsibility; this owner does not advertise a Vulkan API or
+validate arbitrary application Vulkan structs. Command input must be disjoint from
+owner and both staging buffers. Its first little-endian word is retained as reply
+identity. Prefix exactly36 bytes: command178/flags0, description pointer1, resource1,
+offset0(u64), requested reply extent(u64). Then append command without native casts.
+Submit publishes once. Only a successful nonzero CPU fence changes Idle to Submitted.
+Again/Invalid/Limit before successful publication leave Idle; terminal status makes
+Lost. A zero success fence is Corrupt. Start during Submitted/Ready returns Again.
+
+Poll is legal only Submitted. RequestPoll Again retains Submitted without reading
+reply. RingOk means the serialized sole submission's CPU decoder retired, never GPU
+completion. Next RequestReply reads exactly rx extent at offset0. Again retains the
+same submission for another poll without resubmitting; successful reply must carry
+the retained little-endian command identity. Wrong identity or unexpected successful
+response shape is sticky Corrupt and requires old-session abandonment. Valid reply
+makes Ready. No reply decoder receives shared memory or an unbounded native pointer.
+Take exposes the complete borrowed private rx view once and returns to Idle; view
+lifetime ends at next successful start or free. Command-specific decoding and array
+capacity/pNext validation remain Zig responsibilities of future Vulkan entry points.
+
+Free resets the owner without freeing buffers/callback/context or calling transport.
+Free Submitted/Ready/Lost is allowed only after caller stops operations and abandons
+the old receiver session; it cannot cancel an accepted Vulkan command. Idle free is
+ordinary cleanup. All per-exchange deadlines remain the frontend's; the application
+must bound repeated Again polling with its own overall timer and abandon on timeout.
+This component does not change timeline GPU synchronization or advertise ICD/DXVK
+completion. Unit tests must cover every state/error, aliases, bounds, zero fence,
+wrong reply identity, all callback statuses and repeated start/poll/take churn, with
+Zig allocator zero leaks and native Linux/Windows ABI fixtures.
