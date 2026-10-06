@@ -1823,3 +1823,26 @@ sampling and receiver-health precedence. Every returned path clears monitor/cont
 Linux normal/sanitized runs, coverage and Windows x86_64 cross-link pass; dispatch
 production coverage99.24% lines/95.65% branches. Production service construction of
 this binding, worker FD launch and controller retry are not yet integrated.
+
+
+### Production service presentation binding lifecycle (Task #4)
+
+venus_service_run_presented extends the trusted service entry point with a borrowed
+native frame endpoint, retained positive controller PID and nonzero context.
+The three descriptors must be distinct. Unbound operation uses exactly fd-1,
+pid0,context0; malformed partial bindings are Invalid before mapping acquisition.
+The compatibility venus_service_run passes those unbound values. Caller closes
+all descriptors after return; no service function closes borrowed originals.
+
+After normal receiver creation, quotas and timeout setup, a zeroed call-scoped
+venus_export_t is initialized against that receiver/native endpoint. Its address
+and four static adapter callbacks form the optional dispatch binding. The take
+adapter obtains a private completion then encodes it through venus_release_encode
+into exact32 response bytes. Codec failure is Corrupt and ends the session; the
+private completion has no FD ownership. Handshake/RPC initialization retain existing
+failure cleanup. Every serve call uses the bound dispatcher; all monitor/callback
+state resides in the still-live service stack. Teardown closes mapped rings/RPC/
+channel first, zeroes export state, destroys receiver, then releases private bytes
+and mapping. Native leases are abandoned only together with old receiver context
+teardown; controller must discard old guest allocations on session loss. Healthy
+standalone service callers remain unbound and require no presentation socket.

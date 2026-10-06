@@ -928,9 +928,17 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Production service/worker launch and controller acknowledgement retry pending.
 
 
-- **Commit (current; resolve by subject)**: `test(vgpu): verify bound presentation negotiation enforcement`
+- **Commit `d39082b`**: `test(vgpu): verify bound presentation negotiation enforcement`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Explicitly verify both bound operations before negotiation consume
     their full request and return Invalid without submit/take or receiver calls.
   - **Verification**: Normal and ASan/LSan/UBSan runtime suites, required dispatch/RPC
     coverage and native Windows cross-link pass; monitor pointers remain cleared.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define production service presentation lifetime`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Specify optional borrowed frame channel binding, distinct descriptor
+    checks, export owner acquisition and teardown order with existing service state.
+  - **Verification**: Bound dispatch/native Windows cross-link and negotiation
+    tests pass; service construction and worker launch wiring are next gates.
