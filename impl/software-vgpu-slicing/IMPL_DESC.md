@@ -2896,3 +2896,77 @@ Actual worker and actual loader variants create/reset/destroy pools in each devi
 cycle. Native Windows runtime, sanitizers, exact ownership and >=90% production
 line/branch coverage remain required. This does not complete command-buffer
 recording/submission, graphics/compute, mapping or real DXVK acceptance.
+
+### Core command-buffer allocation and recording lifecycle
+
+Implement vkAllocateCommandBuffers88, vkFreeCommandBuffers89,
+vkBeginCommandBuffer90, vkEndCommandBuffer91 and vkResetCommandBuffer92. Actual
+recorded commands and queue submission are the following increments. Use private
+pool-parented dispatchable records with the existing loader magic first word;
+the native loader replaces it with device dispatch as its pinned trampoline does.
+Never return host-native command-buffer pointers. Fixed per-slot metadata records
+level, recording state and begin flags; all pointers are call-borrowed, all calls
+mutex serialized and allocation-free. States are Initial, Recording, Executable,
+Invalid and (for subsequent submission) Pending. New allocations start Initial.
+
+Allocation accepts canonical info tag40/no pNext/live same-device pool and level0
+(primary) or1(secondary). Count1..64 is supported per call. Count0/null info/output
+fails initialization without touching unknown output extents; count>64 returns
+OUT_OF_HOST_MEMORY with output untouched. For accessible info and count1..64, copy
+native info before clearing every caller output to NULL, then validate remaining
+fields. Reserve all dispatchable child records before sending; local partial
+reservation failure rolls back every reserved record and sends nothing. Wire
+command88/flags1/device64/info-tag1/tag40/pNext0/pool64/level32/count32/array-size64/
+reserved-CB-id64[]. Reply command88/result32/array-size64/CB-id64[] must match count
+and every exact preassigned ID before any output is published. Negative host
+results may return each reserved ID or zero (the pinned receiver clears handles
+on native allocation failure but retains preassigned IDs on array-storage failure);
+foreign IDs/count mismatches/truncation are corrupt. Roll back all reservations
+only for validated native negative result, except DEVICE_LOST retains uncertain
+ownership. Unexpected positive statuses, malformed/transport loss poison binding.
+
+Free accepts device/pool with exact parent and0..64 borrowed handle entries.
+Count0 is a no-op. For nonzero count require an accessible array, validate every
+private COMMAND_BUFFER dispatchable child and reject duplicates before sending
+anything. Wire command89/flags1/device64/pool64/count32/array-size64/CB-id64[].
+Only exact command89 reply permits clearing each metadata entry and releasing all
+records. Null/stale/foreign arrays/parents are ignored; failed transport/corruption
+retains uncertain batch ownership until receiver retirement and abandonment.
+Pool destruction implicitly clears/releases all its children after successful
+host destruction; device destruction still refuses live pools. Caller retires
+GPU uses before free or pool destruction.
+
+Begin validates a live private buffer/pool, canonical tag42/no pNext and flags
+confined to ONE_TIME_SUBMIT(1) and SIMULTANEOUS_USE(4). RENDER_PASS_CONTINUE(2) is
+unsupported until render-pass inheritance is implemented. State must be Initial
+or Executable; Executable additionally requires pool RESET_COMMAND_BUFFER(2)
+because begin implicitly resets. Primary buffers normalize ignored inheritance to
+NULL without dereferencing it. Secondary buffers require accessible canonical
+tag41/no pNext, NULL renderPass/framebuffer, subpass0 and all query enable/flags/
+statistics fields0 for the initial transfer/compute scope. Retain no native pointer.
+Wire command90/flags1/CB64/info-tag1/tag42/pNext0/begin-flags32/inheritance-tag64;
+secondary tag1 adds tag41/pNext0/renderpass64(0)/subpass32(0)/framebuffer64(0)/
+occlusion32(0)/queryFlags32(0)/statistics32(0). Exact command90/result0 enters
+Recording and stores flags; validated negative results enter Invalid. Host loss or
+malformed/transport reply poisons binding and leaves uncertain host state.
+
+End requires Recording and sends command91/flags1/CB64. Exact command91/result0
+enters Executable; validated negative results enter Invalid. Reset requires live
+buffer/pool, pool RESET_COMMAND_BUFFER flag, flags0/1 and no Pending state; send
+command92/flags1/CB64/reset-flags32. Exact command92/result0 enters Initial and
+clears begin flags, including after recording/invalid/executable states; negative
+results leave prior state. Pool reset success resets every child to Initial and
+clears begin flags, and future pending submissions will be rejected before wire
+until actual GPU retirement. Local invalid inputs return initialization failure;
+already-lost binding returns DEVICE_LOST. No success is manufactured for host
+recording/reset errors. State changes only follow validated replies.
+
+Tests compare all five commands with independent pinned C encoders, primary and
+secondary inheritance normalization, loader dispatch header behavior,64-entry
+batches, local partial-reservation rollback, native negative rollback, duplicate/
+stale/foreign arrays, pool ownership, exhaustive lifecycle transitions, implicit
+pool child release/reset and each malformed/transport/result path. A bounded
+reply helper is tested at every truncation boundary. Actual static/shared-loader
+worker cycles allocate, begin/end/reset/free and implicitly retire children.
+Native Windows runtime, zero-leak sanitizer and >=90% production coverage gates
+remain mandatory. Full command execution, memory mapping and DXVK are incomplete.

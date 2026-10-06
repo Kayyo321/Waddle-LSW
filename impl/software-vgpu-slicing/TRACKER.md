@@ -1504,7 +1504,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     private device ownership, reset results and child retirement boundary with
     independent encoder and actual worker/loader verification gates.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch core command pool lifecycles`
+- **Commit `8061962`**: `feat(vgpu): dispatch core command pool lifecycles`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; command-buffer execution pending).
   - **Summary**: Add device-parented pool tokens, core flags/configured-family
     validation, exact host creation/destruction/reset, fixed pool metadata and
@@ -1518,3 +1518,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     create/reset/destroy cycles pass normal/sanitizers, Windows fixtures/DLL
     cross-link. Updated actual-loader local runs and native CI remain required.
     Full recording/submission, memory mapping and DXVK acceptance remain pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify command buffer allocation and recording states`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify transactional bounded batch allocation/free, loader-owned
+    dispatch prefixes, primary/secondary inheritance, recording/reset transitions,
+    pool child retirement and exact wire/error/verification boundaries.
