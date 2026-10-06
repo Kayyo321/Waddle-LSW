@@ -4233,3 +4233,14 @@ The command push packet remains opcode132: command header16 bytes, pipeline-layo
 Each `push_profile_t.initialized` changes from two to four `u64` words: byte B maps word `B/64`, bit `B%64` for B0 through255. A definition change clears all four words of that stage before new initialized bits are published. Six stage profiles stay independent. The exact x86_64 native/Windows ABI sizes, verified with Zig `@sizeOf` before implementation, are424 bytes per push profile (previous408),19600 bytes per command profile (previous19504),19608 bytes per command owner slot (previous19512), and1254912 bytes for64 owners (previous1248768): precisely6144 additional fixed bytes. The registry contains no heap allocations or borrowed native pointers. Reset scrubs metadata in place without refunding the live-owner quota; confirmed free/pool destruction and retired abandonment retain their existing deterministic owner release semantics. Source push values are never stored in this metadata bitmap.
 
 Tests must preserve the original partial writes across byte63/64 and add exact byte127/128,191/192 and255 boundaries, full256-byte initialization, definition-change clearing of all four words, and failure-before-mutation for all out-of-range extents. Protocol/profile/state branch and line gates remain at least90 percent, native allocator tests remain leak-free, and pure Windows crosscompile remains mandatory. The ICD integration draft must cache actual `maxPushConstantsSize` from the existing opcode6 properties reply, reject pipeline ranges exceeding that value, bound public push inputs to256, and preserve the real physical property value rather than fabricating a256-byte host limit. Hosts with a128-byte limit must reject a256-byte layout locally. No progress credit for actual256-byte public/GPU support is assigned until that separate integration and hardware gate pass.
+
+The256-byte pure push profile is a prerequisite rather than public device support.
+Until the actual selected physical maxPushConstantsSize is cached and enforced,
+public pipeline-layout creation keeps an explicit128-byte ceiling. Validate the
+create tag, pNext, flags, counts and nonnull arrays before reading any range; reject
+an offset above128 or a size exceeding128-offset before reserving metadata or
+issuing a native creation. This subtraction ordering cannot overflow. Native
+regressions require offset128/size4, UINT32_MAX offsets and null nonempty ranges to
+fail with NULL output and unchanged transaction count. The temporary ceiling is
+removed only with the documented actual-host cache, truthful public limit clamp
+and native128/256-host tests; no API/extension advertisement accompanies codecs.
