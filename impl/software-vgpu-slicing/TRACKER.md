@@ -2375,14 +2375,18 @@ This synchronization commit is identified by subject `docs(vgpu): audit physical
   - **Task Impact**: +0% to TODO: #3 (+0% overall); real triangle pixels and DXVK acceptance remain pending.
   - **Summary**: Require an active compatible pass and live compiled graphics pipeline before draw106. Exact acknowledgment precedes pipeline-reference publication. Independently generated native packets exercise ordinary and zero-count/full-u32 draws, binding before/inside a pass, retired creating shaders/layout/pass, and pending protection of pipeline/pass/framebuffer/view/image/memory/pool until queue idle. Corrupt/transport acknowledgment tests preserve references and active state. Native/shared128 lifecycles, ASan/LSan/UBSan, Windows object compilation and74 Zig tests pass; production branch90.04% (2024/2248), line99.03% (2343/2366).
 
-- **Commit `399e7e9`**: `feat(vgpu): adapt native feature chains with transactional publication`
+- **Commit `399e7e9`**: `feat(vgpu): adapt native feature chains transactionally`
   - **Task Impact**: +0% to TODO: #3 (+0% overall); actual feature query/cache/device enablement remain pending.
   - **Summary**: Collect at most64 aligned native headers and eight distinct recognized tags without touching unknown payloads. Prevalidate whole Boolean batches and disjoint output extents before named-member writes. All25 native and freshly instrumented oracle sanitizer tests pass; Windows executable crosscompiles.
 
-- **Commit `2e7833a`**: `fix(vgpu): exclude native feature fixtures from production coverage`
+- **Commit `2e7833a`**: `test(vgpu): delimit native feature adapter fixtures for coverage`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Add explicit test-only boundary before native adapter helper functions. Correct production-only coverage97.96% branches(48/49),95.74% lines(45/47);25 tests pass.
 
-- **Commit (this entry, resolved by subject)**: `docs(vgpu): record bounded native feature adapter verification`
+- **Commit `a58886f`**: `docs(vgpu): record bounded native feature adapter verification`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Record native/Windows exact storage ledger, overlap ownership preconditions, structured Boolean ABI assertions and corrected production-only sanitizer/coverage evidence. No hardware feature or API advertisement credit.
+
+- **Commit (this entry, resolved by subject)**: `docs(vgpu): specify atomic core and Features2 native publication`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify entire core55 and known-chain validation before any caller write, exact named-member Boolean ABI, whole-outer extent overlap rejection, native canary/failure tests and Linux/Windows storage proof. This adds no procedure or API advertisement.

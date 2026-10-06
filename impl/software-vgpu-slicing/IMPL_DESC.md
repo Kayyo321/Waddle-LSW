@@ -4343,3 +4343,37 @@ Publication receives the collected snapshot plus exactly matching owned flag rec
 Tests require one-hot coverage of every recognized native Boolean member, whole-batch malformed-last preservation, zero/one/non-Boolean values, every tag/count and unknown canary preservation. Test unknown nodes before/between/after recognized nodes,64 unknown headers success,65th inaccessible address rejection, duplicate tags, cycles including entirely unknown nodes, null termination and misalignment rejection before dereference. Native Zig allocator tests, structured interface documentation, at least90% production line/branch coverage and Windows x64 crosscompile are required. Integrating the helper into ICD features2 queries and enabled-device chains remains separate from this allocation-free adapter prerequisite.
 
 The verified x64 native adapter ledger is identical under Linux and Windows: chain_t104 bytes/alignment8, one owned wire node_t196 bytes and an eight-record decoded array1568 bytes, with the collector's64 seen pointers512 bytes. Native recognized structs are64/208/80/32/24/24/24/24 bytes, alignment8, in the stated tag order. Compile-time assertions verify every named member after the two base-header fields is VkBool32 and that the exact field counts match the wire schema. These are bounded stack storage extents, not additional global ICD cache reservations. Publication also rejects intersections between recognized native target extents before any write; all native outputs and owned snapshot/flag inputs are caller-guaranteed disjoint. Native tests and freshly instrumented independent C oracles pass under ASan/LSan/UBSan with zero bytes leaked, Windows x64 executable crosscompiles, and corrected production-only coverage is97.96% branches(48/49),95.74% lines(45/47). Test-only helper functions are explicitly excluded by the existing coverage boundary marker.
+
+### Transactional native core55 and Features2 publication
+
+
+Owned production change is confined to src/vgpu/venus_features_native.zig. It introduces no receiver call, hardware cache, advertisement, feature enabling, allocation, lock or global storage. Existing collect_chain and publish_batch interfaces remain compatible.
+
+Public interface:
+
+    pub fn publish_features2(output: *c.VkPhysicalDeviceFeatures2,
+        chain: *const chain_t, nodes: []const node_t, core: []const u32) !void;
+
+The existing wire result field is named result_t.core ([55]u32), not core_flags. Integration passes &decoded.core and decoded.nodes[0..decoded.count]. output is a nonnull initialized accessible caller-owned native Features2 object. chain is the snapshot collected from exactly output.pNext during the same operation; all linked headers/links remain immutable until return. The function rejects wrong outer tag or misalignment before reading other outer fields. A successful call borrows every input until return and retains no pointers. Externally synchronized exclusive output access is required.
+
+Input snapshot/flag storage must not overlap any target object. All native records, including unknown objects whose extents cannot be inferred from their header, must be distinct accessible initialized non-overlapping objects. This explicit precondition preserves unknown payloads without guessing their sizes. In addition, publication defensively rejects overlaps among recognized targets (existing behavior) and between each recognized target's full native extent and the entire outer Features2 object, including its header and padding. Full outer extent rather than features-only range prevents named chain assignments from corrupting outer sType/pNext/padding. Compute interval endpoints with checked usize addition before publication; never dereference a caller address after alignment/quota failure.
+
+Validation is one complete phase before any native write:
+1. Verify outer pointer alignment and sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2.
+2. Require core.len == 55; validate all55 words are0 or1, including the last word.
+3. Call an extracted private validate_batch(chain,nodes) with identical current count/tag/schema/Boolean/null/alignment/header/duplicate/recognized-overlap behavior. Existing public publish_batch reuses the same validator.
+4. Validate every recognized native target interval against the full outer object interval; reject any overlap.
+5. Only after all validation succeeds, assign recognized Boolean members by the existing private infallible named-field writer, then assign all55 VkPhysicalDeviceFeatures members by native field name. No operation that can return an error occurs after the first write.
+
+Use comptime @typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields to assert exactly55 fields, each VkBool32; no struct/raw-wire cast or contiguous payload memcpy. Struct declaration order is the pinned core feature wire order. Existing recognized type assertions remain unchanged. Preserve every outer sType/pNext byte, implicit padding byte, adjacent canary and all unknown object bytes. Publication errors return Invalid and leave the complete outer object plus all recognized outputs unchanged, including the case of a malformed last chain record or final core word.
+
+Linux/Windows x64 compile-time ABI proof: VkPhysicalDeviceFeatures size220/alignment4; VkPhysicalDeviceFeatures2 size240/alignment8, features offset16, pNext offset8. The adapter retains existing chain104B/seen512B/record196B ABI. No owned core copy is required because immutable borrowed core inputs are explicitly disjoint from outputs; validation uses bounded scalar temporaries, fixed storage only.
+
+Required tests before the atomic increment:
+- Every55 native core field one-hot with independent native @offsetOf byte expectation, A5-filled outer padding/header and adjacent canaries; native known chain outputs simultaneously verified.
+- Full byte preservation on core lengths0/54/56, bad core words at every position (2 and maximal u32), malformed final chain Boolean/count/tag/header, duplicate/null/misaligned targets and incorrect outer sType/alignment.
+- Zero-chain success and maximal8 known-chain success; unknown nodes before/between/after recognized outputs retain header/payload/canaries.
+- Aligned initialized recognized target overlapping outer object rejected with exact pre/post byte comparison; adjacent target extent permitted, proving half-open interval boundary.
+- Native tests and independently instrumented C-oracle ASan/LSan/UBSan run, x64 Windows compile with ABI assertions, production coverage>=90% line/branch. Source fixture boundary marker stays before all test-only helpers.
+
+No public Features2 procedure is installed and no API or extension is advertised by this prerequisite. ICD integration must establish actual raw host/schema support independently and must not publish core or chain separately before this whole-operation validator succeeds.
