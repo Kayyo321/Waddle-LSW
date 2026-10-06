@@ -16,7 +16,50 @@ struct venus_surface_t {
     venus_frame_t pending;      /**< Private unsubmitted frame; zero when absent. */
     int fds[4];                 /**< Owned received descriptors; -1 when absent. */
     venus_frame_t accepted[3];  /**< Metadata retained until compositor retirement. */
+    venus_ring_status_t
+        release_failed;            /**< Sticky native send loss; never retransmit after loss. */
+    int acknowledged;              /**< Nonzero opts into owned native release retries. */
+    venus_release_t releases[4];   /**< Completed private records, frame zero means empty. */
+    venus_surface_done_t observer; /**< Optional borrowed observer through free. */
+    void *observer_context;        /**< Optional borrowed observer context through free. */
 };
+static venus_ring_status_t flush_releases(venus_surface_t *owner) {
+    if (owner->release_failed != RingOk)
+        return owner->release_failed;
+    for (unsigned index = 0; index < 4; index++) {
+        if (!owner->releases[index].frame)
+            continue;
+        venus_ring_status_t status = venus_release_send(owner->socket_fd, &owner->releases[index]);
+        if (status == RingAgain)
+            return RingAgain;
+        if (status != RingOk) {
+            owner->failed = owner->release_failed = status == RingClosed ? RingClosed : RingCorrupt;
+            return owner->failed;
+        }
+        memset(&owner->releases[index], 0, sizeof(owner->releases[index]));
+    }
+    return RingOk;
+}
+static void acknowledged_done(void *context, const venus_frame_t *frame,
+                              venus_ring_status_t status) {
+    venus_surface_t *owner = context;
+    if (status != RingOk && status != RingInvalid && status != RingCancelled &&
+        status != RingClosed)
+        owner->failed = RingCorrupt;
+    else {
+        unsigned slot;
+        for (slot = 0; slot < 4; slot++)
+            if (!owner->releases[slot].frame)
+                break;
+        if (slot == 4)
+            owner->failed = RingCorrupt;
+        else
+            owner->releases[slot] = (venus_release_t){
+                .context = frame->context, .frame = frame->frame, .status = status};
+    }
+    if (owner->observer)
+        owner->observer(owner->observer_context, frame, status);
+}
 static void finish_pending(venus_surface_t *owner, venus_ring_status_t status) {
     venus_frame_t frame = owner->pending;
     memset(&owner->pending, 0, sizeof(owner->pending));
@@ -66,9 +109,29 @@ venus_ring_status_t venus_surface_create(venus_surface_t **owner, int socket_fd,
     *owner = created;
     return RingOk;
 }
+venus_ring_status_t
+venus_surface_create_acknowledged(venus_surface_t **owner, int socket_fd, int32_t worker_pid,
+                                  uint64_t identity, struct wl_display *display,
+                                  struct zwp_linux_dmabuf_v1 *dmabuf, struct wl_surface *surface,
+                                  venus_surface_done_t observer, void *context) {
+    venus_ring_status_t status = venus_surface_create(
+        owner, socket_fd, worker_pid, identity, display, dmabuf, surface, acknowledged_done, NULL);
+    if (status != RingOk)
+        return status;
+    (*owner)->acknowledged = 1;
+    (*owner)->context = *owner;
+    (*owner)->observer = observer;
+    (*owner)->observer_context = context;
+    return RingOk;
+}
 venus_ring_status_t venus_surface_poll(venus_surface_t *owner) {
     if (!owner)
         return RingInvalid;
+    if (owner->acknowledged) {
+        venus_ring_status_t status = flush_releases(owner);
+        if (status != RingOk)
+            return status;
+    }
     if (owner->failed != RingOk)
         return owner->failed;
     size_t slot;
@@ -123,11 +186,19 @@ venus_ring_status_t venus_surface_free(venus_surface_t **owner) {
     if (!owner || !*owner)
         return RingOk;
     venus_surface_t *current = *owner;
+    venus_ring_status_t flush_status = current->acknowledged ? flush_releases(current) : RingOk;
+    if (flush_status == RingAgain)
+        return RingAgain;
     venus_ring_status_t result = venus_present_free(&current->presenter);
     if (result != RingOk)
         return result;
     finish_pending(current, RingCancelled);
+    if (current->acknowledged && flush_status == RingOk) {
+        flush_status = flush_releases(current);
+        if (flush_status == RingAgain)
+            return RingAgain;
+    }
     free(current);
     *owner = NULL;
-    return RingOk;
+    return flush_status;
 }

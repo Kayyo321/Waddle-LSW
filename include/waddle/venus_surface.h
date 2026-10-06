@@ -37,6 +37,27 @@ venus_ring_status_t venus_surface_create(venus_surface_t **owner, int socket_fd,
                                          struct zwp_linux_dmabuf_v1 *dmabuf,
                                          struct wl_surface *surface, venus_surface_done_t done,
                                          void *context);
+/** @brief Bind a surface and own bounded native release acknowledgement retries.
+ * @param[out] owner Nonnull initially-NULL private pointer, unchanged on failure.
+ * @param[in] socket_fd Borrowed prepared nonblocking CLOEXEC seqpacket endpoint.
+ * @param[in] worker_pid Positive retained unreaped worker identity.
+ * @param[in] identity Nonzero exact controller context.
+ * @param[in] display Borrowed live display retained through free.
+ * @param[in] dmabuf Borrowed version-four global on same display/queue.
+ * @param[in] surface Borrowed role-bound version-four target surface.
+ * @param[in] observer Nullable borrowed completion observer, no reentry/destruction.
+ * @param[in,out] context Nullable borrowed observer state retained until free.
+ * @return Same acquisition status as venus_surface_create.
+ * @note Event thread only. Owns four private acknowledgement slots inside owner;
+ * poll/free retry Again before new receipt/teardown. Observer callback does not
+ * mean acknowledgement delivery. Caller retains receiver/worker/window lifetimes.
+ */
+venus_ring_status_t venus_surface_create_acknowledged(venus_surface_t **owner, int socket_fd,
+                                                      int32_t worker_pid, uint64_t identity,
+                                                      struct wl_display *display,
+                                                      struct zwp_linux_dmabuf_v1 *dmabuf,
+                                                      struct wl_surface *surface,
+                                                      venus_surface_done_t observer, void *context);
 /** @brief Receive/retry at most one frame without blocking the Wayland event loop.
  * @param[in,out] owner Nonnull event-thread owner; independently dispatch its display.
  * @return RingOk accepted into presenter; Invalid local import rejection reported or NULL; Again
@@ -44,7 +65,9 @@ venus_ring_status_t venus_surface_create(venus_surface_t **owner, int socket_fd,
  * Closed peer loss. Native terminal receive/submit results are sticky.
  * @note On Again after receipt, keeps original FDs/metadata for exact retry. On
  * acceptance/failure closes originals; Wayland owns its duplicates on acceptance.
- * Caller must acknowledge completion and retain GPU allocation until release.
+ * In explicit callback mode caller acknowledges completion. Acknowledged mode
+ * flushes queued releases first and retains them on Again without receiving.
+ * Caller retains GPU allocation until authenticated completion consumption.
  */
 venus_ring_status_t venus_surface_poll(venus_surface_t *owner);
 /** @brief Abandon one unsubmitted pending frame, allowing modifier/allocation retry.
@@ -58,7 +81,10 @@ venus_ring_status_t venus_surface_cancel_pending(venus_surface_t *owner);
  * @param[in,out] owner Nullable pointer to nullable owned state; nulled on success.
  * @return RingOk empty/freed; Again accepted compositor frames still live.
  * @note Event thread only, frees before display disconnect. On successful teardown
- * pending unsubmitted frame completes Cancelled and closes FDs. Borrowed native
+ * pending unsubmitted frame completes Cancelled and closes FDs. Acknowledged
+ * mode retains owner on send Again even after presenter cleanup. Native terminal
+ * send allows idle cleanup with pointer NULL and terminal return; discard old
+ * context allocations. Busy presenter still retains listener cookies. Borrowed native
  * socket, window and worker remain caller-owned; stop worker before unbinding.
  */
 venus_ring_status_t venus_surface_free(venus_surface_t **owner);

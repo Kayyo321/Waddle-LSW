@@ -64,6 +64,20 @@ void venus_frame_fds_free(int fds[4]) {
         fds[index] = -1;
     }
 }
+static venus_ring_status_t release_status;
+static unsigned release_calls, release_successes, release_after;
+static venus_release_t last_release;
+venus_ring_status_t venus_release_send(int fd, const venus_release_t *release) {
+    assert(fd == source_fd && release && release->context == 456 && release->frame);
+    release_calls++;
+    venus_ring_status_t status =
+        release_after && release_successes >= release_after ? RingAgain : release_status;
+    if (status == RingOk) {
+        last_release = *release;
+        release_successes++;
+    }
+    return status;
+}
 static void completed(void *context, const venus_frame_t *frame, venus_ring_status_t status) {
     assert(context == &completed_count && frame->context == 456 && frame->resource_ids[0] == 2);
     completed_count++;
@@ -76,6 +90,96 @@ static venus_ring_status_t create_owner(venus_surface_t **owner) {
                                 (struct wl_surface *)&completion, completed, &completed_count);
 }
 static void expect_closed(void) { assert(fcntl(received_fd, F_GETFD) == -1); }
+static void acknowledged_queue(void) {
+    venus_surface_t *owner = NULL;
+    create_status = receive_status = submit_status = free_status = RingOk;
+    release_status = RingOk;
+    release_after = release_calls = release_successes = 0;
+    assert(venus_surface_create_acknowledged(NULL, source_fd, 123, 456, NULL, NULL, NULL, NULL,
+                                             NULL) == RingInvalid);
+    assert(venus_surface_create_acknowledged(
+               &owner, source_fd, 123, 456, (struct wl_display *)&completion,
+               (struct zwp_linux_dmabuf_v1 *)&completion, (struct wl_surface *)&completion,
+               completed, &completed_count) == RingOk);
+    next_frame = (venus_frame_t){.context = 456,
+                                 .frame = 1,
+                                 .resource_ids = {2},
+                                 .layout = {.plane_count = 1},
+                                 .damage_count = 1};
+    for (unsigned id = 1; id <= 3; id++) {
+        next_frame.frame = id;
+        assert(venus_surface_poll(owner) == RingOk);
+    }
+    completion(completion_context, 2, RingInvalid);
+    completion(completion_context, 1, RingOk);
+    completion(completion_context, 3, RingClosed);
+    release_status = RingAgain;
+    unsigned received = receive_calls;
+    assert(venus_surface_poll(owner) == RingAgain && receive_calls == (int)received);
+    assert(venus_surface_free(&owner) == RingAgain && owner);
+    release_status = RingOk;
+    release_after = 1;
+    assert(venus_surface_poll(owner) == RingAgain && release_successes == 1);
+    assert(last_release.frame == 2 && last_release.status == RingInvalid);
+    release_after = 0;
+    assert(venus_surface_poll(owner) == RingClosed && release_successes == 3);
+    assert(last_release.frame == 3 && last_release.status == RingClosed);
+    assert(venus_surface_free(&owner) == RingOk && !owner);
+    assert(venus_surface_create_acknowledged(
+               &owner, source_fd, 123, 456, (struct wl_display *)&completion,
+               (struct zwp_linux_dmabuf_v1 *)&completion, (struct wl_surface *)&completion, NULL,
+               NULL) == RingOk);
+    next_frame.frame = 1;
+    submit_status = RingAgain;
+    assert(venus_surface_poll(owner) == RingAgain);
+    assert(venus_surface_cancel_pending(owner) == RingOk);
+    release_status = RingAgain;
+    assert(venus_surface_poll(owner) == RingAgain);
+    release_status = RingOk;
+    receive_status = RingAgain;
+    assert(venus_surface_poll(owner) == RingAgain);
+    assert(last_release.frame == 1 && last_release.status == RingInvalid);
+    next_frame.frame = 2;
+    receive_status = RingOk;
+    assert(venus_surface_poll(owner) == RingAgain);
+    release_status = RingAgain;
+    assert(venus_surface_free(&owner) == RingAgain && owner && !owner->presenter);
+    release_status = RingOk;
+    assert(venus_surface_free(&owner) == RingOk && !owner);
+    assert(last_release.frame == 2 && last_release.status == RingCancelled);
+    const venus_ring_status_t Faults[] = {RingClosed, RingCorrupt, RingInvalid};
+    for (unsigned fault = 0; fault < 3; fault++) {
+        release_status = RingOk;
+        assert(venus_surface_create_acknowledged(
+                   &owner, source_fd, 123, 456, (struct wl_display *)&completion,
+                   (struct zwp_linux_dmabuf_v1 *)&completion, (struct wl_surface *)&completion,
+                   NULL, NULL) == RingOk);
+        acknowledged_done(owner, &next_frame, RingOk);
+        release_status = Faults[fault];
+        venus_ring_status_t expected = fault ? RingCorrupt : RingClosed;
+        assert(venus_surface_poll(owner) == expected);
+        unsigned sent = release_calls;
+        release_status = RingOk;
+        assert(venus_surface_poll(owner) == expected && release_calls == sent);
+        free_status = RingAgain;
+        assert(venus_surface_free(&owner) == RingAgain && owner);
+        free_status = RingOk;
+        assert(venus_surface_free(&owner) == expected && !owner);
+    }
+    release_status = RingOk;
+    assert(venus_surface_create_acknowledged(
+               &owner, source_fd, 123, 456, (struct wl_display *)&completion,
+               (struct zwp_linux_dmabuf_v1 *)&completion, (struct wl_surface *)&completion, NULL,
+               NULL) == RingOk);
+    acknowledged_done(owner, &next_frame, RingCorrupt);
+    assert(venus_surface_poll(owner) == RingCorrupt);
+    for (unsigned id = 1; id <= 5; id++) {
+        next_frame.frame = id;
+        acknowledged_done(owner, &next_frame, RingOk);
+    }
+    assert(owner->failed == RingCorrupt);
+    assert(venus_surface_free(&owner) == RingOk && !owner);
+}
 int main(void) {
     source_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
     assert(source_fd >= 0);
@@ -186,6 +290,7 @@ int main(void) {
     assert(venus_surface_poll(owner) == RingCorrupt);
     assert(venus_surface_free(&owner) == RingOk);
     assert(submit_calls > 128 && completed_count > 128);
+    acknowledged_queue();
     close(source_fd);
     return 0;
 }

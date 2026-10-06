@@ -1937,3 +1937,18 @@ retains owner/cookies even on channel loss, until actual release or display loss
 A native terminal session may discard unsendable queued records only during this
 final teardown together with old-context abandonment. No image allocation/FD is
 released by the acknowledgement queue, and no pixel mapping/copy occurs.
+
+
+Acknowledged surface mode is now implemented within the existing owner allocation,
+with four private release records and sticky native send failure distinct from
+display/import loss. Native terminal send is never retried, preventing duplicate
+publication after an impossible partial-send error. Tests verify full and partial
+backpressure flush, no new receipt while records remain, optional observer,
+Invalid/Closed/Cancelled/Ok completion, queue overflow, teardown retaining an owner
+with NULL presenter and no repeated callback, and sticky loss through busy cleanup.
+Production C lines/branches100%; normal and ASan/LSan/UBSan pass. Native Wayland
+fixture uses acknowledged mode, checks no packet before explicit flush, then exact
+credential/context/frame/status after each completion. Real RTX5080 DMA-BUF and
+synthetic allocation paths both pass normal/sanitized execution. These still use
+in-process frame publication; successful guest-to-production-worker rendered-frame
+routing remains the final separate acceptance gate.

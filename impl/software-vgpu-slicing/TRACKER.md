@@ -985,9 +985,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Add Linux CI gates. Controller acknowledgement retry/render routing pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define controller acknowledgement retry ownership`
+- **Commit `722962e`**: `docs(vgpu): define controller acknowledgement retry ownership`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Specify opt-in four-slot surface release queue, receive gating
     during send pressure, observer lifetime and retry-preserving teardown behavior.
   - **Verification**: Production presented worker launch/native FD tests pass;
     controller queue implementation and rendered-frame runtime validation pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): retain surface release acknowledgements under backpressure`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add opt-in acknowledged surface owner with four bounded release
+    slots, receive gating during pressure, sticky send loss and retry-preserving
+    teardown after presenter destruction; preserve explicit callback compatibility.
+  - **Verification**: Production C lines/branches100%; partial flush, all completion
+    statuses, queue overflow, native loss, optional observer and cancelled teardown
+    retry pass ASan/LSan/UBSan. Actual native Wayland/mock and real RTX5080 image
+    harness roundtrip exact acknowledgements after every release/rejection in normal
+    and sanitized runs. Successful rendered production worker routing still pending.

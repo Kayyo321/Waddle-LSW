@@ -261,8 +261,8 @@ static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t 
     assert(!socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, bridge));
     assert(venus_frame_prepare(bridge[0]) == RingOk);
     venus_surface_t *presenter = NULL;
-    assert(venus_surface_create(&presenter, bridge[1], getpid(), 1, display, client.dmabuf, surface,
-                                completed, &client) == RingOk);
+    assert(venus_surface_create_acknowledged(&presenter, bridge[1], getpid(), 1, display,
+                                             client.dmabuf, surface, completed, &client) == RingOk);
     assert(wl_display_roundtrip(display) >= 0); // Real table FD and array events.
     venus_frame_t frame = {.context = 1,
                            .layout = {.width = 32,
@@ -287,6 +287,12 @@ static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t 
             assert(++attempts <= 8);
         }
         assert(client.status == (sequence == 8 ? RingInvalid : RingOk));
+        venus_release_t release;
+        assert(venus_release_receive(bridge[0], getpid(), 1, &release) == RingAgain);
+        assert(venus_surface_poll(presenter) == RingAgain); // Flush ack before next native receipt.
+        assert(venus_release_receive(bridge[0], getpid(), 1, &release) == RingOk);
+        assert(release.context == 1 && release.frame == sequence &&
+               release.status == client.status);
         assert(wl_display_roundtrip(display) >= 0); // Drain independent frame callback/destroys.
     }
     assert(venus_surface_free(&presenter) == RingOk && !presenter);
