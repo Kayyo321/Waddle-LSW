@@ -272,7 +272,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Reviewed public renderer create/map/unref behavior and
     separated resource ownership from subsequent wire dispatch/GPU export gates.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): bound receiver resource ownership and quotas`
+- **Commit `8766015`**: `feat(vgpu): bound receiver resource ownership and quotas`
   - **Task Impact**: +15% to TODO: #2 (+3.0% overall).
   - **Summary**: Implemented a fixed 64-entry resource ledger, Zig-validated IDs,
     flags and copy bounds, declared-storage/count quotas, lazy CPU SHM mappings,
@@ -283,3 +283,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ASan/LSan/UBSan and Zig allocator gates report no leaks. Real public renderer
     CPU SHM copies and independent mapped-file/UNIX integration passed. Device
     memory export, GPU completion and runtime wire dispatch remain separate gates.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded receiver request envelopes`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Defined the 64-byte little-endian header, operation-specific
+    fields, explicit wire statuses, payload bounds and sequential exchange contract.
+    Split remaining dispatch work into portable codec and integrated runtime gates.
+  - **Verification**: Checked against resource quotas, CPU fences, fixed capset
+    extent and the backing-agnostic ring/channel ownership contracts.

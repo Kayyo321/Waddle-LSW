@@ -617,3 +617,71 @@ CPU-map metadata errors and acquisition failures, pending/poisoned operations,
 implicit resource cleanup, and real shared resources through the public renderer.
 Owned C/Zig coverage and sanitizer gates remain >=90%/zero leaks. Real device
 memory export/DMA-BUF tests remain separate from CPU SHM ownership evidence.
+
+### Bounded receiver request envelope
+
+The remaining 15% runtime-dispatch portion of Task #2 is split into 5% for the
+portable request/response codec (including native Windows and coverage gates) and
+10% for bounded host dispatch, ring framing and independent mock-guest execution.
+The codec alone does not implement receiver dispatch or a guest Vulkan ICD.
+
+Each request and response starts with exactly 64 little-endian bytes, independent
+of the C decoded structure. Offset 0 is u32 magic 0x57565131; 4 is u32 version 1;
+8 is u32 operation; 12 is u32 direction (0 request, 1 response); 16 is u64 nonzero
+sequence; 24 is u32 payload length; 28 is u32 wire status; 32 is u32 resource ID;
+36 is u32 resource flags; 40 and 48 are u64 operation arguments; 56..63 are zero.
+Payload immediately follows the header and is at most 16777216 bytes. Sender must
+publish header then all payload bytes in order, even if the payload exceeds ring
+capacity; receiver reads bounded chunks into private storage under the existing
+channel deadline/cancellation contract. Header is copied privately before decoding.
+No shared pointer, native structure padding or fd is transmitted.
+
+Operations are Capabilities=1, Submit=2, Reply=3, Create=4, Free=5, Read=6, Write=7,
+Poll=8. Requests always have status zero. All unspecified fields must be zero:
+Capabilities and Poll have no arguments or payload. Submit has only a payload of
+8..16777216 bytes, multiple of four. Reply has argument zero as reply byte offset
+and argument one as desired nonzero byte count <=16777216, with no payload.
+Create has ID 2..65, resource flags, blob ID in argument zero and declared bytes
+in argument one; its complete policy is the resource registry contract above.
+Free has only ID 2..65. Read has ID 2..65, byte offset in argument zero and desired
+nonzero count <=16777216 in argument one. Write has the same fields as Read and
+payload length exactly argument one. Requested byte ranges must not overflow
+u64; the live resource/reply extent is checked separately during host dispatch.
+No request may configure host quotas; policy remains trusted host configuration.
+
+Wire statuses are unsigned values: Success=0, Again=1, Invalid=2, Corrupt=3,
+Closed=4, Cancelled=5, Timeout=6, Limit=7. They map explicitly to the corresponding
+Ring status, rather than transmitting a compiler's signed enum representation.
+Responses echo operation and sequence; resource ID and flags are always zero.
+Failed responses have no payload or arguments. Successful Capabilities has exactly
+160 payload bytes; Reply and Read have 1..16777216 payload bytes (client also
+requires the exact requested count); Submit has only a nonzero CPU fence in
+argument zero; Create, Free, Write and Poll have no payload or arguments. Argument
+one is always zero in responses. These are CPU submission/status semantics; Poll
+success does not prove GPU timeline completion. Unknown statuses are corruption.
+
+Encode validates host values and leaves the output unchanged on local error.
+Decode accepts only exactly 64 bytes, zeros its decoded output on error and rejects
+all unknown fields, reserved bytes, lengths and policy violations before exposing
+any payload length. Null arguments return RingInvalid; malformed wire input returns
+RingCorrupt. Both functions allocate nothing, borrow disjoint private inputs/outputs
+only for the call and are thread-safe on disjoint outputs. Public decoded integers
+are host values; all external integer parsing and length decisions are in Zig.
+
+A ready negotiated session owns one sequential request stream. The runtime starts
+sequence at one, accepts only the exact next sequence and prohibits wrap/reuse.
+Every fully consumed request produces one response, including Again/Invalid/Limit;
+retry is a new sequence and cannot reuse a consumed request ID. A malformed header,
+stale sequence, truncated payload or deadline/cancellation closes both rings and
+requires a new session. Response validation includes exact echoed operation/sequence
+and expected payload extent. Only one exchange is active at a time in this initial
+runtime; Submit success records an accepted CPU fence, and the guest must Poll to
+completion before Reply/resource access. Renderer failure is terminal. Cancellation
+or disconnect must discard partial private input and join callbacks before freeing
+receiver/mapping owners. Limits are checked before allocating/copying payload;
+resources remain represented in the existing receiver ledger through teardown.
+
+Codec acceptance covers all operations and statuses, each corrupt identity/padding
+field, null/truncated/oversized inputs, every size/ID/flag/range edge, output
+preservation and allocator cleanliness. Native Windows ABI execution and >=90%
+production line/branch coverage are required before the 5% codec credit is given.
