@@ -3281,3 +3281,91 @@ null identity remains corrupt. GetDeviceQueue2 has no result field and therefore
 never accepts null. This follows native failure output semantics and preserves
 rollback only for known negative errors; device loss and malformed replies retain
 uncertain ownership until receiver retirement.
+
+### Core queue submission and proven retirement
+
+Scope is core command18 `vkQueueSubmit` with canonical tag4 submit records and
+binary semaphores. Submit2, timeline/value/device-group/protected chains and
+secondary execution remain separate API increments. No synthetic completion is
+published. The renderer's native QueueSubmit executes submitted command buffers;
+CPU result receipt says only whether native submission was accepted.
+
+#### Wire and bounded native inputs
+
+Command18 encodes header command/flags/queueID (16 bytes), submitCount u32,
+arrayCount u64, followed by each VkSubmitInfo (tag4 u32, null next u64,
+waitCount u32, waitArrayCount u64, wait IDs u64[], stageArrayCount u64,
+wait stages u32[], commandCount u32, commandArrayCount u64, command IDs u64[],
+signalCount u32, signalArrayCount u64, signal IDs u64[]), then fenceID u64 or0.
+Each empty submit contributes56 bytes. Bounds are16 submit records and aggregate
+64 waits,64 signals,64 command buffer occurrences. Maximum stream is2724 bytes
+(36+16*56+64*12+64*8+64*8), within the8192-byte writer. Native zero-count pointers
+are ignored/normalized to zero arrays; positive counts require accessible native
+storage for the entire call. Count exceeding capacity returns OUT_OF_HOST_MEMORY
+before reading arrays or sending partial work; malformed records/handles return
+INITIALIZATION_FAILED. No caller arrays or pointers are retained.
+
+Queues must be live initialized private dispatchable objects. Each command buffer
+must be primary, from a pool of the queue's family and device, and Executable;
+Pending is allowed only with SIMULTANEOUS_USE. Repeated command buffer occurrences
+in a call also require SIMULTANEOUS_USE. ONE_TIME and SIMULTANEOUS are already
+mutually exclusive at Begin. Wait/signal semaphore identities belong to the device;
+wait stages must be nonzero core mask0x1ffff. Native caller retains responsibility
+for binary signal/wait ordering, stage capability and feature validity. This
+increment does not invent a binary semaphore state machine. Optional fence must
+belong to the device, have no pending reference and actually return NOT_READY
+from native GetFenceStatus; signaled fence is rejected before submitting work.
+
+#### Fixed ticket ownership and lifecycle
+
+A global fixed array of128 submission_ticket_t records owns no heap or handles.
+Each ticket contains queue handle, optional fence handle and512 reference bits
+(8 u64 words) selecting private registry slots. A queue handle0 marks a free
+entry. Aggregate repeated appearances within one native submission contribute
+one lifetime reference per object; distinct submissions contribute distinct
+references. Each resource metadata inflight_count is bounded by128. Registry
+slots cannot be released while referenced, so bit positions cannot change
+identity underneath a ticket. Queues live until device destruction; submission
+references prevent destruction of remaining nonqueue children. Device destroy
+also refuses outstanding tickets, including empty submissions without a fence.
+
+Validate all input, reserve free ticket capacity locally, query optional fence
+readiness, encode and transmit once under the global binding mutex. A valid
+SUCCESS result publishes ticket references and changes command buffers to
+Pending. Known negative native errors publish no ticket and preserve prior
+command states. Transport/malformed/device-loss paths poison the binding and
+retain all existing ownership; resources are reclaimable only after the caller
+retires the old receiver and invokes abandon. No CPU acknowledgment retires a
+ticket. No new host submission can occur between a GPU proof and local retirement
+because both execute under the same mutex.
+
+Queue idle's actual receiver timeline fence/poll success retires all tickets for
+that queue; Device idle retires each queue only after that queue's successful
+proof. A later queue failure retains unproven tickets. Native fence status SUCCESS
+retires tickets carrying that fence. Wait-all SUCCESS retires requested fences;
+wait-any SUCCESS polls individual native fence statuses and retires only those
+proven signaled. ResetFence/DestroyFence refuse in-flight references before wire
+access; semaphore destruction already does so. Pending command buffer reset/free,
+pool reset/destruction and referenced buffer destruction are refused.
+
+Retiring a ticket decrements each selected object's inflight_count exactly once.
+A command buffer stays Pending while any references remain. On final decrement,
+ONE_TIME becomes Invalid, otherwise it becomes Executable, preserving recorded
+buffer dependencies until successful Begin/reset/free. Completed tickets are
+zeroed for reuse. Abandon clears all tickets only after receiver retirement and
+also clears object metadata, preventing reuse across namespace generations.
+
+#### Verification requirements
+
+Independent pinned queue encoder checks exact bytes for zero/one/multiple/bounded
+submit records and pointer normalization. Exercise every scalar/count/identity/
+family/state/duplicate guard with no partial host request, known negative native
+result, malformed reply, transport loss, ticket exhaustion and simultaneous
+multiple-ticket retirement. Check ONE_TIME final invalidation and subsequent
+implicit begin reset; check pending destruction/reset suppression. Exercise fence
+status, wait-any/all and actual queue/device GPU proof retirement separately.
+Run allocation-free Zig tests, native C oracle, ASan/LSan/UBSan, >=90% source line
+and branch coverage, Windows native ABI gates and actual pinned shared loader to
+out-of-process production worker. Submit the worker's fill/barrier/copy/update/
+host-read command stream and wait for real completion before releasing buffers.
+None of these bounded increments grants full API or DXVK milestone credit.

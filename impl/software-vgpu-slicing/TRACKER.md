@@ -1726,7 +1726,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Strict C boundary probe accepts16383/31 and aborts on
     16384/0 and0/32. Latest native ICD coverage remains required.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): implement binary semaphore ownership and pending guards`
+- **Commit `36cc757`**: `feat(vgpu): implement binary semaphore ownership and pending guards`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Dispatch canonical binary semaphore create/destroy40/41 with
     exact identity publication, known-error rollback and loss retention. Add fixed
@@ -1740,3 +1740,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     normal/sanitized semaphore lifecycles pass, including forced-failure cleanup.
     Windows fixture/DLL/loader cross-link passes. Queue submission and full API/
     mapping/DXVK remain pending; TODO #3 stays50%. Latest CI required.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify queue submission and proven GPU retirement`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify command18 canonical binary submits, exact bounded arrays,
+    primary/family/state validation and128 fixed reference tickets. Define real
+    fence/timeline proofs, any/all retirement, pending reset/destruction suppression
+    and ONE_TIME/SIMULTANEOUS final state transitions without CPU completion credit.
+  - **Verification**: Inspect pinned queue encoder and renderer native QueueSubmit
+    dispatch. Implementation, oracle coverage and actual GPU worker submission
+    remain pending; TODO #3 stays50%.
