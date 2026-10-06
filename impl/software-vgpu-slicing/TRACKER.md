@@ -2270,6 +2270,30 @@ This synchronization commit is identified by subject `docs(vgpu): audit physical
   - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
   - **Summary**: Build the immutable same-version Mesa25.0.7 RADV repair offline and run three real native and ASan/LSan/UBSan teardown/unload cycles before production receiver verification. Fail closed if the installed Mesa source version changes. Substitute only RADV library_path in its original installed manifest, retaining every API/architecture setting and every other host ICD. Keep all existing receiver and full production worker workload tests; allow30minutes for the additional675-unit ACO driver build. Add required base-system glslang/zlib/expat tools and fetch the pinned Mesa gitlink. YAML,shell,Python syntax and exact manifest-field preservation verified locally; real clean CI remains mandatory.
 
-- **Commit (this entry, resolved by subject)**: `docs(vgpu): audit compute ownership and bounded Mesa prerequisite progress`
+- **Commit `d16cb5c`**: `docs(vgpu): audit compute ownership and bounded Mesa prerequisite progress`
   - **Task Impact**: +0% to TODO: #3 and #10 (+0% overall).
   - **Summary**: Attribute each atomic source, regression, push-profile and Mesa prerequisite commit. Native Windows 11 build26300.9457 executed eight owned PE fixtures successfully; this establishes unit execution only. Physical compute/push direct/shared sanitizer paths passed; complete graphics and native DXVK remain pending.
+
+- **Commit `8860bd2`**: `docs(vgpu): specify acknowledged single-color graphics frontend ownership`
+  - **Task Impact**: +0% to TODO: #3 and prerequisite #10 (+0% overall).
+  - **Summary**: Specify exact acknowledged graphics metadata, ordering and native lifecycle boundaries before frontend implementation.
+
+- **Commit `cde62cc`**: `test(vgpu): add owned triangle render and mapped readback workload`
+  - **Task Impact**: +0% to TODO: #3 and prerequisite #10 (+0% overall).
+  - **Summary**: Add owned physical triangle workload and poisoned pixel readback; execution awaits complete graphics entry points.
+
+- **Commit `45ff49b`**: `feat(vgpu): gate256 push constants by actual host limits`
+  - **Task Impact**: +0% to TODO: #3 and prerequisite #10 (+0% overall).
+  - **Summary**: Cache actual host push limits and truthfully clamp public256 support, preserving128/129hosts without fabricated feature advertising.
+
+- **Commit `b54beee`**: `test(vgpu): prove actual push limits and full256 recording`
+  - **Task Impact**: +0% to TODO: #3 and prerequisite #10 (+0% overall).
+  - **Summary**: Cover nine actual/malformed host-limit cases and generated full256/final-word packet checks; native/shared/safety/Windows gates pass. Physical252-word normal/safety probes16cycles each passed.
+
+- **Commit `1c83116`**: `feat(vgpu): expose acknowledged single-color render pass ownership`
+  - **Task Impact**: +0% to TODO: #3 and prerequisite #10 (+0% overall).
+  - **Summary**: Publish exact acknowledged render-pass ownership with independent native encoder checks; native/shared128cycles, safety and Windows object pass. ICD branch90.03%, line99.22%. Graphics and native DXVK acceptance remain pending.
+
+- **Commit (this entry, resolved by subject)**: `docs(vgpu): record host push and render pass verification`
+  - **Task Impact**: +0% to TODO: #3 and #10 (+0% overall).
+  - **Summary**: Record actual-host push and render-pass milestones, plus four clean full16 worker paths using all host ICDs and the repaired matching RADV. Mesa production CI remains pending; graphics/DXVK completion not credited prematurely.
