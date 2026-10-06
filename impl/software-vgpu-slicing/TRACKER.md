@@ -13,14 +13,14 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 40% | Guest frontend, userland adapter/DLL, command/object ownership and core query/instance wire native CI pass; public ICD/device/API dispatch and DXVK pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 50% | Frontend, userland adapter, object ownership and native loader/shared ICD production-worker dispatch verified; complete API/command/mapping/DXVK gates pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 
-**Total Feature Completion**: `65.0%`
+**Total Feature Completion**: `67.5%`
 
 ## Commit History & Progress Log
 
@@ -1525,7 +1525,19 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     dispatch prefixes, primary/secondary inheritance, recording/reset transitions,
     pool child retirement and exact wire/error/verification boundaries.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): clarify primary command buffer begin flags`
+- **Commit `c0a4a54`**: `docs(vgpu): clarify primary command buffer begin flags`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Record Khronos VUID02840 primary-only prohibition of combined
     one-time/simultaneous flags5, preserving the supported secondary combination.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): accept native loader milestone through production workers`
+  - **Task Impact**: +10% to TODO: #3 (+2.5% overall).
+  - **Summary**: Accept loader ABI/manifest milestone with real shared ICD device
+    creation and public object/memory calls through the production negotiated
+    worker. TODO #3 reaches50%, overall67.5%; no full runtime/DXVK acceptance.
+  - **Verification**:11ca7e7 GitHub Linux job112420950151 passes the actual pinned
+    loader production worker normal/sanitized and injected failure-cleanup gate.
+    Native Windows job112420950697 passes DLL export/dispatch and actual pinned
+    loader manifest/device/fence/memory tests. Local pool increment additionally
+    passes actual loader normal/sanitized worker cycles and forced cleanup.
+    Full latest-head CI remains required at task completion independently.

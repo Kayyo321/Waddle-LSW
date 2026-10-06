@@ -2975,3 +2975,12 @@ Primary buffers additionally reject the combined ONE_TIME_SUBMIT and SIMULTANEOU
 flags5, as required by [vkBeginCommandBuffer VUID02840](https://docs.vulkan.org/refpages/latest/refpages/source/vkBeginCommandBuffer.html).
 Secondary buffers may use that combination in the supported non-render inheritance
 scope. Recording fixtures explicitly distinguish the primary/secondary rule.
+
+Loader milestone acceptance:11ca7e7 passes actual pinned loader/shared ICD dispatch
+through the production negotiated worker in native Linux GitHub job112420950151,
+normal and ASan/LSan/UBSan, including live-allocation failure cleanup. Native
+Windows job112420950697 passes exact DLL exports, loader manifest/device/fence/
+memory dispatch. Accept loader ABI/manifest10%, bringing TODO #3 to50% and overall
+67.5%. Remaining instance/device/procedure10%, full bounded graphics/compute/
+memory/synchronization20% and real DXVK20% retain their separate implementation
+and verification gates; latest-head complete CI is still required.
