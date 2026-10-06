@@ -12,6 +12,7 @@ var descriptor_allocation_snapshots = [_]profiles.descriptor_set_t{.{}} ** 64;
 var descriptor_update_snapshots = [_]profiles.descriptor_set_t{.{}} ** 128;
 var descriptor_wire_buffers: [64][64]descriptor_wire.buffer_info_t = std.mem.zeroes([64][64]descriptor_wire.buffer_info_t);
 const render_wire = @import("venus_render_wire.zig");
+const graphics_wire = @import("venus_graphics_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 const MaxMappedBytes: u64 = 16777216;
@@ -67,6 +68,9 @@ const resource_state_t = struct {
     memory_offset: u64 = 0,
     buffer_size: u64 = 0,
     buffer_usage: u32 = 0,
+    render_format: u32 = 0,
+    render_initial_layout: u32 = 0,
+    render_final_layout: u32 = 0,
     image_levels: u32 = 0,
     image_layers: u32 = 0,
     image_format: u32 = 0,
@@ -1443,6 +1447,39 @@ fn create_render_resource(parent: *c.venus_object_t, kind: u32, writer: *render_
     output.* = record.*.handle;
     return c.VK_SUCCESS;
 }
+/// Create canonical single-color pass. [in] device/info borrowed nonnull; allocator nullable unused.
+/// [out] output nonnull, NULL on error; success transfers guest identity until destruction.
+/// Returns native result or local invalid/OOM/loss; mutex serialized and allocation-free.
+fn create_render_pass(device: c.VkDevice, info: [*c]const c.VkRenderPassCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkRenderPass) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = graphics_wire.create_render_pass(@ptrCast(info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_RENDER_PASS, &writer, &handle);
+    if (result != c.VK_SUCCESS) return result;
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_RENDER_PASS, parent.id).?);
+    state.render_format = info.*.pAttachments[0].format;
+    state.render_initial_layout = info.*.pAttachments[0].initialLayout;
+    state.render_final_layout = info.*.pAttachments[0].finalLayout;
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy quiescent pass. [in] nullable borrowed device/pass/callback tokens.
+/// Void; invalid or pending ignored, uncertain native destruction retains identity.
+/// Copied pipeline/framebuffer compatibility survives retirement; mutex serialized.
+fn destroy_render_pass(device: c.VkDevice, pass: c.VkRenderPass, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    destroy_render_resource(device, if (pass) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_RENDER_PASS, 83);
+}
+
 /// Create a core device-owned image. [in] device/info borrowed nonnull, allocator nullable unused.
 /// [out] output nonnull handle storage, NULL on error. Returns host result/local invalid/OOM/loss.
 /// Mutex serialized, allocation-free; owns identity until exact host destruction or retired abandon.
@@ -3960,6 +3997,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkAllocateDescriptorSets", &allocate_descriptor_sets },
         .{ "vkFreeDescriptorSets", &free_descriptor_sets },
         .{ "vkUpdateDescriptorSets", &update_descriptor_sets },
+        .{ "vkCreateRenderPass", &create_render_pass },
+        .{ "vkDestroyRenderPass", &destroy_render_pass },
         .{ "vkCreateImage", &create_image },
         .{ "vkDestroyImage", &destroy_image },
         .{ "vkGetImageMemoryRequirements", &image_requirements },

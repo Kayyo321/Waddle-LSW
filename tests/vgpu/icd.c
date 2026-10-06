@@ -15,6 +15,7 @@
 #include "vn_protocol_driver_pipeline_layout.h"
 #include "vn_protocol_driver_pipeline.h"
 #include "vn_protocol_driver_image_view.h"
+#include "vn_protocol_driver_render_pass.h"
 #include "vn_protocol_driver_device.h"
 #include "vn_protocol_driver_command_buffer.h"
 #include "vn_protocol_driver_command_pool.h"
@@ -102,6 +103,7 @@ typedef struct fixture_t {
     unsigned fail_fill;
     const VkDeviceCreateInfo *device_info;
     const VkBufferCreateInfo *buffer_info;
+    const VkRenderPassCreateInfo *render_pass_info;
     const VkImageCreateInfo *image_info;
     const VkImageViewCreateInfo *view_info;
     const VkShaderModuleCreateInfo *shader_info;
@@ -620,6 +622,20 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 (VkDescriptorSetLayout)(uintptr_t)read_u64(bytes + 16), NULL);
             else vn_encode_vkDestroyPipelineLayout(&encoder, 1, device,
                 (VkPipelineLayout)(uintptr_t)read_u64(bytes + 16), NULL);
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 82 || fixture->command == 83) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 82) {
+                assert(fixture->render_pass_info);
+                VkRenderPass pass = (VkRenderPass)(uintptr_t)read_u64(bytes + length - 44);
+                vn_encode_vkCreateRenderPass(&encoder, 1, device, fixture->render_pass_info, NULL, &pass);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, 1);
+                put_u64(fixture->reply + 16, (uintptr_t)pass);
+            } else vn_encode_vkDestroyRenderPass(&encoder, 1, device,
+                (VkRenderPass)(uintptr_t)read_u64(bytes + 16), NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 66 || fixture->command == 67) {
             unsigned char expected[8192];
@@ -2221,6 +2237,53 @@ static void shader_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fix
     assert(fixture->submissions == before);
     fixture->shader_info = NULL;
 }
+/** @brief Compare canonical pass bytes and local/ordinary-host failure rollback.
+ * @param[in] device Live borrowed guest device. @param[in] lookup Static device dispatcher.
+ * @param[in,out] fixture Borrowed single-thread backend; pass-info pointer cleared on return.
+ * @note Owned pass identity destroyed after each successful iteration; no heap allocation.
+ */
+static void render_pass_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
+    PFN_vkCreateRenderPass create_pass = (PFN_vkCreateRenderPass)lookup(device, "vkCreateRenderPass");
+    PFN_vkDestroyRenderPass destroy_pass = (PFN_vkDestroyRenderPass)lookup(device, "vkDestroyRenderPass");
+    assert(create_pass && destroy_pass);
+    VkAttachmentDescription attachment = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+        .samples = VK_SAMPLE_COUNT_1_BIT, .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE, .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, .finalLayout = VK_IMAGE_LAYOUT_GENERAL};
+    VkAttachmentReference color = {.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1, .pColorAttachments = &color};
+    VkRenderPassCreateInfo info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1, .pAttachments = &attachment, .subpassCount = 1, .pSubpasses = &subpass};
+    fixture->render_pass_info = &info;
+    VkRenderPass pass = (VkRenderPass)(uintptr_t)42;
+    unsigned before = fixture->submissions;
+    assert(create_pass(device, &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_pass(NULL, &info, NULL, &pass) == VK_ERROR_INITIALIZATION_FAILED && !pass);
+    assert(create_pass((VkDevice)(uintptr_t)42, &info, NULL, &pass) == VK_ERROR_INITIALIZATION_FAILED && !pass);
+    assert(create_pass(device, NULL, NULL, &pass) == VK_ERROR_INITIALIZATION_FAILED && !pass);
+    info.flags = 1;
+    assert(create_pass(device, &info, NULL, &pass) == VK_ERROR_INITIALIZATION_FAILED && !pass);
+    info.flags = 0;
+    assert(fixture->submissions == before);
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(create_pass(device, &info, NULL, &pass) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !pass);
+    fixture->create_result = VK_SUCCESS;
+    for (unsigned iteration = 0; iteration < 16; ++iteration) {
+        attachment.format = iteration & 1 ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_R8G8B8A8_UNORM;
+        assert(create_pass(device, &info, NULL, &pass) == VK_SUCCESS && pass);
+        before = fixture->submissions;
+        destroy_pass(NULL, pass, NULL);
+        destroy_pass(device, NULL, NULL);
+        assert(fixture->submissions == before);
+        destroy_pass(device, pass, NULL);
+        assert(fixture->submissions == before + 1 && fixture->command == 83);
+        destroy_pass(device, pass, NULL);
+        assert(fixture->submissions == before + 1);
+    }
+    fixture->render_pass_info = NULL;
+}
+
 static void image_contract(void) {
     for (unsigned scenario = 0; scenario < 8; scenario++) {
         fixture_t fixture = fresh();
@@ -2238,7 +2301,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) { shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
+        if (scenario == 0) { render_pass_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
