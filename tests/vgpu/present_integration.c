@@ -2,7 +2,7 @@
 #include "linux_dmabuf_client.h"
 #include "linux_dmabuf_server.h"
 #include "waddle/venus_frame.h"
-#include "waddle/venus_present.h"
+#include "waddle/venus_surface.h"
 #include <assert.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -221,9 +221,10 @@ static void removed_event(void *context, struct wl_registry *registry, uint32_t 
 }
 static const struct wl_registry_listener RegistryEvents = {.global = global_event,
                                                            .global_remove = removed_event};
-static void completed(void *context, uint64_t frame, venus_ring_status_t status) {
+static void completed(void *context, const venus_frame_t *frame, venus_ring_status_t status) {
     client_t *client = context;
-    client->completed_frame = frame;
+    assert(frame->context == 1 && frame->resource_ids[0] == 2);
+    client->completed_frame = frame->frame;
     client->status = status;
 }
 int main(void) {
@@ -254,13 +255,13 @@ int main(void) {
     assert(wl_display_roundtrip(display) >= 0 && client.compositor && client.dmabuf);
     struct wl_surface *surface = wl_compositor_create_surface(client.compositor);
     assert(surface);
-    venus_present_t *presenter = NULL;
-    assert(venus_present_create(&presenter, display, client.dmabuf, surface, completed, &client) ==
-           RingOk);
-    assert(wl_display_roundtrip(display) >= 0); // Real table FD and array events.
     int bridge[2];
     assert(!socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0, bridge));
-    assert(venus_frame_prepare(bridge[0]) == RingOk && venus_frame_prepare(bridge[1]) == RingOk);
+    assert(venus_frame_prepare(bridge[0]) == RingOk);
+    venus_surface_t *presenter = NULL;
+    assert(venus_surface_create(&presenter, bridge[1], getpid(), 1, display, client.dmabuf, surface,
+                                completed, &client) == RingOk);
+    assert(wl_display_roundtrip(display) >= 0); // Real table FD and array events.
     venus_frame_t frame = {.context = 1,
                            .layout = {.width = 32,
                                       .height = 16,
@@ -274,13 +275,7 @@ int main(void) {
         atomic_store_explicit(&server.reject, sequence == 8, memory_order_release);
         frame.frame = sequence;
         assert(venus_frame_send(bridge[0], &frame, &source, 1) == RingOk);
-        venus_frame_t received;
-        int fds[4];
-        assert(venus_frame_receive(bridge[1], getpid(), 1, &received, fds) == RingOk);
-        assert(venus_present_submit(presenter, received.frame, &received.layout, fds,
-                                    received.layout.plane_count, received.damage,
-                                    received.damage_count) == RingOk);
-        venus_frame_fds_free(fds); // libwayland retains its actual kernel duplicates.
+        assert(venus_surface_poll(presenter) == RingOk);
         unsigned attempts = 0;
         while (client.completed_frame != sequence) {
             assert(wl_display_roundtrip(display) >= 0);
@@ -289,7 +284,7 @@ int main(void) {
         assert(client.status == (sequence == 8 ? RingInvalid : RingOk));
         assert(wl_display_roundtrip(display) >= 0); // Drain independent frame callback/destroys.
     }
-    assert(venus_present_free(&presenter) == RingOk && !presenter);
+    assert(venus_surface_free(&presenter) == RingOk && !presenter);
     wl_surface_destroy(surface);
     zwp_linux_dmabuf_v1_destroy(client.dmabuf);
     wl_compositor_destroy(client.compositor);

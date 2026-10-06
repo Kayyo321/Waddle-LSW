@@ -14,12 +14,12 @@
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 35% | Guest frontend and bounded userland adapter/DLL native CI pass; full Vulkan ICD and DXVK pending |
-| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 80% | Export, metadata, presenter and credential-bound FD channel verified; worker/surface/release routing and end-to-end GPU presentation pending |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 85% | Export, metadata, presenter and credential-bound FD channel verified; worker/surface/release routing and end-to-end GPU presentation pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 
-**Total Feature Completion**: `60.75%`
+**Total Feature Completion**: `61.5%`
 
 ## Commit History & Progress Log
 
@@ -798,7 +798,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     normal and ASan/LSan/UBSan runs pass. Synthetic allocation remains explicitly
     mock-only; hardware Venus image/export and worker routing remain pending.
 
-- **Commit (current; resolve by subject)**: `chore(deps): pin exact guest Venus serializer generator`
+- **Commit `e897295`**: `chore(deps): pin exact guest Venus serializer generator`
   - **Task Impact**: +100% to TODO: #7 (+0% overall); +0% to TODO: #3.
   - **Summary**: Add MIT generator/Apache-2.0 Vulkan declarations as a public HTTPS
     submodule pinned to 7157163d5fed65f0742542a8e77e5412dea6a4bc; generate offline.
@@ -806,3 +806,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     declaration headers byte-for-byte; generate thirty-seven driver headers and
     compile their complete declarations on Linux and Windows x86_64. This verifies
     schema/dependency configuration; ICD dispatch and serialization remain pending.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): bind worker frame ownership to native Wayland surfaces`
+  - **Task Impact**: +5% to TODO: #4 (+0.75% overall).
+  - **Summary**: Add credential/context-bound surface owner with pending FD retry,
+    monotonic frame identities, three compositor-owned metadata ledgers, explicit
+    unsubmitted cancellation and release callbacks retaining resource identities.
+  - **Verification**: Production C lines/branches 100%; acquisition faults, retained
+    backpressure FDs, three slots, stale callbacks/frames, sticky loss and 128 churn
+    cycles pass ASan/LSan/UBSan. Actual native Wayland wire fixture now routes through
+    this owner and passes normal/sanitized runs. Worker export service and guest
+    release acknowledgement delivery remain pending, as does hardware image export.

@@ -515,8 +515,8 @@ vgpu-windows: build/vgpu_frame_codec_test.exe
 build/linux_dmabuf_server.h: /usr/share/wayland-protocols/stable/linux-dmabuf/linux-dmabuf-v1.xml | build
 	wayland-scanner server-header $< $@
 
-VgpuPresentIntegrationSources = tests/vgpu/present_integration.c src/vgpu/venus_present.c src/vgpu/venus_frame_linux.c build/linux_dmabuf_protocol.c
-VgpuPresentIntegrationHeaders = $(VgpuPresentHeaders) $(VgpuFrameHeaders) build/linux_dmabuf_client.h build/linux_dmabuf_server.h
+VgpuPresentIntegrationSources = tests/vgpu/present_integration.c src/vgpu/venus_surface.c src/vgpu/venus_present.c src/vgpu/venus_frame_linux.c build/linux_dmabuf_protocol.c
+VgpuPresentIntegrationHeaders = include/waddle/venus_surface.h $(VgpuPresentHeaders) $(VgpuFrameHeaders) build/linux_dmabuf_client.h build/linux_dmabuf_server.h
 VgpuPresentIntegrationFlags = -Ibuild $(shell pkg-config --cflags wayland-client wayland-server)
 VgpuPresentIntegrationLibraries = $(shell pkg-config --libs wayland-client wayland-server) -pthread
 build/vgpu_present_integration: $(VgpuPresentIntegrationSources) $(VgpuPresentIntegrationHeaders) build/venus_frame.o | build
@@ -540,3 +540,18 @@ vgpu-protocol:
 vgpu-protocol-test: vgpu-protocol
 	$(CC) -std=c11 $(VgpuProtocolIncludes) -c submodules/venus_protocol/tests/driver.c -o build/venus_protocol_driver.o
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 $(VgpuProtocolIncludes) -c submodules/venus_protocol/tests/driver.c -o build/venus_protocol_driver_windows.o
+
+# One event-thread worker binding retains pending FDs and compositor frame identities.
+build/vgpu_surface_test: tests/vgpu/surface.c src/vgpu/venus_surface.c include/waddle/venus_surface.h $(VgpuPresentHeaders) $(VgpuFrameHeaders) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/surface.c -o $@
+
+.PHONY: vgpu-surface-test vgpu-surface-sanitizers vgpu-surface-coverage
+vgpu-surface-test: build/vgpu_surface_test
+	./build/vgpu_surface_test
+
+vgpu-surface-sanitizers:
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/surface.c -o build/vgpu_surface_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_surface_sanitized
+
+vgpu-surface-coverage: build/venus_bounds.o
+	python3 tests/vgpu/coverage.py surface

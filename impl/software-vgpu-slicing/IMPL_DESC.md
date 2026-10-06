@@ -1547,3 +1547,46 @@ configuration. Generated driver encoders remain behind a vendor adapter boundary
 they are not yet connected to the guest frontend or public Vulkan ICD dispatch.
 Allocate a dedicated zero-weight dependency task #7 so ownership, immutable pin,
 offline generation and verification are audited without awarding rendering progress.
+
+
+### Controller worker/surface binding owner (Task #4)
+
+`venus_surface_t` is one calloc-owned event-thread record, symmetrically freed by
+`venus_surface_free`. It borrows one prepared seqpacket endpoint, retained unreaped
+worker PID, exact nonzero controller context identity and existing window-manager
+surface/global/display. It owns a presenter, one pending decoded frame and its four
+FD slots, plus three accepted metadata records keyed by frame identity. No worker
+or role/window is created or destroyed by this layer. Host addresses/FD numbers
+never enter guest messages. The caller stops the worker before unbinding and retains
+its unreaped identity through all receive operations to prevent PID reuse.
+
+Poll consumes at most one packet and first checks accepted-ledger capacity. Receive
+checks native credentials/context and strictly increasing frame identity before
+presentation; corruption or peer loss becomes sticky, prohibiting future receives.
+A received frame that encounters feedback/modifier/pacing backpressure remains
+pending with all original descriptors live. Subsequent poll retries exactly that
+metadata without another receive. Acceptance clears pending state and closes
+originals because Wayland acquired duplicates. The accepted metadata stays until
+presenter completion, preserving resource IDs for release acknowledgement. Local
+import failure closes originals, reports its status and clears metadata. Corrupt/
+Closed callback outcomes become sticky. Unknown callback identity is an internal
+Corrupt failure; it cannot release any unrelated frame ledger entry.
+
+The completion callback borrows a call-scoped metadata copy and must not reenter
+or destroy this owner; its caller queues release acknowledgements independently.
+Frame.done does not trigger completion. Normal completion RingOk originates only
+from wl_buffer.release. Invalid completion permits selecting a different supported
+modifier/allocation. Explicit cancel_pending closes only unsubmitted FDs and reports
+Invalid, enabling recovery from an unsupported feedback pair without waiting
+forever. It never cancels a compositor-owned buffer. No CPU fallback is permitted.
+
+Healthy teardown with accepted buffers returns Again retaining owner and listener
+cookies. Successful idle teardown closes pending FDs with Cancelled completion,
+frees presenter/record and nulls the pointer. Confirmed display loss uses the
+presenter's Closed callbacks before freeing local proxies; old-session allocations
+must be discarded. Borrowed worker/socket/window/display ownership is unchanged.
+The native wire fixture now exercises this owner through receive/import/release.
+Fault/retry/stale-ID/cancellation/three-slot/churn tests cover every production line
+and branch and pass ASan/LSan/UBSan. Split the remaining 10% runtime handoff gate
+into 5% controller surface binding and 5% worker service export/guest release routing.
+That final worker/runtime path and hardware image verification remain pending.
