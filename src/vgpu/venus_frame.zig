@@ -173,3 +173,119 @@ test "frame exact wire roundtrip, NULL/length and all identity/padding errors" {
     try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_frame_encode, .{ &full, bytes.ptr, bytes.len }));
     try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_frame_decode, .{ &value, bytes.ptr, bytes.len }));
 }
+
+const ReleaseBytes: usize = 32;
+const ReleaseMagic: u32 = 0x57565231;
+const release_t = c.venus_release_t;
+fn valid_release(release: *const release_t) bool {
+    return release.context != 0 and release.frame != 0 and
+        (release.status == c.RingOk or release.status == c.RingInvalid or
+        release.status == c.RingCancelled or release.status == c.RingClosed);
+}
+/// in: nullable immutable private record; out: nullable disjoint bytes[length].
+/// Returns 0 success/-1 local error, preserving bytes on failure. No allocation,
+/// ownership or retained pointers; thread-safe for disjoint private outputs.
+export fn venus_release_encode(input: ?*const release_t, output: ?[*]u8, length: usize) c_int {
+    const release = input orelse return -1;
+    const destination = output orelse return -1;
+    if (length != ReleaseBytes or !valid_release(release)) return -1;
+    const bytes = destination[0..ReleaseBytes];
+    @memset(bytes, 0);
+    put(u32, bytes, 0, ReleaseMagic);
+    put(u32, bytes, 4, 1);
+    put(u64, bytes, 8, release.context);
+    put(u64, bytes, 16, release.frame);
+    put(i32, bytes, 24, release.status);
+    return 0;
+}
+/// out: nullable private record zeroed on failure; in: nullable bytes[length].
+/// Returns 0 success/-1 NULL/-2 wire error. Allocation-free, thread-safe, no
+/// retained pointers. Sender credentials and live lease matching are separate.
+export fn venus_release_decode(output: ?*release_t, input: ?[*]const u8, length: usize) c_int {
+    const release = output orelse return -1;
+    release.* = std.mem.zeroes(release_t);
+    const source = input orelse return -1;
+    if (length != ReleaseBytes) return -2;
+    const bytes = source[0..ReleaseBytes];
+    if (get(u32, bytes, 0) != ReleaseMagic or get(u32, bytes, 4) != 1 or
+        get(u32, bytes, 28) != 0) return -2;
+    const value = release_t{
+        .context = get(u64, bytes, 8),
+        .frame = get(u64, bytes, 16),
+        .status = get(i32, bytes, 24),
+    };
+    if (!valid_release(&value)) return -2;
+    release.* = value;
+    return 0;
+}
+fn expect_release_encode(
+    status: c_int,
+    release: ?*const release_t,
+    bytes: ?[*]u8,
+    length: usize,
+) !void {
+    const result = @call(.never_inline, venus_release_encode, .{ release, bytes, length });
+    try std.testing.expectEqual(status, result);
+}
+fn expect_release(status: c_int, release: ?*release_t, bytes: ?[*]const u8, length: usize) !void {
+    const result = @call(.never_inline, venus_release_decode, .{ release, bytes, length });
+    try std.testing.expectEqual(status, result);
+    if (status != 0) if (release) |value| {
+        try std.testing.expectEqual(@as(u64, 0), value.context);
+        try std.testing.expectEqual(@as(u64, 0), value.frame);
+        try std.testing.expectEqual(@as(c_int, 0), value.status);
+    };
+}
+test "release exact ABI, all identities/statuses, padding, NULL and bounds" {
+    const bytes = try std.testing.allocator.alloc(u8, ReleaseBytes);
+    defer std.testing.allocator.free(bytes);
+    var release = release_t{ .context = 17, .frame = std.math.maxInt(u64), .status = c.RingOk };
+    var decoded: release_t = undefined;
+    try expect_release_encode(-1, null, bytes.ptr, bytes.len);
+    try expect_release_encode(-1, &release, null, bytes.len);
+    try expect_release(-1, null, bytes.ptr, bytes.len);
+    try expect_release(-1, &decoded, null, bytes.len);
+    for ([_]usize{ 0, 31, 33, std.math.maxInt(usize) }) |length| {
+        @memset(bytes, 0x5a);
+        try expect_release_encode(-1, &release, bytes.ptr, length);
+        for (bytes) |byte| try std.testing.expectEqual(@as(u8, 0x5a), byte);
+        try expect_release(-2, &decoded, bytes.ptr, length);
+    }
+    for ([_]c_int{ c.RingOk, c.RingInvalid, c.RingCancelled, c.RingClosed }) |status| {
+        release.status = status;
+        try expect_release_encode(0, &release, bytes.ptr, bytes.len);
+        try expect_release(0, &decoded, bytes.ptr, bytes.len);
+        try std.testing.expectEqual(release.context, decoded.context);
+        try std.testing.expectEqual(release.frame, decoded.frame);
+        try std.testing.expectEqual(release.status, decoded.status);
+    }
+    for ([_]usize{ 0, 4, 28, 29, 30, 31 }) |offset| {
+        bytes[offset] ^= 0x80;
+        try expect_release(-2, &decoded, bytes.ptr, bytes.len);
+        bytes[offset] ^= 0x80;
+    }
+    const InvalidStatuses = [_]c_int{
+        c.RingAgain, c.RingCorrupt,          c.RingLimit,            c.RingTimeout,
+        1,           std.math.minInt(c_int), std.math.maxInt(c_int),
+    };
+    for (InvalidStatuses) |status| {
+        release.status = status;
+        @memset(bytes, 0x5a);
+        try expect_release_encode(-1, &release, bytes.ptr, bytes.len);
+        for (bytes) |byte| try std.testing.expectEqual(@as(u8, 0x5a), byte);
+        release.status = c.RingOk;
+        try expect_release_encode(0, &release, bytes.ptr, bytes.len);
+        put(i32, bytes, 24, status);
+        try expect_release(-2, &decoded, bytes.ptr, bytes.len);
+    }
+    for ([_]usize{ 8, 16 }) |offset| {
+        release.context = if (offset == 8) 0 else 17;
+        release.frame = if (offset == 16) 0 else 1;
+        try expect_release_encode(-1, &release, bytes.ptr, bytes.len);
+        release.context = 17;
+        release.frame = 1;
+        try expect_release_encode(0, &release, bytes.ptr, bytes.len);
+        put(u64, bytes, offset, 0);
+        try expect_release(-2, &decoded, bytes.ptr, bytes.len);
+    }
+}

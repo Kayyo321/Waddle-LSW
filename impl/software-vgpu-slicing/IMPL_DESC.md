@@ -1676,3 +1676,11 @@ lease. Guest release polling acknowledges the final status once, then discards t
 completed lease; it cannot free a live presentation resource. This codec milestone
 alone implements none of the service lease, controller retry or guest poll gates;
 TODO #4 stays95% until those paths are integrated and verified.
+
+
+The release record C ABI and bounded Zig codecs are implemented in venus_frame.h
+and venus_frame.zig. The existing native Windows frame codec fixture now roundtrips
+release identities/status and checks reserved-byte corruption/zeroed output too.
+Linux allocator, boundary, status and output-preservation tests pass; combined
+owned frame/release codec coverage is100% lines and95.59% branches. No socket or
+lease implementation credit is implied by these codec tests.

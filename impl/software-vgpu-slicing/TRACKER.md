@@ -838,10 +838,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ASan/LSan/UBSan and native hardware/Wayland fixture pass.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify authenticated presentation release packets`
+- **Commit `78176a5`**: `docs(vgpu): specify authenticated presentation release packets`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Specify exact reverse-channel release schema, allowed completion
     statuses, sender validation, descriptor rollback and bounded retry ownership.
   - **Verification**: Cross-checked surface callback outcomes and native frame
     credential contract; worker leases, acknowledgement retry and guest polls remain
     separate integration gates, with no runtime completion credit.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): encode bounded presentation release records`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add documented C ABI and allocation-free Zig release codec with
+    exact little-endian size, explicit completion statuses and zeroed error output.
+  - **Verification**: Five Zig allocator tests, Linux frame/native sanitizer tests,
+    Windows x86_64 cross-link and coverage pass. Frame codec production lines100%,
+    branches95.59%; native frame transport96.77%/90.74%. Native Windows CI retains
+    the ABI roundtrip/corruption fixture; release socket routing remains pending.

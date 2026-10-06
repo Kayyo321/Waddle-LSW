@@ -20,5 +20,13 @@ int main(void) {
     bytes[44] = 1;
     assert(venus_frame_decode(&decoded, bytes, sizeof(bytes)) == RingCorrupt);
     assert(!decoded.context);
+    venus_release_t release = {.context = 1, .frame = 2, .status = RingInvalid}, completion;
+    unsigned char release_bytes[VenusReleaseBytes];
+    assert(venus_release_encode(&release, release_bytes, sizeof(release_bytes)) == RingOk);
+    assert(venus_release_decode(&completion, release_bytes, sizeof(release_bytes)) == RingOk);
+    assert(completion.context == 1 && completion.frame == 2 && completion.status == RingInvalid);
+    release_bytes[28] = 1;
+    assert(venus_release_decode(&completion, release_bytes, sizeof(release_bytes)) == RingCorrupt);
+    assert(!completion.context && !completion.frame);
     return 0;
 }

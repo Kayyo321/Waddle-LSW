@@ -36,6 +36,35 @@ venus_ring_status_t venus_frame_encode(const venus_frame_t *frame, void *bytes, 
  * and frame ordering remain separate channel/owner checks.
  */
 venus_ring_status_t venus_frame_decode(venus_frame_t *frame, const void *bytes, size_t length);
+/** @brief Exact little-endian release packet size; independent of frame packets. */
+#define VenusReleaseBytes 32u
+/** @brief Caller-owned private completion record, naturally eight-byte aligned.
+ * @note No resource/pointer ownership; immutable codec inputs are thread-safe.
+ * Never cast onto wire bytes. Padding is native-only and not serialized.
+ */
+typedef struct venus_release_t {
+    uint64_t context;           /**< Nonzero retained controller context identity. */
+    uint64_t frame;             /**< Nonzero frame identity, matched against worker leases. */
+    venus_ring_status_t status; /**< Ok release, Invalid rejection, Cancelled or Closed. */
+} venus_release_t;
+/** @brief Encode a private completion record into exact release wire storage.
+ * @param[in] release Nonnull immutable input disjoint from bytes, borrowed for call.
+ * @param[out] bytes Nonnull private bytes[length]; unchanged on failure.
+ * @param[in] length Exactly VenusReleaseBytes accessible bytes.
+ * @return RingOk or RingInvalid NULL/length/identity/status error.
+ * @note Allocation-free/thread-safe; retains no pointers and owns no resources.
+ */
+venus_ring_status_t venus_release_encode(const venus_release_t *release, void *bytes,
+                                         size_t length);
+/** @brief Decode and validate one private release packet.
+ * @param[out] release Nonnull disjoint private output, zeroed on every failure.
+ * @param[in] bytes Nonnull immutable private bytes[length], borrowed for call.
+ * @param[in] length Exactly VenusReleaseBytes accessible bytes.
+ * @return RingOk, RingInvalid NULL, RingCorrupt shape/identity/status/reserved errors.
+ * @note Allocation-free/thread-safe; credentials and lease matching are separate.
+ */
+venus_ring_status_t venus_release_decode(venus_release_t *release, const void *bytes,
+                                         size_t length);
 #ifndef _WIN32
 /** @brief Verify borrowed trusted socket and enable kernel credential delivery.
  * @param[in] socket_fd Borrowed CLOEXEC/nonblocking AF_UNIX SOCK_SEQPACKET endpoint.
