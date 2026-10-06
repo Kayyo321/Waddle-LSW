@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 mode=sys.argv[1]
-assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire')
+assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd')
 if mode == 'av_video':
     import gzip
     output=Path.cwd()/'build/coverage/av/video'
@@ -34,12 +34,16 @@ if mode == 'av_video':
         print(f'av_video production {kind} coverage: {percent:.2f}% ({covered}/{len(entries)})',flush=True)
         assert percent>=90
     sys.exit(0)
-source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire') else 'src/av/')+mode+'.zig'
-root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire') else 'av')/mode
+source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd') else 'src/av/')+mode+'.zig'
+root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd') else 'av')/mode
 if output.exists(): shutil.rmtree(output)
 output.mkdir(parents=True)
-oracle = {'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o'}.get(mode)
-extra_args = ['-Isubmodules/venus_protocol/include', oracle] if oracle else []
+oracle = {'venus_values': 'build/venus_values_oracle.o', 'venus_instance_wire': 'build/venus_instance_oracle.o', 'venus_query_wire': 'build/venus_query_oracle.o', 'venus_icd': 'build/venus_icd_oracle.o'}.get(mode)
+link_objects = [oracle] if oracle else []
+if mode == 'venus_icd':
+    link_objects += ['build/venus_command.o','build/venus_objects.o','build/venus_instance_wire.o',
+                     'build/venus_query_wire.o','build/venus_values.o','build/venus_values_oracle.o']
+extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle else []
 subprocess.run(['zig','test',source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
  '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')],check=True)
 
@@ -124,7 +128,7 @@ instrumented.append('declare void @waddle_branch_hit(i32, i32)')
 (output/'branches.json').write_text(json.dumps(records,indent=2))
 assert records,'no source branches instrumented'
 subprocess.run(['clang-19','-Wno-override-module','-c',str(output/'instrumented.ll'),'-o',str(output/'test.o')],check=True)
-subprocess.run(['zig','cc',str(output/'test.o'),*([oracle] if oracle else []),'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
+subprocess.run(['zig','cc',str(output/'test.o'),*link_objects,'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
 env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output)
 subprocess.run([str(output/'runner')],env=env,check=True)
 hits=set()

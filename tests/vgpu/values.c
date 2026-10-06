@@ -9,7 +9,7 @@ _Static_assert(VK_COMMAND_TYPE_vkGetPhysicalDeviceFeatures_EXT == 3, "Pinned fea
 _Static_assert(VK_COMMAND_TYPE_vkGetPhysicalDeviceMemoryProperties_EXT == 8, "Pinned memory");
 /** @brief Encode one deterministic pinned core query reply into borrowed
  * storage.
- * @param[in] kind Exactly3/6/8; other values return zero.
+ * @param[in] kind Exactly3/4/5/6/7/8/33; other values return zero.
  * @param[out] bytes Nonnull exclusive private bytes[capacity].
  * @param[in] capacity Actual accessible extent, at least4096; otherwise zero
  * result.
@@ -18,11 +18,16 @@ _Static_assert(VK_COMMAND_TYPE_vkGetPhysicalDeviceMemoryProperties_EXT == 8, "Pi
  * implementation.
  */
 size_t venus_values_test_encode(uint32_t kind, void *bytes, size_t capacity) {
-    if (!bytes || capacity < 4096 || (kind != 3 && kind != 8 && kind != 6))
+    if (!bytes || capacity < 4096 ||
+        (kind != 3 && kind != 4 && kind != 5 && kind != 6 && kind != 7 && kind != 8 && kind != 33))
         return 0;
     struct fixture_encoder_t encoder = {.bytes = bytes, .capacity = capacity};
     uint64_t pointer_tag = 1;
     vn_encode_uint32_t(&encoder, &kind);
+    if (kind == 5) {
+        int32_t result = VK_SUCCESS;
+        vn_encode_int32_t(&encoder, &result);
+    }
     vn_encode_uint64_t(&encoder, &pointer_tag);
     if (kind == 6) {
         venus_vk_properties_t value = {.apiVersion = VK_API_VERSION_1_3,
@@ -39,6 +44,32 @@ size_t venus_values_test_encode(uint32_t kind, void *bytes, size_t capacity) {
         value.memoryHeaps[0].size = 1048576;
         value.memoryHeaps[0].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
         vn_encode_VkPhysicalDeviceMemoryProperties(&encoder, &value);
+    } else if (kind == 4) {
+        VkFormatProperties value = {.optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT};
+        vn_encode_VkFormatProperties(&encoder, &value);
+    } else if (kind == 5) {
+        VkImageFormatProperties value = {.maxExtent = {4096, 4096, 1},
+                                         .maxMipLevels = 12,
+                                         .maxArrayLayers = 256,
+                                         .sampleCounts = 1,
+                                         .maxResourceSize = 1048576};
+        vn_encode_VkImageFormatProperties(&encoder, &value);
+    } else if (kind == 7 || kind == 33) {
+        uint32_t count = 1;
+        uint64_t array_count = 1;
+        vn_encode_uint32_t(&encoder, &count);
+        vn_encode_uint64_t(&encoder, &array_count);
+        if (kind == 7) {
+            VkQueueFamilyProperties value = {.queueFlags = VK_QUEUE_GRAPHICS_BIT,
+                                             .queueCount = 1,
+                                             .timestampValidBits = 64,
+                                             .minImageTransferGranularity = {1, 1, 1}};
+            vn_encode_VkQueueFamilyProperties(&encoder, &value);
+        } else {
+            VkSparseImageFormatProperties value = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                   .imageGranularity = {64, 64, 1}};
+            vn_encode_VkSparseImageFormatProperties(&encoder, &value);
+        }
     } else {
         venus_vk_features_t value = {.robustBufferAccess = 1, .tessellationShader = 1};
         vn_encode_VkPhysicalDeviceFeatures(&encoder, &value);

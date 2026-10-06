@@ -2416,7 +2416,7 @@ feature or extension is advertised. API version remains1.0 while device APIs are
 incomplete, and the experimental manifest is test-only until runtime acceptance.
 
 Create supports the previously specified core instance input, no layers/extensions
-or pNext, but accepts nullable allocation callbacks because no local heap allocation
+or application pNext, but accepts nullable allocation callbacks because no local heap allocation
 occurs and the host uses its own allocator. Reserve before encode/submission, roll
 back on local encode failure or a validated Vulkan creation error, publish handle
 only after successful identity validation. Success leaves one live instance record.
@@ -2447,3 +2447,59 @@ stability. A real negotiated production-worker fixture must execute the same
 application-facing functions before claiming instance dispatch acceptance. Existing
 protocol coverage/sanitizer gates remain required; no full TODO #3 completion
 credit from this intermediate interface.
+
+
+The system loader adds private VkLayerInstanceCreateInfo records (sType47). The
+ICD strips only those known records from a private copy of create-info, with a
+maximum32-link walk; unknown application tags or cyclic/long chains fail before
+submission and roll back reservations. It never interprets the loader callback
+union or sends private loader pointers to the receiver. Native input chain
+storage remains caller-valid for the synchronous call. Explicit unsupported
+application extension structures still fail, rather than being silently dropped.
+
+System loader requires the complete core physical query function table even
+before device creation. Format query4 encodes format(u32) before output tag1 and
+decodes exactly three u32 flags. Image format query5 encodes five u32 parameters
+(format/type/tiling/usage/flags) before tag1; reply contains command5/result(i32)/
+tag1 followed by extent3*u32, mip levels/layers/sample flags(u32 each), maximum
+resource bytes(u64). Positive result is corruption; validated negative results
+preserve output. Only fixed integer native fields are reflected; variable/pointer
+fields are compile errors. Every scalar read checks private snapshot bounds.
+
+Queue query7 encodes output count pointer tag1/request count(u32)/array tag(u64);
+struct partial inputs have no fields. Sparse query33 encodes five u32 parameters
+(format/type/sample count/usage/tiling) before the same count/array tags. Replies
+have command(u32), count pointer tag1(u64), returned count(u32), array count(u64),
+then native field-by-field integer values (queue24 bytes/entry, sparse20/entry).
+Count-only mode requires array0 and bounded total<=64; fill requires returned<=
+requested<=64 and exact array count. Decode all values to a private64-entry array
+before publishing caller values/count. Caller fill capacity0 returns without
+submission because the pinned schema cannot distinguish zero-capacity fill from
+count-only mode. This preserves0 written entries and avoids a false protocol loss.
+Trailing receiver capacity is ignored; no output pointer comes from peer bytes.
+
+Device creation is an explicit VK_ERROR_FEATURE_NOT_PRESENT placeholder needed
+for loader discovery of this intermediate ICD. It initializes nullable output
+NULL and submits nothing. Device extension enumeration lists only guest-supported
+extensions (currently empty), validates live physical identity, and rejects layer
+names. These are not device functionality acceptance. Public physical queries
+return host metadata while this test-only driver is incomplete; the manifest must
+not be distributed/registered as a complete application ICD before device/API
+and DXVK acceptance. Production command-owned outputs stay bounded and private.
+
+Nine public export names are restricted by a Windows DEF and Linux version map;
+all command/registry/codec helpers remain library-local. Windows DLL linking uses
+a direct ICD object because a DEF alone does not extract unreferenced objects
+from Zig archives. Native DLL fixture checks exact supported exports and absence
+of private helper/DriverEntry exports. The Linux system-loader fixture dynamically
+binds the actual shared library, discovers its generated manifest and executes8
+instance/query/destroy cycles. It restores VK_DRIVER_FILES and closes both dynamic
+libraries. The native ABI fixture also executes128 single-thread and128 four-thread
+cycles; all callbacks are serialized under the same process mutex, and native
+thread handles are joined/released. Lost/timeout/unsupported input/cyclic loader
+chain and output preservation paths are covered. Allocation-free code requires
+no custom allocator callback use. Fixed private initialization/encoder invariants
+are asserted instead of introducing unreachable public recovery branches;
+peer/transport errors retain explicit sticky loss returns. Production coverage
+99.18% lines/91.37% branches, normal and ASan/LSan/UBSan pass. Windows cross-link
+passes; native CI and production-worker acceptance are separately recorded.

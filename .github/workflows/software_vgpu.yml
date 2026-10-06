@@ -54,6 +54,8 @@ jobs:
         run: make vgpu-query-wire-test vgpu-query-wire-sanitizers vgpu-query-wire-coverage
       - name: Verify bounded native Vulkan query replies
         run: make vgpu-values-test vgpu-values-sanitizers vgpu-values-coverage
+      - name: Verify experimental ICD loader and instance dispatch
+        run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
       - name: Verify guest Vulkan object identity and lifetime
         run: make vgpu-objects-test vgpu-objects-sanitizers vgpu-objects-coverage
       - name: Verify exclusive serialized guest command ownership
@@ -258,6 +260,24 @@ jobs:
           ./build/vgpu_command_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_command.zig -Iinclude -lc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows experimental ICD dispatch and DLL exports
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -o build/vgpu_icd_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_icd_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-obj src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.obj'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -shared src/vgpu/venus_icd.def build/venus_icd_windows.obj build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib -o build/waddle_vulkan_experimental.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd_dll.c -o build/vgpu_icd_dll_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_icd_dll_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify native Windows standalone adapter and DLL ABI
