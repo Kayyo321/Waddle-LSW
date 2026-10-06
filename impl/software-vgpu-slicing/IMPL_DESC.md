@@ -2333,3 +2333,46 @@ branches; instance wire gates100% lines/95.59% branches. This accepts these
 components only. TODO #3 stays40%; remaining public ICD loader/manifest,
 instance/device/API dispatch, memory/synchronization and actual DXVK acceptance
 must be implemented and verified before TODO #3 can be marked Done.
+
+
+### Physical enumeration dispatch transactions (TODO #3)
+
+The application-facing instance dispatcher must serialize core count/fill queries
+without copying native pointers. The production allocation-free Zig wire module
+accepts nonzero existing host instance IDs and up to16 reserved physical-device
+IDs. Count mode uses zero count and a zero array tag; fill mode uses count1..16
+and exactly that many unique nonzero preassigned IDs. Command2/reply flag1 is
+followed by instance(u64), count pointer tag(u64=1), requested count(u32), array
+count(u64), then each reserved ID(u64). Packet sizes are36+8*count. IDs may not
+alias the instance ID or each other. Zero count with nonnull IDs is invalid.
+The lifecycle dispatcher owns reservations and must abandon the session if a
+successful fill reply contains foreign, duplicate or reordered IDs.
+
+Enumeration reply is command2(u32), VkResult(i32), count pointer tag(u64=1),
+returned count(u32), array count(u64), then IDs. Count mode expects array count0,
+VK_SUCCESS and returned count0..16. Fill mode accepts VK_SUCCESS or VK_INCOMPLETE,
+returned count0..requested, and exact array count=returned count; every returned
+ID equals its corresponding reservation. A negative Vulkan result is accepted
+only with zero returned count/array; positive values besides VK_INCOMPLETE are
+corruption. Trailing reply-resource capacity is ignored. Decoder checks the
+whole required prefix before publishing result/count; malformed input preserves
+both outputs. Transport errors do not produce Vulkan handles.
+
+Fixed query request builder accepts commands3(features),6(properties),8(memory),
+a nonzero existing host physical-device ID and caller-provided private output.
+Each command has reply flag1, physical ID and nonnull output pointer tag1.
+Property partial output carries exact array tags3,3,2,2,2 for limits arrays;
+feature partial output is empty; memory partial output carries tags32 and16.
+These tags come from the pinned generated partial encoders, not native padding.
+
+All wire outputs and length metadata must be disjoint from each other and input;
+all extents are actual accessible private storage, capped16MiB. Requests stage in
+fixed private stack storage before any output write, preserving output/length on
+errors. Null/bounds/alias/invalid IDs or query kind return Invalid, insufficient
+request capacity returns Limit, malformed replies return Corrupt. No allocation,
+retained pointers, global state or locks. Independent calls on disjoint storage
+are thread-safe; the ICD must serialize frontend access separately. Unit tests
+compare exact immutable C generator output, exercise every truncated reply,
+identity/result/tag/count mutations, alias/overflow and capacity preservation.
+Native Linux/Windows ABI, allocator, sanitizers and >=90% production line/branch
+coverage gate this module. No ICD/device/DXVK milestone is accepted by helpers alone.

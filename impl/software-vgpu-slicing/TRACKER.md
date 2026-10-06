@@ -1196,7 +1196,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ICD/device/API dispatch and real DXVK still pending; TODO #3 remains40%.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record native core wire verification`
+- **Commit `d8657a1`**: `docs(vgpu): record native core wire verification`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Record Linux and native Windows acceptance of bounded core query
     and instance wire components; synchronize remaining ICD/device/DXVK scope and
@@ -1206,3 +1206,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     retirement; Windows executes native ABI and all five instance wire Zig tests.
     TODO #3 remains40%, overall65.0%, In Progress, Time Ended TBD. No public ICD
     loader/device/API implementation or DXVK acceptance is claimed by these tests.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify physical enumeration dispatch transactions`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Define bounded count/fill physical-device enumeration and fixed
+    query request serialization, reserved identities and reply preservation before
+    connecting application-facing dispatch. Full ICD/device/DXVK remains required.
+  - **Verification**: Cross-check pinned generated guest/renderer schemas, command
+    IDs, partial fixed arrays and output handle preallocation; implementation pending.
