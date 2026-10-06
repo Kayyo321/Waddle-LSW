@@ -1,5 +1,7 @@
 /** @file render_wire_oracle.c @brief Independent pinned core image serializers; test-only. */
 #include "vn_cs.h"
+/** @brief Isolate the upstream non-static test ring stub from other linked oracles. */
+#define vn_ring_submit_command venus_render_oracle_unused_submit
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "vn_protocol_driver_image.h"
