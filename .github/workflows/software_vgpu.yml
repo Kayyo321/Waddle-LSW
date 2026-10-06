@@ -37,6 +37,8 @@ jobs:
         run: make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
+      - name: Verify isolated receiver process ownership
+        run: make vgpu-worker-test vgpu-worker-sanitizers vgpu-worker-coverage
       - name: Verify bounded receiver runtime and failure paths
         run: make vgpu-runtime-test vgpu-runtime-sanitizers vgpu-runtime-coverage
       - name: Verify independent mapped-file guest and real Venus replies

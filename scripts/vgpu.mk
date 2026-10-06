@@ -217,3 +217,17 @@ vgpu-runtime-coverage: build/venus_request.o build/venus_bounds.o build/venus_co
 
 # Header changes must rebuild every consumer, including the integrated renderer.
 build/vgpu_integration_test build/vgpu_runtime_test build/vgpu_runtime_test.exe: src/vgpu/venus_rpc_internal.h include/waddle/venus_rpc.h include/waddle/venus_dispatch.h include/waddle/venus_request.h include/waddle/venus_receiver.h
+
+build/vgpu_worker_test: tests/vgpu/worker.c src/vgpu/venus_worker.c include/waddle/venus_worker.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/worker.c -o $@
+
+.PHONY: vgpu-worker-test vgpu-worker-sanitizers vgpu-worker-coverage
+vgpu-worker-test: build/vgpu_worker_test
+	./build/vgpu_worker_test
+
+vgpu-worker-sanitizers:
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/worker.c -o build/vgpu_worker_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_worker_sanitized
+
+vgpu-worker-coverage:
+	python3 tests/vgpu/coverage.py worker

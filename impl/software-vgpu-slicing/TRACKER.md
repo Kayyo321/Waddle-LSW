@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 51% | GPU wire/native fixtures verified; health deadlines implemented, CI pending; hardware queue, isolated recovery and multi-context milestones remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 54% | Health/native fixtures verified; process ownership implemented, CI pending; worker integration, hardware queue and multi-context milestones remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `30.2%`
+**Total Feature Completion**: `30.8%`
 
 ## Commit History & Progress Log
 
@@ -409,10 +409,26 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37394675981 .
     Current health CI, real GPU execution and isolated worker recovery remain pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify isolated receiver process ownership`
+- **Commit `753e740`**: `docs(vgpu): specify isolated receiver process ownership`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Defined trusted exec/descriptor handoff, owned process groups,
     observe-before-reap identity safety and bounded TERM/KILL shutdown. Kept actual
     worker integration/restart separate from process ownership acceptance.
   - **Verification**: Explicitly retains unreaped identities on timeout; killing
     a stuck kernel task is not falsely represented as complete recovery.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): own isolated receiver process groups`
+  - **Task Impact**: +3% to TODO: #2 (+0.6% overall) for verified health CI;
+    process ownership's separate 1% gate awaits current CI.
+  - **Summary**: Added collision-safe trusted exec/descriptor handoff, symmetric
+    launch cleanup, observe-before-reap process identity, descendant disposal and
+    bounded TERM/KILL shutdown with retained ownership on timeout/OS failure.
+  - **Verification**: `make vgpu-worker-test vgpu-worker-sanitizers
+    vgpu-worker-coverage` passed; owned lines 98.35%, branches 94.26%.
+    Real exec and TERM-resistant descendants, all launch acquisition failures,
+    wait interruptions/external reaping, clock/timeout faults and descriptor
+    preservation tested; ASan/LSan/UBSan report no findings. CI now runs these gates.
+    Health Linux/native Windows CI passed at `2568f9e` in
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37395109626 .
+    Actual receiver worker integration, guest restart notification and real GPU
+    execution remain pending; process shutdown tests do not prove GPU recovery.
