@@ -3882,3 +3882,39 @@ Tests cover all64 reservations, exhaustion/reuse/scrub, compatible and incompati
 prefix/suffix disturbances, independent snapshots, per-stage partial push writes,
 range changes and malformed ranges. Native and Windows Zig test artifacts compile
 without heap storage; production coverage must remain at least90%.
+
+### Initial typed Vulkan 1.1 feature-query chain wire profile
+
+The feature query codec will encode pinned command147 (`vkGetPhysicalDeviceFeatures2`)
+with a nonzero translated physical-device ID and a caller-owned list of at most4
+unique type tags. Recognized nodes are `VkPhysicalDeviceVulkan11Features` (12
+ordered flags), shader draw parameters (1), host query reset (1) and transform
+feedback (2). Vulkan11 flags are ordered storageBuffer16BitAccess,
+uniformAndStorageBuffer16BitAccess, storagePushConstant16, storageInputOutput16,
+multiview, multiviewGeometryShader, multiviewTessellationShader,
+variablePointersStorageBuffer, variablePointers, protectedMemory,
+samplerYcbcrConversion, shaderDrawParameters. The transform feedback order is
+transformFeedback then geometryStreams. These are external Vulkan field names;
+owned code records use snake_case names. Unsupported or duplicate tags and excess
+nodes reject before any packet publication. The caller must separately verify
+negotiated receiver schema support; this codec advertises no extension or API.
+
+Partial query encoding sends only requested structural tags:16-byte command
+header, pointer1, FEATURES_2 type, nested(pointer1,type) pairs and terminal pointer0.
+No feature flags are input query data. Exact query length is36+12*node_count, at
+most84 bytes. Reply shape is command147, pointer1, FEATURES_2, the exact requested
+nested tags in input order, terminal0, each node's flags in reverse structural
+order, then the55 core Vulkan1.0 boolean flags in their pinned declaration order.
+Exact initialized reply prefix is244+12*node_count+4*sum(node_flag_count), at most356
+bytes. Every boolean must0 or1. Truncation, command/type/tag mismatch and nonboolean
+values reject before caller output publication. Bytes following the initialized
+prefix are unused transport scratch and are ignored, matching receiver reuse.
+
+Returned metadata owns bounded flag arrays with zeroed unused entries and no
+native pointers. Serializers and parsers allocate no storage and are thread-safe
+on distinct returned values. Caller conversion preserves application pNext links
+and copies only validated flag fields after success. Independent pinned guest
+and receiver encoders will compare request and reply prefixes, including all
+requested nodes, node order permutations, every truncation length, malformed
+tags and every boolean corruption. Native/Windows ABI checks, sanitizer oracle
+execution and unchanged90% coverage gates precede any runtime API advertisement.
