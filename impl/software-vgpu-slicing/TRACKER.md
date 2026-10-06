@@ -13,14 +13,14 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 50% | Frontend, userland adapter, object ownership and native loader/shared ICD production-worker dispatch verified; complete API/command/mapping/DXVK gates pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; complete API/command/mapping/DXVK gates pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 
-**Total Feature Completion**: `67.5%`
+**Total Feature Completion**: `68.75%`
 
 ## Commit History & Progress Log
 
@@ -1811,3 +1811,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Preserve same-queue external synchronization and one-second whole deadline.
   - **Verification**: Inspect current idle/submit transport ownership and native
     external synchronization contract; thread regression/implementation pending.
+
+- **Commit `d224846`**: `feat(vgpu): track guest queue idle references and concurrency`
+  - **Task Impact**: +5% to TODO: #3 (+1.25% overall).
+  - **Summary**: Prevent queue submissions and concurrent wait-idle operations
+    while a queue is already being idled by tracking `idle_refs`. Reject conflicting
+    attempts with VK_ERROR_INITIALIZATION_FAILED.
+  - **Verification**: ICD native queue concurrency fixtures, sanitizers, and
+    coverage gates pass. `make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage`
+    and `make vgpu-windows` execution verified locally.
