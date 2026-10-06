@@ -640,7 +640,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Summary**: Independent documentation commit outside receiver work; no
     vGPU source changes or task credit.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record completed host receiver acceptance`
+- **Commit `8541e4d`**: `docs(vgpu): record completed host receiver acceptance`
   - **Task Impact**: +10% to TODO: #2 (+2.0% overall) for simultaneous context runtime acceptance.
   - **Summary**: Mark only TODO #2 complete; record exact host receiver scope,
     context handle lifetime and verification evidence. Remaining feature tasks
@@ -655,3 +655,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     dispatch 99.10%/93.94%, receiver 100%/98.76%, request Zig 98.39%/100%.
     Formatting and diff checks pass. README changes were independent commits.
   - **TODO #2 Completed At**: 2026-10-06T01:50:12Z
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify guest and presentation acceptance boundaries`
+  - **Task Impact**: +0% to TODO: #3; +0% to TODO: #4 (+0% overall).
+  - **Summary**: Divide guest and presentation scope into independently verifiable
+    milestones; specify public Venus DMA-BUF export, completion ordering,
+    descriptor ownership, image-layout and cross-process handoff boundaries.
+  - **Verification**: Inspected pinned public renderer export/query implementation,
+    existing AV Wayland client and system Vulkan/Wayland dependencies. WDK/native
+    guest access is requested; no driver or full ICD implementation credit.

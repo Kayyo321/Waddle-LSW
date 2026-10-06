@@ -1184,3 +1184,69 @@ A Windows guest ICD/WDDM driver and its context-to-endpoint binding remain Task
 #3. Device-memory DMA-BUF presentation remains Task #4, compute remoting Task #5.
 Physical hypervisor/driver testing remains the existing delegated user validation
 scope. Completion here authorizes no merge or completion of the remaining feature.
+
+
+### Tasks #3 and #4 implementation and acceptance boundaries
+
+Task #3 is divided into negotiated guest client ownership (10%), loader ABI and
+manifest (10%), Vulkan instance/device/command serialization and synchronization
+(35%), WDDM KMD/UMD adapter lifecycle and deployment (25%), and reproducible DXVK
+execution (20%). Task #4 is divided into receiver device-memory FD export (15%),
+bounded image-layout and compositor-feedback validation (20%), Wayland import,
+pacing/damage/release ownership (25%), isolated-worker descriptor handoff and
+surface binding (20%), and integrated GPU/Wayland verification (20%). Credit each
+milestone only after its stated implementation and verification; neither a Vulkan
+loader export that cannot create devices nor mock FD creation completes a task.
+
+External ABI names required by Vulkan, Windows WDK, and Wayland are confined to
+adapters. Owned functions and types retain repository naming. An ICD needs the
+complete Vulkan entry points/features required by DXVK, dispatchable object
+loader headers, validated device/instance procedure routing, and Venus object
+identity/lifetime handling. A WDDM render-only adapter is a real kernel miniport
+with WDK callback registration, scheduler/memory/context interfaces and an INF;
+an ordinary user-mode C abstraction cannot expose an adapter to Windows/DWM.
+Render-only devices require a separate display adapter for desktop scanout.
+No WDK or Windows VM is currently provisioned in this checkout. Native user-mode
+CI alone does not establish kernel-driver install or DXVK rendering acceptance.
+
+The pinned public renderer exports Venus device memory using
+virgl_renderer_resource_export_blob. Its export-query interface explicitly returns
+fourcc zero and no layout for untyped Venus blobs (virglrenderer.c,
+virgl_renderer_export_query). Do not use the GL resource query as image metadata,
+cast a guest VkImage to a host handle, or treat SHM/opaque FDs as DMA-BUFs. Vulkan
+image allocation must have DMA-BUF external memory support and a compositor-
+compatible modifier. Image format/plane layout must be obtained with Vulkan
+image/modifier layout queries and validated separately before presentation.
+
+The receiver export API takes a live registered nonzero-blob resource with Share,
+a GPU timeline 1..63 and an already-issued nonzero fence. It requires CPU decoder
+completion and acquire-observed retirement of that exact GPU fence before SDK
+export. The caller guarantees that fence orders all writes to the allocation and
+checks Vulkan execution results; fence retirement alone is not device success.
+Invalid resource/policy/fence leaves output -1; pending work returns Again without
+export. SDK failure, invalid returned descriptor, non-DMA-BUF type, or CLOEXEC
+failure returns Corrupt after closing any acquired descriptor. Export errors do
+not poison the renderer: unsupported external-memory export is a presentation
+failure, and the caller may choose a different allocation/modifier. No userspace
+pixel allocation, map, or copy occurs. A successful FD is independently owned by
+the caller and must be closed exactly once after protocol handoff or cancellation.
+The SDK resource ledger and its budget are unchanged; closing this FD does not
+release the registered resource. Caller must retain the underlying Venus image
+and prevent GPU writes/reuse until the compositor releases its buffer, even if
+local FD duplication no longer requires the resource ledger to stay live.
+
+Export belongs on the worker's sole renderer session thread. An FD is process-
+local and cannot be sent as an integer through IVSHMEM. A later dedicated trusted
+AF_UNIX channel must transfer it with SCM_RIGHTS, bind it to context/resource/frame
+identities, and reject stale, truncated or extra ancillary records. Do not share
+the guest lifecycle stream with the compositor or add host FDs to guest replies.
+Destroying a worker closes worker-owned FDs; the compositor/controller must also
+retire retained imports and independently transferred descriptors.
+
+Export acceptance: exercise NULL/ID/flags/blob/pending/poisoned/fence checks,
+DMA-BUF versus opaque/SHM responses, SDK error with/without acquired FD, CLOEXEC
+failure, repeated exports/free, unchanged registry quotas and independent FD
+lifetime using real Linux descriptors under ASan/LSan/UBSan and >=90% receiver
+coverage. These fixtures prove the public SDK ownership adapter, not successful
+hardware DMA-BUF allocation or Wayland rendering. Hardware export and integration
+are separately credited by Task #4's final verification gate.
