@@ -3633,7 +3633,7 @@ layout and reserved output identities with matching lengths and nonzero device/
 pool IDs. Update command79 initially supports buffer types6..9 and copies with
 at most64 writes/copies and1..64 elements per write. Validate IDs, offsets/ranges
 and all native scalar counts before encoding. Exact aggregate packet preflight
-is40+sum(60+24*buffer_count)+44*copy_count<=8192; reject larger packets without
+is40+sum(60+24*buffer_count)+48*copy_count<=8192; reject larger packets without
 publication. Pool packet80+8*entry_count<=592; allocation64+16*set_count<=1088.
 The ICD remains responsible for pool/layout quotas, binding/type compatibility,
 resource usage and live references. Independent pinned encoders compare each
@@ -3661,3 +3661,36 @@ fixed4096-byte receiver reply resource may retain older bytes after that prefix;
 those bytes are not a serialized destruction result and must be ignored. Invalid
 prefix/transport still retains uncertain ownership until abandonment. Regression
 fixtures deliberately leave a nonzero trailing reply region.
+
+### Bounded descriptor compatibility metadata ownership
+
+The ICD reserves32 descriptor-layout metadata slots and32 pipeline-layout slots.
+A descriptor layout normalizes at most64 binding records {binding,type,count,
+stage_flags}; immutable samplers remain unsupported in this initial profile.
+Each pipeline layout owns copies of up to16 normalized descriptor layouts and32
+validated push ranges. Dedicated fixed tables (~570KiB) avoid embedding maximum
+layout arrays in all512 generic resource records. Generic resource metadata
+contains only a one-based profile slot index; zero means no profile. Reservation
+precedes native creation. Ordinary native failure rolls back both reservations;
+transport uncertainty retains identity/profile until retired-backend abandonment.
+Validated destruction clears its owned profile exactly once.
+
+Pipeline metadata has64 dedicated slots, each copying the construction layout's
+compatibility definition by value. Shader modules and descriptor layouts may
+retire after successful native pipeline/layout construction; their original
+tokens are not retained as artificial ownership dependencies. Pipeline layout
+may likewise retire after successful compilation when no actual pending calls
+reference its token. Command recording that uses a layout token retains/invalidate
+references through the existing submission state machine. Metadata comparison
+uses normalized binding definitions and push ranges, never retired object IDs.
+
+Descriptor sets have128 dedicated metadata slots, copy their allocation layout
+definition and initially support at most64 total descriptors per set. The codec
+may encode broader bounded arrays; the public ICD rejects profiles exceeding its
+actual metadata budget before allocation/publication. Set storage tracks exact
+resource IDs/offsets/ranges without retaining native pointers. Pool operations
+refund set slots only after validated native free/reset/destruction; pending GPU
+references prohibit invalid reuse. Insufficient local profile capacity returns
+OUT_OF_HOST_MEMORY before native work. Abandon clears all fixed tables after
+receiver retirement. These quotas are initial implementation limits and do not
+establish full DXVK compatibility; expanding them requires documented budgets.
