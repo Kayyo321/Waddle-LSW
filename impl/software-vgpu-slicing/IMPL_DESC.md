@@ -2100,3 +2100,12 @@ and nonzero returned version. The C test inspects private fixture bytes only; it
 is not an application-facing Vulkan decoder. Two fresh worker sessions retain
 existing healthy exit and unknown-release shutdown checks plus FD baselines. Both
 normal and ASan/LSan/UBSan worker/client runs pass; no standalone ICD/DXVK credit.
+
+
+Native command-owner acceptance at960aa49 is verified by successful Linux and
+Windows jobs in GitHub Actions run37479173379. Linux includes production-worker
+version queries, ASan/LSan/UBSan and required coverage; Windows executes native C
+ABI and Zig state tests. This does not implement public ICD loader dispatch,
+Vulkan object/memory lifetimes, complete command/device entry points or DXVK
+execution. TODO #3 remains35%; TODO #4 remains100% from its separately verified
+presentation scope. Feature completion stays63.75%, with no feature merge/PR.
