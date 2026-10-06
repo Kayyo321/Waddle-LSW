@@ -127,6 +127,13 @@ instrumented.append('declare void @waddle_branch_hit(i32, i32)')
 (output/'instrumented.ll').write_text('\n'.join(instrumented)+'\n')
 (output/'branches.json').write_text(json.dumps(records,indent=2))
 assert records,'no source branches instrumented'
+runtime_source=Path('tests/device_branch_runtime.c').read_text()
+max_branches=int(re.search(r'MaxBranches = (\d+)',runtime_source)[1])
+max_edges=int(re.search(r'MaxEdges = (\d+)',runtime_source)[1])
+assert len(records)<=max_branches, f'coverage sites {len(records)} exceed recorder {max_branches}'
+assert max(record['edges'] for record in records)<=max_edges, 'coverage switch exceeds recorder'
+print(f'{mode} instrumentation: {len(records)}/{max_branches} sites; '
+      f"{max(record['edges'] for record in records)}/{max_edges} maximum edges",flush=True)
 subprocess.run(['clang-19','-Wno-override-module','-c',str(output/'instrumented.ll'),'-o',str(output/'test.o')],check=True)
 subprocess.run(['zig','cc',str(output/'test.o'),*link_objects,'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
 env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output)

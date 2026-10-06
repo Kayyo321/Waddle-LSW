@@ -1676,7 +1676,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     valid usage; implementation and actual worker dependency recording pending.
     TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): record bounded global and buffer pipeline barriers`
+- **Commit `184f002`**: `feat(vgpu): record bounded global and buffer pipeline barriers`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; full execution pending).
   - **Summary**: Dispatch pinned command126 for execution-only/global/private
     buffer dependencies. Validate complete canonical arrays, core masks, family
@@ -1693,3 +1693,15 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ce01f55 passes; one Linux coverage run aborts while parallel same-head run
     passes that stage, under investigation/retry. Latest-head checks remain
     required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): diagnose coverage recorder bounds and output failures`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Report bounded recorder branch/edge violations and output path/
+    open/close failures before aborting. Publish instrumentation capacity counts
+    and validate them against the runtime's named bounds before execution. Preserve
+    atomic recording and all existing coverage thresholds; do not mask failures.
+  - **Verification**: Strict C probe accepts final valid4095/31 site/edge and
+    rejects4096/0 and0/32 with diagnostic SIGABRT. ICD seven-test coverage passes
+    at99.74% lines/93.78% branches with2158/4096 sites, maximum3/32 edges. CI's
+    single same-head coverage abort remains without a confirmed cause; parallel
+    ce01f55 run passed that gate and failed job is retried. TODO #3 stays50%.
