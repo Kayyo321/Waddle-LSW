@@ -22,13 +22,13 @@ pub fn bind_pipeline(command_id: u64, pipeline_id: u64, bind_point: u32) !writer
     return writer;
 }
 /// Encode descriptor binding. [in] nonzero translated command/layout/set IDs, arrays borrowed for call.
-/// [in] bind_point core0/1, first_set and arrays bounded by this module's fixed profile.
+/// [in] bind_point core0/1, first_set and nonempty set array bounded by this fixed profile.
 /// Returns owned packet or Invalid/Limit; complete capacity proof precedes writes; no allocations.
 /// Caller validates structural compatibility and exact dynamic count/alignment before submission.
 pub fn bind_descriptor_sets(command_id: u64, layout_id: u64, bind_point: u32, first_set: u32, set_ids: []const u64, dynamic_offsets: []const u32) !writer_t {
     if (command_id == 0 or layout_id == 0 or bind_point > 1 or first_set >= MaxSets) return error.Invalid;
     if (set_ids.len > MaxSets - first_set or dynamic_offsets.len > MaxDynamicOffsets) return error.Limit;
-    if (set_ids.len == 0 and dynamic_offsets.len != 0) return error.Invalid;
+    if (set_ids.len == 0) return error.Invalid;
     for (set_ids) |id| if (id == 0) return error.Invalid;
     // 56 + 16*8 + 1024*4 = 4280, strictly within the shared packet capacity.
     var writer = writer_t{};
@@ -82,7 +82,7 @@ fn compare(writer: writer_t, bytes: []const u8) !void {
     try std.testing.expectEqual(bytes.len, writer.used);
     try std.testing.expectEqualSlices(u8, bytes, writer.bytes[0..writer.used]);
 }
-test "generated oracle command packets ordinary empty and maximum" {
+test "generated oracle command packets ordinary static and maximum" {
     var bytes: [8192]u8 = undefined;
     for ([_]u32{ 0, 1 }) |point| {
         const count = venus_compute_test_bind_pipeline(point, &bytes);
@@ -92,11 +92,13 @@ test "generated oracle command packets ordinary empty and maximum" {
     for (&ids, 0..) |*id, index| id.* = 42 + index;
     var offsets: [1024]u32 = undefined;
     for (&offsets, 0..) |*offset, index| offset.* = @intCast(index * 256);
-    for ([_]usize{ 0, 1, 16 }) |count| {
+    for ([_]usize{ 1, 16 }) |count| {
         const dynamic_count: usize = if (count == 16) 1024 else count;
         const size = venus_compute_test_bind_sets(1, 0, count, &ids, dynamic_count, &offsets, &bytes);
         try compare(try bind_descriptor_sets(7, 43, 1, 0, ids[0..count], offsets[0..dynamic_count]), bytes[0..size]);
     }
+    const static_size = venus_compute_test_bind_sets(0, 15, 1, &ids, 0, &offsets, &bytes);
+    try compare(try bind_descriptor_sets(7, 43, 0, 15, ids[0..1], &.{}), bytes[0..static_size]);
     var values: [128]u8 = undefined;
     for (&values, 0..) |*value, index| value.* = @intCast(index);
     for ([_]usize{ 4, 128 }) |count| {
@@ -120,6 +122,7 @@ test "invalid identities enums counts and push ranges fail before encoding" {
     try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 16, &.{}, &.{}));
     try std.testing.expectError(error.Limit, bind_descriptor_sets(7, 43, 1, 0, &ids, &.{}));
     try std.testing.expectError(error.Limit, bind_descriptor_sets(7, 43, 1, 0, ids[0..1], &offsets));
+    try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{}, &.{}));
     try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{}, offsets[0..1]));
     try std.testing.expectError(error.Invalid, bind_descriptor_sets(7, 43, 1, 0, &.{0}, &.{}));
     const values = [_]u8{0} ** 132;
