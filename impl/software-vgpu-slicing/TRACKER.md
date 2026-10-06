@@ -1442,7 +1442,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and sanitizers; native Windows fixtures/DLL cross-link and pinned Linux loader
     pass. Native updated-head CI and full runtime/DXVK remain required.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record native loader dependency acceptance`
+- **Commit `9914c38`**: `docs(vgpu): record native loader dependency acceptance`
   - **Task Impact**: +35% to TODO: #8; +0% to TODO: #3 (+0% overall).
   - **Summary**: Complete loader dependency build/runtime acceptance with the exact
     pinned offline loader and existing headers. Preserve pending full ICD/runtime
@@ -1452,3 +1452,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     pinned loader discovery and its ASan/LSan/UBSan fixture. Local Linux loader
     eight device/queue/fence cycles and strict Windows cross-link pass. Full latest
     branch CI remains required independently of this dependency acceptance.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify device memory allocation and buffer binding`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify private memory ownership, per-slot generation metadata,
+    exact allocation/free/bind wire, actual cached requirements and overflow-safe
+    range validation, relationship teardown and independent/real-worker gates.

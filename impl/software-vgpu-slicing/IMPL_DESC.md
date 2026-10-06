@@ -2746,3 +2746,53 @@ negotiated worker integration creates/queries/destroys buffers in each device
 lifecycle. Native Windows ABI, normal/sanitized stress and >=90% production line
 and branch coverage remain mandatory. These callbacks alone do not satisfy the
 full memory/graphics/compute milestone or real DXVK acceptance.
+
+### Public core device memory allocation and buffer binding
+
+The next increment implements vkAllocateMemory21, vkFreeMemory22 and
+vkBindBufferMemory28. Mapping, flush/invalidate, imported/exported guest-visible
+resources and command submission are separate pending paths. No native host
+pointer is returned to the caller. Private device-parented nondispatchable memory
+tokens use the existing registry and deterministic host-free lifecycle. Allocator
+callbacks are borrowed but unused: the ICD uses fixed private metadata[512], one
+entry per registry slot, containing its exact generation ID, allocation size and
+type, cached buffer requirements and bound memory handle. Metadata is cleared on
+local retirement and binding teardown; reused slots never inherit old metadata.
+All methods serialize under the existing mutex without allocation.
+
+Allocation accepts an accessible canonical tag5 native info, no pNext, nonzero
+allocationSize and memoryTypeIndex<32. The host validates actual memoryTypeCount
+and allocation limits; native negative results are returned with local reservation
+rolled back. Wire: command21/flags1/device-id64/info-tag1/tag5/pNext0/size64/type32/
+allocator-tag0/output-tag1/reserved-memory-id64. Exact creation identity and signed
+result rules match buffer creation. Unexpected positive statuses, malformed reply,
+transport loss and host device loss poison the binding and retain uncertain host
+ownership. The caller's output is NULL until successful validated publication.
+
+Binding accepts private live buffer/memory with the exact same device parent.
+Fetch and stage actual buffer requirements through command30 if not already cached.
+Refuse rebinding. Validate memoryTypeBits against the allocation type, offset
+alignment, offset<=allocationSize and required size<=allocationSize-offset; use
+subtraction after checking offset to avoid overflow. Wire command28/flags1/device64/
+buffer64/memory64/offset64. Require exact command28/result0 before publishing the
+bound memory relationship. Negative host errors preserve an unbound buffer;
+DEVICE_LOST or malformed/transport replies poison uncertain state. The binding
+operation never copies, maps or guesses host allocation requirements.
+
+Free validates private memory and exact device parent; null/stale/foreign handles
+are ignored. Refuse free while any private buffer still refers to that token.
+Buffer destruction clears its relationship only after host retirement; caller must
+retire all GPU uses first. Wire command22/flags1/device64/memory64/allocator-tag0.
+Only exact command22 reply releases registry and metadata. Failed transport or
+corruption retains uncertain memory until receiver retirement and abandonment.
+Device destruction refuses remaining memory children. Invalid binding inputs
+return initialization failure; an already lost binding returns DEVICE_LOST.
+
+Tests compare all commands against independent pinned generated C encoders, cover
+allocation rollback, type bounds, offset overflow/alignment/range, wrong parents,
+rebinding, free-before-buffer refusal, cached requirements, registry exhaustion,
+malformed/transport paths and destruction order. Actual worker tests choose a
+returned compatible memory type, allocate actual requirements size, bind offset0,
+retire GPU work, destroy buffer then free memory. All native, Windows, safety and
+>=90% coverage gates remain required. No completion credit for full memory or
+DXVK is granted until mapping, command execution and application acceptance work.
