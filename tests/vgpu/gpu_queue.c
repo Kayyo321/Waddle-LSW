@@ -13,6 +13,6 @@ int main(int argc, char **argv) {
     alarm(30); /* Whole fixture guard, including any blocking SDK teardown. */
     int status = venus_gpu_fixture_run(argc == 2);
     if (!status)
-        puts("Real Venus queue bootstrap/retirement passed; workload verification remains separate");
+        puts("Real Venus GPU timestamp workload and fence ordering passed");
     return status;
 }

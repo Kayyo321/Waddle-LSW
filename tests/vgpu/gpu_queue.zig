@@ -6,6 +6,10 @@ const MaxFamilies: u32 = 32;
 const InstanceId: u64 = 1;
 const DeviceId: u64 = 100;
 const QueueId: u64 = 101;
+const QueryPoolId: u64 = 102;
+const CommandPoolId: u64 = 103;
+const CommandBufferId: u64 = 104;
+const queue_family_t = struct { index: u32, timestamp_bits: u32 };
 const venus_receiver_t = opaque {};
 // Borrowed C ABI operations; ownership/status contract is venus_receiver.h.
 extern fn venus_receiver_create(*?*venus_receiver_t, u32, u64) c_int;
@@ -143,7 +147,7 @@ fn select_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
     }
     return error.NoDevice;
 }
-fn select_family(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64) !u32 {
+fn select_family(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64) !queue_family_t {
     try writer.begin(7);
     try writer.put(u64, physical);
     try writer.put(u64, 1);
@@ -163,12 +167,15 @@ fn select_family(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
     try reader.expect(u64, 1);
     try reader.expect(u32, count);
     try reader.expect(u64, count);
-    var selected: ?u32 = null;
+    var selected: ?queue_family_t = null;
     for (0..count) |index| {
         const flags = try reader.get(u32);
         const queues = try reader.get(u32);
-        _ = try reader.take(16); // timestamp bits and transfer granularity.
-        if (selected == null and flags & 3 != 0 and queues != 0) selected = @intCast(index);
+        const valid_bits = try reader.get(u32);
+        if (valid_bits > 64) return error.Protocol;
+        _ = try reader.take(12); // transfer granularity.
+        if (selected == null and flags & 3 != 0 and queues != 0 and valid_bits != 0)
+            selected = .{ .index = @intCast(index), .timestamp_bits = valid_bits };
     }
     return selected orelse error.NoDevice;
 }
@@ -210,10 +217,115 @@ fn create_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
     try reader.expect(u64, 1);
     try reader.expect(u64, QueueId);
 }
+fn create_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, family: u32) !void {
+    try writer.begin(47); // CreateQueryPool.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 11); // QUERY_POOL_CREATE_INFO.
+    try writer.put(u64, 0);
+    try writer.words(&.{ 0, 2, 2, 0 }); // flags, timestamp query type, count, statistics.
+    try writer.put(u64, 0); // allocator.
+    try writer.put(u64, 1);
+    try writer.put(u64, QueryPoolId);
+    var reader = try exchange(receiver, writer, reply, 47);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    try reader.expect(u64, QueryPoolId);
+    try writer.begin(85); // CreateCommandPool.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 39); // COMMAND_POOL_CREATE_INFO.
+    try writer.put(u64, 0);
+    try writer.words(&.{ 0, family });
+    try writer.put(u64, 0);
+    try writer.put(u64, 1);
+    try writer.put(u64, CommandPoolId);
+    reader = try exchange(receiver, writer, reply, 85);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    try reader.expect(u64, CommandPoolId);
+    try writer.begin(88); // AllocateCommandBuffers.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 40); // COMMAND_BUFFER_ALLOCATE_INFO.
+    try writer.put(u64, 0);
+    try writer.put(u64, CommandPoolId);
+    try writer.words(&.{ 0, 1 }); // primary level, count.
+    try writer.put(u64, 1);
+    try writer.put(u64, CommandBufferId);
+    reader = try exchange(receiver, writer, reply, 88);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    try reader.expect(u64, CommandBufferId);
+    try writer.begin(90); // BeginCommandBuffer.
+    try writer.put(u64, CommandBufferId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 42); // COMMAND_BUFFER_BEGIN_INFO.
+    try writer.put(u64, 0);
+    try writer.put(u32, 0);
+    try writer.put(u64, 0); // no inheritance.
+    reader = try exchange(receiver, writer, reply, 90);
+    try reader.expect(u32, 0);
+    try writer.begin(129); // CmdResetQueryPool, executes again on every submission.
+    try writer.put(u64, CommandBufferId);
+    try writer.put(u64, QueryPoolId);
+    try writer.words(&.{ 0, 2 });
+    _ = try exchange(receiver, writer, reply, 129);
+    for ([_]u32{ 1, 0x2000 }, 0..) |stage, query| {
+        try writer.begin(130); // CmdWriteTimestamp, top then bottom of pipe.
+        try writer.put(u64, CommandBufferId);
+        try writer.put(u32, stage);
+        try writer.put(u64, QueryPoolId);
+        try writer.put(u32, @intCast(query));
+        _ = try exchange(receiver, writer, reply, 130);
+    }
+    try writer.begin(91); // EndCommandBuffer.
+    try writer.put(u64, CommandBufferId);
+    reader = try exchange(receiver, writer, reply, 91);
+    try reader.expect(u32, 0);
+}
+fn read_timestamps(reader: *reader_t, valid_bits: u32) !u64 {
+    if (valid_bits == 0 or valid_bits > 64) return error.Protocol;
+    try reader.expect(u32, 0); // VK_SUCCESS: no NOT_READY after completed GPU fence.
+    try reader.expect(u64, 32);
+    const first = try reader.get(u64);
+    const first_available = try reader.get(u64);
+    const last = try reader.get(u64);
+    const last_available = try reader.get(u64);
+    if (first_available == 0 or last_available == 0) return error.Protocol;
+    const mask = @as(u64, std.math.maxInt(u64)) >> @as(u6, @intCast(64 - valid_bits));
+    const delta = (last -% first) & mask;
+    const half_range = @as(u64, 1) << @as(u6, @intCast(valid_bits - 1));
+    if (delta >= half_range) return error.Protocol;
+    return delta;
+}
+fn verify_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, valid_bits: u32) !void {
+    try writer.begin(49); // GetQueryPoolResults, nonblocking after GPU retirement.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, QueryPoolId);
+    try writer.words(&.{ 0, 2 }); // first query, count.
+    try writer.put(u64, 32); // dataSize.
+    try writer.put(u64, 32); // output blob extent, no request data follows.
+    try writer.put(u64, 16); // timestamp + availability stride.
+    try writer.put(u32, 5); // 64_BIT | WITH_AVAILABILITY, without WAIT.
+    var reader = try exchange(receiver, writer, reply, 49);
+    const delta = try read_timestamps(&reader, valid_bits);
+    std.debug.print("GPU timestamp commands executed: valid_bits={d} delta={d}\n", .{ valid_bits, delta });
+}
 fn queue_roundtrip(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, expected: u64) !void {
     try writer.begin(18);
     try writer.put(u64, QueueId);
-    try writer.put(u32, 0); // No VkSubmitInfo commands yet.
+    try writer.put(u32, 1); // One real command-buffer submission.
+    try writer.put(u64, 1); // VkSubmitInfo array.
+    try writer.put(u32, 4); // SUBMIT_INFO.
+    try writer.put(u64, 0);
+    try writer.put(u32, 0); // waitSemaphoreCount.
+    try writer.put(u64, 0); // wait semaphore array.
+    try writer.put(u64, 0); // wait stage array.
+    try writer.put(u32, 1); // commandBufferCount.
+    try writer.put(u64, 1);
+    try writer.put(u64, CommandBufferId);
+    try writer.put(u32, 0); // signalSemaphoreCount.
     try writer.put(u64, 0);
     try writer.put(u64, 0); // No Vulkan fence object.
     var reader = try exchange(receiver, writer, reply, 18);
@@ -242,8 +354,19 @@ fn run_fixture(hardware: bool) !void {
     const count = try enumerate_devices(receiver, &writer, &reply);
     const physical = try select_device(receiver, &writer, &reply, count, hardware);
     const family = try select_family(receiver, &writer, &reply, physical);
-    try create_device(receiver, &writer, &reply, physical, family);
-    for (1..4) |fence| try queue_roundtrip(receiver, &writer, &reply, fence);
+    try create_device(receiver, &writer, &reply, physical, family.index);
+    try create_workload(receiver, &writer, &reply, family.index);
+    for (1..4) |fence| {
+        try queue_roundtrip(receiver, &writer, &reply, fence);
+        try verify_workload(receiver, &writer, &reply, family.timestamp_bits);
+    }
+    for ([_]u32{ 86, 48 }, [_]u64{ CommandPoolId, QueryPoolId }) |command, object| {
+        try writer.begin(command);
+        try writer.put(u64, DeviceId);
+        try writer.put(u64, object);
+        try writer.put(u64, 0);
+        _ = try exchange(receiver, &writer, &reply, command);
+    }
     for ([_]u32{ 12, 1 }, [_]u64{ DeviceId, InstanceId }) |command, object| {
         try writer.begin(command);
         try writer.put(u64, object);
@@ -281,4 +404,48 @@ test "bounded fixture writes and parses fixed little-endian scalars" {
     try std.testing.expectError(error.Protocol, reader.expect(u32, 0));
     reader.used = std.math.maxInt(usize);
     try std.testing.expectError(error.Bounds, reader.take(1));
+}
+
+test "timestamp reply requires complete available ordered GPU output" {
+    const bytes = try std.testing.allocator.alloc(u8, 44);
+    defer std.testing.allocator.free(bytes);
+    var writer = writer_t{};
+    try writer.put(u32, 0);
+    try writer.put(u64, 32);
+    try writer.put(u64, std.math.maxInt(u64) - 2);
+    try writer.put(u64, 1);
+    try writer.put(u64, 1);
+    try writer.put(u64, 1);
+    @memcpy(bytes, writer.bytes[0..44]);
+    for ([_]u32{ 4, 32, 64 }) |valid_bits| {
+        var reader = reader_t{ .bytes = bytes };
+        try std.testing.expectEqual(@as(u64, 4), try read_timestamps(&reader, valid_bits));
+        try std.testing.expectEqual(@as(usize, 44), reader.used);
+    }
+    for (0..44) |length| {
+        var reader = reader_t{ .bytes = bytes[0..length] };
+        try std.testing.expectError(error.Bounds, read_timestamps(&reader, 64));
+    }
+    for ([_]u32{ 0, 65, std.math.maxInt(u32) }) |valid_bits| {
+        var reader = reader_t{ .bytes = bytes };
+        try std.testing.expectError(error.Protocol, read_timestamps(&reader, valid_bits));
+        try std.testing.expectEqual(@as(usize, 0), reader.used);
+    }
+    for ([_]usize{ 0, 4, 20, 36 }) |offset| {
+        const saved = bytes[offset];
+        bytes[offset] = if (offset == 0) 1 else 0;
+        var reader = reader_t{ .bytes = bytes };
+        try std.testing.expectError(error.Protocol, read_timestamps(&reader, 64));
+        bytes[offset] = saved;
+    }
+    std.mem.writeInt(u64, bytes[12..20], 10, .little);
+    std.mem.writeInt(u64, bytes[28..36], 9, .little);
+    for ([_]u32{ 4, 64 }) |valid_bits| {
+        var reader = reader_t{ .bytes = bytes };
+        try std.testing.expectError(error.Protocol, read_timestamps(&reader, valid_bits));
+    }
+    // Equal timestamps can be legal at a coarse timestamp resolution.
+    std.mem.writeInt(u64, bytes[28..36], 10, .little);
+    var reader = reader_t{ .bytes = bytes };
+    try std.testing.expectEqual(@as(u64, 0), try read_timestamps(&reader, 1));
 }

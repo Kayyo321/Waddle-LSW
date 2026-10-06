@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 57% | Isolated process/service ownership, guest closure and fresh restart verified in Linux/native Windows CI; hardware queue and negotiated multi-context milestones remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 59% | Real device/queue bootstrap and retirement verified on NVIDIA/AMD and in CI; timestamp workload implemented, CI pending; negotiated multi-context runtime remains |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `31.4%`
+**Total Feature Completion**: `31.8%`
 
 ## Commit History & Progress Log
 
@@ -529,8 +529,23 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Production worker cancellation CI passed at `035c2e2` in run `37396744418`,
     and acceptance tracker CI passed at `2ac629b` in run `37397026658`.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define GPU timestamp workload verification`
+- **Commit `fced4de`**: `docs(vgpu): define GPU timestamp workload verification`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Specify real recorded command submission and GPU-written query
     output checks, bounded blob parsing, availability/modular counter rules and
     quiescent query/command ownership. Keep graphics/compute/presentation tasks separate.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): verify GPU timestamp workload output`
+  - **Task Impact**: +2% to TODO: #2 (+0.4% overall) for verified hardware
+    queue bootstrap; timestamp workload separate 6% gate awaits current CI.
+  - **Summary**: Record query reset and GPU top/bottom timestamp commands, submit
+    the actual command buffer three times, fence GPU completion and parse exact
+    nonblocking query result blobs with availability and modular counter checks.
+    Destroy query/command pools before device/instance teardown.
+  - **Verification**: Hardware-required normal and ASan/LSan/UBSan runs pass on
+    NVIDIA RTX 5080 and AMD RADV; llvmpipe CI backend normal/sanitizer runs pass
+    locally. Zig allocator tests cover all truncated lengths, invalid widths,
+    failed/absent data, unavailable queries, wrap, reverse and equal timestamps.
+    Bootstrap and libc-boundary Linux/native Windows CI passed at `a54d571`:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398115404 .
+    GPU timestamps verify queue commands, not guest shader/presentation/OpenCL APIs.
