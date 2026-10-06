@@ -767,7 +767,7 @@ vgpu-windows: build/vgpu_query_wire_test.exe
 # Experimental public loader/instance ABI; backend transport remains caller owned.
 VgpuIcdObjects = build/venus_icd.o build/venus_command.o build/venus_objects.o build/venus_instance_wire.o build/venus_query_wire.o build/venus_values.o
 VgpuIcdHeaders = include/waddle/venus_icd.h include/waddle/venus_objects.h include/waddle/venus_query_wire.h include/waddle/venus_instance_wire.h include/waddle/venus_values.h include/waddle/venus_command.h
-build/venus_icd.o: src/vgpu/venus_icd.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig $(VgpuIcdHeaders) | build
+build/venus_icd.o: src/vgpu/venus_icd.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
 build/vgpu_icd_test: tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o
@@ -782,7 +782,7 @@ vgpu-icd-sanitizers: $(VgpuIcdObjects) build/venus_values_oracle.o
 	$(CC) $(VgpuReceiverSanitizers) $(VgpuInstanceOracleIncludes) tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -o build/vgpu_icd_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_icd_sanitized
 
-build/venus_icd_windows.lib: src/vgpu/venus_icd.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig $(VgpuIcdHeaders) | build
+build/venus_icd_windows.lib: src/vgpu/venus_icd.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-lib $< $(VgpuInstanceWireIncludes) -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
 
 VgpuIcdWindowsLibraries = build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
@@ -806,7 +806,7 @@ build/waddle_vulkan_experimental.dll: src/vgpu/venus_icd.def build/venus_icd_win
 vgpu-icd-test: build/waddle_vulkan_experimental.json
 vgpu-windows: build/waddle_vulkan_experimental.dll
 
-build/venus_icd_windows.obj: src/vgpu/venus_icd.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig $(VgpuIcdHeaders) | build
+build/venus_icd_windows.obj: src/vgpu/venus_icd.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
 
 build/vgpu_icd_loader_test: tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o build/waddle_vulkan_experimental.json
@@ -819,7 +819,7 @@ build/venus_icd_oracle.o: tests/vgpu/icd.c $(VgpuIcdHeaders) | vgpu-protocol
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuInstanceOracleIncludes) -Dmain=venus_icd_native_fixture -c $< -o $@
 
 .PHONY: vgpu-icd-coverage
-vgpu-icd-coverage: build/venus_descriptor_wire_oracle.o build/venus_icd_oracle.o $(VgpuIcdObjects) build/venus_values_oracle.o build/venus_render_wire_oracle.o
+vgpu-icd-coverage: build/venus_compute_wire_oracle.o build/venus_descriptor_wire_oracle.o build/venus_icd_oracle.o $(VgpuIcdObjects) build/venus_values_oracle.o build/venus_render_wire_oracle.o
 	python3 tests/av/coverage.py venus_icd
 
 
@@ -923,3 +923,15 @@ vgpu-graphics-wire-coverage: build/venus_graphics_wire_oracle.o build/venus_rend
 	python3 tests/av/coverage.py venus_graphics_wire
 vgpu-icd-test: vgpu-graphics-wire-test
 vgpu-icd-coverage: vgpu-graphics-wire-coverage
+
+# Bounded command records are checked independently before state integration.
+build/venus_compute_wire_oracle.o: tests/vgpu/compute_wire_oracle.c tests/vgpu/encoder/vn_cs.h | vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -c $< -o $@
+.PHONY: vgpu-compute-wire-test vgpu-compute-wire-coverage
+vgpu-compute-wire-test: build/venus_compute_wire_oracle.o build/venus_render_wire_oracle.o
+	$(ZIG) test src/vgpu/venus_compute_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_compute_wire_oracle.o build/venus_render_wire_oracle.o
+vgpu-compute-wire-coverage: build/venus_compute_wire_oracle.o build/venus_render_wire_oracle.o
+	python3 tests/av/coverage.py venus_compute_wire
+
+vgpu-icd-test: vgpu-compute-wire-test
+vgpu-icd-coverage: vgpu-compute-wire-coverage
