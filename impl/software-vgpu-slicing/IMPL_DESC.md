@@ -2311,3 +2311,15 @@ passes, native Windows execution is a CI gate. Full ICD/device/DXVK stays pendin
 The prior fixed physical-device decoder changes atb2d6354 passed both Linux and
 native Windows CI run37488148604. This confirms query conversion and real receiver
 fixtures only; no additional TODO #3 runtime milestone is accepted by these helpers.
+
+
+Production presented-worker fixture now reserves an instance in the actual bounded
+object registry, submits the production create packet through the negotiated guest
+frontend/exclusive command owner, validates host creation result and exact reserved
+ID, submits destroy and consumes command1 reply before releasing the application
+handle. This runs once in each of two fresh isolated worker sessions after repeated
+version queries; process-local namespace IDs never reuse. Normal and sanitized
+worker/client executions pass. On any error, the fixture abandons the guest session
+before clearing command/registry storage; success retires the host instance before
+local release and confirms zero live objects. This verifies these components
+jointly but still does not create public Vulkan loader/device/API or DXVK support.

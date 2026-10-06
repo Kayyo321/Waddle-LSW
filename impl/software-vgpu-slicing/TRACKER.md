@@ -1174,7 +1174,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     output host IDs and nullable application info. Full ICD/DXVK remains pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): serialize bounded core instance transactions`
+- **Commit `634e76c`**: `feat(vgpu): serialize bounded core instance transactions`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Add production core create/destroy packets and exact creation
     reply identity/result checks with preserved failure output. Compare independent
@@ -1183,3 +1183,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows cross-link passes. Production lines100%, branches95.59%. Prior fixed
     query changes atb2d6354 pass Linux and native Windows CI run37488148604.
     Public loader/device/API dispatch and DXVK remain pending with no helper credit.
+
+
+- **Commit (current; resolve by subject)**: `test(vgpu): retire guest instance reservations through production worker`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Integrate registry reservation, production instance packet,
+    exclusive command owner and negotiated frontend through two fresh worker
+    sessions; validate host ID/result and destroy reply before local retirement.
+  - **Verification**: Normal and ASan/LSan/UBSan worker/client fixtures pass;
+    namespaces never reuse and success ends with zero live registry objects.
+    Error paths abandon transport before clearing borrowed storage. Public
+    ICD/device/API dispatch and real DXVK still pending; TODO #3 remains40%.

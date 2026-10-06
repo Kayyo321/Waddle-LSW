@@ -588,16 +588,16 @@ vgpu-export-coverage: build/venus_frame.o build/venus_bounds.o
 build/vgpu_service_fixture build/vgpu_service_fixture_sanitized build/waddle_vgpu_worker build/waddle_vgpu_worker_sanitized build/vgpu_service_owner_test: include/waddle/venus_export.h $(VgpuFrameHeaders)
 
 VgpuPresentedWorkerSources = tests/vgpu/worker_presented.c src/vgpu/venus_worker.c src/vgpu/venus_guest.c src/vgpu/venus_frame_linux.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c
-VgpuPresentedWorkerObjects = build/venus_command.o build/venus_frame.o build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
-build/vgpu_presented_worker_test: $(VgpuPresentedWorkerSources) $(VgpuGuestHeaders) include/waddle/venus_worker.h $(VgpuFrameHeaders) $(VgpuPresentedWorkerObjects) build/waddle_vgpu_worker
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu $(VgpuPresentedWorkerSources) $(VgpuPresentedWorkerObjects) -o $@
+VgpuPresentedWorkerObjects = build/venus_instance_wire.o build/venus_objects.o build/venus_command.o build/venus_frame.o build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
+build/vgpu_presented_worker_test: $(VgpuPresentedWorkerSources) $(VgpuGuestHeaders) include/waddle/venus_worker.h include/waddle/venus_objects.h include/waddle/venus_instance_wire.h $(VgpuFrameHeaders) $(VgpuPresentedWorkerObjects) build/waddle_vgpu_worker
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu -Isubmodules/venus_protocol/include $(VgpuPresentedWorkerSources) $(VgpuPresentedWorkerObjects) -o $@
 
 .PHONY: vgpu-presented-worker-test vgpu-presented-worker-sanitizers
 vgpu-presented-worker-test: build/vgpu_presented_worker_test
 	RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_presented_worker_test
 
 vgpu-presented-worker-sanitizers: $(VgpuPresentedWorkerObjects) build/waddle_vgpu_worker_sanitized
-	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu $(VgpuPresentedWorkerSources) $(VgpuPresentedWorkerObjects) -o build/vgpu_presented_worker_sanitized
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu -Isubmodules/venus_protocol/include $(VgpuPresentedWorkerSources) $(VgpuPresentedWorkerObjects) -o build/vgpu_presented_worker_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_presented_worker_sanitized
 
 VgpuRemoteImageSources = $(VgpuPresentIntegrationSources) src/vgpu/venus_guest.c src/vgpu/venus_worker.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c

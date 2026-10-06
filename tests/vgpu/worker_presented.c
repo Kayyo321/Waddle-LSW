@@ -3,6 +3,8 @@
 #include "waddle/venus_command.h"
 #include "waddle/venus_frame.h"
 #include "waddle/venus_guest.h"
+#include "waddle/venus_instance_wire.h"
+#include "waddle/venus_objects.h"
 #include "waddle/venus_worker.h"
 #include <dirent.h>
 #include <fcntl.h>
@@ -61,6 +63,55 @@ static int query_version(venus_guest_t *guest) {
     venus_command_free(&command);
     return 0;
 }
+static venus_ring_status_t wait_command(venus_command_t *command, const void **view,
+                                        size_t *length) {
+    for (unsigned attempt = 0; attempt < 1000; attempt++) {
+        venus_ring_status_t status = venus_command_poll(command);
+        if (status == RingOk)
+            return venus_command_take(command, view, length);
+        if (status != RingAgain)
+            return status;
+        usleep(1000);
+    }
+    return RingTimeout;
+}
+static int instance_cycle(venus_guest_t *guest) {
+    static uint32_t next_namespace = 1; /* Sole test thread; never reuse a session namespace. */
+    int result = 1;
+    venus_command_t command = {0};
+    venus_objects_t objects = {0};
+    venus_object_t slots[4], *instance = NULL;
+    unsigned char tx[256], rx[32], encoded[128];
+    size_t written = 0, length = 0;
+    const void *view = NULL;
+    venus_vk_instance_info_t info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    venus_vk_result_t create_result = VK_ERROR_UNKNOWN;
+    if (next_namespace == UINT32_MAX ||
+        venus_objects_init(&objects, slots, 4, next_namespace++, guest) != RingOk ||
+        venus_command_init(&command, command_exchange, guest, tx, sizeof(tx), rx, sizeof(rx)) !=
+            RingOk ||
+        venus_objects_reserve(&objects, 1, 0, 1, &instance) != RingOk)
+        goto cleanup;
+    if (venus_instance_wire_create(&info, instance->id, encoded, sizeof(encoded), &written) !=
+            RingOk ||
+        venus_command_start(&command, encoded, written) != RingOk ||
+        wait_command(&command, &view, &length) != RingOk ||
+        venus_instance_wire_create_reply(&create_result, view, length, instance->id) != RingOk ||
+        create_result != VK_SUCCESS)
+        goto cleanup;
+    if (venus_instance_wire_destroy(instance->id, encoded, sizeof(encoded), &written) != RingOk ||
+        venus_command_start(&command, encoded, written) != RingOk ||
+        wait_command(&command, &view, &length) != RingOk ||
+        venus_objects_release(&objects, instance->handle, 1, 1) != RingOk || objects.live_count)
+        goto cleanup;
+    result = 0;
+cleanup:
+    if (result)
+        venus_guest_free(guest); /* Abandon transport before forgetting any outstanding object. */
+    venus_command_free(&command);
+    venus_objects_free(&objects);
+    return result;
+}
 static int run_fixture(int corrupt) {
     int result = 1, mapping_fd = -1, streams[2] = {-1, -1}, frames[2] = {-1, -1};
     void *mapping = MAP_FAILED;
@@ -97,7 +148,7 @@ static int run_fixture(int corrupt) {
         venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) != RingOk ||
         venus_guest_init(&guest, &rpc, 5000) != RingOk)
         goto cleanup;
-    if (query_version(&guest))
+    if (query_version(&guest) || instance_cycle(&guest))
         goto cleanup;
     venus_frame_t frame = {.context = UINT64_MAX,
                            .frame = 1,
