@@ -9,6 +9,8 @@
 #include "vn_protocol_driver_buffer.h"
 #include "vn_protocol_driver_image.h"
 #include "vn_protocol_driver_shader_module.h"
+#include "vn_protocol_driver_descriptor_set_layout.h"
+#include "vn_protocol_driver_pipeline_layout.h"
 #include "vn_protocol_driver_image_view.h"
 #include "vn_protocol_driver_device.h"
 #include "vn_protocol_driver_command_buffer.h"
@@ -93,6 +95,8 @@ typedef struct fixture_t {
     const VkImageCreateInfo *image_info;
     const VkImageViewCreateInfo *view_info;
     const VkShaderModuleCreateInfo *shader_info;
+    const VkDescriptorSetLayoutCreateInfo *descriptor_layout_info;
+    const VkPipelineLayoutCreateInfo *pipeline_layout_info;
     unsigned requirements_fault;
     uint64_t requirements_size;
     const void *update_data;
@@ -487,6 +491,33 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     (VkDeviceMemory)(uintptr_t)read_u64(bytes + 24), read_u64(bytes + 32));
                 put_u32(fixture->reply + 4, (uint32_t)fixture->bind_result);
             }
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 72 || fixture->command == 73 || fixture->command == 68 || fixture->command == 69) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 72 || fixture->command == 68) {
+                uint64_t id = read_u64(bytes + length - 44);
+                if (fixture->command == 72) {
+                    assert(fixture->descriptor_layout_info);
+                    VkDescriptorSetLayout layout = (VkDescriptorSetLayout)(uintptr_t)id;
+                    vn_encode_vkCreateDescriptorSetLayout(&encoder, 1, device, fixture->descriptor_layout_info, NULL, &layout);
+                } else {
+                    assert(fixture->pipeline_layout_info);
+                    VkPipelineLayoutCreateInfo info = *fixture->pipeline_layout_info;
+                    VkDescriptorSetLayout layouts[16];
+                    for (uint32_t index = 0; index < info.setLayoutCount; index++)
+                        layouts[index] = (VkDescriptorSetLayout)(uintptr_t)read_u64(bytes + 52 + index * 8);
+                    info.pSetLayouts = layouts;
+                    VkPipelineLayout layout = (VkPipelineLayout)(uintptr_t)id;
+                    vn_encode_vkCreatePipelineLayout(&encoder, 1, device, &info, NULL, &layout);
+                }
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, 1); put_u64(fixture->reply + 16, id);
+            } else if (fixture->command == 73) vn_encode_vkDestroyDescriptorSetLayout(&encoder, 1, device,
+                (VkDescriptorSetLayout)(uintptr_t)read_u64(bytes + 16), NULL);
+            else vn_encode_vkDestroyPipelineLayout(&encoder, 1, device,
+                (VkPipelineLayout)(uintptr_t)read_u64(bytes + 16), NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 59 || fixture->command == 60) {
             unsigned char expected[8192];
@@ -1474,6 +1505,82 @@ static void device_failures(void) {
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
+/** @brief Prove copied layout ownership, native identity translation and fixed quota refund. */
+static void layout_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
+    PFN_vkCreateDescriptorSetLayout create_layout = (PFN_vkCreateDescriptorSetLayout)lookup(device, "vkCreateDescriptorSetLayout");
+    PFN_vkDestroyDescriptorSetLayout destroy_layout = (PFN_vkDestroyDescriptorSetLayout)lookup(device, "vkDestroyDescriptorSetLayout");
+    PFN_vkCreatePipelineLayout create_pipeline = (PFN_vkCreatePipelineLayout)lookup(device, "vkCreatePipelineLayout");
+    PFN_vkDestroyPipelineLayout destroy_pipeline = (PFN_vkDestroyPipelineLayout)lookup(device, "vkDestroyPipelineLayout");
+    assert(create_layout && destroy_layout && create_pipeline && destroy_pipeline);
+    VkDescriptorSetLayoutBinding binding = {.binding = 3, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
+    VkDescriptorSetLayoutCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1, .pBindings = &binding};
+    fixture->descriptor_layout_info = &info;
+    VkDescriptorSetLayout layout = NULL;
+    unsigned before = fixture->submissions;
+    assert(create_layout(NULL, &info, NULL, &layout) == VK_ERROR_INITIALIZATION_FAILED && !layout);
+    assert(create_layout(device, NULL, NULL, &layout) == VK_ERROR_INITIALIZATION_FAILED && !layout);
+    assert(create_layout(device, &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_layout((VkDevice)(uintptr_t)1, &info, NULL, &layout) == VK_ERROR_INITIALIZATION_FAILED && !layout);
+    info.flags = 1;
+    assert(create_layout(device, &info, NULL, &layout) == VK_ERROR_INITIALIZATION_FAILED && !layout);
+    info.flags = 0;
+    assert(fixture->submissions == before);
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(create_layout(device, &info, NULL, &layout) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !layout);
+    fixture->create_result = VK_SUCCESS;
+    VkDescriptorSetLayout layouts[32];
+    for (unsigned index = 0; index < 32; index++) assert(create_layout(device, &info, NULL, &layouts[index]) == VK_SUCCESS);
+    before = fixture->submissions;
+    assert(create_layout(device, &info, NULL, &layout) == VK_ERROR_OUT_OF_HOST_MEMORY && !layout);
+    assert(fixture->submissions == before);
+    VkPushConstantRange range = {.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .size = 4};
+    VkPipelineLayoutCreateInfo pipeline_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, .pSetLayouts = &layouts[0], .pushConstantRangeCount = 1, .pPushConstantRanges = &range};
+    fixture->pipeline_layout_info = &pipeline_info;
+    VkPipelineLayout pipeline = NULL;
+    assert(create_pipeline(NULL, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    assert(create_pipeline(device, NULL, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    assert(create_pipeline(device, &pipeline_info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_pipeline((VkDevice)(uintptr_t)1, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    pipeline_info.setLayoutCount = 17;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    pipeline_info.setLayoutCount = 1;
+    const VkDescriptorSetLayout saved_layout = layouts[0];
+    layouts[0] = NULL;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    layouts[0] = (VkDescriptorSetLayout)(uintptr_t)1;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    layouts[0] = saved_layout;
+    range.stageFlags = 0;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !pipeline);
+    fixture->create_result = VK_SUCCESS;
+    VkPipelineLayout pipelines[32];
+    for (unsigned index = 0; index < 32; index++) assert(create_pipeline(device, &pipeline_info, NULL, &pipelines[index]) == VK_SUCCESS);
+    before = fixture->submissions;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_OUT_OF_HOST_MEMORY && !pipeline);
+    assert(fixture->submissions == before);
+    /* Copied pipeline definitions outlive every original descriptor layout token. */
+    for (unsigned index = 0; index < 32; index++) destroy_layout(device, layouts[index], NULL);
+    before = fixture->submissions;
+    destroy_layout(device, layouts[0], NULL); destroy_layout(NULL, layouts[0], NULL); destroy_layout(device, NULL, NULL);
+    assert(fixture->submissions == before);
+    for (unsigned index = 0; index < 32; index++) destroy_pipeline(device, pipelines[index], NULL);
+    before = fixture->submissions;
+    destroy_pipeline(device, pipelines[0], NULL); destroy_pipeline(NULL, pipelines[0], NULL); destroy_pipeline(device, NULL, NULL);
+    assert(fixture->submissions == before);
+    /* Full-profile reclaim after exact native acknowledgments. */
+    assert(create_layout(device, &info, NULL, &layout) == VK_SUCCESS);
+    pipeline_info.pSetLayouts = &layout;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_SUCCESS);
+    destroy_layout(device, layout, NULL); destroy_pipeline(device, pipeline, NULL);
+    fixture->descriptor_layout_info = NULL; fixture->pipeline_layout_info = NULL;
+}
+
 static void shader_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
     PFN_vkCreateShaderModule create_shader = (PFN_vkCreateShaderModule)lookup(device, "vkCreateShaderModule");
     PFN_vkDestroyShaderModule destroy_shader = (PFN_vkDestroyShaderModule)lookup(device, "vkDestroyShaderModule");
@@ -1526,7 +1633,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) shader_contract(device, lookup, &fixture);
+        if (scenario == 0) { shader_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
