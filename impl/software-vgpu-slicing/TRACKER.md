@@ -701,7 +701,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Keep serialized Vulkan entry points, userland adapter stub
     and DXVK acceptance separate from the command/resource/fence backend.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): own negotiated guest frontend and sticky session loss`
+- **Commit `1e2ad7d`**: `feat(vgpu): own negotiated guest frontend and sticky session loss`
   - **Task Impact**: +5% to TODO: #3 (+1.25% overall); integrated/native acceptance pending.
   - **Summary**: Add caller-owned allocation-free guest command/resource/fence
     frontend, constant mandatory-only encoder declaration, private host capability
@@ -710,3 +710,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     x86_64 cross-link pass. Production C lines 100%, branches 100%. Every init
     precondition, profile mismatch, exchange acquisition failure, wire status,
     sticky terminal result and idempotent teardown tested; native CI follows.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): exercise guest frontend across isolated receiver contexts`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integrated/native 5% gate awaits CI.
+  - **Summary**: Route real negotiation, resource accesses, CPU submission/poll/reply
+    through the guest frontend across eight isolated workers and fresh crash recovery.
+  - **Verification**: Three rounds/27 production launches pass in normal and
+    ASan/LSan/UBSan runs with descriptor counts returned to baseline. Retain
+    pre-negotiation/profile retry/repeated negotiation negative protocol tests.

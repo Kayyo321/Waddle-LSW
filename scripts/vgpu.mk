@@ -360,7 +360,7 @@ vgpu-context-coverage: build/venus_bounds.o
 	python3 tests/vgpu/coverage.py context
 
 
-VgpuContextSources = src/vgpu/venus_context.c src/vgpu/venus_worker.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c
+VgpuContextSources = src/vgpu/venus_guest.c src/vgpu/venus_context.c src/vgpu/venus_worker.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c
 VgpuContextObjects = build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
 build/vgpu_contexts_integration: tests/vgpu/contexts_integration.c $(VgpuContextSources) $(VgpuContextObjects) build/waddle_vgpu_worker include/waddle/venus_context.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/contexts_integration.c $(VgpuContextSources) $(VgpuContextObjects) -o $@
@@ -428,3 +428,5 @@ vgpu-guest-coverage: build/venus_capabilities.o build/venus_bounds.o
 	python3 tests/vgpu/coverage.py guest
 
 vgpu-windows: build/vgpu_guest_test.exe
+
+build/vgpu_contexts_integration: $(VgpuGuestHeaders)

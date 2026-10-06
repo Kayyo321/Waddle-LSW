@@ -1,6 +1,7 @@
 /** @file contexts_integration.c @brief Simultaneous isolated Venus worker execution. */
 #include "waddle/venus_capabilities.h"
 #include "waddle/venus_context.h"
+#include "waddle/venus_guest.h"
 #include "waddle/venus_receiver.h"
 #include "waddle/venus_rpc.h"
 #include <assert.h>
@@ -23,6 +24,7 @@ typedef struct guest_context_t {
     int stream_fd;            /**< Owned guest stream endpoint. */
     venus_session_t session;  /**< Local guest attachment. */
     venus_channel_t channel;  /**< Borrows local stream/session. */
+    venus_guest_t frontend;   /**< Negotiated guest transport frontend. */
     venus_rpc_t rpc;          /**< Borrows local private scratch. */
     unsigned char bytes[256]; /**< Exclusive bounded private transfer scratch. */
     uint64_t identity;        /**< Controller handle, never a renderer ID. */
@@ -41,8 +43,13 @@ static unsigned descriptor_count(void) {
 static void exchange(guest_context_t *guest, venus_request_t request, const void *input,
                      void *output, size_t capacity, uint32_t expected) {
     venus_request_t response;
-    assert(venus_rpc_exchange(&guest->rpc, &request, input, request.payload_bytes, &response,
-                              output, capacity, 5000) == RingOk);
+    if (guest->frontend.rpc && request.kind != RequestNegotiate) {
+        assert(venus_guest_exchange(&guest->frontend, &request, input, request.payload_bytes,
+                                    &response, output, capacity) == RingOk);
+    } else {
+        assert(venus_rpc_exchange(&guest->rpc, &request, input, request.payload_bytes, &response,
+                                  output, capacity, 5000) == RingOk);
+    }
     assert(response.status == expected);
 }
 static void start_context(venus_context_manager_t *manager, guest_context_t *guest,
@@ -81,7 +88,7 @@ static void start_context(venus_context_manager_t *manager, guest_context_t *gue
     unsupported[0] = 2;
     exchange(guest, request, unsupported, NULL, 0, RequestInvalid);
     assert(!guest->rpc.negotiated);
-    exchange(guest, request, capabilities, NULL, 0, RequestSuccess);
+    assert(venus_guest_init(&guest->frontend, &guest->rpc, 5000) == RingOk);
     assert(guest->rpc.negotiated);
     exchange(guest, request, capabilities, NULL, 0, RequestInvalid);
     request = (venus_request_t){
@@ -125,6 +132,7 @@ static void check_version(guest_context_t *guest) {
 static void free_guest(guest_context_t *guest) {
     assert(atomic_load(&guest->session.region.commands.header->flags) == VenusRingClosed);
     assert(atomic_load(&guest->session.region.replies.header->flags) == VenusRingClosed);
+    venus_guest_free(&guest->frontend);
     venus_rpc_free(&guest->rpc);
     venus_channel_free(&guest->channel);
     venus_region_detach(&guest->session.region);
