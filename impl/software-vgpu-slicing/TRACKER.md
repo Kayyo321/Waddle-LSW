@@ -13,13 +13,13 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 35% | Guest frontend, userland adapter/DLL and exclusive command owner native CI pass; full Vulkan ICD dispatch/lifetimes and DXVK pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 40% | Guest frontend, userland adapter/DLL, command owner and bounded Vulkan object lifetime storage native CI pass; full ICD/API dispatch and DXVK pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 
-**Total Feature Completion**: `63.75%`
+**Total Feature Completion**: `65.0%`
 
 ## Commit History & Progress Log
 
@@ -1106,7 +1106,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     object ID isolation; no new runtime or DXVK credit claimed by this design.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): retain bounded guest Vulkan object identities`
+- **Commit `ae50e2d`**: `feat(vgpu): retain bounded guest Vulkan object identities`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; native CI acceptance pending).
   - **Summary**: Add documented caller-owned Zig registry with loader-first-word
     layout, monotonic host IDs, namespaced application tokens, bounded dispatchable
@@ -1116,3 +1116,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Native Linux loader header helpers, C ABI, ASan/LSan/UBSan and Windows cross-link
     pass. Production lines100%, branches98.75%; exclude test-only helper assertions
     from coverage. Complete ICD/device dispatch and DXVK still pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): accept native Vulkan object ownership milestone`
+  - **Task Impact**: +5% to TODO: #3 (+1.25% overall); TODO #3 now40%.
+  - **Summary**: Accept the documented identity/lifetime storage milestone after
+    local allocator/sanitizer/coverage verification and native Linux/Windows CI.
+  - **Verification**: Both jobs atae50e2d passed, run37483582807. Linux verifies
+    actual loader-word helpers, allocator churn, sanitizer and98.75% branch/100%
+    line coverage; Windows executes native ABI and Zig state tests. This accepts
+    storage only; public ICD instance/device/API dispatch and DXVK remain pending.

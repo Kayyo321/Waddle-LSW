@@ -2176,3 +2176,12 @@ branches. The coverage collector respects an explicit test-only fixture boundary
 so test assertion failure branches are not labeled production paths. Native CI
 acceptance is still required before the5% ownership milestone; loader/device/API
 and DXVK remain independently unimplemented, without completion credit.
+
+
+Native object ownership acceptance atae50e2d is verified by Linux and Windows CI
+run37483582807, both successful. This credits the previously specified5% object
+identity/lifetime storage milestone, bringing TODO #3 to40% and overall65.0%.
+Vulkan loader-word compatibility is checked by native Linux helpers; Windows
+executes C ABI and Zig tests. Public ICD dispatch and DXVK are still required.
+The registry detects contradictory private count/storage as Corrupt before writes;
+it does not cancel the underlying receiver, which its caller must abandon.
