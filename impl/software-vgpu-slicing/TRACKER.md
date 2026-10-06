@@ -857,7 +857,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     the ABI roundtrip/corruption fixture; release socket routing remains pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): authenticate native presentation release delivery`
+- **Commit `7b06672`**: `feat(vgpu): authenticate native presentation release delivery`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add nonblocking reverse-channel release send/receive with exact
     controller PID/UID/context checks and closure of every unexpected received FD.
@@ -866,3 +866,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     credentials/payloads and truncated/unexpected FD batches pass normal and
     ASan/LSan/UBSan runs. Native transport coverage exceeds90% lines/branches;
     Zig codecs100%/95.59%. Worker leases and guest polling remain pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define bounded worker presentation leases`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Specify three receiver-backed leases, ordered frame publication,
+    fence-bound plane export rollback, retained resource busy checks and exact-once
+    guest completion consumption before implementing worker ownership.
+  - **Verification**: Native release transport coverage97.92% lines/91.07% branches;
+    runtime routing and controller acknowledgement retry remain pending.

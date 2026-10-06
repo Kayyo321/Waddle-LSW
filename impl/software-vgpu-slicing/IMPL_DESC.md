@@ -1695,3 +1695,40 @@ retry; fork identity, wrong PID/UID/context, duplicate/malformed credentials,
 unknown ancillary records, truncation, all statuses and128 churn cycles pass with
 unchanged descriptor baselines under ASan/LSan/UBSan. These primitives do not yet
 own a controller retry queue, worker leases or guest release requests.
+
+
+### Bounded worker export leases (Task #4)
+
+A caller-owned venus_export_t is initialized once on the sole worker service
+thread. It borrows receiver, prepared frame socket, nonzero controller context
+and retained controller PID until free. It owns no allocation or persistent FD;
+three private lease records hold frame identity, four resource IDs, completion
+status and an explicit completed flag. Initialization validates every input before
+publishing state and rejects an already-live owner. Free zeroes the owner and is
+only legal after the service has stopped publication and its receiver will be
+destroyed; it never sends acknowledgements or independently frees Vulkan objects.
+
+Submit decodes an exact1216-byte private frame through Zig, requires the trusted
+context and frame greater than last successfully queued frame, and requires a
+GPU timeline1..63 and nonzero fence. An occupied lease slot consumes capacity
+until guest completion polling removes it, even after an acknowledgement arrives.
+Any resource ID already referenced by any occupied lease makes submit Again;
+duplicate IDs among one frame's planes are legal and separately exported.
+All plane exports use the same explicit retired fence; each produces a distinct
+owned FD. Export or native send failure closes every already-acquired FD and
+publishes no lease. Again permits re-export/retry with the same frame because no
+packet was queued. Only a successful full native send advances the last-frame ID
+and records the lease. Originals then close; kernel/Wayland duplicates and the
+retained receiver registration carry presentation ownership. No pixel maps occur.
+
+Native release pumping processes at most three packets per call, keeping the
+service event loop bounded. Again stops pumping successfully. Unknown frame or
+already-completed lease is sticky Corrupt; native Closed/Corrupt is sticky terminal
+without clearing any unrelated lease. Valid release records mark the matching
+lease completed and preserve its resource IDs until guest completion polling.
+A resource-busy query includes every occupied lease, allowing dispatch to reject
+RequestFree with Again. Guest completion polling takes a nonzero frame ID and
+zeroes its private release output on failure; absent ID is Invalid, live awaiting
+acknowledgement is Again, completed returns the copied release record exactly once
+and clears that lease. This worker helper alone does not route guest envelopes or
+own controller acknowledgement retries; no final5% acceptance credit yet.
