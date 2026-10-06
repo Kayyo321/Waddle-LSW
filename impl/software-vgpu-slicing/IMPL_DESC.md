@@ -3163,3 +3163,61 @@ this outer budget accommodates slower CI while each RPC/CPU/GPU operation keeps
 its existing bounded deadline. It does not convert per-operation timeout into
 success. Native encoder expected storage grows only in the command117 branch,
 not in every writer/frame; fixture source storage is explicitly65536 bytes.
+
+### Core global and buffer pipeline barriers before submission
+
+This increment routes Vulkan1.0 vkCmdPipelineBarrier through pinned command126,
+covering execution-only barriers, global memory dependencies and private buffer
+barriers. Image barriers remain unsupported until image ownership/layout APIs are
+implemented: any nonzero image_count invalidates Recording before reading that
+array. No render/video scope is exposed. All inputs are borrowed only during the
+call; the ICD mutex serializes validation/encoding/acknowledgment, without heap
+allocation. Caller satisfies native feature enablement, queue capability and
+stage/access compatibility, and pairs queue ownership release/acquire correctly.
+These native Vulkan semantic valid-usage requirements are not inferred from byte
+mask membership. GPU execution/retirement remain separate from recording acknowledgment.
+
+Require live Recording command buffer/private pool. Source and destination stage
+masks must be nonzero and use only Vulkan1.0 core bits0..16 (mask0x1ffff); dependency
+flags may be0 or BY_REGION(1). Each global/buffer count is independently0..64.
+Nonnull accessible arrays are required only for positive counts; zero counts ignore
+caller pointers entirely and encode array count0. Every record must have canonical
+tag (MemoryBarrier46, BufferMemoryBarrier44), pNext NULL and access masks confined
+to core bits0..16. Unsupported scalar/tag/pNext/count/image inputs mark the live
+Recording buffer Invalid and send nothing. Invalid command-buffer handle/state
+sends nothing and preserves state. Zero memory and buffer counts still send a real
+execution-only barrier, never a local no-op pretending to record a dependency.
+
+Each buffer record needs a live bound same-device buffer, offset below requested
+size and positive size<=requested_size-offset, or WHOLE_SIZE UINT64_MAX. These byte
+ranges need no added four-byte alignment. Both family indices are either
+QUEUE_FAMILY_IGNORED(UINT32_MAX), or both belong to the private parent's configured
+families; mismatched ignored/concrete or unknown/private external indices reject
+locally. Native family ownership is performed by the actual receiver when the
+corresponding release/acquire recordings execute; frontend metadata does not claim
+ownership transfer merely because a CPU reply arrives. Validate the complete
+arrays, including their final elements, before sending or publishing references.
+
+Wire is command12632/flags32(1)/command-buffer-ID64/srcStage32/dstStage32/dependency32/
+memoryCount32/memoryArrayCount64/memory records/bufferCount32/bufferArrayCount64/
+buffer records/imageCount32(0)/imageArrayCount64(0). Memory record is tag46/pNext64(0)/
+srcAccess32/dstAccess32 (20 bytes). Buffer record is tag44/pNext64(0)/srcAccess32/
+dstAccess32/srcFamily32/dstFamily32/buffer-ID64/offset64/size64 (52 bytes). Maximum
+command is64+64*20+64*52=4672 bytes, within8192 writer and expanded backend capacity.
+Exact reply command126 adds all buffer slot bits to the recording reference set;
+global/execution-only barriers add no object references. Existing slot-generation
+invalidation/reset/free/Pending destruction rules apply. Peer/transport loss poisons
+binding and retains uncertain host ownership until receiver-retired abandonment.
+
+Tests compare pinned independent encoder output for zero/one/64 global and buffer
+arrays, normalization of ignored zero-count pointers, BY_REGION and core masks.
+Cover canonical/pNext/count/null/access/stage guards, byte/WHOLE_SIZE bounds,
+foreign/unbound/stale buffer identity, family pair validation, bad final record
+no-partial dispatch, destruction invalidation and malformed/transport reply. Real
+worker recordings place transfer-write→transfer-read/write dependencies between
+fill/copy/update and transfer-write→host-read afterward, preparing actual submission
+and mapped readback. Verify native loader dispatch, Windows ABI, zero-leak sanitizer
+runs and >=90% metadata coverage. This partial image-free recording increment grants
+no TODO #3 credit until full execution/runtime gates. Native semantics follow
+[vkCmdPipelineBarrier](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdPipelineBarrier.html)
+and [VkBufferMemoryBarrier](https://docs.vulkan.org/refpages/latest/refpages/source/VkBufferMemoryBarrier.html).

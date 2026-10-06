@@ -1647,7 +1647,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     recording increment expands scratch and verifies fragmented full-size input.
     TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): capture full-size inline buffer updates in bounded staging`
+- **Commit `ce01f55`**: `feat(vgpu): capture full-size inline buffer updates in bounded staging`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; GPU execution pending).
   - **Summary**: Route command117 with native1..65536-byte data after complete
     identity/binding/usage/alignment/range validation. Keep the8192-byte stack
@@ -1665,3 +1665,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     cleanup. Pinned native Linux loader public update passes normal/sanitized;
     Windows fixture, DLL and loader fixture cross-link pass. Latest CI required.
     TODO #3 stays50%; synchronization/submission/full API/mapping/DXVK pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify core memory and buffer pipeline barriers`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Define exact command126 and bounded canonical memory/buffer
+    barrier arrays, core masks and family/range validation. Specify execution-only
+    normalization, no partial dispatch, shared resource lifetime and native semantic
+    caller requirements. Image scope remains pending, without completion credit.
+  - **Verification**: Inspect pinned encoder record strides/ordering and Vulkan
+    valid usage; implementation and actual worker dependency recording pending.
+    TODO #3 stays50%.
