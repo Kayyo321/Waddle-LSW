@@ -3622,3 +3622,42 @@ instance/device/procedure support and bounded runtime/real DXVK gates must pass
 before TODO#3 reaches100%. A native DXVK runner also needs negotiated frontend
 binding before its loader creates an ICD instance; the black-box DLL harness
 does not manufacture that backend bootstrap or infer production execution.
+
+### Initial descriptor and graphics codec profiles (TODO #3)
+
+The descriptor codec owns no allocation or global mutable state and returns the
+shared8192-byte writer type. Pool command74 accepts null chain, only FREE_SET
+flags, maxSets1..64 and at most64 core type/count entries, positive counts and
+aggregate descriptors<=65536. Allocation command77 requires1..64 translated
+layout and reserved output identities with matching lengths and nonzero device/
+pool IDs. Update command79 initially supports buffer types6..9 and copies with
+at most64 writes/copies and1..64 elements per write. Validate IDs, offsets/ranges
+and all native scalar counts before encoding. Exact aggregate packet preflight
+is40+sum(60+24*buffer_count)+44*copy_count<=8192; reject larger packets without
+publication. Pool packet80+8*entry_count<=592; allocation64+16*set_count<=1088.
+The ICD remains responsible for pool/layout quotas, binding/type compatibility,
+resource usage and live references. Independent pinned encoders compare each
+operation and maximum profiles; native negative and90% source coverage required.
+
+Initial graphics codecs expose a single color attachment/subpass render-pass
+profile, rather than accepting unsupported native arrays. Render-pass command82
+accepts RGBA8/BGRA8_UNORM, sample1, core load/store operations, initial layouts
+UNDEFINED/GENERAL/COLOR_ATTACHMENT and final GENERAL/COLOR_ATTACHMENT/SHADER_READ.
+Input/resolve/depth/preserve attachments are absent. At most16 dependencies have
+subpass0 or EXTERNAL endpoints, not both EXTERNAL, nonzero core stage masks, core
+access masks and optional BY_REGION. Packet size204+28*dependency_count<=652.
+Framebuffer command80 borrows one translated view and render-pass ID, nonzero
+width/height and layers1; packet104 bytes. Begin command133 uses translated
+command/render-pass/framebuffer identities, nonnegative origin, nonzero bounded
+area and one borrowed clear value; INLINE contents only, packet116 bytes. Clear
+union encoding preserves the pinned tags0/2, array count4 and raw32-bit color
+words; no native union padding is copied. The ICD validates image/view format,
+extent, compatible render-pass state and GPU lifetimes separately. These owned
+packets are allocation-free, thread-safe for distinct writers and independently
+oracle-checked; they do not imply general graphics pipeline or DXVK support.
+
+Image destruction acknowledgment validates only the4-byte command prefix. The
+fixed4096-byte receiver reply resource may retain older bytes after that prefix;
+those bytes are not a serialized destruction result and must be ignored. Invalid
+prefix/transport still retains uncertain ownership until abandonment. Regression
+fixtures deliberately leave a nonzero trailing reply region.
