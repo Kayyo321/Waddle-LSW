@@ -967,3 +967,16 @@ vgpu-graphics-command-wire-coverage: build/venus_graphics_command_wire_oracle.o 
 	python3 tests/av/coverage.py venus_graphics_command_wire
 vgpu-icd-test: vgpu-graphics-command-wire-test
 vgpu-icd-coverage: vgpu-graphics-command-wire-coverage
+
+# Independent partial guest query and complete native receiver feature reply.
+build/venus_features_query_oracle.o: tests/vgpu/features_query_oracle.c tests/vgpu/features_oracle.h tests/vgpu/encoder/vn_cs.h | vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -c $< -o $@
+build/venus_features_reply_oracle.o: tests/vgpu/features_reply_oracle.c tests/vgpu/features_oracle.h tests/vgpu/encoder/vkr_cs.h | vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuValuesOracleIncludes) -c $< -o $@
+.PHONY: vgpu-features-wire-test vgpu-features-wire-coverage
+vgpu-features-wire-test: build/venus_features_query_oracle.o build/venus_features_reply_oracle.o build/venus_render_wire_oracle.o
+	$(ZIG) test src/vgpu/venus_features_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_features_query_oracle.o build/venus_features_reply_oracle.o build/venus_render_wire_oracle.o
+vgpu-features-wire-coverage: build/venus_features_query_oracle.o build/venus_features_reply_oracle.o build/venus_render_wire_oracle.o
+	python3 tests/av/coverage.py venus_features_wire
+vgpu-icd-test: vgpu-features-wire-test
+vgpu-icd-coverage: vgpu-features-wire-coverage
