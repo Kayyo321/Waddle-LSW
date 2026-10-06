@@ -13,6 +13,7 @@ var descriptor_update_snapshots = [_]profiles.descriptor_set_t{.{}} ** 128;
 var descriptor_wire_buffers: [64][64]descriptor_wire.buffer_info_t = std.mem.zeroes([64][64]descriptor_wire.buffer_info_t);
 const render_wire = @import("venus_render_wire.zig");
 const graphics_wire = @import("venus_graphics_wire.zig");
+const graphics_pipeline_wire = @import("venus_graphics_pipeline_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 const MaxMappedBytes: u64 = 16777216;
@@ -1715,6 +1716,44 @@ fn create_compute_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCach
     output.* = @ptrFromInt(handle);
     return c.VK_SUCCESS;
 }
+/// Create one canonical vertexless graphics pipeline. [in] device/info borrowed nonnull;
+/// count must1 and cache null; allocator nullable unused. [out] output nonnull NULL on failure.
+/// Success owns guest identity and copied empty layout/pass definitions until retirement.
+/// Returns native/local invalid/OOM/loss; fixed shared64-pipeline quota, mutex serialized.
+fn create_graphics_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCache, count: u32, infos: [*c]const c.VkGraphicsPipelineCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkPipeline) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null or count != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or pipeline_cache != null or infos == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const info = &infos[0];
+    if (info.sType != c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO or info.pNext != null or info.flags != 0 or info.stageCount != 2 or info.pStages == null or info.pStages[0].module == null or
+        info.pStages[1].module == null or info.layout == null or info.renderPass == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const vertex = child_object(@intFromPtr(info.pStages[0].module.?), c.VK_OBJECT_TYPE_SHADER_MODULE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const fragment = child_object(@intFromPtr(info.pStages[1].module.?), c.VK_OBJECT_TYPE_SHADER_MODULE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const layout = child_object(@intFromPtr(info.layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const pass = child_object(@intFromPtr(info.renderPass.?), c.VK_OBJECT_TYPE_RENDER_PASS, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const profile = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(layout).profile_index).?.*;
+    if (profile.set_count != 0 or profile.push_count != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = graphics_pipeline_wire.create_graphics_pipeline(parent.id, @ptrCast(info), vertex.id, fragment.id, layout.id, pass.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    const index = profiles.reserve_slot(&profile_registry.pipelines, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_PIPELINE, &writer, &handle);
+    if (result != c.VK_SUCCESS) {
+        if (lost == c.RingOk) std.debug.assert(profiles.release_slot(&profile_registry.pipelines, index));
+        return result;
+    }
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_PIPELINE, parent.id).?);
+    state.profile_index = index;
+    state.pipeline_bind_point = 0;
+    state.render_format = resource_state(pass).render_format;
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+
 /// Destroy a quiescent pipeline. [in] nullable private tokens/callbacks borrowed for call.
 /// Void; pending resources remain owned. Exact host acknowledgment retires metadata and identity.
 /// Mutex serialized, no allocation; destroying recorded pipeline invalidates affected commands.
@@ -4056,6 +4095,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
         .{ "vkCmdPushConstants", &push_constants },
         .{ "vkCmdDispatch", &dispatch },
+        .{ "vkCreateGraphicsPipelines", &create_graphics_pipelines },
         .{ "vkCreateComputePipelines", &create_compute_pipelines },
         .{ "vkDestroyPipeline", &destroy_pipeline },
         .{ "vkCreateShaderModule", &create_shader_module },

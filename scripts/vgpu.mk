@@ -767,10 +767,10 @@ vgpu-windows: build/vgpu_query_wire_test.exe
 # Experimental public loader/instance ABI; backend transport remains caller owned.
 VgpuIcdObjects = build/venus_icd.o build/venus_command.o build/venus_objects.o build/venus_instance_wire.o build/venus_query_wire.o build/venus_values.o
 VgpuIcdHeaders = include/waddle/venus_icd.h include/waddle/venus_objects.h include/waddle/venus_query_wire.h include/waddle/venus_instance_wire.h include/waddle/venus_values.h include/waddle/venus_command.h
-build/venus_icd.o: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
+build/venus_icd.o: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_pipeline_wire.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
-build/vgpu_icd_test: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o
+build/vgpu_icd_test: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o
 	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -o $@
 
 .PHONY: vgpu-icd-test vgpu-icd-sanitizers
@@ -782,14 +782,14 @@ vgpu-icd-sanitizers: $(VgpuIcdObjects) build/venus_values_oracle.o
 	$(CC) $(VgpuReceiverSanitizers) $(VgpuInstanceOracleIncludes) tests/vgpu/icd.c $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -o build/vgpu_icd_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_icd_sanitized
 
-build/venus_icd_windows.lib: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
+build/venus_icd_windows.lib: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_pipeline_wire.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-lib $< $(VgpuInstanceWireIncludes) -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
 
 VgpuIcdWindowsLibraries = build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
 build/venus_values_oracle_windows.obj: tests/vgpu/values.c | build vgpu-protocol
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuValuesOracleIncludes) -DVgpuValuesOracle -c $< -o $@
 
-build/vgpu_icd_test.exe: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj
+build/vgpu_icd_test.exe: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuInstanceOracleIncludes) $< $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj -o $@
 
 vgpu-windows: build/vgpu_icd_test.exe
@@ -806,20 +806,20 @@ build/waddle_vulkan_experimental.dll: src/vgpu/venus_icd.def build/venus_icd_win
 vgpu-icd-test: build/waddle_vulkan_experimental.json
 vgpu-windows: build/waddle_vulkan_experimental.dll
 
-build/venus_icd_windows.obj: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
+build/venus_icd_windows.obj: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_pipeline_wire.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
 
-build/vgpu_icd_loader_test: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o build/waddle_vulkan_experimental.json
+build/vgpu_icd_loader_test: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o build/waddle_vulkan_experimental.json
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DVgpuIcdLoader $(VgpuInstanceOracleIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -ldl -o $@
 
 vgpu-icd-test: build/vgpu_icd_loader_test
 
 
-build/venus_icd_oracle.o: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h $(VgpuIcdHeaders) | vgpu-protocol
+build/venus_icd_oracle.o: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdHeaders) | vgpu-protocol
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuInstanceOracleIncludes) -Dmain=venus_icd_native_fixture -c $< -o $@
 
 .PHONY: vgpu-icd-coverage
-vgpu-icd-coverage: build/venus_graphics_wire_oracle.o build/venus_compute_wire_oracle.o build/venus_descriptor_wire_oracle.o build/venus_icd_oracle.o $(VgpuIcdObjects) build/venus_values_oracle.o build/venus_render_wire_oracle.o
+vgpu-icd-coverage: build/venus_graphics_pipeline_wire_oracle.o build/venus_graphics_wire_oracle.o build/venus_compute_wire_oracle.o build/venus_descriptor_wire_oracle.o build/venus_icd_oracle.o $(VgpuIcdObjects) build/venus_values_oracle.o build/venus_render_wire_oracle.o
 	python3 tests/av/coverage.py venus_icd
 
 
@@ -841,10 +841,10 @@ vgpu-native-loader-test: vgpu-native-loader build/vgpu_icd_loader_test
 build/waddle_vulkan_experimental_windows.json: build/waddle_vulkan_experimental.dll
 	python3 -c 'import json,pathlib; pathlib.Path("$@").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("$<").resolve()),"api_version":"1.0.0"}},indent=2)+"\n")'
 
-build/vgpu_icd_loader_test.exe: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj build/waddle_vulkan_experimental_windows.json
+build/vgpu_icd_loader_test.exe: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj build/waddle_vulkan_experimental_windows.json
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader $(VgpuInstanceOracleIncludes) $< $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj -ladvapi32 -o $@
 
-build/vgpu_icd_loader_sanitized: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o build/waddle_vulkan_experimental.json
+build/vgpu_icd_loader_sanitized: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o build/waddle_vulkan_experimental.json
 	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -DVgpuIcdLoader $(VgpuInstanceOracleIncludes) $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -ldl -o $@
 
 .PHONY: vgpu-native-loader-sanitizers
@@ -882,7 +882,7 @@ vgpu-icd-test: vgpu-render-wire-test
 vgpu-icd-coverage: vgpu-render-wire-coverage
 
 # One-shot libc allocation failure is exercised outside Zig's testing allocator.
-build/vgpu_icd_mapping_fault_test: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o
+build/vgpu_icd_mapping_fault_test: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdObjects) build/venus_values_oracle.o
 	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -DVgpuMappingAllocationFaults $< $(VgpuIcdObjects) build/venus_values_oracle.o -pthread -Wl,--wrap=posix_memalign -o $@
 
 .PHONY: vgpu-icd-mapping-fault-test vgpu-icd-mapping-fault-sanitizers

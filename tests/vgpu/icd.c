@@ -3,6 +3,8 @@
 #include "vn_cs.h"
 #include "waddle/venus_icd.h"
 #include "shaders/compute_shader.h"
+#include "shaders/triangle_vertex_shader.h"
+#include "shaders/triangle_fragment_shader.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wpointer-arith"
@@ -110,6 +112,7 @@ typedef struct fixture_t {
     const VkImageViewCreateInfo *view_info;
     const VkShaderModuleCreateInfo *shader_info;
     const VkComputePipelineCreateInfo *compute_info;
+    const VkGraphicsPipelineCreateInfo *graphics_info;
     const VkDescriptorSetLayoutCreateInfo *descriptor_layout_info;
     const VkPipelineLayoutCreateInfo *pipeline_layout_info;
     const VkDescriptorPoolCreateInfo *descriptor_pool_info;
@@ -656,6 +659,23 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 put_u64(fixture->reply + 16, (uintptr_t)pass);
             } else vn_encode_vkDestroyRenderPass(&encoder, 1, device,
                 (VkRenderPass)(uintptr_t)read_u64(bytes + 16), NULL);
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 65) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            assert(fixture->graphics_info && length == 36 + 632);
+            VkGraphicsPipelineCreateInfo info = *fixture->graphics_info;
+            VkPipelineShaderStageCreateInfo stages[2] = {info.pStages[0], info.pStages[1]};
+            stages[0].module = (VkShaderModule)(uintptr_t)read_u64(bytes + 84);
+            stages[1].module = (VkShaderModule)(uintptr_t)read_u64(bytes + 136);
+            info.pStages = stages;
+            info.layout = (VkPipelineLayout)(uintptr_t)read_u64(bytes + 576);
+            info.renderPass = (VkRenderPass)(uintptr_t)read_u64(bytes + 584);
+            VkPipeline pipeline = (VkPipeline)(uintptr_t)read_u64(bytes + 624);
+            vn_encode_vkCreateGraphicsPipelines(&encoder, 1, (VkDevice)(uintptr_t)read_u64(bytes + 8), NULL, 1, &info, NULL, &pipeline);
+            put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+            put_u64(fixture->reply + 8, 1);
+            put_u64(fixture->reply + 16, (uintptr_t)pipeline);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 66 || fixture->command == 67) {
             unsigned char expected[8192];
@@ -2596,6 +2616,203 @@ static void framebuffer_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup
     fixture->memory_info = NULL;
 }
 
+/** @brief Canonical graphics compilation, validation and copied-definition ownership.
+ * @param[in] device Live borrowed device; lookup static resolver.
+ * @param[in,out] fixture Exclusive fake backend; all borrowed infos cleared before return.
+ * @note No heap allocation. Both shader identities and creating layout/pass retire
+ * before pipeline destruction, proving the compiled object owns scalar snapshots.
+ */
+static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
+                                       fixture_t *fixture) {
+#define LoadGraphics(type, variable, name)                                                         \
+    type variable = (type)lookup(device, name);                                                    \
+    assert(variable)
+    LoadGraphics(PFN_vkCreateRenderPass, create_pass, "vkCreateRenderPass");
+    LoadGraphics(PFN_vkDestroyRenderPass, destroy_pass, "vkDestroyRenderPass");
+    LoadGraphics(PFN_vkCreateShaderModule, create_shader, "vkCreateShaderModule");
+    LoadGraphics(PFN_vkDestroyShaderModule, destroy_shader, "vkDestroyShaderModule");
+    LoadGraphics(PFN_vkCreatePipelineLayout, create_layout, "vkCreatePipelineLayout");
+    LoadGraphics(PFN_vkDestroyPipelineLayout, destroy_layout, "vkDestroyPipelineLayout");
+    LoadGraphics(PFN_vkCreateGraphicsPipelines, create_pipeline, "vkCreateGraphicsPipelines");
+    LoadGraphics(PFN_vkDestroyPipeline, destroy_pipeline, "vkDestroyPipeline");
+#undef LoadGraphics
+    VkAttachmentDescription attachment = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+                                          .samples = VK_SAMPLE_COUNT_1_BIT,
+                                          .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                          .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                          .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                          .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                                          .finalLayout = VK_IMAGE_LAYOUT_GENERAL};
+    VkAttachmentReference color = {.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    .colorAttachmentCount = 1,
+                                    .pColorAttachments = &color};
+    VkRenderPassCreateInfo pass_info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+                                        .attachmentCount = 1,
+                                        .pAttachments = &attachment,
+                                        .subpassCount = 1,
+                                        .pSubpasses = &subpass};
+    fixture->render_pass_info = &pass_info;
+    VkRenderPass pass;
+    assert(create_pass(device, &pass_info, NULL, &pass) == VK_SUCCESS);
+    VkShaderModuleCreateInfo shader_info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                            .codeSize = sizeof(TriangleVertexShader),
+                                            .pCode = TriangleVertexShader};
+    fixture->shader_info = &shader_info;
+    VkShaderModule vertex, fragment;
+    assert(create_shader(device, &shader_info, NULL, &vertex) == VK_SUCCESS);
+    shader_info.codeSize = sizeof(TriangleFragmentShader);
+    shader_info.pCode = TriangleFragmentShader;
+    assert(create_shader(device, &shader_info, NULL, &fragment) == VK_SUCCESS);
+    VkPipelineLayoutCreateInfo layout_info = {.sType =
+                                                  VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    fixture->pipeline_layout_info = &layout_info;
+    VkPipelineLayout layout;
+    assert(create_layout(device, &layout_info, NULL, &layout) == VK_SUCCESS);
+    VkPipelineShaderStageCreateInfo stages[2] = {
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+         .stage = VK_SHADER_STAGE_VERTEX_BIT,
+         .module = vertex,
+         .pName = "main"},
+        {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+         .module = fragment,
+         .pName = "main"}};
+    VkPipelineVertexInputStateCreateInfo vertex_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo assembly = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST};
+    VkViewport viewport = {.width = 64, .height = 64, .maxDepth = 1};
+    VkRect2D scissor = {.extent = {64, 64}};
+    VkPipelineViewportStateCreateInfo viewport_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .pViewports = &viewport,
+        .scissorCount = 1,
+        .pScissors = &scissor};
+    VkPipelineRasterizationStateCreateInfo raster = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .lineWidth = 1};
+    VkPipelineMultisampleStateCreateInfo samples = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT};
+    VkPipelineColorBlendAttachmentState blend_attachment = {.colorWriteMask = 15};
+    VkPipelineColorBlendStateCreateInfo blend = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1,
+        .pAttachments = &blend_attachment};
+    VkGraphicsPipelineCreateInfo info = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+                                         .stageCount = 2,
+                                         .pStages = stages,
+                                         .pVertexInputState = &vertex_info,
+                                         .pInputAssemblyState = &assembly,
+                                         .pViewportState = &viewport_info,
+                                         .pRasterizationState = &raster,
+                                         .pMultisampleState = &samples,
+                                         .pColorBlendState = &blend,
+                                         .layout = layout,
+                                         .renderPass = pass,
+                                         .basePipelineIndex = -1};
+    fixture->graphics_info = &info;
+    VkPipeline pipeline;
+    unsigned before = fixture->submissions;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_pipeline(NULL, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    assert(create_pipeline(device, (VkPipelineCache)(uintptr_t)1, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    assert(create_pipeline(device, NULL, 2, (void *)(uintptr_t)1, NULL, (void *)(uintptr_t)1) ==
+           VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_pipeline((VkDevice)(uintptr_t)42, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    info.pNext = (void *)(uintptr_t)1;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.pNext = NULL;
+    info.pStages = NULL;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.pStages = stages;
+    for (unsigned index = 0; index < 2; ++index) {
+        VkShaderModule saved = stages[index].module;
+        stages[index].module = NULL;
+        assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+        stages[index].module = (VkShaderModule)(uintptr_t)42;
+        assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+        stages[index].module = saved;
+    }
+    info.layout = NULL;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.layout = (VkPipelineLayout)(uintptr_t)42;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.layout = layout;
+    info.renderPass = NULL;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.renderPass = (VkRenderPass)(uintptr_t)42;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    info.renderPass = pass;
+    info.flags = 1;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    info.flags = 0;
+    info.stageCount = 1;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    info.stageCount = 2;
+    stages[0].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    info.pDynamicState = (void *)(uintptr_t)1;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    info.pDynamicState = NULL;
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    raster.rasterizerDiscardEnable = VK_TRUE;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    raster.rasterizerDiscardEnable = VK_FALSE;
+    blend_attachment.blendEnable = VK_TRUE;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !pipeline);
+    blend_attachment.blendEnable = VK_FALSE;
+    assert(fixture->submissions == before);
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
+               VK_ERROR_OUT_OF_DEVICE_MEMORY &&
+           !pipeline);
+    fixture->create_result = VK_SUCCESS;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_SUCCESS && pipeline);
+    destroy_shader(device, vertex, NULL);
+    destroy_shader(device, fragment, NULL);
+    destroy_layout(device, layout, NULL);
+    destroy_pass(device, pass, NULL);
+    before = fixture->submissions;
+    assert(create_pipeline(device, NULL, 1, &info, NULL, &(VkPipeline){0}) ==
+           VK_ERROR_INITIALIZATION_FAILED);
+    assert(fixture->submissions == before);
+    destroy_pipeline(device, pipeline, NULL);
+    assert(fixture->submissions == before + 1);
+    destroy_pipeline(device, pipeline, NULL);
+    assert(fixture->submissions == before + 1);
+    fixture->render_pass_info = NULL;
+    fixture->shader_info = NULL;
+    fixture->pipeline_layout_info = NULL;
+    fixture->graphics_info = NULL;
+}
+
 static void image_contract(void) {
     for (unsigned scenario = 0; scenario < 8; scenario++) {
         fixture_t fixture = fresh();
@@ -2613,7 +2830,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) { render_pass_contract(device, lookup, &fixture); framebuffer_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
+        if (scenario == 0) { render_pass_contract(device, lookup, &fixture); framebuffer_contract(device, lookup, &fixture); graphics_pipeline_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
