@@ -972,6 +972,165 @@ fn destroy_fence(
     std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_FENCE, 0) ==
         c.RingOk);
 }
+/// Create a device-owned core buffer after validating bounded native input.
+/// @param[in] device Nonnull live private device; no caller handle dereference.
+/// @param[in] info Nonnull accessible canonical info and optional2..16 family array.
+/// @param[in] allocator Nullable unused callbacks, borrowed only for call.
+/// @param[out] output Nonnull borrowed handle storage, NULL on failure.
+/// @return Host result, initialization error, registry exhaustion or sticky device loss.
+/// @note Allocation-free and mutex serialized; record owned until host destruction.
+fn create_buffer(
+    device: c.VkDevice,
+    info: [*c]const c.VkBufferCreateInfo,
+    allocator: [*c]const c.VkAllocationCallbacks,
+    output: [*c]c.VkBuffer,
+) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or
+        info.*.sType != c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO or info.*.pNext != null or
+        info.*.flags != 0 or info.*.size == 0 or info.*.usage == 0 or
+        info.*.usage & ~@as(u32, 0x1ff) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var family_count: u32 = 0;
+    if (info.*.sharingMode == c.VK_SHARING_MODE_CONCURRENT) {
+        family_count = info.*.queueFamilyIndexCount;
+        if (family_count < 2 or family_count > 16 or info.*.pQueueFamilyIndices == null)
+            return c.VK_ERROR_INITIALIZATION_FAILED;
+        const entry = device_cache(parent.handle).?;
+        for (info.*.pQueueFamilyIndices[0..family_count], 0..) |family, index| {
+            if (std.mem.indexOfScalar(
+                u32,
+                entry.families[0..entry.family_count],
+                family,
+            ) == null or std.mem.indexOfScalar(
+                u32,
+                info.*.pQueueFamilyIndices[0..index],
+                family,
+            ) != null) return c.VK_ERROR_INITIALIZATION_FAILED;
+        }
+    } else if (info.*.sharingMode != c.VK_SHARING_MODE_EXCLUSIVE)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_BUFFER,
+        parent.id,
+        0,
+        &record,
+    ) != c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var writer = writer_t{};
+    writer.header(50, parent.id);
+    writer.put(u64, 1);
+    writer.put(u32, c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
+    writer.put(u64, 0);
+    writer.put(u32, 0);
+    writer.put(u64, info.*.size);
+    writer.put(u32, info.*.usage);
+    writer.put(u32, info.*.sharingMode);
+    writer.put(u32, family_count);
+    writer.put(u64, family_count);
+    if (family_count != 0) for (info.*.pQueueFamilyIndices[0..family_count]) |family| {
+        writer.put(u32, family);
+    };
+    writer.put(u64, 0);
+    writer.put(u64, 1);
+    writer.put(u64, record.*.id);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = identity_reply(reply, 50, record.*.id, true) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0) return failure(c.RingCorrupt);
+    if (result != c.VK_SUCCESS) {
+        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_BUFFER, 0);
+        return result;
+    }
+    output.* = @ptrFromInt(record.*.handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy a quiescent buffer, ignoring NULL/stale/foreign handles.
+/// @param[in] device Nullable private device parent, borrowed for call.
+/// @param[in] buffer Nullable device-owned token, consumed only after host destruction.
+/// @param[in] allocator Nullable unused callbacks, no pointer retained.
+/// @note Allocation-free and mutex serialized; caller retires GPU uses first.
+/// Host loss retains uncertain ownership until receiver retirement and abandonment.
+fn destroy_buffer(
+    device: c.VkDevice,
+    buffer: c.VkBuffer,
+    allocator: [*c]const c.VkAllocationCallbacks,
+) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or buffer == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(
+        @intFromPtr(buffer.?),
+        c.VK_OBJECT_TYPE_BUFFER,
+        parent.id,
+    ) orelse return;
+    var writer = writer_t{};
+    writer.header(51, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 51) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    std.debug.assert(
+        c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_BUFFER, 0) == c.RingOk,
+    );
+}
+/// Query actual host memory requirements through a validated private buffer parent.
+/// @param[in] device Nullable private parent handle, borrowed for call.
+/// @param[in] buffer Nullable private device-owned token, no pointer dereference.
+/// @param[out] output Nullable borrowed storage, preserved on all errors.
+/// @note Allocation-free and mutex serialized; invalid handles ignored.
+/// Peer/transport errors poison binding; staged size/alignment/type bits validated.
+fn buffer_requirements(
+    device: c.VkDevice,
+    buffer: c.VkBuffer,
+    output: [*c]c.VkMemoryRequirements,
+) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or buffer == null or output == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(
+        @intFromPtr(buffer.?),
+        c.VK_OBJECT_TYPE_BUFFER,
+        parent.id,
+    ) orelse return;
+    var writer = writer_t{};
+    writer.header(30, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, 1);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const value = fixed_value(c.VkMemoryRequirements, &reader, 30) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (value.size == 0 or value.alignment == 0 or
+        value.alignment & (value.alignment - 1) != 0 or value.memoryTypeBits == 0)
+    {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    output.* = value;
+}
 fn encode_fences(command_id: u32, device: c.VkDevice, fences: []const c.VkFence) ?writer_t {
     if (device == null or fences.len == 0 or fences.len > 64) return null;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return null;
@@ -1150,6 +1309,9 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkDeviceWaitIdle", &device_wait_idle },
         .{ "vkQueueWaitIdle", &queue_wait_idle },
         .{ "vkCreateFence", &create_fence },
+        .{ "vkCreateBuffer", &create_buffer },
+        .{ "vkDestroyBuffer", &destroy_buffer },
+        .{ "vkGetBufferMemoryRequirements", &buffer_requirements },
         .{ "vkDestroyFence", &destroy_fence },
         .{ "vkResetFences", &reset_fences },
         .{ "vkGetFenceStatus", &get_fence_status },

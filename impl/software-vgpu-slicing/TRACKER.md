@@ -1422,8 +1422,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     encoder pass. ASan/LSan/UBSan reports no leaks; Zig tests pass; production
     coverage99.63% lines/93.35% branches. Updated native loader/Windows CI required.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify core buffer ownership and requirements`
+- **Commit `9fb1558`**: `docs(vgpu): specify core buffer ownership and requirements`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify private buffer identity, bounded sharing inputs, exact
     create/destroy/query wire fields, staged host requirements and failure
     ownership. Full memory execution and DXVK acceptance remain required.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch core buffers and host memory requirements`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; full memory execution pending).
+  - **Summary**: Add private device-parented buffers, bounded exclusive/concurrent
+    sharing, exact creation identity and host destruction, staged validated actual
+    memory requirements. Preserve uncertain ownership on transport/peer loss.
+  - **Verification**: Independent pinned encoders compare commands30/50/51;
+    invalid tags/flags/usage/sharing/families, native creation rollback, stale and
+    foreign parents,507-buffer registry exhaustion, device-before-child refusal,
+    malformed requirements and every command corruption/transport path pass.
+    ASan/LSan/UBSan reports no leaks; production coverage99.68% lines/93.61%
+    branches. Actual two-session worker create/query/destroy cycles pass normal
+    and sanitizers; native Windows fixtures/DLL cross-link and pinned Linux loader
+    pass. Native updated-head CI and full runtime/DXVK remain required.

@@ -223,6 +223,20 @@ static int icd_cycles(venus_guest_t *guest) {
             wait_fences(device, 1, &fence, VK_TRUE, 0) != VK_TIMEOUT)
             goto fail;
         destroy_fence(device, fence, NULL);
+        PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)device_proc(device, "vkCreateBuffer");
+        PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)device_proc(device, "vkDestroyBuffer");
+        PFN_vkGetBufferMemoryRequirements requirements =
+            (PFN_vkGetBufferMemoryRequirements)device_proc(device, "vkGetBufferMemoryRequirements");
+        if (!create_buffer || !destroy_buffer || !requirements) goto fail;
+        VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 4096, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        VkBuffer buffer = NULL;
+        if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto fail;
+        VkMemoryRequirements buffer_memory = {0};
+        requirements(device, buffer, &buffer_memory);
+        if (buffer_memory.size < 4096 || !buffer_memory.alignment || !buffer_memory.memoryTypeBits) goto fail;
+        destroy_buffer(device, buffer, NULL);
+
         destroy_device(device, NULL);
         if (device_proc(device, "vkDestroyDevice"))
             goto fail;
