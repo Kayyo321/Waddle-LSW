@@ -1046,7 +1046,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     production Submit/Poll/Reply semantics. No loader or DXVK credit assigned.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): accept verified production presentation milestone`
+- **Commit `2fba038`**: `docs(vgpu): accept verified production presentation milestone`
   - **Task Impact**: +5% to TODO: #4 (+0.75% overall); TODO #4 now100%.
   - **Summary**: Accept final guest/production-worker/native Wayland release gate
     after mapped hardware and sanitized fresh-context runtime verification.
@@ -1056,3 +1056,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     protocol/memory ownership coverage gates remain above90%; no pixel copying.
     Physical compositor/VM acceptance remains downstream; standalone ICD/DXVK
     TODO #3 still35%, and unrequested OpenCL TODO #5 remains pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): own bounded serialized guest command replies`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Add documented allocation-free Zig command owner, exclusive
+    submission/reply staging, pinned prefix, retained CPU fence and exact-once
+    identity-validated reply views. Add Linux/native Windows ABI and CI gates.
+  - **Verification**: Five Zig tests include128 cycles, all state boundaries,
+    buffer overlap/overflow, callback statuses and malformed successful shapes.
+    Native Linux C ABI, ASan/LSan/UBSan and Windows cross-link pass. Production
+    lines100%, branches91.67%. Public Vulkan dispatch/DXVK remain pending.

@@ -612,3 +612,30 @@ vgpu-image-remote-hardware: build/vgpu_remote_image_integration
 vgpu-image-remote-sanitizers: $(VgpuRemoteImageSources) $(VgpuRemoteImageObjects) build/waddle_vgpu_worker_sanitized | vgpu-renderer
 	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -DVgpuRemoteImage $(VgpuReceiverIncludes) $(VgpuPresentIntegrationFlags) $(VgpuRemoteImageSources) $(VgpuRemoteImageObjects) $(VgpuPresentIntegrationLibraries) $(VgpuReceiverLibraries) -o build/vgpu_remote_image_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_remote_image_sanitized --require-hardware
+
+# Private staging owner has no Vulkan loader or native renderer dependency.
+build/venus_command.o: src/vgpu/venus_command.zig include/waddle/venus_command.h include/waddle/venus_request.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/vgpu_command_test: tests/vgpu/command.c build/venus_command.o include/waddle/venus_command.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< build/venus_command.o -o $@
+
+.PHONY: vgpu-command-test vgpu-command-sanitizers vgpu-command-coverage
+vgpu-command-test: build/vgpu_command_test
+	./build/vgpu_command_test
+	$(ZIG) test src/vgpu/venus_command.zig -Iinclude -lc
+
+vgpu-command-sanitizers: build/venus_command.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) tests/vgpu/command.c build/venus_command.o -o build/vgpu_command_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_command_sanitized
+
+vgpu-command-coverage:
+	python3 tests/av/coverage.py venus_command
+
+build/venus_command_windows.lib: src/vgpu/venus_command.zig include/waddle/venus_command.h include/waddle/venus_request.h | build
+	$(ZIG) build-lib $< -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_command_test.exe: tests/vgpu/command.c build/venus_command_windows.lib
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< build/venus_command_windows.lib -o $@
+
+vgpu-windows: build/vgpu_command_test.exe

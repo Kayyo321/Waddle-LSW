@@ -2075,3 +2075,18 @@ RTX5080 normal/sanitized mapped guest runs verified48 frames over3 fresh context
 per run, exact releases/rejections and FD baselines. This completes the specified
 standalone export/presentation scope; physical VM/compositor acceptance remains
 explicitly downstream. TODO #3 ICD/DXVK is not credited by this acceptance.
+
+
+Serialized command owner is implemented in Zig with documented C ABI. Prefix and
+scalar identities use explicit little-endian stores/loads. Successful callback
+shape is checked independently, including zero resource/flags/unused arguments;
+zero CPU fence is terminal corruption. Start validates private input aliasing and
+extent before any copy/publication; init rejects pointer-range overflow. Reply
+Again retains the accepted CPU fence and never resubmits. Take returns a private
+borrowed view exactly once. Five Zig tests exercise128 cycles, state transitions,
+all callback failures, malformed successful shapes, retry and bounds/alias cases.
+Tests call exported functions without inlining so coverage measures their runtime
+branches rather than only compiler-specialized test copies. Production lines100%,
+branches91.67%; native C ABI/ASan/LSan/UBSan and Windows x86_64 cross-link pass. CI
+executes the same ABI/test fixtures natively on Windows and gates Linux coverage.
+No Vulkan loader or DXVK completion credit is assigned to this backend alone.

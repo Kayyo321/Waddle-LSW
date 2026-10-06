@@ -48,6 +48,8 @@ jobs:
         run: make vgpu-capabilities-test vgpu-capabilities-sanitizers vgpu-capabilities-coverage
       - name: Verify image layouts and complete DMA-BUF feedback
         run: make vgpu-dmabuf-test vgpu-dmabuf-sanitizers vgpu-dmabuf-coverage
+      - name: Verify exclusive serialized guest command ownership
+        run: make vgpu-command-test vgpu-command-sanitizers vgpu-command-coverage
       - name: Verify negotiated guest frontend ownership
         run: make vgpu-guest-test vgpu-guest-sanitizers vgpu-guest-coverage
       - name: Verify Wayland import pacing and release ownership
@@ -176,6 +178,18 @@ jobs:
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/guest.c src/vgpu/venus_guest.c build/venus_capabilities_windows.lib -o build/vgpu_guest_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_guest_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows command staging ABI
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_command.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_command_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/command.c build/venus_command_windows.lib -o build/vgpu_command_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_command_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_command.zig -Iinclude -lc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify native Windows standalone adapter and DLL ABI
