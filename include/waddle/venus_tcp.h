@@ -5,6 +5,7 @@
 #include "venus_request.h"
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 /** @brief Exact client hello bytes; no native padding. */
 #define VenusTcpClientHelloBytes 128u
 /** @brief Exact server hello bytes, including actual160-byte receiver capset. */
@@ -123,6 +124,92 @@ venus_ring_status_t venus_tcp_request_limit(const venus_request_t *request);
  * @note Allocation-free/thread-safe; no pointers retained or storage mutated.
  */
 venus_ring_status_t venus_tcp_response_limit(const venus_request_t *request, const venus_request_t *response);
+/** @brief Sole-thread native socket owner, initialized only through these APIs.
+ * Zero-initialize before first use; never copy a live owner. Windows holds one
+ * balanced WSAStartup reference per live owner. Cancellation may be release-set
+ * concurrently through the separately borrowed flag; close itself is serialized.
+ */
+typedef struct venus_tcp_socket_t {
+    uintptr_t handle; /**< Private native socket; meaningful only when initialized. */
+    uint32_t initialized; /**< One while socket and optional Winsock reference are owned. */
+} venus_tcp_socket_t;
+/** @brief Get monotonic milliseconds for a whole-operation deadline.
+ * @return Native monotonic milliseconds, zero on unavailable clock. No allocation,
+ * mutation or ownership; thread-safe. Add at most60000 without unsigned overflow.
+ */
+uint64_t venus_tcp_now_ms(void);
+/** @brief Initialize a nonblocking connection to an admitted literal address.
+ * @param[in,out] socket Nonnull empty caller owner; remains empty on failure.
+ * @param[in] host Nonnull borrowed127.0.0.1 or10.0.2.2 NUL-terminated literal.
+ * @param[in] port Explicit1..65535 TCP port. @param[in] deadline_ms Absolute
+ * monotonic deadline, never extended after partial progress or interruption.
+ * @param[in] cancel Nullable borrowed release-set atomic flag, alive for call.
+ * @return Ok; Invalid arguments/live owner; Cancelled/Timeout; Closed native error.
+ * Sole owner thread, no heap; success owns one socket/reference until close.
+ */
+venus_ring_status_t venus_tcp_socket_connect(venus_tcp_socket_t *socket, const char *host,
+    uint32_t port, uint64_t deadline_ms, const _Atomic uint32_t *cancel);
+/** @brief Initialize a private loopback-only nonblocking listener.
+ * @param[in,out] socket Nonnull empty owner; unchanged on failure.
+ * @param[in] port0 selects ephemeral native test port, otherwise1..65535.
+ * @param[out] bound_port Nonnull disjoint owned port, zeroed on error.
+ * @return Ok, Invalid or Closed. Sole owner thread; no heap or retained pointers.
+ * Listener owns native handle/reference and requires idempotent close.
+ */
+venus_ring_status_t venus_tcp_socket_listen(venus_tcp_socket_t *socket, uint32_t port, uint32_t *bound_port);
+/** @brief Accept one socket before an immutable whole-operation deadline.
+ * @param[in] listener Nonnull live borrowed private listener; not consumed.
+ * @param[in,out] socket Nonnull disjoint empty owner, unchanged on failure.
+ * @param[in] deadline_ms Absolute monotonic deadline. @param[in] cancel Nullable
+ * borrowed atomic cancellation flag. @return Ok, Invalid, Closed, Cancelled or Timeout.
+ * Sole owner thread, no heap; accepted socket owns its own balanced Winsock reference.
+ */
+venus_ring_status_t venus_tcp_socket_accept(const venus_tcp_socket_t *listener,
+    venus_tcp_socket_t *socket, uint64_t deadline_ms, const _Atomic uint32_t *cancel);
+/** @brief Send all immutable private bytes under a single deadline.
+ * @param[in,out] socket Nonnull live owner, borrowed for call, never closed here.
+ * @param[in] bytes Nullable only for length zero, borrowed accessible bytes[length].
+ * @param[in] length Actual bounded extent. @param[in] deadline_ms Absolute monotonic deadline.
+ * @param[in] cancel Nullable atomic borrowed flag. @return Ok, Invalid, Closed,
+ * Cancelled or Timeout; partial send on error is terminal to protocol caller.
+ * Sole owner thread; no heap, pointer retention or implicit deadline resets.
+ */
+venus_ring_status_t venus_tcp_socket_send(venus_tcp_socket_t *socket, const void *bytes,
+    size_t length, uint64_t deadline_ms, const _Atomic uint32_t *cancel);
+/** @brief Receive exact bytes into private staging, publishing progress on EOF/error.
+ * @param[in,out] socket Nonnull live owner, never closed here. @param[out] bytes
+ * Nullable only for length zero; owned buffer[length] may contain partial bytes on error.
+ * @param[in] length Actual bounded extent. @param[out] received Nonnull owned count,
+ * zeroed before argument checks. @param[in] deadline_ms Fixed absolute deadline.
+ * @param[in] cancel Nullable atomic borrowed flag. @return Ok, Invalid, Closed,
+ * Cancelled or Timeout. Closed with received zero is clean EOF before a new header;
+ * Closed with partial bytes must be treated as truncated protocol by the caller.
+ * Sole owner thread; no heap, retained pointer or retry after terminal protocol failure.
+ */
+venus_ring_status_t venus_tcp_socket_receive(venus_tcp_socket_t *socket, void *bytes,
+    size_t length, size_t *received, uint64_t deadline_ms, const _Atomic uint32_t *cancel);
+/** @brief Half-close writes after frontend unbind, retaining reads for retirement Ack.
+ * @param[in,out] socket Nonnull live owner, not consumed. @return Ok, Invalid or Closed.
+ * Sole owner thread; no allocation. Call once during orderly session retirement.
+ */
+venus_ring_status_t venus_tcp_socket_shutdown_write(venus_tcp_socket_t *socket);
+/** @brief Close native socket/reference and reset owner before native release.
+ * @param[in,out] socket Nullable empty/live owner, sole thread after I/O stops.
+ * Idempotent; no allocation, no borrowed-pointer ownership or cancellation mutation.
+ */
+void venus_tcp_socket_close(venus_tcp_socket_t *socket);
+/** @brief Fill bounded private token/nonce/session bytes from the system CSPRNG.
+ * @param[out] bytes Nonnull owned bytes[length], unchanged only for invalid input;
+ * callers scrub complete buffer after any error. @param[in] length1..32.
+ * @return Ok, Invalid or Closed. Thread-safe; no heap or retained pointer.
+ * Linux uses nonblocking getrandom; Windows owns/closes an explicit Microsoft primitive CNG RNG provider per call.
+ */
+venus_ring_status_t venus_tcp_random(void *bytes, size_t length);
+/** @brief Volatile scrub of owned sensitive storage before deterministic release.
+ * @param[in,out] bytes Nullable only for length zero, owned accessible buffer[length].
+ * @param[in] length Exact owner extent. No allocation/retention; thread-safe on disjoint bytes.
+ */
+void venus_tcp_scrub(void *bytes, size_t length);
 _Static_assert(sizeof(venus_tcp_client_hello_t) == 48, "TCP private hello ABI");
 _Static_assert(sizeof(venus_tcp_server_hello_t) == 184, "TCP private server ABI");
 #endif
