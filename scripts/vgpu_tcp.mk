@@ -54,3 +54,39 @@ build/vgpu_tcp_windows_random_test.exe: tests/vgpu/tcp_windows_random.c src/vgpu
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/tcp_windows_random.c -lws2_32 -lbcrypt -o $@
 
 vgpu-tcp-transport-windows: build/vgpu_tcp_windows_random_test.exe
+
+# Peer units own their codec outputs; no shared ICD/worker/dependency rebuild lease.
+VgpuTcpPeerObjects = build/tcp_peer_request.o build/tcp_peer_capabilities.o build/venus_tcp_wire.o
+VgpuTcpPeerWrapFlags = -Wl,--wrap=send,--wrap=clock_gettime,--wrap=getrandom,--wrap=shutdown
+VgpuTcpPeerSources = tests/vgpu/tcp_receiver.c tests/vgpu/tcp_wire_oracle.c src/vgpu/venus_tcp_client.c src/vgpu/venus_tcp_socket.c
+
+build/tcp_peer_request.o: src/vgpu/venus_request.zig src/vgpu/venus_receiver_bounds.zig | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/tcp_peer_capabilities.o: src/vgpu/venus_capabilities.zig include/waddle/venus_capabilities.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/vgpu_tcp_receiver_test: $(VgpuTcpPeerSources) include/waddle/venus_tcp.h $(VgpuTcpPeerObjects) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DTcpPeerFaultTests $(VgpuTcpPeerSources) $(VgpuTcpPeerObjects) $(VgpuTcpPeerWrapFlags) -pthread -o $@
+
+.PHONY: vgpu-tcp-client-test vgpu-tcp-client-sanitizers vgpu-tcp-client-coverage vgpu-tcp-client-windows
+vgpu-tcp-client-test: build/vgpu_tcp_receiver_test
+	./build/vgpu_tcp_receiver_test
+
+vgpu-tcp-client-sanitizers: $(VgpuTcpPeerObjects)
+	$(CC) $(CPPFLAGS) -DTcpPeerFaultTests -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuTcpPeerSources) $(VgpuTcpPeerObjects) $(VgpuTcpPeerWrapFlags) -pthread -o build/vgpu_tcp_receiver_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_tcp_receiver_sanitized
+
+vgpu-tcp-client-coverage:
+	python3 tests/vgpu/tcp_receiver_coverage.py
+
+build/tcp_peer_request_windows.lib: src/vgpu/venus_request.zig src/vgpu/venus_receiver_bounds.zig | build
+	$(ZIG) build-lib $< -static -Iinclude -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/tcp_peer_capabilities_windows.lib: src/vgpu/venus_capabilities.zig include/waddle/venus_capabilities.h | build
+	$(ZIG) build-lib $< -static -Iinclude -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_tcp_receiver_test.exe: $(VgpuTcpPeerSources) include/waddle/venus_tcp.h build/tcp_peer_request_windows.lib build/tcp_peer_capabilities_windows.lib build/venus_tcp_wire_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $(VgpuTcpPeerSources) build/tcp_peer_request_windows.lib build/tcp_peer_capabilities_windows.lib build/venus_tcp_wire_windows.lib -lws2_32 -lbcrypt -o $@
+
+vgpu-tcp-client-windows: build/vgpu_tcp_receiver_test.exe
