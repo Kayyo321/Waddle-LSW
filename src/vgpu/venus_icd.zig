@@ -27,6 +27,9 @@ const resource_state_t = struct {
     allocation_size: u64 = 0,
     type_index: u32 = 0,
     bound_memory: u64 = 0,
+    buffer_size: u64 = 0,
+    buffer_usage: u32 = 0,
+    buffer_references: [8]u64 = [_]u64{0} ** 8,
     pool_family: u32 = 0,
     pool_flags: u32 = 0,
     command_state: command_state_t = .Initial,
@@ -35,9 +38,12 @@ const resource_state_t = struct {
     requirements: c.VkMemoryRequirements = std.mem.zeroes(c.VkMemoryRequirements),
 };
 var resource_states = [_]resource_state_t{.{}} ** 512;
-fn resource_state(record: [*c]const c.venus_object_t) *resource_state_t {
-    for (slots, 0..) |slot, index| if (slot.id == record.*.id) return &resource_states[index];
+fn resource_index(record: [*c]const c.venus_object_t) usize {
+    for (slots, 0..) |slot, index| if (slot.id == record.*.id) return index;
     unreachable;
+}
+fn resource_state(record: [*c]const c.venus_object_t) *resource_state_t {
+    return &resource_states[resource_index(record)];
 }
 const QueueTimelineTag: u32 = 1000384005;
 var ring_slots = [_]bool{false} ** 64;
@@ -1070,7 +1076,11 @@ fn create_buffer(
         _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_BUFFER, 0);
         return result;
     }
-    resource_state(record).* = .{ .id = record.*.id };
+    resource_state(record).* = .{
+        .id = record.*.id,
+        .buffer_size = info.*.size,
+        .buffer_usage = info.*.usage,
+    };
     output.* = @ptrFromInt(record.*.handle);
     return c.VK_SUCCESS;
 }
@@ -1095,6 +1105,10 @@ fn destroy_buffer(
         c.VK_OBJECT_TYPE_BUFFER,
         parent.id,
     ) orelse return;
+    const index = resource_index(record);
+    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+    for (resource_states) |state| if (state.buffer_references[index / 64] & bit != 0 and
+        state.command_state == .Pending) return;
     var writer = writer_t{};
     writer.header(51, parent.id);
     writer.put(u64, record.id);
@@ -1109,6 +1123,10 @@ fn destroy_buffer(
         _ = failure(c.RingCorrupt);
         return;
     }
+    for (&resource_states) |*state| if (state.buffer_references[index / 64] & bit != 0) {
+        state.command_state = .Invalid;
+        state.buffer_references = [_]u64{0} ** 8;
+    };
     resource_state(record).* = .{};
     std.debug.assert(
         c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_BUFFER, 0) == c.RingOk,
@@ -1406,8 +1424,9 @@ fn destroy_command_pool(
         c.VK_OBJECT_TYPE_COMMAND_POOL,
         parent.id,
     ) orelse return;
-    for (slots) |child|
-        if (child.parent_id == record.id and child.kind != c.VK_OBJECT_TYPE_COMMAND_BUFFER) return;
+    for (slots, 0..) |child, index|
+        if (child.parent_id == record.id and (child.kind != c.VK_OBJECT_TYPE_COMMAND_BUFFER or
+            resource_states[index].command_state == .Pending)) return;
     var writer = writer_t{};
     writer.header(86, parent.id);
     writer.put(u64, record.id);
@@ -1475,6 +1494,7 @@ fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) cal
     if (result == c.VK_SUCCESS) for (slots, 0..) |child, index| if (child.parent_id == record.id) {
         resource_states[index].command_state = .Initial;
         resource_states[index].command_flags = 0;
+        resource_states[index].buffer_references = [_]u64{0} ** 8;
     };
     return result;
 }
@@ -1696,6 +1716,7 @@ fn begin_command_buffer(
     if (result == c.VK_SUCCESS) {
         state.command_state = .Recording;
         state.command_flags = info.*.flags;
+        state.buffer_references = [_]u64{0} ** 8;
     } else if (lost == c.RingOk) state.command_state = .Invalid;
     return result;
 }
@@ -1722,6 +1743,68 @@ fn end_command_buffer(buffer: c.VkCommandBuffer) callconv(.C) c_int {
         state.command_state = if (result == c.VK_SUCCESS) .Executable else .Invalid;
     return result;
 }
+/// Record a bounded fill of a private device buffer; CPU acknowledgment only.
+/// @param[in] command_buffer Nullable private borrowed handle; invalid states ignored.
+/// @param[in] buffer Nullable same-device bound TRANSFER_DST token, no ownership transfer.
+/// @param[in] offset Four-byte aligned offset below requested buffer size.
+/// @param[in] size Positive four-byte multiple within bounds, or UINT64_MAX WHOLE_SIZE.
+/// @param[in] data Repeated native word, serialized under the little-endian contract.
+/// @return Void; local invalid Recording inputs invalidate recording, loss poisons binding.
+/// @note Mutex serialized, allocation-free; caller satisfies native queue capabilities.
+fn fill_buffer(
+    command_buffer: c.VkCommandBuffer,
+    buffer: c.VkBuffer,
+    offset: u64,
+    size: u64,
+    data: u32,
+) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(
+        @intFromPtr(command_buffer.?),
+        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+    ) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    const target = if (buffer != null) child_object(
+        @intFromPtr(buffer.?),
+        c.VK_OBJECT_TYPE_BUFFER,
+        pool.parent_id,
+    ) else null;
+    if (target == null) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const destination = resource_state(target.?);
+    if (destination.bound_memory == 0 or destination.buffer_usage & 2 == 0 or
+        offset % 4 != 0 or offset >= destination.buffer_size or
+        (size != std.math.maxInt(u64) and (size == 0 or size % 4 != 0 or
+        size > destination.buffer_size - offset)))
+    {
+        state.command_state = .Invalid;
+        return;
+    }
+    var writer = writer_t{};
+    writer.header(118, record.id);
+    writer.put(u64, target.?.id);
+    writer.put(u64, offset);
+    writer.put(u64, size);
+    writer.put(u32, data);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 118) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    const index = resource_index(target.?);
+    state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+}
 /// Reset an individual nonpending buffer from a reset-capable private pool.
 /// @param[in] buffer Nonnull private borrowed handle; no ownership transfer.
 /// @param[in] flags0/1 release-resources only.
@@ -1747,6 +1830,7 @@ fn reset_command_buffer(buffer: c.VkCommandBuffer, flags: u32) callconv(.C) c_in
     if (result == c.VK_SUCCESS) {
         resource_state(record).command_state = .Initial;
         resource_state(record).command_flags = 0;
+        resource_state(record).buffer_references = [_]u64{0} ** 8;
     }
     return result;
 }
@@ -1933,6 +2017,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkAllocateCommandBuffers", &allocate_command_buffers },
         .{ "vkFreeCommandBuffers", &free_command_buffers },
         .{ "vkBeginCommandBuffer", &begin_command_buffer },
+        .{ "vkCmdFillBuffer", &fill_buffer },
         .{ "vkEndCommandBuffer", &end_command_buffer },
         .{ "vkResetCommandBuffer", &reset_command_buffer },
         .{ "vkDestroyCommandPool", &destroy_command_pool },
@@ -2318,4 +2403,68 @@ test "command buffer batch replies validate every truncation result count and id
         ),
         try command_buffers_reply(writer.bytes[0..writer.used], &Ids),
     );
+}
+
+test "pending buffer references prevent host destruction before GPU retirement" {
+    const fixture_t = struct {
+        fn exchange(
+            _: ?*anyopaque,
+            _: [*c]const c.venus_request_t,
+            _: ?*const anyopaque,
+            _: usize,
+            _: [*c]c.venus_request_t,
+            _: ?*anyopaque,
+            _: usize,
+        ) callconv(.C) c_int {
+            return c.RingInvalid;
+        }
+    };
+    var sentinel: u8 = 0;
+    try std.testing.expectEqual(
+        @as(c_int, c.RingOk),
+        venus_icd_bind(fixture_t.exchange, &sentinel),
+    );
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var buffer: [*c]c.venus_object_t = null;
+    var recording: [*c]c.venus_object_t = null;
+    var pool: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_DEVICE,
+        0,
+        1,
+        &device,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_BUFFER,
+        device.*.id,
+        0,
+        &buffer,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_COMMAND_POOL,
+        device.*.id,
+        0,
+        &pool,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+        pool.*.id,
+        1,
+        &recording,
+    ));
+    const index = resource_index(buffer);
+    resource_state(recording).command_state = .Pending;
+    resource_state(recording).buffer_references[index / 64] =
+        @as(u64, 1) << @as(u6, @intCast(index % 64));
+    destroy_buffer(@ptrFromInt(device.*.handle), @ptrFromInt(buffer.*.handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    destroy_command_pool(@ptrFromInt(device.*.handle), @ptrFromInt(pool.*.handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(usize, 4), objects.live_count);
+    try std.testing.expectEqual(command_state_t.Pending, resource_state(recording).command_state);
 }

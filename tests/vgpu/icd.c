@@ -186,6 +186,14 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                             &queue_info, &queue);
                 assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
             }
+        } else if (fixture->command == 118) {
+            unsigned char expected[64];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            vn_encode_vkCmdFillBuffer(&encoder, 1,
+                (VkCommandBuffer)(uintptr_t)read_u64(bytes + 8),
+                (VkBuffer)(uintptr_t)read_u64(bytes + 16), read_u64(bytes + 24),
+                read_u64(bytes + 32), read_u32(bytes + 40));
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command >= 88 && fixture->command <= 92) {
             unsigned char expected[4096];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -1410,6 +1418,132 @@ static void pool_contract(void) {
         assert(venus_icd_unbind() == RingOk);
     }
 }
+static void fill_buffer_contract(void) {
+    for (unsigned scenario = 0; scenario < 5; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2;
+        VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,
+            "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 1, .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &device_info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)lookup(device, "vkCreateCommandPool");
+        PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)lookup(device, "vkDestroyCommandPool");
+        PFN_vkResetCommandPool reset_pool = (PFN_vkResetCommandPool)lookup(device, "vkResetCommandPool");
+        PFN_vkAllocateCommandBuffers allocate = (PFN_vkAllocateCommandBuffers)lookup(device, "vkAllocateCommandBuffers");
+        PFN_vkFreeCommandBuffers release = (PFN_vkFreeCommandBuffers)lookup(device, "vkFreeCommandBuffers");
+        PFN_vkBeginCommandBuffer begin = (PFN_vkBeginCommandBuffer)lookup(device, "vkBeginCommandBuffer");
+        PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)lookup(device, "vkEndCommandBuffer");
+        PFN_vkResetCommandBuffer reset = (PFN_vkResetCommandBuffer)lookup(device, "vkResetCommandBuffer");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
+        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+        fixture.pool_info = &pool_info;
+        VkCommandPool pool = NULL, other_pool = NULL;
+        assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+        pool_info.flags = 0;
+        assert(create_pool(device, &pool_info, NULL, &other_pool) == VK_SUCCESS);
+        VkCommandBufferAllocateInfo info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
+        fixture.command_allocate = &info;
+        PFN_vkCmdFillBuffer fill = (PFN_vkCmdFillBuffer)lookup(device, "vkCmdFillBuffer");
+        PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)lookup(device, "vkCreateBuffer");
+        PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)lookup(device, "vkDestroyBuffer");
+        PFN_vkAllocateMemory allocate_memory = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+        PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+        PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)lookup(device, "vkBindBufferMemory");
+        assert(fill && create_buffer && destroy_buffer && allocate_memory && free_memory && bind);
+        VkCommandBuffer buffers[2] = {NULL, NULL};
+        assert(allocate(device, &info, buffers) == VK_SUCCESS);
+        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        fixture.command_begin = &begin_info;
+        VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 4099, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        fixture.buffer_info = &buffer_info;
+        VkBuffer target = NULL, unbound = NULL, foreign_buffer = NULL, source = NULL;
+        assert(create_buffer(device, &buffer_info, NULL, &target) == VK_SUCCESS);
+        assert(create_buffer(device, &buffer_info, NULL, &unbound) == VK_SUCCESS);
+        assert(create_buffer(foreign, &buffer_info, NULL, &foreign_buffer) == VK_SUCCESS);
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        assert(create_buffer(device, &buffer_info, NULL, &source) == VK_SUCCESS);
+        VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = 16384, .memoryTypeIndex = 0};
+        fixture.memory_info = &memory_info;
+        VkDeviceMemory memory = NULL;
+        assert(allocate_memory(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+        assert(bind(device, target, memory, 0) == VK_SUCCESS);
+        assert(bind(device, source, memory, 8192) == VK_SUCCESS);
+        unsigned submissions = fixture.submissions;
+        fill(NULL, target, 0, 4, 1);
+        fill((VkCommandBuffer)(uintptr_t)1, target, 0, 4, 1);
+        fill(buffers[0], target, 0, 4, 1); /* Initial preserves state. */
+        assert(fixture.submissions == submissions);
+        const VkBuffer Invalid[] = {NULL, (VkBuffer)(uintptr_t)1, unbound, foreign_buffer, source};
+        for (unsigned index = 0; index < sizeof(Invalid) / sizeof(*Invalid); index++) {
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            fill(buffers[0], Invalid[index], 0, 4, 1);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        }
+        const uint64_t Offsets[] = {1, 4100, 0, 0, 4, UINT64_MAX};
+        const uint64_t Sizes[] = {4, 4, 0, 3, UINT64_MAX - 3, 4};
+        for (unsigned index = 0; index < sizeof(Offsets) / sizeof(*Offsets); index++) {
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            fill(buffers[0], target, Offsets[index], Sizes[index], 1);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        }
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        if (scenario == 0) fixture.fail_command = 118;
+        if (scenario == 1) fixture.corrupt_command = 118;
+        fill(buffers[0], target, 0, 4096, 0x12345678);
+        if (scenario < 2) {
+            assert(end(buffers[0]) == VK_ERROR_DEVICE_LOST);
+            venus_icd_abandon(); continue;
+        }
+        fill(buffers[0], target, 4, VK_WHOLE_SIZE, 0);
+        fill(buffers[0], target, 4096, VK_WHOLE_SIZE, UINT32_MAX);
+        assert(end(buffers[0]) == VK_SUCCESS);
+        submissions = fixture.submissions;
+        fill(buffers[0], target, 0, 4, 1); /* Executable preserves state. */
+        assert(fixture.submissions == submissions);
+        if (scenario == 2) assert(reset(buffers[0], 0) == VK_SUCCESS);
+        if (scenario == 3) assert(reset_pool(device, pool, 0) == VK_SUCCESS);
+        if (scenario == 4) {
+            assert(begin(buffers[1], &begin_info) == VK_SUCCESS);
+            fill(buffers[1], target, 0, 4, 1);
+        }
+        destroy_buffer(device, target, NULL);
+        if (scenario == 4) {
+            assert(end(buffers[1]) == VK_ERROR_INITIALIZATION_FAILED);
+            assert(end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        }
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        assert(create_buffer(device, &buffer_info, NULL, &target) == VK_SUCCESS);
+        assert(bind(device, target, memory, 0) == VK_SUCCESS);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        assert(begin(buffers[1], &begin_info) == VK_SUCCESS && end(buffers[1]) == VK_SUCCESS);
+        destroy_buffer(device, target, NULL); /* Cleared refs must not invalidate. */
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        destroy_buffer(device, source, NULL); destroy_buffer(device, unbound, NULL);
+        destroy_buffer(foreign, foreign_buffer, NULL); free_memory(device, memory, NULL);
+        release(device, pool, 2, buffers);
+        destroy_pool(device, pool, NULL); destroy_pool(device, other_pool, NULL);
+        destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
 static void command_buffer_contract(void) {
     for (unsigned scenario = 0; scenario < 20; scenario++) {
         fixture_t fixture = fresh();
@@ -2054,7 +2188,7 @@ static void loader_fixture(void) {
         PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)device_proc(device, "vkBindBufferMemory");
         assert(create_buffer && destroy_buffer && requirements && allocate && release && bind);
         VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = 4096, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
+            .size = 4096, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
         fixture.buffer_info = &buffer_info;
         VkBuffer buffer = NULL;
         assert(create_buffer(device, &buffer_info, NULL, &buffer) == VK_SUCCESS && buffer);
@@ -2067,8 +2201,6 @@ static void loader_fixture(void) {
         VkDeviceMemory memory = NULL;
         assert(allocate(device, &memory_info, NULL, &memory) == VK_SUCCESS && memory);
         assert(bind(device, buffer, memory, 0) == VK_SUCCESS);
-        destroy_buffer(device, buffer, NULL);
-        release(device, memory, NULL);
         PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
         PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)device_proc(device, "vkDestroyCommandPool");
         PFN_vkAllocateCommandBuffers allocate_buffers = (PFN_vkAllocateCommandBuffers)device_proc(device, "vkAllocateCommandBuffers");
@@ -2089,10 +2221,14 @@ static void loader_fixture(void) {
         assert(allocate_buffers(device, &command_info, commands) == VK_SUCCESS && commands[0] && commands[1]);
         VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         fixture.command_begin = &begin_info;
-        assert(begin(commands[0], &begin_info) == VK_SUCCESS && end(commands[0]) == VK_SUCCESS);
+        PFN_vkCmdFillBuffer fill = (PFN_vkCmdFillBuffer)device_proc(device, "vkCmdFillBuffer");
+        assert(fill && begin(commands[0], &begin_info) == VK_SUCCESS);
+        fill(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
+        assert(end(commands[0]) == VK_SUCCESS);
         assert(reset(commands[0], 0) == VK_SUCCESS);
         free_buffers(device, pool, 1, commands);
         destroy_pool(device, pool, NULL);
+        destroy_buffer(device, buffer, NULL); release(device, memory, NULL);
 
 
         destroy_device(device, NULL);
@@ -2129,6 +2265,7 @@ int main(void) {
     memory_contract();
     pool_contract();
     command_buffer_contract();
+    fill_buffer_contract();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();

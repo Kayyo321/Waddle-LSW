@@ -1573,10 +1573,28 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     pass; coverage99.69% lines/94.09% branches. Windows native fixture, DLL and
     pinned-loader fixture cross-link pass. TODO #3 remains50%.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify core fill recording and resource invalidation`
+- **Commit `f3d4530`**: `docs(vgpu): specify core fill recording and resource invalidation`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Define bounded buffer range validation, exact command118 encoding,
     generation-safe slot reference tracking and invalidation on buffer destruction.
     Specify reset/free ownership, Pending protection and recording-only acceptance.
   - **Verification**: Inspect pinned encoder and Vulkan fill-buffer valid usage;
     implementation and execution proof remain pending. TODO #3 remains50%.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): record bounded buffer fills with resource lifetime tracking`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; GPU execution pending).
+  - **Summary**: Route core fill command118 using requested buffer size/usage,
+    same-device binding and overflow-safe range checks. Track buffer references
+    in fixed512-bit sets, invalidate recordings before referenced slot release,
+    clear references on successful begin/reset/free and reject Pending buffer or
+    pool destruction before host dispatch. No heap allocation or native pointer
+    retention; CPU acknowledgment does not imply GPU retirement.
+  - **Verification**: Independent pinned encoder, explicit/WHOLE_SIZE/rounded
+    ranges, invalid inputs/state recovery, reference invalidation/reset/slot reuse
+    and transport/tag errors pass. Six Zig tests include Pending destruction
+    protection. ASan/LSan/UBSan and coverage99.70% lines/94.13% branches pass.
+    Normal/sanitized actual static and shared-loader production worker recording
+    pass; forced loader failure restores descriptors and leaks zero bytes. Pinned
+    Linux loader public fill dispatch passes normal/sanitized; Windows fixture,
+    loader fixture and DLL cross-link pass. Native Windows latest CI remains
+    required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending.

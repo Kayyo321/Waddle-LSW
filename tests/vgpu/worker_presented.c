@@ -320,8 +320,6 @@ static int icd_cycles(venus_guest_t *guest) {
 #ifdef VgpuIcdLoader
         if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
 #endif
-        destroy_buffer(device, buffer, NULL);
-        release(device, buffer_allocation, NULL);
         PFN_vkCreateCommandPool create_pool =
             (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
         PFN_vkDestroyCommandPool destroy_pool =
@@ -346,7 +344,10 @@ static int icd_cycles(venus_guest_t *guest) {
             (PFN_vkEndCommandBuffer)device_proc(device, "vkEndCommandBuffer");
         PFN_vkResetCommandBuffer reset_buffer =
             (PFN_vkResetCommandBuffer)device_proc(device, "vkResetCommandBuffer");
-        if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer)
+        PFN_vkCmdFillBuffer fill_buffer =
+            (PFN_vkCmdFillBuffer)device_proc(device, "vkCmdFillBuffer");
+        if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer ||
+            !fill_buffer)
             goto fail;
         VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
@@ -354,15 +355,17 @@ static int icd_cycles(venus_guest_t *guest) {
         VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
         if (allocate_buffers(device, &command_info, commands) != VK_SUCCESS || !commands[0] ||
-            !commands[1] || begin_buffer(commands[0], &begin_info) != VK_SUCCESS ||
-            end_buffer(commands[0]) != VK_SUCCESS || reset_buffer(commands[0], 0) != VK_SUCCESS ||
+            !commands[1] || begin_buffer(commands[0], &begin_info) != VK_SUCCESS) goto fail;
+        fill_buffer(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
+        if (end_buffer(commands[0]) != VK_SUCCESS || reset_buffer(commands[0], 0) != VK_SUCCESS ||
             begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
             end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)
             goto fail;
         free_buffers(device, pool, 1, commands);
         /* Pool destruction implicitly retires the second loader-dispatchable buffer. */
         destroy_pool(device, pool, NULL);
-
+        destroy_buffer(device, buffer, NULL);
+        release(device, buffer_allocation, NULL);
 
         destroy_device(device, NULL);
         cleanup_device = NULL;
