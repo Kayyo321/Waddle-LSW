@@ -1313,8 +1313,17 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows/updated-head GitHub checks remain required. TODO #3 stays40%; complete
     graphics/compute/memory/synchronization dispatch and actual DXVK remain pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify receiver GPU fence idle waits`
+- **Commit `79325dc`**: `docs(vgpu): specify receiver GPU fence idle waits`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify queue/device idle through explicit issued and retired GPU
     identities, exact envelope shapes and a monotonic whole-call deadline. Preserve
     sole frontend ownership and session retirement on any terminal failure.
+
+- **Commit (current; resolve by subject)**: `fix(ci): include pinned ICD encoder oracle on Windows`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Add the encoder shim/generated driver/test hook include directories
+    to the native Windows ICD fixture's direct compiler invocation. Make targets
+    already include them; preserve the workflow's compiler warnings/error policy.
+  - **Verification**: Exact same directories pass local Windows cross-link; native
+    job112393470812 identified missing vn_cs.h before executing the fixture.
+    Updated-head native Windows verification remains required.

@@ -267,7 +267,7 @@ jobs:
         run: |
           zig build-lib src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -o build/vgpu_icd_test.exe
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -o build/vgpu_icd_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_icd_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
