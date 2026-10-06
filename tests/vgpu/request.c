@@ -51,7 +51,7 @@ int main(void) {
     for (size_t index = 0; index < sizeof(bytes); index++)
         assert(bytes[index] == 0x5a);
 
-    for (uint32_t kind = RequestCapabilities; kind <= RequestNegotiate; kind++) {
+    for (uint32_t kind = RequestCapabilities; kind <= RequestPresentPoll; kind++) {
         value = (venus_request_t){.kind = kind, .sequence = 1};
         if (kind == RequestSubmit)
             value.payload_bytes = 8;
@@ -72,6 +72,13 @@ int main(void) {
             if (kind == RequestGpuPoll)
                 value.argument_one = 1;
         }
+        if (kind == RequestPresent) {
+            value.payload_bytes = 1216;
+            value.argument_zero = 1;
+            value.argument_one = 1;
+        }
+        if (kind == RequestPresentPoll)
+            value.argument_zero = UINT64_MAX;
         assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingOk);
         assert(venus_request_decode(&decoded, bytes, sizeof(bytes)) == RingOk);
         assert(memcmp(&decoded, &value, sizeof(value)) == 0);
@@ -121,12 +128,31 @@ int main(void) {
                 value.argument_one = UINT64_MAX;
             assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingOk);
         }
+        if (kind == RequestPresent) {
+            reject_field(bytes, 24, 1215);
+            reject_field(bytes, 24, 1217);
+            reject_field(bytes, 40, 0);
+            reject_field(bytes, 40, 64);
+            reject_field(bytes, 44, 1);
+            reject_field(bytes, 48, 0);
+        }
+        if (kind == RequestPresentPoll) {
+            write_word(bytes, 40, 0);
+            write_word(bytes, 44, 0);
+            reject_field(bytes, 40, 0);
+            write_word(bytes, 40, UINT32_MAX);
+            write_word(bytes, 44, UINT32_MAX);
+            reject_field(bytes, 48, 1);
+            reject_field(bytes, 24, 32);
+        }
         for (uint32_t status = RequestSuccess; status <= RequestLimit; status++) {
             value =
                 (venus_request_t){.kind = kind, .direction = 1, .sequence = 1, .status = status};
             if (status == RequestSuccess) {
                 if (kind == RequestCapabilities)
                     value.payload_bytes = 160;
+                if (kind == RequestPresentPoll)
+                    value.payload_bytes = 32;
                 if (kind == RequestSubmit || kind == RequestGpuFence)
                     value.argument_zero = 1;
                 if (kind == RequestRead || kind == RequestReply)
@@ -145,6 +171,10 @@ int main(void) {
             } else if (kind == RequestCapabilities) {
                 reject_field(bytes, 24, 159);
                 reject_field(bytes, 24, 161);
+            } else if (kind == RequestPresentPoll) {
+                reject_field(bytes, 24, 31);
+                reject_field(bytes, 24, 33);
+                reject_field(bytes, 40, 1);
             } else if (kind == RequestSubmit || kind == RequestGpuFence) {
                 reject_field(bytes, 40, 0);
                 reject_field(bytes, 24, 8);

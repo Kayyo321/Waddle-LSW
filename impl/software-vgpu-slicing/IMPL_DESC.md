@@ -1774,3 +1774,13 @@ outstanding image before reuse. Header failures retain existing output guarantee
 codec recognition alone is not evidence of host dispatch or guest runtime routing.
 Both opcodes keep requests/responses inside the existing bounded mapped RPC and
 preserve negotiation-before-operation enforcement. All errors have no payload.
+
+
+The bounded envelope codec now recognizes operations12/13 with all exact request
+and response field rules above. Independent C tests include u64 timeline narrowing,
+frame ID UINT64_MAX, zero IDs/fences and off-by-one payload lengths. All operation/
+status Zig mutation/allocator tests include both opcodes. Existing unbound host
+service explicitly returns Invalid for them before any receiver polling, with
+pre/post-negotiation native RPC tests covering complete1216-byte payload delivery.
+Request codec coverage98.46% lines/97.80% branches, existing RPC/dispatch thresholds,
+sanitisers and Windows cross-links pass. Bound service integration is pending.

@@ -58,7 +58,10 @@ static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc
     case RequestGpuPoll:
         return venus_receiver_gpu_poll(receiver, (uint32_t)request->argument_zero,
                                        request->argument_one);
-    default: /* Codec validation leaves only Poll. */
+    case RequestPresent:
+    case RequestPresentPoll:
+        return RingInvalid; /* Requires an explicitly trusted native presentation binding. */
+    default:                /* Codec validation leaves only Poll. */
         return venus_receiver_poll(receiver);
     }
 }

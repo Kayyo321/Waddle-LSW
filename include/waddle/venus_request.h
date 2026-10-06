@@ -8,7 +8,7 @@
 /** @brief Maximum streamed payload/transfer bytes, before stricter owner
  * limits. */
 #define VenusRequestMaxPayload 16777216u
-/** @brief Envelope operations; CPU completion semantics only. */
+/** @brief Envelope operations with distinct CPU, GPU and presentation completion. */
 typedef enum venus_request_kind_t {
     RequestCapabilities = 1, /**< Query the pinned 160-byte public capset. */
     RequestSubmit = 2,       /**< Submit private Venus bytes; returns CPU fence. */
@@ -20,7 +20,9 @@ typedef enum venus_request_kind_t {
     RequestPoll = 8,         /**< Acquire latest CPU submission completion. */
     RequestGpuFence = 9,     /**< Fence an existing GPU queue, returns GPU identity. */
     RequestGpuPoll = 10,     /**< Acquire an explicitly issued GPU fence retirement. */
-    RequestNegotiate = 11    /**< Declare pinned guest encoder profile; opens operation gate. */
+    RequestNegotiate = 11,   /**< Declare pinned guest encoder profile; opens operation gate. */
+    RequestPresent = 12,     /**< Queue exact frame payload after explicit GPU fence. */
+    RequestPresentPoll = 13  /**< Consume exact release payload for outstanding frame. */
 } venus_request_kind_t;
 /** @brief Unsigned stable wire status codes, never native signed enum bytes. */
 typedef enum venus_request_status_t {

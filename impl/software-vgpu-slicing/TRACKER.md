@@ -889,9 +889,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     envelopes, worker launch wiring and controller acknowledgement retry pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify guest presentation request envelopes`
+- **Commit `80d3100`**: `docs(vgpu): specify guest presentation request envelopes`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Specify operations12/13, exact frame/release payloads, explicit GPU
     ordering and publication/retry/consumption semantics without native FD exposure.
   - **Verification**: Cross-checked existing negotiation/RPC field/status contracts;
     envelope codec, service binding and controller retries remain pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): validate presentation request envelope operations`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add bounded operations12/13 with exact frame/release payload,
+    GPU timeline/fence and completion identity rules. Explicitly reject both in
+    unbound host dispatch, preventing accidental fallthrough to CPU polling.
+  - **Verification**: Linux/Zig allocator and C ABI tests, request/runtime sanitizer
+    suites and Windows x86_64 cross-links pass. Request coverage98.46% lines/97.80%
+    branches; RPC/dispatch coverage exceeds90%. Unbound pre/post-negotiation frames
+    consume payload and return Invalid with no receiver calls. Bound routing pending.

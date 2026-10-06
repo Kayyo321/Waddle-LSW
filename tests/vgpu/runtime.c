@@ -7,7 +7,7 @@
 #include <string.h>
 
 static _Alignas(64) unsigned char mapping[4096];
-static unsigned char scratch[160], peer_input[512], peer_output[512];
+static unsigned char scratch[160], peer_input[2048], peer_output[512];
 static size_t incoming_bytes, incoming_position, outgoing_bytes;
 static venus_session_t session;
 static venus_channel_t channel;
@@ -137,7 +137,7 @@ venus_ring_status_t venus_receiver_health(venus_receiver_t *receiver,
     return health_after && health_calls < health_after ? RingOk : health_status;
 }
 
-static void reset(venus_session_role_t role) {
+static void reset_buffer(venus_session_role_t role, void *buffer, uint32_t bytes) {
     memset(&session, 0, sizeof(session));
     memset(&channel, 0, sizeof(channel));
     memset(&rpc, 0, sizeof(rpc));
@@ -160,9 +160,10 @@ static void reset(venus_session_role_t role) {
     session.state = SessionReady;
     channel.session = &session;
     channel.initialized = 1;
-    assert(venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) == RingOk);
+    assert(venus_rpc_init(&rpc, &channel, buffer, bytes) == RingOk);
     rpc.negotiated = 1;
 }
+static void reset(venus_session_role_t role) { reset_buffer(role, scratch, sizeof(scratch)); }
 static venus_request_t request_for(uint32_t kind) {
     venus_request_t value = {.kind = kind};
     if (kind == RequestSubmit)
@@ -245,6 +246,26 @@ static void host_operations(void) {
         drain_peer();
         assert(venus_request_decode(&response, peer_output, 64) == RingOk);
         assert(response.status == RequestLimit);
+    }
+}
+static void unbound_presentation(void) {
+    unsigned char presentation[1216];
+    for (unsigned negotiated = 0; negotiated < 2; negotiated++) {
+        for (uint32_t kind = RequestPresent; kind <= RequestPresentPoll; kind++) {
+            reset_buffer(SessionHost, presentation, sizeof(presentation));
+            rpc.negotiated = negotiated;
+            venus_request_t request = {.kind = kind, .sequence = 1, .argument_zero = 1}, response;
+            if (kind == RequestPresent) {
+                request.payload_bytes = sizeof(presentation);
+                request.argument_one = 1;
+            }
+            prepare(request);
+            assert(serve() == RingOk && !calls && incoming_position == incoming_bytes);
+            drain_peer();
+            assert(venus_request_decode(&response, peer_output, 64) == RingOk);
+            assert(response.status == RequestInvalid && !response.payload_bytes);
+            venus_rpc_free(&rpc);
+        }
     }
 }
 static void host_failures(void) {
@@ -498,6 +519,7 @@ static void negotiation(void) {
 int main(void) {
     negotiation();
     host_operations();
+    unbound_presentation();
     host_failures();
     health_failures();
     guest_operations();
