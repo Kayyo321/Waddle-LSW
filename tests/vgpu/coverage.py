@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else 'ring'
-if mode not in ('ring', 'region', 'mapping', 'wait', 'session', 'receiver', 'worker', 'service', 'context', 'guest', 'present'):
+if mode not in ('ring', 'region', 'mapping', 'wait', 'session', 'receiver', 'worker', 'service', 'context', 'guest', 'present', 'wddm'):
     raise ValueError(mode)
 root = Path.cwd()
 output = root / 'build/coverage/vgpu' / mode
@@ -34,7 +34,7 @@ subprocess.run([
     *(['-pthread'] if mode == 'receiver' else []),
     *(['build/venus_capabilities.o'] if mode == 'guest' else []),
     *(['build/venus_dmabuf.o'] if mode == 'present' else []),
-    'build/venus_receiver_bounds.o' if mode == 'receiver' else 'build/venus_bounds.o', '--coverage', '-o', str(output / 'runner'),
+    'build/venus_receiver_bounds.o' if mode in ('receiver', 'wddm') else 'build/venus_bounds.o', '--coverage', '-o', str(output / 'runner'),
 ], check=True)
 subprocess.run([str(output / 'runner')], check=True)
 subprocess.run(['gcov', '--json-format', '-b', '-c', str(output / f'{mode}.gcno')],

@@ -13,12 +13,12 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 10% | Negotiated frontend passes native Windows and isolated-worker CI; Vulkan entry points, userland WDDM stubs and DXVK pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 30% | Guest frontend verified; bounded userland adapter stub/DLL cross-link passes, native DLL CI pending; full Vulkan/DXVK pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 60% | Export, native image/feedback validation and Wayland ownership verified; worker FD handoff and end-to-end GPU presentation pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `51.5%`
+**Total Feature Completion**: `56.5%`
 
 ## Commit History & Progress Log
 
@@ -743,10 +743,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37402655882 .
     Hardware allocation/export, worker FD handoff and full ICD/DXVK remain pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define standalone render-only adapter lifetimes`
+- **Commit `d60a8ab`**: `docs(vgpu): define standalone render-only adapter lifetimes`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify userland render/compute/no-scanout adapter identity,
     bounded negotiated context bindings, nonreused handles and fence-ordered
     registered-allocation teardown; distinguish this stub from kernel installation.
   - **Verification**: Preserve host quota/codec authority and explicit lost-context
     discard without remote requests or undocumented ownership transfer.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): implement standalone render-only adapter ownership`
+  - **Task Impact**: +20% to TODO: #3 (+5.0% overall); native DLL acceptance 5% pending.
+  - **Summary**: Add no-scanout render/compute adapter capabilities, eight distinct
+    negotiated frontend bindings, monotonic context/allocation handles, 64-resource
+    ledgers, GPU-fence-ordered free and explicit lost-context discard. Build a
+    userland Windows DLL exporting exactly eight snake_case stub ABI symbols.
+  - **Verification**: Linux faults/churn, ASan/LSan/UBSan and Windows x86_64 test/DLL
+    cross-link pass. Production C lines 100%, branches 98.15%; PE export table
+    inspected. Native DLL fixture loads exports, calls init/query/free and verifies
+    absence of kernel DriverEntry/internal frontend exports; CI acceptance pending.
+    This implements the user-authorized stub scope, not an installed WDDM driver.

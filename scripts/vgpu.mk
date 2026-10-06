@@ -449,3 +449,34 @@ vgpu-present-sanitizers: build/linux_dmabuf_client.h build/venus_dmabuf.o
 
 vgpu-present-coverage: build/linux_dmabuf_client.h build/venus_dmabuf.o build/venus_bounds.o
 	python3 tests/vgpu/coverage.py present
+
+# Portable userland WDDM model; this DLL does not register a kernel miniport.
+VgpuWddmHeaders = include/waddle/venus_wddm.h $(VgpuGuestHeaders) src/vgpu/venus_receiver_bounds.h
+VgpuWddmWindowsSources = src/vgpu/venus_wddm.c src/vgpu/venus_guest.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_windows.c
+VgpuWddmWindowsObjects = build/venus_bounds_windows.lib build/venus_control_windows.lib build/venus_request_windows.lib build/venus_capabilities_windows.lib
+build/vgpu_wddm_test: tests/vgpu/wddm.c src/vgpu/venus_wddm.c $(VgpuWddmHeaders) build/venus_receiver_bounds.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/wddm.c src/vgpu/venus_wddm.c build/venus_receiver_bounds.o -o $@
+
+build/vgpu_wddm_test.exe: tests/vgpu/wddm.c src/vgpu/venus_wddm.c $(VgpuWddmHeaders) build/venus_request_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/wddm.c src/vgpu/venus_wddm.c build/venus_request_windows.lib -o $@
+
+build/waddle_userland_adapter.dll: src/vgpu/venus_wddm.def $(VgpuWddmWindowsSources) $(VgpuWddmHeaders) $(VgpuWddmWindowsObjects) | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu -shared src/vgpu/venus_wddm.def $(VgpuWddmWindowsSources) $(VgpuWddmWindowsObjects) -o $@
+
+.PHONY: vgpu-wddm-test vgpu-wddm-sanitizers vgpu-wddm-coverage
+vgpu-wddm-test: build/vgpu_wddm_test
+	./build/vgpu_wddm_test
+
+vgpu-wddm-sanitizers: build/venus_receiver_bounds.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/wddm.c src/vgpu/venus_wddm.c build/venus_receiver_bounds.o -o build/vgpu_wddm_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_wddm_sanitized
+
+vgpu-wddm-coverage: build/venus_receiver_bounds.o
+	python3 tests/vgpu/coverage.py wddm
+
+vgpu-windows: build/vgpu_wddm_test.exe build/waddle_userland_adapter.dll
+
+build/vgpu_wddm_dll_test.exe: tests/vgpu/wddm_dll.c $(VgpuWddmHeaders) build/waddle_userland_adapter.dll | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/wddm_dll.c -o $@
+
+vgpu-windows: build/vgpu_wddm_dll_test.exe

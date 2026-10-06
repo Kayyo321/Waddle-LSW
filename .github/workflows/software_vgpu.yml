@@ -50,6 +50,8 @@ jobs:
         run: make vgpu-guest-test vgpu-guest-sanitizers vgpu-guest-coverage
       - name: Verify Wayland import pacing and release ownership
         run: make vgpu-present-test vgpu-present-sanitizers vgpu-present-coverage
+      - name: Verify standalone render-only adapter ownership
+        run: make vgpu-wddm-test vgpu-wddm-sanitizers vgpu-wddm-coverage
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership
@@ -162,4 +164,19 @@ jobs:
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/guest.c src/vgpu/venus_guest.c build/venus_capabilities_windows.lib -o build/vgpu_guest_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_guest_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows standalone adapter and DLL ABI
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/wddm.c src/vgpu/venus_wddm.c build/venus_request_windows.lib -o build/vgpu_wddm_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_wddm_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu -shared src/vgpu/venus_wddm.def src/vgpu/venus_wddm.c src/vgpu/venus_guest.c src/vgpu/venus_rpc.c src/vgpu/venus_channel.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c src/vgpu/venus_stream_windows.c build/venus_bounds_windows.lib build/venus_control_windows.lib build/venus_request_windows.lib build/venus_capabilities_windows.lib -o build/waddle_userland_adapter.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/wddm_dll.c -o build/vgpu_wddm_dll_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_wddm_dll_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
