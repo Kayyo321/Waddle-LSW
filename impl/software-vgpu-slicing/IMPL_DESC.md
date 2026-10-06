@@ -1341,3 +1341,67 @@ free; Linux sanitizers, >=90% coverage, Windows cross-link/native CI and actual
 mapped production-worker negotiation/query execution are required. Task #3's 10%
 frontend milestone is split 5% local ownership/portable fixtures and 5% native CI
 plus integrated production-worker execution; later ICD/DXVK gates stay separate.
+
+
+### Wayland DMA-BUF presenter ownership (Task #4)
+
+A presenter borrows one live Wayland display, version-four-or-later linux-dmabuf
+global and version-four-or-later wl_surface on the same event queue. The host
+window manager owns surface roles (xdg_toplevel/subsurface), geometry and registry
+binding; the presenter imports into the provided target surface without changing
+its role. init owns a surface feedback proxy and fixed caller-owned metadata
+storage; it allocates no pixel buffers. All functions/listeners run on the same
+Wayland event thread; no recursive destruction from completion callbacks.
+
+Feedback double-buffers bounded private format tables (65536 bytes) and tranche
+indices (8192 bytes). The format_table handler validates size/fstat extent, maps
+read-only MAP_PRIVATE, copies bounded metadata and unmaps/closes the received FD
+on every path. Device events require exactly sizeof(dev_t) bytes; native device
+identities and tranche preference/scanout flags do not override format validation.
+Table and tranche updates become active only at feedback.done after complete
+Zig validation. Unsupported/oversized/incomplete data sets terminal local failure
+and prohibits new imports; active compositor buffers retain release ownership.
+The prior active snapshot remains usable until a valid new batch completes.
+
+Three fixed import slots retain copied validated image layout and up to 64 damage
+rectangles. Damage rectangles have nonnegative origin, positive size, fit image
+extent, and are validated in Zig before native requests. submit borrows one valid
+FD per active plane only for the call; libwayland queues its own FD duplicates.
+Caller retains/always closes its original descriptors. Require a matching active
+feedback pair before create_params/add/create. Only one asynchronous import is
+pending, and no new import starts while a frame callback is outstanding: Again
+is backpressure without descriptor or allocation ownership transfer. Each accepted
+frame has a nonzero monotonically increasing caller identity; repeated/stale frame
+IDs are invalid. The image and damage metadata are copied privately, never pixels.
+
+params.created owns a wl_buffer, destroys params, installs release listener,
+creates/listens to one frame callback, then attaches/damages/commits the target
+surface. A callback/proxy allocation failure releases local proxy ownership and
+completes the accepted frame with Corrupt without committing. params.failed
+completes it with Invalid so the caller can choose a different advertised modifier
+and allocation; no CPU fallback occurs. wl_buffer.release alone completes a
+committed frame with Ok and releases local buffer ownership, allowing caller GPU
+reuse. frame.done destroys only pacing callback; it never signals memory release.
+The user completion callback is borrowed until free, receives frame ID/status
+only, and must not destroy/reenter the presenter.
+
+Normal free returns Again while any import/buffer remains owned, preserving the
+record and every listener cookie. Once idle, it destroys any pacing callback and
+feedback proxy then zeroes the record. On confirmed display error it may instead
+abandon all imports/buffers, destroy local proxies and notify each accepted frame
+Closed; callers discard these allocations rather than reuse them for a new
+session. Display must remain alive until this cleanup; disconnect afterward.
+A healthy but unresponsive compositor requires the caller's bounded event-loop
+shutdown/disconnect handling; freeing live listener cookies is never a timeout
+strategy. Context termination must detach/quiesce guest ownership and drive these
+release/error paths before replacing endpoints. FD handoff and host window binding
+remain a separate Task #4 milestone.
+
+Acceptance includes real descriptor table mapping/close ownership, every protocol
+allocation/listener failure, complete feedback batches and replacement, unsupported
+modifiers, invalid damage, import rejection and retry, pacing-before-release and
+release-before-pacing, three simultaneous compositor-owned buffers, stale IDs,
+normal free refusal, disconnected abandonment and repeated churn. Native mock
+protocol callbacks plus actual generated-protocol compilation, sanitizer/allocator
+and >=90% production coverage are required; real GPU/compositor display remains
+its final integrated acceptance gate.

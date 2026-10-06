@@ -711,10 +711,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     precondition, profile mismatch, exchange acquisition failure, wire status,
     sticky terminal result and idempotent teardown tested; native CI follows.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): exercise guest frontend across isolated receiver contexts`
+- **Commit `4ca8195`**: `test(vgpu): exercise guest frontend across isolated receiver contexts`
   - **Task Impact**: +0% to TODO: #3 (+0% overall); integrated/native 5% gate awaits CI.
   - **Summary**: Route real negotiation, resource accesses, CPU submission/poll/reply
     through the guest frontend across eight isolated workers and fresh crash recovery.
   - **Verification**: Three rounds/27 production launches pass in normal and
     ASan/LSan/UBSan runs with descriptor counts returned to baseline. Retain
     pre-negotiation/profile retry/repeated negotiation negative protocol tests.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify Wayland import pacing and release ownership`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Define borrowed target surface/global, atomic feedback snapshots,
+    bounded asynchronous import slots, damage validation, frame-versus-buffer
+    retirement, rejection and safe display-loss teardown before implementation.
+  - **Verification**: Preserve allocation FD ownership and prohibit freeing active
+    listener cookies or CPU fallback; window roles and worker handoff stay separate.
