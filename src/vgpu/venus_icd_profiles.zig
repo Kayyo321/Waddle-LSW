@@ -1,5 +1,8 @@
 //! Fixed compatibility metadata; callers exclusively serialize mutation and retire GPU uses first.
 const std = @import("std");
+/// Private push byte ceiling256; caller also checks actual host maxPushConstantsSize.
+/// Immutable scalar budget, no allocation or ownership; shared concurrent reads are safe.
+pub const MaxPushBytes: u32 = 256;
 /// Maximum normalized binding records in a descriptor layout; no storage ownership.
 pub const MaxBindings: usize = 64;
 /// Maximum descriptor layouts copied into one pipeline layout; no storage ownership.
@@ -28,9 +31,9 @@ pub const descriptor_layout_t = struct {
 pub const push_range_t = struct {
     /// Nonzero core stage mask.
     stage_flags: u32 = 0,
-    /// Four-byte-aligned offset in the core128-byte push-constant budget.
+    /// Four-byte-aligned offset in the bounded256-byte push-constant budget.
     offset: u32 = 0,
-    /// Positive aligned byte count; offset+size<=128.
+    /// Positive aligned byte count; offset+size<=256.
     size: u32 = 0,
 };
 /// Owned pipeline compatibility snapshot; input layout identities are never retained.
@@ -140,7 +143,7 @@ pub fn normalize_pipeline(layouts: []const descriptor_layout_t, ranges: []const 
     }
     for (ranges, 0..) |range, index| {
         if (range.stage_flags == 0 or range.stage_flags & ~@as(u32, 0x3f) != 0 or range.size == 0 or
-            range.offset % 4 != 0 or range.size % 4 != 0 or range.offset >= 128 or range.size > 128 - range.offset) return error.Invalid;
+            range.offset % 4 != 0 or range.size % 4 != 0 or range.offset >= MaxPushBytes or range.size > MaxPushBytes - range.offset) return error.Invalid;
         for (ranges[0..index]) |previous| if (range.stage_flags & previous.stage_flags != 0) return error.Invalid;
         var destination = index;
         while (destination > 0 and (profile.pushes[destination - 1].offset > range.offset or
@@ -265,7 +268,7 @@ test "sorted and equal-offset inputs preserve canonical order and bounded empty 
     invalid_range.size = 4;
     invalid_range.offset = 2;
     try std.testing.expectError(error.Invalid, fixture_t.pipeline(&.{}, &.{invalid_range}));
-    invalid_range.offset = 124;
+    invalid_range.offset = 252;
     invalid_range.size = 8;
     try std.testing.expectError(error.Invalid, fixture_t.pipeline(&.{}, &.{invalid_range}));
     invalid_range.size = 4;
@@ -279,4 +282,12 @@ test "malformed copied layout contents cannot enter pipeline or set ownership" {
     const corrupted = descriptor_layout_t{ .binding_count = 1 };
     try std.testing.expectError(error.Invalid, fixture_t.pipeline(&.{corrupted}, &.{}));
     try std.testing.expectError(error.Invalid, fixture_t.create_set(&corrupted));
+}
+
+test "push range profiles accept256 ceiling and reject all overflow directions" {
+    const whole = try fixture_t.pipeline(&.{}, &.{.{ .stage_flags = 32, .size = 256 }});
+    try std.testing.expectEqual(@as(u32, 256), whole.pushes[0].size);
+    _ = try fixture_t.pipeline(&.{}, &.{.{ .stage_flags = 32, .offset = 252, .size = 4 }});
+    for ([_]push_range_t{ .{ .stage_flags = 32, .size = 260 }, .{ .stage_flags = 32, .offset = 256, .size = 4 }, .{ .stage_flags = 32, .offset = 252, .size = 8 }, .{ .stage_flags = 32, .offset = 0xfffffffc, .size = 4 } }) |range|
+        try std.testing.expectError(error.Invalid, fixture_t.pipeline(&.{}, &.{range}));
 }
