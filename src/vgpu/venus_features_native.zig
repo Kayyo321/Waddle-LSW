@@ -128,6 +128,7 @@ pub fn publish_batch(chain: *const chain_t, nodes: []const node_t) !void {
     for (nodes, 0..) |node, index| publish_node(chain.addresses[index].?, node.flags[0..node.flag_count]);
 }
 
+// Test-only fixtures.
 fn malformed_target(address: usize) *c.VkBaseOutStructure {
     @setRuntimeSafety(false); // Test fixture only: validate rejection before this pointer is dereferenced.
     return @ptrFromInt(address);
