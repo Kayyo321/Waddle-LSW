@@ -14,11 +14,11 @@
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 35% | Guest frontend and bounded userland adapter/DLL native CI pass; full Vulkan ICD and DXVK pending |
-| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 70% | Export, metadata, presenter and credential-bound FD channel verified; worker/surface/release routing and end-to-end GPU presentation pending |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 80% | Export, metadata, presenter and credential-bound FD channel verified; worker/surface/release routing and end-to-end GPU presentation pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `59.25%`
+**Total Feature Completion**: `60.75%`
 
 ## Commit History & Progress Log
 
@@ -771,7 +771,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: No host FD enters the guest ring; borrowed socket/native
     identity lifetime and every malformed-message cleanup obligation are explicit.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): transfer presentation frames with credential-bound FDs`
+- **Commit `0d8d0b6`**: `feat(vgpu): transfer presentation frames with credential-bound FDs`
   - **Task Impact**: +10% to TODO: #4 (+1.5% overall) for bounded codec/native FD
     ownership; +5% to TODO: #3 (+1.25% overall) for native adapter/DLL acceptance.
   - **Summary**: Add exact Zig image/damage frame codec and separate nonblocking
@@ -787,3 +787,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37403866555 .
     Wayland presenter CI passed at 8a065bd:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37403394245 .
+
+- **Commit (current; resolve by subject)**: `test(vgpu): verify native Wayland frame descriptor integration`
+  - **Task Impact**: +10% to TODO: #4 (+1.5% overall).
+  - **Summary**: Exercise production frame channel and presenter across actual
+    libwayland client/server sockets, real FD transfer and generated protocol.
+  - **Verification**: Sixteen frames verify backing inode identity, partial damage,
+    frame callbacks, release ownership, rejected import and subsequent recovery;
+    normal and ASan/LSan/UBSan runs pass. Synthetic allocation remains explicitly
+    mock-only; hardware Venus image/export and worker routing remain pending.

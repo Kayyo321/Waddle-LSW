@@ -510,3 +510,22 @@ vgpu-frame-coverage: build/venus_frame.o build/venus_bounds.o
 	python3 tests/av/coverage.py venus_frame
 
 vgpu-windows: build/vgpu_frame_codec_test.exe
+
+# Actual client/server protocol fixture: mock allocation, native Wayland FD transfer.
+build/linux_dmabuf_server.h: /usr/share/wayland-protocols/stable/linux-dmabuf/linux-dmabuf-v1.xml | build
+	wayland-scanner server-header $< $@
+
+VgpuPresentIntegrationSources = tests/vgpu/present_integration.c src/vgpu/venus_present.c src/vgpu/venus_frame_linux.c build/linux_dmabuf_protocol.c
+VgpuPresentIntegrationHeaders = $(VgpuPresentHeaders) $(VgpuFrameHeaders) build/linux_dmabuf_client.h build/linux_dmabuf_server.h
+VgpuPresentIntegrationFlags = -Ibuild $(shell pkg-config --cflags wayland-client wayland-server)
+VgpuPresentIntegrationLibraries = $(shell pkg-config --libs wayland-client wayland-server) -pthread
+build/vgpu_present_integration: $(VgpuPresentIntegrationSources) $(VgpuPresentIntegrationHeaders) build/venus_frame.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuPresentIntegrationFlags) $(VgpuPresentIntegrationSources) build/venus_frame.o $(LDFLAGS) $(VgpuPresentIntegrationLibraries) -o $@
+
+.PHONY: vgpu-present-integration vgpu-present-integration-sanitizers
+vgpu-present-integration: build/vgpu_present_integration
+	./build/vgpu_present_integration
+
+vgpu-present-integration-sanitizers: $(VgpuPresentIntegrationSources) $(VgpuPresentIntegrationHeaders) build/venus_frame.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) $(VgpuPresentIntegrationFlags) $(VgpuPresentIntegrationSources) build/venus_frame.o $(VgpuPresentIntegrationLibraries) -o build/vgpu_present_integration_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_present_integration_sanitized

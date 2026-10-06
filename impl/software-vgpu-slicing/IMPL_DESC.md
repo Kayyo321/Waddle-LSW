@@ -1489,3 +1489,35 @@ integration work. Split the 20% handoff milestone into 10% codec/native channel
 ownership and 10% actual worker/presentation/release routing. Require corruption,
 FD count/type/credential/context errors, descriptor closure and process-separated
 transfer under sanitizers plus >=90% protocol/native coverage.
+
+
+### Native Wayland wire acceptance fixture (Task #4)
+
+`vgpu-present-integration` links production presenter, frame codec/channel and
+actual libwayland-client/server with scanner-generated client/server declarations.
+A server-owned display runs on its own joined pthread; only an atomic rejection
+flag crosses threads. Client uses a socket-connected display, registry-bound
+version-four compositor/DMA-BUF globals and one borrowed target surface. Server
+sends a real format-table FD and native feedback arrays. The production presenter
+maps only the format metadata table and closes it after copying bounded metadata.
+
+Sixteen frames first traverse production seqpacket credential/FD checks. The client
+closes received original FDs immediately after successful import marshalling;
+libwayland owns its kernel duplicates. Server checks fstat device/inode against
+the original synthetic allocation at params.add, duplicates the FD into wl_buffer
+ownership, and closes both params/buffer FD owners on resource destruction. No
+participant maps or copies pixels. The server validates exact partial damage and
+sends separate frame.done and buffer.release events. Frame eight sends params.failed
+and must never attach/commit. The following frame succeeds on the same surface.
+All loops have a roundtrip count bound and a 30-second process deadline.
+
+Client waits for release/rejection completion, drains frame callbacks, frees the
+idle presenter, destroys borrowed protocol objects, disconnects and joins server.
+The server's client-destroy listener terminates its event loop; display destruction
+cleans remaining resources. Expected totals are fifteen imports/commits/damage
+requests and one rejection. ASan/LSan/UBSan covers native protocol acquisition and
+teardown. This mock deliberately accepts a regular memfd as a synthetic allocation;
+it proves protocol, backing-identity and ownership integration, not GPU image
+allocation/export or hardware compositor scanout. Split the final 20% verification
+milestone into 10% native mock protocol integration and 10% rendered Venus hardware
+image export/presentation. Worker runtime routing remains its separate 10% gate.

@@ -54,6 +54,8 @@ jobs:
         run: make vgpu-wddm-test vgpu-wddm-sanitizers vgpu-wddm-coverage
       - name: Verify credential-bound frame descriptor handoff
         run: make vgpu-frame-test vgpu-frame-sanitizers vgpu-frame-coverage
+      - name: Verify native Wayland wire and frame FD integration
+        run: make vgpu-present-integration vgpu-present-integration-sanitizers
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership
