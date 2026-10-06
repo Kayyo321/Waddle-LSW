@@ -61,6 +61,8 @@ typedef struct fixture_t {
     int32_t gpu_failure;
     unsigned char fence_ready[4096];
     uint32_t fence_pending;
+    unsigned properties_override;
+    uint32_t properties_version;
     unsigned fence_override;
     int32_t fence_result;
 } fixture_t;
@@ -237,6 +239,8 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 (fixture->command == 33 && read_u32(bytes + 44) == 0))
                 put_u64(fixture->reply + 16, 0);
         }
+        if (fixture->command == 6 && fixture->properties_override)
+            put_u32(fixture->reply + 12, fixture->properties_version);
         if (fixture->command == fixture->corrupt_command) {
             if (fixture->command == 0)
                 fixture->reply[16] ^= 1;
@@ -521,7 +525,8 @@ static void healthy(fixture_t *fixture) {
         get_queue(device_handle, 0, 0, &repeat);
         assert(!repeat);
         device_destroy(device_handle, NULL);
-        assert(properties.vendorID == 42 && features.robustBufferAccess && memory.memoryTypeCount);
+        assert(properties.apiVersion == VK_API_VERSION_1_0 && properties.vendorID == 42 &&
+               features.robustBufferAccess && memory.memoryTypeCount);
         get_properties((VkPhysicalDevice)(uintptr_t)1, &properties);
         get_properties(NULL, &properties);
         get_properties(devices[0], NULL);
@@ -944,6 +949,58 @@ static void device_failures(void) {
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
+static void version_contract(void) {
+  fixture_t fixture = fresh();
+  assert(venus_icd_bind(exchange, &fixture) == RingOk);
+  VkApplicationInfo application = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO};
+  VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+                               .pApplicationInfo = &application};
+  const uint32_t Rejected[] = {VK_API_VERSION_1_1, VK_API_VERSION_1_3,
+                               VK_MAKE_API_VERSION(1, 1, 0, 0),
+                               VK_MAKE_API_VERSION(0, 2, 0, 0), 1};
+  for (unsigned index = 0; index < sizeof(Rejected) / sizeof(*Rejected);
+       index++) {
+    application.apiVersion = Rejected[index];
+    VkInstance instance = (VkInstance)(uintptr_t)1;
+    assert(create_function()(&info, NULL, &instance) ==
+           VK_ERROR_INCOMPATIBLE_DRIVER);
+    assert(!instance && !fixture.submissions);
+  }
+  const uint32_t Accepted[] = {0, VK_API_VERSION_1_0,
+                               VK_MAKE_API_VERSION(0, 1, 0, 4095)};
+  for (unsigned index = 0; index < sizeof(Accepted) / sizeof(*Accepted);
+       index++) {
+    application.apiVersion = Accepted[index];
+    VkInstance instance = NULL;
+    assert(create_function()(&info, NULL, &instance) == VK_SUCCESS && instance);
+    destroy(instance);
+  }
+  assert(venus_icd_unbind() == RingOk);
+  const uint32_t InvalidHost[] = {0, VK_MAKE_API_VERSION(1, 1, 0, 0),
+                                  VK_MAKE_API_VERSION(0, 2, 0, 0)};
+  for (unsigned index = 0; index < sizeof(InvalidHost) / sizeof(*InvalidHost);
+       index++) {
+    fixture = fresh();
+    assert(venus_icd_bind(exchange, &fixture) == RingOk);
+    VkInstance instance = create();
+    VkPhysicalDevice devices[2];
+    uint32_t count = 2;
+    PFN_vkEnumeratePhysicalDevices enumerate =
+        (PFN_vkEnumeratePhysicalDevices)lookup_external(
+            instance, "vkEnumeratePhysicalDevices");
+    assert(enumerate(instance, &count, devices) == VK_SUCCESS);
+    fixture.properties_override = 1;
+    fixture.properties_version = InvalidHost[index];
+    VkPhysicalDeviceProperties output, saved;
+    memset(&output, 0xa5, sizeof(output));
+    memcpy(&saved, &output, sizeof(saved));
+    ((PFN_vkGetPhysicalDeviceProperties)lookup_external(
+        instance, "vkGetPhysicalDeviceProperties"))(devices[0], &output);
+    assert(!memcmp(&saved, &output, sizeof(saved)));
+    assert(enumerate(instance, &count, devices) == VK_ERROR_DEVICE_LOST);
+    venus_icd_abandon();
+  }
+}
 static void failures(void) {
     VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     VkInstance instance = (VkInstance)(uintptr_t)1;
@@ -1344,6 +1401,7 @@ int main(void) {
     idle_failures();
     device_failures();
     failures();
+    version_contract();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();

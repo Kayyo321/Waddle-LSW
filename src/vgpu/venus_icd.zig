@@ -139,6 +139,12 @@ fn create_instance(
     output.* = null;
     if (info == null or command.exchange == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (info.*.pApplicationInfo != null) {
+        const version = info.*.pApplicationInfo.*.apiVersion;
+        if (version != 0 and (version >> 29 != 0 or
+            ((version >> 22) & 0x7f) != 1 or ((version >> 12) & 0x3ff) != 0))
+            return c.VK_ERROR_INCOMPATIBLE_DRIVER;
+    }
     var available: ?*instance_cache_t = null;
     for (&caches) |*entry| if (entry.handle == 0) {
         available = entry;
@@ -811,9 +817,15 @@ fn properties(
     defer mutex.unlock();
     if (output == null) return;
     const reply = query(physical, 6) orelse return;
-    if (c.venus_values_properties_decode(output, reply.ptr, reply.len) != c.RingOk) {
+    var staged: c.VkPhysicalDeviceProperties = undefined;
+    if (c.venus_values_properties_decode(&staged, reply.ptr, reply.len) != c.RingOk or
+        staged.apiVersion >> 29 != 0 or ((staged.apiVersion >> 22) & 0x7f) != 1)
+    {
         _ = failure(c.RingCorrupt);
+        return;
     }
+    staged.apiVersion = c.VK_API_VERSION_1_0;
+    output.* = staged;
 }
 /// Query actual host core features; same serialized/preserved-output contract as properties.
 fn features(

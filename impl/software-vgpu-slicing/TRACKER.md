@@ -1405,8 +1405,19 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     worker runtime remains separately verified. Native Windows/updated-head CI
     required before completing dependency task or loader ABI milestone credit.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify experimental API version consistency`
+- **Commit `623e1a5`**: `docs(vgpu): specify experimental API version consistency`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Align public physical properties/instance requests with declared
     experimental API1.0, keep host query data private until validated, and preserve
     the separate complete runtime/DXVK acceptance requirements.
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): enforce experimental public API version ceiling`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Reject unsupported instance API requests before object reservation
+    or host submission. Decode physical properties privately, reject invalid host
+    API variants/majors without changing caller storage, and cap successful public
+    properties at declared API1.0 while preserving all other host fields.
+  - **Verification**: Native default/patch/unsupported API requests, unchanged
+    outputs on invalid host versions, 128 healthy cycles and independent newer-host
+    encoder pass. ASan/LSan/UBSan reports no leaks; Zig tests pass; production
+    coverage99.63% lines/93.35% branches. Updated native loader/Windows CI required.
