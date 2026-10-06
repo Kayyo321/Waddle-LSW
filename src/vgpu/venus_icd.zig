@@ -1341,6 +1341,7 @@ fn destroy_buffer(
         c.VK_OBJECT_TYPE_BUFFER,
         parent.id,
     ) orelse return;
+    if (resource_state(record).inflight_count != 0) return;
     const index = resource_index(record);
     const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
     for (resource_states) |state| if (state.buffer_references[index / 64] & bit != 0 and
@@ -3025,6 +3026,90 @@ fn push_constants(command_buffer: c.VkCommandBuffer, layout: c.VkPipelineLayout,
     const writer = compute_wire.push_constants(record.id, target.id, stages, offset, bytes[0..size]) catch unreachable;
     if (command_acknowledged(&writer, 132)) command_profile(record).* = next;
 }
+/// Dispatch compute using compatible currently bound static buffer definitions.
+/// [in] private command token borrowed; groups checked against actual queried device limits.
+/// Void; malformed recording invalidates. Mutex serialized, no allocation or pointer retention.
+/// Acknowledged dispatch retains consumed buffers; core descriptor updates invalidate recordings.
+fn dispatch(command_buffer: c.VkCommandBuffer, x: u32, y: u32, z: u32) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    var parent: ?*c.venus_object_t = null;
+    for (&slots) |*slot| if (slot.id == pool.parent_id and slot.kind == c.VK_OBJECT_TYPE_DEVICE) {
+        parent = slot;
+        break;
+    };
+    if (!ensure_descriptor_limits(parent.?)) return;
+    const groups = [3]u32{ x, y, z };
+    const limits = device_cache(parent.?.handle).?.compute_group_limits;
+    for (groups, limits) |value, maximum| if (value > maximum) {
+        state.command_state = .Invalid;
+        return;
+    };
+    const metadata = command_profile(record);
+    const pipeline = child_object(metadata.pipeline, c.VK_OBJECT_TYPE_PIPELINE, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const expected = profiles.get_profile(&profile_registry.pipelines, resource_state(pipeline).profile_index).?;
+    for (expected.sets[0..expected.set_count], 0..) |definition, set_index| {
+        var required = false;
+        for (definition.bindings[0..definition.binding_count]) |binding| if (binding.stage_flags & 0x20 != 0) {
+            required = true;
+            break;
+        };
+        if (!required) continue;
+        if (!metadata.descriptor_layout_ready or !compute_state.layouts_compatible(&metadata.descriptor_layout, expected, set_index)) {
+            state.command_state = .Invalid;
+            return;
+        }
+        const set = descriptor_set_for(if (metadata.sets[set_index] != 0) @ptrFromInt(metadata.sets[set_index]) else null, pool.parent_id) orelse {
+            state.command_state = .Invalid;
+            return;
+        };
+        const profile = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
+        if (!std.meta.eql(definition, profile.layout)) {
+            state.command_state = .Invalid;
+            return;
+        }
+        for (profile.descriptors[0..profile.descriptor_count]) |descriptor| {
+            var visible = false;
+            for (definition.bindings[0..definition.binding_count]) |binding| if (binding.binding == descriptor.binding) {
+                visible = binding.stage_flags & 0x20 != 0;
+                break;
+            };
+            if (visible and !descriptor_buffer_valid(parent.?, &descriptor)) {
+                state.command_state = .Invalid;
+                return;
+            }
+        }
+    }
+    const writer = compute_wire.dispatch(record.id, groups) catch unreachable;
+    if (!command_acknowledged(&writer, 110)) return;
+    // Core descriptor updates invalidate this recorded command. Retain only buffers
+    // consumed by this dispatch, after acknowledgment, independently of later binds.
+    for (expected.sets[0..expected.set_count], 0..) |definition, set_index| {
+        var visible = false;
+        for (definition.bindings[0..definition.binding_count]) |binding| if (binding.stage_flags & 0x20 != 0) {
+            visible = true;
+            break;
+        };
+        if (!visible) continue;
+        const set = descriptor_set_for(@ptrFromInt(metadata.sets[set_index]), pool.parent_id).?;
+        const profile = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
+        for (profile.descriptors[0..profile.descriptor_count]) |descriptor| {
+            for (definition.bindings[0..definition.binding_count]) |binding| if (binding.binding == descriptor.binding and binding.stage_flags & 0x20 != 0) {
+                command_reference(state, child_object(descriptor.buffer, c.VK_OBJECT_TYPE_BUFFER, pool.parent_id).?);
+                break;
+            };
+        }
+    }
+}
+
 /// Record a bounded fill of a private device buffer; CPU acknowledgment only.
 /// @param[in] command_buffer Nullable private borrowed handle; invalid states ignored.
 /// @param[in] buffer Nullable same-device bound TRANSFER_DST token, no ownership transfer.
@@ -3760,6 +3845,23 @@ fn queue_submit(
                 return c.VK_ERROR_INITIALIZATION_FAILED;
         };
     };
+    // Retain every recorded identity, rather than only the submitted command buffer.
+    // Successful descriptor updates invalidate recordings; dispatch records exact consumed buffers.
+    for (slots, 0..) |child, index| {
+        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+        if (staged.references[index / 64] & bit == 0 or child.kind != c.VK_OBJECT_TYPE_COMMAND_BUFFER) continue;
+        for (&staged.references, resource_states[index].buffer_references) |*word, references| word.* |= references;
+    }
+    for (slots, 0..) |child, index| {
+        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+        if (staged.references[index / 64] & bit == 0) continue;
+        if (child.id == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (child.kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER) continue;
+        if (child.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET) {
+            const pool = descriptor_pool_for(&child) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+            if (pool.parent_id != parent.id) return c.VK_ERROR_INITIALIZATION_FAILED;
+        } else if (child.parent_id != parent.id) return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
     if (fence_record) |selected| {
         const status = fence_status_locked(parent, selected);
         if (status == c.VK_SUCCESS) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -3823,6 +3925,10 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateSemaphore", &create_semaphore },
         .{ "vkDestroySemaphore", &destroy_semaphore },
+        .{ "vkCmdBindPipeline", &bind_pipeline },
+        .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
+        .{ "vkCmdPushConstants", &push_constants },
+        .{ "vkCmdDispatch", &dispatch },
         .{ "vkCreateComputePipelines", &create_compute_pipelines },
         .{ "vkDestroyPipeline", &destroy_pipeline },
         .{ "vkCreateShaderModule", &create_shader_module },
@@ -3848,9 +3954,6 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkAllocateCommandBuffers", &allocate_command_buffers },
         .{ "vkFreeCommandBuffers", &free_command_buffers },
         .{ "vkBeginCommandBuffer", &begin_command_buffer },
-        .{ "vkCmdBindPipeline", &bind_pipeline },
-        .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
-        .{ "vkCmdPushConstants", &push_constants },
         .{ "vkCmdFillBuffer", &fill_buffer },
         .{ "vkCmdCopyBuffer", &copy_buffer },
         .{ "vkCmdUpdateBuffer", &update_buffer },
