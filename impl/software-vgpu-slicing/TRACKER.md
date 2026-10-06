@@ -1328,7 +1328,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     job112393470812 identified missing vn_cs.h before executing the fixture.
     Updated-head native Windows verification remains required.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): wait for explicit GPU retirement in ICD idle calls`
+- **Commit `4620bf9`**: `feat(vgpu): wait for explicit GPU retirement in ICD idle calls`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; full synchronization gate pending).
   - **Summary**: Resolve queue/device idle through negotiated GPU fence issue/poll
     envelopes; validate successful shapes and strictly increasing per-ring IDs.
@@ -1342,3 +1342,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Native Windows and updated-head GitHub CI remain required. TODO #3 remains40%;
     complete graphics/compute/memory APIs, public synchronization objects and real
     DXVK execution are pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify public fence ownership and polling`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify bounded fence creation/destruction/reset/status/wait wire
+    commands, device-parent validation, nonblocking receiver polls, caller timeout
+    semantics and mutex release so another thread can signal pending fences.

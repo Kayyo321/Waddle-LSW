@@ -2602,3 +2602,43 @@ Verify the actual worker queue/device idle path, pending issue/poll, malformed
 response shape/replayed identity, timeout and transport failure. Existing sanitizer,
 Zig allocator,90% production coverage and native Windows gates apply. These idle
 functions are only part of the still incomplete synchronization/command API gate.
+
+### Public core fence object lifecycle and waiting
+
+Implement vkCreateFence, vkDestroyFence, vkResetFences, vkGetFenceStatus and
+vkWaitForFences as bounded native ABI dispatch. Fences are nondispatchable private
+namespace/id tokens, parented to their creating device. No application or host
+pointer enters the wire. Create accepts canonical tag8, null pNext and flags0/1;
+serialize command35/device/input-pointer1/tag8/pNext0/flags/allocator0/output1/id.
+Validate command35/result/tag1/reserved identity before publishing; negative native
+results release the reservation, malformed/lost replies retain poisoned ownership.
+Destroy command36 contains device/fence/allocator0 and releases only after matching
+command reply. Device destruction refuses any nonqueue child before host submission.
+
+Reset command37 accepts1..64 accessible borrowed native handles, all validated as
+live fence children of the exact device before encoding count/array tag/IDs. Status
+command38 encodes exact device/fence IDs. Validate signed result replies and accept
+only SUCCESS, NOT_READY where appropriate, or negative host errors. Device loss
+poisons binding; malformed positive statuses also poison it. All calls are mutex
+serialized for one exchange and use fixed private command/reply storage only.
+
+Wait accepts1..64 fence handles, canonical waitAll0/1 and unsigned nanosecond timeout.
+Snapshot native tokens into fixed private storage at entry; validate parent/identity
+on every round. Submit command39 with native waitAll but wire timeout0, keeping the
+receiver nonblocking. One complete poll is always attempted, including timeout0.
+SUCCESS returns; TIMEOUT retries until monotonic elapsed time reaches the caller's
+requested timeout, sleeping min(1ms, remaining timeout) between rounds. UINT64_MAX
+remains effectively indefinite. Every individual CPU exchange retains the existing
+ICD transport deadline. Release the mutex between rounds so another application
+thread can submit the work that signals a waited fence. Vulkan callers must keep
+device/fences alive throughout a wait and must not concurrently mutate input arrays.
+No heap allocation, callback retention, fence ownership transfer or early GPU
+completion inference occurs. Host submission errors and local invalid identities
+return explicit errors; finite timeout returns VK_TIMEOUT without poisoning/releasing.
+
+Verify independent pinned native encoders for all five commands; signaled/unsignaled
+status, reset, any/all wait, zero and finite timeout, invalid/stale/foreign device
+parents, negative creation rollback, and corrupt/transport failures. Run actual
+worker signaled fence/status/wait/reset/timeout/destroy cycles, sanitizers, Zig
+allocator and90% coverage/native Windows CI. Public queue submission and semaphore
+objects remain separate runtime work; this increment alone earns no full API credit.
