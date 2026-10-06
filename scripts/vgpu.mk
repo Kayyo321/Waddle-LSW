@@ -359,3 +359,16 @@ vgpu-context-sanitizers: build/venus_bounds.o
 vgpu-context-coverage: build/venus_bounds.o
 	python3 tests/vgpu/coverage.py context
 
+
+VgpuContextSources = src/vgpu/venus_context.c src/vgpu/venus_worker.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c
+VgpuContextObjects = build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
+build/vgpu_contexts_integration: tests/vgpu/contexts_integration.c $(VgpuContextSources) $(VgpuContextObjects) build/waddle_vgpu_worker include/waddle/venus_context.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/contexts_integration.c $(VgpuContextSources) $(VgpuContextObjects) -o $@
+
+.PHONY: vgpu-context-integration vgpu-context-integration-sanitizers
+vgpu-context-integration: build/vgpu_contexts_integration
+	RENDER_SERVER_EXEC_PATH="$(CURDIR)/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_contexts_integration
+
+vgpu-context-integration-sanitizers: $(VgpuContextObjects) build/waddle_vgpu_worker_sanitized
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/contexts_integration.c $(VgpuContextSources) $(VgpuContextObjects) -o build/vgpu_contexts_integration_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_contexts_integration_sanitized

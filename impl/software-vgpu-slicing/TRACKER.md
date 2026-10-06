@@ -592,7 +592,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     passes. Windows request/runtime cross-link passes; native CI follows.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): bound isolated context lifetimes and mapping budgets`
+- **Commit `4b8913a`**: `feat(vgpu): bound isolated context lifetimes and mapping budgets`
   - **Task Impact**: +10% to TODO: #2 (+2.0% overall) for bounded controller ownership.
   - **Summary**: Add eight-slot process-isolated controller, monotonic nonreused
     handles, aggregate mapping/count budgets, duplicate backing rejection,
@@ -603,3 +603,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Production C line coverage 100%, branch coverage 96.61%. Existing worker
     process-launch and recovery fixtures remain separately gated. Simultaneous
     renderer execution is the next distinct 10% acceptance gate.
+
+
+- **Commit `ae50f3d`**: `Updated README.md`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Independent user documentation commit during receiver work;
+    no software vGPU task credit or receiver source change.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): verify simultaneous isolated context execution`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall); simultaneous execution 10% awaits CI.
+  - **Summary**: Execute eight live production workers over separate mapped
+    regions/UNIX streams with identical registry/resource/fence IDs, distinct
+    resource contents and actual Venus CPU replies. Exercise profile mismatch
+    retry, repeated negotiation, one-worker SIGKILL, seven-context survival,
+    fresh startup, stale-handle rejection and three full churn rounds.
+  - **Verification**: Native Linux normal and ASan/LSan/UBSan integration runs
+    pass with all caller descriptors returned to baseline. Workers use the
+    sanitizer-instrumented production executable. Add these gates to Linux CI.
+    Native Windows negotiation fixtures have passed; remaining Linux CI is running.

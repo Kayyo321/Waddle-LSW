@@ -56,6 +56,8 @@ jobs:
         run: make vgpu-runtime-test vgpu-runtime-sanitizers vgpu-runtime-coverage
       - name: Verify independent mapped-file guest and real Venus replies
         run: make vgpu-integration vgpu-integration-sanitizers
+      - name: Verify simultaneous context execution and crash isolation
+        run: make vgpu-context-integration vgpu-context-integration-sanitizers
       - name: Verify ring safety and independent-process ordering
         run: make vgpu-test vgpu-sanitizers
       - name: Gate production C and Zig transport coverage
