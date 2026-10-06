@@ -3563,3 +3563,39 @@ reuse, actual host coherency rejection, transfer failures and abandonment. Nine
 Zig tests with native fixtures pass; ASan/LSan/UBSan pass with no reported leaks.
 Mapping-stage production coverage is99.53% lines and93.56% branches. These
 fixtures alone do not establish GPU data transfer or full API completion.
+
+### Image and shader public ownership integration (TODO #3)
+
+Image metadata records type, format, mip/layer counts and usage in the existing
+512-slot resource ledger. Validate create input before reservation; host success
+publishes the token, ordinary negative result rolls back, uncertain transport/
+corrupt result retains identity until receiver retirement and abandonment. Image
+requirements command31 stages size/alignment/type bits; binding command29 uses
+actual cached requirements, same-device memory identity and subtraction-safe
+size/offset/alignment checks. Image views retain their image until exact native
+destruction. Image destruction refuses live views/inflight use and invalidates
+recorded nonpending command buffers whose dependency bitsets contain that image.
+Image/view/shader identities retire only after exact command acknowledgment.
+
+Image barriers require live bound same-device image, configured queue family
+pair and mip/layer range within metadata. No layout state is inferred from
+recording order; native application synchronization determines execution order.
+Barrier packet size is checked as a whole before writing, including all memory,
+buffer and image arrays, because individual count bounds alone can overflow
+8192-byte staging. Validated host acknowledgment adds image references to existing
+command lifetime bitsets, preventing reuse during submission. Shader modules
+retain bounded SPIR-V validation and exact host lifetime rules. Creation/destruction
+and malformed/loss paths require native oracle fixtures, sanitizers and90% source
+coverage; production image transitions and compute/draw remain separate gates.
+
+### Whole-packet codec capacity proofs
+
+Owned create writers start with used0. After validating all bounded array counts,
+exact packet-size checks prove each subsequent scalar fits capacity before any
+packet publication. Internal infallible writes are permissible only under that
+whole-packet proof; unexpected exhaustion is a compiler safety trap, not an
+untestable external error. Public writer scalar operations remain checked and
+caller-owned barrier append validates capacity for the complete record before
+any mutation. Independent upstream oracle lengths and maximum valid packets must
+verify each capacity calculation; oversized requests fail before array access.
+This preserves honest coverage of input error paths without lowering thresholds.

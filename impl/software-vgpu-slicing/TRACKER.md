@@ -1853,7 +1853,7 @@ The documentation synchronization commit is identified by its unique subject
   - **Summary**: Native mapped-resource copies, permission and padded extent guards
     pass ownership tests and ASan/LSan/UBSan; receiver coverage100% lines,98.91%
     branches. Actual ICD mapped GPU bytes remain an independent acceptance gate.
-- **Commit `aacf99d`**: `feat(vgpu): validate and encode bounded SPIR-V modules`
+- **Commit `aacf99d`**: `feat(vgpu): validate and serialize bounded SPIR-V shader modules`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Seven image/shader codec tests pass, including generated oracle
     comparisons and8192-byte boundary. Shader runtime integration pending.
@@ -1861,3 +1861,27 @@ The documentation synchronization commit is identified by its unique subject
 The specification/audit commit is identified by unique subject
 `docs(vgpu): specify bounded shader and compute layout encoders`; +0% to TODO#3
 and overall, since no runtime gate is accepted by wire codecs alone.
+
+- **Commit `9cf6056`**: `docs(vgpu): specify bounded shader and compute layout encoders`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Detailed shader and layout wire limits and prior evidence.
+- **Commit `e11c841`**: `feat(vgpu): serialize core descriptor and pipeline layouts`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Nine image/shader/layout tests match independent generated
+    encoders; runtime descriptor/pipeline ownership integration pending.
+- **Commit `355e944`**: `docs(vgpu): detail ICD mapped shadow ownership and backend requirements`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Precise public noncoherent/raw host coherent properties and backend
+    bounded copy contracts, with native safety and coverage acceptance.
+- **Commit `db5402c`**: `feat(vgpu): map coherent host allocations through noncoherent guest shadows`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall), pending hardware acceptance.
+  - **Summary**: Native/shared loader tests, ASan/LSan/UBSan, Zig allocator and
+    Windows cross-build pass. ICD coverage99.53% lines,93.56% branches.
+- **Commit `51af1e6`**: `chore(vgpu): track render codec dependencies for ICD builds`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Explicit Linux/Windows imported-module dependencies prevent stale
+    incremental ICD objects during integration.
+
+The current ownership/proof specification commit is identified by unique subject
+`docs(vgpu): specify image lifetime integration and packet capacity proofs`;
++0% to TODO#3 and overall until its corresponding runtime acceptance.
