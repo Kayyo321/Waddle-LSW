@@ -21,3 +21,12 @@ vgpu-dxvk-client-build: vgpu-dxvk-pin | build
 	ninja -C build/dxvk_win64 -j2
 	test -s build/dxvk_win64/src/dxgi/dxgi.dll
 	test -s build/dxvk_win64/src/d3d11/d3d11.dll
+
+# Private immutable loader crossbuild: native discovery remains a separate gate.
+.PHONY: vgpu-native-loader-win64
+vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan_loader.cmake scripts/vulkan_loader_win64.cmake
+	cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_win64 -G Ninja -DCMAKE_TOOLCHAIN_FILE="$(CURDIR)/scripts/vulkan_loader_win64.cmake" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE="$(CURDIR)/scripts/vulkan_loader.cmake" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DUSE_GAS=ON
+	cmake --build build/vendor/vulkan_loader_win64 --parallel 4
+	test -s build/vendor/vulkan_loader_win64/loader/vulkan-1.dll
+	x86_64-w64-mingw32-objdump -f build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'file format pei-x86-64'
+	x86_64-w64-mingw32-objdump -p build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'DLL Name:'
