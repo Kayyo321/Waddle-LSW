@@ -1608,7 +1608,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspect pinned encoder and versioned Vulkan1.4.307 common
     validity; implementation/execution gates remain pending. TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): record bounded buffer copies with allocation alias checks`
+- **Commit `c7bf471`**: `feat(vgpu): record bounded buffer copies with allocation alias checks`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; GPU submission pending).
   - **Summary**: Dispatch command112 only after validating every1..64 region,
     same-device bound transfer usage and requested-size bounds. Retain successful
@@ -1624,3 +1624,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Linux loader public copy dispatch passes normal/sanitized. Windows fixture,
     DLL and loader fixture cross-link pass. Latest CI remains required. TODO #3
     stays50%; actual submission/full API/mapping/DXVK still pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify full-size inline update staging`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Define native1..65536-byte update input, exact command117, fixed
+    disjoint scratch/tx staging and source capture/scrub lifecycle. Preserve the
+    small writer stack bound and shared buffer lifetime/recording rules.
+  - **Verification**: Inspect pinned blob encoder4-byte stride, command owner's
+    overlap checks/36-byte prefix and Vulkan update valid usage. Implementation
+    and full-size production-worker proof remain pending. TODO #3 stays50%.

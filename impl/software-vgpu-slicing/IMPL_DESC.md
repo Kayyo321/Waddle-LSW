@@ -3098,3 +3098,46 @@ region, both source/destination destruction invalidation, reset/slot reuse and
 transport/tag errors. Verify real worker and shared-loader recording under normal
 and zero-leak sanitizers, native Windows fixtures and >=90% metadata coverage.
 No TODO #3 credit is granted before actual command execution/full runtime gates.
+
+### Full-size inline buffer update staging
+
+Route Vulkan1.0 vkCmdUpdateBuffer through pinned Venus command117 with its full
+native1..65536-byte input range. Update requires live Recording command buffer,
+same-device bound TRANSFER_DST buffer, offset4-aligned and below requested buffer
+size, data_size positive/4-aligned/<=65536/<=buffer_size-offset, and nonnull source
+accessible for precisely data_size bytes. Validate every scalar/identity before
+reading source memory. Invalid Recording inputs mark Invalid and send nothing;
+invalid command-buffer handle/state preserves state and sends nothing. No local
+Vulkan allocator callback is used and no application pointer survives the call.
+
+The8192-byte writer remains unchanged to bound Windows stack frames. New static
+update_encoded scratch owns65584 bytes (48-byte header+65536 data). The binding's
+private tx staging grows to65620 bytes (36-byte command owner prefix+65584 maximum
+update). Both arrays are distinct and exclusive under the existing ICD mutex;
+venus_command_start continues rejecting overlap with tx/rx/owner. Small writer
+builds exactly48 header bytes: command11732/flags32(1)/command-buffer-ID64/buffer-ID64/
+offset64/data-size64/blob-array-count64. Copy that initialized header into scratch,
+then copy precisely data_size native bytes after it. Pinned blob stride rounds to4;
+valid input is already4-aligned, so no trailing padding is needed. Maximum submitted
+stream is65620 bytes and remains within the existing negotiated transport bounds.
+There is no size-dependent stack buffer and no heap allocation.
+
+Source contents are captured before dispatch and the receiver records its own
+native command-buffer data copy. CPU reply is exactly command117 acknowledgment;
+retain the destination slot reference only after validation, under the same lifetime
+rules as fill/copy. It is not a GPU write completion. Scratch and the used tx range
+are zeroed after transact returns on success or any failure, before releasing the
+mutex; callback's existing contract forbids retaining input pointers. Whole scratch
+is cleared on binding abandonment as well. Uncertain host objects are retained on
+loss until receiver retirement. This scrub avoids retaining inline application data
+in reusable staging after the call; no public read exposes those private arrays.
+
+Verification uses an independent pinned C encoder,4/8/65536-byte patterns and exact
+blob count/data comparison. Cover scalar/identity/binding/usage/count/alignment/
+range guards before source reads, invalid source pointer behind rejected scalar
+inputs, transport/tag errors, recording invalidation and resource resets. Verify
+65536-byte recording through the actual shared loader and production worker, normal
+and zero-leak sanitizer paths, native Windows ABI and at least90% metadata coverage.
+Full GPU data results remain a submission/mapping acceptance gate, without progress
+credit for recording alone. The Vulkan data capture/size rules are defined by
+[vkCmdUpdateBuffer](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdUpdateBuffer.html).
