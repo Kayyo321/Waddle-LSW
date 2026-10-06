@@ -393,7 +393,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Distinguished bounded health sampling from preempting SDK
     calls and isolated worker recovery, which remain separate requirements.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): enforce absolute receiver health deadlines`
+- **Commit `2568f9e`**: `feat(vgpu): enforce absolute receiver health deadlines`
   - **Task Impact**: +3% to TODO: #2 (+0.6% overall) for verified GPU wire CI;
     health's separate 3% gate awaits current CI.
   - **Summary**: Armed independent absolute CPU/per-queue GPU budgets, added
@@ -408,3 +408,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     GPU wire Linux/native Windows CI passed at `fb16a1d` in
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37394675981 .
     Current health CI, real GPU execution and isolated worker recovery remain pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify isolated receiver process ownership`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Defined trusted exec/descriptor handoff, owned process groups,
+    observe-before-reap identity safety and bounded TERM/KILL shutdown. Kept actual
+    worker integration/restart separate from process ownership acceptance.
+  - **Verification**: Explicitly retains unreaped identities on timeout; killing
+    a stuck kernel task is not falsely represented as complete recovery.

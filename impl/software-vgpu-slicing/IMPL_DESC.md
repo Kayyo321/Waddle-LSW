@@ -868,3 +868,37 @@ complete hang recovery. Acceptance includes exact boundary retirement/expiry,
 independent queues, repeated-poll budget retention, configuration with pending
 work, cancellation, clock error/regression/overflow, poisoned cleanup, runtime
 idle/backpressure timeout and unchanged output, >=90% coverage and sanitizer gates.
+
+### Linux receiver process ownership
+
+The isolated recovery gate (3% of Task #2) is split into 1% tested process/descriptor
+ownership and 2% actual receiver-worker integration, guest notification and restart.
+The first component launches a trusted absolute executable without a shell, passing
+only `--venus-worker`. It borrows a regular mapping fd and nonblocking connected
+stream socket; the caller retains both. Temporary CLOEXEC duplicates at fd>=64
+prevent source/target collisions. Child fd 3 is the mapping, fd 4 the guest stream;
+closefrom(5) removes all other inherited descriptors except standard streams.
+Use GNU/Linux posix_spawn closefrom actions with a new process group (pgid=child
+pid). Renderer/server descendants must remain in this owned group. No host threads
+or borrowed caller memory are forked into a running receiver image.
+
+The zero caller-owned worker record owns only the child identity. All spawn action,
+attribute and duplicate-fd acquisitions have symmetric cleanup on success/failure.
+The worker path/environment are trusted host configuration, never guest input.
+No other SIGCHLD handler/waiter may reap this child or set SA_NOCLDWAIT. Poll uses
+waitid WNOWAIT to observe exit while the zombie reserves its identity, kills the
+owned group before reaping, then records exit status. It never signals a reused PID.
+Normal/crash exits both dispose of remaining group descendants. External reaping
+(ECHILD) clears the unsafe identity and returns Corrupt without sending a signal.
+
+Destroy requests group SIGTERM, escalates to group SIGKILL after at most 100ms or
+half the configured 1..60000ms shutdown budget, and polls with bounded one-ms sleeps.
+It never performs a blocking waitpid. Success reaps and zeroes the record. Timeout,
+clock or transient OS failure retains an unreaped identity for subsequent cleanup;
+caller must keep that record and retry/poll rather than abandon it. An uninterruptible
+kernel task may remain alive after SIGKILL: report timeout, retain ownership and
+quarantine it; bounded observation is not proof of kernel-resource recovery.
+Standard stream/logging inheritance is intentional. The later executable must
+validate/map fd 3, perform guest handoff on fd 4, own renderer lifetime, and notify
+closure/restart with fresh mapping/session identity. Process ownership alone does
+not implement that worker or establish GPU recovery.
