@@ -8,6 +8,8 @@
 #define VenusWorkerMappingFd 3
 /** @brief Child nonblocking guest control stream after exec. */
 #define VenusWorkerStreamFd 4
+/** @brief Child trusted native presentation endpoint after presented exec. */
+#define VenusWorkerFrameFd 5
 /** @brief Caller-owned process identity; all fields read-only to callers.
  * @note Zero initialize, never copy/use concurrently. Owns child/group until
  * reaped; destroy before reuse. No heap or retained mapping/socket ownership.
@@ -30,6 +32,22 @@ typedef struct venus_worker_t {
  */
 venus_ring_status_t venus_worker_create(venus_worker_t *worker, const char *path, int mapping_fd,
                                         int stream_fd);
+/** @brief Launch a receiver with a dedicated credential-bound presentation endpoint.
+ * @param[out] worker Nonnull zero private owned child record, unchanged on failure.
+ * @param[in] path Nonnull trusted immutable absolute executable path.
+ * @param[in] mapping_fd Borrowed regular initialized mapping descriptor.
+ * @param[in] stream_fd Borrowed nonblocking guest SOCK_STREAM endpoint.
+ * @param[in] frame_fd Borrowed distinct prepared nonblocking/CLOEXEC AF_UNIX
+ * SOCK_SEQPACKET endpoint with SO_PASSCRED enabled; -1 only with context zero.
+ * @param[in] context Nonzero trusted context; zero only for unbound compatibility.
+ * @return RingOk, Invalid arguments/socket, Corrupt duplicate/spawn failure.
+ * @note Controller thread only. Child fd3/4/5 duplicate borrowed sources, closes
+ * fd>=6, receives fixed context/controller identity arguments. Caller owns original
+ * descriptors and must retain unreaped worker PID through authenticated traffic.
+ */
+venus_ring_status_t venus_worker_create_presented(venus_worker_t *worker, const char *path,
+                                                  int mapping_fd, int stream_fd, int frame_fd,
+                                                  uint64_t context);
 /** @brief Nonblocking observe/clean group/reap, preserving child identity ordering.
  * @param[in,out] worker Nonnull owned live/exited record.
  * @return RingAgain running/interrupted, RingClosed exited, RingInvalid zero/null,

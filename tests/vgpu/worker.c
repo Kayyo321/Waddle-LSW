@@ -16,7 +16,8 @@
 #include <unistd.h>
 
 static int fault, duplicates, dup_actions, clock_calls;
-static int copied[2];
+static int copied[3];
+static int frame_fault;
 static int fixture_fcntl(int fd, int command, ...) {
     if (command != F_DUPFD_CLOEXEC)
         return fcntl(fd, command);
@@ -25,12 +26,12 @@ static int fixture_fcntl(int fd, int command, ...) {
     int minimum = va_arg(arguments, int);
     va_end(arguments);
     duplicates++;
-    if (fault == duplicates) {
+    if (fault == duplicates || (frame_fault == 1 && duplicates == 3)) {
         errno = EMFILE;
         return -1;
     }
     int result = fcntl(fd, command, minimum);
-    assert(duplicates <= 2);
+    assert(duplicates <= 3);
     copied[duplicates - 1] = result;
     return result;
 }
@@ -42,22 +43,26 @@ static int fixture_attributes(posix_spawnattr_t *attributes) {
 }
 static int fixture_dup(posix_spawn_file_actions_t *actions, int source, int target) {
     dup_actions++;
-    return fault == 4 + dup_actions ? ENOMEM
-                                    : posix_spawn_file_actions_adddup2(actions, source, target);
+    return fault == 4 + dup_actions || (frame_fault == 2 && dup_actions == 3)
+               ? ENOMEM
+               : posix_spawn_file_actions_adddup2(actions, source, target);
 }
 static int fixture_closefrom(posix_spawn_file_actions_t *actions, int start) {
-    return fault == 7 ? ENOMEM : posix_spawn_file_actions_addclosefrom_np(actions, start);
+    return fault == 7 || frame_fault == 3
+               ? ENOMEM
+               : posix_spawn_file_actions_addclosefrom_np(actions, start);
 }
 static int fixture_flags(posix_spawnattr_t *attributes, short flags) {
-    return fault == 8 ? EINVAL : posix_spawnattr_setflags(attributes, flags);
+    return fault == 8 || frame_fault == 4 ? EINVAL : posix_spawnattr_setflags(attributes, flags);
 }
 static int fixture_group(posix_spawnattr_t *attributes, pid_t group) {
-    return fault == 9 ? EINVAL : posix_spawnattr_setpgroup(attributes, group);
+    return fault == 9 || frame_fault == 5 ? EINVAL : posix_spawnattr_setpgroup(attributes, group);
 }
 static int fixture_spawn(pid_t *pid, const char *path, const posix_spawn_file_actions_t *actions,
                          const posix_spawnattr_t *attributes, char *const argv[],
                          char *const env[]) {
-    return fault == 10 ? EIO : posix_spawn(pid, path, actions, attributes, argv, env);
+    return fault == 10 || frame_fault == 6 ? EIO
+                                           : posix_spawn(pid, path, actions, attributes, argv, env);
 }
 static int fixture_waitid(idtype_t type, id_t id, siginfo_t *info, int options) {
     if (fault >= 11 && fault <= 13) {
@@ -110,6 +115,15 @@ static int fixture_clock(clockid_t clock, struct timespec *now) {
         now->tv_sec++;
     return result;
 }
+static int fixture_socket_option(int fd, int level, int option, void *value, socklen_t *bytes) {
+    if (frame_fault == 7)
+        return -1;
+    int status = getsockopt(fd, level, option, value, bytes);
+    if (!status && frame_fault == 8 && option == SO_DOMAIN)
+        *(int *)value = AF_INET;
+    return status;
+}
+#define getsockopt fixture_socket_option
 #define fcntl fixture_fcntl
 #define posix_spawn_file_actions_init fixture_actions
 #define posix_spawnattr_init fixture_attributes
@@ -123,6 +137,7 @@ static int fixture_clock(clockid_t clock, struct timespec *now) {
 #define kill fixture_kill
 #define clock_gettime fixture_clock
 #include "venus_worker.c"
+#undef getsockopt
 #undef fcntl
 #undef waitid
 #undef waitpid
@@ -132,7 +147,7 @@ static int fixture_clock(clockid_t clock, struct timespec *now) {
 static int mapping_fd, sockets[2];
 static void fixture_open(unsigned char mode) {
     duplicates = dup_actions = clock_calls = 0;
-    copied[0] = copied[1] = -1;
+    copied[0] = copied[1] = copied[2] = -1;
     mapping_fd = memfd_create("waddle_worker_test", MFD_CLOEXEC);
     assert(mapping_fd >= 0 && ftruncate(mapping_fd, 4096) == 0);
     assert(pwrite(mapping_fd, &mode, 1, 0) == 1);
@@ -140,7 +155,7 @@ static void fixture_open(unsigned char mode) {
 }
 static void fixture_close(void) {
     assert(fcntl(mapping_fd, F_GETFD) >= 0 && fcntl(sockets[1], F_GETFD) >= 0);
-    for (int index = 0; index < 2; index++)
+    for (int index = 0; index < 3; index++)
         if (copied[index] >= 0)
             assert(fcntl(copied[index], F_GETFD) < 0 && errno == EBADF);
     close(mapping_fd);
@@ -178,10 +193,83 @@ static void launch(venus_worker_t *worker, unsigned char mode) {
     assert(venus_worker_create(worker, "/proc/self/exe", mapping_fd, sockets[1]) == RingOk);
     ready();
 }
+static void presented_launch(void) {
+    venus_worker_t worker = {0};
+    fault = frame_fault = 0;
+    fixture_open(0);
+    int frames[2];
+    assert(!socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, frames));
+    const uint64_t Context = UINT64_MAX;
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1], -2,
+                                         0) == RingInvalid);
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1], -1,
+                                         Context) == RingInvalid);
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         frames[1], 0) == RingInvalid);
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         mapping_fd, Context) == RingInvalid);
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         sockets[1], Context) == RingInvalid);
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         sockets[0], Context) == RingInvalid);
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1], 99999,
+                                         Context) == RingInvalid);
+    assert(!fcntl(frames[1], F_SETFL, 0));
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         frames[1], Context) == RingInvalid);
+    assert(!fcntl(frames[1], F_SETFL, O_NONBLOCK));
+    assert(!fcntl(frames[1], F_SETFD, 0));
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         frames[1], Context) == RingInvalid);
+    assert(!fcntl(frames[1], F_SETFD, FD_CLOEXEC));
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         frames[1], Context) == RingInvalid);
+    int enabled = 1;
+    assert(!setsockopt(frames[1], SOL_SOCKET, SO_PASSCRED, &enabled, sizeof(enabled)));
+    for (frame_fault = 1; frame_fault <= 8; frame_fault++) {
+        duplicates = dup_actions = 0;
+        copied[0] = copied[1] = copied[2] = -1;
+        assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                             frames[1], Context) ==
+               (frame_fault >= 7 ? RingInvalid : RingCorrupt));
+        assert(!worker.process_id);
+        for (unsigned index = 0; index < 3; index++)
+            if (copied[index] >= 0)
+                assert(fcntl(copied[index], F_GETFD) < 0 && errno == EBADF);
+    }
+    frame_fault = duplicates = dup_actions = 0;
+    assert(venus_worker_create_presented(&worker, "/proc/self/exe", mapping_fd, sockets[1],
+                                         frames[1], Context) == RingOk);
+    ready();
+    unsigned char packet;
+    struct pollfd descriptor = {.fd = frames[0], .events = POLLIN};
+    assert(poll(&descriptor, 1, 2000) == 1);
+    assert(recv(frames[0], &packet, 1, 0) == 1 && packet == 'P');
+    assert(venus_worker_destroy(&worker, 1000) == RingOk && !worker.process_id);
+    assert(fcntl(frames[1], F_GETFD) >= 0);
+    close(frames[0]);
+    close(frames[1]);
+    fixture_close();
+}
 int main(int argc, char **argv) {
     alarm(30);
     if (argc == 2 && !strcmp(argv[1], "--venus-worker"))
         return child_main();
+    if (argc == 4 && !strcmp(argv[1], "--venus-worker-presented")) {
+        assert(!strcmp(argv[2], "ffffffffffffffff"));
+        char controller[17];
+        assert(snprintf(controller, sizeof(controller), "%016llx", (unsigned long long)getppid()) ==
+               16);
+        assert(!strcmp(argv[3], controller));
+        assert(fcntl(6, F_GETFD) < 0 && errno == EBADF);
+        int type;
+        socklen_t bytes = sizeof(type);
+        assert(!getsockopt(VenusWorkerFrameFd, SOL_SOCKET, SO_TYPE, &type, &bytes));
+        assert(type == SOCK_SEQPACKET && (fcntl(VenusWorkerFrameFd, F_GETFL) & O_NONBLOCK));
+        assert(send(VenusWorkerFrameFd, "P", 1, MSG_NOSIGNAL) == 1);
+        return child_main();
+    }
+    presented_launch();
     venus_worker_t worker = {0};
     assert(venus_worker_poll(NULL) == RingInvalid);
     assert(venus_worker_poll(&worker) == RingInvalid);

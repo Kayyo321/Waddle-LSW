@@ -1890,3 +1890,16 @@ maximum u64 are tested with zeroed failure output and testing allocator cleanup.
 Native Windows ABI fixture checks exact numeric value and uppercase rejection;
 Linux allocator/sanitizer and Windows cross-link pass. Combined frame codecs have
 100% production line/95.12% branch coverage. Worker launch is not yet connected.
+
+
+The presented launcher and production worker entry point are now implemented.
+Native tests verify every preparation/duplication/spawn rollback, fixed maximum
+context/parent argument values, inherited fd5 type/nonblocking state and closefrom6
+isolation. Worker production coverage98.73% lines/95.24% branches and sanitizers
+pass. A separate real exec fixture uses production service plus negotiated guest
+frontend over mapped rings, verifies unregistered image/unknown completion Invalid
+without frame publication, then checks authenticated unknown release causes
+terminal session loss and worker exit1. Healthy teardown exits0. Normal/sanitized
+runs restore descriptor baselines, and existing unbound mapped/exec restart suites
+pass. CI includes these gates. No successful rendered-frame routing or controller
+acknowledgement retry integration is claimed by these negative/launch fixtures.

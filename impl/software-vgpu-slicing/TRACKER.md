@@ -963,10 +963,23 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     worker launcher and argument decoding implementation follows separately.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): decode fixed worker context arguments safely`
+- **Commit `1edc2ba`**: `feat(vgpu): decode fixed worker context arguments safely`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add allocation-free bounded Zig fixed hexadecimal argument decoder
     with explicit C ABI, zero failure output and strict lowercase/nonzero policy.
   - **Verification**: Six Zig allocator tests, native frame transport sanitizers,
     Windows cross-link and frame codec coverage100% lines/95.12% branches pass.
     Tests cover every invalid character position, bounds, zero and maximum identity.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): launch isolated workers with trusted presentation channels`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add prepared fd5 presented launch, collision-safe three-source
+    duplication/rollback, fixed context/controller arguments and production entry
+    point parsing/parent validation before bound service acquisition.
+  - **Verification**: Worker unit/real exec faults and ASan/LSan/UBSan pass; production
+    coverage98.73% lines/95.24% branches. Actual production worker negotiates over
+    mapped rings, rejects unregistered present/unknown polls without native frames,
+    and terminates on authenticated unknown release; both normal/sanitized workers
+    return descriptors to baseline. Existing mapped/exec restart regressions pass.
+    Add Linux CI gates. Controller acknowledgement retry/render routing pending.
