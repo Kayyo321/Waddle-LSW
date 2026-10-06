@@ -1,0 +1,284 @@
+//! Bounded pinned-protocol fixture. No native Vulkan structs or reply casts.
+const std = @import("std");
+const BufferBytes: usize = 4096;
+const MaxDevices: u32 = 16;
+const MaxFamilies: u32 = 32;
+const InstanceId: u64 = 1;
+const DeviceId: u64 = 100;
+const QueueId: u64 = 101;
+const venus_receiver_t = opaque {};
+// Borrowed C ABI operations; ownership/status contract is venus_receiver.h.
+extern fn venus_receiver_create(*?*venus_receiver_t, u32, u64) c_int;
+extern fn venus_receiver_destroy(*?*venus_receiver_t) void;
+extern fn venus_receiver_submit(*venus_receiver_t, [*]const u8, usize, *u64) c_int;
+extern fn venus_receiver_poll(*const venus_receiver_t) c_int;
+extern fn venus_receiver_reply(*const venus_receiver_t, u64, [*]u8, usize) c_int;
+extern fn venus_receiver_health(*venus_receiver_t, ?*const u32) c_int;
+extern fn venus_receiver_gpu_fence(*venus_receiver_t, u32, *u64) c_int;
+extern fn venus_receiver_gpu_poll(*const venus_receiver_t, u32, u64) c_int;
+
+const writer_t = struct {
+    bytes: [BufferBytes]u8 align(64) = undefined,
+    used: usize = 0,
+    fn put(self: *writer_t, comptime integer_t: type, value: integer_t) !void {
+        const extent = @sizeOf(integer_t);
+        if (self.used > self.bytes.len - extent) return error.Bounds;
+        std.mem.writeInt(integer_t, self.bytes[self.used..][0..extent], value, .little);
+        self.used += extent;
+    }
+    fn words(self: *writer_t, values: []const u32) !void {
+        for (values) |value| try self.put(u32, value);
+    }
+    fn begin(self: *writer_t, command: u32) !void {
+        self.used = 0;
+        // SetReplyCommandStreamMESA, no reply flag, blob 1, offset 0, size 4096.
+        try self.words(&.{ 178, 0, 1, 0, 1, 0, 0, BufferBytes, 0, command, 1 });
+    }
+};
+const reader_t = struct {
+    bytes: []const u8,
+    used: usize = 0,
+    fn take(self: *reader_t, count: usize) ![]const u8 {
+        if (self.used > self.bytes.len or count > self.bytes.len - self.used) return error.Bounds;
+        const value = self.bytes[self.used..][0..count];
+        self.used += count;
+        return value;
+    }
+    fn get(self: *reader_t, comptime integer_t: type) !integer_t {
+        const bytes = try self.take(@sizeOf(integer_t));
+        return std.mem.readInt(integer_t, bytes[0..@sizeOf(integer_t)], .little);
+    }
+    fn expect(self: *reader_t, comptime integer_t: type, value: integer_t) !void {
+        if (try self.get(integer_t) != value) return error.Protocol;
+    }
+};
+
+fn wait_cpu(receiver: *venus_receiver_t) !void {
+    var timer = try std.time.Timer.start();
+    while (true) {
+        if (venus_receiver_health(receiver, null) != 0) return error.Renderer;
+        const status = venus_receiver_poll(receiver);
+        if (status == 0) return;
+        if (status != 1) return error.Renderer;
+        if (timer.read() >= 5 * std.time.ns_per_s) return error.Deadline;
+        std.time.sleep(std.time.ns_per_ms);
+    }
+}
+fn exchange(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, command: u32) !reader_t {
+    var fence: u64 = 0;
+    if (venus_receiver_submit(receiver, &writer.bytes, writer.used, &fence) != 0 or fence == 0) return error.Renderer;
+    try wait_cpu(receiver);
+    if (venus_receiver_reply(receiver, 0, reply, reply.len) != 0) return error.Renderer;
+    var reader = reader_t{ .bytes = reply };
+    try reader.expect(u32, command);
+    return reader;
+}
+fn create_instance(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8) !void {
+    try writer.begin(0);
+    try writer.put(u64, 1); // pCreateInfo.
+    try writer.put(u32, 1); // INSTANCE_CREATE_INFO.
+    try writer.put(u64, 0); // pNext.
+    try writer.put(u32, 0); // flags.
+    try writer.put(u64, 1); // pApplicationInfo.
+    try writer.put(u32, 0); // APPLICATION_INFO.
+    try writer.put(u64, 0); // pNext.
+    try writer.put(u64, 0); // application name array.
+    try writer.put(u32, 0); // application version.
+    try writer.put(u64, 0); // engine name array.
+    try writer.words(&.{ 0, (1 << 22) | (1 << 12), 0 }); // engine, API 1.1, layer count.
+    try writer.put(u64, 0); // layer array.
+    try writer.put(u32, 0); // extension count.
+    try writer.put(u64, 0); // extension array.
+    try writer.put(u64, 0); // allocator.
+    try writer.put(u64, 1); // output pointer.
+    try writer.put(u64, InstanceId);
+    var reader = try exchange(receiver, writer, reply, 0);
+    try reader.expect(u32, 0); // VK_SUCCESS.
+    try reader.expect(u64, 1);
+    try reader.expect(u64, InstanceId);
+}
+fn enumerate_devices(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8) !u32 {
+    try writer.begin(2);
+    try writer.put(u64, InstanceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 0);
+    try writer.put(u64, 0);
+    var reader = try exchange(receiver, writer, reply, 2);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    const count = try reader.get(u32);
+    if (count == 0 or count > MaxDevices) return error.NoDevice;
+    try reader.expect(u64, 0);
+    try writer.begin(2);
+    try writer.put(u64, InstanceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, count);
+    try writer.put(u64, count);
+    for (0..count) |index| try writer.put(u64, index + 2);
+    reader = try exchange(receiver, writer, reply, 2);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    try reader.expect(u32, count);
+    try reader.expect(u64, count);
+    for (0..count) |index| try reader.expect(u64, index + 2);
+    return count;
+}
+fn select_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, count: u32, hardware: bool) !u64 {
+    for (0..count) |index| {
+        try writer.begin(6); // GetPhysicalDeviceProperties.
+        try writer.put(u64, index + 2);
+        try writer.put(u64, 1); // Partial properties need no scalar inputs.
+        var reader = try exchange(receiver, writer, reply, 6);
+        try reader.expect(u64, 1);
+        const api = try reader.get(u32);
+        _ = try reader.take(12); // driverVersion, vendorID, deviceID.
+        const device_type = try reader.get(u32);
+        if (device_type > 4) return error.Protocol;
+        try reader.expect(u64, 256);
+        const name = try reader.take(256);
+        const terminator = std.mem.indexOfScalar(u8, name, 0) orelse return error.Protocol;
+        if (hardware and device_type != 1 and device_type != 2) continue;
+        std.debug.print("Venus queue device: type={d} API=0x{x} name={s}\n", .{ device_type, api, name[0..terminator] });
+        return index + 2;
+    }
+    return error.NoDevice;
+}
+fn select_family(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64) !u32 {
+    try writer.begin(7);
+    try writer.put(u64, physical);
+    try writer.put(u64, 1);
+    try writer.put(u32, 0);
+    try writer.put(u64, 0);
+    var reader = try exchange(receiver, writer, reply, 7);
+    try reader.expect(u64, 1);
+    const count = try reader.get(u32);
+    if (count == 0 or count > MaxFamilies) return error.NoDevice;
+    try reader.expect(u64, 0);
+    try writer.begin(7);
+    try writer.put(u64, physical);
+    try writer.put(u64, 1);
+    try writer.put(u32, count);
+    try writer.put(u64, count); // Partial family properties contain no scalar input.
+    reader = try exchange(receiver, writer, reply, 7);
+    try reader.expect(u64, 1);
+    try reader.expect(u32, count);
+    try reader.expect(u64, count);
+    var selected: ?u32 = null;
+    for (0..count) |index| {
+        const flags = try reader.get(u32);
+        const queues = try reader.get(u32);
+        _ = try reader.take(16); // timestamp bits and transfer granularity.
+        if (selected == null and flags & 3 != 0 and queues != 0) selected = @intCast(index);
+    }
+    return selected orelse error.NoDevice;
+}
+fn create_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64, family: u32) !void {
+    try writer.begin(11);
+    try writer.put(u64, physical);
+    try writer.put(u64, 1);
+    try writer.put(u32, 3); // DEVICE_CREATE_INFO.
+    try writer.put(u64, 0);
+    try writer.words(&.{ 0, 1 }); // flags, queueCreateInfoCount.
+    try writer.put(u64, 1);
+    try writer.put(u32, 2); // DEVICE_QUEUE_CREATE_INFO.
+    try writer.put(u64, 0);
+    try writer.words(&.{ 0, family, 1 });
+    try writer.put(u64, 1); // priorities array.
+    try writer.words(&.{ 0x3f800000, 0 }); // float 1.0, layer count.
+    try writer.put(u64, 0);
+    try writer.put(u32, 0); // extension count.
+    try writer.put(u64, 0);
+    try writer.put(u64, 0); // enabled features.
+    try writer.put(u64, 0); // allocator.
+    try writer.put(u64, 1);
+    try writer.put(u64, DeviceId);
+    var reader = try exchange(receiver, writer, reply, 11);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    try reader.expect(u64, DeviceId);
+    try writer.begin(155);
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 1000145003); // DEVICE_QUEUE_INFO_2.
+    try writer.put(u64, 1); // timeline pNext.
+    try writer.put(u32, 1000384005); // DEVICE_QUEUE_TIMELINE_INFO_MESA.
+    try writer.put(u64, 0); // chained pNext.
+    try writer.words(&.{ 1, 0, family, 0 }); // timeline 1, flags, family, queue index.
+    try writer.put(u64, 1);
+    try writer.put(u64, QueueId);
+    reader = try exchange(receiver, writer, reply, 155);
+    try reader.expect(u64, 1);
+    try reader.expect(u64, QueueId);
+}
+fn queue_roundtrip(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, expected: u64) !void {
+    try writer.begin(18);
+    try writer.put(u64, QueueId);
+    try writer.put(u32, 0); // No VkSubmitInfo commands yet.
+    try writer.put(u64, 0);
+    try writer.put(u64, 0); // No Vulkan fence object.
+    var reader = try exchange(receiver, writer, reply, 18);
+    try reader.expect(u32, 0);
+    var fence: u64 = 0;
+    if (venus_receiver_gpu_fence(receiver, 1, &fence) != 0 or fence != expected) return error.Renderer;
+    var timer = try std.time.Timer.start();
+    while (true) {
+        if (venus_receiver_health(receiver, null) != 0) return error.Renderer;
+        const status = venus_receiver_gpu_poll(receiver, 1, fence);
+        if (status == 0) break;
+        if (status != 1) return error.Renderer;
+        if (timer.read() >= 5 * std.time.ns_per_s) return error.Deadline;
+        std.time.sleep(std.time.ns_per_ms);
+    }
+    std.debug.print("Real Venus GPU queue fence retired: timeline=1 id={d}\n", .{fence});
+}
+fn run_fixture(hardware: bool) !void {
+    var owned: ?*venus_receiver_t = null;
+    if (venus_receiver_create(&owned, BufferBytes, BufferBytes) != 0) return error.Renderer;
+    defer venus_receiver_destroy(&owned);
+    const receiver = owned orelse return error.Renderer;
+    var writer = writer_t{};
+    var reply: [BufferBytes]u8 = undefined;
+    try create_instance(receiver, &writer, &reply);
+    const count = try enumerate_devices(receiver, &writer, &reply);
+    const physical = try select_device(receiver, &writer, &reply, count, hardware);
+    const family = try select_family(receiver, &writer, &reply, physical);
+    try create_device(receiver, &writer, &reply, physical, family);
+    for (1..4) |fence| try queue_roundtrip(receiver, &writer, &reply, fence);
+    for ([_]u32{ 12, 1 }, [_]u64{ DeviceId, InstanceId }) |command, object| {
+        try writer.begin(command);
+        try writer.put(u64, object);
+        try writer.put(u64, 0);
+        _ = try exchange(receiver, &writer, &reply, command);
+    }
+}
+/// in: hardware nonzero requires physical integrated/discrete type; no borrowed
+/// buffers. Returns 0 success, 1 protocol/renderer/deadline/device failure. Owns
+/// receiver only for call, always destroyed; sole session thread, no heap buffers.
+export fn venus_gpu_fixture_run(hardware: c_int) c_int {
+    run_fixture(hardware != 0) catch |failure| {
+        std.debug.print("Venus queue fixture failed: {s}\n", .{@errorName(failure)});
+        return 1;
+    };
+    return 0;
+}
+
+test "bounded fixture writes and parses fixed little-endian scalars" {
+    const bytes = try std.testing.allocator.alloc(u8, 12);
+    defer std.testing.allocator.free(bytes);
+    var writer = writer_t{};
+    try writer.put(u32, 0x01020304);
+    try writer.put(u64, 0x1020304050607080);
+    @memcpy(bytes, writer.bytes[0..12]);
+    try std.testing.expectEqual(@as(u8, 4), bytes[0]);
+    var reader = reader_t{ .bytes = bytes };
+    try reader.expect(u32, 0x01020304);
+    try reader.expect(u64, 0x1020304050607080);
+    try std.testing.expectError(error.Bounds, reader.get(u32));
+    try std.testing.expectEqual(@as(usize, 12), reader.used);
+    writer.used = BufferBytes - 3;
+    try std.testing.expectError(error.Bounds, writer.put(u32, 1));
+    reader = .{ .bytes = bytes };
+    try std.testing.expectError(error.Protocol, reader.expect(u32, 0));
+    reader.used = std.math.maxInt(usize);
+    try std.testing.expectError(error.Bounds, reader.take(1));
+}

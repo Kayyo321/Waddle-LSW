@@ -17,7 +17,7 @@ jobs:
       - name: Install transport build and coverage tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential clang-19 llvm-19 python3 python3-yaml meson ninja-build pkg-config libvulkan-dev libepoxy-dev libdrm-dev
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential clang-19 llvm-19 python3 python3-yaml meson ninja-build pkg-config libvulkan-dev libepoxy-dev libdrm-dev mesa-vulkan-drivers
           git config --global --add safe.directory '*'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -37,6 +37,11 @@ jobs:
         run: make vgpu-libc-test vgpu-libc-sanitizers
       - name: Verify real Venus CPU dispatch and receiver ownership
         run: make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage
+      - name: Verify real Venus queue protocol with software Vulkan backend
+        run: |
+          export VK_DRIVER_FILES="$(find /usr/share/vulkan/icd.d -maxdepth 1 -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_DRIVER_FILES"
+          make vgpu-gpu-unit vgpu-gpu-test vgpu-gpu-sanitizers
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership

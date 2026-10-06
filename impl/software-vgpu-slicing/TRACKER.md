@@ -510,7 +510,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     corrected objects pass regression and ASan/LSan/UBSan tests. Existing transport,
     receiver, request, runtime, service and mapped/exec suites plus sanitizers pass.
 
-- **Commit (current; resolve by subject)**: `docs(assets): preserve independent application artwork updates`
+- **Commit `c35ca4b`**: `docs(assets): preserve independent application artwork updates`
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Preserve separate README and application image changes staged
     concurrently; no vGPU implementation credit.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): execute real Venus queue bootstrap`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall); hardware bootstrap 2%
+    gate awaits current CI before credit. Actual GPU workload output remains pending.
+  - **Summary**: Add bounded Zig command/reply fixture for instance/device/family
+    enumeration, device queue creation with timeline 1, queue submission and three
+    monotonically retired GPU fences, then explicit object destruction.
+  - **Verification**: Hardware-required normal and sanitizer runs pass on NVIDIA
+    GeForce RTX 5080 and AMD RADV integrated hardware. Linux llvmpipe runs pass
+    separately, and hardware-required mode rejects that CPU backend. Zig fixed
+    scalar/bounds/allocator tests pass. Existing receiver/runtime/service coverage
+    remains above 90%; Linux CI installs a system software Vulkan test driver.
+    Production worker cancellation CI passed at `035c2e2` in run `37396744418`,
+    and acceptance tracker CI passed at `2ac629b` in run `37397026658`.
