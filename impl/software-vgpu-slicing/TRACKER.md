@@ -1128,9 +1128,17 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     storage only; public ICD instance/device/API dispatch and DXVK remain pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded physical-device reply decoding`
+- **Commit `4699df2`**: `docs(vgpu): specify bounded physical-device reply decoding`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify exact core property/feature/memory reply layouts, fixed
     array tags, scalar padding, semantic validation and preserved output behavior.
   - **Verification**: Cross-check pinned command IDs and generated field/array
     encodings; public ICD instance/device dispatch and DXVK remain independent gates.
+
+
+- **Commit (current; resolve by subject)**: `chore(vgpu): canonicalize generated protocol line endings`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Normalize generated headers to LF before immutable receiver
+    comparison so Windows text-mode output retains the exact pinned schema.
+  - **Verification**: Offline generation matches all39 receiver headers and37
+    guest headers. Pinned source files are unchanged; no runtime progress credited.

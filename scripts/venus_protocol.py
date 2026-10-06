@@ -29,6 +29,10 @@ def main():
     command = [sys.executable, str(source / "vn_protocol.py"), "--banner", str(banner)]
     subprocess.run(command + ["--outdir", str(driver)], check=True)
     subprocess.run(command + ["--renderer", "--outdir", str(renderer)], check=True)
+    # Windows text-mode generators produce CRLF; canonical pinned headers use LF.
+    for directory in (driver, renderer):
+        for path in directory.glob("*.h"):
+            path.write_bytes(path.read_bytes().replace(b"\r\n", b"\n"))
     baseline = root / "submodules/virglrenderer/src/venus/venus-protocol"
     actual = {path.name for path in renderer.glob("*.h")}
     expected = {path.name for path in baseline.glob("vn_*.h")}

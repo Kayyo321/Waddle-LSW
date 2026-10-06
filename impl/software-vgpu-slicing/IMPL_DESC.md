@@ -2220,3 +2220,9 @@ truncated prefix and mutated array/pointer/command tag, preserve output on failu
 validate float/name/boolean/memory-index semantics, and pass allocator/sanitizer,
 native Windows ABI and at least90% production line/branch gates. Integrate real
 production-worker queries before claiming any full instance/device dispatch credit.
+
+
+Protocol generation normalizes generated CRLF to LF on every platform before the
+byte-for-byte receiver comparison. Submodule source is never rewritten; native
+Windows CI checks out dependencies with core.autocrlf=false. Generation remains
+offline, and no schema/content difference is permitted by line-end normalization.
