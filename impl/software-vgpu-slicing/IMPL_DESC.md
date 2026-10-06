@@ -379,9 +379,8 @@ additional resources/contexts, guest capability negotiation, and DMA-BUF memory
 are subsequent milestones, not implied by this owner. libvirglrenderer is a
 process singleton; creation uses a process-local C11 atomic claim. A competing
 create returns RingAgain without modifying a live owner. The claim is released
-only after cleanup, including callbacks. The final runtime must route contexts
-through a single manager per process; it cannot create concurrent singleton
-owners. No global renderer API caller outside this owner may be active.
+only after cleanup, including callbacks. The final runtime routes contexts through a bounded controller and one isolated
+worker process per context; each worker has exactly one singleton owner. No global renderer API caller outside this owner may be active.
 
 Creation requires power-of-two command capacity 64..16777216 and reply bytes
 4096..16777216, a nonnull initially-null output, and a configured trusted render
@@ -1067,3 +1066,81 @@ fixtures, actual host capset decoding over the mapped/UNIX integration, all flag
 corruption and version/profile mismatch paths, every extension number/boundary,
 output zeroing and at least 90% owned Zig line/branch coverage. Session negotiation
 and multi-context APIs remain separate later gates.
+
+
+### Negotiated receiver operation gate (Task #2)
+
+Transport readiness and Venus compatibility are separate states. A new RPC is
+unnegotiated. Capabilities (operation 1) and Negotiate (operation 11) alone are
+accepted before negotiation. All other valid operations are drained normally and
+return RequestInvalid without calling the renderer. Negotiate has exactly 160
+payload bytes and zero resource/flags/arguments. Its success response has no
+payload/arguments. The guest sends its supported pinned profile, encoded in the
+same portable capset layout; this is an encoder declaration, not host policy.
+Both the guest declaration and retained host capset must decode and satisfy the
+pinned compatibility contract. Unknown optional extension bits are not enabled
+by this handshake; only the mandatory protocol extensions are required here.
+Failure returns RequestInvalid, leaves the gate closed, and permits retry with a
+new sequence. A repeated negotiation after success returns RequestInvalid and
+preserves the established gate. No guest field changes storage quotas, command
+capacity, timeouts, scheduling or resource ownership. CPU/GPU completion checks
+remain independent. Health/cancellation checks still apply before negotiation.
+
+The sole host session thread sets the RPC negotiated bit only after both checks;
+publication failure terminates the session. The guest sets its local bit only
+after a fully validated success response. Generic guest exchanges remain usable
+for compatibility discovery and negative testing; enforcement is host-side.
+The bit is local private state, reset by RPC free/init and fresh worker startup.
+Capability payload decoding stays in Zig; dispatch owns no new heap storage.
+Acceptance: pre-negotiation rejection of every renderer operation, malformed and
+incompatible peer/host profiles, retry, repeated negotiation, reconnect reset,
+real mapped/UNIX negotiation and resource/CPU command execution; >=90% owned
+line/branch coverage and sanitizer/allocator/native Windows codec/runtime gates.
+
+### Bounded isolated multi-context controller (Task #2)
+
+venus_context_manager_t is a caller-owned fixed array of eight worker slots,
+configured by a trusted host count (1..8) and aggregate mapping byte ceiling
+(4096..8GiB). init/free are symmetric; it allocates no heap. Each slot retains a
+worker, a duplicate CLOEXEC mapping fd and the stat device/inode/size identity.
+Only the controller thread mutates the manager. Context IDs are monotonic nonzero
+u64 handles allocated by the controller; never native renderer IDs or guest
+pointers. Freed handles never address a reused slot; wrap exhaustion returns
+RingLimit. Each worker has a separate mapping/control socket, renderer singleton,
+bootstrap context/resource 1, quotas, reply scratch and fence identities. Thus
+the same Venus and registry object IDs may coexist across independent contexts.
+A trusted launcher binds each guest context to its private endpoints; multiplexed
+context bytes and guest driver context creation remain Task #3.
+
+create borrows an initialized mapping fd and nonblocking connected stream fd,
+validates page-sized power-of-two region size 4096..1GiB and aggregate budgets,
+rejects any live mapping with the same device/inode, duplicates the mapping fd,
+then calls the existing collision-safe worker launcher. Failed acquisition closes
+only the new duplicate and changes no count/bytes/handle. The manager retains the
+duplicate until the worker is joined, preventing inode identity reuse while live.
+The caller owns its original fd, mmap and stream; it closes its local host stream
+copy after launch. Shared storage must remain fixed-size until worker release.
+The guest owns its peer and separate mapping view. No shared renderer global is
+called by the controller; worker processes execute simultaneously.
+
+poll accepts only a live handle. Exit closes both validated ring views via a
+short-lived mmap after the worker and descendants are reaped, then refunds the
+mapping budget, closes the retained fd, and clears the slot. Crash status is
+terminal RingClosed; callers can start a fresh context and mapping afterwards.
+destroy requests the existing bounded TERM/KILL shutdown for one context; timeout
+or OS failure retains its slot/budget/fd for retry. Successful destroy closes rings
+and refunds resources. free visits every occupied slot and returns the first
+failure, retaining only failed ownership; no unreaped worker is abandoned. The
+manager becomes zero only when all ownership is released. Ring closure mapping
+failure returns RingCorrupt after joined resources are released; original caller
+views must still be closed by their lifecycle owner. Other contexts are untouched.
+Each destroy has its own 1..60000ms budget, so free may take count times that budget.
+
+Acceptance: count/byte limits, duplicate mappings, stale handles, spawn/dup/map
+failures and retained shutdown failure; >=90% production line/branch coverage;
+real simultaneous isolated workers with identical resource IDs and distinct byte
+contents, CPU replies, crash isolation, fresh context restart, repeated churn,
+shutdown and zero leaked allocations/descriptors under ASan/LSan/UBSan. Physical
+hypervisor/Windows driver integration remains the previously delegated user gate;
+Task #2 acceptance uses independent Linux mapped/UNIX guests and native Windows
+portable fixtures. Graphics presentation and OpenCL remain Tasks #4/#5.

@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 65% | GPU timestamp workload verified on NVIDIA/AMD and in CI; capability decoding implemented, CI pending; negotiated policy and multi-context runtime remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 70% | Capability decoding passed Linux/native Windows CI; negotiated policy and isolated multi-context runtime remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `33.0%`
+**Total Feature Completion**: `34.0%`
 
 ## Commit History & Progress Log
 
@@ -557,7 +557,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     private caller ownership. Allocate separate decoding, negotiation and
     multi-context acceptance gates without crediting unimplemented runtime policy.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): decode pinned capability snapshots safely`
+- **Commit `0a43c16`**: `feat(vgpu): decode pinned capability snapshots safely`
   - **Task Impact**: +6% to TODO: #2 (+1.2% overall) for verified hardware
     workload; separate capability decoding 5% gate awaits current native CI.
   - **Summary**: Add bounded Zig private capset decoding, exact pinned profile
@@ -569,3 +569,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     capability gates; session negotiation and context runtime remain pending.
     GPU timestamp Linux/native Windows CI passed at `60321bc`:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398576725 .
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify negotiated isolated context completion`
+  - **Task Impact**: +5% to TODO: #2 (+1.0% overall) for verified capability decoding.
+  - **Summary**: Specify operation-11 profile negotiation and host dispatch gate,
+    bounded independent worker contexts, aggregate budgets, handle lifetime,
+    failure ownership and simultaneous execution acceptance before coding.
+  - **Verification**: Linux/native Windows capability CI passed at `0a43c16`:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37399147082 .
+    No credit yet for negotiation or context manager implementation.
