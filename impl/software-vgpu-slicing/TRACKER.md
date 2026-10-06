@@ -535,7 +535,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     output checks, bounded blob parsing, availability/modular counter rules and
     quiescent query/command ownership. Keep graphics/compute/presentation tasks separate.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): verify GPU timestamp workload output`
+- **Commit `60321bc`**: `test(vgpu): verify GPU timestamp workload output`
   - **Task Impact**: +2% to TODO: #2 (+0.4% overall) for verified hardware
     queue bootstrap; timestamp workload separate 6% gate awaits current CI.
   - **Summary**: Record query reset and GPU top/bottom timestamp commands, submit
@@ -549,3 +549,10 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Bootstrap and libc-boundary Linux/native Windows CI passed at `a54d571`:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398115404 .
     GPU timestamps verify queue commands, not guest shader/presentation/OpenCL APIs.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define pinned capability decoding`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Specify exact portable capset offsets, flag shape, pinned
+    version/profile compatibility, bounded explicit extension queries and
+    private caller ownership. Allocate separate decoding, negotiation and
+    multi-context acceptance gates without crediting unimplemented runtime policy.

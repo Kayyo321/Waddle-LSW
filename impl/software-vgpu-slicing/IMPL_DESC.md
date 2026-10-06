@@ -1021,3 +1021,49 @@ blobs, unavailable queries, invalid counter widths, wrapped counters and out-of-
 order deltas with std.testing.allocator. Hardware-required and software CI normal
 and owned-C sanitizer runs retain the existing five-second polling and whole-test
 30-second guards. No hardware workload progress is credited before those gates pass.
+
+### Capability snapshot decoding and pinned compatibility
+
+The remaining 35% negotiated/multi-context milestone is divided into 5% portable
+capability decoding/compatibility, 10% negotiated session policy and operation
+gating, and 20% bounded multi-context ownership/dispatch execution. Capability
+decoding alone does not complete negotiated startup or context isolation.
+
+A capabilities reply is exactly the pinned 160-byte public Venus capset. Parse it
+in Zig from private immutable bytes into caller-owned venus_capabilities_t host
+integers. It is not a struct to cast over shared memory. Offsets 0,4,8,12 hold
+wire_format_version, vk_xml_version, vk_ext_command_serialization_spec_version
+and vk_mesa_venus_protocol_spec_version. Offset 16 is supports_blob_id_0; offsets
+20..147 contain 32 little-endian u32 extension mask words; offsets 148,152,156
+hold allow_vk_wait_syncs, supports_multiple_timelines and use_guest_vram. Every
+flag must be zero or one. No reserved byte or native padding exists on this wire.
+
+Decode accepts only 160 bytes, allocates nothing and zeroes the entire decoded
+output before validation. Null arguments return RingInvalid, malformed length or
+flag values return RingCorrupt. Unsupported version values remain decoded so the
+separate compatibility decision can reject them without misclassifying shape.
+Private input/output records must be disjoint; immutable bytes need only byte
+alignment. The decoded C/Zig ABI is 160 bytes with four-byte integer alignment.
+
+Pinned compatibility requires wire format 1, XML VK_MAKE_API_VERSION(0,1,4,307),
+command serialization spec 1, Venus protocol spec 3, blob-zero support 1, multiple
+timelines 1 and guest-VRAM mode 0. Require explicit extension-mask validity bit
+zero in word zero plus extension numbers 384 and 385 (word 12 bits zero and one).
+allow_vk_wait_syncs may be zero or one; reading it never authorizes a blocking
+SDK operation outside existing host deadlines/process isolation. Other mask bits
+are preserved but never imply that a guest encoder implements those extensions.
+Compatibility returns RingOk only for this pinned profile, otherwise RingInvalid
+(including null/bad local flags), without mutation or ownership transfer.
+
+An allocation-free extension query returns one only for explicit-mask bits 1..1023
+that are present, otherwise zero for null, invalid number or absent/legacy mask.
+It cannot infer all-extension support from the legacy implicit-mask convention;
+the pinned profile deliberately rejects that convention. Validate number before
+indexing in Zig. Both query and compatibility are pure/thread-safe on immutable
+private records. No parsed guest field configures host quotas or allocates memory.
+
+Acceptance requires native Windows C ABI execution, Linux allocator and sanitizer
+fixtures, actual host capset decoding over the mapped/UNIX integration, all flag
+corruption and version/profile mismatch paths, every extension number/boundary,
+output zeroing and at least 90% owned Zig line/branch coverage. Session negotiation
+and multi-context APIs remain separate later gates.
