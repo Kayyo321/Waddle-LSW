@@ -252,7 +252,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Existing native Windows fixtures remain required. New
     integrated mock fixture is specified before implementation; no credit yet.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): integrate independent mock guest and Venus replies`
+- **Commit `dc1f16b`**: `test(vgpu): integrate independent mock guest and Venus replies`
   - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
   - **Summary**: Completed the user-authorized mock gate using independently mapped
     /dev/shm file views, a real UNIX control handshake, ordered ring requests,
@@ -263,3 +263,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows gates remain enforced. CI now runs integrated mock dispatch as well.
     Task #1 is complete for standalone development, with physical hypervisor
     testing explicitly delegated to the user; no real guest driver/GPU claim.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define receiver resource registry and quota`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Specified bounded IDs/ledger, explicit declared-storage/count
+    quotas, lazy CPU SHM copy ownership, refunds/reuse, poisoned map cleanup,
+    and the distinction between registered storage and arbitrary Vulkan VRAM.
+  - **Verification**: Reviewed public renderer create/map/unref behavior and
+    separated resource ownership from subsequent wire dispatch/GPU export gates.

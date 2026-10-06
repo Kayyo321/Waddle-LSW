@@ -555,3 +555,65 @@ EOF after a partial control frame must be a protocol failure. Renderer callback
 joining, file/socket/mapping cleanup, sanitizer cleanliness, and native Windows CI
 fixtures are required. This proves transport plus real CPU Venus dispatch in mock
 mode; GPU device/queue execution and a complete guest ICD remain later tasks.
+
+### Receiver resource registry and exported-storage quota
+
+The resource/allocation-policy milestone (30% of Task #2) is split into 15% for
+bounded resource ownership/copy/quota and 15% for bounded runtime resource/command
+request dispatch. The current implementation extends bootstrap context one; a
+multi-context manager and GPU timeline semantics remain separate later milestones.
+
+The receiver owns a fixed 64-entry ledger in its zero-initialized owner allocation.
+IDs 2..65 map to entries 0..63; zero and one are reserved, and all larger IDs are
+invalid. Each entry stores ID, blob ID, declared bytes, flags, borrowed SDK mapping
+pointer and mapped-stage flag. No per-resource Waddle heap allocation occurs.
+Default additional-resource limits are 64 entries and 67108864 declared bytes.
+The owner may configure 1..64 entries and 4096..1073741824 bytes only while the
+ledger is empty and CPU submission is quiescent. Bootstrap reply/scratch extents
+have their separate fixed bounds and are excluded from this additional quota.
+
+Requests use host values, validated in Zig before table access or upstream calls:
+ID 2..65; nonzero page-aligned size at most one GiB; only Map=1, Share=2,
+CrossDevice=4 flags; CrossDevice requires Share. Blob ID zero requests CPU SHM and
+requires exactly Map. Nonzero blob ID identifies already-created Venus Vulkan
+device memory; the upstream public get-blob path validates that identity/storage.
+The fixed table rejects duplicate IDs. Quota checks use `size <= limit - used`
+without overflow, and count only successful resource acquisitions. RingLimit=-6
+means configured count/declared-storage quota exhaustion, no acquisition or ledger
+change; it must not be retried as CPU backpressure. RingInvalid means invalid
+local request/ID/range; pending CPU work returns RingAgain. Upstream create/map
+failure poisons the owner (RingCorrupt), requiring complete session teardown.
+
+These limits constrain registered/exported storage, not Vulkan allocations made
+inside arbitrary Venus command bundles before resource registration. No hard GPU
+VRAM isolation or per-command allocation interception is claimed. The runtime
+request milestone must apply resource policy consistently before registration;
+GPU scheduling/allocation remains owned by the host driver and upstream context.
+
+CPU resource read/write require blob ID zero, nonnull disjoint private buffers,
+and a nonempty Zig-validated range within the exact declared size. Invalid ranges
+are rejected before mapping/copy. The first valid copy lazily maps through the
+public SDK and verifies nonnull pointer and exact extent, retaining mapped-stage
+ownership even if returned metadata is invalid. Subsequent copies reuse that
+mapping; no borrowed native pointer escapes the API. Timeline-zero CPU completion
+must be acquired before all registry/map/copy/free operations. Device-memory CPU
+copy is unsupported until proper GPU timeline/cache semantics are implemented;
+no CPU fence is misrepresented as GPU completion.
+
+Explicit free requires a live registered ID and quiescent CPU work. The caller
+must have destroyed any Venus object/ring still referencing that resource. It
+unmaps CPU SHM if mapped, unrefs through the public ABI, refunds exact declared
+bytes/count, and zeros the ledger entry for reuse. Failed unmap poisons the owner
+and retains cleanup accounting. Final destruction stops context/callbacks first,
+then unmaps/unrefs every remaining ledger entry before renderer cleanup. For CPU
+SHM only, a failed SDK unmap has a recorded pointer/extent for a final POSIX munmap
+fallback; device memory is never locally mapped by these copy APIs. Every successful
+resource remains represented until explicit free or owner destruction, including
+invalid returned map metadata and pending-owner teardown.
+
+Tests must cover every resource ID/size/flag boundary, duplicate and pool/byte
+exhaustion, limit changes with live resources, quota refund/reuse, range overflow,
+CPU-map metadata errors and acquisition failures, pending/poisoned operations,
+implicit resource cleanup, and real shared resources through the public renderer.
+Owned C/Zig coverage and sanitizer gates remain >=90%/zero leaks. Real device
+memory export/DMA-BUF tests remain separate from CPU SHM ownership evidence.
