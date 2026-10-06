@@ -3963,3 +3963,112 @@ advertisement must reflect actually implemented and verified behavior. The
 current Vulkan1.0 bounded profiles require further work for modern2.x and do not
 receive full DXVK credit. Physical VM/hypervisor integration remains user-owned
 as established elsewhere; standalone native backend bootstrap is still required.
+
+### Typed modern feature-query wire profiles (TODO #3)
+
+`venus_features_wire.zig` recognizes exactly eight unique chain node tags and
+owns no native pointers, heap allocations or global mutable state. The bounded
+result stores eight nodes, each with tag32/count8 and47 zero-initialized32-bit
+boolean slots, plus55 core Vulkan1.0 booleans. Recognized nodes/counts are:
+
+| Native node | Structure tag | Ordered Boolean count | Negotiated parser requirement |
+|:--|--:|--:|:--|
+| Vulkan11 features |49|12|Pinned core schema|
+| Shader draw parameters |1000063000|1|Pinned core schema|
+| Host query reset |1000261000|1|Pinned core schema|
+| Transform feedback EXT |1000028000|2|Extension mask bit29|
+| Vulkan12 features |51|47|Pinned core schema|
+| Vulkan13 features |53|15|Core Vulkan1.3 parser schema|
+| Robustness2 EXT |1000286000|3|Extension mask bit287|
+| Maintenance5/KHR |1000470000|1|Extension mask bit471|
+
+The accepted receiver profile is the already-negotiated immutable Venus schema:
+wire format1, XML Vulkan1.4.307, command serialization revision1, Venus protocol
+revision3, and the capability mask's explicit validity marker. Recognition does
+not authorize dispatch on an incompatible receiver. The caller intersects these
+parser requirements with the negotiated capability mask/API schema before
+forming tags; absent required bits are not replaced with fixture assumptions.
+The independent pinned generator fixtures deliberately provide an all-supported
+parser and therefore prove byte layout, not actual receiver extension support.
+Guest API/extension/feature advertisement additionally requires the actual host
+physical capabilities and implemented/verified guest operation paths. Merely
+recognizing Vulkan12/13, robustness2 or maintenance5 conveys no DXVK completion
+credit and must not enable unsupported features.
+
+All wire scalars are little endian and have no native padding. Query command147
+encodes command32/flags32(1)/physical-ID64, output-pointer64(1), Features2-tag32,
+then each requested node as next-pointer64(1)/tag32 in caller order and final
+next-pointer64(0). The query initializes exactly36+12*N bytes: at most132 bytes
+for eight nodes. Physical ID must be nonzero; unsupported tags, duplicates and
+N>8 reject before any scalar append. Promoted KHR aliases sharing a numerical
+tag are the same node and cannot appear twice.
+
+The reply initializes command32(147)/output-pointer64(1)/Features2-tag32, the
+same forward next-pointer/tag chain and null terminator, then feature bodies in
+reverse node order as required by recursive pinned Venus encoding, followed by
+55 core boolean words. Its exact minimum extent is244+12*N+4*sum(node-counts).
+All eight recognized nodes total82 flags, giving a668-byte maximum initialized
+reply. The decoder proves this complete extent before reading, rejects every
+truncation, checks command/pointer/tag/terminator identity and rejects every
+boolean word greater than1. It returns an owned result only after full success;
+unused node flags remain zero and trailing receiver scratch bytes are ignored.
+The application chain/pointers remain entirely the caller's responsibility and
+must publish feature fields only after successful decode. Query input and reply
+slices are borrowed immutable accessible extents; disjoint operations are
+thread-safe without locks.
+
+Vulkan12's47 boolean words occur in this exact pinned header/generator order:
+`samplerMirrorClampToEdge`, `drawIndirectCount`, `storageBuffer8BitAccess`,
+`uniformAndStorageBuffer8BitAccess`, `storagePushConstant8`,
+`shaderBufferInt64Atomics`, `shaderSharedInt64Atomics`, `shaderFloat16`,
+`shaderInt8`, `descriptorIndexing`, `shaderInputAttachmentArrayDynamicIndexing`,
+`shaderUniformTexelBufferArrayDynamicIndexing`,
+`shaderStorageTexelBufferArrayDynamicIndexing`,
+`shaderUniformBufferArrayNonUniformIndexing`,
+`shaderSampledImageArrayNonUniformIndexing`,
+`shaderStorageBufferArrayNonUniformIndexing`,
+`shaderStorageImageArrayNonUniformIndexing`,
+`shaderInputAttachmentArrayNonUniformIndexing`,
+`shaderUniformTexelBufferArrayNonUniformIndexing`,
+`shaderStorageTexelBufferArrayNonUniformIndexing`,
+`descriptorBindingUniformBufferUpdateAfterBind`,
+`descriptorBindingSampledImageUpdateAfterBind`,
+`descriptorBindingStorageImageUpdateAfterBind`,
+`descriptorBindingStorageBufferUpdateAfterBind`,
+`descriptorBindingUniformTexelBufferUpdateAfterBind`,
+`descriptorBindingStorageTexelBufferUpdateAfterBind`,
+`descriptorBindingUpdateUnusedWhilePending`, `descriptorBindingPartiallyBound`,
+`descriptorBindingVariableDescriptorCount`, `runtimeDescriptorArray`,
+`samplerFilterMinmax`, `scalarBlockLayout`, `imagelessFramebuffer`,
+`uniformBufferStandardLayout`, `shaderSubgroupExtendedTypes`,
+`separateDepthStencilLayouts`, `hostQueryReset`, `timelineSemaphore`,
+`bufferDeviceAddress`, `bufferDeviceAddressCaptureReplay`,
+`bufferDeviceAddressMultiDevice`, `vulkanMemoryModel`,
+`vulkanMemoryModelDeviceScope`, `vulkanMemoryModelAvailabilityVisibilityChains`,
+`shaderOutputViewportIndex`, `shaderOutputLayer`, `subgroupBroadcastDynamicId`.
+
+Vulkan13's15 words are exactly `robustImageAccess`, `inlineUniformBlock`,
+`descriptorBindingInlineUniformBlockUpdateAfterBind`,
+`pipelineCreationCacheControl`, `privateData`, `shaderDemoteToHelperInvocation`,
+`shaderTerminateInvocation`, `subgroupSizeControl`, `computeFullSubgroups`,
+`synchronization2`, `textureCompressionASTC_HDR`,
+`shaderZeroInitializeWorkgroupMemory`, `dynamicRendering`,
+`shaderIntegerDotProduct`, `maintenance4`. Robustness2's three words are exactly
+`robustBufferAccess2`, `robustImageAccess2`, `nullDescriptor`; maintenance5 has
+only `maintenance5`. Vulkan11's12 words remain the pinned native interval from
+`storageBuffer16BitAccess` through `shaderDrawParameters`; standalone draw and
+host-query nodes each have their namesake flag; transform feedback has exactly
+`transformFeedback`, `geometryStreams`.
+
+Independent request and receiver translation units instantiate actual typed
+native structures, link real native pNext addresses only during encoding, and
+compare pinned generated bytes with allocation-free Zig packets/results. Native
+fixtures statically assert each copied boolean interval's exact first/last
+member offset and count; no wire/native struct casts or guessed padding occur.
+Tests compare every recognized standalone node and all chain lengths/orders,
+maximum packets, every initialized structural/boolean word corruption and every
+reply prefix truncation. Booleans additionally use one-hot bit positions to
+prove individual native flag ordering. Native bounded C fixtures run under
+ASan/LSan/UBSan with zero leaks, Zig tests use safety checks and
+`std.testing.allocator`, Windows x86_64 fixtures compile, and production
+line/branch coverage must remain at least90%.
