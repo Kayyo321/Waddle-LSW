@@ -6,6 +6,19 @@
 #include <signal.h>
 #include <string.h>
 #include <unistd.h>
+#if defined(__SANITIZE_ADDRESS__)
+/** @brief Preserve deep allocation callers when Vulkan modules unload at shutdown.
+ * @return Nonnull borrowed static option string; process lifetime, never free.
+ * @details Sanitizer diagnostic only: use DWARF stack unwinding on allocation.
+ * Leak detection, abort policy and resource lifetime remain controlled by the
+ * existing ASAN_OPTIONS and normal worker teardown. Thread-safe; no allocation.
+ * Explicit ASAN_OPTIONS overrides this default when that flag is present.
+ */
+__attribute__((no_sanitize_address))
+const char *__asan_default_options(void) {
+    return "fast_unwind_on_malloc=0";
+}
+#endif
 static _Atomic uint32_t worker_cancel = 0;
 static void cancel_worker(int signal_number) {
     (void)signal_number;
