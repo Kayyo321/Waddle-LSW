@@ -14,11 +14,11 @@
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
-| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 15% | Receiver export ownership verified; image metadata, Wayland integration and worker FD handoff pending |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 30% | Export and image/feedback validation verified locally; native codec CI, Wayland ownership and worker FD handoff pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `42.25%`
+**Total Feature Completion**: `44.5%`
 
 ## Commit History & Progress Log
 
@@ -676,9 +676,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     CLOEXEC get/set failure, pending/poisoned fences, 128 export/close cycles and
     exported FD survival after ledger free. Hardware export is a separate gate.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify image layout and feedback validation`
+- **Commit `41ebf74`**: `docs(vgpu): specify image layout and feedback validation`
   - **Task Impact**: +0% to TODO: #3; +0% to TODO: #4 (+0% overall).
   - **Summary**: Record reaffirmed userland WDDM/standalone acceptance scope and
     bounded packed/NV12 plane and complete-feedback-table validation contracts.
   - **Verification**: Checked system linux-dmabuf protocol table/index schema;
     preserve separate import/allocation/descriptor-handoff acceptance gates.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): validate image planes and complete DMA-BUF feedback`
+  - **Task Impact**: +15% to TODO: #4 (+2.25% overall); remaining 5% validation
+    credit waits for native Windows CI.
+  - **Summary**: Add allocation-free Zig packed/NV12 geometry and allocation-range
+    validation, bounded native-endian format-table/tranche matching and documented
+    C ABI. Ignore protocol-defined unused padding. Add independent Make and CI gates.
+  - **Verification**: Linux C ABI, Zig allocator tests, ASan/LSan/UBSan and Windows
+    x86_64 cross-link pass. Zig production coverage 100% lines/100% branches;
+    all 4096 table indices, late corruption and descriptor fields exercised.
+    No wl_buffer imports or worker FD handoff are claimed by codec tests.

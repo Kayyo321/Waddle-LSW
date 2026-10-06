@@ -379,3 +379,31 @@ vgpu-runtime-sanitizers vgpu-runtime-coverage: build/venus_capabilities.o
 # Rebuild context consumers when any borrowed lifetime or framing contract changes.
 build/vgpu_context_test build/vgpu_contexts_integration: include/waddle/venus_worker.h include/waddle/venus_region.h include/waddle/venus_ring.h
 build/vgpu_contexts_integration: include/waddle/venus_rpc.h include/waddle/venus_channel.h include/waddle/venus_session.h include/waddle/venus_request.h include/waddle/venus_capabilities.h include/waddle/venus_receiver.h
+
+# Image metadata and native-endian Wayland feedback parsing stay in Zig.
+build/venus_dmabuf.o: src/vgpu/venus_dmabuf.zig | build
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/venus_dmabuf_windows.lib: src/vgpu/venus_dmabuf.zig | build
+	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/vgpu_dmabuf_test: tests/vgpu/dmabuf.c include/waddle/venus_dmabuf.h include/waddle/venus_ring.h build/venus_dmabuf.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/vgpu/dmabuf.c build/venus_dmabuf.o $(LDFLAGS) -o $@
+
+build/vgpu_dmabuf_test.exe: tests/vgpu/dmabuf.c include/waddle/venus_dmabuf.h include/waddle/venus_ring.h build/venus_dmabuf_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/dmabuf.c build/venus_dmabuf_windows.lib -o $@
+
+.PHONY: vgpu-dmabuf-test vgpu-dmabuf-sanitizers vgpu-dmabuf-coverage
+vgpu-dmabuf-test: build/vgpu_dmabuf_test
+	./build/vgpu_dmabuf_test
+	$(ZIG) test src/vgpu/venus_dmabuf.zig
+
+vgpu-dmabuf-sanitizers: build/venus_dmabuf.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) tests/vgpu/dmabuf.c build/venus_dmabuf.o -o build/vgpu_dmabuf_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_dmabuf_sanitized
+	$(ZIG) test src/vgpu/venus_dmabuf.zig
+
+vgpu-dmabuf-coverage:
+	python3 tests/av/coverage.py venus_dmabuf
+
+vgpu-windows: build/vgpu_dmabuf_test.exe

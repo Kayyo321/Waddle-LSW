@@ -44,6 +44,8 @@ jobs:
           make vgpu-gpu-unit vgpu-gpu-test vgpu-gpu-sanitizers
       - name: Verify pinned capability snapshots and compatibility
         run: make vgpu-capabilities-test vgpu-capabilities-sanitizers vgpu-capabilities-coverage
+      - name: Verify image layouts and complete DMA-BUF feedback
+        run: make vgpu-dmabuf-test vgpu-dmabuf-sanitizers vgpu-dmabuf-coverage
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership
@@ -136,4 +138,16 @@ jobs:
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/runtime.c src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c build/venus_request_windows.lib build/venus_capabilities_windows.lib build/venus_bounds_windows.lib build/venus_control_windows.lib -o build/vgpu_runtime_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_runtime_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows image metadata ABI
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_dmabuf.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_dmabuf_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/dmabuf.c build/venus_dmabuf_windows.lib -o build/vgpu_dmabuf_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_dmabuf_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_dmabuf.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

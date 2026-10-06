@@ -1281,12 +1281,12 @@ opens/maps/copies pixel FDs. Plane extent and size must come from the retained
 allocation/query; guest values alone cannot invent allocation capacity.
 
 Linux DMA-BUF feedback table entries are exactly 16 native-endian bytes: u32
-fourcc, u32 zero padding, u64 modifier. This implementation supports the existing
+fourcc, four unused padding bytes, u64 modifier. This implementation supports the existing
 little-endian x86-64 target only. Tables must be nonempty, a multiple of 16, and
 at most 65536 bytes (4096 entries). Tranche format indices are u16 native-endian,
 nonempty/even-length, at most 8192 bytes; each index must be < table entry count.
 The allocation-free Zig query validates the entire table and tranche before
-returning a match, so a match preceding malformed trailing metadata never masks
+returning a match, so a match preceding malformed trailing indices never masks
 corruption. NULL/range/shape errors return RingInvalid/Corrupt, an absent pair
 returns RingAgain, a valid match returns RingOk. Tables/indices are immutable
 private snapshots, borrowed only for query; no C casts or untrusted pointer
@@ -1296,7 +1296,7 @@ copy fallback in the Venus zero-copy path.
 
 Tests cover every descriptor field, all supported plane layouts, overflow/end
 bounds, unused planes, implicit/tiled modifier boundaries, NULL/truncated/oversize
-feedback, padding/index corruption, complete validation after early matches and
+feedback, ignored padding/index corruption, complete validation after early matches and
 all entry-index positions. Zig uses std.testing.allocator for variable test
 buffers, immediate defer, and >=90% production line/branch coverage. Validation
 is separate from receiving feedback, selecting allocation modifiers and importing
