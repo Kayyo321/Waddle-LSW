@@ -1,5 +1,8 @@
 //! Bounded pinned-protocol fixture. No native Vulkan structs or reply casts.
 const std = @import("std");
+const c = @cImport({
+    @cInclude("waddle/venus_request.h");
+});
 const BufferBytes: usize = 4096;
 const MaxDevices: u32 = 16;
 const MaxFamilies: u32 = 32;
@@ -25,6 +28,92 @@ extern fn venus_receiver_gpu_poll(*const venus_receiver_t, u32, u64) c_int;
 extern fn venus_receiver_resource_create(*venus_receiver_t, u32, u64, u64, u32) c_int;
 extern fn venus_receiver_resource_export(*venus_receiver_t, u32, u32, u64, *c_int) c_int;
 extern fn venus_receiver_resource_free(*venus_receiver_t, u32) c_int;
+
+const guest_exchange_t = *const fn (
+    ?*anyopaque,
+    *const c.venus_request_t,
+    ?*const anyopaque,
+    usize,
+    *c.venus_request_t,
+    ?*anyopaque,
+    usize,
+) callconv(.C) c_int;
+// Private call-scoped transport; exactly one local receiver or remote binding.
+const backend_t = struct {
+    receiver: ?*venus_receiver_t = null,
+    guest: ?*anyopaque = null,
+    guest_exchange: ?guest_exchange_t = null,
+    fn request(
+        self: *backend_t,
+        kind: u32,
+        resource: u32,
+        flags: u32,
+        argument_zero: u64,
+        argument_one: u64,
+        input: ?[]const u8,
+        output: ?[]u8,
+        returned: ?*u64,
+    ) c_int {
+        var offered = std.mem.zeroes(c.venus_request_t);
+        offered.kind = kind;
+        offered.resource_id = resource;
+        offered.flags = flags;
+        offered.argument_zero = argument_zero;
+        offered.argument_one = argument_one;
+        offered.payload_bytes = if (input) |bytes| @intCast(bytes.len) else 0;
+        var response = std.mem.zeroes(c.venus_request_t);
+        const status = self.guest_exchange.?(
+            self.guest,
+            &offered,
+            if (input) |bytes| bytes.ptr else null,
+            offered.payload_bytes,
+            &response,
+            if (output) |bytes| bytes.ptr else null,
+            if (output) |bytes| bytes.len else 0,
+        );
+        if (status == 0) {
+            if (response.kind != kind or response.direction != 1 or response.status != 0 or
+                response.payload_bytes != (if (output) |bytes| bytes.len else 0)) return -2;
+            if (returned) |value| value.* = response.argument_zero;
+        }
+        return status;
+    }
+    fn health(self: *backend_t) c_int {
+        // Remote health is checked by the production service on every RPC.
+        return if (self.receiver) |receiver| venus_receiver_health(receiver, null) else 0;
+    }
+    fn poll(self: *backend_t) c_int {
+        if (self.receiver) |receiver| return venus_receiver_poll(receiver);
+        return self.request(c.RequestPoll, 0, 0, 0, 0, null, null, null);
+    }
+    fn submit(self: *backend_t, bytes: []const u8, fence: *u64) c_int {
+        if (self.receiver) |receiver|
+            return venus_receiver_submit(receiver, bytes.ptr, bytes.len, fence);
+        return self.request(c.RequestSubmit, 0, 0, 0, 0, bytes, null, fence);
+    }
+    fn reply(self: *backend_t, bytes: []u8) c_int {
+        if (self.receiver) |receiver|
+            return venus_receiver_reply(receiver, 0, bytes.ptr, bytes.len);
+        return self.request(c.RequestReply, 0, 0, 0, bytes.len, null, bytes, null);
+    }
+    fn gpu_fence(self: *backend_t, timeline: u32, fence: *u64) c_int {
+        if (self.receiver) |receiver| return venus_receiver_gpu_fence(receiver, timeline, fence);
+        return self.request(c.RequestGpuFence, 0, 0, timeline, 0, null, null, fence);
+    }
+    fn gpu_poll(self: *backend_t, timeline: u32, fence: u64) c_int {
+        if (self.receiver) |receiver| return venus_receiver_gpu_poll(receiver, timeline, fence);
+        return self.request(c.RequestGpuPoll, 0, 0, timeline, fence, null, null, null);
+    }
+    fn resource_create(self: *backend_t, resource: u32, blob: u64, size: u64, flags: u32) c_int {
+        if (self.receiver) |receiver|
+            return venus_receiver_resource_create(receiver, resource, blob, size, flags);
+        return self.request(c.RequestCreate, resource, flags, blob, size, null, null, null);
+    }
+    fn resource_free(self: *backend_t, resource: u32) c_int {
+        if (self.receiver) |receiver| return venus_receiver_resource_free(receiver, resource);
+        return self.request(c.RequestFree, resource, 0, 0, 0, null, null, null);
+    }
+};
 
 const writer_t = struct {
     bytes: [BufferBytes]u8 align(64) = undefined,
@@ -62,27 +151,33 @@ const reader_t = struct {
     }
 };
 
-fn wait_cpu(receiver: *venus_receiver_t) !void {
+fn wait_cpu(receiver: *backend_t) !void {
     var timer = try std.time.Timer.start();
     while (true) {
-        if (venus_receiver_health(receiver, null) != 0) return error.Renderer;
-        const status = venus_receiver_poll(receiver);
+        if (receiver.health() != 0) return error.Renderer;
+        const status = receiver.poll();
         if (status == 0) return;
         if (status != 1) return error.Renderer;
         if (timer.read() >= 5 * std.time.ns_per_s) return error.Deadline;
         std.time.sleep(std.time.ns_per_ms);
     }
 }
-fn exchange(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, command: u32) !reader_t {
+fn exchange(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    command: u32,
+) !reader_t {
     var fence: u64 = 0;
-    if (venus_receiver_submit(receiver, &writer.bytes, writer.used, &fence) != 0 or fence == 0) return error.Renderer;
+    if (receiver.submit(writer.bytes[0..writer.used], &fence) != 0 or
+        fence == 0) return error.Renderer;
     try wait_cpu(receiver);
-    if (venus_receiver_reply(receiver, 0, reply, reply.len) != 0) return error.Renderer;
+    if (receiver.reply(reply) != 0) return error.Renderer;
     var reader = reader_t{ .bytes = reply };
     try reader.expect(u32, command);
     return reader;
 }
-fn create_instance(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8) !void {
+fn create_instance(receiver: *backend_t, writer: *writer_t, reply: *[BufferBytes]u8) !void {
     try writer.begin(0);
     try writer.put(u64, 1); // pCreateInfo.
     try writer.put(u32, 1); // INSTANCE_CREATE_INFO.
@@ -106,7 +201,7 @@ fn create_instance(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buff
     try reader.expect(u64, 1);
     try reader.expect(u64, InstanceId);
 }
-fn enumerate_devices(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8) !u32 {
+fn enumerate_devices(receiver: *backend_t, writer: *writer_t, reply: *[BufferBytes]u8) !u32 {
     try writer.begin(2);
     try writer.put(u64, InstanceId);
     try writer.put(u64, 1);
@@ -132,7 +227,13 @@ fn enumerate_devices(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Bu
     for (0..count) |index| try reader.expect(u64, index + 2);
     return count;
 }
-fn select_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, count: u32, hardware: bool) !u64 {
+fn select_device(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    count: u32,
+    hardware: bool,
+) !u64 {
     for (0..count) |index| {
         try writer.begin(6); // GetPhysicalDeviceProperties.
         try writer.put(u64, index + 2);
@@ -147,12 +248,20 @@ fn select_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
         const name = try reader.take(256);
         const terminator = std.mem.indexOfScalar(u8, name, 0) orelse return error.Protocol;
         if (hardware and device_type != 1 and device_type != 2) continue;
-        std.debug.print("Venus queue device: type={d} API=0x{x} name={s}\n", .{ device_type, api, name[0..terminator] });
+        std.debug.print(
+            "Venus queue device: type={d} API=0x{x} name={s}\n",
+            .{ device_type, api, name[0..terminator] },
+        );
         return index + 2;
     }
     return error.NoDevice;
 }
-fn select_family(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64) !queue_family_t {
+fn select_family(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    physical: u64,
+) !queue_family_t {
     try writer.begin(7);
     try writer.put(u64, physical);
     try writer.put(u64, 1);
@@ -184,7 +293,13 @@ fn select_family(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
     }
     return selected orelse error.NoDevice;
 }
-fn create_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64, family: u32) !void {
+fn create_device(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    physical: u64,
+    family: u32,
+) !void {
     try writer.begin(11);
     try writer.put(u64, physical);
     try writer.put(u64, 1);
@@ -222,7 +337,13 @@ fn create_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
     try reader.expect(u64, 1);
     try reader.expect(u64, QueueId);
 }
-fn create_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, family: u32, image: bool) !void {
+fn create_workload(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    family: u32,
+    image: bool,
+) !void {
     try writer.begin(47); // CreateQueryPool.
     try writer.put(u64, DeviceId);
     try writer.put(u64, 1);
@@ -305,7 +426,12 @@ fn read_timestamps(reader: *reader_t, valid_bits: u32) !u64 {
     if (delta >= half_range) return error.Protocol;
     return delta;
 }
-fn verify_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, valid_bits: u32) !void {
+fn verify_workload(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    valid_bits: u32,
+) !void {
     try writer.begin(49); // GetQueryPoolResults, nonblocking after GPU retirement.
     try writer.put(u64, DeviceId);
     try writer.put(u64, QueryPoolId);
@@ -316,9 +442,17 @@ fn verify_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buff
     try writer.put(u32, 5); // 64_BIT | WITH_AVAILABILITY, without WAIT.
     var reader = try exchange(receiver, writer, reply, 49);
     const delta = try read_timestamps(&reader, valid_bits);
-    std.debug.print("GPU timestamp commands executed: valid_bits={d} delta={d}\n", .{ valid_bits, delta });
+    std.debug.print(
+        "GPU timestamp commands executed: valid_bits={d} delta={d}\n",
+        .{ valid_bits, delta },
+    );
 }
-fn queue_roundtrip(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, expected: u64) !void {
+fn queue_roundtrip(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    expected: u64,
+) !void {
     try writer.begin(18);
     try writer.put(u64, QueueId);
     try writer.put(u32, 1); // One real command-buffer submission.
@@ -337,11 +471,11 @@ fn queue_roundtrip(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buff
     var reader = try exchange(receiver, writer, reply, 18);
     try reader.expect(u32, 0);
     var fence: u64 = 0;
-    if (venus_receiver_gpu_fence(receiver, 1, &fence) != 0 or fence != expected) return error.Renderer;
+    if (receiver.gpu_fence(1, &fence) != 0 or fence != expected) return error.Renderer;
     var timer = try std.time.Timer.start();
     while (true) {
-        if (venus_receiver_health(receiver, null) != 0) return error.Renderer;
-        const status = venus_receiver_gpu_poll(receiver, 1, fence);
+        if (receiver.health() != 0) return error.Renderer;
+        const status = receiver.gpu_poll(1, fence);
         if (status == 0) break;
         if (status != 1) return error.Renderer;
         if (timer.read() >= 5 * std.time.ns_per_s) return error.Deadline;
@@ -353,7 +487,8 @@ fn run_fixture(hardware: bool) !void {
     var owned: ?*venus_receiver_t = null;
     if (venus_receiver_create(&owned, BufferBytes, BufferBytes) != 0) return error.Renderer;
     defer venus_receiver_destroy(&owned);
-    const receiver = owned orelse return error.Renderer;
+    var backend = backend_t{ .receiver = owned orelse return error.Renderer };
+    const receiver = &backend;
     var writer = writer_t{};
     var reply: [BufferBytes]u8 = undefined;
     try create_instance(receiver, &writer, &reply);
@@ -457,7 +592,12 @@ test "timestamp reply requires complete available ordered GPU output" {
 }
 
 const image_layout_t = struct { offset: u64, stride: u64, size: u64, extent: u64 };
-fn allocate_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64) !image_layout_t {
+fn allocate_image(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    physical: u64,
+) !image_layout_t {
     try writer.begin(54); // CreateImage, linear BGRA8 with explicit DMA-BUF handle support.
     try writer.put(u64, DeviceId);
     try writer.put(u64, 1);
@@ -484,7 +624,11 @@ fn allocate_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffe
     const size = try reader.get(u64);
     const alignment = try reader.get(u64);
     const types = try reader.get(u32);
-    if (size == 0 or size > 1073737728 or alignment == 0 or alignment & (alignment - 1) != 0 or types == 0) return error.Protocol;
+    if (size == 0 or
+        size > 1073737728 or
+        alignment == 0 or
+        alignment & (alignment - 1) != 0 or
+        types == 0) return error.Protocol;
     const extent = (size + 4095) & ~@as(u64, 4095);
     try writer.begin(8); // GetPhysicalDeviceMemoryProperties.
     try writer.put(u64, physical);
@@ -501,7 +645,10 @@ fn allocate_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffe
         const flags = try reader.get(u32);
         const heap = try reader.get(u32);
         if (index < count and heap >= 16) return error.Protocol;
-        if (index < count and types & (@as(u32, 1) << @as(u5, @intCast(index))) != 0 and flags & 2 != 0 and selected == null)
+        if (index < count and
+            types & (@as(u32, 1) << @as(u5, @intCast(index))) != 0 and
+            flags & 2 != 0 and
+            selected == null)
             selected = @intCast(index);
     }
     const heaps = try reader.get(u32);
@@ -544,10 +691,26 @@ fn allocate_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffe
     const image_size = try reader.get(u64);
     const stride = try reader.get(u64);
     _ = try reader.take(16);
-    if (offset > extent or image_size > extent - offset or stride < 128 or stride > 2147483647 or image_size < stride * 15 + 128) return error.Protocol;
+    if (offset > extent or
+        image_size > extent - offset or
+        stride < 128 or
+        stride > 2147483647 or
+        image_size < stride * 15 + 128) return error.Protocol;
     return .{ .offset = offset, .stride = stride, .size = image_size, .extent = extent };
 }
-fn image_barrier(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, old_layout: u32, new_layout: u32, source_stage: u32, destination_stage: u32, source_access: u32, destination_access: u32, source_family: u32, destination_family: u32) !void {
+fn image_barrier(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    old_layout: u32,
+    new_layout: u32,
+    source_stage: u32,
+    destination_stage: u32,
+    source_access: u32,
+    destination_access: u32,
+    source_family: u32,
+    destination_family: u32,
+) !void {
     try writer.begin(126);
     try writer.put(u64, CommandBufferId);
     try writer.words(&.{ source_stage, destination_stage, 0, 0 });
@@ -558,13 +721,37 @@ fn image_barrier(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
     try writer.put(u64, 1);
     try writer.put(u32, 45); // IMAGE_MEMORY_BARRIER.
     try writer.put(u64, 0);
-    try writer.words(&.{ source_access, destination_access, old_layout, new_layout, source_family, destination_family });
+    try writer.words(&.{
+        source_access,
+        destination_access,
+        old_layout,
+        new_layout,
+        source_family,
+        destination_family,
+    });
     try writer.put(u64, ImageId);
     try writer.words(&.{ 1, 0, 1, 0, 1 });
     _ = try exchange(receiver, writer, reply, 126);
 }
-fn record_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, family: u32) !void {
-    try image_barrier(receiver, writer, reply, 0, 7, 1, 0x1000, 0, 0x1000, std.math.maxInt(u32), std.math.maxInt(u32));
+fn record_image(
+    receiver: *backend_t,
+    writer: *writer_t,
+    reply: *[BufferBytes]u8,
+    family: u32,
+) !void {
+    try image_barrier(
+        receiver,
+        writer,
+        reply,
+        0,
+        7,
+        1,
+        0x1000,
+        0,
+        0x1000,
+        std.math.maxInt(u32),
+        std.math.maxInt(u32),
+    );
     try writer.begin(119);
     try writer.put(u64, CommandBufferId);
     try writer.put(u64, ImageId);
@@ -576,43 +763,74 @@ fn record_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferB
     try writer.put(u64, 1);
     try writer.words(&.{ 1, 0, 1, 0, 1 });
     _ = try exchange(receiver, writer, reply, 119);
-    try image_barrier(receiver, writer, reply, 7, 1, 0x1000, 0x2000, 0x1000, 0, family, std.math.maxInt(u32) - 1);
+    try image_barrier(
+        receiver,
+        writer,
+        reply,
+        7,
+        1,
+        0x1000,
+        0x2000,
+        0x1000,
+        0,
+        family,
+        std.math.maxInt(u32) - 1,
+    );
 }
 const present_image_t = *const fn (c_int, u64, u64, u64, u64, ?*anyopaque) callconv(.C) c_int;
 fn run_image_fixture(present: present_image_t, context: ?*anyopaque) !void {
     var owned: ?*venus_receiver_t = null;
     if (venus_receiver_create(&owned, BufferBytes, BufferBytes) != 0) return error.Renderer;
     defer venus_receiver_destroy(&owned);
-    const receiver = owned orelse return error.Renderer;
+    var backend = backend_t{ .receiver = owned orelse return error.Renderer };
+    const receiver = &backend;
     var writer = writer_t{};
     var reply: [BufferBytes]u8 = undefined;
-    try create_instance(receiver, &writer, &reply);
-    const count = try enumerate_devices(receiver, &writer, &reply);
-    const physical = try select_device(receiver, &writer, &reply, count, true);
-    const family = try select_family(receiver, &writer, &reply, physical);
-    try create_device(receiver, &writer, &reply, physical, family.index);
-    const layout = try allocate_image(receiver, &writer, &reply, physical);
-    try create_workload(receiver, &writer, &reply, family.index, true);
-    try queue_roundtrip(receiver, &writer, &reply, 1);
-    try verify_workload(receiver, &writer, &reply, family.timestamp_bits);
-    if (venus_receiver_resource_create(receiver, 2, MemoryId, layout.extent, 6) != 0) return error.Renderer;
+    const layout = try prepare_image(receiver, &writer, &reply);
     var fd: c_int = -1;
-    if (venus_receiver_resource_export(receiver, 2, 1, 1, &fd) != 0 or fd < 0) return error.Renderer;
+    const export_status = venus_receiver_resource_export(receiver.receiver.?, 2, 1, 1, &fd);
+    if (export_status != 0 or fd < 0) return error.Renderer;
     defer std.posix.close(fd);
-    if (present(fd, layout.offset, layout.stride, layout.size, layout.extent, context) != 0) return error.Presentation;
-    if (venus_receiver_resource_free(receiver, 2) != 0) return error.Renderer;
-    for ([_]u32{ 86, 48, 55, 22 }, [_]u64{ CommandPoolId, QueryPoolId, ImageId, MemoryId }) |command, object| {
+    const present_status = present(
+        fd,
+        layout.offset,
+        layout.stride,
+        layout.size,
+        layout.extent,
+        context,
+    );
+    if (present_status != 0) return error.Presentation;
+    if (receiver.resource_free(2) != 0) return error.Renderer;
+    try destroy_image(receiver, &writer, &reply);
+}
+fn prepare_image(receiver: *backend_t, writer: *writer_t, reply: *[BufferBytes]u8) !image_layout_t {
+    try create_instance(receiver, writer, reply);
+    const count = try enumerate_devices(receiver, writer, reply);
+    const physical = try select_device(receiver, writer, reply, count, true);
+    const family = try select_family(receiver, writer, reply, physical);
+    try create_device(receiver, writer, reply, physical, family.index);
+    const layout = try allocate_image(receiver, writer, reply, physical);
+    try create_workload(receiver, writer, reply, family.index, true);
+    try queue_roundtrip(receiver, writer, reply, 1);
+    try verify_workload(receiver, writer, reply, family.timestamp_bits);
+    if (receiver.resource_create(2, MemoryId, layout.extent, 6) != 0) return error.Renderer;
+    return layout;
+}
+fn destroy_image(receiver: *backend_t, writer: *writer_t, reply: *[BufferBytes]u8) !void {
+    const Commands = [_]u32{ 86, 48, 55, 22 };
+    const Objects = [_]u64{ CommandPoolId, QueryPoolId, ImageId, MemoryId };
+    for (Commands, Objects) |command, object| {
         try writer.begin(command);
         try writer.put(u64, DeviceId);
         try writer.put(u64, object);
         try writer.put(u64, 0);
-        _ = try exchange(receiver, &writer, &reply, command);
+        _ = try exchange(receiver, writer, reply, command);
     }
     for ([_]u32{ 12, 1 }, [_]u64{ DeviceId, InstanceId }) |command, object| {
         try writer.begin(command);
         try writer.put(u64, object);
         try writer.put(u64, 0);
-        _ = try exchange(receiver, &writer, &reply, command);
+        _ = try exchange(receiver, writer, reply, command);
     }
 }
 /// in: nullable callback and nullable borrowed context. Callback borrows real
@@ -625,4 +843,155 @@ export fn venus_gpu_image_fixture_run(present: ?present_image_t, context: ?*anyo
         return 1;
     };
     return 0;
+}
+
+const remote_present_t = *const fn (u64, u64, u64, u64, ?*anyopaque) callconv(.C) c_int;
+fn run_remote_image(
+    guest_exchange: guest_exchange_t,
+    guest: *anyopaque,
+    present: remote_present_t,
+    context: ?*anyopaque,
+) !void {
+    var backend = backend_t{ .guest = guest, .guest_exchange = guest_exchange };
+    var writer = writer_t{};
+    var reply: [BufferBytes]u8 = undefined;
+    const layout = try prepare_image(&backend, &writer, &reply);
+    if (present(layout.offset, layout.stride, layout.size, layout.extent, context) != 0)
+        return error.Presentation;
+    if (backend.resource_free(2) != 0) return error.Renderer;
+    try destroy_image(&backend, &writer, &reply);
+}
+/// in: nullable negotiated guest callback/context and image callback/context.
+/// Borrows all for call; callback receives queried metadata only and must finish
+/// release consumption before returning. Returns0 success/1 failure. Owns no host
+/// receiver/FD; on failure caller destroys old worker/session. Sole guest thread.
+export fn venus_gpu_remote_image_fixture_run(
+    guest_exchange: ?guest_exchange_t,
+    guest: ?*anyopaque,
+    present: ?remote_present_t,
+    context: ?*anyopaque,
+) c_int {
+    run_remote_image(
+        guest_exchange orelse return 1,
+        guest orelse return 1,
+        present orelse return 1,
+        context,
+    ) catch |failure| {
+        std.debug.print("Mapped Venus image fixture failed: {s}\n", .{@errorName(failure)});
+        return 1;
+    };
+    return 0;
+}
+
+const request_fixture_t = struct {
+    status: c_int = 0,
+    corruption: u32 = 4,
+    seen: c.venus_request_t = std.mem.zeroes(c.venus_request_t),
+};
+fn test_guest_exchange(
+    context: ?*anyopaque,
+    request: *const c.venus_request_t,
+    input: ?*const anyopaque,
+    length: usize,
+    response: *c.venus_request_t,
+    output: ?*anyopaque,
+    capacity: usize,
+) callconv(.C) c_int {
+    const fixture: *request_fixture_t = @ptrCast(@alignCast(context.?));
+    fixture.seen = request.*;
+    std.debug.assert(request.sequence == 0 and request.direction == 0 and request.status == 0);
+    std.debug.assert(length == request.payload_bytes and (length == 0 or input != null));
+    if (fixture.status != 0) return fixture.status;
+    response.* = std.mem.zeroes(c.venus_request_t);
+    response.kind = request.kind;
+    response.direction = 1;
+    response.payload_bytes = @intCast(capacity);
+    if (request.kind == c.RequestSubmit or request.kind == c.RequestGpuFence)
+        response.argument_zero = 17;
+    if (output) |bytes| {
+        const destination: [*]u8 = @ptrCast(bytes);
+        @memset(destination[0..capacity], 0x5a);
+    }
+    switch (fixture.corruption) {
+        0 => response.kind = 0,
+        1 => response.direction = 0,
+        2 => response.status = 1,
+        3 => response.payload_bytes += 1,
+        else => {},
+    }
+    return 0;
+}
+fn test_remote_present(_: u64, _: u64, _: u64, _: u64, _: ?*anyopaque) callconv(.C) c_int {
+    return 1;
+}
+test "guest GPU backend emits exact operation fields and propagates malformed responses" {
+    var fixture = request_fixture_t{};
+    var backend = backend_t{ .guest = &fixture, .guest_exchange = test_guest_exchange };
+    const bytes = try std.testing.allocator.alloc(u8, BufferBytes);
+    defer std.testing.allocator.free(bytes);
+    @memset(bytes, 0);
+    var fence: u64 = 0;
+    try std.testing.expectEqual(@as(c_int, 0), backend.health());
+    try std.testing.expectEqual(@as(c_int, 0), backend.submit(bytes[0..8], &fence));
+    try std.testing.expectEqual(@as(u64, 17), fence);
+    try std.testing.expectEqual(@as(u32, c.RequestSubmit), fixture.seen.kind);
+    try std.testing.expectEqual(@as(u32, 8), fixture.seen.payload_bytes);
+    try std.testing.expectEqual(@as(c_int, 0), backend.poll());
+    try std.testing.expectEqual(@as(u32, c.RequestPoll), fixture.seen.kind);
+    try std.testing.expectEqual(@as(c_int, 0), backend.reply(bytes));
+    try std.testing.expectEqual(@as(u32, c.RequestReply), fixture.seen.kind);
+    try std.testing.expectEqual(@as(u64, BufferBytes), fixture.seen.argument_one);
+    for (bytes) |byte| try std.testing.expectEqual(@as(u8, 0x5a), byte);
+    try std.testing.expectEqual(@as(c_int, 0), backend.gpu_fence(2, &fence));
+    try std.testing.expectEqual(@as(u32, c.RequestGpuFence), fixture.seen.kind);
+    try std.testing.expectEqual(@as(u64, 2), fixture.seen.argument_zero);
+    try std.testing.expectEqual(@as(u64, 0), fixture.seen.argument_one);
+    try std.testing.expectEqual(@as(c_int, 0), backend.gpu_poll(2, 17));
+    try std.testing.expectEqual(@as(u32, c.RequestGpuPoll), fixture.seen.kind);
+    try std.testing.expectEqual(@as(u64, 17), fixture.seen.argument_one);
+    try std.testing.expectEqual(@as(c_int, 0), backend.resource_create(2, 106, 4096, 6));
+    try std.testing.expectEqual(@as(u32, c.RequestCreate), fixture.seen.kind);
+    try std.testing.expectEqual(@as(u32, 2), fixture.seen.resource_id);
+    try std.testing.expectEqual(@as(u32, 6), fixture.seen.flags);
+    try std.testing.expectEqual(@as(u64, 106), fixture.seen.argument_zero);
+    try std.testing.expectEqual(@as(u64, 4096), fixture.seen.argument_one);
+    try std.testing.expectEqual(@as(c_int, 0), backend.resource_free(2));
+    try std.testing.expectEqual(@as(u32, c.RequestFree), fixture.seen.kind);
+    try std.testing.expectEqual(@as(u32, 0), fixture.seen.flags);
+    try std.testing.expectEqual(@as(u64, 0), fixture.seen.argument_zero);
+    try std.testing.expectEqual(@as(u64, 0), fixture.seen.argument_one);
+    for (0..4) |corruption| {
+        fixture.corruption = @intCast(corruption);
+        try std.testing.expectEqual(@as(c_int, -2), backend.poll());
+    }
+    fixture.corruption = 4;
+    for ([_]c_int{ 1, -1, -2, -3, -4, -5, -6 }) |status| {
+        fixture.status = status;
+        try std.testing.expectEqual(status, backend.poll());
+    }
+    try std.testing.expectEqual(@as(c_int, 1), venus_gpu_remote_image_fixture_run(
+        null,
+        &fixture,
+        test_remote_present,
+        null,
+    ));
+    try std.testing.expectEqual(@as(c_int, 1), venus_gpu_remote_image_fixture_run(
+        test_guest_exchange,
+        null,
+        test_remote_present,
+        null,
+    ));
+    try std.testing.expectEqual(@as(c_int, 1), venus_gpu_remote_image_fixture_run(
+        test_guest_exchange,
+        &fixture,
+        null,
+        null,
+    ));
+    fixture.status = -1;
+    try std.testing.expectEqual(@as(c_int, 1), venus_gpu_remote_image_fixture_run(
+        test_guest_exchange,
+        &fixture,
+        test_remote_present,
+        null,
+    ));
 }

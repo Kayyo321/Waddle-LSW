@@ -1005,10 +1005,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and sanitized runs. Successful rendered production worker routing still pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define mapped guest hardware presentation verification`
+- **Commit `6a5149d`**: `docs(vgpu): define mapped guest hardware presentation verification`
   - **Task Impact**: +0% to TODO: #4; +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify explicit fixture transport backend, guest-only image metadata,
     production worker/native FD/Wayland roundtrip and exact completion-before-reuse
     validation. Keep standalone ICD and DXVK acceptance separate.
   - **Verification**: Acknowledged native Wayland/RTX5080 path passes; mapped rendered
     production worker fixture and final runtime acceptance remain pending.
+
+
+- **Commit (current; resolve by subject)**: `test(vgpu): add explicit guest transport backend to the GPU fixture`
+  - **Task Impact**: +0% to TODO: #4; +0% to TODO: #3 (+0% overall).
+  - **Summary**: Add private receiver/negotiated guest backends with exact request
+    fields, shared image preparation/teardown and metadata-only remote callback.
+    Format fixture signatures/conditions/calls within100 columns using zig fmt.
+  - **Verification**: Three Zig allocator tests cover all remote operation fields,
+    malformed replies, status propagation and argument failures. Existing local
+    timestamp and image native/hardware paths pass normal and ASan/LSan/UBSan.
+    Successful mapped remote image/Wayland fixture remains pending; no ICD credit.

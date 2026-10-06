@@ -1988,3 +1988,15 @@ consumed. Sixteen frames include one import rejection and subsequent recovery.
 Linux hardware execution and sanitizer gates exercise this path; hosted CI compiles
 it and runs negative presented worker/native wire fixtures without requiring GPU.
 Successful runtime hardware validation is required before final5% TODO #4 credit.
+
+
+GPU fixture now implements an explicit call-scoped backend with no global switch or
+fake receiver handle. Receiver path and remote exchange path share image preparation,
+queue work and teardown. Private backend validates callback response kind/direction/
+status/exact output length; remote health is sampled by the production service on
+every operation. New metadata-only C ABI entry point rejects NULL required bindings
+and delegates old-context cleanup to its caller on failure. Three Zig allocator tests
+cover exact request fields for all forwarded operations, callback corruption/status
+propagation and NULL/early failure boundaries. Existing hardware timestamp/image and
+sanitized local paths pass. Fixture lines are within100 columns and zig fmt checks
+pass. Successful mapped remote image presentation still requires its C harness.

@@ -270,8 +270,8 @@ build/waddle_vgpu_worker_sanitized: src/vgpu/worker_main.c $(VgpuServiceSources)
 
 build/waddle_vgpu_worker_sanitized: include/waddle/venus_service.h include/waddle/venus_worker.h include/waddle/venus_receiver.h include/waddle/venus_request.h include/waddle/venus_rpc.h include/waddle/venus_dispatch.h include/waddle/venus_channel.h include/waddle/venus_session.h include/waddle/venus_region.h include/waddle/venus_ring.h src/vgpu/venus_rpc_internal.h src/vgpu/venus_receiver_bounds.h src/vgpu/venus_stream.h
 
-build/venus_gpu_fixture.o: tests/vgpu/gpu_queue.zig | build
-	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fno-compiler-rt -lc -femit-bin=$@
+build/venus_gpu_fixture.o: tests/vgpu/gpu_queue.zig include/waddle/venus_request.h include/waddle/venus_ring.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fno-compiler-rt -lc -femit-bin=$@
 
 build/vgpu_gpu_queue_test: tests/vgpu/gpu_queue.c src/vgpu/venus_receiver.c include/waddle/venus_receiver.h build/venus_gpu_fixture.o build/venus_receiver_bounds.o | vgpu-renderer
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/gpu_queue.c src/vgpu/venus_receiver.c build/venus_gpu_fixture.o build/venus_receiver_bounds.o $(VgpuReceiverLibraries) -o $@
@@ -292,7 +292,7 @@ build/vgpu_gpu_receiver.o: src/vgpu/venus_receiver.c include/waddle/venus_receiv
 
 .PHONY: vgpu-gpu-unit
 vgpu-gpu-unit: build/vgpu_gpu_receiver.o build/venus_receiver_bounds.o
-	$(ZIG) test tests/vgpu/gpu_queue.zig build/vgpu_gpu_receiver.o build/venus_receiver_bounds.o -lc -Lbuild/vendor/virglrenderer/src -lvirglrenderer -rpath "$(CURDIR)/build/vendor/virglrenderer/src"
+	$(ZIG) test tests/vgpu/gpu_queue.zig -Iinclude build/vgpu_gpu_receiver.o build/venus_receiver_bounds.o -lc -Lbuild/vendor/virglrenderer/src -lvirglrenderer -rpath "$(CURDIR)/build/vendor/virglrenderer/src"
 
 # Linux C ABI objects use libc; freestanding weak getauxval must not interpose.
 VgpuLibcRuntimeObjects = build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
