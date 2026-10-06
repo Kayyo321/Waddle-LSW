@@ -1857,3 +1857,28 @@ exact encoded completion and export-before-receiver cleanup. Service coverage is
 mapped/exec-isolated service, quotas and fresh restart regressions also pass with
 normal and sanitized production workers. Worker launch still supplies only the
 unbound entry point until dedicated native frame FD routing is implemented.
+
+
+### Presented worker exec contract (Task #4)
+
+The dedicated presented launcher borrows mapping, guest stream and prepared native
+frame socket plus nonzero trusted context. Frame socket must be nonblocking,
+CLOEXEC, AF_UNIX SOCK_SEQPACKET with SO_PASSCRED already enabled; descriptors must
+be distinct. All validation precedes duplication/spawn. Duplicate three sources
+above64 before assigning child fd3 mapping/fd4 control/fd5 frame, then close all
+fd>=6. Unbound launcher retains fd3/4 and closefrom5. Every temporary duplication
+closes on all failures; owned child/group and borrowed caller descriptors retain
+existing ownership/reaping rules. Presentation callers must not reap the worker
+while its PID authenticates any outstanding controller frame receipt.
+
+Presented argv is executable, --venus-worker-presented, context and controller PID.
+The last two arguments are exactly16 lowercase hexadecimal ASCII bytes, no prefix,
+no sign/whitespace, nonzero. Parent formats private trusted integers in bounded
+17-byte buffers; child parses them through an allocation-free bounded Zig decoder
+with zero output on failure. PID must fit positive int32 and equal getppid before
+service acquisition. The child marks fd3/4/5 CLOEXEC before entering presented
+service; no file descriptor values enter guest packets. Malformed mode/length/
+argument/PID causes exit2 without receiver initialization. Unbound argv and entry
+point remain unchanged. SIGTERM/INT, owned process-group shutdown and old-context
+teardown follow existing worker rules. Native frame endpoint closes after service
+return; caller still owns its originals. No spontaneous surface/socket creation.

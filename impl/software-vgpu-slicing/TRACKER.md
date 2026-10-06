@@ -944,7 +944,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     tests pass; service construction and worker launch wiring are next gates.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): bind presentation leases into the production receiver service`
+- **Commit `5030b20`**: `feat(vgpu): bind presentation leases into the production receiver service`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add optional trusted frame endpoint/controller/context service run,
     acquire caller-owned export leases, route bound callbacks and encode consumed
@@ -953,3 +953,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     pass normal/ASan/LSan/UBSan; production coverage100% lines/99.02% branches.
     Real mapped/exec-isolated receiver and fresh restart regressions pass normal
     and sanitized production workers. Native frame launch/ack retry still pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define presented worker exec binding`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Specify prepared fd5 isolation, three-source duplication rollback,
+    fixed bounded argument encoding, retained parent identity and unbound compatibility.
+  - **Verification**: Service lifetime tests and actual mapped/exec regressions pass;
+    worker launcher and argument decoding implementation follows separately.
