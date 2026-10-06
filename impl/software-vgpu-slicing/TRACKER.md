@@ -1343,8 +1343,16 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     complete graphics/compute/memory APIs, public synchronization objects and real
     DXVK execution are pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify public fence ownership and polling`
+- **Commit `e4df455`**: `docs(vgpu): specify public fence ownership and polling`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify bounded fence creation/destruction/reset/status/wait wire
     commands, device-parent validation, nonblocking receiver polls, caller timeout
     semantics and mutex release so another thread can signal pending fences.
+
+- **Commit (current; resolve by subject)**: `fix(test): record concurrent branch hits atomically`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Use relaxed C11 atomic bytes in the fixed branch recorder so the
+    four-thread native ICD fixture can record source edges without data races.
+    Preserve bounds/abort behavior and the joined-thread exit report format.
+  - **Verification**: Native thread fixtures and coverage gates remain enforced;
+    no production runtime, threshold or ownership policy changes.
