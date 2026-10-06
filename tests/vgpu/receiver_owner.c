@@ -1,14 +1,16 @@
 /** @file receiver_owner.c @brief Public renderer boundary acquisition fault fixture. */
 #include "waddle/venus_receiver.h"
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include <sys/mman.h>
-#include <pthread.h>
 #include <time.h>
-#include <virglrenderer.h>
+#include <unistd.h>
 #include <venus_hw.h>
+#include <virglrenderer.h>
 
 static uint64_t clock_ms = 1000;
 static int clock_mode;
@@ -207,6 +209,31 @@ static int fixture_fence(uint32_t context, uint32_t flags, uint32_t ring, uint64
 #define free fixture_free
 #define virgl_renderer_init fixture_init
 #define virgl_renderer_cleanup fixture_cleanup
+static int export_mode;
+static int exported_fd = -1;
+static int fixture_export(uint32_t id, uint32_t *type, int *fd) {
+    assert(id == 3 && additional_live[1]);
+    if (export_mode == 1)
+        return -1;
+    if (export_mode == 2)
+        return 0;
+    exported_fd = dup(STDERR_FILENO);
+    assert(exported_fd >= 0);
+    *fd = exported_fd;
+    *type = export_mode == 3   ? VIRGL_RENDERER_BLOB_FD_TYPE_OPAQUE
+            : export_mode == 4 ? VIRGL_RENDERER_BLOB_FD_TYPE_SHM
+                               : VIRGL_RENDERER_BLOB_FD_TYPE_DMABUF;
+    return export_mode == 5 ? -1 : 0;
+}
+static int fixture_fcntl(int fd, int operation, ...) {
+    if (export_mode == 6 && operation == F_GETFD)
+        return -1;
+    if (export_mode == 7 && operation == F_SETFD)
+        return -1;
+    return fcntl(fd, operation, FD_CLOEXEC);
+}
+#define virgl_renderer_resource_export_blob fixture_export
+#define fcntl fixture_fcntl
 #define virgl_renderer_get_cap_set fixture_cap_set
 #define virgl_renderer_fill_caps fixture_fill_caps
 #define virgl_renderer_context_create_with_flags fixture_context_create
@@ -230,6 +257,65 @@ static void create(venus_receiver_t **receiver) {
     assert(venus_receiver_create(receiver, 64, 4096) == RingOk);
     assert(*receiver);
 }
+static void test_export(void) {
+    venus_receiver_t *receiver = NULL;
+    int fd = 123;
+    assert(venus_receiver_resource_export(NULL, 3, 1, 1, NULL) == RingInvalid);
+    assert(venus_receiver_resource_export(NULL, 3, 1, 1, &fd) == RingInvalid && fd == -1);
+    create(&receiver);
+    assert(venus_receiver_resource_export(receiver, 0, 1, 1, &fd) == RingInvalid);
+    assert(venus_receiver_resource_export(receiver, 66, 1, 1, &fd) == RingInvalid);
+    assert(venus_receiver_resource_export(receiver, 3, 1, 1, &fd) == RingInvalid);
+    assert(venus_receiver_resource_create(receiver, 2, 0, 4096, ResourceMap) == RingOk);
+    assert(venus_receiver_resource_create(receiver, 3, 44, 4096, ResourceShare) == RingOk);
+    assert(venus_receiver_resource_create(receiver, 4, 45, 4096, ResourceMap) == RingOk);
+    assert(venus_receiver_resource_export(receiver, 2, 1, 1, &fd) == RingInvalid);
+    assert(venus_receiver_resource_export(receiver, 4, 1, 1, &fd) == RingInvalid);
+    assert(venus_receiver_resource_export(receiver, 3, 0, 1, &fd) == RingInvalid);
+    assert(venus_receiver_resource_export(receiver, 3, 1, 0, &fd) == RingInvalid);
+    assert(venus_receiver_resource_export(receiver, 3, 1, 1, &fd) == RingInvalid);
+    uint64_t fence;
+    assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingOk);
+    assert(venus_receiver_resource_export(receiver, 3, 1, fence, &fd) == RingAgain);
+    context_fence(receiver, 1, 1, fence);
+    const uint32_t Commands[] = {137, 0};
+    assert(venus_receiver_submit(receiver, Commands, sizeof(Commands), &fence) == RingOk);
+    assert(venus_receiver_resource_export(receiver, 3, 1, 1, &fd) == RingAgain);
+    context_fence(receiver, 1, 0, fence);
+    for (export_mode = 1; export_mode <= 7; export_mode++) {
+        exported_fd = -1;
+        assert(venus_receiver_resource_export(receiver, 3, 1, 1, &fd) == RingCorrupt && fd == -1);
+        if (exported_fd >= 0) {
+            int saved_mode = export_mode;
+            export_mode = 0;
+            errno = 0;
+            assert(fixture_fcntl(exported_fd, F_GETFD) == -1 && errno == EBADF);
+            export_mode = saved_mode;
+        }
+        assert(venus_receiver_poll(receiver) == RingOk);
+    }
+    export_mode = 0;
+    for (int iteration = 0; iteration < 128; iteration++) {
+        assert(venus_receiver_resource_export(receiver, 3, 1, 1, &fd) == RingOk);
+        assert(fixture_fcntl(fd, F_GETFD) & FD_CLOEXEC);
+        assert(receiver->resource_count == 3 && receiver->resource_bytes == 12288);
+        close(fd);
+    }
+    assert(venus_receiver_resource_export(receiver, 3, 1, 1, &fd) == RingOk);
+    assert(venus_receiver_resource_free(receiver, 3) == RingOk);
+    assert(fixture_fcntl(fd, F_GETFD) >= 0);
+    close(fd);
+    atomic_store_explicit(&receiver->failed, 1, memory_order_release);
+    assert(venus_receiver_resource_export(receiver, 2, 1, 1, &fd) == RingInvalid);
+    assert(venus_receiver_resource_create(receiver, 3, 44, 4096, ResourceShare) == RingCorrupt);
+    receiver->resources[1] =
+        (venus_receiver_resource_t){.id = 3, .blob_id = 44, .flags = ResourceShare};
+    assert(venus_receiver_resource_export(receiver, 3, 1, 1, &fd) == RingCorrupt);
+    memset(&receiver->resources[1], 0, sizeof(receiver->resources[1]));
+    venus_receiver_destroy(&receiver);
+    no_resources();
+}
+
 static void test_resources(void) {
     venus_receiver_t *receiver = NULL;
     uint8_t output[8];
@@ -555,6 +641,7 @@ int main(void) {
     venus_receiver_destroy(&receiver);
     venus_receiver_destroy(&receiver);
     no_resources();
+    test_export();
     test_resources();
     test_gpu_fences();
     test_health();

@@ -1,12 +1,14 @@
 /** @file venus_receiver.c @brief Scoped public virglrenderer/Venus ownership. */
 #include "waddle/venus_receiver.h"
 #include "venus_receiver_bounds.h"
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <time.h>
-#include <virglrenderer.h>
+#include <unistd.h>
 #include <venus_hw.h>
+#include <virglrenderer.h>
 
 /** @brief Receiver-owned additional resource; no private heap allocation.
  * @note ID zero means free. Mapping borrowed from SDK, retained until unmap.
@@ -452,3 +454,36 @@ venus_ring_status_t venus_receiver_health(venus_receiver_t *receiver,
 
 _Static_assert(sizeof(struct virgl_renderer_capset_venus) == VenusCapabilityBytes,
                "Pinned public Venus capability ABI");
+
+venus_ring_status_t venus_receiver_resource_export(venus_receiver_t *receiver, uint32_t id,
+                                                   uint32_t timeline, uint64_t fence, int *output) {
+    if (!output)
+        return RingInvalid;
+    *output = -1;
+    uint32_t slot = venus_receiver_resource_slot(id);
+    if (!receiver || !slot)
+        return RingInvalid;
+    const venus_receiver_resource_t *resource = &receiver->resources[slot - 1];
+    if (!resource->id || !resource->blob_id || !(resource->flags & ResourceShare))
+        return RingInvalid;
+    venus_ring_status_t status = venus_receiver_poll(receiver);
+    if (status != RingOk)
+        return status;
+    status = venus_receiver_gpu_poll(receiver, timeline, fence);
+    if (status != RingOk)
+        return status;
+    uint32_t fd_type = 0;
+    int fd = -1;
+    if (virgl_renderer_resource_export_blob(id, &fd_type, &fd) != 0 || fd < 0 ||
+        fd_type != VIRGL_RENDERER_BLOB_FD_TYPE_DMABUF)
+        goto fail;
+    int flags = fcntl(fd, F_GETFD);
+    if (flags < 0 || fcntl(fd, F_SETFD, flags | FD_CLOEXEC) < 0)
+        goto fail;
+    *output = fd;
+    return RingOk;
+fail:
+    if (fd >= 0)
+        close(fd);
+    return RingCorrupt;
+}

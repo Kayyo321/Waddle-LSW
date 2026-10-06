@@ -190,4 +190,20 @@ venus_ring_status_t venus_receiver_timeouts(venus_receiver_t *receiver, uint32_t
  */
 venus_ring_status_t venus_receiver_health(venus_receiver_t *receiver,
                                           const _Atomic uint32_t *cancel);
+/** @brief Export completed shareable Venus device memory as a DMA-BUF.
+ * @param[in,out] receiver Nonnull live session-thread-owned receiver.
+ * @param[in] resource_id Live nonzero-blob resource ID 2..65 with ResourceShare.
+ * @param[in] timeline Existing GPU queue timeline 1..63, ordering image writes.
+ * @param[in] fence Previously-issued nonzero fence ordering all allocation writes.
+ * @param[out] fd Nonnull private output; set -1 on failure. Success transfers one
+ * owned CLOEXEC DMA-BUF FD; caller closes after handoff/cancellation.
+ * @return RingOk; RingInvalid for arguments/resource/policy/unissued fence;
+ * RingAgain for pending CPU/GPU; RingCorrupt for poison/SDK/type/CLOEXEC failure.
+ * @note Linux/session-thread-only. No pixel mapping/copy or ledger mutation.
+ * Caller checks Vulkan results and prevents writes/reuse until compositor release.
+ * Export failure does not poison receiver. FD lifetime is independent of ledger;
+ * resource/image ownership and quota remain until explicit release/destroy.
+ */
+venus_ring_status_t venus_receiver_resource_export(venus_receiver_t *receiver, uint32_t resource_id,
+                                                   uint32_t timeline, uint64_t fence, int *fd);
 #endif

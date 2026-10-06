@@ -14,11 +14,11 @@
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
-| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 15% | Receiver export ownership verified; image metadata, Wayland integration and worker FD handoff pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `40.0%`
+**Total Feature Completion**: `42.25%`
 
 ## Commit History & Progress Log
 
@@ -656,7 +656,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Formatting and diff checks pass. README changes were independent commits.
   - **TODO #2 Completed At**: 2026-10-06T01:50:12Z
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify guest and presentation acceptance boundaries`
+- **Commit `c737b48`**: `docs(vgpu): specify guest and presentation acceptance boundaries`
   - **Task Impact**: +0% to TODO: #3; +0% to TODO: #4 (+0% overall).
   - **Summary**: Divide guest and presentation scope into independently verifiable
     milestones; specify public Venus DMA-BUF export, completion ordering,
@@ -664,3 +664,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspected pinned public renderer export/query implementation,
     existing AV Wayland client and system Vulkan/Wayland dependencies. WDK/native
     guest access is requested; no driver or full ICD implementation credit.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): export fence-ordered device-memory DMA-BUFs`
+  - **Task Impact**: +15% to TODO: #4 (+2.25% overall).
+  - **Summary**: Add Linux public-ABI export of registered shareable device memory
+    after CPU and explicit GPU fence retirement, independent CLOEXEC FD ownership,
+    strict FD type checks and symmetric export-failure cleanup without pixel copies.
+  - **Verification**: Receiver unit/real CPU tests, ASan/LSan/UBSan and coverage
+    pass. Production receiver lines 100%, branches 98.89%; Zig bounds 100%/100%.
+    Faults include acquired-FD SDK error, opaque/SHM rejection, invalid metadata,
+    CLOEXEC get/set failure, pending/poisoned fences, 128 export/close cycles and
+    exported FD survival after ledger free. Hardware export is a separate gate.
