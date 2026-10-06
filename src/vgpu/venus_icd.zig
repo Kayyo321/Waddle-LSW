@@ -2995,6 +2995,36 @@ fn bind_descriptor_sets(command_buffer: c.VkCommandBuffer, point: u32, layout: c
     compute_state.bind_sets(command_profile(record), definition, first, tokens[0..count]) catch unreachable;
     for (targets[0..count]) |target| command_reference(state, target);
 }
+/// Record push bytes covered by declared ranges, including before pipeline binding.
+/// [in] command/layout tokens borrowed; stages core mask; values nonnull accessible size4..128.
+/// Void; malformed recording invalidates. Mutex serialized, no allocation/retained input pointer.
+/// Copied per-stage compatibility and initialized-byte state publishes after native acknowledgment.
+fn push_constants(command_buffer: c.VkCommandBuffer, layout: c.VkPipelineLayout, stages: u32, offset: u32, size: u32, values: ?*const anyopaque) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    if (layout == null or values == null or stages == 0 or stages & ~@as(u32, 0x3f) != 0 or offset % 4 != 0 or size == 0 or size % 4 != 0 or offset > 128 or size > 128 - offset) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const target = child_object(@intFromPtr(layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const definition = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(target).profile_index).?;
+    var next = command_profile(record).*;
+    compute_state.push_bytes(&next, definition, stages, offset, size) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    const bytes: [*]const u8 = @ptrCast(values.?);
+    const writer = compute_wire.push_constants(record.id, target.id, stages, offset, bytes[0..size]) catch unreachable;
+    if (command_acknowledged(&writer, 132)) command_profile(record).* = next;
+}
 /// Record a bounded fill of a private device buffer; CPU acknowledgment only.
 /// @param[in] command_buffer Nullable private borrowed handle; invalid states ignored.
 /// @param[in] buffer Nullable same-device bound TRANSFER_DST token, no ownership transfer.
@@ -3820,6 +3850,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkBeginCommandBuffer", &begin_command_buffer },
         .{ "vkCmdBindPipeline", &bind_pipeline },
         .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
+        .{ "vkCmdPushConstants", &push_constants },
         .{ "vkCmdFillBuffer", &fill_buffer },
         .{ "vkCmdCopyBuffer", &copy_buffer },
         .{ "vkCmdUpdateBuffer", &update_buffer },
