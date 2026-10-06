@@ -261,3 +261,83 @@ test "view and barrier negative scalar boundaries reject before serialization" {
     writer.used = MaxBytes - 2;
     try std.testing.expectError(error.Limit, image_barrier(&writer, &barrier, 42));
 }
+
+/// Encode core shader creation from bounded SPIR-V. [in] info/code borrowed and accessible for call.
+/// [in] IDs translated nonzero identities, never dereferenced. Returns owned packet or Invalid/Limit.
+/// No allocation, locks or retained pointers. Validates structural word bounds; host validates semantics.
+pub fn create_shader_module(info: *const c.VkShaderModuleCreateInfo, device_id: u64, module_id: u64) !writer_t {
+    if (info.sType != c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO or info.pNext != null or
+        info.flags != 0 or info.pCode == null or info.codeSize < 20 or info.codeSize % 4 != 0) return error.Invalid;
+    if (info.codeSize > MaxBytes - 80) return error.Limit;
+    const words = info.pCode[0 .. info.codeSize / 4];
+    if (words[0] != 0x07230203 or words[1] & 0xff0000ff != 0 or
+        (words[1] >> 16) & 0xff != 1 or (words[1] >> 8) & 0xff > 6 or
+        words[3] == 0 or words[4] != 0) return error.Invalid;
+    var cursor: usize = 5;
+    while (cursor < words.len) {
+        const count = words[cursor] >> 16;
+        if (count == 0 or count > words.len - cursor) return error.Invalid;
+        cursor += count;
+    }
+    var writer = writer_t{};
+    try writer.header(59, device_id);
+    try writer.put(u64, 1);
+    try writer.put(u32, c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO);
+    try writer.put(u64, 0);
+    try writer.put(u32, 0);
+    try writer.put(u64, info.codeSize);
+    try writer.put(u64, words.len);
+    for (words) |word| try writer.put(u32, word);
+    try finish_create(&writer, module_id);
+    return writer;
+}
+extern fn venus_render_test_shader(*const c.VkShaderModuleCreateInfo, [*]u8) usize;
+test "shader packets match pinned oracle and reject structural corruption" {
+    var words = [_]u32{ 0x07230203, 0x00010000, 0, 1, 0, 0x00010000 };
+    var info: c.VkShaderModuleCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = words.len * 4, .pCode = &words };
+    var expected: [MaxBytes]u8 = undefined;
+    const writer = try create_shader_module(&info, 7, 42);
+    const count = venus_render_test_shader(&info, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    const original = words;
+    for ([_]usize{ 0, 1, 3, 4, 5 }) |index| {
+        words = original;
+        words[index] = if (index == 3 or index == 5) 0 else 0xffffffff;
+        try std.testing.expectError(error.Invalid, create_shader_module(&info, 7, 42));
+    }
+    words = original;
+    words[5] = 0x00020000;
+    try std.testing.expectError(error.Invalid, create_shader_module(&info, 7, 42));
+    words = original;
+    info.codeSize = MaxBytes;
+    try std.testing.expectError(error.Limit, create_shader_module(&info, 7, 42));
+    info.codeSize = 19;
+    try std.testing.expectError(error.Invalid, create_shader_module(&info, 7, 42));
+    info.codeSize = 21;
+    try std.testing.expectError(error.Invalid, create_shader_module(&info, 7, 42));
+    info.codeSize = 24;
+    info.pCode = null;
+    try std.testing.expectError(error.Invalid, create_shader_module(&info, 7, 42));
+    info.pCode = &words;
+    info.flags = 1;
+    try std.testing.expectError(error.Invalid, create_shader_module(&info, 7, 42));
+    info.flags = 0;
+    info.pNext = @ptrFromInt(1);
+    try std.testing.expectError(error.Invalid, create_shader_module(&info, 7, 42));
+}
+test "shader exact maximum packet fits and one word beyond fails before dereference" {
+    var words: [(MaxBytes - 80) / 4]u32 = [_]u32{0x00010000} ** ((MaxBytes - 80) / 4);
+    words[0] = 0x07230203;
+    words[1] = 0x00010600;
+    words[2] = 0;
+    words[3] = 1;
+    words[4] = 0;
+    var info: c.VkShaderModuleCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = words.len * 4, .pCode = &words };
+    var expected: [MaxBytes]u8 = undefined;
+    const writer = try create_shader_module(&info, 7, 42);
+    try std.testing.expectEqual(MaxBytes, writer.used);
+    const count = venus_render_test_shader(&info, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    info.codeSize += 4;
+    try std.testing.expectError(error.Limit, create_shader_module(&info, 7, 42));
+}
