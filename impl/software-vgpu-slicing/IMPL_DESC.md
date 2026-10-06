@@ -2240,3 +2240,12 @@ fixtures pass; production coverage is100% lines and90% branches. Windows cross-l
 passes; native Windows execution is gated in CI. No public ICD/API credit is awarded
 for these helpers alone. The earlier design command numbering is corrected to the
 actual pinned enum; serializer tests assert this mapping rather than assuming it.
+
+
+Real queue fixtures now validate complete property, feature and memory output via
+the production decoder. GetPhysicalDeviceMemoryProperties requests include exact
+u64 partial-array tags32 and16, although nested partial scalar fields are omitted.
+Mesa llvmpipe normal/sanitized queue tests and RTX5080 queue tests pass. Mapped guest
+hardware production-worker presentation tests validate all three queries in three
+fresh sessions, then execute48-frame acquire/present/release churn in each, normal
+and ASan/LSan/UBSan. These fixtures remain separate from public ICD/DXVK acceptance.

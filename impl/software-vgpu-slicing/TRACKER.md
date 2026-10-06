@@ -1144,7 +1144,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     guest headers. Pinned source files are unchanged; no runtime progress credited.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): decode bounded native Vulkan query values`
+- **Commit `b88853f`**: `feat(vgpu): decode bounded native Vulkan query values`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Add allocation-free Zig native property/feature/memory conversion
     with exact tags, bounded reads, semantic checks and preserved failure output.
@@ -1153,3 +1153,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Four allocator tests, native C, ASan/LSan/UBSan and Windows
     cross-link pass; production lines100%, branches90%. Public ICD/API dispatch
     and DXVK remain unfinished; no completion credit from decoder helpers alone.
+
+
+- **Commit (current; resolve by subject)**: `test(vgpu): validate complete core replies from real receivers`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Replace partial property parsing with production fixed-value
+    decoders; also query complete features and memory metadata before GPU work.
+    Encode exact fixed memory array tags required by the receiver input schema.
+  - **Verification**: Mesa llvmpipe normal/sanitized queue workloads pass; RTX5080
+    queue and mapped guest/production-worker48-frame fresh-session tests pass,
+    including ASan/LSan/UBSan. This is actual receiver verification, not ICD/DXVK.

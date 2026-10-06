@@ -2,6 +2,7 @@
 const std = @import("std");
 const c = @cImport({
     @cInclude("waddle/venus_request.h");
+    @cInclude("waddle/venus_values.h");
 });
 const BufferBytes: usize = 4096;
 const MaxDevices: u32 = 16;
@@ -238,19 +239,33 @@ fn select_device(
         try writer.begin(6); // GetPhysicalDeviceProperties.
         try writer.put(u64, index + 2);
         try writer.put(u64, 1); // Partial properties need no scalar inputs.
-        var reader = try exchange(receiver, writer, reply, 6);
-        try reader.expect(u64, 1);
-        const api = try reader.get(u32);
-        _ = try reader.take(12); // driverVersion, vendorID, deviceID.
-        const device_type = try reader.get(u32);
-        if (device_type > 4) return error.Protocol;
-        try reader.expect(u64, 256);
-        const name = try reader.take(256);
+        _ = try exchange(receiver, writer, reply, 6);
+        var properties: c.venus_vk_properties_t = undefined;
+        if (c.venus_values_properties_decode(&properties, reply, reply.len) != c.RingOk)
+            return error.Protocol;
+        const device_type = properties.deviceType;
+        const name = std.mem.asBytes(&properties.deviceName);
         const terminator = std.mem.indexOfScalar(u8, name, 0) orelse return error.Protocol;
         if (hardware and device_type != 1 and device_type != 2) continue;
+        try writer.begin(3); // GetPhysicalDeviceFeatures.
+        try writer.put(u64, index + 2);
+        try writer.put(u64, 1);
+        _ = try exchange(receiver, writer, reply, 3);
+        var features: c.venus_vk_features_t = undefined;
+        if (c.venus_values_features_decode(&features, reply, reply.len) != c.RingOk)
+            return error.Protocol;
+        try writer.begin(8); // GetPhysicalDeviceMemoryProperties.
+        try writer.put(u64, index + 2);
+        try writer.put(u64, 1);
+        try writer.put(u64, 32); // Fixed partial memory type array.
+        try writer.put(u64, 16); // Fixed partial memory heap array.
+        _ = try exchange(receiver, writer, reply, 8);
+        var memory: c.venus_vk_memory_t = undefined;
+        if (c.venus_values_memory_decode(&memory, reply, reply.len) != c.RingOk)
+            return error.Protocol;
         std.debug.print(
-            "Venus queue device: type={d} API=0x{x} name={s}\n",
-            .{ device_type, api, name[0..terminator] },
+            "Venus queue device: type={d} API=0x{x} name={s} heaps={d}\n",
+            .{ device_type, properties.apiVersion, name[0..terminator], memory.memoryHeapCount },
         );
         return index + 2;
     }
