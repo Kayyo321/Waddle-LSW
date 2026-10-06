@@ -22,6 +22,7 @@ typedef struct server_t {
     struct wl_display *display;
     struct wl_listener disconnected;
     struct stat allocation;
+    uint32_t offset, stride;
     _Atomic int reject;
     unsigned commits, damage, imports, rejects;
 } server_t;
@@ -52,7 +53,8 @@ static void plane_request(struct wl_client *client, struct wl_resource *resource
                           uint32_t low) {
     (void)client;
     import_t *import = wl_resource_get_user_data(resource);
-    assert(import->fd == -1 && !plane && !offset && stride == 128 && !high && !low);
+    assert(import->fd == -1 && !plane && offset == import->server->offset &&
+           stride == import->server->stride && !high && !low);
     struct stat metadata;
     assert(!fstat(fd, &metadata));
     assert(metadata.st_dev == import->server->allocation.st_dev &&
@@ -227,11 +229,11 @@ static void completed(void *context, const venus_frame_t *frame, venus_ring_stat
     client->completed_frame = frame->frame;
     client->status = status;
 }
-int main(void) {
-    alarm(30);
-    int source = memfd_create("native-import-fixture", MFD_CLOEXEC);
-    assert(source >= 0 && !ftruncate(source, 4096));
-    server_t server = {0};
+static int present_image(int source, uint64_t offset, uint64_t stride, uint64_t size,
+                         uint64_t extent, void *context) {
+    (void)context;
+    assert(offset <= UINT32_MAX && stride <= UINT32_MAX);
+    server_t server = {.offset = (uint32_t)offset, .stride = (uint32_t)stride};
     atomic_init(&server.reject, 0);
     assert(!fstat(source, &server.allocation));
     server.display = wl_display_create();
@@ -267,7 +269,10 @@ int main(void) {
                                       .height = 16,
                                       .fourcc = 0x34325241,
                                       .plane_count = 1,
-                                      .planes = {{.stride = 128, .size = 2048, .extent = 4096}}},
+                                      .planes = {{.offset = (uint32_t)offset,
+                                                  .stride = (uint32_t)stride,
+                                                  .size = size,
+                                                  .extent = extent}}},
                            .resource_ids = {2},
                            .damage_count = 1,
                            .damage = {{.x = 4, .y = 2, .width = 8, .height = 4}}};
@@ -295,8 +300,34 @@ int main(void) {
     assert(server.imports == 15 && server.rejects == 1 && server.commits == 15 &&
            server.damage == 15);
     wl_display_destroy(server.display);
-    close(source);
     close(bridge[0]);
     close(bridge[1]);
     return 0;
+}
+
+#ifdef VgpuHardwareImage
+/** @brief Run real Venus hardware clear/export with call-scoped borrowed callback.
+ * @param[in] present Nonnull callback borrows FD/layout until return after release.
+ * @param[in,out] context Nullable call-scoped callback state.
+ * @return Zero success, one failure. Owns receiver/exported FD, symmetric teardown.
+ * @note Sole session thread, no concurrent renderer; hardware GPU required.
+ */
+extern int venus_gpu_image_fixture_run(int (*present)(int, uint64_t, uint64_t, uint64_t, uint64_t,
+                                                      void *),
+                                       void *context);
+#endif
+int main(int argc, char **argv) {
+    alarm(30);
+#ifdef VgpuHardwareImage
+    if (argc == 2 && !strcmp(argv[1], "--require-hardware"))
+        return venus_gpu_image_fixture_run(present_image, NULL);
+#endif
+    (void)argv;
+    if (argc != 1)
+        return 2;
+    int source = memfd_create("native-import-fixture", MFD_CLOEXEC);
+    assert(source >= 0 && !ftruncate(source, 4096));
+    int result = present_image(source, 0, 128, 2048, 4096, NULL);
+    close(source);
+    return result;
 }

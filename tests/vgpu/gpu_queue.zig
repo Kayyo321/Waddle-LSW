@@ -9,6 +9,8 @@ const QueueId: u64 = 101;
 const QueryPoolId: u64 = 102;
 const CommandPoolId: u64 = 103;
 const CommandBufferId: u64 = 104;
+const ImageId: u64 = 105;
+const MemoryId: u64 = 106;
 const queue_family_t = struct { index: u32, timestamp_bits: u32 };
 const venus_receiver_t = opaque {};
 // Borrowed C ABI operations; ownership/status contract is venus_receiver.h.
@@ -20,6 +22,9 @@ extern fn venus_receiver_reply(*const venus_receiver_t, u64, [*]u8, usize) c_int
 extern fn venus_receiver_health(*venus_receiver_t, ?*const u32) c_int;
 extern fn venus_receiver_gpu_fence(*venus_receiver_t, u32, *u64) c_int;
 extern fn venus_receiver_gpu_poll(*const venus_receiver_t, u32, u64) c_int;
+extern fn venus_receiver_resource_create(*venus_receiver_t, u32, u64, u64, u32) c_int;
+extern fn venus_receiver_resource_export(*venus_receiver_t, u32, u32, u64, *c_int) c_int;
+extern fn venus_receiver_resource_free(*venus_receiver_t, u32) c_int;
 
 const writer_t = struct {
     bytes: [BufferBytes]u8 align(64) = undefined,
@@ -217,7 +222,7 @@ fn create_device(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buffer
     try reader.expect(u64, 1);
     try reader.expect(u64, QueueId);
 }
-fn create_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, family: u32) !void {
+fn create_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, family: u32, image: bool) !void {
     try writer.begin(47); // CreateQueryPool.
     try writer.put(u64, DeviceId);
     try writer.put(u64, 1);
@@ -266,6 +271,7 @@ fn create_workload(receiver: *venus_receiver_t, writer: *writer_t, reply: *[Buff
     try writer.put(u64, 0); // no inheritance.
     reader = try exchange(receiver, writer, reply, 90);
     try reader.expect(u32, 0);
+    if (image) try record_image(receiver, writer, reply, family);
     try writer.begin(129); // CmdResetQueryPool, executes again on every submission.
     try writer.put(u64, CommandBufferId);
     try writer.put(u64, QueryPoolId);
@@ -355,7 +361,7 @@ fn run_fixture(hardware: bool) !void {
     const physical = try select_device(receiver, &writer, &reply, count, hardware);
     const family = try select_family(receiver, &writer, &reply, physical);
     try create_device(receiver, &writer, &reply, physical, family.index);
-    try create_workload(receiver, &writer, &reply, family.index);
+    try create_workload(receiver, &writer, &reply, family.index, false);
     for (1..4) |fence| {
         try queue_roundtrip(receiver, &writer, &reply, fence);
         try verify_workload(receiver, &writer, &reply, family.timestamp_bits);
@@ -448,4 +454,175 @@ test "timestamp reply requires complete available ordered GPU output" {
     std.mem.writeInt(u64, bytes[28..36], 10, .little);
     var reader = reader_t{ .bytes = bytes };
     try std.testing.expectEqual(@as(u64, 0), try read_timestamps(&reader, 1));
+}
+
+const image_layout_t = struct { offset: u64, stride: u64, size: u64, extent: u64 };
+fn allocate_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, physical: u64) !image_layout_t {
+    try writer.begin(54); // CreateImage, linear BGRA8 with explicit DMA-BUF handle support.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 14); // IMAGE_CREATE_INFO.
+    try writer.put(u64, 1);
+    try writer.put(u32, 1000072001); // EXTERNAL_MEMORY_IMAGE_CREATE_INFO.
+    try writer.put(u64, 0);
+    try writer.words(&.{ 0x200, 0, 1, 44, 32, 16, 1, 1, 1, 1, 1, 2, 0, 0 });
+    try writer.put(u64, 0); // queue-family array.
+    try writer.put(u32, 0); // UNDEFINED initial layout.
+    try writer.put(u64, 0);
+    try writer.put(u64, 1);
+    try writer.put(u64, ImageId);
+    var reader = try exchange(receiver, writer, reply, 54);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    try reader.expect(u64, ImageId);
+    try writer.begin(31); // GetImageMemoryRequirements.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, ImageId);
+    try writer.put(u64, 1);
+    reader = try exchange(receiver, writer, reply, 31);
+    try reader.expect(u64, 1);
+    const size = try reader.get(u64);
+    const alignment = try reader.get(u64);
+    const types = try reader.get(u32);
+    if (size == 0 or size > 1073737728 or alignment == 0 or alignment & (alignment - 1) != 0 or types == 0) return error.Protocol;
+    const extent = (size + 4095) & ~@as(u64, 4095);
+    try writer.begin(8); // GetPhysicalDeviceMemoryProperties.
+    try writer.put(u64, physical);
+    try writer.put(u64, 1);
+    try writer.put(u64, 32); // Partial fixed array sizes, no scalar values.
+    try writer.put(u64, 16);
+    reader = try exchange(receiver, writer, reply, 8);
+    try reader.expect(u64, 1);
+    const count = try reader.get(u32);
+    if (count == 0 or count > 32) return error.Protocol;
+    try reader.expect(u64, 32);
+    var selected: ?u32 = null;
+    for (0..32) |index| {
+        const flags = try reader.get(u32);
+        const heap = try reader.get(u32);
+        if (index < count and heap >= 16) return error.Protocol;
+        if (index < count and types & (@as(u32, 1) << @as(u5, @intCast(index))) != 0 and flags & 2 != 0 and selected == null)
+            selected = @intCast(index);
+    }
+    const heaps = try reader.get(u32);
+    if (heaps == 0 or heaps > 16) return error.Protocol;
+    try reader.expect(u64, 16);
+    _ = try reader.take(16 * 12);
+    try writer.begin(21); // AllocateMemory with explicit DMA-BUF export chain.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, 1);
+    try writer.put(u32, 5); // MEMORY_ALLOCATE_INFO.
+    try writer.put(u64, 1);
+    try writer.put(u32, 1000072002); // EXPORT_MEMORY_ALLOCATE_INFO.
+    try writer.put(u64, 0);
+    try writer.put(u32, 0x200);
+    try writer.put(u64, extent);
+    try writer.put(u32, selected orelse return error.NoDevice);
+    try writer.put(u64, 0);
+    try writer.put(u64, 1);
+    try writer.put(u64, MemoryId);
+    reader = try exchange(receiver, writer, reply, 21);
+    try reader.expect(u32, 0);
+    try reader.expect(u64, 1);
+    try reader.expect(u64, MemoryId);
+    try writer.begin(29); // BindImageMemory, offset zero.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, ImageId);
+    try writer.put(u64, MemoryId);
+    try writer.put(u64, 0);
+    reader = try exchange(receiver, writer, reply, 29);
+    try reader.expect(u32, 0);
+    try writer.begin(56); // Query authoritative linear image layout.
+    try writer.put(u64, DeviceId);
+    try writer.put(u64, ImageId);
+    try writer.put(u64, 1);
+    try writer.words(&.{ 1, 0, 0 });
+    try writer.put(u64, 1);
+    reader = try exchange(receiver, writer, reply, 56);
+    try reader.expect(u64, 1);
+    const offset = try reader.get(u64);
+    const image_size = try reader.get(u64);
+    const stride = try reader.get(u64);
+    _ = try reader.take(16);
+    if (offset > extent or image_size > extent - offset or stride < 128 or stride > 2147483647 or image_size < stride * 15 + 128) return error.Protocol;
+    return .{ .offset = offset, .stride = stride, .size = image_size, .extent = extent };
+}
+fn image_barrier(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, old_layout: u32, new_layout: u32, source_stage: u32, destination_stage: u32, source_access: u32, destination_access: u32, source_family: u32, destination_family: u32) !void {
+    try writer.begin(126);
+    try writer.put(u64, CommandBufferId);
+    try writer.words(&.{ source_stage, destination_stage, 0, 0 });
+    try writer.put(u64, 0);
+    try writer.put(u32, 0);
+    try writer.put(u64, 0);
+    try writer.put(u32, 1);
+    try writer.put(u64, 1);
+    try writer.put(u32, 45); // IMAGE_MEMORY_BARRIER.
+    try writer.put(u64, 0);
+    try writer.words(&.{ source_access, destination_access, old_layout, new_layout, source_family, destination_family });
+    try writer.put(u64, ImageId);
+    try writer.words(&.{ 1, 0, 1, 0, 1 });
+    _ = try exchange(receiver, writer, reply, 126);
+}
+fn record_image(receiver: *venus_receiver_t, writer: *writer_t, reply: *[BufferBytes]u8, family: u32) !void {
+    try image_barrier(receiver, writer, reply, 0, 7, 1, 0x1000, 0, 0x1000, std.math.maxInt(u32), std.math.maxInt(u32));
+    try writer.begin(119);
+    try writer.put(u64, CommandBufferId);
+    try writer.put(u64, ImageId);
+    try writer.put(u32, 7); // TRANSFER_DST_OPTIMAL.
+    try writer.put(u64, 1);
+    try writer.put(u32, 2); // Clear union tag: raw four uint32 float bit patterns.
+    try writer.put(u64, 4);
+    try writer.words(&.{ 0x3f000000, 0x3e800000, 0x3f400000, 0x3f800000, 1 });
+    try writer.put(u64, 1);
+    try writer.words(&.{ 1, 0, 1, 0, 1 });
+    _ = try exchange(receiver, writer, reply, 119);
+    try image_barrier(receiver, writer, reply, 7, 1, 0x1000, 0x2000, 0x1000, 0, family, std.math.maxInt(u32) - 1);
+}
+const present_image_t = *const fn (c_int, u64, u64, u64, u64, ?*anyopaque) callconv(.C) c_int;
+fn run_image_fixture(present: present_image_t, context: ?*anyopaque) !void {
+    var owned: ?*venus_receiver_t = null;
+    if (venus_receiver_create(&owned, BufferBytes, BufferBytes) != 0) return error.Renderer;
+    defer venus_receiver_destroy(&owned);
+    const receiver = owned orelse return error.Renderer;
+    var writer = writer_t{};
+    var reply: [BufferBytes]u8 = undefined;
+    try create_instance(receiver, &writer, &reply);
+    const count = try enumerate_devices(receiver, &writer, &reply);
+    const physical = try select_device(receiver, &writer, &reply, count, true);
+    const family = try select_family(receiver, &writer, &reply, physical);
+    try create_device(receiver, &writer, &reply, physical, family.index);
+    const layout = try allocate_image(receiver, &writer, &reply, physical);
+    try create_workload(receiver, &writer, &reply, family.index, true);
+    try queue_roundtrip(receiver, &writer, &reply, 1);
+    try verify_workload(receiver, &writer, &reply, family.timestamp_bits);
+    if (venus_receiver_resource_create(receiver, 2, MemoryId, layout.extent, 6) != 0) return error.Renderer;
+    var fd: c_int = -1;
+    if (venus_receiver_resource_export(receiver, 2, 1, 1, &fd) != 0 or fd < 0) return error.Renderer;
+    defer std.posix.close(fd);
+    if (present(fd, layout.offset, layout.stride, layout.size, layout.extent, context) != 0) return error.Presentation;
+    if (venus_receiver_resource_free(receiver, 2) != 0) return error.Renderer;
+    for ([_]u32{ 86, 48, 55, 22 }, [_]u64{ CommandPoolId, QueryPoolId, ImageId, MemoryId }) |command, object| {
+        try writer.begin(command);
+        try writer.put(u64, DeviceId);
+        try writer.put(u64, object);
+        try writer.put(u64, 0);
+        _ = try exchange(receiver, &writer, &reply, command);
+    }
+    for ([_]u32{ 12, 1 }, [_]u64{ DeviceId, InstanceId }) |command, object| {
+        try writer.begin(command);
+        try writer.put(u64, object);
+        try writer.put(u64, 0);
+        _ = try exchange(receiver, &writer, &reply, command);
+    }
+}
+/// in: nullable callback and nullable borrowed context. Callback borrows real
+/// DMA-BUF plus authoritative linear layout until return; must finish compositor
+/// releases before returning. Returns 0 success/1 failure; owns receiver/FD for
+/// call and destroys both on every path. Sole session thread, hardware required.
+export fn venus_gpu_image_fixture_run(present: ?present_image_t, context: ?*anyopaque) c_int {
+    run_image_fixture(present orelse return 1, context) catch |failure| {
+        std.debug.print("Venus hardware image fixture failed: {s}\n", .{@errorName(failure)});
+        return 1;
+    };
+    return 0;
 }

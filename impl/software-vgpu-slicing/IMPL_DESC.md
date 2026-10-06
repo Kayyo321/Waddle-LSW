@@ -1590,3 +1590,45 @@ Fault/retry/stale-ID/cancellation/three-slot/churn tests cover every production 
 and branch and pass ASan/LSan/UBSan. Split the remaining 10% runtime handoff gate
 into 5% controller surface binding and 5% worker service export/guest release routing.
 That final worker/runtime path and hardware image verification remain pending.
+
+
+### Rendered Venus hardware image to native Wayland mock (Task #4)
+
+`vgpu-image-hardware` and `vgpu-image-hardware-sanitizers` extend the actual native
+protocol fixture with a real receiver/Vulkan workload. Require integrated/discrete
+physical-device type; software Vulkan cannot satisfy this gate. Through bounded
+Zig packet encoding, create a 32x16 BGRA8_UNORM two-dimensional, single-level,
+single-layer, single-sample linear image with TRANSFER_DST usage and explicit
+DMA_BUF external-memory image handle type. Query memory requirements, reject zero/
+invalid size/alignment/type masks, round allocation extent up to 4096 bytes below
+one GiB, query bounded physical memory properties and select an eligible host-visible
+memory type. Allocate memory with explicit DMA_BUF export type, bind at offset zero,
+and query the actual subresource offset/size/row pitch. Validate extent arithmetic,
+32-bit descriptor offset/pitch limits and minimum final-row coverage before import.
+No guessed hardware pitch or virgl GL texture export metadata is used.
+
+Record UNDEFINED-to-TRANSFER_DST image barrier, GPU clear color (0.5,0.25,0.75,1),
+and TRANSFER_DST-to-GENERAL barrier releasing queue ownership to the Vulkan external
+queue family. Submit once on the real queue, acquire its explicit timeline-one
+fence and wait for retirement under the existing five-second health/deadline checks.
+Timestamp commands verify actual GPU queue execution/available results; they do
+not constitute pixel readback or validate physical compositor output. Register the
+existing device memory as resource two with Share/CrossDevice flags, then export
+its real hardware DMA-BUF only after fence retirement. The callback borrows that FD
+and queried layout through all sixteen native Wayland frame iterations; fifteen
+buffer releases and one rejection finish before callback return. Real compositor
+mock verifies backing inode identity, protocol damage/pacing and FD lifetimes; it
+never maps or copies image pixels and never performs physical scanout.
+
+Receiver, image, device memory and exported FD stay owned throughout the callback.
+After all releases, drop registered resource, destroy command/query pools and image,
+free device memory, destroy device/instance and close the exported FD. Error paths
+always destroy the receiver/context and close any acquired FD through Zig defer.
+The call-scoped callback cannot retain/reuse the image after return. A process
+alarm bounds the entire test including SDK teardown. Local RTX 5080 normal and
+ASan/LSan/UBSan executions pass with queried offset zero, pitch128, image2048 bytes
+and allocation4096 bytes. Linux CI compiles this fixture and runs its native mock
+path plus software-Vulkan queue regression; hosted CI has no required hardware GPU.
+Physical compositor/hypervisor acceptance remains downstream. This meets the 10%
+hardware image/export plus native mock verification gate, independently of the
+still-pending production worker service and guest release acknowledgement path.

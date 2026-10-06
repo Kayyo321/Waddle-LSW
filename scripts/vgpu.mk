@@ -555,3 +555,16 @@ vgpu-surface-sanitizers:
 
 vgpu-surface-coverage: build/venus_bounds.o
 	python3 tests/vgpu/coverage.py surface
+
+# Hardware image clear/export and real protocol presentation to the mock compositor.
+VgpuImageIntegrationSources = $(VgpuPresentIntegrationSources) src/vgpu/venus_receiver.c
+build/vgpu_image_integration: $(VgpuImageIntegrationSources) $(VgpuPresentIntegrationHeaders) build/venus_frame.o build/venus_gpu_fixture.o build/venus_receiver_bounds.o | vgpu-renderer
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DVgpuHardwareImage $(VgpuReceiverIncludes) $(VgpuPresentIntegrationFlags) $(VgpuImageIntegrationSources) build/venus_frame.o build/venus_gpu_fixture.o build/venus_receiver_bounds.o $(VgpuPresentIntegrationLibraries) $(VgpuReceiverLibraries) -o $@
+
+.PHONY: vgpu-image-hardware vgpu-image-hardware-sanitizers
+vgpu-image-hardware: build/vgpu_image_integration
+	RENDER_SERVER_EXEC_PATH="$(CURDIR)/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_image_integration --require-hardware
+
+vgpu-image-hardware-sanitizers: $(VgpuImageIntegrationSources) $(VgpuPresentIntegrationHeaders) build/venus_frame.o build/venus_gpu_fixture.o build/venus_receiver_bounds.o vgpu-renderer
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -DVgpuHardwareImage $(VgpuReceiverIncludes) $(VgpuPresentIntegrationFlags) $(VgpuImageIntegrationSources) build/venus_frame.o build/venus_gpu_fixture.o build/venus_receiver_bounds.o $(VgpuPresentIntegrationLibraries) $(VgpuReceiverLibraries) -o build/vgpu_image_integration_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 RENDER_SERVER_EXEC_PATH="$(CURDIR)/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_image_integration_sanitized --require-hardware
