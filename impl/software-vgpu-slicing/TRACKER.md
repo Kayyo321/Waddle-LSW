@@ -683,7 +683,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Checked system linux-dmabuf protocol table/index schema;
     preserve separate import/allocation/descriptor-handoff acceptance gates.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): validate image planes and complete DMA-BUF feedback`
+- **Commit `0ab1bf9`**: `feat(vgpu): validate image planes and complete DMA-BUF feedback`
   - **Task Impact**: +15% to TODO: #4 (+2.25% overall); remaining 5% validation
     credit waits for native Windows CI.
   - **Summary**: Add allocation-free Zig packed/NV12 geometry and allocation-range
@@ -693,3 +693,10 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     x86_64 cross-link pass. Zig production coverage 100% lines/100% branches;
     all 4096 table indices, late corruption and descriptor fields exercised.
     No wl_buffer imports or worker FD handoff are claimed by codec tests.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define negotiated guest frontend ownership`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify constant guest encoder profile, borrowed ready RPC,
+    private host capabilities, wire-status translation and sticky session loss.
+  - **Verification**: Keep serialized Vulkan entry points, userland adapter stub
+    and DXVK acceptance separate from the command/resource/fence backend.

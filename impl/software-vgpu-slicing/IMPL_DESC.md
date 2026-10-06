@@ -1301,3 +1301,43 @@ all entry-index positions. Zig uses std.testing.allocator for variable test
 buffers, immediate defer, and >=90% production line/branch coverage. Validation
 is separate from receiving feedback, selecting allocation modifiers and importing
 wl_buffers; those are the subsequent Wayland ownership milestone.
+
+
+### Negotiated guest frontend ownership (Task #3)
+
+venus_guest_t is a zero-initialized caller-owned record borrowing a ready guest
+RPC. It owns no heap, native stream or mapping; one guest submission thread owns
+all calls, and application threads must serialize before reaching this frontend.
+init validates SessionGuest, Ready, unnegotiated RPC, nonzero next sequence and
+1..60000ms exchange timeout. It fetches private host capabilities, decodes/checks
+with existing Zig APIs, then sends a constant 160-byte pinned encoder declaration
+containing only mandatory serialization/Venus extensions. Host optional extension
+bits are cached for later implemented-function checks; they do not enable APIs.
+It never echoes the host extension mask as claimed guest support. Each exchange
+has its existing deadline. Initialization has two exchanges and hence may take
+twice timeout; no unbounded hidden poll occurs. Success publishes the borrowed
+RPC and immutable capability snapshot into the zero owner. Failure leaves the
+owner empty; the caller retains RPC/channel/mapping cleanup responsibility.
+
+exchange accepts one host-value request and private bounded payload/output using
+the existing RPC contract. Capabilities/Negotiate are forbidden after initialization;
+all other operations use the portable request codec. It translates every validated
+wire result into Ring status. Local/operation Invalid, Again and Limit leave the
+frontend usable. Transport Corrupt/Closed/Cancelled/Timeout and renderer terminal
+wire statuses become sticky loss, close/clear the borrowed RPC, and prevent every
+later exchange from publishing bytes until free/new session. Successful responses
+retain CPU/GPU distinction; a returned accepted fence is never completion. The
+caller owns virtual Vulkan object destruction and must discard old objects on loss.
+free is idempotent, closes an attached RPC and zeroes only the frontend; the caller
+then frees channel/stream/mapping after all users stop. Capability mismatch before
+successful negotiation leaves the caller-owned RPC available for diagnosis or
+explicit teardown; it does not allocate native Vulkan objects.
+
+This module supplies the ICD's negotiated command/resource/fence backend, not
+Vulkan entry-point serialization or WDDM installation. Native fault fixtures must
+cover every init precondition/acquisition, host mismatch, guest declaration,
+wire status, terminal sticky state, response propagation, reuse and symmetric
+free; Linux sanitizers, >=90% coverage, Windows cross-link/native CI and actual
+mapped production-worker negotiation/query execution are required. Task #3's 10%
+frontend milestone is split 5% local ownership/portable fixtures and 5% native CI
+plus integrated production-worker execution; later ICD/DXVK gates stay separate.
