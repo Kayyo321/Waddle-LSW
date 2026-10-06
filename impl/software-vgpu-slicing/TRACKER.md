@@ -877,7 +877,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     runtime routing and controller acknowledgement retry remain pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): retain bounded worker presentation allocation leases`
+- **Commit `5c4d29c`**: `feat(vgpu): retain bounded worker presentation allocation leases`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add caller-owned three-slot fence-bound export owner with actual
     DMA-BUF extent checks, ordered successful publication, resource busy guards,
@@ -887,3 +887,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     duplicate/out-of-order acknowledgements and128 churn cycles pass normal and
     ASan/LSan/UBSan runs with descriptor baselines. Add Linux CI gates. Service
     envelopes, worker launch wiring and controller acknowledgement retry pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify guest presentation request envelopes`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Specify operations12/13, exact frame/release payloads, explicit GPU
+    ordering and publication/retry/consumption semantics without native FD exposure.
+  - **Verification**: Cross-checked existing negotiation/RPC field/status contracts;
+    envelope codec, service binding and controller retries remain pending.

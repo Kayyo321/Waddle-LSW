@@ -1750,3 +1750,27 @@ unknown release corruption, all three full slots and128 sequential release cycle
 Every temporary FD closes and descriptor counts return to baseline. Production
 lines/branches100% and ASan/LSan/UBSan pass. Linux CI includes these gates; guest
 service dispatch/worker launch and controller retry remain separate pending paths.
+
+
+### Guest presentation request envelopes (Task #4)
+
+Extend the version-one64-byte request header with RequestPresent12 and
+RequestPresentPoll13. RequestPresent is negotiated-session-only, has zero
+resource_id/flags/status, payload_bytes1216, argument_zero GPU timeline1..63,
+and argument_one a nonzero issued GPU fence. Its payload is the existing exact
+bounded frame schema, containing controller context/resource identities and no
+native descriptors. Success response has zero payload/arguments and means the
+worker queued the frame and retained its lease; Again means no publication and
+permits the same immutable image/frame retry. Other request errors follow existing
+frontend sticky/local error policy. Without a trusted presentation binding the
+host returns Invalid; these operations cannot implicitly create a socket/surface.
+
+RequestPresentPoll has zero payload/resource_id/flags/status, argument_zero
+nonzero frame ID, argument_one zero. Success response contains exactly32 release
+bytes with all envelope arguments zero, decoded through the Zig release codec.
+Again means the known frame awaits completion; Invalid means absent/already
+consumed identity. Guest must validate returned context/frame against its own
+outstanding image before reuse. Header failures retain existing output guarantees;
+codec recognition alone is not evidence of host dispatch or guest runtime routing.
+Both opcodes keep requests/responses inside the existing bounded mapped RPC and
+preserve negotiation-before-operation enforcement. All errors have no payload.
