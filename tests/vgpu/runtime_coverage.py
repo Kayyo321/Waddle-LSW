@@ -20,7 +20,7 @@ for module in ('rpc', 'dispatch'):
 subprocess.run(['cc', '-D_GNU_SOURCE', '-std=c11', '-Iinclude', '-Isrc/vgpu',
                 'tests/vgpu/runtime.c', *objects, 'src/vgpu/venus_session.c',
                 'src/vgpu/venus_region.c', 'src/vgpu/venus_ring.c', 'src/vgpu/venus_wait.c',
-                'build/venus_request.o', 'build/venus_bounds.o', 'build/venus_control.o',
+                'build/venus_request.o', 'build/venus_capabilities.o', 'build/venus_bounds.o', 'build/venus_control.o',
                 '--coverage', '-o', str(output / 'runner')], check=True)
 subprocess.run([str(output / 'runner')], check=True)
 for module in ('rpc', 'dispatch'):

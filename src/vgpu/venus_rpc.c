@@ -137,6 +137,8 @@ venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *
         return result;
     if (received.payload_bytes)
         memcpy(output, rpc->buffer, received.payload_bytes);
+    if (received.kind == RequestNegotiate && received.status == RequestSuccess)
+        rpc->negotiated = 1;
     *response = received;
     rpc->next_sequence++;
     return RingOk;

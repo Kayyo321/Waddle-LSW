@@ -5,7 +5,8 @@
 #include "venus_ring.h"
 /** @brief Fixed serialized header bytes, independent of decoded C padding. */
 #define VenusRequestHeaderBytes 64u
-/** @brief Maximum streamed payload/transfer bytes, before stricter owner limits. */
+/** @brief Maximum streamed payload/transfer bytes, before stricter owner
+ * limits. */
 #define VenusRequestMaxPayload 16777216u
 /** @brief Envelope operations; CPU completion semantics only. */
 typedef enum venus_request_kind_t {
@@ -18,7 +19,8 @@ typedef enum venus_request_kind_t {
     RequestWrite = 7,        /**< Copy request payload into CPU SHM. */
     RequestPoll = 8,         /**< Acquire latest CPU submission completion. */
     RequestGpuFence = 9,     /**< Fence an existing GPU queue, returns GPU identity. */
-    RequestGpuPoll = 10      /**< Acquire an explicitly issued GPU fence retirement. */
+    RequestGpuPoll = 10,     /**< Acquire an explicitly issued GPU fence retirement. */
+    RequestNegotiate = 11    /**< Declare pinned guest encoder profile; opens operation gate. */
 } venus_request_kind_t;
 /** @brief Unsigned stable wire status codes, never native signed enum bytes. */
 typedef enum venus_request_status_t {
@@ -32,9 +34,10 @@ typedef enum venus_request_status_t {
     RequestLimit = 7      /**< RingLimit; host quota exhaustion. */
 } venus_request_status_t;
 /** @brief Caller-owned decoded host values, not a serialized native struct.
- * @note No pointers/allocations; may be copied. Thread-safe on disjoint records.
- * Direction zero requests, one responses. Unspecified fields must be zero.
- * Full operation field/sequence rules are in IMPL_DESC.md's envelope contract.
+ * @note No pointers/allocations; may be copied. Thread-safe on disjoint
+ * records. Direction zero requests, one responses. Unspecified fields must be
+ * zero. Full operation field/sequence rules are in IMPL_DESC.md's envelope
+ * contract.
  */
 typedef struct venus_request_t {
     uint32_t kind;          /**< One of venus_request_kind_t. */
@@ -44,7 +47,8 @@ typedef struct venus_request_t {
     uint32_t status;        /**< Wire status; requests always Success. */
     uint32_t resource_id;   /**< Request resource ID 2..65, otherwise zero. */
     uint32_t flags;         /**< Create flags only; resource policy validated. */
-    uint64_t argument_zero; /**< Operation offset/blob/CPU or GPU fence, otherwise zero. */
+    uint64_t argument_zero; /**< Operation offset/blob/CPU or GPU fence, otherwise
+                               zero. */
     uint64_t argument_one;  /**< Requested bytes for resource/reply, otherwise zero. */
 } venus_request_t;
 /** @brief Validate and decode an immutable private envelope header.
@@ -59,7 +63,8 @@ venus_ring_status_t venus_request_decode(venus_request_t *request, const void *f
                                          size_t length);
 /** @brief Validate host values and encode a portable header.
  * @param[in] request Nonnull immutable private record, borrowed for call.
- * @param[out] frame Nonnull disjoint private buffer[length], unchanged on error.
+ * @param[out] frame Nonnull disjoint private buffer[length], unchanged on
+ * error.
  * @param[in] length Exactly VenusRequestHeaderBytes.
  * @return RingOk or RingInvalid for null/local fields/length.
  * @note Allocation-free/thread-safe on disjoint buffers. Writes no payload.

@@ -1,11 +1,11 @@
-/** @file integration.c @brief Independent mapped processes and real Venus CPU dispatch. */
-#include "waddle/venus_channel.h"
+/** @file integration.c @brief Independent mapped processes and real Venus CPU
+ * dispatch. */
 #include "waddle/venus_capabilities.h"
+#include "waddle/venus_channel.h"
 #include "waddle/venus_dispatch.h"
 #include "waddle/venus_worker.h"
-#include <limits.h>
-#include <time.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,9 +13,11 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
-/** @brief Repeated independent-process transfers, enough to wrap both small rings. */
+/** @brief Repeated independent-process transfers, enough to wrap both small
+ * rings. */
 #define RoundTrips 32u
 /** @brief Shared mock BAR extent, validated by production region helpers. */
 #define MockMappingBytes 4096u
@@ -56,6 +58,9 @@ static int guest_resources(venus_rpc_t *rpc) {
             RingOk ||
         venus_capabilities_compatible(&decoded_capabilities) != RingOk)
         return 0;
+    request = (venus_request_t){.kind = RequestNegotiate, .payload_bytes = sizeof(capabilities)};
+    if (!guest_exchange(rpc, request, capabilities, NULL, 0, RequestSuccess))
+        return 0;
     request = (venus_request_t){
         .kind = RequestCreate, .resource_id = 2, .flags = ResourceMap, .argument_one = 4096};
     if (!guest_exchange(rpc, request, NULL, NULL, 0, RequestSuccess) ||
@@ -84,7 +89,8 @@ static int guest_resources(venus_rpc_t *rpc) {
         return 0;
     request = (venus_request_t){
         .kind = RequestCreate, .resource_id = 65, .flags = ResourceMap, .argument_one = 4096};
-    /* Keep final registered resource live to test owner cleanup after peer exit. */
+    /* Keep final registered resource live to test owner cleanup after peer exit.
+     */
     return guest_exchange(rpc, request, NULL, NULL, 0, RequestSuccess);
 }
 
@@ -113,7 +119,16 @@ static int guest_run(void *inherited, int descriptor, int stream, fixture_mode_t
     if (fixture_report_fd >= 0 && write(fixture_report_fd, &session.session_id,
                                         sizeof(session.session_id)) != sizeof(session.session_id))
         goto cleanup;
-    if (mode != FixtureCooperativeStop && !guest_resources(&rpc))
+    if (mode == FixtureCooperativeStop) {
+        unsigned char capabilities[160];
+        venus_request_t request = {.kind = RequestCapabilities};
+        if (!guest_exchange(&rpc, request, NULL, capabilities, sizeof(capabilities),
+                            RequestSuccess))
+            goto cleanup;
+        request = (venus_request_t){.kind = RequestNegotiate, .payload_bytes = 160};
+        if (!guest_exchange(&rpc, request, capabilities, NULL, 0, RequestSuccess))
+            goto cleanup;
+    } else if (!guest_resources(&rpc))
         goto cleanup;
     for (uint32_t sequence = 1; sequence <= RoundTrips; sequence++) {
         /* Pinned Venus stream/resource one, real instance-version command. */
@@ -242,7 +257,8 @@ static int run_fixture(fixture_mode_t mode) {
         socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, sockets) != 0)
         goto cleanup;
     /* No renderer threads exist at fork; the guest performs only its local
-     * mapping/session/socket operations, and renderer ownership stays host-side. */
+     * mapping/session/socket operations, and renderer ownership stays host-side.
+     */
     guest = fork();
     if (guest < 0)
         goto cleanup;

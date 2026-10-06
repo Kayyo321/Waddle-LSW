@@ -18,7 +18,7 @@ const venus_request_t = extern struct {
 };
 
 fn valid_fields(value: *const venus_request_t) bool {
-    if (value.kind < 1 or value.kind > 10 or value.direction > 1 or value.sequence == 0 or value.payload_bytes > MaxPayload) return false;
+    if (value.kind < 1 or value.kind > 11 or value.direction > 1 or value.sequence == 0 or value.payload_bytes > MaxPayload) return false;
     if (value.direction == 1) {
         if (value.status > 7 or value.resource_id != 0 or value.flags != 0 or value.argument_one != 0) return false;
         if (value.status != 0) return value.payload_bytes == 0 and value.argument_zero == 0;
@@ -33,6 +33,7 @@ fn valid_fields(value: *const venus_request_t) bool {
     const plain = value.resource_id == 0 and value.flags == 0;
     const no_arguments = value.argument_zero == 0 and value.argument_one == 0;
     return switch (value.kind) {
+        11 => plain and no_arguments and value.payload_bytes == 160,
         1, 8 => plain and no_arguments and value.payload_bytes == 0,
         2 => plain and no_arguments and value.payload_bytes >= 8 and value.payload_bytes & 3 == 0,
         3 => plain and value.payload_bytes == 0 and valid_range(value),
@@ -107,6 +108,7 @@ fn good_request(kind: u32) venus_request_t {
     value.sequence = 0x1020304050607080;
     switch (kind) {
         2 => value.payload_bytes = 8,
+        11 => value.payload_bytes = 160,
         3 => value.argument_one = 4,
         4 => {
             value.resource_id = 2;
@@ -147,7 +149,7 @@ test "all operation and status envelopes round trip without native padding" {
     const bytes = try std.testing.allocator.alloc(u8, HeaderBytes);
     defer std.testing.allocator.free(bytes);
     var decoded: venus_request_t = undefined;
-    for (1..11) |kind| {
+    for (1..12) |kind| {
         const request = good_request(@intCast(kind));
         try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_request_encode, .{ &request, bytes.ptr, bytes.len }));
         try std.testing.expectEqual(@as(u8, 0x80), bytes[16]);
@@ -179,7 +181,7 @@ test "invalid fields and wire mutations preserve all output guarantees" {
         for (bytes) |byte| try std.testing.expectEqual(@as(u8, 0x5a), byte);
         try std.testing.expectEqual(@as(c_int, -2), @call(.never_inline, venus_request_decode, .{ &decoded, bytes.ptr, length }));
     }
-    for (1..11) |kind| {
+    for (1..12) |kind| {
         for (0..2) |direction| {
             const base = if (direction == 0) good_request(@intCast(kind)) else good_response(@intCast(kind), 0);
             inline for (std.meta.fields(venus_request_t)) |field| {

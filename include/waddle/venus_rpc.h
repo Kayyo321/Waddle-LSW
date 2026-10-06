@@ -13,7 +13,9 @@ typedef struct venus_rpc_t {
     unsigned char *buffer;         /**< Borrowed exclusive private scratch. */
     uint32_t buffer_bytes;         /**< Immutable actual private buffer extent. */
     venus_wait_callback_t monitor; /**< Private nullable host health callback, call-scoped. */
-    void *monitor_context;         /**< Private borrowed stack cookie, cleared on serve return. */
+    void *monitor_context;         /**< Private borrowed stack cookie, cleared on serve
+                                      return. */
+    uint32_t negotiated;           /**< Private compatibility gate, reset on new session/free. */
     uint64_t next_sequence;        /**< Next exchange ID; zero means terminal. */
 } venus_rpc_t;
 /** @brief Initialize framing after complete readiness delivery.
@@ -29,14 +31,16 @@ venus_ring_status_t venus_rpc_init(venus_rpc_t *rpc, venus_channel_t *channel, v
                                    uint32_t bytes);
 /** @brief Close the borrowed session and clear local fields.
  * @param[in,out] rpc Nullable zero/live record; already freed is a no-op.
- * @note Sole session thread after calls stop; never frees buffer/receiver/channel,
- * closes a native handle or unmaps. Lifecycle owner then releases those resources.
+ * @note Sole session thread after calls stop; never frees
+ * buffer/receiver/channel, closes a native handle or unmaps. Lifecycle owner
+ * then releases those resources.
  */
 void venus_rpc_free(venus_rpc_t *rpc);
 /** @brief Publish a request and acquire an exact private response.
  * @param[in,out] rpc Nonnull live guest framing record, session-thread-only.
  * @param[in] request Nonnull immutable host-value request with sequence zero.
- * @param[in] input Nullable only when length zero, immutable private input[length].
+ * @param[in] input Nullable only when length zero, immutable private
+ * input[length].
  * @param[in] length Exactly request payload_bytes; must fit private scratch.
  * @param[out] response Nonnull disjoint record, zeroed on failure; wire status
  * describes operation outcome when return is RingOk.
@@ -47,7 +51,8 @@ void venus_rpc_free(venus_rpc_t *rpc);
  * @return RingOk for valid delivered response; RingInvalid for local arguments
  * without publication; terminal protocol/channel statuses close both rings.
  * @note Input/output may alias each other; both disjoint from scratch/records.
- * No allocation. Return does not imply GPU completion; retry uses a new sequence.
+ * No allocation. Return does not imply GPU completion; retry uses a new
+ * sequence.
  */
 venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *request,
                                        const void *input, size_t length, venus_request_t *response,

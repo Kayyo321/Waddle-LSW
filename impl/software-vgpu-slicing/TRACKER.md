@@ -571,7 +571,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398576725 .
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify negotiated isolated context completion`
+- **Commit `e9dcc0b`**: `docs(vgpu): specify negotiated isolated context completion`
   - **Task Impact**: +5% to TODO: #2 (+1.0% overall) for verified capability decoding.
   - **Summary**: Specify operation-11 profile negotiation and host dispatch gate,
     bounded independent worker contexts, aggregate budgets, handle lifetime,
@@ -579,3 +579,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Linux/native Windows capability CI passed at `0a43c16`:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37399147082 .
     No credit yet for negotiation or context manager implementation.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): gate receiver dispatch on pinned negotiation`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall); 10% negotiation gate awaits native CI.
+  - **Summary**: Add bounded operation-11 guest profile declaration, pinned host
+    compatibility checks, pre-negotiation SDK rejection and private session state.
+    Existing mapped/exec guests now negotiate before quotas and CPU dispatch.
+  - **Verification**: Request/runtime fixtures, real mapped/exec integration,
+    ASan/LSan/UBSan and Zig allocator checks pass. Request codec production
+    coverage exceeds 90%; dispatch lines 99.10%, branches 93.94%; RPC coverage
+    passes. Windows request/runtime cross-link passes; native CI follows.

@@ -129,7 +129,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_request.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/runtime.c src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c build/venus_request_windows.lib build/venus_bounds_windows.lib build/venus_control_windows.lib -o build/vgpu_runtime_test.exe
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/runtime.c src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c build/venus_request_windows.lib build/venus_capabilities_windows.lib build/venus_bounds_windows.lib build/venus_control_windows.lib -o build/vgpu_runtime_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_runtime_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

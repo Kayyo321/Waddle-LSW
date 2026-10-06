@@ -1,4 +1,5 @@
-/** @file request.c @brief Portable C/Zig ABI and independent wire-policy fixture. */
+/** @file request.c @brief Portable C/Zig ABI and independent wire-policy
+ * fixture. */
 #include "waddle/venus_request.h"
 #include <assert.h>
 #include <stdio.h>
@@ -50,10 +51,12 @@ int main(void) {
     for (size_t index = 0; index < sizeof(bytes); index++)
         assert(bytes[index] == 0x5a);
 
-    for (uint32_t kind = RequestCapabilities; kind <= RequestGpuPoll; kind++) {
+    for (uint32_t kind = RequestCapabilities; kind <= RequestNegotiate; kind++) {
         value = (venus_request_t){.kind = kind, .sequence = 1};
         if (kind == RequestSubmit)
             value.payload_bytes = 8;
+        if (kind == RequestNegotiate)
+            value.payload_bytes = 160;
         if (kind == RequestReply || kind == RequestRead || kind == RequestWrite)
             value.argument_one = 4;
         if (kind >= RequestCreate && kind <= RequestWrite)

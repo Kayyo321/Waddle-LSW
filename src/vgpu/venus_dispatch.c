@@ -1,9 +1,33 @@
 /** @file venus_dispatch.c @brief Validated bounded receiver request routing. */
 #include "waddle/venus_dispatch.h"
 #include "venus_rpc_internal.h"
+#include "waddle/venus_capabilities.h"
+
+static venus_ring_status_t negotiate(venus_receiver_t *receiver, venus_rpc_t *rpc) {
+    if (rpc->negotiated)
+        return RingInvalid;
+    venus_capabilities_t guest, host;
+    unsigned char host_bytes[VenusCapabilityBytes];
+    if (venus_capabilities_decode(&guest, rpc->buffer, VenusCapabilityBytes) != RingOk ||
+        venus_capabilities_compatible(&guest) != RingOk)
+        return RingInvalid;
+    venus_ring_status_t result =
+        venus_receiver_capabilities(receiver, host_bytes, sizeof(host_bytes));
+    if (result != RingOk)
+        return result;
+    if (venus_capabilities_decode(&host, host_bytes, sizeof(host_bytes)) != RingOk ||
+        venus_capabilities_compatible(&host) != RingOk)
+        return RingInvalid;
+    rpc->negotiated = 1;
+    return RingOk;
+}
 
 static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc,
                                     const venus_request_t *request, venus_request_t *response) {
+    if (request->kind == RequestNegotiate)
+        return negotiate(receiver, rpc);
+    if (!rpc->negotiated && request->kind != RequestCapabilities)
+        return RingInvalid;
     switch (request->kind) {
     case RequestCapabilities:
         response->payload_bytes = VenusCapabilityBytes;

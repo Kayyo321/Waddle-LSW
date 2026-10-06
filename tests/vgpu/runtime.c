@@ -1,4 +1,6 @@
-/** @file runtime.c @brief Portable framing and receiver-boundary fault fixtures. */
+/** @file runtime.c @brief Portable framing and receiver-boundary fault
+ * fixtures. */
+#include "waddle/venus_capabilities.h"
 #include "waddle/venus_dispatch.h"
 #include <assert.h>
 #include <stdio.h>
@@ -15,6 +17,7 @@ static int eof, calls;
 static int health_calls, health_after;
 static venus_ring_status_t health_status;
 static uint64_t fence_value;
+static unsigned char host_capabilities[160];
 static int receiver_cookie;
 
 static venus_ring_t *incoming_ring(void) {
@@ -61,7 +64,7 @@ venus_ring_status_t venus_receiver_capabilities(const venus_receiver_t *receiver
     assert(receiver && length == 160);
     calls++;
     if (receiver_status == RingOk)
-        memset(output, 0x42, length);
+        memcpy(output, host_capabilities, length);
     return receiver_status;
 }
 venus_ring_status_t venus_receiver_submit(venus_receiver_t *receiver, const void *input,
@@ -144,6 +147,12 @@ static void reset(venus_session_role_t role) {
     eof = calls = health_calls = health_after = 0;
     health_status = RingOk;
     fence_value = 1;
+    memset(host_capabilities, 0, sizeof(host_capabilities));
+    const uint32_t Profile[] = {1, VenusPinnedXmlVersion, 1, 3, 1};
+    memcpy(host_capabilities, Profile, sizeof(Profile));
+    host_capabilities[20] = 1;
+    host_capabilities[68] = 3;
+    host_capabilities[152] = 1;
     assert(venus_region_init(mapping, sizeof(mapping), 64) == RingOk);
     assert(venus_session_init(&session, role, mapping, sizeof(mapping),
                               role == SessionHost ? 1 : 0) == RingOk);
@@ -152,6 +161,7 @@ static void reset(venus_session_role_t role) {
     channel.session = &session;
     channel.initialized = 1;
     assert(venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) == RingOk);
+    rpc.negotiated = 1;
 }
 static venus_request_t request_for(uint32_t kind) {
     venus_request_t value = {.kind = kind};
@@ -212,7 +222,8 @@ static void host_operations(void) {
             assert(response.payload_bytes == (index == 0 ? expected_bytes(kind) : 0));
             assert(outgoing_bytes == 64 + response.payload_bytes);
             for (size_t offset = 64; offset < outgoing_bytes; offset++)
-                assert(peer_output[offset] == 0x42);
+                assert(peer_output[offset] ==
+                       (kind == RequestCapabilities ? host_capabilities[offset - 64] : 0x42));
             venus_rpc_free(&rpc);
         }
     }
@@ -429,7 +440,63 @@ static void local_errors(void) {
     venus_rpc_free(&rpc);
     venus_rpc_free(&rpc);
 }
+static void negotiation(void) {
+    for (uint32_t kind = RequestSubmit; kind <= RequestGpuPoll; kind++) {
+        reset(SessionHost);
+        rpc.negotiated = 0;
+        venus_request_t request = request_for(kind), response;
+        request.sequence = 1;
+        prepare(request);
+        assert(serve() == RingOk && !calls && !rpc.negotiated);
+        drain_peer();
+        assert(venus_request_decode(&response, peer_output, 64) == RingOk);
+        assert(response.status == RequestInvalid);
+    }
+    for (int mode = 0; mode < 8; mode++) {
+        reset(SessionHost);
+        rpc.negotiated = mode == 1;
+        venus_request_t request = {.kind = RequestNegotiate, .sequence = 1, .payload_bytes = 160};
+        prepare(request);
+        memcpy(peer_input + 64, host_capabilities, 160);
+        if (mode == 2)
+            peer_input[64 + 16] = 2; /* Invalid peer flag. */
+        if (mode == 3)
+            peer_input[64] = 2; /* Peer version mismatch. */
+        if (mode == 4)
+            host_capabilities[16] = 2;
+        if (mode == 5)
+            host_capabilities[0] = 2;
+        if (mode == 6)
+            receiver_status = RingAgain;
+        if (mode == 7)
+            receiver_status = RingCorrupt;
+        venus_ring_status_t result = serve();
+        if (mode == 7) {
+            assert_terminal(result, RingCorrupt);
+            continue;
+        }
+        assert(result == RingOk && rpc.negotiated == (mode <= 1));
+        drain_peer();
+        venus_request_t response;
+        assert(venus_request_decode(&response, peer_output, 64) == RingOk);
+        assert(response.status == (mode == 0   ? RequestSuccess
+                                   : mode == 6 ? RequestAgain
+                                               : RequestInvalid));
+    }
+    reset(SessionGuest);
+    rpc.negotiated = 0;
+    venus_request_t request = {.kind = RequestNegotiate, .payload_bytes = 160}, response;
+    venus_request_t reply = {.kind = RequestNegotiate, .direction = 1, .sequence = 1};
+    prepare(reply);
+    assert(venus_rpc_exchange(&rpc, &request, host_capabilities, 160, &response, NULL, 0, 1000) ==
+           RingOk);
+    assert(rpc.negotiated);
+    venus_rpc_free(&rpc);
+    assert(!rpc.negotiated);
+}
+
 int main(void) {
+    negotiation();
     host_operations();
     host_failures();
     health_failures();
