@@ -141,4 +141,30 @@ venus_ring_status_t venus_receiver_resource_read(venus_receiver_t *receiver, uin
 venus_ring_status_t venus_receiver_resource_write(venus_receiver_t *receiver, uint32_t resource_id,
                                                   uint64_t offset, const void *input,
                                                   size_t length);
+/** @brief Pinned renderer timeline slots; zero CPU, 1..63 GPU queues. */
+#define VenusReceiverTimelineCount 64u
+/** @brief Fence previously associated Venus GPU queue after CPU dispatch completes.
+ * @param[in,out] receiver Nonnull live session-thread-owned record.
+ * @param[in] timeline Queue's existing Venus timeline, 1..63, never CPU zero.
+ * @param[out] fence Nonnull disjoint private output, zeroed on failure; success
+ * transfers a nonzero per-queue identity, not memory/handle ownership.
+ * @return RingOk; RingInvalid for null/bad timeline; RingAgain for CPU work or
+ * a pending fence on this queue; RingCorrupt for poison/exhaustion/SDK failure.
+ * @note No allocation. Queue association must already exist through Venus;
+ * SDK rejection poisons owner. Other queues can have independent pending fences.
+ */
+venus_ring_status_t venus_receiver_gpu_fence(venus_receiver_t *receiver, uint32_t timeline,
+                                             uint64_t *fence);
+/** @brief Acquire retirement of an explicit previously-issued GPU queue fence.
+ * @param[in] receiver Nonnull borrowed live owner, sole session thread.
+ * @param[in] timeline Queue timeline, 1..63.
+ * @param[in] fence Nonzero previously-issued per-queue identity.
+ * @return RingOk retired, RingAgain pending, RingInvalid null/bounds/unissued,
+ * RingCorrupt poisoned. No allocation or ownership transfer.
+ * @note May poll while later CPU work is pending; CPU retirement does not imply
+ * GPU retirement. Upstream callback gives no device-loss status: consult Vulkan
+ * replies/health before claiming execution success. Caller enforces deadline.
+ */
+venus_ring_status_t venus_receiver_gpu_poll(const venus_receiver_t *receiver, uint32_t timeline,
+                                            uint64_t fence);
 #endif

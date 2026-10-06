@@ -33,12 +33,14 @@ struct venus_receiver_t {
     uint64_t reply_bytes;          /**< Actual validated upstream mapped extent. */
     uint64_t submitted;            /**< Session-thread-only most recently submitted CPU fence. */
     _Atomic uint64_t retired;      /**< Callback release/session acquire fence completion. */
-    _Atomic int failed;            /**< Public failure or unexpected callback identity. */
-    uint32_t command_capacity;     /**< Immutable local scratch allocation bytes. */
-    int initialized;               /**< Renderer cleanup required. */
-    int context_created;           /**< Context destruction required; callbacks may be active. */
-    int resource_created;          /**< Resource unref required. */
-    int mapped;                    /**< Resource unmap required even on returned extent mismatch. */
+    _Atomic uint64_t gpu_issued[VenusReceiverTimelineCount];  /**< Published queue fence IDs. */
+    _Atomic uint64_t gpu_retired[VenusReceiverTimelineCount]; /**< Callback retired maximum. */
+    _Atomic int failed;        /**< Public failure or unexpected callback identity. */
+    uint32_t command_capacity; /**< Immutable local scratch allocation bytes. */
+    int initialized;           /**< Renderer cleanup required. */
+    int context_created;       /**< Context destruction required; callbacks may be active. */
+    int resource_created;      /**< Resource unref required. */
+    int mapped;                /**< Resource unmap required even on returned extent mismatch. */
 };
 static atomic_flag receiver_claim = ATOMIC_FLAG_INIT;
 /** @brief Pinned Venus capability set ID and owned bootstrap resource identities. */
@@ -56,11 +58,20 @@ static void legacy_fence(void *cookie, uint32_t fence) {
 
 static void context_fence(void *cookie, uint32_t context, uint32_t ring, uint64_t fence) {
     venus_receiver_t *receiver = cookie;
-    if (context != BootstrapContextId || ring != 0 || fence == 0) {
+    if (context != BootstrapContextId || ring >= VenusReceiverTimelineCount || fence == 0 ||
+        (ring && fence > atomic_load_explicit(&receiver->gpu_issued[ring], memory_order_acquire))) {
         atomic_store_explicit(&receiver->failed, 1, memory_order_release);
         return;
     }
-    atomic_store_explicit(&receiver->retired, fence, memory_order_release);
+    if (!ring) {
+        atomic_store_explicit(&receiver->retired, fence, memory_order_release);
+        return;
+    }
+    uint64_t retired = atomic_load_explicit(&receiver->gpu_retired[ring], memory_order_relaxed);
+    while (retired < fence &&
+           !atomic_compare_exchange_weak_explicit(&receiver->gpu_retired[ring], &retired, fence,
+                                                  memory_order_release, memory_order_relaxed)) {
+    }
 }
 
 static void release_resource(venus_receiver_resource_t *resource) {
@@ -109,6 +120,10 @@ venus_ring_status_t venus_receiver_create(venus_receiver_t **output, uint32_t co
         goto fail;
     atomic_init(&receiver->retired, 0);
     atomic_init(&receiver->failed, 0);
+    for (uint32_t timeline = 0; timeline < VenusReceiverTimelineCount; timeline++) {
+        atomic_init(&receiver->gpu_issued[timeline], 0);
+        atomic_init(&receiver->gpu_retired[timeline], 0);
+    }
     receiver->commands = aligned_alloc(64, command_capacity);
     if (!receiver->commands)
         goto fail;
@@ -327,6 +342,41 @@ venus_ring_status_t venus_receiver_resource_write(venus_receiver_t *receiver, ui
                                                   uint64_t offset, const void *input,
                                                   size_t length) {
     return copy_resource(receiver, id, offset, input, NULL, length, 1);
+}
+
+venus_ring_status_t venus_receiver_gpu_poll(const venus_receiver_t *receiver, uint32_t timeline,
+                                            uint64_t fence) {
+    if (!receiver || !venus_receiver_gpu_timeline(timeline) || !fence)
+        return RingInvalid;
+    if (atomic_load_explicit(&receiver->failed, memory_order_acquire))
+        return RingCorrupt;
+    if (fence > atomic_load_explicit(&receiver->gpu_issued[timeline], memory_order_acquire))
+        return RingInvalid;
+    return atomic_load_explicit(&receiver->gpu_retired[timeline], memory_order_acquire) >= fence
+               ? RingOk
+               : RingAgain;
+}
+
+venus_ring_status_t venus_receiver_gpu_fence(venus_receiver_t *receiver, uint32_t timeline,
+                                             uint64_t *fence) {
+    if (!fence)
+        return RingInvalid;
+    *fence = 0;
+    if (!venus_receiver_gpu_timeline(timeline))
+        return RingInvalid;
+    venus_ring_status_t result = venus_receiver_poll(receiver);
+    if (result != RingOk)
+        return result;
+    uint64_t issued = atomic_load_explicit(&receiver->gpu_issued[timeline], memory_order_acquire);
+    if (atomic_load_explicit(&receiver->gpu_retired[timeline], memory_order_acquire) < issued)
+        return RingAgain;
+    if (issued == UINT64_MAX)
+        return poison_receiver(receiver);
+    atomic_store_explicit(&receiver->gpu_issued[timeline], issued + 1, memory_order_release);
+    if (virgl_renderer_context_create_fence(BootstrapContextId, 0, timeline, issued + 1) != 0)
+        return poison_receiver(receiver);
+    *fence = issued + 1;
+    return RingOk;
 }
 
 _Static_assert(sizeof(struct virgl_renderer_capset_venus) == VenusCapabilityBytes,

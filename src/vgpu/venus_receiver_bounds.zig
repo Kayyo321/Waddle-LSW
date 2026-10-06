@@ -125,3 +125,16 @@ test "resource policy validates ID, page extent, flag and copy boundaries" {
     try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_receiver_memory_write, .{ bytes.ptr, @as(u64, 8), @as(u64, 4), &Source, @as(usize, 4) }));
     try std.testing.expectEqualSlices(u8, &Source, bytes[4..8]);
 }
+
+/// in: proposed GPU timeline; returns one for 1..63, zero otherwise.
+/// Pure/thread-safe, allocation-free, validates before C array indexing.
+export fn venus_receiver_gpu_timeline(timeline: u32) c_int {
+    return if (timeline != 0 and timeline < 64) 1 else 0;
+}
+
+test "GPU timeline zero and out-of-range never index owned arrays" {
+    for ([_]u32{ 0, 64, 65, std.math.maxInt(u32) }) |timeline|
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_receiver_gpu_timeline, .{timeline}));
+    for (1..64) |timeline|
+        try std.testing.expectEqual(@as(c_int, 1), @call(.never_inline, venus_receiver_gpu_timeline, .{@as(u32, @intCast(timeline))}));
+}

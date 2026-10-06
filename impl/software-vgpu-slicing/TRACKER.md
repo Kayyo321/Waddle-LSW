@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 30% | Resource ownership and portable request codec verified; bounded runtime implemented, native CI pending; multi-context/GPU milestones remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 48% | Bounded runtime/native fixtures and GPU fence ownership verified; hardware queue, recovery and multi-context milestones remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `26.0%`
+**Total Feature Completion**: `29.6%`
 
 ## Commit History & Progress Log
 
@@ -340,10 +340,29 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     both runtime sources and ABI/private headers are present. Runtime behavior
     is unchanged; the preceding validated integration build contained both sources.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify GPU queue fence ownership`
+- **Commit `d384dee`**: `docs(vgpu): specify GPU queue fence ownership`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Defined bounded queue timeline slots, independent issued/retired
     identities, inline callback publication, stale/future callback handling and
     CPU versus GPU semantics. Split ownership, hardware and recovery acceptance.
   - **Verification**: Matched the pinned public fence ABI and vkr queue association;
     callback retirement does not by itself prove successful GPU execution.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): track bounded GPU queue fence retirement`
+  - **Task Impact**: +8% to TODO: #2 (+1.6% overall) for GPU fence ownership;
+    +10% to TODO: #2 (+2.0% overall) for verified sequential runtime CI.
+  - **Summary**: Added fixed per-queue issued/retired atomics, Zig timeline bounds,
+    independent backpressure, inline callback publication, future-callback poison,
+    monotonically retired maxima and explicit GPU fence polling. CPU completion
+    remains separate. No queue/device creation or successful GPU work is implied.
+  - **Verification**: `make vgpu-receiver-test vgpu-receiver-sanitizers
+    vgpu-receiver-coverage vgpu-integration vgpu-integration-sanitizers` passed.
+    Receiver C lines 100%, branches 98.91%; Zig bounds lines/branches 100%.
+    All 63 GPU slots, inline/concurrent callbacks, SDK failure, exhaustion,
+    pending cleanup and CPU/GPU separation tested through the SDK mock boundary.
+    ASan/LSan/UBSan and allocator tests report no leaks. Real CPU Venus dispatch
+    and independent mock integration still pass. Real hardware queue execution,
+    runtime GPU fence operations and bounded hang recovery remain pending.
+    Sequential runtime Linux/native Windows CI passed at `4253a51` in
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393773120 and at
+    `f99723a` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393832459 .

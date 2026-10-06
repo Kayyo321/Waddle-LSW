@@ -57,4 +57,9 @@ int venus_receiver_resource_range(uint64_t extent, uint64_t offset, size_t lengt
  */
 int venus_receiver_memory_write(void *memory, uint64_t extent, uint64_t offset, const void *input,
                                 size_t length);
+/** @brief Validate GPU queue index before C atomic-array access.
+ * @param[in] timeline Untrusted host-value index.
+ * @return One for 1..63, zero otherwise; pure/thread-safe/allocation-free.
+ */
+int venus_receiver_gpu_timeline(uint32_t timeline);
 #endif

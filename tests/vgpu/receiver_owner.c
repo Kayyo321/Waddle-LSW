@@ -5,10 +5,12 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/mman.h>
+#include <pthread.h>
 #include <virglrenderer.h>
 #include <venus_hw.h>
 
 static int fault;
+static int fence_inline;
 static int allocations;
 static int active_renderer;
 static int active_context;
@@ -86,6 +88,7 @@ static void fixture_context_destroy(uint32_t context) {
     /* An outstanding callback runs before this boundary returns. The owner
      * and its callback cookie must remain live through context destruction. */
     callback_table->write_context_fence(callback_cookie, 1, 0, 100);
+    callback_table->write_context_fence(callback_cookie, 1, 63, 1);
     active_context = 0;
 }
 static int fixture_create_blob(const struct virgl_renderer_resource_create_blob_args *blob) {
@@ -174,7 +177,9 @@ static int fixture_submit(void *commands, int context, int words) {
     return fault == 12 ? -1 : 0;
 }
 static int fixture_fence(uint32_t context, uint32_t flags, uint32_t ring, uint64_t fence) {
-    assert(context == 1 && flags == 0 && ring == 0 && fence != 0);
+    assert(context == 1 && flags == 0 && ring < VenusReceiverTimelineCount && fence != 0);
+    if (ring && fence_inline && fault != 13)
+        callback_table->write_context_fence(callback_cookie, context, ring, fence);
     return fault == 13 ? -1 : 0;
 }
 #define calloc fixture_calloc
@@ -289,6 +294,79 @@ static void test_resources(void) {
     no_resources();
 }
 
+static void *retire_queue(void *context) {
+    const uint32_t *timeline = context;
+    callback_table->write_context_fence(callback_cookie, 1, *timeline, 1);
+    return NULL;
+}
+
+static void test_gpu_fences(void) {
+    venus_receiver_t *receiver = NULL;
+    uint64_t fence = 9;
+    assert(venus_receiver_gpu_fence(NULL, 1, &fence) == RingInvalid && fence == 0);
+    assert(venus_receiver_gpu_poll(NULL, 1, 1) == RingInvalid);
+    create(&receiver);
+    assert(venus_receiver_gpu_fence(receiver, 1, NULL) == RingInvalid);
+    for (uint32_t timeline = 0; timeline <= 65; timeline++) {
+        if (timeline == 0 || timeline >= 64) {
+            assert(venus_receiver_gpu_fence(receiver, timeline, &fence) == RingInvalid && !fence);
+            assert(venus_receiver_gpu_poll(receiver, timeline, 1) == RingInvalid);
+            continue;
+        }
+        assert(venus_receiver_gpu_poll(receiver, timeline, 0) == RingInvalid);
+        assert(venus_receiver_gpu_poll(receiver, timeline, 1) == RingInvalid);
+        assert(venus_receiver_gpu_fence(receiver, timeline, &fence) == RingOk && fence == 1);
+        assert(venus_receiver_gpu_poll(receiver, timeline, 1) == RingAgain);
+        assert(venus_receiver_gpu_fence(receiver, timeline, &fence) == RingAgain && !fence);
+    }
+    const uint32_t Commands[] = {137, 0};
+    assert(venus_receiver_submit(receiver, Commands, sizeof(Commands), &fence) == RingOk);
+    assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingAgain && !fence);
+    const uint32_t Timeline = 2;
+    pthread_t worker;
+    assert(pthread_create(&worker, NULL, retire_queue, (void *)&Timeline) == 0);
+    venus_ring_status_t concurrent = venus_receiver_gpu_poll(receiver, 2, 1);
+    assert(concurrent == RingAgain || concurrent == RingOk);
+    void *joined = (void *)1;
+    assert(pthread_join(worker, &joined) == 0 && joined == NULL);
+    assert(venus_receiver_gpu_poll(receiver, 2, 1) == RingOk);
+    callback_table->write_context_fence(callback_cookie, 1, 1, 1);
+    assert(venus_receiver_gpu_poll(receiver, 1, 1) == RingOk);
+    assert(venus_receiver_poll(receiver) == RingAgain); /* GPU is not CPU completion. */
+    callback_table->write_context_fence(callback_cookie, 1, 0, 1);
+    assert(venus_receiver_poll(receiver) == RingOk);
+    fence_inline = 1;
+    assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingOk && fence == 2);
+    assert(venus_receiver_gpu_poll(receiver, 1, 2) == RingOk);
+    fence_inline = 0;
+    callback_table->write_context_fence(callback_cookie, 1, 1, 1);
+    callback_table->write_context_fence(callback_cookie, 1, 1, 2);
+    assert(venus_receiver_gpu_poll(receiver, 1, 2) == RingOk); /* No regression. */
+    venus_receiver_destroy(&receiver); /* Queue 63 callback while other queues pending. */
+    no_resources();
+    for (int mode = 0; mode < 4; mode++) {
+        create(&receiver);
+        if (mode == 0) {
+            fault = 13;
+            assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingCorrupt && !fence);
+        } else if (mode == 1) {
+            atomic_store(&receiver->gpu_issued[1], UINT64_MAX);
+            atomic_store(&receiver->gpu_retired[1], UINT64_MAX);
+            assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingCorrupt && !fence);
+        } else if (mode == 2) {
+            callback_table->write_context_fence(callback_cookie, 1, 64, 1);
+        } else {
+            assert(venus_receiver_gpu_fence(receiver, 1, &fence) == RingOk);
+            callback_table->write_context_fence(callback_cookie, 1, 1, 2);
+        }
+        assert(venus_receiver_gpu_poll(receiver, 1, 1) == RingCorrupt);
+        assert(venus_receiver_gpu_fence(receiver, 2, &fence) == RingCorrupt && !fence);
+        assert(venus_receiver_poll(receiver) == RingCorrupt);
+        venus_receiver_destroy(&receiver);
+        no_resources();
+    }
+}
+
 int main(void) {
     venus_receiver_t *receiver = NULL;
     venus_receiver_destroy(NULL);
@@ -374,5 +452,6 @@ int main(void) {
     venus_receiver_destroy(&receiver);
     no_resources();
     test_resources();
+    test_gpu_fences();
     return 0;
 }

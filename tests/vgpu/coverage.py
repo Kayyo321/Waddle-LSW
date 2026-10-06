@@ -28,6 +28,7 @@ subprocess.run([
     *(['src/vgpu/venus_ring.c', '-Isrc/vgpu'] if mode in ('region', 'mapping', 'wait', 'session') else []),
     *(['src/vgpu/venus_region.c', 'build/venus_control.o'] if mode == 'session' else []),
     *(['src/vgpu/venus_region.c', '-Isrc/vgpu', '-Wl,--wrap=memfd_create,--wrap=ftruncate,--wrap=fcntl,--wrap=mmap,--wrap=venus_region_init,--wrap=venus_region_attach'] if mode == 'mapping' else []),
+    *(['-pthread'] if mode == 'receiver' else []),
     'build/venus_receiver_bounds.o' if mode == 'receiver' else 'build/venus_bounds.o', '--coverage', '-o', str(output / 'runner'),
 ], check=True)
 subprocess.run([str(output / 'runner')], check=True)
