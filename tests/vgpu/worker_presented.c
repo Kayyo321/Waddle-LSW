@@ -19,6 +19,64 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *) = venus_icd_bind;
+static venus_ring_status_t (*icd_unbind)(void) = venus_icd_unbind;
+static void (*icd_abandon)(void) = venus_icd_abandon;
+static PFN_vkGetInstanceProcAddr icd_lookup = venus_icd_get_instance_proc_addr;
+#ifdef VgpuIcdLoader
+#include <dlfcn.h>
+static void *icd_library, *loader_library;
+static char *saved_driver_files;
+static int saved_driver_present, driver_changed;
+/** @brief Resolve borrowed function storage; no allocation or pointer conversion.
+ * @param[in] library Live owned library and nonnull accessible name.
+ * @param[out] output Accessible function storage[bytes], changed only on success.
+ * @return Zero success, one missing symbol/unsupported native representation.
+ * @note Test sole thread; library must outlive the returned callback.
+ */
+static int loader_symbol(void *library, const char *name, void *output, size_t bytes) {
+    void *symbol = dlsym(library, name);
+    if (!symbol || bytes != sizeof(symbol)) return 1;
+    memcpy(output, &symbol, bytes);
+    return 0;
+}
+static void loader_cleanup(void) {
+    if (loader_library) dlclose(loader_library);
+    loader_library = NULL;
+    if (icd_library) dlclose(icd_library);
+    icd_library = NULL;
+    if (driver_changed) {
+        if (saved_driver_present) setenv("VK_DRIVER_FILES", saved_driver_files, 1);
+        else unsetenv("VK_DRIVER_FILES");
+    }
+    driver_changed = 0;
+    icd_bind = venus_icd_bind; icd_unbind = venus_icd_unbind;
+    icd_abandon = venus_icd_abandon; icd_lookup = venus_icd_get_instance_proc_addr;
+    free(saved_driver_files);
+    saved_driver_files = NULL;
+}
+static int loader_initialize(void) {
+    const char *saved = getenv("VK_DRIVER_FILES");
+    saved_driver_present = saved != NULL;
+    if (saved) {
+        saved_driver_files = strdup(saved);
+        if (!saved_driver_files) return 1;
+    }
+    char manifest[PATH_MAX], library[PATH_MAX];
+    const char *loader = getenv("WADDLE_TEST_VULKAN_LOADER");
+    if (!loader || !realpath("build/waddle_vulkan_experimental.json", manifest) ||
+        !realpath("build/libwaddle_vulkan_experimental.so", library) ||
+        setenv("VK_DRIVER_FILES", manifest, 1)) return 1;
+    driver_changed = 1;
+    icd_library = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+    loader_library = dlopen(loader, RTLD_NOW | RTLD_LOCAL);
+    if (!icd_library || !loader_library) return 1;
+    return loader_symbol(icd_library, "venus_icd_bind", &icd_bind, sizeof(icd_bind)) ||
+        loader_symbol(icd_library, "venus_icd_unbind", &icd_unbind, sizeof(icd_unbind)) ||
+        loader_symbol(icd_library, "venus_icd_abandon", &icd_abandon, sizeof(icd_abandon)) ||
+        loader_symbol(loader_library, "vkGetInstanceProcAddr", &icd_lookup, sizeof(icd_lookup));
+}
+#endif
 static unsigned descriptors(void) {
     DIR *directory = opendir("/proc/self/fd");
     if (!directory)
@@ -116,17 +174,27 @@ cleanup:
     return result;
 }
 static int icd_cycles(venus_guest_t *guest) {
-    if (venus_icd_bind(command_exchange, guest) != RingOk)
+#ifdef VgpuIcdLoader
+    /* Host receiver is already initialized with its original driver environment. */
+    if (loader_initialize()) { loader_cleanup(); return 1; }
+#endif
+    if (icd_bind(command_exchange, guest) != RingOk)
         return 1;
     PFN_vkCreateInstance create =
-        (PFN_vkCreateInstance)venus_icd_get_instance_proc_addr(NULL, "vkCreateInstance");
+        (PFN_vkCreateInstance)icd_lookup(NULL, "vkCreateInstance");
+    VkInstance cleanup_instance = NULL;
+    VkDevice cleanup_device = NULL;
+    PFN_vkDestroyInstance cleanup_destroy_instance = NULL;
+    PFN_vkDestroyDevice cleanup_destroy_device = NULL;
     VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     for (unsigned iteration = 0; iteration < 8; iteration++) {
         VkInstance instance = NULL;
         if (!create || create(&info, NULL, &instance) != VK_SUCCESS || !instance)
             goto fail;
+        cleanup_instance = instance;
+        cleanup_destroy_instance = (PFN_vkDestroyInstance)icd_lookup(instance, "vkDestroyInstance");
         PFN_vkEnumeratePhysicalDevices enumerate =
-            (PFN_vkEnumeratePhysicalDevices)venus_icd_get_instance_proc_addr(
+            (PFN_vkEnumeratePhysicalDevices)icd_lookup(
                 instance, "vkEnumeratePhysicalDevices");
         uint32_t count = 0;
         if (!enumerate || enumerate(instance, &count, NULL) != VK_SUCCESS || !count || count > 16)
@@ -136,13 +204,13 @@ static int icd_cycles(venus_guest_t *guest) {
         if (enumerate(instance, &capacity, devices) != VK_SUCCESS || capacity != count)
             goto fail;
         PFN_vkGetPhysicalDeviceProperties properties =
-            (PFN_vkGetPhysicalDeviceProperties)venus_icd_get_instance_proc_addr(
+            (PFN_vkGetPhysicalDeviceProperties)icd_lookup(
                 instance, "vkGetPhysicalDeviceProperties");
         PFN_vkGetPhysicalDeviceFeatures features =
-            (PFN_vkGetPhysicalDeviceFeatures)venus_icd_get_instance_proc_addr(
+            (PFN_vkGetPhysicalDeviceFeatures)icd_lookup(
                 instance, "vkGetPhysicalDeviceFeatures");
         PFN_vkGetPhysicalDeviceMemoryProperties memory =
-            (PFN_vkGetPhysicalDeviceMemoryProperties)venus_icd_get_instance_proc_addr(
+            (PFN_vkGetPhysicalDeviceMemoryProperties)icd_lookup(
                 instance, "vkGetPhysicalDeviceMemoryProperties");
         if (!properties || !features || !memory)
             goto fail;
@@ -158,12 +226,12 @@ static int icd_cycles(venus_guest_t *guest) {
                 goto fail;
         }
         PFN_vkGetPhysicalDeviceQueueFamilyProperties queue_properties =
-            (PFN_vkGetPhysicalDeviceQueueFamilyProperties)venus_icd_get_instance_proc_addr(
+            (PFN_vkGetPhysicalDeviceQueueFamilyProperties)icd_lookup(
                 instance, "vkGetPhysicalDeviceQueueFamilyProperties");
         PFN_vkCreateDevice create_device =
-            (PFN_vkCreateDevice)venus_icd_get_instance_proc_addr(instance, "vkCreateDevice");
+            (PFN_vkCreateDevice)icd_lookup(instance, "vkCreateDevice");
         PFN_vkGetDeviceProcAddr device_proc =
-            (PFN_vkGetDeviceProcAddr)venus_icd_get_instance_proc_addr(instance,
+            (PFN_vkGetDeviceProcAddr)icd_lookup(instance,
                                                                       "vkGetDeviceProcAddr");
         if (!queue_properties || !create_device || !device_proc)
             goto fail;
@@ -186,6 +254,8 @@ static int icd_cycles(venus_guest_t *guest) {
         VkDevice device = NULL;
         if (create_device(devices[0], &device_info, NULL, &device) != VK_SUCCESS || !device)
             goto fail;
+        cleanup_device = device;
+        cleanup_destroy_device = (PFN_vkDestroyDevice)device_proc(device, "vkDestroyDevice");
         PFN_vkGetDeviceQueue get_queue =
             (PFN_vkGetDeviceQueue)device_proc(device, "vkGetDeviceQueue");
         PFN_vkDestroyDevice destroy_device =
@@ -247,25 +317,40 @@ static int icd_cycles(venus_guest_t *guest) {
         if (allocate(device, &allocation, NULL, &buffer_allocation) != VK_SUCCESS ||
             !buffer_allocation || bind(device, buffer, buffer_allocation, 0) != VK_SUCCESS ||
             device_idle(device) != VK_SUCCESS) goto fail;
+#ifdef VgpuIcdLoader
+        if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
+#endif
         destroy_buffer(device, buffer, NULL);
         release(device, buffer_allocation, NULL);
 
         destroy_device(device, NULL);
+        cleanup_device = NULL;
+#ifndef VgpuIcdLoader
         if (device_proc(device, "vkDestroyDevice"))
             goto fail;
+#endif
         PFN_vkDestroyInstance destroy =
-            (PFN_vkDestroyInstance)venus_icd_get_instance_proc_addr(instance, "vkDestroyInstance");
+            (PFN_vkDestroyInstance)icd_lookup(instance, "vkDestroyInstance");
         if (!destroy)
             goto fail;
         destroy(instance, NULL);
-        if (venus_icd_get_instance_proc_addr(instance, "vkDestroyInstance"))
+        cleanup_instance = NULL;
+#ifndef VgpuIcdLoader
+        if (icd_lookup(instance, "vkDestroyInstance"))
             goto fail;
+#endif
     }
-    if (venus_icd_unbind() == RingOk)
+    if (icd_unbind() == RingOk) {
+#ifdef VgpuIcdLoader
+        loader_cleanup();
+#endif
         return 0;
+    }
 fail:
+    /* Release loader-owned CPU dispatch tables even when host ownership is uncertain. */
+    if (cleanup_device && cleanup_destroy_device) cleanup_destroy_device(cleanup_device, NULL);
+    if (cleanup_instance && cleanup_destroy_instance) cleanup_destroy_instance(cleanup_instance, NULL);
     venus_guest_free(guest); /* Stop receiver access before forgetting reserved objects. */
-    venus_icd_abandon();
     return 1;
 }
 static int run_fixture(int corrupt) {
@@ -366,6 +451,10 @@ cleanup:
     venus_channel_free(&channel);
     if (venus_worker_destroy(&worker, 1000) != RingOk)
         result = 1;
+    if (result) icd_abandon(); /* Receiver retired before forgetting uncertain objects. */
+#ifdef VgpuIcdLoader
+    loader_cleanup();
+#endif
     for (unsigned index = 0; index < 2; index++) {
         if (streams[index] >= 0)
             close(streams[index]);
@@ -380,16 +469,24 @@ cleanup:
     return result;
 }
 int main(void) {
-    alarm(60);
+    alarm(90);
+    int result = 1;
     unsigned baseline = descriptors();
-    if (!baseline)
-        return 1;
-    for (unsigned corrupt = 0; corrupt < 2; corrupt++)
-        if (run_fixture((int)corrupt) || descriptors() != baseline) {
+    if (!baseline) goto cleanup;
+    for (unsigned corrupt = 0; corrupt < 2; corrupt++) {
+        int fixture_result = run_fixture((int)corrupt);
+        unsigned after = descriptors();
+        if (fixture_result || after != baseline) {
+            result = after == baseline ? 1 : 2;
             fprintf(stderr, "Presented worker binding failed: mode=%u\n", corrupt);
-            return 1;
+            goto cleanup;
         }
-    puts("Presented production worker negotiation, isolation and unknown-release "
-         "shutdown passed");
-    return 0;
+    }
+    puts("Presented production worker negotiation, isolation and unknown-release shutdown passed");
+    result = 0;
+cleanup:
+#ifdef VgpuIcdLoader
+    loader_cleanup();
+#endif
+    return result;
 }

@@ -1476,8 +1476,24 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     API with their independent oracle backend. Native Windows fixture/DLL cross-link
     succeeds. Updated-head native CI remains required; TODO #3 remains40%.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify native loader production worker proof`
+- **Commit `1123f95`**: `docs(vgpu): specify native loader production worker proof`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify real loader/shared ICD dispatch through the actual
     negotiated worker, explicit borrowed callback and owned library/environment
     lifetimes, two-session object cycles and independent loader milestone gates.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): drive production workers through the native loader`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; updated native CI required).
+  - **Summary**: Add actual pinned loader/shared ICD production worker variant,
+    owned library/environment lifetimes, original host driver environment before
+    guest manifest selection, two-session object cycles and receiver-retired
+    failure cleanup. Capture destroy callbacks to retire loader CPU dispatch tables;
+    never query stale loader handles. Gate actual normal/sanitized worker dispatch
+    and injected live-allocation failure in Linux CI with a20-minute job budget.
+  - **Verification**: Local real loader/receiver sixteen device/queue/fence/buffer/
+    memory lifecycle cycles pass normal and ASan/LSan/UBSan. Forced failure after
+    binding retires receiver and loader dispatch state with zero leaks and restored
+    descriptor baseline; expected exit1 confirmed. Static worker normal/sanitized
+    regressions pass; workflow YAML parses. Native Windows18350fb loader dispatch
+    and DLL ABI are green. Latest native Linux integration CI remains required
+    before the loader10% milestone; full command/mapping/DXVK remains incomplete.

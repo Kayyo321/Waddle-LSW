@@ -2829,3 +2829,24 @@ ABI execution are required before loader10% credit. This gate verifies actual
 loader dispatch through device creation; full command/mapping/graphics/compute
 and DXVK remain their independent incomplete milestones. The manifest remains
 explicitly experimental until those milestones pass.
+
+The integration receiver is launched/negotiated before selecting the application's
+private guest manifest, so its own Vulkan backend inherits the original host
+configuration. Restore that environment before starting the next receiver. Each
+session owns its loader/ICD libraries until unbind or receiver-retired abandonment;
+libraries are closed before the next session. The combined two-session fixture has
+a90-second overall process alarm for sixteen actual device lifecycles. Individual
+command and GPU retirement deadlines remain unchanged. The Linux CI job allows
+20minutes for the growing native/sanitized/coverage/cross-link gates (the previous
+complete job took approximately13minutes before these two additional worker runs).
+
+The sanitized integration also injects failure immediately after live buffer memory
+binding. The test captures live loader instance/device destroy callbacks and uses
+them to release loader CPU dispatch allocations on failure, then stops guest
+access and retires the receiver before ICD abandonment. Nondispatchable driver
+objects remain uncertain until receiver retirement; the test never forgets them
+while the host is live. The injected run must exit1 with no sanitizer report;
+exit2 denotes descriptor baseline mismatch and other statuses fail the gate.
+Descriptor baselines are audited even on this expected failure path. No stale
+application handle is passed back through the native loader after destruction;
+that private-handle lookup regression remains in the separate static ICD variant.

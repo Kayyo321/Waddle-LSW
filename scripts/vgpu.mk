@@ -852,3 +852,17 @@ vgpu-native-loader-sanitizers: build/vgpu_icd_loader_sanitized
 	cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_sanitized -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$(CURDIR)/scripts/vulkan_loader.cmake -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DBUILD_WSI_XCB_SUPPORT=OFF -DBUILD_WSI_XLIB_SUPPORT=OFF -DBUILD_WSI_XLIB_XRANDR_SUPPORT=OFF -DBUILD_WSI_WAYLAND_SUPPORT=OFF -DLOADER_ENABLE_ADDRESS_SANITIZER=ON
 	cmake --build build/vendor/vulkan_loader_sanitized --parallel 4
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader_sanitized/loader/libvulkan.so.1" ./build/vgpu_icd_loader_sanitized
+
+# Real pinned loader dispatch through the production negotiated receiver.
+build/vgpu_loader_worker_test: $(VgpuPresentedWorkerSources) $(VgpuGuestHeaders) $(VgpuPresentedWorkerObjects) build/waddle_vgpu_worker build/libwaddle_vulkan_experimental.so build/waddle_vulkan_experimental.json
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DVgpuIcdLoader -Isrc/vgpu -Isubmodules/venus_protocol/include $(VgpuPresentedWorkerSources) $(VgpuPresentedWorkerObjects) -ldl -o $@
+
+.PHONY: vgpu-loader-worker-test vgpu-loader-worker-sanitizers
+vgpu-loader-worker-test: build/vgpu_loader_worker_test vgpu-native-loader
+	WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader/loader/libvulkan.so.1" RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_loader_worker_test
+
+vgpu-loader-worker-sanitizers: $(VgpuPresentedWorkerObjects) build/waddle_vgpu_worker_sanitized build/libwaddle_vulkan_experimental.so build/waddle_vulkan_experimental.json vgpu-native-loader-sanitizers
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -DVgpuIcdLoader -Isrc/vgpu -Isubmodules/venus_protocol/include $(VgpuPresentedWorkerSources) $(VgpuPresentedWorkerObjects) -ldl -o build/vgpu_loader_worker_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader_sanitized/loader/libvulkan.so.1" WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_loader_worker_sanitized
+
+	@WADDLE_TEST_LOADER_FAILURE=1 ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader_sanitized/loader/libvulkan.so.1" WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_loader_worker_sanitized; status=$$?; test $$status -eq 1

@@ -9,7 +9,7 @@ permissions:
 jobs:
   transport:
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     container:
       image: debian:trixie-slim
       options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
@@ -72,6 +72,8 @@ jobs:
         run: make vgpu-frame-test vgpu-frame-sanitizers vgpu-frame-coverage
       - name: Verify presented production worker exec binding
         run: make vgpu-presented-worker-test vgpu-presented-worker-sanitizers
+      - name: Verify pinned loader with production negotiated worker
+        run: make vgpu-loader-worker-test vgpu-loader-worker-sanitizers
       - name: Verify bounded worker export leases
         run: make vgpu-export-test vgpu-export-sanitizers vgpu-export-coverage
       - name: Verify worker surface binding ownership
