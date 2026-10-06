@@ -1390,7 +1390,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     is clean; no loose vendor files, source changes or runtime substitutions.
     Offline build and actual native loader acceptance remain pending.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): verify native loader device and fence dispatch`
+- **Commit `2326afc`**: `test(vgpu): verify native loader device and fence dispatch`
   - **Task Impact**: +35% to TODO: #8; +0% to TODO: #3 (+0% overall).
   - **Summary**: Build the pinned loader offline with the existing exact header307
     target, no downloads/codegen/install or vendor edits. Extend dynamic loader
@@ -1404,3 +1404,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Workflow parses. The native oracle backend remains explicitly fake; production
     worker runtime remains separately verified. Native Windows/updated-head CI
     required before completing dependency task or loader ABI milestone credit.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify experimental API version consistency`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Align public physical properties/instance requests with declared
+    experimental API1.0, keep host query data private until validated, and preserve
+    the separate complete runtime/DXVK acceptance requirements.

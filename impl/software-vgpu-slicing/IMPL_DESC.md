@@ -2681,3 +2681,17 @@ lower label, free SID and close token deterministically. The upstream loader
 correctly ignores environment overrides at high integrity; do not bypass or disable
 that guard. No system token, registry entry or installed loader/driver is changed.
 The test may read its build artifacts after lowering; no registry writes are needed.
+
+### Experimental public API version ceiling
+
+The experimental ICD public API ceiling is Vulkan1.0, independent of host renderer
+capability or raw query wire support for1.1. vkEnumerateInstanceVersion and generated
+private manifests already advertise1.0. VkPhysicalDeviceProperties must also report
+at most1.0 after a full bounded decode into private staging; preserve all other
+actual host properties. Reject invalid host variant/major or versions below1.0 as
+peer corruption before publishing any application output. Future1.x host minor
+versions can be safely clamped. Application instance requests with nonzero Vulkan
+variant, major other than1 or minor greater than0 return VK_ERROR_INCOMPATIBLE_DRIVER
+before reserving/submitting. Zero version defaults to1.0, patch values in1.0 are
+accepted. This ceiling does not imply that the unfinished ICD implements every
+core1.0 API; test-only discovery and full runtime acceptance remain distinct.
