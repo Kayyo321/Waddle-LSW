@@ -539,6 +539,62 @@ static int icd_cycles(venus_guest_t *guest) {
 #ifdef VgpuIcdLoader
             if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
 #endif
+            image_stage = "image barrier entry-point lookup";
+            PFN_vkCreateCommandPool create_image_pool =
+                (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
+            PFN_vkDestroyCommandPool destroy_image_pool =
+                (PFN_vkDestroyCommandPool)device_proc(device, "vkDestroyCommandPool");
+            PFN_vkAllocateCommandBuffers allocate_image_commands =
+                (PFN_vkAllocateCommandBuffers)device_proc(device, "vkAllocateCommandBuffers");
+            PFN_vkBeginCommandBuffer begin_image_command =
+                (PFN_vkBeginCommandBuffer)device_proc(device, "vkBeginCommandBuffer");
+            PFN_vkEndCommandBuffer end_image_command =
+                (PFN_vkEndCommandBuffer)device_proc(device, "vkEndCommandBuffer");
+            PFN_vkCmdPipelineBarrier image_barrier =
+                (PFN_vkCmdPipelineBarrier)device_proc(device, "vkCmdPipelineBarrier");
+            PFN_vkQueueSubmit submit_image =
+                (PFN_vkQueueSubmit)device_proc(device, "vkQueueSubmit");
+            if (!create_image_pool || !destroy_image_pool || !allocate_image_commands ||
+                !begin_image_command || !end_image_command || !image_barrier || !submit_image)
+                goto fail;
+            image_stage = "image command acquisition";
+            const VkCommandPoolCreateInfo image_pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                .queueFamilyIndex = family};
+            VkCommandPool image_pool = NULL;
+            if (create_image_pool(device, &image_pool_info, NULL, &image_pool) != VK_SUCCESS ||
+                !image_pool) goto fail;
+            const VkCommandBufferAllocateInfo image_command_info = {
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = image_pool,
+                .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
+            const VkCommandBufferBeginInfo image_begin_info = {
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+            VkCommandBuffer image_command = NULL;
+            if (allocate_image_commands(device, &image_command_info, &image_command) != VK_SUCCESS ||
+                !image_command || begin_image_command(image_command, &image_begin_info) != VK_SUCCESS)
+                goto fail;
+            image_stage = "image layout transition";
+            const VkImageMemoryBarrier transition = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .image = image,
+                .subresourceRange = view_info.subresourceRange};
+            image_barrier(image_command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, NULL, 0, NULL, 1, &transition);
+            const VkFenceCreateInfo image_fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+            VkFence image_fence = NULL;
+            const VkSubmitInfo image_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .commandBufferCount = 1, .pCommandBuffers = &image_command};
+            image_stage = "image submission and fence retirement";
+            if (end_image_command(image_command) != VK_SUCCESS ||
+                create_fence(device, &image_fence_info, NULL, &image_fence) != VK_SUCCESS || !image_fence ||
+                submit_image(queue, 1, &image_submit, image_fence) != VK_SUCCESS ||
+                wait_fences(device, 1, &image_fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
+                queue_idle(queue) != VK_SUCCESS)
+                goto fail;
+            destroy_fence(device, image_fence, NULL);
+            destroy_image_pool(device, image_pool, NULL);
             destroy_view(device, image_view, NULL);
             destroy_image(device, image, NULL);
             release(device, image_allocation, NULL);
