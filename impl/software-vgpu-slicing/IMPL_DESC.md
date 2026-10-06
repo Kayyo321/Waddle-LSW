@@ -2503,3 +2503,15 @@ are asserted instead of introducing unreachable public recovery branches;
 peer/transport errors retain explicit sticky loss returns. Production coverage
 99.18% lines/91.37% branches, normal and ASan/LSan/UBSan pass. Windows cross-link
 passes; native CI and production-worker acceptance are separately recorded.
+
+
+Production presented-worker integration now calls the public ICD functions in8
+fresh instance lifecycles in each of2 mapped worker sessions. Count/fill physical
+identities are cached and validated against reservations; real host properties,
+features and memory structs are decoded through the same production interfaces.
+Success destroys the host instance before retiring children/root, confirms stale
+instance procedure rejection and empty unbind. Failure first closes guest access,
+then abandons ICD reservations. Normal/sanitized executions retain existing FD
+baselines, worker isolation and authenticated unknown-release shutdown checks.
+This establishes public instance dispatch over the real backend, with no device
+creation or DXVK completion claim. Native CI still gates component acceptance.

@@ -588,7 +588,7 @@ vgpu-export-coverage: build/venus_frame.o build/venus_bounds.o
 build/vgpu_service_fixture build/vgpu_service_fixture_sanitized build/waddle_vgpu_worker build/waddle_vgpu_worker_sanitized build/vgpu_service_owner_test: include/waddle/venus_export.h $(VgpuFrameHeaders)
 
 VgpuPresentedWorkerSources = tests/vgpu/worker_presented.c src/vgpu/venus_worker.c src/vgpu/venus_guest.c src/vgpu/venus_frame_linux.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c
-VgpuPresentedWorkerObjects = build/venus_instance_wire.o build/venus_objects.o build/venus_command.o build/venus_frame.o build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
+VgpuPresentedWorkerObjects = build/venus_icd.o build/venus_query_wire.o build/venus_values.o build/venus_instance_wire.o build/venus_objects.o build/venus_command.o build/venus_frame.o build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
 build/vgpu_presented_worker_test: $(VgpuPresentedWorkerSources) $(VgpuGuestHeaders) include/waddle/venus_worker.h include/waddle/venus_objects.h include/waddle/venus_instance_wire.h $(VgpuFrameHeaders) $(VgpuPresentedWorkerObjects) build/waddle_vgpu_worker
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu -Isubmodules/venus_protocol/include $(VgpuPresentedWorkerSources) $(VgpuPresentedWorkerObjects) -o $@
 

@@ -1243,7 +1243,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and production coverage remain unchanged. No runtime milestone credit.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch standalone ICD instance lifecycles`
+- **Commit `58ad94d`**: `feat(vgpu): dispatch standalone ICD instance lifecycles`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; native CI acceptance pending).
   - **Summary**: Add mutex-serialized allocation-free experimental ICD, exact
     loader export aliases, borrowed negotiated backend, registry-backed instance/
@@ -1255,3 +1255,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ASan/LSan/UBSan pass; Zig production lines99.18%, branches91.37%; native
     Windows tests/DLL cross-link. Device creation explicitly returns unsupported;
     complete device/memory/command/synchronization APIs and DXVK remain required.
+
+
+- **Commit (current; resolve by subject)**: `test(vgpu): exercise public ICD through production workers`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; native CI acceptance pending).
+  - **Summary**: Bind public ICD instance/procedure/query functions to the actual
+    negotiated production worker in each of2 fresh mapped sessions; execute8
+    instance/create/enumerate/property/feature/memory/destroy cycles per session.
+  - **Verification**: Normal and ASan/LSan/UBSan worker/client paths pass; success
+    retires all cached physical and instance reservations before unbind, failure
+    abandons the guest before clearing ICD objects. Descriptor baseline checks
+    remain enforced. Device/API and real DXVK runtime acceptance remains pending.

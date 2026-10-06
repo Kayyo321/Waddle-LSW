@@ -3,6 +3,7 @@
 #include "waddle/venus_command.h"
 #include "waddle/venus_frame.h"
 #include "waddle/venus_guest.h"
+#include "waddle/venus_icd.h"
 #include "waddle/venus_instance_wire.h"
 #include "waddle/venus_objects.h"
 #include "waddle/venus_worker.h"
@@ -112,6 +113,63 @@ cleanup:
     venus_objects_free(&objects);
     return result;
 }
+static int icd_cycles(venus_guest_t *guest) {
+    if (venus_icd_bind(command_exchange, guest) != RingOk)
+        return 1;
+    PFN_vkCreateInstance create =
+        (PFN_vkCreateInstance)venus_icd_get_instance_proc_addr(NULL, "vkCreateInstance");
+    VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+    for (unsigned iteration = 0; iteration < 8; iteration++) {
+        VkInstance instance = NULL;
+        if (!create || create(&info, NULL, &instance) != VK_SUCCESS || !instance)
+            goto fail;
+        PFN_vkEnumeratePhysicalDevices enumerate =
+            (PFN_vkEnumeratePhysicalDevices)venus_icd_get_instance_proc_addr(
+                instance, "vkEnumeratePhysicalDevices");
+        uint32_t count = 0;
+        if (!enumerate || enumerate(instance, &count, NULL) != VK_SUCCESS || !count || count > 16)
+            goto fail;
+        VkPhysicalDevice devices[16] = {0};
+        uint32_t capacity = count;
+        if (enumerate(instance, &capacity, devices) != VK_SUCCESS || capacity != count)
+            goto fail;
+        PFN_vkGetPhysicalDeviceProperties properties =
+            (PFN_vkGetPhysicalDeviceProperties)venus_icd_get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceProperties");
+        PFN_vkGetPhysicalDeviceFeatures features =
+            (PFN_vkGetPhysicalDeviceFeatures)venus_icd_get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceFeatures");
+        PFN_vkGetPhysicalDeviceMemoryProperties memory =
+            (PFN_vkGetPhysicalDeviceMemoryProperties)venus_icd_get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceMemoryProperties");
+        if (!properties || !features || !memory)
+            goto fail;
+        for (uint32_t index = 0; index < count; index++) {
+            VkPhysicalDeviceProperties property_value = {0};
+            VkPhysicalDeviceFeatures feature_value = {0};
+            VkPhysicalDeviceMemoryProperties memory_value = {0};
+            properties(devices[index], &property_value);
+            features(devices[index], &feature_value);
+            memory(devices[index], &memory_value);
+            if (property_value.apiVersion < VK_API_VERSION_1_0 || !property_value.deviceName[0] ||
+                !memory_value.memoryTypeCount || !memory_value.memoryHeapCount)
+                goto fail;
+        }
+        PFN_vkDestroyInstance destroy =
+            (PFN_vkDestroyInstance)venus_icd_get_instance_proc_addr(instance, "vkDestroyInstance");
+        if (!destroy)
+            goto fail;
+        destroy(instance, NULL);
+        if (venus_icd_get_instance_proc_addr(instance, "vkDestroyInstance"))
+            goto fail;
+    }
+    if (venus_icd_unbind() == RingOk)
+        return 0;
+fail:
+    venus_guest_free(guest); /* Stop receiver access before forgetting reserved objects. */
+    venus_icd_abandon();
+    return 1;
+}
 static int run_fixture(int corrupt) {
     int result = 1, mapping_fd = -1, streams[2] = {-1, -1}, frames[2] = {-1, -1};
     void *mapping = MAP_FAILED;
@@ -148,7 +206,7 @@ static int run_fixture(int corrupt) {
         venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) != RingOk ||
         venus_guest_init(&guest, &rpc, 5000) != RingOk)
         goto cleanup;
-    if (query_version(&guest) || instance_cycle(&guest))
+    if (query_version(&guest) || instance_cycle(&guest) || icd_cycles(&guest))
         goto cleanup;
     venus_frame_t frame = {.context = UINT64_MAX,
                            .frame = 1,
