@@ -1903,3 +1903,37 @@ terminal session loss and worker exit1. Healthy teardown exits0. Normal/sanitize
 runs restore descriptor baselines, and existing unbound mapped/exec restart suites
 pass. CI includes these gates. No successful rendered-frame routing or controller
 acknowledgement retry integration is claimed by these negative/launch fixtures.
+
+
+### Controller-owned release acknowledgement retry (Task #4)
+
+venus_surface_create_acknowledged adds an opt-in native channel mode to the existing
+surface owner. Existing explicit callback mode is unchanged. The acknowledged mode
+owns four allocation-free private release slots inside the same owner allocation:
+three compositor-completed frames plus one abandoned pending frame. It optionally
+borrows an observer callback/context using the same no-reentry/call-scoped metadata
+contract. Internal completion first queues an exact identity/status record, then
+notifies the observer; Corrupt/non-encodable callback status causes sticky terminal
+failure without falsely acknowledging reuse. Queue overflow also causes sticky
+Corrupt and old-context discard, never silent acknowledgement loss.
+
+Each surface poll flushes pending acknowledgements before receiving another frame.
+At most four complete packets are sent per call. RingOk frees exactly that queued
+record; Again retains it and returns without receiving/accepting another frame.
+Closed/Corrupt native send failures become sticky; unexpected local send errors
+become Corrupt. A callback itself never blocks/sends or reenters the native event
+loop. Frame.done still never queues a release. Healthy buffer release queues Ok,
+import/cancel rejection Invalid, pending teardown Cancelled, display loss Closed.
+After successful flush, normal surface retry/receive semantics continue. Observer
+notification alone is not proof that the worker received the acknowledgement.
+
+Free flushes before destroying presenter cookies and after pending cancellation.
+Again preserves the same owner, even if presenter already became NULL; later free
+retries queued acknowledgements without repeating callbacks. Healthy accepted
+buffers retain the existing Again teardown rule. Confirmed native send failure
+allows idle cleanup but returns terminal status with pointer NULL; caller must
+abandon old guest context rather than reuse its allocations. Busy presenter still
+retains owner/cookies even on channel loss, until actual release or display loss.
+A native terminal session may discard unsendable queued records only during this
+final teardown together with old-context abandonment. No image allocation/FD is
+released by the acknowledgement queue, and no pixel mapping/copy occurs.

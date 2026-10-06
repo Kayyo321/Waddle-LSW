@@ -972,7 +972,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Tests cover every invalid character position, bounds, zero and maximum identity.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): launch isolated workers with trusted presentation channels`
+- **Commit `6aa5255`**: `feat(vgpu): launch isolated workers with trusted presentation channels`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add prepared fd5 presented launch, collision-safe three-source
     duplication/rollback, fixed context/controller arguments and production entry
@@ -983,3 +983,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and terminates on authenticated unknown release; both normal/sanitized workers
     return descriptors to baseline. Existing mapped/exec restart regressions pass.
     Add Linux CI gates. Controller acknowledgement retry/render routing pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define controller acknowledgement retry ownership`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Specify opt-in four-slot surface release queue, receive gating
+    during send pressure, observer lifetime and retry-preserving teardown behavior.
+  - **Verification**: Production presented worker launch/native FD tests pass;
+    controller queue implementation and rendered-frame runtime validation pending.
