@@ -19,6 +19,13 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
+/** @brief Test workload policy; immutable after main parses trusted test configuration. */
+typedef enum fixture_workload_t {
+    FullWorkload, /**< Default mapped transfer plus image lifecycle acceptance. */
+    MappingWorkload, /**< Exact-byte mapped CPU/GPU transfer workload. */
+    ImageWorkload /**< Native image/view lifecycle and subsequent image commands. */
+} fixture_workload_t;
+static fixture_workload_t selected_workload = FullWorkload;
 static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *) = venus_icd_bind;
 static venus_ring_status_t (*icd_unbind)(void) = venus_icd_unbind;
 static void (*icd_abandon)(void) = venus_icd_abandon;
@@ -226,7 +233,7 @@ static int icd_cycles(venus_guest_t *guest) {
                 !memory_value.memoryTypeCount || !memory_value.memoryHeapCount)
                 goto fail;
             if (!iteration && !index) {
-                printf("ICD mapped-memory acceptance device: %s\n", property_value.deviceName);
+                printf("ICD production acceptance device: %s\n", property_value.deviceName);
                 fflush(stdout);
             }
         }
@@ -308,225 +315,236 @@ static int icd_cycles(venus_guest_t *guest) {
         if (create_semaphore(device, &semaphore_info, NULL, &semaphore) != VK_SUCCESS || !semaphore)
             goto fail;
         destroy_semaphore(device, semaphore, NULL);
-        PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)device_proc(device, "vkCreateBuffer");
-        PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)device_proc(device, "vkDestroyBuffer");
-        PFN_vkGetBufferMemoryRequirements requirements =
-            (PFN_vkGetBufferMemoryRequirements)device_proc(device, "vkGetBufferMemoryRequirements");
-        if (!create_buffer || !destroy_buffer || !requirements) goto fail;
-        VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = 65536, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
-        VkBuffer buffer = NULL;
-        if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto fail;
-        VkMemoryRequirements buffer_memory = {0};
-        requirements(device, buffer, &buffer_memory);
-        if (buffer_memory.size < 4096 || !buffer_memory.alignment || !buffer_memory.memoryTypeBits) goto fail;
         PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)device_proc(device, "vkAllocateMemory");
         PFN_vkFreeMemory release = (PFN_vkFreeMemory)device_proc(device, "vkFreeMemory");
-        PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)device_proc(device, "vkBindBufferMemory");
-        if (!allocate || !release || !bind) goto fail;
         VkPhysicalDeviceMemoryProperties supported_memory = {0};
         memory(devices[0], &supported_memory);
-        uint32_t memory_type = 0;
-        while (memory_type < supported_memory.memoryTypeCount &&
-               (!(buffer_memory.memoryTypeBits & (1u << memory_type)) ||
-                !(supported_memory.memoryTypes[memory_type].propertyFlags &
-                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)))
-            memory_type++;
-        if (memory_type == supported_memory.memoryTypeCount) goto fail;
-        VkMemoryAllocateInfo allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize = buffer_memory.size, .memoryTypeIndex = memory_type};
-        VkDeviceMemory buffer_allocation = NULL;
-        if (allocate(device, &allocation, NULL, &buffer_allocation) != VK_SUCCESS ||
-            !buffer_allocation || bind(device, buffer, buffer_allocation, 0) != VK_SUCCESS ||
-            device_idle(device) != VK_SUCCESS) goto fail;
-        PFN_vkMapMemory map_memory = (PFN_vkMapMemory)device_proc(device, "vkMapMemory");
-        PFN_vkUnmapMemory unmap_memory = (PFN_vkUnmapMemory)device_proc(device, "vkUnmapMemory");
-        PFN_vkFlushMappedMemoryRanges flush_memory =
-            (PFN_vkFlushMappedMemoryRanges)device_proc(device, "vkFlushMappedMemoryRanges");
-        PFN_vkInvalidateMappedMemoryRanges invalidate_memory =
-            (PFN_vkInvalidateMappedMemoryRanges)device_proc(device, "vkInvalidateMappedMemoryRanges");
-        void *mapped = NULL;
-        if (!map_memory || !unmap_memory || !flush_memory || !invalidate_memory ||
-            map_memory(device, buffer_allocation, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS ||
-            !mapped) goto fail;
-        const VkMappedMemoryRange mapped_range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-            .memory = buffer_allocation, .size = VK_WHOLE_SIZE};
-#ifdef VgpuIcdLoader
-        if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
-#endif
-        PFN_vkCreateCommandPool create_pool =
-            (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
-        PFN_vkDestroyCommandPool destroy_pool =
-            (PFN_vkDestroyCommandPool)device_proc(device, "vkDestroyCommandPool");
-        PFN_vkResetCommandPool reset_pool =
-            (PFN_vkResetCommandPool)device_proc(device, "vkResetCommandPool");
-        if (!create_pool || !destroy_pool || !reset_pool) goto fail;
-        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = family};
-        VkCommandPool pool = NULL;
-        if (create_pool(device, &pool_info, NULL, &pool) != VK_SUCCESS || !pool ||
-            reset_pool(device, pool, 0) != VK_SUCCESS ||
-            reset_pool(device, pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT) != VK_SUCCESS)
-            goto fail;
-        PFN_vkAllocateCommandBuffers allocate_buffers =
-            (PFN_vkAllocateCommandBuffers)device_proc(device, "vkAllocateCommandBuffers");
-        PFN_vkFreeCommandBuffers free_buffers =
-            (PFN_vkFreeCommandBuffers)device_proc(device, "vkFreeCommandBuffers");
-        PFN_vkBeginCommandBuffer begin_buffer =
-            (PFN_vkBeginCommandBuffer)device_proc(device, "vkBeginCommandBuffer");
-        PFN_vkEndCommandBuffer end_buffer =
-            (PFN_vkEndCommandBuffer)device_proc(device, "vkEndCommandBuffer");
-        PFN_vkResetCommandBuffer reset_buffer =
-            (PFN_vkResetCommandBuffer)device_proc(device, "vkResetCommandBuffer");
-        PFN_vkCmdFillBuffer fill_buffer =
-            (PFN_vkCmdFillBuffer)device_proc(device, "vkCmdFillBuffer");
-        PFN_vkCmdCopyBuffer copy_buffer =
-            (PFN_vkCmdCopyBuffer)device_proc(device, "vkCmdCopyBuffer");
-        PFN_vkCmdUpdateBuffer update_buffer =
-            (PFN_vkCmdUpdateBuffer)device_proc(device, "vkCmdUpdateBuffer");
-        PFN_vkCmdPipelineBarrier pipeline_barrier =
-            (PFN_vkCmdPipelineBarrier)device_proc(device, "vkCmdPipelineBarrier");
-        if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer ||
-            !fill_buffer || !copy_buffer || !update_buffer || !pipeline_barrier)
-            goto fail;
-        VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
-        VkCommandBuffer commands[2] = {NULL, NULL};
-        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-        if (allocate_buffers(device, &command_info, commands) != VK_SUCCESS || !commands[0] ||
-            !commands[1] || begin_buffer(commands[0], &begin_info) != VK_SUCCESS) goto fail;
-        fill_buffer(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
-        VkMemoryBarrier memory_barrier = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
-        pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0, 1, &memory_barrier, 0, NULL, 0, NULL);
-        const VkBufferCopy copy_region = {.srcOffset = 0, .dstOffset = 2048, .size = 1024};
-        copy_buffer(commands[0], buffer, buffer, 1, &copy_region);
-        pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0, 1, &memory_barrier, 0, NULL, 0, NULL);
-        unsigned char update_data[65536];
-        for (unsigned index = 0; index < sizeof(update_data); index++)
-            update_data[index] = (unsigned char)(index * 13);
-        update_buffer(commands[0], buffer, 0, sizeof(update_data), update_data);
-        memory_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-            0, 1, &memory_barrier, 0, NULL, 0, NULL);
-        PFN_vkQueueSubmit submit = (PFN_vkQueueSubmit)device_proc(device, "vkQueueSubmit");
-        PFN_vkCreateSemaphore create_signal = (PFN_vkCreateSemaphore)device_proc(device, "vkCreateSemaphore");
-        PFN_vkDestroySemaphore destroy_signal = (PFN_vkDestroySemaphore)device_proc(device, "vkDestroySemaphore");
-        const VkSemaphoreCreateInfo signal_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
-        VkSemaphore signal = NULL;
-        fence_info.flags = 0; fence = NULL;
-        if (!submit || !create_signal || !destroy_signal ||
-            create_signal(device, &signal_info, NULL, &signal) != VK_SUCCESS || !signal ||
-            create_fence(device, &fence_info, NULL, &fence) != VK_SUCCESS || !fence ||
-            end_buffer(commands[0]) != VK_SUCCESS) goto fail;
-        const VkSubmitInfo signal_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1, .pCommandBuffers = commands,
-            .signalSemaphoreCount = 1, .pSignalSemaphores = &signal};
-        const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-        const VkSubmitInfo wait_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .waitSemaphoreCount = 1, .pWaitSemaphores = &signal, .pWaitDstStageMask = &wait_stage};
-        if (submit(queue, 1, &signal_submit, NULL) != VK_SUCCESS ||
-            submit(queue, 1, &wait_submit, fence) != VK_SUCCESS ||
-            wait_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
-            queue_idle(queue) != VK_SUCCESS) goto fail;
-        /* Compare receiver storage, rather than trusting fence retirement alone. */
-        if (invalidate_memory(device, 1, &mapped_range) != VK_SUCCESS ||
-            memcmp(mapped, update_data, sizeof(update_data))) goto fail;
-        unsigned char upload[4096];
-        for (unsigned index = 0; index < sizeof(upload); index++)
-            upload[index] = (unsigned char)(index * 17 + iteration);
-        memcpy(mapped, upload, sizeof(upload));
-        memset((unsigned char *)mapped + 32768, 0, sizeof(upload));
-        if (flush_memory(device, 1, &mapped_range) != VK_SUCCESS ||
-            reset_fences(device, 1, &fence) != VK_SUCCESS ||
-            begin_buffer(commands[1], &begin_info) != VK_SUCCESS) goto fail;
-        memory_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-        memory_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-        pipeline_barrier(commands[1], VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            0, 1, &memory_barrier, 0, NULL, 0, NULL);
-        const VkBufferCopy upload_copy = {.srcOffset = 0, .dstOffset = 32768, .size = sizeof(upload)};
-        copy_buffer(commands[1], buffer, buffer, 1, &upload_copy);
-        memory_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        memory_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        pipeline_barrier(commands[1], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
-            0, 1, &memory_barrier, 0, NULL, 0, NULL);
-        const VkSubmitInfo upload_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1, .pCommandBuffers = &commands[1]};
-        if (end_buffer(commands[1]) != VK_SUCCESS ||
-            submit(queue, 1, &upload_submit, fence) != VK_SUCCESS ||
-            wait_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
-            invalidate_memory(device, 1, &mapped_range) != VK_SUCCESS ||
-            memcmp(mapped, upload, sizeof(upload)) ||
-            memcmp((unsigned char *)mapped + 32768, upload, sizeof(upload))) goto fail;
-        unmap_memory(device, buffer_allocation);
-        mapped = NULL;
-        destroy_signal(device, signal, NULL); destroy_fence(device, fence, NULL);
-        if (reset_buffer(commands[0], 0) != VK_SUCCESS ||
-            reset_buffer(commands[1], 0) != VK_SUCCESS ||
-            begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
-            end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)
-            goto fail;
-        free_buffers(device, pool, 1, commands);
-        /* Pool destruction implicitly retires the second loader-dispatchable buffer. */
-        destroy_pool(device, pool, NULL);
-        destroy_buffer(device, buffer, NULL);
-        release(device, buffer_allocation, NULL);
+        if (!allocate || !release || !supported_memory.memoryTypeCount ||
+            supported_memory.memoryTypeCount > VK_MAX_MEMORY_TYPES) goto fail;
+        if (selected_workload != ImageWorkload) {
+            PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)device_proc(device, "vkCreateBuffer");
+            PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)device_proc(device, "vkDestroyBuffer");
+            PFN_vkGetBufferMemoryRequirements requirements =
+                (PFN_vkGetBufferMemoryRequirements)device_proc(device, "vkGetBufferMemoryRequirements");
+            if (!create_buffer || !destroy_buffer || !requirements) goto fail;
+            VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .size = 65536, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+            VkBuffer buffer = NULL;
+            if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto fail;
+            VkMemoryRequirements buffer_memory = {0};
+            requirements(device, buffer, &buffer_memory);
+            if (buffer_memory.size < 4096 || !buffer_memory.alignment || !buffer_memory.memoryTypeBits) goto fail;
+            PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)device_proc(device, "vkBindBufferMemory");
+            if (!bind) goto fail;
+            uint32_t memory_type = 0;
+            while (memory_type < supported_memory.memoryTypeCount &&
+                   (!(buffer_memory.memoryTypeBits & (1u << memory_type)) ||
+                    !(supported_memory.memoryTypes[memory_type].propertyFlags &
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)))
+                memory_type++;
+            if (memory_type == supported_memory.memoryTypeCount) goto fail;
+            VkMemoryAllocateInfo allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = buffer_memory.size, .memoryTypeIndex = memory_type};
+            VkDeviceMemory buffer_allocation = NULL;
+            if (allocate(device, &allocation, NULL, &buffer_allocation) != VK_SUCCESS ||
+                !buffer_allocation || bind(device, buffer, buffer_allocation, 0) != VK_SUCCESS ||
+                device_idle(device) != VK_SUCCESS) goto fail;
+            PFN_vkMapMemory map_memory = (PFN_vkMapMemory)device_proc(device, "vkMapMemory");
+            PFN_vkUnmapMemory unmap_memory = (PFN_vkUnmapMemory)device_proc(device, "vkUnmapMemory");
+            PFN_vkFlushMappedMemoryRanges flush_memory =
+                (PFN_vkFlushMappedMemoryRanges)device_proc(device, "vkFlushMappedMemoryRanges");
+            PFN_vkInvalidateMappedMemoryRanges invalidate_memory =
+                (PFN_vkInvalidateMappedMemoryRanges)device_proc(device, "vkInvalidateMappedMemoryRanges");
+            void *mapped = NULL;
+            if (!map_memory || !unmap_memory || !flush_memory || !invalidate_memory ||
+                map_memory(device, buffer_allocation, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS ||
+                !mapped) goto fail;
+            const VkMappedMemoryRange mapped_range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                .memory = buffer_allocation, .size = VK_WHOLE_SIZE};
+    #ifdef VgpuIcdLoader
+            if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
+    #endif
+            PFN_vkCreateCommandPool create_pool =
+                (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
+            PFN_vkDestroyCommandPool destroy_pool =
+                (PFN_vkDestroyCommandPool)device_proc(device, "vkDestroyCommandPool");
+            PFN_vkResetCommandPool reset_pool =
+                (PFN_vkResetCommandPool)device_proc(device, "vkResetCommandPool");
+            if (!create_pool || !destroy_pool || !reset_pool) goto fail;
+            VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = family};
+            VkCommandPool pool = NULL;
+            if (create_pool(device, &pool_info, NULL, &pool) != VK_SUCCESS || !pool ||
+                reset_pool(device, pool, 0) != VK_SUCCESS ||
+                reset_pool(device, pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT) != VK_SUCCESS)
+                goto fail;
+            PFN_vkAllocateCommandBuffers allocate_buffers =
+                (PFN_vkAllocateCommandBuffers)device_proc(device, "vkAllocateCommandBuffers");
+            PFN_vkFreeCommandBuffers free_buffers =
+                (PFN_vkFreeCommandBuffers)device_proc(device, "vkFreeCommandBuffers");
+            PFN_vkBeginCommandBuffer begin_buffer =
+                (PFN_vkBeginCommandBuffer)device_proc(device, "vkBeginCommandBuffer");
+            PFN_vkEndCommandBuffer end_buffer =
+                (PFN_vkEndCommandBuffer)device_proc(device, "vkEndCommandBuffer");
+            PFN_vkResetCommandBuffer reset_buffer =
+                (PFN_vkResetCommandBuffer)device_proc(device, "vkResetCommandBuffer");
+            PFN_vkCmdFillBuffer fill_buffer =
+                (PFN_vkCmdFillBuffer)device_proc(device, "vkCmdFillBuffer");
+            PFN_vkCmdCopyBuffer copy_buffer =
+                (PFN_vkCmdCopyBuffer)device_proc(device, "vkCmdCopyBuffer");
+            PFN_vkCmdUpdateBuffer update_buffer =
+                (PFN_vkCmdUpdateBuffer)device_proc(device, "vkCmdUpdateBuffer");
+            PFN_vkCmdPipelineBarrier pipeline_barrier =
+                (PFN_vkCmdPipelineBarrier)device_proc(device, "vkCmdPipelineBarrier");
+            if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer ||
+                !fill_buffer || !copy_buffer || !update_buffer || !pipeline_barrier)
+                goto fail;
+            VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
+            VkCommandBuffer commands[2] = {NULL, NULL};
+            VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+            if (allocate_buffers(device, &command_info, commands) != VK_SUCCESS || !commands[0] ||
+                !commands[1] || begin_buffer(commands[0], &begin_info) != VK_SUCCESS) goto fail;
+            fill_buffer(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
+            VkMemoryBarrier memory_barrier = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+            pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 1, &memory_barrier, 0, NULL, 0, NULL);
+            const VkBufferCopy copy_region = {.srcOffset = 0, .dstOffset = 2048, .size = 1024};
+            copy_buffer(commands[0], buffer, buffer, 1, &copy_region);
+            pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 1, &memory_barrier, 0, NULL, 0, NULL);
+            unsigned char update_data[65536];
+            for (unsigned index = 0; index < sizeof(update_data); index++)
+                update_data[index] = (unsigned char)(index * 13);
+            update_buffer(commands[0], buffer, 0, sizeof(update_data), update_data);
+            memory_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                0, 1, &memory_barrier, 0, NULL, 0, NULL);
+            PFN_vkQueueSubmit submit = (PFN_vkQueueSubmit)device_proc(device, "vkQueueSubmit");
+            PFN_vkCreateSemaphore create_signal = (PFN_vkCreateSemaphore)device_proc(device, "vkCreateSemaphore");
+            PFN_vkDestroySemaphore destroy_signal = (PFN_vkDestroySemaphore)device_proc(device, "vkDestroySemaphore");
+            const VkSemaphoreCreateInfo signal_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            VkSemaphore signal = NULL;
+            fence_info.flags = 0; fence = NULL;
+            if (!submit || !create_signal || !destroy_signal ||
+                create_signal(device, &signal_info, NULL, &signal) != VK_SUCCESS || !signal ||
+                create_fence(device, &fence_info, NULL, &fence) != VK_SUCCESS || !fence ||
+                end_buffer(commands[0]) != VK_SUCCESS) goto fail;
+            const VkSubmitInfo signal_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .commandBufferCount = 1, .pCommandBuffers = commands,
+                .signalSemaphoreCount = 1, .pSignalSemaphores = &signal};
+            const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            const VkSubmitInfo wait_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .waitSemaphoreCount = 1, .pWaitSemaphores = &signal, .pWaitDstStageMask = &wait_stage};
+            if (submit(queue, 1, &signal_submit, NULL) != VK_SUCCESS ||
+                submit(queue, 1, &wait_submit, fence) != VK_SUCCESS ||
+                wait_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
+                queue_idle(queue) != VK_SUCCESS) goto fail;
+            /* Compare receiver storage, rather than trusting fence retirement alone. */
+            if (invalidate_memory(device, 1, &mapped_range) != VK_SUCCESS ||
+                memcmp(mapped, update_data, sizeof(update_data))) goto fail;
+            unsigned char upload[4096];
+            for (unsigned index = 0; index < sizeof(upload); index++)
+                upload[index] = (unsigned char)(index * 17 + iteration);
+            memcpy(mapped, upload, sizeof(upload));
+            memset((unsigned char *)mapped + 32768, 0, sizeof(upload));
+            if (flush_memory(device, 1, &mapped_range) != VK_SUCCESS ||
+                reset_fences(device, 1, &fence) != VK_SUCCESS ||
+                begin_buffer(commands[1], &begin_info) != VK_SUCCESS) goto fail;
+            memory_barrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+            memory_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+            pipeline_barrier(commands[1], VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                0, 1, &memory_barrier, 0, NULL, 0, NULL);
+            const VkBufferCopy upload_copy = {.srcOffset = 0, .dstOffset = 32768, .size = sizeof(upload)};
+            copy_buffer(commands[1], buffer, buffer, 1, &upload_copy);
+            memory_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            memory_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            pipeline_barrier(commands[1], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                0, 1, &memory_barrier, 0, NULL, 0, NULL);
+            const VkSubmitInfo upload_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                .commandBufferCount = 1, .pCommandBuffers = &commands[1]};
+            if (end_buffer(commands[1]) != VK_SUCCESS ||
+                submit(queue, 1, &upload_submit, fence) != VK_SUCCESS ||
+                wait_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
+                invalidate_memory(device, 1, &mapped_range) != VK_SUCCESS ||
+                memcmp(mapped, upload, sizeof(upload)) ||
+                memcmp((unsigned char *)mapped + 32768, upload, sizeof(upload))) goto fail;
+            unmap_memory(device, buffer_allocation);
+            mapped = NULL;
+            destroy_signal(device, signal, NULL); destroy_fence(device, fence, NULL);
+            if (reset_buffer(commands[0], 0) != VK_SUCCESS ||
+                reset_buffer(commands[1], 0) != VK_SUCCESS ||
+                begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
+                end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)
+                goto fail;
+            free_buffers(device, pool, 1, commands);
+            /* Pool destruction implicitly retires the second loader-dispatchable buffer. */
+            destroy_pool(device, pool, NULL);
+            destroy_buffer(device, buffer, NULL);
+            release(device, buffer_allocation, NULL);
 
-        /* Exercise actual receiver image and view ownership independently of
-         * mapped transfer storage. Destruction must retire each dependency. */
-        PFN_vkCreateImage create_image = (PFN_vkCreateImage)device_proc(device, "vkCreateImage");
-        PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)device_proc(device, "vkDestroyImage");
-        PFN_vkGetImageMemoryRequirements image_requirements =
-            (PFN_vkGetImageMemoryRequirements)device_proc(device, "vkGetImageMemoryRequirements");
-        PFN_vkBindImageMemory bind_image = (PFN_vkBindImageMemory)device_proc(device, "vkBindImageMemory");
-        PFN_vkCreateImageView create_view =
-            (PFN_vkCreateImageView)device_proc(device, "vkCreateImageView");
-        PFN_vkDestroyImageView destroy_view =
-            (PFN_vkDestroyImageView)device_proc(device, "vkDestroyImageView");
-        image_stage = "entry-point lookup";
-        if (!create_image || !destroy_image || !image_requirements || !bind_image ||
-            !create_view || !destroy_view) goto fail;
-        const VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-            .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_B8G8R8A8_UNORM,
-            .extent = {64, 64, 1}, .mipLevels = 1, .arrayLayers = 1,
-            .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
-            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
-        VkImage image = NULL;
-        image_stage = "image creation";
-        if (create_image(device, &image_info, NULL, &image) != VK_SUCCESS || !image) goto fail;
-        VkMemoryRequirements image_memory = {0};
-        image_stage = "memory requirements";
-        image_requirements(device, image, &image_memory);
-        if (!image_memory.size || !image_memory.alignment || !image_memory.memoryTypeBits) goto fail;
-        uint32_t image_type = 0;
-        while (image_type < supported_memory.memoryTypeCount &&
-               !(image_memory.memoryTypeBits & (1u << image_type)))
-            image_type++;
-        if (image_type == supported_memory.memoryTypeCount) goto fail;
-        const VkMemoryAllocateInfo image_allocation_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .allocationSize = image_memory.size, .memoryTypeIndex = image_type};
-        VkDeviceMemory image_allocation = NULL;
-        image_stage = "allocation and bind";
-        if (allocate(device, &image_allocation_info, NULL, &image_allocation) != VK_SUCCESS ||
-            !image_allocation || bind_image(device, image, image_allocation, 0) != VK_SUCCESS)
-            goto fail;
-        const VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = image_info.format,
-            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .levelCount = 1, .layerCount = 1}};
-        VkImageView image_view = NULL;
-        image_stage = "view creation";
-        if (create_view(device, &view_info, NULL, &image_view) != VK_SUCCESS || !image_view)
-            goto fail;
-        destroy_view(device, image_view, NULL);
-        destroy_image(device, image, NULL);
-        release(device, image_allocation, NULL);
-        image_stage = "device teardown after image release";
+        }
+
+        if (selected_workload != MappingWorkload) {
+            /* Exercise actual receiver image and view ownership independently of
+             * mapped transfer storage. Destruction must retire each dependency. */
+            PFN_vkCreateImage create_image = (PFN_vkCreateImage)device_proc(device, "vkCreateImage");
+            PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)device_proc(device, "vkDestroyImage");
+            PFN_vkGetImageMemoryRequirements image_requirements =
+                (PFN_vkGetImageMemoryRequirements)device_proc(device, "vkGetImageMemoryRequirements");
+            PFN_vkBindImageMemory bind_image = (PFN_vkBindImageMemory)device_proc(device, "vkBindImageMemory");
+            PFN_vkCreateImageView create_view =
+                (PFN_vkCreateImageView)device_proc(device, "vkCreateImageView");
+            PFN_vkDestroyImageView destroy_view =
+                (PFN_vkDestroyImageView)device_proc(device, "vkDestroyImageView");
+            image_stage = "entry-point lookup";
+            if (!create_image || !destroy_image || !image_requirements || !bind_image ||
+                !create_view || !destroy_view) goto fail;
+            const VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_B8G8R8A8_UNORM,
+                .extent = {64, 64, 1}, .mipLevels = 1, .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+            VkImage image = NULL;
+            image_stage = "image creation";
+            if (create_image(device, &image_info, NULL, &image) != VK_SUCCESS || !image) goto fail;
+            VkMemoryRequirements image_memory = {0};
+            image_stage = "memory requirements";
+            image_requirements(device, image, &image_memory);
+            if (!image_memory.size || !image_memory.alignment || !image_memory.memoryTypeBits) goto fail;
+            uint32_t image_type = 0;
+            while (image_type < supported_memory.memoryTypeCount &&
+                   !(image_memory.memoryTypeBits & (1u << image_type)))
+                image_type++;
+            if (image_type == supported_memory.memoryTypeCount) goto fail;
+            const VkMemoryAllocateInfo image_allocation_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = image_memory.size, .memoryTypeIndex = image_type};
+            VkDeviceMemory image_allocation = NULL;
+            image_stage = "allocation and bind";
+            if (allocate(device, &image_allocation_info, NULL, &image_allocation) != VK_SUCCESS ||
+                !image_allocation || bind_image(device, image, image_allocation, 0) != VK_SUCCESS)
+                goto fail;
+            const VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = image_info.format,
+                .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .levelCount = 1, .layerCount = 1}};
+            VkImageView image_view = NULL;
+            image_stage = "view creation";
+            if (create_view(device, &view_info, NULL, &image_view) != VK_SUCCESS || !image_view)
+                goto fail;
+#ifdef VgpuIcdLoader
+            if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
+#endif
+            destroy_view(device, image_view, NULL);
+            destroy_image(device, image, NULL);
+            release(device, image_allocation, NULL);
+            image_stage = "device teardown after image release";
+
+        }
 
         destroy_device(device, NULL);
         cleanup_device = NULL;
@@ -676,6 +694,15 @@ cleanup:
     return result;
 }
 int main(void) {
+    const char *workload = getenv("WADDLE_TEST_WORKLOAD");
+    if (workload && strcmp(workload, "full")) {
+        if (!strcmp(workload, "mapping")) selected_workload = MappingWorkload;
+        else if (!strcmp(workload, "image")) selected_workload = ImageWorkload;
+        else {
+            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping or image\n", stderr);
+            return 2;
+        }
+    }
     /* Sixteen full-allocation transfer cycles intentionally fragment over the
      * 64-byte stress ring; keep a finite watchdog above that added workload. */
     alarm(300);
