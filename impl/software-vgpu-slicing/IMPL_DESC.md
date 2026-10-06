@@ -2515,3 +2515,13 @@ then abandons ICD reservations. Normal/sanitized executions retain existing FD
 baselines, worker isolation and authenticated unknown-release shutdown checks.
 This establishes public instance dispatch over the real backend, with no device
 creation or DXVK completion claim. Native CI still gates component acceptance.
+
+
+The public ICD production-worker object group includes the fixed-value decoder.
+The remote hardware image fixture reuses that group and must not add the same
+object separately: otherwise a clean link defines every decoder twice. CI caught
+that duplicate in its clean build; the object group now supplies each production
+symbol exactly once. Both image consumers compile, normal/sanitized RTX5080
+48-frame/3-context hardware regressions pass, and native ICD/loader/worker tests
+retain their gates. Native Windows dispatch and actual DLL exports already pass
+CI; final Linux consumer verification must pass on the corrected commit.

@@ -601,7 +601,7 @@ vgpu-presented-worker-sanitizers: $(VgpuPresentedWorkerObjects) build/waddle_vgp
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_presented_worker_sanitized
 
 VgpuRemoteImageSources = $(VgpuPresentIntegrationSources) src/vgpu/venus_guest.c src/vgpu/venus_worker.c src/vgpu/venus_rpc.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c
-VgpuRemoteImageObjects = build/venus_gpu_fixture.o build/venus_values.o $(VgpuPresentedWorkerObjects)
+VgpuRemoteImageObjects = build/venus_gpu_fixture.o $(VgpuPresentedWorkerObjects)
 build/vgpu_remote_image_integration: $(VgpuRemoteImageSources) $(VgpuPresentIntegrationHeaders) $(VgpuGuestHeaders) include/waddle/venus_worker.h $(VgpuRemoteImageObjects) build/waddle_vgpu_worker | vgpu-renderer
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DVgpuRemoteImage $(VgpuReceiverIncludes) $(VgpuPresentIntegrationFlags) $(VgpuRemoteImageSources) $(VgpuRemoteImageObjects) $(VgpuPresentIntegrationLibraries) $(VgpuReceiverLibraries) -o $@
 

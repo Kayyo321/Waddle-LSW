@@ -1257,7 +1257,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     complete device/memory/command/synchronization APIs and DXVK remain required.
 
 
-- **Commit (current; resolve by subject)**: `test(vgpu): exercise public ICD through production workers`
+- **Commit `e0d4be9`**: `test(vgpu): exercise public ICD through production workers`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; native CI acceptance pending).
   - **Summary**: Bind public ICD instance/procedure/query functions to the actual
     negotiated production worker in each of2 fresh mapped sessions; execute8
@@ -1266,3 +1266,16 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     retires all cached physical and instance reservations before unbind, failure
     abandons the guest before clearing ICD objects. Descriptor baseline checks
     remain enforced. Device/API and real DXVK runtime acceptance remains pending.
+
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): link shared query decoder once in remote image fixture`
+  - **Task Impact**: +0% to TODO: #3; +0% to TODO: #4 (+0% overall).
+  - **Summary**: Remove duplicate value decoder object after public ICD worker
+    integration made it part of the shared guest object list. Restore clean
+    remote image fixture linking without changing wire/runtime behavior.
+  - **Verification**: GitHub native Windows ICD dispatch/DLL tests passed in both
+    push37496066320 and PR37496073296 runs. Linux ICD safety/coverage and real
+    worker tests passed; remote image link exposed the duplicate object. Local
+    image/remote consumers now compile, actual RTX5080 normal/sanitized48-frame
+    fresh-context presentation runs pass, and loader/worker regressions pass.
+    Full updated-head GitHub CI remains required.
