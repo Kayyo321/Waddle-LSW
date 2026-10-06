@@ -1217,7 +1217,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     IDs, partial fixed arrays and output handle preallocation; implementation pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): encode bounded physical enumeration transactions`
+- **Commit `26aee9b`**: `feat(vgpu): encode bounded physical enumeration transactions`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Implement count/fill request encoding, reserved identity reply
     validation and fixed-query partial packets in allocation-free Zig; compare
@@ -1225,3 +1225,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: All3 allocator tests and native C/ASan/LSan/UBSan pass;
     production coverage100% lines/90% branches; Windows fixtures cross-link.
     Full ICD/device/API/DXVK acceptance remains required; no helper milestone credit.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify standalone ICD instance lifecycle`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Define loader export aliases, serialized borrowed frontend,
+    registry-backed instance/physical dispatch, count/fill caching and sticky loss.
+  - **Verification**: Reviewed lifecycle against existing command, object and wire
+    contracts; public device/API/DXVK acceptance remains pending.

@@ -2383,3 +2383,67 @@ identity, duplicate/zero/overflow IDs and output alias/capacity boundary is test
 Local ASan/LSan/UBSan pass, Zig allocator tests leak zero bytes, Windows fixtures
 cross-link. Production coverage100% lines/90% branches. Native Windows execution
 and application-facing dispatch acceptance remain separately required.
+
+### Standalone ICD instance lifecycle and procedure routing (TODO #3)
+
+The experimental x86_64 ICD borrows one negotiated command exchange/context via
+venus_icd_bind, retaining both until successful unbind or explicit abandonment.
+Binding initializes fixed private command staging8192, reply4096 and object slots512,
+with monotonically increasing process namespace. Neither bind nor Vulkan calls
+allocate heap storage. Borrowed callback/context must support4096-byte replies and
+remain exclusive to the ICD; caller binds before loader discovery. The standalone
+backend launcher remains responsible for channel/mapping/worker ownership.
+
+A process-local Zig mutex serializes bind, unbind and all Vulkan calls before
+entering the sole-owner command backend. Callbacks may not reenter the ICD, and
+must terminate within the frontend's deadline. Command poll allows at most1000
+attempts with1ms sleeps; any accepted-command timeout/corruption/terminal failure
+poisons the binding. A poisoned binding cannot submit again. Unbind refuses live
+objects; abandonment is permitted only after the caller has retired the old
+receiver and stopped application calls. Clearing local objects does not cancel
+remote Vulkan work. Namespaces never wrap or reuse. Registry loader_data remains
+the first word of all application dispatchable handles.
+
+Loader-interface negotiation accepts supported interface versions2..5, clamps
+higher requests to5, and rejects0/1 without mutation. Exact external ABI names
+exist only as export aliases; owned function names remain snake_case. Procedure
+names are read through accessible NUL with maximum256 bytes. Null instance lookup
+returns only global entry points; live instance lookup additionally returns
+implemented instance entry points. Unknown names, oversized names, stale/foreign
+handles, and unsupported device functions return NULL. Physical procedure routing
+returns only implemented physical queries for a live instance. No unimplemented
+feature or extension is advertised. API version remains1.0 while device APIs are
+incomplete, and the experimental manifest is test-only until runtime acceptance.
+
+Create supports the previously specified core instance input, no layers/extensions
+or pNext, but accepts nullable allocation callbacks because no local heap allocation
+occurs and the host uses its own allocator. Reserve before encode/submission, roll
+back on local encode failure or a validated Vulkan creation error, publish handle
+only after successful identity validation. Success leaves one live instance record.
+Output handle is initialized NULL before failure. Destruction queries the instance
+registry without dereferencing application addresses, submits host destroy, then
+retires cached physical children before the root. Malformed/failed destroy poisons
+the binding and keeps reservations until abandoned.
+
+Physical enumeration is lazily cached per live instance, maximum16 devices. First
+query count, reserve exact returned identities, then fill/validate against those
+reservations. Any failure after host enumeration may have created physical host
+identities: abandon the binding instead of silently reusing reservations. A valid
+negative result before identities exist propagates as Vulkan failure. Cached
+handles are stable across repeated queries. Null output returns count; capacity
+smaller than cached count copies only capacity and returns VK_INCOMPLETE. Count0
+with nonnull output copies nothing. Destroy invalidates the entire cache. The ICD
+queries actual host properties/features/memory through production wire serializers
+and decoders; void-query failures poison the binding and preserve caller output.
+The allocator-free instance extension list is empty and layer names return
+VK_ERROR_LAYER_NOT_PRESENT. Device extensions/device creation remain unsupported
+until separately implemented, so this intermediate ICD is not DXVK-capable.
+
+Tests require exact loader symbols and native ABI on Linux/Windows, global versus
+instance/physical routing, stale/foreign addresses, null/oversized names, bind/unbind
+and loss states, multiple create/enumerate/query/destroy cycles, creation rollback,
+reply identity corruption, prefix bounds, count truncation and cached-handle
+stability. A real negotiated production-worker fixture must execute the same
+application-facing functions before claiming instance dispatch acceptance. Existing
+protocol coverage/sanitizer gates remain required; no full TODO #3 completion
+credit from this intermediate interface.
