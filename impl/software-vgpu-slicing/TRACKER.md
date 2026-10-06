@@ -1581,7 +1581,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspect pinned encoder and Vulkan fill-buffer valid usage;
     implementation and execution proof remain pending. TODO #3 remains50%.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): record bounded buffer fills with resource lifetime tracking`
+- **Commit `fbbd1ac`**: `feat(vgpu): record bounded buffer fills with resource lifetime tracking`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; GPU execution pending).
   - **Summary**: Route core fill command118 using requested buffer size/usage,
     same-device binding and overflow-safe range checks. Track buffer references
@@ -1598,3 +1598,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Linux loader public fill dispatch passes normal/sanitized; Windows fixture,
     loader fixture and DLL cross-link pass. Native Windows latest CI remains
     required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded buffer copy and alias validation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify exact command112, byte-granular bounded region arrays,
+    requested-size requirements validation and binding-offset overflow proof.
+    Define all-pairs source/destination union overlap checks for same-allocation
+    buffers and shared recording lifetime rules.
+  - **Verification**: Inspect pinned encoder and versioned Vulkan1.4.307 common
+    validity; implementation/execution gates remain pending. TODO #3 stays50%.

@@ -3048,3 +3048,53 @@ loss and production-worker recording. Sanitizers must report zero bytes leaked,
 protocol metadata coverage must remain at least90%, and Windows ABI fixtures must
 compile and run in CI. Actual GPU contents are verified only after submission and
 mapping support is available; this recording increment grants no TODO #3 credit.
+
+### Core copy-buffer recording and aliased allocation bounds
+
+This increment routes Vulkan1.0 vkCmdCopyBuffer through pinned Venus command112.
+All existing fill-recording lifetime rules apply: mutex serialization, no heap
+allocation, no retained caller pointers, same-device bound buffers and CPU-only
+acknowledgment. Buffer metadata additionally stores memory_offset64 only after
+successful BindBufferMemory. Actual requirements replies must have size at least
+the requested buffer size, besides existing power-of-two alignment/nonzero type
+checks. A smaller size is corrupt peer data: poison binding and preserve public
+requirements output; no binding relationship can be published from that reply.
+Together with allocationSize-offset validation this proves every requested-buffer
+byte address plus binding offset fits in the allocation without unsigned overflow.
+
+Copy requires a live Recording command buffer/pool, same-device source with
+TRANSFER_SRC and destination with TRANSFER_DST, and each bound to one private
+allocation. regionCount is1..64 and pRegions is nonnull and accessible for that
+count. Validate all regions before encoding/sending: size>0; srcOffset<srcSize;
+dstOffset<dstSize; size<=srcSize-srcOffset and size<=dstSize-dstOffset. Inputs are
+byte-granular: no extra four-byte alignment restriction. Caller supplies Vulkan
+queue capabilities and synchronization; render/video scopes remain unsupported.
+
+When source and destination share one memory token, compare every source region
+against every destination region (at most4096 pairs), including different buffer
+objects and different binding offsets. Convert each validated range to the
+allocation's half-open interval [memory_offset+region_offset, start+size).
+Intervals overlap iff source_start<destination_end and destination_start<source_end;
+adjacent intervals are legal. Different private allocations require no interval
+comparison because native external-memory alias imports are unsupported. This
+implements pinned Vulkan1.4.307
+[copy-buffer common validity](https://github.com/KhronosGroup/Vulkan-Docs/blob/v1.4.307/chapters/commonvalidity/copy_buffer_common.adoc)
+VUID00117 for the unions, rather than checking only corresponding region pairs.
+No newer destination/destination overlap restriction is added to the pinned ABI.
+
+Wire is command11232/flags32(1)/command-buffer-ID64/source-ID64/destination-ID64/
+regionCount32/array-count64/region tuples(srcOffset64,dstOffset64,size64), totaling
+44+24*regionCount bytes within the8192-byte writer. Exact reply command112 adds both
+buffer slot bits to the recording reference set. Local invalid Recording inputs
+mark Invalid and send nothing; invalid command-buffer handle/state sends nothing
+and preserves state; malformed/transport reply poisons binding. All reference
+release/reset/destruction rules defined for fill remain identical for both buffers.
+
+Tests require independent pinned encoder comparison,1/64-region and byte-granular
+cases, zero/65/null count guards, range underflow/overflow, usage/parent/binding
+checks, same-buffer and aliased distinct-buffer overlap across nonmatching region
+indices, legal adjacency/disjoint allocations, no partial dispatch on a bad final
+region, both source/destination destruction invalidation, reset/slot reuse and
+transport/tag errors. Verify real worker and shared-loader recording under normal
+and zero-leak sanitizers, native Windows fixtures and >=90% metadata coverage.
+No TODO #3 credit is granted before actual command execution/full runtime gates.
