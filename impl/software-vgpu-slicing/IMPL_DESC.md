@@ -902,3 +902,40 @@ Standard stream/logging inheritance is intentional. The later executable must
 validate/map fd 3, perform guest handoff on fd 4, own renderer lifetime, and notify
 closure/restart with fresh mapping/session identity. Process ownership alone does
 not implement that worker or establish GPU recovery.
+
+### Isolated receiver service execution and restart
+
+The service borrows trusted host configuration, a regular mapping fd, nonblocking
+stream fd and optional atomic cancellation for its entire run. It owns only its
+mmap, aligned private transfer buffer, channel event state and receiver. The caller
+closes descriptors after return; the executable closes inherited fd 3/4. Validate
+configuration before acquiring anything: receiver command/reply power-of-two limits,
+resource count/bytes and CPU/GPU/operation timeouts. Default command/reply extents
+are 65536 bytes, additional resources 64/64MiB and all timeouts 5000ms. Host policy
+is supplied through the service config; guest bytes cannot alter it.
+
+The inherited file must be regular, power-of-two 4096..one GiB, immutable in size
+while active. Map shared read/write, then validate and attach the existing dedicated
+region without reinitializing shared cursors. Generate a fresh nonzero u64 session
+identity using nonblocking getrandom, at most four exact-size attempts. Failed
+entropy or invalid mapping is terminal. Initialize the host session while fresh,
+then acquire aligned private storage (at least 256 bytes), receiver and host limits,
+channel, complete deadline-bound handshake and RPC framing. Dispatch sequentially
+until transport/protocol/health shutdown. Private scratch is never guest-mapped.
+
+Every return closes all attached rings, frees RPC/channel local state, destroys
+receiver (joins callbacks), detaches views, frees/nulls private storage and unmaps.
+No borrowed fd is closed by the library. RingClosed is orderly/disconnected shutdown;
+other statuses retain error meaning. This cleanup can block inside upstream teardown,
+so the parent process owner's TERM/KILL budget remains mandatory. The executable
+uses only the trusted --venus-worker invocation, installs lock-free cancellation
+handlers, runs default policy and closes inherited descriptors before exit.
+
+Guest notification is shared ring closure plus control-stream EOF; a guest maps
+that terminal condition to device loss and must discard all old objects. Detailed
+failure reason delivery is not guaranteed after disconnect or forced termination.
+Restart creates a new mapping, zero cursors, new control stream, new worker and new
+random session ID; old resources/handles are never reused. Real mock integration
+must exercise exec'd service CPU/resource operations, malformed/truncated sessions,
+closure visibility, bounded controller cleanup and repeated fresh launches. This
+verifies recovery plumbing, not physical GPU reset or success after device loss.

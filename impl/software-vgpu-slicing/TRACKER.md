@@ -417,7 +417,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Explicitly retains unreaped identities on timeout; killing
     a stuck kernel task is not falsely represented as complete recovery.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): own isolated receiver process groups`
+- **Commit `a07549c`**: `feat(vgpu): own isolated receiver process groups`
   - **Task Impact**: +3% to TODO: #2 (+0.6% overall) for verified health CI;
     process ownership's separate 1% gate awaits current CI.
   - **Summary**: Added collision-safe trusted exec/descriptor handoff, symmetric
@@ -432,3 +432,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37395109626 .
     Actual receiver worker integration, guest restart notification and real GPU
     execution remain pending; process shutdown tests do not prove GPU recovery.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define isolated receiver service execution`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Specified trusted service policy, inherited mapping validation,
+    random session identity, symmetric bootstrap/teardown, closure notification
+    and fresh mapping/stream/worker restart requirements.
+  - **Verification**: Kept parent process shutdown budgets mandatory for blocked
+    SDK teardown; mock restart does not prove physical GPU recovery.
