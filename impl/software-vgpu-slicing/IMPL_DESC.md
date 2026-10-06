@@ -4072,3 +4072,41 @@ prove individual native flag ordering. Native bounded C fixtures run under
 ASan/LSan/UBSan with zero leaks, Zig tests use safety checks and
 `std.testing.allocator`, Windows x86_64 fixtures compile, and production
 line/branch coverage must remain at least90%.
+
+### Pinned DXVK client build and isolated native guest environment
+
+`vgpu-dxvk-client-build` constructs only DXVK2.7.1 DXGI and D3D11 client DLLs
+under ignored `build/dxvk_win64`, using upstream `build-win64.txt`, base-package
+x86_64 MinGW GCC/G++ and glslang, Meson release configuration and Ninja. D3D8,
+D3D9 and D3D10 are disabled because the acceptance harness requests D3D11 FL11_0.
+All dependencies remain upstream recursive gitlinks; `--wrap-mode=nodownload`
+forbids Meson retrieving unpinned fallback archives. A pin-verification prerequisite
+checks root and all four recursive immutable revisions before configuration or
+incremental build, and requires clean tracked upstream sources. Missing tools,
+missing submodules, wrong revisions, dirty vendor sources, configuration failure
+or absent/empty DLL outputs fail the target. The target never executes guest DLLs
+and never awards device/swapchain acceptance. The existing harness crosscompile
+remains independently available as `vgpu-dxvk-build`.
+
+Dependency task#9 milestones are20% immutable root/recursive pin,30% verified
+offline build configuration and50% successful DXGI/D3D11 client outputs. These
+zero-weight dependency milestones do not imply TODO#3 modern Vulkan support.
+DXVK's root zlib/libpng terms, libdisplay-info MIT terms, SPIRV-Headers MIT
+terms and Vulkan-Headers Apache2.0/MIT terms permit GPLv3 integration with notices
+retained. MinGW DirectX header notices explicitly permit unrestricted object
+use of the numerical constants, layouts, short macros and short inline functions;
+all upstream LGPL/GPL/MIT/BSD notices remain in the submodule. Client test DLLs
+are not copied into production sources, and vendor C++ is not owned runtime code.
+
+The user-provided Windows11 ISO is test input outside Git. QEMU/KVM uses a new
+sparse qcow2 disk, private UEFI variable store, emulated TPM and emulated SATA,
+network and display devices. No physical GPU or existing disk is attached.
+Unattended setup, credentials, VM logs and generated media stay in ignored build
+storage; secret files have owner-only permissions and are never committed or
+printed. Guest administration is restricted to a loopback forwarded port, with
+the guest's password retained only in that private storage. VM boot, Windows
+installation and native executable execution are distinct milestones from actual
+Waddle ICD backend binding and DXVK success. The Windows harness must still use
+the pinned Waddle loader/manifest, the production remoting backend and unchanged
+DXVK client, require device/swapchain success and read real completion results.
+Provisioning alone cannot satisfy any missing Vulkan extension or API command.
