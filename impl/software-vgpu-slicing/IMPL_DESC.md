@@ -1952,3 +1952,39 @@ credential/context/frame/status after each completion. Real RTX5080 DMA-BUF and
 synthetic allocation paths both pass normal/sanitized execution. These still use
 in-process frame publication; successful guest-to-production-worker rendered-frame
 routing remains the final separate acceptance gate.
+
+
+### Mapped guest hardware presentation fixture (Task #4)
+
+The bounded GPU fixture gains an explicit private backend record, borrowing either
+an in-process receiver or a negotiated guest exchange callback/context. No global
+transport switch or forged receiver pointer is permitted. Existing fixture behavior
+uses the receiver backend unchanged; remote mode owns no host receiver and forwards
+Submit/Poll/Reply/GpuFence/GpuPoll/Create/Free through exact existing guest envelopes.
+Remote health is enforced by production service monitor on every RPC, with existing
+fixture five-second waits and process alarm bounding progress. Reply/submit fence
+validation and all bounded Venus packet parsing remain in Zig. The callback borrows
+private request/input/output only for the call and returns frontend ring status;
+normal response identity/size validation remains the negotiated frontend's job.
+
+Remote image fixture creates the same real linear BGRA8 image, memory binding,
+query workload and explicit external ownership release as the local fixture. After
+retired GPU fence1, register memory106 as resource2 with Share/CrossDevice. Its
+presentation callback receives only queried offset/stride/size/extent plus borrowed
+context, never a host FD or host pointer. The callback submits exact guest frames
+and independently drives the native Wayland surface owner until authenticated
+completion is consumed. It must return only after every frame is released/rejected;
+then resource free succeeds, followed by Vulkan image/memory/device teardown. On
+any failure caller destroys the worker/old session, reclaiming receiver allocations.
+No remote fixture is an ICD or DXVK test, and no TODO #3 credit is assigned.
+
+The host native mock fixture separately owns mapped region, guest control socket,
+prepared presentation pair and unreaped production worker. Guest Vulkan commands
+travel over the mapped RPC to that worker; exported FDs travel only worker-to-host
+native channel. Controller uses acknowledged surface mode; guest polls operation13
+and validates exact context/frame/status before resource reuse. RequestFree while
+leased must return Again, including after compositor release until completion is
+consumed. Sixteen frames include one import rejection and subsequent recovery.
+Linux hardware execution and sanitizer gates exercise this path; hosted CI compiles
+it and runs negative presented worker/native wire fixtures without requiring GPU.
+Successful runtime hardware validation is required before final5% TODO #4 credit.

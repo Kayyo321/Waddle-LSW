@@ -993,7 +993,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     controller queue implementation and rendered-frame runtime validation pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): retain surface release acknowledgements under backpressure`
+- **Commit `eaf075a`**: `feat(vgpu): retain surface release acknowledgements under backpressure`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add opt-in acknowledged surface owner with four bounded release
     slots, receive gating during pressure, sticky send loss and retry-preserving
@@ -1003,3 +1003,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     retry pass ASan/LSan/UBSan. Actual native Wayland/mock and real RTX5080 image
     harness roundtrip exact acknowledgements after every release/rejection in normal
     and sanitized runs. Successful rendered production worker routing still pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define mapped guest hardware presentation verification`
+  - **Task Impact**: +0% to TODO: #4; +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify explicit fixture transport backend, guest-only image metadata,
+    production worker/native FD/Wayland roundtrip and exact completion-before-reuse
+    validation. Keep standalone ICD and DXVK acceptance separate.
+  - **Verification**: Acknowledged native Wayland/RTX5080 path passes; mapped rendered
+    production worker fixture and final runtime acceptance remain pending.
