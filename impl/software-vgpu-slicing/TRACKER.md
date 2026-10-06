@@ -1519,8 +1519,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     cross-link. Updated actual-loader local runs and native CI remain required.
     Full recording/submission, memory mapping and DXVK acceptance remain pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify command buffer allocation and recording states`
+- **Commit `246be94`**: `docs(vgpu): specify command buffer allocation and recording states`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify transactional bounded batch allocation/free, loader-owned
     dispatch prefixes, primary/secondary inheritance, recording/reset transitions,
     pool child retirement and exact wire/error/verification boundaries.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): clarify primary command buffer begin flags`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Record Khronos VUID02840 primary-only prohibition of combined
+    one-time/simultaneous flags5, preserving the supported secondary combination.

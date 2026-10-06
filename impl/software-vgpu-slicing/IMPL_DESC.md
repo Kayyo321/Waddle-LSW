@@ -2970,3 +2970,8 @@ reply helper is tested at every truncation boundary. Actual static/shared-loader
 worker cycles allocate, begin/end/reset/free and implicitly retire children.
 Native Windows runtime, zero-leak sanitizer and >=90% production coverage gates
 remain mandatory. Full command execution, memory mapping and DXVK are incomplete.
+
+Primary buffers additionally reject the combined ONE_TIME_SUBMIT and SIMULTANEOUS_USE
+flags5, as required by [vkBeginCommandBuffer VUID02840](https://docs.vulkan.org/refpages/latest/refpages/source/vkBeginCommandBuffer.html).
+Secondary buffers may use that combination in the supported non-render inheritance
+scope. Recording fixtures explicitly distinguish the primary/secondary rule.
