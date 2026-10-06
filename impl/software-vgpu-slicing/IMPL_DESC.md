@@ -3221,3 +3221,54 @@ runs and >=90% metadata coverage. This partial image-free recording increment gr
 no TODO #3 credit until full execution/runtime gates. Native semantics follow
 [vkCmdPipelineBarrier](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdPipelineBarrier.html)
 and [VkBufferMemoryBarrier](https://docs.vulkan.org/refpages/latest/refpages/source/VkBufferMemoryBarrier.html).
+
+### Core binary semaphore ownership before queue submission
+
+Expose Vulkan1.0 vkCreateSemaphore/vkDestroySemaphore through pinned commands40/41.
+Only binary semaphores are in this increment: canonical create-info tag9, pNext NULL
+and flags0. Timeline creation/query/wait/signal remains a later core1.2/extension
+gate and is not advertised here. Each semaphore is a private non-dispatchable
+namespace/generation token, kind SEMAPHORE and parented directly to its private
+VkDevice. Callback structs and native creation inputs are call-borrowed, never
+retained; allocator callbacks are unused because frontend storage is fixed and
+native host allocation receives NULL. The native receiver owns actual semaphore
+storage from validated creation until validated destruction or worker teardown.
+
+Create requires nonnull live device/info/output; output is NULL on failure.
+Validate canonical scalar fields before reserving a registry slot. Reserve one
+preassigned host identity and encode command4032/flags32(1)/device-ID64/info-tag64(1)/
+structure-tag32(9)/pNext64(0)/flags32(0)/allocator-tag64(0)/output-array64(1)/ID64,
+total64 bytes. Require exact command40, nonpositive VkResult, one identity and the
+preassigned ID on success. Native negative errors may return that ID or0; release
+local reservation after validated non-loss failure. Device loss, transport or
+malformed reply retains uncertain reservation, leaves output NULL and poisons
+binding. Exhausted512-slot registry returns OUT_OF_HOST_MEMORY before host work.
+Publish token/metadata only after exact host success; binary initial state remains
+native unsignaled, without local synthetic signal/status results.
+
+Fixed resource metadata adds inflight_count32, initialized0 on semaphore success,
+cleared only on validated destruction/reset of the binding. Later bounded queue
+submission tickets increment it once per ticket referencing that semaphore and
+retirement decrements symmetrically; destruction refuses nonzero counts before
+wire. That private reference count tracks object lifetime, not the semaphore's
+native binary signal state. Binary wait/signal ordering remains actual queue
+execution. Caller supplies valid Vulkan submission ordering and retirement.
+No pending reference may outlive a released slot/generation.
+
+Destroy validates nullable token and exact device parent; null/stale/wrong-kind/
+foreign inputs are ignored. An idle semaphore sends command4132/flags32(1)/device64/
+semaphore64/allocator-tag64(0), total32 bytes. Exact command41 acknowledgment clears
+metadata/releases its private slot. Malformed/transport failure poisons binding and
+retains uncertain ownership. Calls are mutex serialized and allocation-free.
+Device destruction continues refusing all live non-queue children. Abandonment
+requires caller-retired receiver before clearing uncertain semaphores/reference
+counts; no caller/native pointer is retained afterward.
+
+Verification compares independent pinned creation/destruction encoders and tests
+canonical input/output guards, native negative rollback, exact ID/tag/status errors,
+transport loss,512-slot exhaustion, stale/foreign/wrong-kind tokens, native first-word
+loader dispatch, destruction reference refusal and zero-allocation lifecycle churn.
+Exercise real native binary semaphore creation/destruction through static/shared
+ICD production workers, pinned Linux/Windows loaders, zero-leak sanitizers and >=90%
+metadata coverage. Real wait/signal execution is a submission gate; lifecycle alone
+grants no additional TODO #3 completion credit.

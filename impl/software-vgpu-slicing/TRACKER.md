@@ -1694,7 +1694,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     passes that stage, under investigation/retry. Latest-head checks remain
     required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): diagnose coverage recorder bounds and output failures`
+- **Commit `a32ce25`**: `test(vgpu): diagnose coverage recorder bounds and output failures`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Report bounded recorder branch/edge violations and output path/
     open/close failures before aborting. Publish instrumentation capacity counts
@@ -1705,3 +1705,13 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     at99.74% lines/93.78% branches with2158/4096 sites, maximum3/32 edges. CI's
     single same-head coverage abort remains without a confirmed cause; parallel
     ce01f55 run passed that gate and failed job is retried. TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify binary semaphore ownership and pending references`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify canonical core binary semaphore commands40/41, exact
+    transactional identities, negative rollback and uncertain loss retention.
+    Define fixed in-flight reference counts for subsequent submission lifetime
+    enforcement, with no synthetic signal state or timeline claim.
+  - **Verification**: Inspect pinned semaphore encoders and existing private
+    object/identity transaction contracts; implementation/execution pending.
+    TODO #3 stays50%.
