@@ -4148,3 +4148,39 @@ The300-second fixture watchdog remains finite; successful fence wait is bounded.
 Acceptance requires direct and actual shared-loader paths on physical receivers,
 ASan/LSan/UBSan clean execution and balanced process descriptor counts. Source or
 crosscompile alone earns no actual compute completion credit.
+
+### Single-color graphics recording compatibility state
+
+The initial actual triangle path uses the already independently verified canonical
+single-color, single-sample render-pass/pipeline profiles. Compatibility in this
+profile is exactly equality of the sole color attachment format (RGBA8_UNORM or
+BGRA8_UNORM); attachment load/store operations and initial/final layouts do not
+change compatibility. Shader and original pipeline-layout/render-pass identities
+may be retired after successful pipeline construction because their definitions
+are copied. Beginning a pass references the live pass and framebuffer actually
+used by the command; its attachment view, image and bound memory are resolved
+and retained through the existing512-bit command/submission reference model.
+
+An owned allocation-free `venus_graphics_state.zig` state stores the current
+bound graphics pipeline token, its copied color format, and the active pass color
+format (zero means outside a pass). Binding before or within a pass is legal;
+binding an incompatible pipeline does not itself invalidate recording, but a draw
+requires a bound pipeline and an active compatible pass. Beginning a nested pass,
+ending outside a pass, drawing outside a pass, drawing without a pipeline and
+finishing a command with an active pass all fail before native dispatch. Successful
+end preserves the bound pipeline for a later compatible pass. Reset clears every
+field. Invalid helper inputs preserve the old state; the public void command
+adapter marks malformed recording Invalid. Validated state is published only after
+native acknowledgment; transport uncertainty poisons the binding and retains
+remote references until receiver retirement/abandon. Helpers borrow scalar values,
+retain no native pointers, require external mutex serialization on shared state,
+and return Invalid for unsupported formats/zero pipeline tokens/state violations.
+
+No new quota or heap owner is introduced: public integration associates one
+state with each existing64 command metadata reservation, resets it in place,
+and releases it with that reservation. Native tests prove bind-before-begin,
+compatible later passes, all invalid orderings with state preservation, incompatible
+draw rejection, rebind recovery, complete reset and full command-finish rules.
+Production source branch/line coverage stays above90%; std.testing.allocator and
+ASan/LSan-instrumented test executables must report zero leaks. This metadata
+helper alone earns no graphics or DXVK runtime credit.
