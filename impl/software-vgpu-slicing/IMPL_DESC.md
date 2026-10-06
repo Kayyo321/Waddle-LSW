@@ -3772,3 +3772,28 @@ and dynamic quota. Native Zig tests use no heap allocation; maximum C oracle pat
 pass AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer with zero leaks.
 The oracle and Zig test executable cross-compile for x86_64 Windows. Production
 coverage is100% branches20/20 and96.97% lines32/33; no threshold is lowered.
+
+### Descriptor transaction scratch ownership and stack budget
+
+On x86_64, one normalized descriptor set profile is3,600 bytes, one descriptor
+layout1,032 bytes and one pipeline layout16,912 bytes. Allocation transactions
+stage at most64 owned set profiles in a230,400-byte static scratch array. Update
+transactions stage at most128 profiles in460,800 bytes, with64 batches of64
+translated24-byte buffer records in98,304 bytes. These three arrays are exclusively
+owned by the existing process-local ICD mutex; they contain no application pointer
+ownership, cannot be shared across concurrent calls, and require no heap allocation.
+They are cleared on every exit through deterministic cleanup and on abandonment.
+Together with the2,119,424-byte profile registry the specified static storage is
+2,908,928 bytes, excluding existing command/object/cache storage and small packet
+scratch. This budget avoids several-hundred-KiB automatic frames on Windows.
+
+Allocation reserves set identities and copied profiles before native submission,
+validates every returned array count and translated identity, charges pool quotas
+only after exact success, and refunds local reservations on ordinary native failure.
+Uncertain transport ownership remains until the receiver is retired and abandoned.
+Free/reset/destruction refund profiles and pool accounting only after acknowledgment;
+pending GPU references prohibit reuse. Update validates all writes/copies and actual
+queried uniform/storage alignment/range limits into private staged snapshots before
+one command79 transaction. Snapshot publication follows acknowledgment; an invalid
+batch publishes nothing and sends no partial update. Buffer identities are validated
+again when used, so destruction cannot turn a copied descriptor into a reused token.
