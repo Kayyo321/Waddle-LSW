@@ -4110,3 +4110,41 @@ Waddle ICD backend binding and DXVK success. The Windows harness must still use
 the pinned Waddle loader/manifest, the production remoting backend and unchanged
 DXVK client, require device/swapchain success and read real completion results.
 Provisioning alone cannot satisfy any missing Vulkan extension or API command.
+
+### Physical compute shader exact-byte acceptance workload
+
+The production presented-worker fixture adds explicit `WADDLE_TEST_WORKLOAD=compute`.
+The unchanged default/full selector still executes the original mapped transfer and
+image workloads; compute selection runs the common physical instance/device/queue,
+fence and semaphore checks plus an actual64-invocation shader workload. Missing
+entry points, unsupported host-visible memory, failed native operations or wrong
+output cause failure; this selector never reports success after an empty probe.
+The selected queue family must actually advertise COMPUTE capability. Both normal
+and corrupt-frame receiver fixtures repeat eight complete compute lifetimes each.
+
+Each cycle creates a256-byte STORAGE_BUFFER buffer, queries requirements and picks
+an advertised HOST_VISIBLE type from the actual compatible memoryTypeBits mask.
+The fixture allocates/binds/maps the full allocation, poisons all256 output bytes
+with0xa5 and flushes the mapped range before submission. It creates the owned
+SPIR-V1.0 ComputeShader, a set0/binding0 single STORAGE_BUFFER descriptor layout,
+one-set pipeline layout, descriptor pool/set and descriptor update covering256
+bytes; no dynamic offsets or specialization exist. One compute pipeline uses the
+shader main entry point. Primary one-time command recording binds that pipeline,
+binds its descriptor set, dispatches64x1x1 workgroups, then records a COMPUTE_SHADER
+SHADER_WRITE to HOST HOST_READ memory barrier. Real queue submission and fence wait
+must succeed before mapped invalidation and comparison of every64 u32 result with
+index*13+7. Poisoning prevents stale allocation contents or a no-op dispatch from
+passing; no expected output bytes are supplied to the native shader by the host.
+
+Each helper acquisition is initialized to NULL and exclusively owned by the helper.
+Success and failure share reverse cleanup: retire submitted queue work, destroy
+fence/command pool, pipeline, descriptor pool, pipeline layout, descriptor layout
+and shader, unmap, destroy buffer and free allocation. Parent instance/device remain
+borrowed throughout; device abandonment and receiver shutdown handle uncertain
+native ownership on transport failure. No heap-owned fixture arrays are introduced.
+Forced shared-loader failure occurs after mapped poison/flush and before shader
+creation, and must release those acquisitions with exit1 and no sanitizer errors.
+The300-second fixture watchdog remains finite; successful fence wait is bounded.
+Acceptance requires direct and actual shared-loader paths on physical receivers,
+ASan/LSan/UBSan clean execution and balanced process descriptor counts. Source or
+crosscompile alone earns no actual compute completion credit.
