@@ -4184,3 +4184,25 @@ draw rejection, rebind recovery, complete reset and full command-finish rules.
 Production source branch/line coverage stays above90%; std.testing.allocator and
 ASan/LSan-instrumented test executables must report zero leaks. This metadata
 helper alone earns no graphics or DXVK runtime credit.
+
+### Physical compute push-constant command acceptance
+
+The independent `compute_push` workload uses an owned SPIR-V1.0 shader with the
+same set0/binding0 storage buffer and a4-byte COMPUTE push-constant block. Its
+pipeline layout declares exactly stageCOMPUTE/offset0/size4. After pipeline and
+static descriptor-set binding, the command buffer pushes a caller-owned u32 bias,
+then dispatches64x1x1, records the same shader-write/host-read barrier, retires the
+queue/fence, invalidates mapped memory and compares all64 words with index*13+bias.
+Bias is37+iteration*19+fixture_kind*257, so all sixteen lifetimes use distinct
+nondefault values and ordinary/corrupt-frame fixtures differ. The poison+flush
+step remains mandatory; an ignored push, stale push bytes or no-op dispatch cannot
+pass. The push source is borrowed for the synchronous recording call and can be
+changed immediately afterwards; the ICD must own its recorded bytes.
+
+`compute` remains the original fixed7 shader; default/full mapping+image workload
+is unchanged. Both compute selectors require a COMPUTE queue and all shared native
+acquisition/reverse-cleanup checks. `compute_push` additionally requires the actual
+vkCmdPushConstants entry point. Owned GLSL and generated immutable shader words
+record their exact base-system Vulkan1.0 generation command and must match the
+independently validated SPIR-V binary. Direct/shared normal and sanitized physical
+executions are separate gates; code generation alone confers no push acceptance.
