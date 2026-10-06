@@ -9,3 +9,6 @@
 	path = submodules/virglrenderer
 	url = https://gitlab.freedesktop.org/virgl/virglrenderer.git
 	shallow = true
+[submodule "submodules/venus_protocol"]
+	path = submodules/venus_protocol
+	url = https://gitlab.freedesktop.org/virgl/venus-protocol.git

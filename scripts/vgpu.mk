@@ -529,3 +529,14 @@ vgpu-present-integration: build/vgpu_present_integration
 vgpu-present-integration-sanitizers: $(VgpuPresentIntegrationSources) $(VgpuPresentIntegrationHeaders) build/venus_frame.o
 	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) $(VgpuPresentIntegrationFlags) $(VgpuPresentIntegrationSources) build/venus_frame.o $(VgpuPresentIntegrationLibraries) -o build/vgpu_present_integration_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_present_integration_sanitized
+
+# Generator and Vulkan declarations are pinned together to the receiver schema.
+VgpuProtocolPython ?= /usr/bin/python3
+VgpuProtocolIncludes = -Isubmodules/venus_protocol/tests -Ibuild/venus_protocol -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan
+.PHONY: vgpu-protocol vgpu-protocol-test
+vgpu-protocol:
+	$(VgpuProtocolPython) scripts/venus_protocol.py
+
+vgpu-protocol-test: vgpu-protocol
+	$(CC) -std=c11 $(VgpuProtocolIncludes) -c submodules/venus_protocol/tests/driver.c -o build/venus_protocol_driver.o
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 $(VgpuProtocolIncludes) -c submodules/venus_protocol/tests/driver.c -o build/venus_protocol_driver_windows.o

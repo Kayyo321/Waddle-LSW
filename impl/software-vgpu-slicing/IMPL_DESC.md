@@ -1521,3 +1521,29 @@ it proves protocol, backing-identity and ownership integration, not GPU image
 allocation/export or hardware compositor scanout. Split the final 20% verification
 milestone into 10% native mock protocol integration and 10% rendered Venus hardware
 image export/presentation. Worker runtime routing remains its separate 10% gate.
+
+
+### Pinned guest serializer generator dependency (Task #3 / dependency #7)
+
+The existing receiver protocol was generated from public upstream Venus protocol
+commit `7157163d5fed65f0742542a8e77e5412dea6a4bc`. Pin that exact immutable commit
+at `submodules/venus_protocol`, public HTTPS upstream
+`https://gitlab.freedesktop.org/virgl/venus-protocol.git`. Its Python generator,
+XML schema and templates use MIT SPDX licensing; bundled Khronos Vulkan headers
+use Apache-2.0 SPDX licensing, compatible with the project's MIT distribution.
+Preserve upstream copyright/license notices, keep all third-party sources within
+the submodule and generated outputs under ignored build directories. No runtime
+Python dependency is introduced; Python/Mako is a base-system build dependency.
+
+`make vgpu-protocol-test` performs offline generation using the pinned XML and
+rejects any differing HEAD or dirty generator checkout. It produces thirty-seven
+guest driver headers, regenerates thirty-nine renderer headers and compares every
+renderer byte to the already-pinned virglrenderer protocol. It also compares the
+three bundled public Vulkan declaration headers byte-for-byte. No compatibility
+assumption is made from a version number alone. Linux and x86_64 Windows C compile
+all generated guest declarations through the upstream syntax fixture. That fixture
+contains no runtime test workload; syntax validation is credited only to dependency
+configuration. Generated driver encoders remain behind a vendor adapter boundary;
+they are not yet connected to the guest frontend or public Vulkan ICD dispatch.
+Allocate a dedicated zero-weight dependency task #7 so ownership, immutable pin,
+offline generation and verification are audited without awarding rendering progress.

@@ -17,6 +17,7 @@
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 80% | Export, metadata, presenter and credential-bound FD channel verified; worker/surface/release routing and end-to-end GPU presentation pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
+| #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 
 **Total Feature Completion**: `60.75%`
 
@@ -788,7 +789,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Wayland presenter CI passed at 8a065bd:
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37403394245 .
 
-- **Commit (current; resolve by subject)**: `test(vgpu): verify native Wayland frame descriptor integration`
+- **Commit `c22c0fe`**: `test(vgpu): verify native Wayland frame descriptor integration`
   - **Task Impact**: +10% to TODO: #4 (+1.5% overall).
   - **Summary**: Exercise production frame channel and presenter across actual
     libwayland client/server sockets, real FD transfer and generated protocol.
@@ -796,3 +797,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     frame callbacks, release ownership, rejected import and subsequent recovery;
     normal and ASan/LSan/UBSan runs pass. Synthetic allocation remains explicitly
     mock-only; hardware Venus image/export and worker routing remain pending.
+
+- **Commit (current; resolve by subject)**: `chore(deps): pin exact guest Venus serializer generator`
+  - **Task Impact**: +100% to TODO: #7 (+0% overall); +0% to TODO: #3.
+  - **Summary**: Add MIT generator/Apache-2.0 Vulkan declarations as a public HTTPS
+    submodule pinned to 7157163d5fed65f0742542a8e77e5412dea6a4bc; generate offline.
+  - **Verification**: Reproduce all thirty-nine renderer headers and three Vulkan
+    declaration headers byte-for-byte; generate thirty-seven driver headers and
+    compile their complete declarations on Linux and Windows x86_64. This verifies
+    schema/dependency configuration; ICD dispatch and serialization remain pending.
