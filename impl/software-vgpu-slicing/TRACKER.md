@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 80% | Bounded isolated context ownership verified locally; negotiation native CI and simultaneous worker CI remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 90% | Negotiation passed Linux/native Windows CI; isolated context ownership verified; simultaneous worker CI remains |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `36.0%`
+**Total Feature Completion**: `38.0%`
 
 ## Commit History & Progress Log
 
@@ -610,7 +610,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Summary**: Independent user documentation commit during receiver work;
     no software vGPU task credit or receiver source change.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): verify simultaneous isolated context execution`
+- **Commit `75d39cd`**: `test(vgpu): verify simultaneous isolated context execution`
   - **Task Impact**: +0% to TODO: #2 (+0% overall); simultaneous execution 10% awaits CI.
   - **Summary**: Execute eight live production workers over separate mapped
     regions/UNIX streams with identical registry/resource/fence IDs, distinct
@@ -621,3 +621,15 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     pass with all caller descriptors returned to baseline. Workers use the
     sanitizer-instrumented production executable. Add these gates to Linux CI.
     Native Windows negotiation fixtures have passed; remaining Linux CI is running.
+
+
+- **Commit (current; resolve by subject)**: `chore(vgpu): complete standalone negotiation build dependencies`
+  - **Task Impact**: +10% to TODO: #2 (+2.0% overall) for negotiated runtime acceptance.
+  - **Summary**: Make standalone runtime sanitizer/coverage targets build the
+    capability object they link, and track context consumer header dependencies.
+  - **Verification**: `make -n -W src/vgpu/venus_capabilities.zig
+    vgpu-runtime-sanitizers vgpu-runtime-coverage` includes codec rebuild before
+    linking. Linux/native Windows negotiation, ownership, real mapped/exec,
+    coverage and sanitizer CI passed at `35076e2`:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37400157106 .
+    Simultaneous context runtime acceptance is the final 10% gate.

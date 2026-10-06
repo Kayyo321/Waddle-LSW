@@ -372,3 +372,10 @@ vgpu-context-integration: build/vgpu_contexts_integration
 vgpu-context-integration-sanitizers: $(VgpuContextObjects) build/waddle_vgpu_worker_sanitized
 	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/contexts_integration.c $(VgpuContextSources) $(VgpuContextObjects) -o build/vgpu_contexts_integration_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_contexts_integration_sanitized
+
+# Standalone sanitizer/coverage invocations need the dispatch negotiation codec.
+vgpu-runtime-sanitizers vgpu-runtime-coverage: build/venus_capabilities.o
+
+# Rebuild context consumers when any borrowed lifetime or framing contract changes.
+build/vgpu_context_test build/vgpu_contexts_integration: include/waddle/venus_worker.h include/waddle/venus_region.h include/waddle/venus_ring.h
+build/vgpu_contexts_integration: include/waddle/venus_rpc.h include/waddle/venus_channel.h include/waddle/venus_session.h include/waddle/venus_request.h include/waddle/venus_capabilities.h include/waddle/venus_receiver.h
