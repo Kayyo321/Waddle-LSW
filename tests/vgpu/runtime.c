@@ -327,6 +327,24 @@ static void bound_presentation(void) {
                                               1000) == RingInvalid);
         assert(!incoming_position && !outgoing_bytes && !calls);
     }
+    for (uint32_t kind = RequestPresent; kind <= RequestPresentPoll; kind++) {
+        reset_buffer(SessionHost, presentation, sizeof(presentation));
+        rpc.negotiated = 0;
+        presentation_calls = 0;
+        pump_status = RingOk;
+        venus_request_t request = {.kind = kind, .sequence = 1, .argument_zero = 1}, response;
+        if (kind == RequestPresent) {
+            request.payload_bytes = sizeof(presentation);
+            request.argument_one = 1;
+        }
+        prepare(request);
+        assert(venus_dispatch_serve_presented(&rpc, (venus_receiver_t *)&receiver_cookie, &Binding,
+                                              1000) == RingOk);
+        assert(!calls && !presentation_calls && !rpc.negotiated);
+        drain_peer();
+        assert(venus_request_decode(&response, peer_output, 64) == RingOk);
+        assert(response.status == RequestInvalid && !response.payload_bytes);
+    }
     const venus_ring_status_t Results[] = {RingOk,    RingAgain,  RingInvalid,
                                            RingLimit, RingClosed, RingCorrupt};
     const uint32_t Wire[] = {RequestSuccess, RequestAgain, RequestInvalid, RequestLimit};

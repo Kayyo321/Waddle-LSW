@@ -916,7 +916,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Linux/native Windows CI passed at beba08e, run37406662469. Bound routing pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): route bounded presentation requests through trusted dispatch`
+- **Commit `4b06374`**: `feat(vgpu): route bounded presentation requests through trusted dispatch`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Route negotiated frame/release requests through complete trusted
     bindings, guard resource frees, pump acknowledgements during receiver health
@@ -926,3 +926,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     bindings, pre-negotiation rejection, all local/terminal outcomes, release bytes,
     busy guards and health-pump loss with cleared call-scoped monitor pointers.
     Production service/worker launch and controller acknowledgement retry pending.
+
+
+- **Commit (current; resolve by subject)**: `test(vgpu): verify bound presentation negotiation enforcement`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Explicitly verify both bound operations before negotiation consume
+    their full request and return Invalid without submit/take or receiver calls.
+  - **Verification**: Normal and ASan/LSan/UBSan runtime suites, required dispatch/RPC
+    coverage and native Windows cross-link pass; monitor pointers remain cleared.
