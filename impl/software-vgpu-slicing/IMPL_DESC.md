@@ -4395,3 +4395,113 @@ Failure-only diagnostic CI37544979923 identifies the remaining128-byte realloc a
 Extend the owned immutable Mesa25.0.7 source742a20f48c59e8649533c84c4d49dd95b403f5da build and existing static bounded CPU-mask repair to RADV and Lavapipe. Build the required swrast/Gallium software path against base-system LLVM development packages; record actual llvm-config version/options and source/patch hashes. No loose source vendoring, additional unpinned dependency downloads, foreign allocator free, library retention, sanitizer suppression or driver filtering is allowed. Maintain all existing host manifests and settings; replace only library_path in the original matching-version RADV and Lavapipe manifests with the corresponding owned repaired DSOs. Do not change advertised hardware/API fields. The existing same-version guard must apply to both original drivers, failing closed on unknown or mismatched versions.
 
 The existing repair uses module-owned bounded static L3 affinity masks and leaves detection behavior intact. Verify the same original-versus-repaired allocator path and CPU/L3 membership on actual hardware where available; after each real loader/instance teardown require driver unload using native loader state, with no live project/driver allocations. A loader NODELETE activation in a particular build is diagnostic evidence and cannot satisfy an explicit unload gate. Inspect symbol linkage and dependencies before assuming the base LLVM/compiler configuration matches CI. Preserve all ordinary native/ASan/LSan/UBSan production worker workloads and bounded failure diagnostics. Full clean production CI remains mandatory; prerequisite#10 stays50% until those pass. Local RADV success and a Lavapipe compilation alone cannot establish completion.
+
+##### Owned ICD ASan gate: compiler interoperability contract
+
+Required additional Linux x64 gate: scripts/icd_owned_sanitizers.py. Its artifact directory is exclusive and separate from normal/shared/physical build outputs. No production source, suppression file or compiler panic is rewritten.
+
+#### Current gap and exact scope
+
+`build/venus_icd.o` currently compiles Zig0.13.0 ReleaseSafe without ASan. Linking
+it into the C fixture with `-fsanitize=address,leak,undefined` instruments the C
+fixture and activates process allocation/LSan interposition, but does not insert
+ASan checks at the Zig object's loads/stores. `nm -u build/venus_icd.o` shows no
+ASan/UBSan access hooks. Existing graphics-state LLVM tooling instruments only
+that selected module. Clang's UBSan frontend pass does not retroactively generate
+C-language UB checks from Zig LLVM IR; this proposal must not claim otherwise.
+
+The gate instruments every emitted production function whose
+DISubprogram belongs to the exact requested owned Zig filename and whose canonical
+name occurs before its `// Test-only fixtures.` boundary. Generic `__anon_N`
+instantiations normalize to the source name. The frozen native Debug gate found159 source function names and171 source-mapped
+owned definitions; the Zig-test executable has172. Both have zero omitted names.
+The earlier189-definition prototype used a broader canonical-prefix selector;
+the final tool narrows selection to exact source metadata and source-defined names. It
+instruments both native ICD and the same ICD embedded in the Zig test executable.
+Standard library/test-runner functions are not relabeled owned. Imported codecs
+retain Zig Debug checks; their independently specified gates remain necessary.
+
+#### Why Debug IR is required
+
+The Zig emitted ReleaseSafe LLVM IR has already coalesced distinct local stack
+objects. A concrete function `format_properties` has an outer64-byte lifetime and
+inner8-byte lifetime on the same `%3` alloca. ASan added after coalescing poisons
+those8 bytes at the inner lifetime end despite the valid outer lifetime. Removing
+lifetime hints, turning off scope checking, or suppressing the report is prohibited.
+Debug emitted IR keeps separate stack objects and retains Zig null, bounds,
+arithmetic, alignment and explicit runtime safety checks. Debug is the additional
+unit safety gate; ordinary ReleaseSafe build, coverage, ABI and physical GPU gates
+remain independent and unchanged.
+
+#### Compiler guard normalization without erasure
+
+Zig's emitted IR already contains both `llvm.stackprotector` and explicit volatile
+canary reload/compare/failure blocks. Adding ASan late relocates the slot into the
+ASan frame, but backend lowering of the preexisting intrinsic stores to the old
+frame. The resulting null epilogue read was reproduced under gdb in `cache(1)`;
+unmodified non-ASan LLVM roundtrip passes the full native suite.
+
+For each accepted shape only, normalize:
+
+```
+call void @llvm.stackprotector(ptr %StackGuard, ptr %StackGuardSlot)
+```
+
+to:
+
+```
+store volatile ptr %StackGuard, ptr %StackGuardSlot, align 8
+```
+
+The transformation writes exactly the same guard value to exactly the same slot
+with volatile semantics. Every original guard load, comparison, branch, panic,
+`__stack_chk_fail` call, SSP attribute, module initializer and LLVM lifetime hint
+remains byte-for-byte intact. Backend SSP attributes are retained and can add
+normal backend protection after ASan. No original function or branch is removed.
+The prototype native module contains1128 normalized compiler guard stores.
+
+The tool rejects changed intrinsic grammar, unknown slot reload shape, missing
+production functions, an empty transformation, or any preservation mismatch.
+After removing only its added function ASan attribute and reversing only accepted
+stores, it requires exact byte equality with the entire original LLVM module.
+That equality includes all compiler panic bodies and global initializers. The
+sanitized object must contain both ASan load and store report hooks.
+
+#### Execution, ownership and diagnostics
+
+The caller exclusively owns the selected artifact directory. Normalized IR,
+objects, reports, C oracle and executables live there only. Existing pinned oracle
+objects and headers are read dependencies; no protocol regeneration or shared
+object replacement occurs. IR input is limited to256MiB. Each tool/test subprocess
+has180-second timeout and nonzero status propagates as failure. There are no
+suppression options. Required runtime options are detect_leaks=1, abort_on_error=1,
+halt_on_error=1; C UBSan also halts and prints its stack trace.
+
+Both the ordinary native C fixture's28 entry-case groups (including graphics,
+readback, mapped memory and cancellation paths) and all Zig unit tests run against
+the genuinely ASan-instrumented ICD. The latter includes allocator tests and the
+sanitized C fixture renamed `venus_icd_native_fixture`. The tool records selected
+symbols, production counts, empty omission list, accepted guard count, reverse
+proof and explicit UBSan scope. A new owned source can reuse the selection and
+normalization utility, but its native/oracle dependency integration requires a
+separate contract; the initial CLI accepts venus_icd.zig only.
+
+#### Evidence already obtained
+
+- Unmodified ReleaseSafe LLVM roundtrip native128-cycle suite: pass.
+- Frozen Debug owned171-definition ASan native128-cycle suite: pass, no sanitizer/leak
+  diagnostic, original guards and lifetime markers retained.
+- nm shows ASan load1/4/8/16/n and store1/4/8/16 hooks.
+- Earlier isolated diagnostic controls proved a real owned `enumerate_version`
+  undersized output WRITE is caught by ASan and a deliberately corrupted temporary
+  guard copy reaches `__stack_chk_fail`. These were completed before the latest
+  instruction. The reusable ordinary tool neither creates nor modifies fault
+  variants or canary values, and performs no further fault injection.
+- Frozen ba0983c reusable tool native128-cycle/28-case suite and all74 Debug Zig
+  tests pass with ASan/LSan active, no diagnostics and exact reverse proof. Native
+  report:159 source names,171 definitions,1128 guard stores. Zig-test report:
+  same159 source names,172 definitions,1513 guard stores. Reports/logs: `/tmp/waddle_full_icd_safety/frozen/`
+  and `/tmp/waddle_full_icd_safety/frozen.log`. No further fault variants were created.
+
+
+The initial frozen ba0983c proof predates additive capability binding. The tracked tool must add the already owned capability codec object to both native and Zig link inputs and rerun against the completed binding source before its implementation commit. Compile C fixtures with the existing strict warning flags. Select every current ICD production function dynamically, rather than hard-coding the159-name baseline. Preserve exact whole-module reverse equality and fail closed on unknown compiler/ABI guard shape. This gate verifies owned ICD Zig memory accesses, C frontend UBSan and process leak ownership; imported and separately compiled codecs retain their independently specified safety gates and cannot be described as newly ASan-instrumented by this one-file selector.
