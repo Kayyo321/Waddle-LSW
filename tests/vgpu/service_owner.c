@@ -205,6 +205,8 @@ int main(void) {
     venus_service_config_t config;
     assert(venus_service_config_init(NULL) == RingInvalid);
     assert(venus_service_config_init(&config) == RingOk);
+    /* Full Vulkan inline update plus Venus command/reply-stream headers must fit. */
+    assert(config.command_bytes >= 65536 + 48 + 36);
     assert(venus_service_run(NULL, 3, 4, NULL) == RingInvalid);
     assert(venus_service_run(&config, -1, 4, NULL) == RingInvalid);
     assert(venus_service_run(&config, 3, -1, NULL) == RingInvalid);

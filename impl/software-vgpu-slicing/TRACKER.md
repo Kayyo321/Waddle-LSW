@@ -1625,7 +1625,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     DLL and loader fixture cross-link pass. Latest CI remains required. TODO #3
     stays50%; actual submission/full API/mapping/DXVK still pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify full-size inline update staging`
+- **Commit `4696452`**: `docs(vgpu): specify full-size inline update staging`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Define native1..65536-byte update input, exact command117, fixed
     disjoint scratch/tx staging and source capture/scrub lifecycle. Preserve the
@@ -1633,3 +1633,16 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspect pinned blob encoder4-byte stride, command owner's
     overlap checks/36-byte prefix and Vulkan update valid usage. Implementation
     and full-size production-worker proof remain pending. TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): size default worker commands for full inline updates`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Raise the bounded default command/private-transfer allocation
+    to131072 bytes so65536-byte native data plus48-byte command and36-byte
+    reply-stream prefix fit. Keep one service-owned aligned allocation with
+    deterministic teardown and preserve explicit smaller trusted policy support.
+    Document required backend scratch/command extent for full ICD binding.
+  - **Verification**: Service acquisition/fault tests, ASan/LSan/UBSan and
+    coverage100% lines/99.02% branches pass. Inline update worker fixture initially
+    rejected its oversized request with prior4096-byte guest scratch; the pending
+    recording increment expands scratch and verifies fragmented full-size input.
+    TODO #3 stays50%.

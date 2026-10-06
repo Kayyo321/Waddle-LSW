@@ -11,7 +11,7 @@
 venus_ring_status_t venus_service_config_init(venus_service_config_t *config) {
     if (!config)
         return RingInvalid;
-    *config = (venus_service_config_t){.command_bytes = 65536,
+    *config = (venus_service_config_t){.command_bytes = 131072,
                                        .reply_bytes = 65536,
                                        .resource_count = VenusReceiverMaxResources,
                                        .resource_bytes = VenusReceiverDefaultResourceBytes,

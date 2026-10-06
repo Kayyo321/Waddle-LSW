@@ -3141,3 +3141,17 @@ and zero-leak sanitizer paths, native Windows ABI and at least90% metadata cover
 Full GPU data results remain a submission/mapping acceptance gate, without progress
 credit for recording alone. The Vulkan data capture/size rules are defined by
 [vkCmdUpdateBuffer](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdUpdateBuffer.html).
+
+The full-size transport acceptance additionally raises the default host service
+command/private-transfer allocation from65536 to131072 bytes, the next supported
+power of two above the65620-byte stream. Reply capacity remains65536. Ownership
+stays in venus_service_run: one64-byte-aligned allocation freed on all teardown/
+fault paths; no per-update allocation. Explicit smaller trusted configurations
+remain legal for restricted clients and can reject oversized streams with existing
+bounded errors. A full ICD binding's backend must provide private request scratch
+and host command capacity at least65620 bytes; insufficient backend capacity is a
+terminal dispatch failure, never truncated data or manufactured success. The
+production-worker fixture supplies131072-byte guest RPC scratch and streams the
+full payload through its existing64-byte ring, exercising actual fragmentation.
+The service owner test checks maximum update plus both header extents fit in the
+default; existing acquisition/fault/teardown sanitizer tests remain mandatory.
