@@ -40,15 +40,24 @@ pub fn draw(command_id: u64, values: [4]u32) !writer_t {
 /// size, nonzero. regions is borrowed accessible1..64 records, tight single-color2D
 /// mip0/layer0/depth1 copies. layout is GENERAL or TRANSFER_SRC_OPTIMAL.
 /// out: owns48+56*regions.len bytes; invalid IDs/layout/count/metadata/ranges return
-/// Invalid before serialization. No heap allocation or pointer retention; thread-safe.
+/// Invalid before serialization, including overlapping destination memory spans.
+/// Adjacent spans and overlapping source regions are permitted. No allocation or locks.
 pub fn copy_image_to_buffer(command_id: u64, image_id: u64, buffer_id: u64, layout: c.VkImageLayout, width: u32, height: u32, buffer_size: u64, regions: []const c.VkBufferImageCopy) !writer_t {
     if (command_id == 0 or image_id == 0 or buffer_id == 0 or buffer_size == 0 or width == 0 or height == 0 or width > 4096 or height > 4096 or regions.len == 0 or regions.len > 64) return error.Invalid;
     if (layout != c.VK_IMAGE_LAYOUT_GENERAL and layout != c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) return error.Invalid;
-    for (regions) |region| {
+    for (regions, 0..) |region, index| {
         if (region.bufferRowLength != 0 or region.bufferImageHeight != 0 or region.bufferOffset % 4 != 0 or region.imageSubresource.aspectMask != c.VK_IMAGE_ASPECT_COLOR_BIT or region.imageSubresource.mipLevel != 0 or region.imageSubresource.baseArrayLayer != 0 or region.imageSubresource.layerCount != 1 or region.imageOffset.x < 0 or region.imageOffset.y < 0 or region.imageOffset.z != 0 or region.imageExtent.width == 0 or region.imageExtent.height == 0 or region.imageExtent.depth != 1) return error.Invalid;
         if (@as(u64, @intCast(region.imageOffset.x)) + region.imageExtent.width > width or @as(u64, @intCast(region.imageOffset.y)) + region.imageExtent.height > height) return error.Invalid;
         const byte_count = @as(u64, region.imageExtent.width) * region.imageExtent.height * 4;
         if (region.bufferOffset > buffer_size or byte_count > buffer_size - region.bufferOffset) return error.Invalid;
+        // Every prior span has already passed the subtraction-based buffer bound,
+        // proving both half-open endpoint sums cannot overflow u64.
+        const end = region.bufferOffset + byte_count;
+        for (regions[0..index]) |previous| {
+            const previous_bytes = @as(u64, previous.imageExtent.width) * previous.imageExtent.height * 4;
+            const previous_end = previous.bufferOffset + previous_bytes;
+            if (region.bufferOffset < previous_end and previous.bufferOffset < end) return error.Invalid;
+        }
     }
     // Fixed records are56 bytes, prefix48:64 regions require3632 <=8192.
     comptime {
@@ -174,4 +183,42 @@ test "readback nonzero offsets exact destination fit and maximum image extent" {
     try compare(try copy_image_to_buffer(8, 42, 43, 6, 4096, 4096, std.math.maxInt(u64), &.{region}), oracle[0..venus_graphics_command_test_copy(6, 1, &.{region}, &oracle)]);
     region.bufferOffset = std.math.maxInt(u64) - 3;
     try std.testing.expectError(error.Invalid, copy_image_to_buffer(8, 42, 43, 1, 4096, 4096, std.math.maxInt(u64), &.{region}));
+}
+
+test "readback rejects destination intersections and preserves adjacent copies in either order" {
+    const initial = region_fixture();
+    var regions = [_]c.VkBufferImageCopy{ initial, initial };
+    for ([_]u64{ 0, 4, 16380 }) |offset| {
+        regions[0] = initial;
+        regions[1] = initial;
+        regions[1].bufferOffset = offset;
+        try std.testing.expectError(error.Invalid, copy_image_to_buffer(8, 42, 43, 1, 64, 64, 65536, &regions));
+        std.mem.swap(c.VkBufferImageCopy, &regions[0], &regions[1]);
+        try std.testing.expectError(error.Invalid, copy_image_to_buffer(8, 42, 43, 1, 64, 64, 65536, &regions));
+    }
+    regions = .{ initial, initial };
+    regions[1].bufferOffset = 4;
+    regions[1].imageExtent = .{ .width = 1, .height = 1, .depth = 1 };
+    try std.testing.expectError(error.Invalid, copy_image_to_buffer(8, 42, 43, 1, 64, 64, 65536, &regions));
+    std.mem.swap(c.VkBufferImageCopy, &regions[0], &regions[1]);
+    try std.testing.expectError(error.Invalid, copy_image_to_buffer(8, 42, 43, 1, 64, 64, 65536, &regions));
+    regions = .{ initial, initial };
+    regions[1].bufferOffset = 16384;
+    var oracle: [8192]u8 = undefined;
+    for (0..2) |_| {
+        const writer = try copy_image_to_buffer(8, 42, 43, 1, 64, 64, 32768, &regions);
+        try compare(writer, oracle[0..venus_graphics_command_test_copy(1, 2, &regions, &oracle)]);
+        std.mem.swap(c.VkBufferImageCopy, &regions[0], &regions[1]);
+    }
+    for (&regions, 0..) |*region, index| {
+        region.imageExtent = .{ .width = 1, .height = 1, .depth = 1 };
+        region.bufferOffset = std.math.maxInt(u64) - 11 + 4 * index;
+    }
+    for (0..2) |_| {
+        const writer = try copy_image_to_buffer(8, 42, 43, 1, 64, 64, std.math.maxInt(u64), &regions);
+        try compare(writer, oracle[0..venus_graphics_command_test_copy(1, 2, &regions, &oracle)]);
+        std.mem.swap(c.VkBufferImageCopy, &regions[0], &regions[1]);
+    }
+    regions[1].bufferOffset = regions[0].bufferOffset;
+    try std.testing.expectError(error.Invalid, copy_image_to_buffer(8, 42, 43, 1, 64, 64, std.math.maxInt(u64), &regions));
 }
