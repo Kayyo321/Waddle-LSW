@@ -21,6 +21,8 @@
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
 
+| #10     | Pin and build Mesa RADV CPU cache lifecycle repair for zero-leak native driver enumeration | In Progress | 0% | 0% | Matched vendor prototype fixes3x128-byte unload leak; pinned build and full production CI pending |
+
 **Total Feature Completion**: `68.75%`
 
 ## Commit History & Progress Log

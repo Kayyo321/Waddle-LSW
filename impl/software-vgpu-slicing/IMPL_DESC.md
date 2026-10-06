@@ -4244,3 +4244,52 @@ regressions require offset128/size4, UINT32_MAX offsets and null nonempty ranges
 fail with NULL output and unchanged transaction count. The temporary ceiling is
 removed only with the documented actual-host cache, truthful public limit clamp
 and native128/256-host tests; no API/extension advertisement accompanies codecs.
+
+### Mesa RADV CPU topology cache teardown dependency
+
+CI's128-byte leak was reproduced without Waddle by ordinary Vulkan instance
+creation, physical enumeration, instance destruction and complete driver unload.
+The allocating Mesa25.0.7 RADV CPU topology utility grows L3 affinity masks through
+realloc and retains the pointer in module-global CPU capabilities without any
+module cleanup hook. Driver unload loses that heap owner. Three matched baseline
+cycles leak384 bytes. Mesa exposes no supported Waddle cleanup API; the receiver
+must not free another driver's private pointer, suppress LSan, retain the library
+or filter away an unselected driver to hide this allocation defect.
+
+Pin the official public HTTPS Mesa repository under `submodules/mesa` at tagged
+25.0.7 commit `742a20f48c59e8649533c84c4d49dd95b403f5da`. Keep its tracked checkout
+pristine. The only owned compatibility patch applies to an ignored build copy of
+`src/util/u_cpu_detect.c`: replace the realloc-grown pointer with module-owned
+`static util_affinity_mask[UTIL_MAX_CPUS]`. Each visited CPU contributes at most
+one distinct L3 cache; the discovery loop bounds CPU indices below1024, so every
+new cache index is below1024. Each mask contains32 uint32 words,128 bytes; the
+whole array is131072 bytes, precisely128KiB. Existing per-cache initialization
+and CPU bit updates remain unchanged. Module retirement unmaps this storage with
+its owner. There is no heap allocation, new API, hash approximation, pointer
+retention or invented freeing responsibility.
+
+Only the vendor AMD Vulkan driver and ACO compiler are built; LLVM, Gallium,
+OpenGL, GLES, EGL, GLX, GBM and other Vulkan drivers are disabled. Owned driver
+patch and test harness are C; vendor graphics SDK C++ remains inside its existing
+compatibility boundary. Mesa's MIT CPU utility and retained per-file upstream
+license notices are GPLv3-compatible for this selected build. The submodule's
+source license documentation and notices remain unchanged. Meson forbids wrap
+fallback downloads. Require base-package Meson/Ninja/GCC/G++, pkg-config,
+Python3/Mako/YAML, libdrm-dev>=2.4.121, zlib/expat development packages and glslang.
+
+The isolated ordinary Vulkan teardown fixture owns one dlopen loader reference
+and one instance per iteration, destroys the instance before closing the loader,
+nulls retired handles and closes all ordinary error paths. An RTLD_NOLOAD query
+must prove the tested RADV library is absent after each cycle; any diagnostic
+reference is immediately closed. The patched and identical unpatched vendor
+builds must use the same compiler/options and expose the same physical device
+count. Prototype evidence: both unload every cycle, baseline384-byte leak versus
+patched zero ASan/LSan/UBSan diagnostics; identical000000ff L3 mask. ELF BSS grows
+23104 to154176 bytes, exactly131072. Required integration still includes owned
+strict-warning fixture, reproducible pinned/offline patch build and the complete
+production-worker CI workload using the patched RADV alongside the unchanged
+remaining host ICDs. No driver selection change may conceal the original defect.
+
+Dependency task#10 is zero-weight:20% immutable pin/license/boundary,30% reproducible
+offline patched driver configuration,50% clean repeated unload plus production CI.
+Its completion does not satisfy graphics or modern DXVK acceptance in TODO#3.
