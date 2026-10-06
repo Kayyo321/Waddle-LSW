@@ -2249,3 +2249,41 @@ Mesa llvmpipe normal/sanitized queue tests and RTX5080 queue tests pass. Mapped 
 hardware production-worker presentation tests validate all three queries in three
 fresh sessions, then execute48-frame acquire/present/release churn in each, normal
 and ASan/LSan/UBSan. These fixtures remain separate from public ICD/DXVK acceptance.
+
+
+### Core instance dispatch wire boundary (TODO #3)
+
+The public ICD lifecycle requires a production instance serializer and bounded
+transaction reply conversion. The initial core path accepts VkInstanceCreateInfo
+with sType=INSTANCE_CREATE_INFO, zero flags, no pNext, no layers or extensions.
+A nullable application-info record has sType=APPLICATION_INFO and no pNext; each
+nullable UTF8 application/engine name is an accessible NUL-terminated string of at
+most1024 bytes including NUL. The supported requested API is Vulkan1.0 or1.1,
+variant0; apiVersion0 means1.0. Unsupported extension/pNext/flag inputs fail before
+serialization. This initial restriction must be lifted or exposed as unsupported
+by the ICD; it is not evidence of full instance/device/API implementation.
+
+Caller provides private disjoint byte output and native input, a nonzero reserved
+host instance ID and actual output capacity8..16MiB. Encoding is little-endian and
+bounds-checked in Zig, command0/reply flag1 followed by pointer tag1, create-info
+fields, optional application-info, zero layer/extension arrays, null host allocator,
+nonnull output pointer and the preassigned host ID. Each string encodes its exact
+u64 byte count including NUL and padding to4. No native padding/pointer is copied.
+The output initialized prefix length is published only on success; on failure no
+prefix is valid and the caller must not submit it. No allocation or retained input.
+
+Create replies are exactly command0,u32 signed VkResult, nonnull output tag1 and
+preassigned u64 host ID. On success the ID must match the existing reservation;
+on Vulkan error it must remain zero or the reserved ID, and caller releases the
+reservation. Positive non-success VkResult is malformed for create. Native result
+output remains unchanged for malformed/truncated/alias/local bounds failures.
+Reply-resource trailing capacity is ignored. Destroy command1 carries the existing
+host ID and null host allocator; its reply must contain exact command1 before
+local release. Transport loss abandons the session and all its object reservations.
+Host destruction occurs before local slot retirement; physical-device children
+must be retired explicitly by the lifecycle owner before root release.
+
+Tests compare create packets against the immutable guest C generator and exercise
+nullable application-info/names, empty names, byte padding, max names/API, malformed
+input, buffer exhaustion, every truncated reply prefix and wrong host identity.
+Allocator, sanitizers, coverage and native Windows execution remain required.

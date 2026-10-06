@@ -1155,7 +1155,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and DXVK remain unfinished; no completion credit from decoder helpers alone.
 
 
-- **Commit (current; resolve by subject)**: `test(vgpu): validate complete core replies from real receivers`
+- **Commit `b2d6354`**: `test(vgpu): validate complete core replies from real receivers`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Replace partial property parsing with production fixed-value
     decoders; also query complete features and memory metadata before GPU work.
@@ -1163,3 +1163,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Mesa llvmpipe normal/sanitized queue workloads pass; RTX5080
     queue and mapped guest/production-worker48-frame fresh-session tests pass,
     including ASan/LSan/UBSan. This is actual receiver verification, not ICD/DXVK.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify core instance dispatch wire boundary`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify production instance creation/destruction serialization,
+    bounded name input, exact transaction replies, reservation rollback and
+    unsupported initial core inputs before ICD lifecycle integration.
+  - **Verification**: Cross-check command IDs and pinned guest encoding, including
+    output host IDs and nullable application info. Full ICD/DXVK remains pending.
