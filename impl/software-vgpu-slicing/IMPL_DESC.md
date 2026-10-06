@@ -3684,9 +3684,12 @@ compatibility definition by value. Shader modules and descriptor layouts may
 retire after successful native pipeline/layout construction; their original
 tokens are not retained as artificial ownership dependencies. Pipeline layout
 may likewise retire after successful compilation when no actual pending calls
-reference its token. Command recording that uses a layout token retains/invalidate
-references through the existing submission state machine. Metadata comparison
-uses normalized binding definitions and push ranges, never retired object IDs.
+reference its token. Recording validates a live layout token for the call, then retains copied binding
+and push-range definitions rather than the layout identity. Pipeline-layout
+destruction does not require recorded or pending commands to complete; it must
+not artificially invalidate them. Metadata comparison uses normalized binding
+definitions and push ranges, never retired object IDs. This follows the
+[Khronos destruction contract](https://docs.vulkan.org/refpages/latest/refpages/source/vkDestroyPipelineLayout.html).
 
 Descriptor sets have128 dedicated metadata slots, copy their allocation layout
 definition and initially support at most64 total descriptors per set. The codec
