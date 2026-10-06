@@ -94,7 +94,54 @@ jobs:
       - name: Verify credential-bound frame descriptor handoff
         run: make vgpu-frame-test vgpu-frame-sanitizers vgpu-frame-coverage
       - name: Verify presented production worker exec binding
-        run: make vgpu-presented-worker-test vgpu-presented-worker-sanitizers
+        run: |
+          if make vgpu-presented-worker-test vgpu-presented-worker-sanitizers; then
+            exit 0
+          else
+            gate_status=$?
+          fi
+          mkdir -p build/diagnostics
+          diagnostic_log=build/diagnostics/presented_worker_loader.log
+          if test -x build/vgpu_presented_worker_sanitized; then
+            # One exact existing sanitized runtime path, preserving every host ICD.
+            # A rerun result never changes the original failing acceptance status.
+            if LD_DEBUG=files ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$PWD/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_presented_worker_sanitized > "$diagnostic_log" 2>&1; then
+              echo 'Diagnostic rerun passed; original gate remains failed' >> "$diagnostic_log"
+            else
+              diagnostic_status=$?
+              echo "Diagnostic rerun exited $diagnostic_status; original gate remains failed" >> "$diagnostic_log"
+            fi
+          else
+            echo 'Sanitized diagnostic binary unavailable; original gate remains failed' > "$diagnostic_log"
+          fi
+          if ! python3 - <<'PY'
+          from pathlib import Path
+          log = Path("build/diagnostics/presented_worker_loader.log")
+          max_bytes = 8 * 1024 * 1024
+          if log.stat().st_size > max_bytes:
+              marker = b"\n[Oversized diagnostic middle omitted; beginning and tail preserved]\n"
+              first_bytes = (max_bytes - len(marker)) // 2
+              last_bytes = max_bytes - len(marker) - first_bytes
+              with log.open("r+b") as stream:
+                  first = stream.read(first_bytes)
+                  stream.seek(-last_bytes, 2)
+                  last = stream.read(last_bytes)
+                  stream.seek(0)
+                  stream.write(first + marker + last)
+                  stream.truncate()
+          PY
+          then
+            echo 'Diagnostic artifact bounding failed; original gate remains failed' > "$diagnostic_log"
+          fi
+          exit "$gate_status"
+      - name: Preserve failed worker loader and sanitizer diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: presented-worker-loader-diagnostics
+          path: build/diagnostics/presented_worker_loader.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify pinned loader with production negotiated worker
         run: make vgpu-loader-worker-test vgpu-loader-worker-sanitizers
       - name: Verify bounded worker export leases
