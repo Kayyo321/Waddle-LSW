@@ -5,18 +5,36 @@ const c = @cImport({
     @cInclude("vulkan/vulkan.h");
 });
 /// Maximum unique owned feature nodes; no native pointers are retained.
-pub const MaxNodes: usize = 4;
-/// Largest recognized node's boolean extent, matching Vulkan11 features.
-pub const MaxNodeFlags: usize = 12;
+pub const MaxNodes: usize = 8;
+/// Largest recognized node's boolean extent, matching the exact 47 Vulkan12 feature words.
+pub const MaxNodeFlags: usize = 47;
 /// Pinned core Vulkan1.0 feature boolean count; native padding is not wire data.
 pub const CoreFlags: usize = 55;
 /// Owned typed flags; unused entries zero, no heap/pointer ownership, immutable sharing safe.
-pub const node_t = struct { type_tag: u32 = 0, flag_count: u8 = 0, flags: [MaxNodeFlags]u32 = [_]u32{0} ** MaxNodeFlags };
+pub const node_t = struct {
+    /// Owned recognized native structure tag, zero for unused slots.
+    type_tag: u32 = 0,
+    /// Initialized flags extent; bounded by MaxNodeFlags after successful decode.
+    flag_count: u8 = 0,
+    /// Owned Boolean words in native declaration order; unused suffix remains zero.
+    flags: [MaxNodeFlags]u32 = [_]u32{0} ** MaxNodeFlags,
+};
 /// Owned decoded query result; application chain conversion occurs only after successful return.
-pub const result_t = struct { count: u8 = 0, nodes: [MaxNodes]node_t = [_]node_t{.{}} ** MaxNodes, core: [CoreFlags]u32 = [_]u32{0} ** CoreFlags };
+pub const result_t = struct {
+    /// Initialized node extent; bounded by MaxNodes after successful decode.
+    count: u8 = 0,
+    /// Owned nodes in requested forward-chain order; unused suffix remains zero.
+    nodes: [MaxNodes]node_t = [_]node_t{.{}} ** MaxNodes,
+    /// Owned core Boolean words in VkPhysicalDeviceFeatures declaration order.
+    core: [CoreFlags]u32 = [_]u32{0} ** CoreFlags,
+};
 fn flag_count(tag: u32) !u8 {
     return switch (tag) {
         c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES => 12,
+        c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES => 47,
+        c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES => 15,
+        c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT => 3,
+        c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR => 1,
         c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES => 1,
         c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT => 2,
         else => error.Invalid,
@@ -34,11 +52,13 @@ fn validate(tags: []const u32) !usize {
 /// Encode partial feature query. [in] physical_id nonzero translated identity, tags borrowed for call.
 /// Returns owned packet or Invalid for unsupported/duplicate/excess tags; no allocation or locks.
 /// Caller validates negotiated receiver schema and application pointer conversion separately.
+/// Vulkan13 needs the core1.3 parser; robustness2/maintenance5 require explicit mask bits287/471.
+/// Recognition never advertises device/API capabilities or authorizes feature enabling.
 pub fn query(physical_id: u64, tags: []const u32) !render.writer_t {
     if (physical_id == 0) return error.Invalid;
     _ = try validate(tags);
     var writer = render.writer_t{};
-    // Complete capacity proof:36+12*4=84 <=8192, before any checked scalar append.
+    // Complete capacity proof:36+12*8=132 <=8192, before any checked scalar append.
     writer.header(147, physical_id) catch unreachable;
     writer.put(u64, 1) catch unreachable;
     writer.put(u32, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) catch unreachable;
@@ -97,10 +117,11 @@ pub fn decode(bytes: []const u8, tags: []const u32) !result_t {
 // Test-only fixtures.
 extern fn venus_features_test_query([*]const u32, usize, [*]u8) usize;
 extern fn venus_features_test_reply([*]const u32, usize, [*]u8) usize;
-const FixtureTags = [_]u32{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT };
+extern fn venus_features_test_reply_one_hot([*]const u32, usize, usize, [*]u8) usize;
+const FixtureTags = [_]u32{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR };
 test "partial queries and receiver flags match independent pinned encoders" {
     var expected: [4096]u8 = undefined;
-    for (0..5) |count| {
+    for (0..FixtureTags.len + 1) |count| {
         const tags = FixtureTags[0..count];
         const writer = try @call(.never_inline, query, .{ 7, tags });
         const size = venus_features_test_query(tags.ptr, count, &expected);
@@ -117,7 +138,8 @@ test "partial queries and receiver flags match independent pinned encoders" {
         }
         for (0..reply_size) |prefix| try std.testing.expectError(error.Bounds, decode(expected[0..prefix], tags));
     }
-    const reversed = [_]u32{ FixtureTags[3], FixtureTags[2], FixtureTags[1], FixtureTags[0] };
+    var reversed = FixtureTags;
+    std.mem.reverse(u32, &reversed);
     const reply_size = venus_features_test_reply(&reversed, reversed.len, &expected);
     _ = try decode(expected[0..reply_size], &reversed);
     @memset(expected[reply_size..], 0xaa);
@@ -125,7 +147,7 @@ test "partial queries and receiver flags match independent pinned encoders" {
 }
 test "invalid requests and every structural or boolean reply word reject" {
     try std.testing.expectError(error.Invalid, @call(.never_inline, query, .{ 0, &.{} }));
-    for ([_][]const u32{ &.{0}, &.{ FixtureTags[0], FixtureTags[0] }, &.{ FixtureTags[0], FixtureTags[1], FixtureTags[2], FixtureTags[3], 0 } }) |tags| {
+    for ([_][]const u32{ &.{0}, &.{ FixtureTags[0], FixtureTags[0] }, &.{ FixtureTags[0], FixtureTags[1], FixtureTags[2], FixtureTags[3], FixtureTags[4], FixtureTags[5], FixtureTags[6], FixtureTags[7], 0 } }) |tags| {
         try std.testing.expectError(error.Invalid, @call(.never_inline, query, .{ 7, tags }));
         try std.testing.expectError(error.Invalid, decode(&.{}, tags));
     }
@@ -137,5 +159,38 @@ test "invalid requests and every structural or boolean reply word reject" {
         var malformed = bytes;
         std.mem.writeInt(u32, malformed[index * 4 ..][0..4], 99, .little);
         try std.testing.expectError(error.Corrupt, decode(malformed[0..size], &FixtureTags));
+    }
+}
+
+test "each typed standalone and native one-hot feature preserves exact member order" {
+    var bytes: [4096]u8 = undefined;
+    for (FixtureTags) |tag| {
+        const tags = [_]u32{tag};
+        const writer = try query(7, &tags);
+        const query_size = venus_features_test_query(&tags, 1, &bytes);
+        try std.testing.expectEqualSlices(u8, bytes[0..query_size], writer.bytes[0..writer.used]);
+        const flags = try flag_count(tag);
+        for (0..CoreFlags + flags) |enabled| {
+            const size = venus_features_test_reply_one_hot(&tags, 1, enabled, &bytes);
+            const result = try decode(bytes[0..size], &tags);
+            for (result.core, 0..) |value, index| try std.testing.expectEqual(@as(u32, if (index == enabled) 1 else 0), value);
+            for (result.nodes[0].flags[0..flags], 0..) |value, index| try std.testing.expectEqual(@as(u32, if (CoreFlags + index == enabled) 1 else 0), value);
+        }
+    }
+    const size = venus_features_test_reply(&FixtureTags, FixtureTags.len, &bytes);
+    try std.testing.expectEqual(@as(usize, 668), size);
+    for (0..137) |enabled| {
+        const one_hot_size = venus_features_test_reply_one_hot(&FixtureTags, FixtureTags.len, enabled, &bytes);
+        const result = try decode(bytes[0..one_hot_size], &FixtureTags);
+        var position: usize = 0;
+        for (result.core) |value| {
+            try std.testing.expectEqual(@as(u32, if (position == enabled) 1 else 0), value);
+            position += 1;
+        }
+        for (result.nodes) |node| for (node.flags[0..node.flag_count]) |value| {
+            try std.testing.expectEqual(@as(u32, if (position == enabled) 1 else 0), value);
+            position += 1;
+        };
+        try std.testing.expectEqual(@as(usize, 137), position);
     }
 }

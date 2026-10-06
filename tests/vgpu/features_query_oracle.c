@@ -11,14 +11,14 @@
 #pragma GCC diagnostic pop
 /** @brief Encode actual typed native query with the pinned guest generator.
  * @param[in] tags Nonnull borrowed array[count], recognized unique tags,
- * count0..4.
+ * count0..8.
  * @param[in] count Actual accessible tag count.
  * @param[out] bytes Nonnull private4096-byte output, no pointer retention.
  * @return Initialized prefix extent; allocation-free, sole test thread.
  */
 size_t venus_features_test_query(const uint32_t *tags, size_t count,
                                  unsigned char *bytes) {
-  feature_node_t nodes[4];
+  feature_node_t nodes[8];
   feature_nodes_init(nodes, tags, count);
   VkPhysicalDeviceFeatures2 value = {
       .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
