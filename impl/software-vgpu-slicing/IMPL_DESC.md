@@ -1250,3 +1250,54 @@ lifetime using real Linux descriptors under ASan/LSan/UBSan and >=90% receiver
 coverage. These fixtures prove the public SDK ownership adapter, not successful
 hardware DMA-BUF allocation or Wayland rendering. Hardware export and integration
 are separately credited by Task #4's final verification gate.
+
+
+### Standalone guest acceptance scope for Tasks #3/#4
+
+The user reaffirmed standalone mode for this request: develop the user-mode ICD
+DLL and userland WDDM interface stubs with Zig x86_64-windows-gnu cross-compilation,
+Linux mapped-shared-memory/Mesa software fixtures and native windows-2022 CI.
+Physical hypervisor and kernel miniport installation remain downstream user
+acceptance. The Task #3 25% WDDM milestone therefore covers an explicitly named
+userland adapter/context/allocation lifecycle stub and ABI fixtures, not an
+installed kernel display adapter. Full Vulkan/DXVK command support remains an
+independent implementation/verification requirement; software CI is test-only.
+
+### DMA-BUF image layout and feedback validation (Task #4)
+
+The image descriptor is private host data, never a native wire struct. It contains
+u32 width/height/fourcc/plane_count, u64 modifier, four planes each containing u32
+offset/stride and u64 size/extent. Width/height are 1..16384, plane count matches
+supported packed ARGB8888/XRGB8888/ABGR8888/XBGR8888 (one) or NV12 (two, even
+width/height). Unused planes are entirely zero. Each active plane has nonzero
+size/stride, extent 1..one GiB, offset within extent and size <= extent-offset.
+Stride fits signed Wayland dimensions. For linear modifier zero, packed rows
+require width*4 bytes; NV12 both strides require width bytes with height or
+height/2 rows. Last-row bound is (rows-1)*stride+row_bytes <= plane size, using
+u64 checked arithmetic. Nonlinear/implicit modifiers require authoritative
+VkSubresourceLayout size and a matching compositor-advertised format/modifier;
+linear arithmetic cannot establish tiled allocation layout. The validator never
+opens/maps/copies pixel FDs. Plane extent and size must come from the retained
+allocation/query; guest values alone cannot invent allocation capacity.
+
+Linux DMA-BUF feedback table entries are exactly 16 native-endian bytes: u32
+fourcc, u32 zero padding, u64 modifier. This implementation supports the existing
+little-endian x86-64 target only. Tables must be nonempty, a multiple of 16, and
+at most 65536 bytes (4096 entries). Tranche format indices are u16 native-endian,
+nonempty/even-length, at most 8192 bytes; each index must be < table entry count.
+The allocation-free Zig query validates the entire table and tranche before
+returning a match, so a match preceding malformed trailing metadata never masks
+corruption. NULL/range/shape errors return RingInvalid/Corrupt, an absent pair
+returns RingAgain, a valid match returns RingOk. Tables/indices are immutable
+private snapshots, borrowed only for query; no C casts or untrusted pointer
+arithmetic. Unknown fourcc entries are allowed in compositor tables but cannot
+bypass image descriptor validation. Compositor rejection never authorizes CPU
+copy fallback in the Venus zero-copy path.
+
+Tests cover every descriptor field, all supported plane layouts, overflow/end
+bounds, unused planes, implicit/tiled modifier boundaries, NULL/truncated/oversize
+feedback, padding/index corruption, complete validation after early matches and
+all entry-index positions. Zig uses std.testing.allocator for variable test
+buffers, immediate defer, and >=90% production line/branch coverage. Validation
+is separate from receiving feedback, selecting allocation modifiers and importing
+wl_buffers; those are the subsequent Wayland ownership milestone.

@@ -665,7 +665,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     existing AV Wayland client and system Vulkan/Wayland dependencies. WDK/native
     guest access is requested; no driver or full ICD implementation credit.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): export fence-ordered device-memory DMA-BUFs`
+- **Commit `33dd751`**: `feat(vgpu): export fence-ordered device-memory DMA-BUFs`
   - **Task Impact**: +15% to TODO: #4 (+2.25% overall).
   - **Summary**: Add Linux public-ABI export of registered shareable device memory
     after CPU and explicit GPU fence retirement, independent CLOEXEC FD ownership,
@@ -675,3 +675,10 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Faults include acquired-FD SDK error, opaque/SHM rejection, invalid metadata,
     CLOEXEC get/set failure, pending/poisoned fences, 128 export/close cycles and
     exported FD survival after ledger free. Hardware export is a separate gate.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify image layout and feedback validation`
+  - **Task Impact**: +0% to TODO: #3; +0% to TODO: #4 (+0% overall).
+  - **Summary**: Record reaffirmed userland WDDM/standalone acceptance scope and
+    bounded packed/NV12 plane and complete-feedback-table validation contracts.
+  - **Verification**: Checked system linux-dmabuf protocol table/index schema;
+    preserve separate import/allocation/descriptor-handoff acceptance gates.
