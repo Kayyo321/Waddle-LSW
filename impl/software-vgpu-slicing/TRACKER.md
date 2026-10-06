@@ -1227,9 +1227,17 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Full ICD/device/API/DXVK acceptance remains required; no helper milestone credit.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify standalone ICD instance lifecycle`
+- **Commit `f757c40`**: `docs(vgpu): specify standalone ICD instance lifecycle`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Define loader export aliases, serialized borrowed frontend,
     registry-backed instance/physical dispatch, count/fill caching and sticky loss.
   - **Verification**: Reviewed lifecycle against existing command, object and wire
     contracts; public device/API/DXVK acceptance remains pending.
+
+
+- **Commit (current; resolve by subject)**: `refactor(vgpu): format physical query wire fixtures`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Expand long Zig signatures/calls and fixture records with explicit
+    trailing commas to preserve the100-column limit under zig fmt.
+  - **Verification**: Query request/oracle and allocator tests pass; prior behavior
+    and production coverage remain unchanged. No runtime milestone credit.

@@ -37,7 +37,8 @@ fn output_valid(bytes: ?[*]u8, capacity: usize, written: ?*usize) bool {
 fn ids_valid(ids: ?[*]const u64, count: u32) bool {
     if (count > MaxDevices or (ids == null) != (count == 0)) return false;
     if (ids) |values| {
-        if (@intFromPtr(values) > std.math.maxInt(usize) - @as(usize, count) * @sizeOf(u64)) return false;
+        const id_bytes = @as(usize, count) * @sizeOf(u64);
+        if (@intFromPtr(values) > std.math.maxInt(usize) - id_bytes) return false;
         for (values[0..count], 0..) |id, index| {
             if (id == 0) return false;
             for (values[0..index]) |previous| if (previous == id) return false;
@@ -152,7 +153,14 @@ export fn venus_query_wire_fixed(
 // Test-only fixtures.
 extern fn venus_query_test_encode(u32, u64, ?[*]const u64, u32, [*]u8, usize) usize;
 const fixture_t = struct {
-    fn enumerate(id: u64, ids: ?[*]const u64, count: u32, bytes: ?[*]u8, capacity: usize, written: ?*usize) c_int {
+    fn enumerate(
+        id: u64,
+        ids: ?[*]const u64,
+        count: u32,
+        bytes: ?[*]u8,
+        capacity: usize,
+        written: ?*usize,
+    ) c_int {
         var target: *const @TypeOf(venus_query_wire_enumerate) = venus_query_wire_enumerate;
         return @as(*volatile @TypeOf(target), &target).*(id, ids, count, bytes, capacity, written);
     }
@@ -160,10 +168,24 @@ const fixture_t = struct {
         var target: *const @TypeOf(venus_query_wire_fixed) = venus_query_wire_fixed;
         return @as(*volatile @TypeOf(target), &target).*(command, id, bytes, capacity, written);
     }
-    fn reply(result: ?*i32, count: ?*u32, ids: ?[*]const u64, capacity: u32, bytes: ?[*]const u8, length: usize) c_int {
+    fn reply(
+        result: ?*i32,
+        count: ?*u32,
+        ids: ?[*]const u64,
+        capacity: u32,
+        bytes: ?[*]const u8,
+        length: usize,
+    ) c_int {
         var target: *const @TypeOf(venus_query_wire_enumerate_reply) =
             venus_query_wire_enumerate_reply;
-        return @as(*volatile @TypeOf(target), &target).*(result, count, ids, capacity, bytes, length);
+        return @as(*volatile @TypeOf(target), &target).*(
+            result,
+            count,
+            ids,
+            capacity,
+            bytes,
+            length,
+        );
     }
     fn packet(result: i32, count: u32, array_count: u64, ids: []const u64) writer_t {
         var writer = writer_t{};
@@ -186,13 +208,26 @@ test "requests match independent immutable guest generator" {
     var written: usize = 99;
     for (0..MaxDevices + 1) |count| {
         const values: ?[*]const u64 = if (count == 0) null else &ids;
-        try std.testing.expectEqual(c.RingOk, fixture_t.enumerate(1, values, @intCast(count), bytes.ptr, bytes.len, &written));
-        const size = venus_query_test_encode(2, 1, values, @intCast(count), expected.ptr, expected.len);
+        try std.testing.expectEqual(
+            c.RingOk,
+            fixture_t.enumerate(1, values, @intCast(count), bytes.ptr, bytes.len, &written),
+        );
+        const size = venus_query_test_encode(
+            2,
+            1,
+            values,
+            @intCast(count),
+            expected.ptr,
+            expected.len,
+        );
         try std.testing.expectEqual(size, written);
         try std.testing.expectEqualSlices(u8, expected[0..size], bytes[0..written]);
     }
     for ([_]u32{ 3, 6, 8 }) |command| {
-        try std.testing.expectEqual(c.RingOk, fixture_t.fixed(command, 2, bytes.ptr, bytes.len, &written));
+        try std.testing.expectEqual(
+            c.RingOk,
+            fixture_t.fixed(command, 2, bytes.ptr, bytes.len, &written),
+        );
         const size = venus_query_test_encode(command, 2, null, 0, expected.ptr, expected.len);
         try std.testing.expectEqual(size, written);
         try std.testing.expectEqualSlices(u8, expected[0..size], bytes[0..written]);
@@ -204,20 +239,34 @@ test "every reply prefix identity and malformed result preserves outputs" {
     var count: u32 = 99;
     for ([_]i32{ 0, 5, -1 }) |native_result| {
         const fill = native_result >= 0;
-        var packet = fixture_t.packet(native_result, if (fill) 2 else 0, if (fill) 2 else 0, if (fill) &ids else &.{});
+        var packet = fixture_t.packet(
+            native_result,
+            if (fill) 2 else 0,
+            if (fill) 2 else 0,
+            if (fill) &ids else &.{},
+        );
         for (0..packet.used) |length| {
             result = 99;
             count = 99;
-            try std.testing.expectEqual(c.RingCorrupt, fixture_t.reply(&result, &count, &ids, 2, &packet.bytes, length));
+            try std.testing.expectEqual(
+                c.RingCorrupt,
+                fixture_t.reply(&result, &count, &ids, 2, &packet.bytes, length),
+            );
             try std.testing.expectEqual(@as(i32, 99), result);
             try std.testing.expectEqual(@as(u32, 99), count);
         }
-        try std.testing.expectEqual(c.RingOk, fixture_t.reply(&result, &count, &ids, 2, &packet.bytes, packet.used));
+        try std.testing.expectEqual(
+            c.RingOk,
+            fixture_t.reply(&result, &count, &ids, 2, &packet.bytes, packet.used),
+        );
         try std.testing.expectEqual(native_result, result);
     }
     for ([_]u32{ 0, 16 }) |number| {
         var packet = fixture_t.packet(0, number, 0, &.{});
-        try std.testing.expectEqual(c.RingOk, fixture_t.reply(&result, &count, null, 0, &packet.bytes, packet.used));
+        try std.testing.expectEqual(
+            c.RingOk,
+            fixture_t.reply(&result, &count, null, 0, &packet.bytes, packet.used),
+        );
         try std.testing.expectEqual(number, count);
     }
     const mutations = [_]struct { offset: usize, value: u8, fill: bool }{
@@ -228,17 +277,35 @@ test "every reply prefix identity and malformed result preserves outputs" {
         .{ .offset = 4, .value = 5, .fill = false },
     };
     for (mutations) |mutation| {
-        var packet = fixture_t.packet(0, if (mutation.fill) 2 else 0, if (mutation.fill) 2 else 0, if (mutation.fill) &ids else &.{});
+        var packet = fixture_t.packet(
+            0,
+            if (mutation.fill) 2 else 0,
+            if (mutation.fill) 2 else 0,
+            if (mutation.fill) &ids else &.{},
+        );
         packet.bytes[mutation.offset] = mutation.value;
         result = 99;
         count = 99;
-        try std.testing.expectEqual(c.RingCorrupt, fixture_t.reply(&result, &count, if (mutation.fill) &ids else null, if (mutation.fill) 2 else 0, &packet.bytes, packet.used));
+        try std.testing.expectEqual(
+            c.RingCorrupt,
+            fixture_t.reply(
+                &result,
+                &count,
+                if (mutation.fill) &ids else null,
+                if (mutation.fill) 2 else 0,
+                &packet.bytes,
+                packet.used,
+            ),
+        );
         try std.testing.expectEqual(@as(i32, 99), result);
         try std.testing.expectEqual(@as(u32, 99), count);
     }
     for ([_]bool{ false, true }) |array| {
         var packet = fixture_t.packet(-1, if (array) 0 else 1, if (array) 1 else 0, &.{});
-        try std.testing.expectEqual(c.RingCorrupt, fixture_t.reply(&result, &count, &ids, 2, &packet.bytes, packet.used));
+        try std.testing.expectEqual(
+            c.RingCorrupt,
+            fixture_t.reply(&result, &count, &ids, 2, &packet.bytes, packet.used),
+        );
     }
 }
 test "local invalid bounds identities capacity and aliases preserve storage" {
@@ -246,31 +313,135 @@ test "local invalid bounds identities capacity and aliases preserve storage" {
     @memset(&bytes, 0xa5);
     var written: usize = 99;
     var ids = [_]u64{ 2, 3 };
-    const invalid = [_]struct { id: u64, ids: ?[*]const u64, count: u32, bytes: ?[*]u8, capacity: usize, written: ?*usize }{
-        .{ .id = 0, .ids = null, .count = 0, .bytes = &bytes, .capacity = 256, .written = &written },
-        .{ .id = 1, .ids = null, .count = 1, .bytes = &bytes, .capacity = 256, .written = &written },
-        .{ .id = 1, .ids = &ids, .count = 0, .bytes = &bytes, .capacity = 256, .written = &written },
-        .{ .id = 1, .ids = &ids, .count = 17, .bytes = &bytes, .capacity = 256, .written = &written },
-        .{ .id = 2, .ids = &ids, .count = 2, .bytes = &bytes, .capacity = 256, .written = &written },
+    const invalid = [_]struct {
+        id: u64,
+        ids: ?[*]const u64,
+        count: u32,
+        bytes: ?[*]u8,
+        capacity: usize,
+        written: ?*usize,
+    }{
+        .{
+            .id = 0,
+            .ids = null,
+            .count = 0,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
+        .{
+            .id = 1,
+            .ids = null,
+            .count = 1,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
+        .{
+            .id = 1,
+            .ids = &ids,
+            .count = 0,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
+        .{
+            .id = 1,
+            .ids = &ids,
+            .count = 17,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
+        .{
+            .id = 2,
+            .ids = &ids,
+            .count = 2,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
         .{ .id = 1, .ids = null, .count = 0, .bytes = null, .capacity = 256, .written = &written },
         .{ .id = 1, .ids = null, .count = 0, .bytes = &bytes, .capacity = 7, .written = &written },
-        .{ .id = 1, .ids = null, .count = 0, .bytes = &bytes, .capacity = MaxBytes + 1, .written = &written },
+        .{
+            .id = 1,
+            .ids = null,
+            .count = 0,
+            .bytes = &bytes,
+            .capacity = MaxBytes + 1,
+            .written = &written,
+        },
         .{ .id = 1, .ids = null, .count = 0, .bytes = &bytes, .capacity = 256, .written = null },
-        .{ .id = 1, .ids = null, .count = 0, .bytes = &bytes, .capacity = 256, .written = @ptrCast(&bytes) },
-        .{ .id = 1, .ids = @ptrCast(&bytes), .count = 2, .bytes = &bytes, .capacity = 256, .written = &written },
-        .{ .id = 1, .ids = @ptrCast(&written), .count = 1, .bytes = &bytes, .capacity = 256, .written = &written },
-        .{ .id = 1, .ids = @ptrFromInt(std.math.maxInt(usize) - 7), .count = 2, .bytes = &bytes, .capacity = 256, .written = &written },
-        .{ .id = 1, .ids = null, .count = 0, .bytes = @ptrFromInt(std.math.maxInt(usize) - 3), .capacity = 8, .written = &written },
-        .{ .id = 1, .ids = null, .count = 0, .bytes = &bytes, .capacity = 256, .written = @ptrFromInt(std.math.maxInt(usize) - 7) },
+        .{
+            .id = 1,
+            .ids = null,
+            .count = 0,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = @ptrCast(&bytes),
+        },
+        .{
+            .id = 1,
+            .ids = @ptrCast(&bytes),
+            .count = 2,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
+        .{
+            .id = 1,
+            .ids = @ptrCast(&written),
+            .count = 1,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
+        .{
+            .id = 1,
+            .ids = @ptrFromInt(std.math.maxInt(usize) - 7),
+            .count = 2,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = &written,
+        },
+        .{
+            .id = 1,
+            .ids = null,
+            .count = 0,
+            .bytes = @ptrFromInt(std.math.maxInt(usize) - 3),
+            .capacity = 8,
+            .written = &written,
+        },
+        .{
+            .id = 1,
+            .ids = null,
+            .count = 0,
+            .bytes = &bytes,
+            .capacity = 256,
+            .written = @ptrFromInt(std.math.maxInt(usize) - 7),
+        },
     };
     for (invalid) |entry| {
-        try std.testing.expectEqual(c.RingInvalid, fixture_t.enumerate(entry.id, entry.ids, entry.count, entry.bytes, entry.capacity, entry.written));
+        try std.testing.expectEqual(
+            c.RingInvalid,
+            fixture_t.enumerate(
+                entry.id,
+                entry.ids,
+                entry.count,
+                entry.bytes,
+                entry.capacity,
+                entry.written,
+            ),
+        );
         try std.testing.expectEqual(@as(usize, 99), written);
         for (bytes) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
     }
     for ([_]u64{ 0, 3 }) |bad| {
         ids[0] = bad;
-        try std.testing.expectEqual(c.RingInvalid, fixture_t.enumerate(1, &ids, 2, &bytes, 256, &written));
+        try std.testing.expectEqual(
+            c.RingInvalid,
+            fixture_t.enumerate(1, &ids, 2, &bytes, 256, &written),
+        );
     }
     ids[0] = 2;
     try std.testing.expectEqual(c.RingLimit, fixture_t.enumerate(1, &ids, 2, &bytes, 8, &written));
@@ -284,14 +455,38 @@ test "local invalid bounds identities capacity and aliases preserve storage" {
     try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(null, &count, null, 0, &bytes, 28));
     try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, null, null, 0, &bytes, 28));
     try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, &count, null, 0, null, 28));
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, &count, null, 0, &bytes, MaxBytes + 1));
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, &count, null, 1, &bytes, 28));
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, @ptrCast(&result), null, 0, &bytes, 28));
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(@ptrCast(&bytes), &count, null, 0, &bytes, 28));
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, @ptrCast(&bytes), null, 0, &bytes, 28));
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(@ptrCast(&ids), &count, &ids, 1, &bytes, 28));
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, @ptrCast(&ids), &ids, 1, &bytes, 28));
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(&result, &count, null, 0, &bytes, MaxBytes + 1),
+    );
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(&result, &count, null, 1, &bytes, 28),
+    );
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(&result, @ptrCast(&result), null, 0, &bytes, 28),
+    );
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(@ptrCast(&bytes), &count, null, 0, &bytes, 28),
+    );
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(&result, @ptrCast(&bytes), null, 0, &bytes, 28),
+    );
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(@ptrCast(&ids), &count, &ids, 1, &bytes, 28),
+    );
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(&result, @ptrCast(&ids), &ids, 1, &bytes, 28),
+    );
     @memset(&bytes, 0);
     bytes[0] = 2;
-    try std.testing.expectEqual(c.RingInvalid, fixture_t.reply(&result, &count, @ptrCast(&bytes), 1, &bytes, 28));
+    try std.testing.expectEqual(
+        c.RingInvalid,
+        fixture_t.reply(&result, &count, @ptrCast(&bytes), 1, &bytes, 28),
+    );
 }
