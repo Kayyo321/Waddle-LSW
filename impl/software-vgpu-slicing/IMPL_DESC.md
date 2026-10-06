@@ -1632,3 +1632,7 @@ path plus software-Vulkan queue regression; hosted CI has no required hardware G
 Physical compositor/hypervisor acceptance remains downstream. This meets the 10%
 hardware image/export plus native mock verification gate, independently of the
 still-pending production worker service and guest release acknowledgement path.
+
+Surface callback lookup also rejects zero explicitly before comparing ledger entries;
+zero denotes an empty slot and must never report a false completion. The fixture
+checks both zero and unmatched nonzero callback identities without releasing metadata.

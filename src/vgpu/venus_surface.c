@@ -27,7 +27,7 @@ static void finish_pending(venus_surface_t *owner, venus_ring_status_t status) {
 static void presented(void *context, uint64_t frame, venus_ring_status_t status) {
     venus_surface_t *owner = context;
     for (size_t index = 0; index < 3; index++) {
-        if (owner->accepted[index].frame == frame) {
+        if (frame && owner->accepted[index].frame == frame) {
             venus_frame_t completed = owner->accepted[index];
             memset(&owner->accepted[index], 0, sizeof(owner->accepted[index]));
             if (status == RingCorrupt || status == RingClosed)

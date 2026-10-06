@@ -818,7 +818,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     this owner and passes normal/sanitized runs. Worker export service and guest
     release acknowledgement delivery remain pending, as does hardware image export.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): present rendered Venus hardware images through native Wayland`
+- **Commit `44f05d8`**: `test(vgpu): present rendered Venus hardware images through native Wayland`
   - **Task Impact**: +10% to TODO: #4 (+1.5% overall).
   - **Summary**: Allocate/bind linear external-memory BGRA8 image through bounded
     Venus packets, clear on the real GPU, release external ownership, retire fence,
@@ -829,3 +829,10 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     real queue and native mock normal/sanitized regressions pass. CI compiles the
     hardware fixture; physical compositor scanout/pixel readback is not claimed.
     Production worker export and guest release acknowledgement remain pending.
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): reject zero surface completion identities`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Keep empty accepted-ledger entries from matching zero callback IDs.
+  - **Verification**: Zero and unmatched nonzero callbacks prohibit further receives
+    without reporting a completion; production line/branch coverage remains 100%,
+    ASan/LSan/UBSan and native hardware/Wayland fixture pass.

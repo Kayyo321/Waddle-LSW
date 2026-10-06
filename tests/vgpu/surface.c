@@ -176,6 +176,12 @@ int main(void) {
         assert(venus_surface_free(&owner) == RingOk);
     }
     assert(create_owner(&owner) == RingOk);
+    unsigned saved_count = completed_count;
+    completion(completion_context, 0, RingOk); // Empty slots cannot match a zero identity.
+    assert(completed_count == saved_count);
+    assert(venus_surface_poll(owner) == RingCorrupt);
+    assert(venus_surface_free(&owner) == RingOk);
+    assert(create_owner(&owner) == RingOk);
     completion(completion_context, UINT64_MAX, RingOk); // Internal identity violation.
     assert(venus_surface_poll(owner) == RingCorrupt);
     assert(venus_surface_free(&owner) == RingOk);
