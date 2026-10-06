@@ -2943,6 +2943,58 @@ fn bind_pipeline(command_buffer: c.VkCommandBuffer, point: u32, pipeline: c.VkPi
     command_profile(record).pipeline = target.?.handle;
     command_reference(state, target.?);
 }
+/// Bind copied-definition-compatible static buffer descriptor sets, including before pipeline binding.
+/// [in] command/layout/set tokens borrowed; count1..16-first; sets must be nonnull.
+/// [in] dynamic_count must be zero; dynamic_offsets borrowed unused, rejected before dereference.
+/// Void; invalid recordings invalidate. Mutex serialized, allocation-free; owns copied definitions.
+fn bind_descriptor_sets(command_buffer: c.VkCommandBuffer, point: u32, layout: c.VkPipelineLayout, first: u32, count: u32, sets: [*c]const c.VkDescriptorSet, dynamic_count: u32, dynamic_offsets: [*c]const u32) callconv(.C) void {
+    _ = dynamic_offsets;
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    if (point != 1 or first >= 16 or count == 0 or count > 16 - first or dynamic_count != 0 or (count != 0 and sets == null) or layout == null) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const layout_record = child_object(@intFromPtr(layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const definition = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(layout_record).profile_index).?;
+    if (first + count > definition.set_count) {
+        state.command_state = .Invalid;
+        return;
+    }
+    var targets: [16]*c.venus_object_t = undefined;
+    var ids: [16]u64 = undefined;
+    var tokens: [16]u64 = undefined;
+    if (count != 0) for (sets[0..count], 0..) |handle, index| {
+        const target = descriptor_set_for(handle, pool.parent_id) orelse {
+            state.command_state = .Invalid;
+            return;
+        };
+        const profile = profiles.get_profile(&profile_registry.sets, resource_state(target).profile_index).?;
+        if (!std.meta.eql(profile.layout, definition.sets[first + index])) {
+            state.command_state = .Invalid;
+            return;
+        }
+        for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| if (binding.descriptor_type != 6 and binding.descriptor_type != 7) {
+            state.command_state = .Invalid;
+            return;
+        };
+        targets[index] = target;
+        ids[index] = target.id;
+        tokens[index] = target.handle;
+    };
+    const writer = compute_wire.bind_descriptor_sets(record.id, layout_record.id, point, first, ids[0..count], &.{}) catch unreachable;
+    if (!command_acknowledged(&writer, 103)) return;
+    compute_state.bind_sets(command_profile(record), definition, first, tokens[0..count]) catch unreachable;
+    for (targets[0..count]) |target| command_reference(state, target);
+}
 /// Record a bounded fill of a private device buffer; CPU acknowledgment only.
 /// @param[in] command_buffer Nullable private borrowed handle; invalid states ignored.
 /// @param[in] buffer Nullable same-device bound TRANSFER_DST token, no ownership transfer.
@@ -3767,6 +3819,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkFreeCommandBuffers", &free_command_buffers },
         .{ "vkBeginCommandBuffer", &begin_command_buffer },
         .{ "vkCmdBindPipeline", &bind_pipeline },
+        .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
         .{ "vkCmdFillBuffer", &fill_buffer },
         .{ "vkCmdCopyBuffer", &copy_buffer },
         .{ "vkCmdUpdateBuffer", &update_buffer },
