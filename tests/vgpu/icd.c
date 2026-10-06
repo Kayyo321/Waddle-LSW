@@ -3800,20 +3800,30 @@ static void command_buffer_contract(void) {
         assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
         release(device, pool, 2, buffers);
         if (scenario == 15) {
-            VkCommandBuffer batches[8][64];
+            /* Fixed command metadata quota: reset scrubs bindings without refunding live owners. */
+            VkCommandBuffer batch[64], extra[2] = {0};
             info.commandBufferCount = 64;
-            for (unsigned index = 0; index < 7; index++)
-                assert(allocate(device, &info, batches[index]) == VK_SUCCESS);
-            submissions = fixture.submissions;
-            assert(allocate(device, &info, batches[7]) == VK_ERROR_OUT_OF_HOST_MEMORY);
-            assert(fixture.submissions == submissions);
-            for (unsigned index = 0; index < 64; index++) assert(!batches[7][index]);
-            info.commandBufferCount = 55;
-            assert(allocate(device, &info, batches[7]) == VK_SUCCESS);
+            assert(allocate(device, &info, batch) == VK_SUCCESS);
             info.commandBufferCount = 1;
-            assert(allocate(device, &info, buffers) == VK_ERROR_OUT_OF_HOST_MEMORY && !buffers[0]);
-            for (unsigned index = 0; index < 7; index++) release(device, pool, 64, batches[index]);
-            release(device, pool, 55, batches[7]);
+            submissions = fixture.submissions;
+            assert(allocate(device, &info, extra) == VK_ERROR_OUT_OF_HOST_MEMORY && !extra[0]);
+            assert(fixture.submissions == submissions);
+            assert(reset_pool(device, pool, 0) == VK_SUCCESS);
+            assert(reset(batch[0], 0) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            assert(allocate(device, &info, extra) == VK_ERROR_OUT_OF_HOST_MEMORY && !extra[0]);
+            assert(fixture.submissions == submissions);
+            release(device, pool, 1, batch);
+            info.commandBufferCount = 2;
+            assert(allocate(device, &info, extra) == VK_ERROR_OUT_OF_HOST_MEMORY && !extra[0] && !extra[1]);
+            /* Partial metadata reservations from the failed two-owner allocation are refunded. */
+            info.commandBufferCount = 1;
+            assert(allocate(device, &info, extra) == VK_SUCCESS && extra[0]);
+            release(device, pool, 1, extra);
+            release(device, pool, 63, batch + 1);
+            info.commandBufferCount = 64;
+            assert(allocate(device, &info, batch) == VK_SUCCESS);
+            release(device, pool, 64, batch);
         }
         info.commandBufferCount = 2; info.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
         assert(allocate(device, &info, buffers) == VK_SUCCESS);

@@ -2,6 +2,8 @@
 const std = @import("std");
 const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
+const compute_state = @import("venus_compute_state.zig");
+var command_registry = compute_state.registry_t{};
 var profile_registry = profiles.registry_t{};
 // Mutex-owned230400-byte batch staging; no native pointers, scrubbed after every call and abandon.
 var descriptor_allocation_snapshots = [_]profiles.descriptor_set_t{.{}} ** 64;
@@ -45,6 +47,7 @@ const resource_state_t = struct {
     id: u64 = 0,
     profile_index: u8 = 0,
     pipeline_bind_point: u32 = 0,
+    command_profile_index: u8 = 0,
     descriptor_max_sets: u32 = 0,
     descriptor_live_sets: u32 = 0,
     descriptor_capacity: [11]u32 = [_]u32{0} ** 11,
@@ -160,6 +163,7 @@ fn clear() void {
     ring_slots = [_]bool{false} ** 64;
     gpu_fences = [_]u64{0} ** 64;
     profile_registry = .{};
+    command_registry = .{};
     @memset(&descriptor_allocation_snapshots, .{});
     @memset(&descriptor_update_snapshots, .{});
     @memset(std.mem.asBytes(&descriptor_wire_buffers), 0);
@@ -2577,6 +2581,7 @@ fn destroy_command_pool(
         return;
     }
     for (&slots, 0..) |*child, index| if (child.parent_id == record.id) {
+        release_command_profile(&resource_states[index]);
         resource_states[index] = .{};
         std.debug.assert(
             c.venus_objects_release(
@@ -2630,6 +2635,7 @@ fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) cal
         resource_states[index].command_state = .Initial;
         resource_states[index].command_flags = 0;
         resource_states[index].buffer_references = [_]u64{0} ** 8;
+        reset_command_profile(&resource_states[index]);
     };
     return result;
 }
@@ -2637,6 +2643,14 @@ fn command_pool_for(record: *const c.venus_object_t) ?*c.venus_object_t {
     for (&slots) |*slot|
         if (slot.id == record.parent_id and slot.kind == c.VK_OBJECT_TYPE_COMMAND_POOL) return slot;
     return null;
+}
+// Successful reset retains the live command reservation, only scrubbing its binding definitions.
+fn reset_command_profile(state: *const resource_state_t) void {
+    if (state.command_profile_index != 0) profiles.get_profile(&command_registry.commands, state.command_profile_index).?.* = .{};
+}
+// Successful native retirement refunds metadata; internal legacy test records may own no profile.
+fn release_command_profile(state: *const resource_state_t) void {
+    if (state.command_profile_index != 0) std.debug.assert(profiles.release_slot(&command_registry.commands, state.command_profile_index));
 }
 fn command_buffers_reply(bytes: []const u8, ids: []const u64) !c_int {
     var reader = reader_t{ .bytes = bytes };
@@ -2656,6 +2670,7 @@ fn command_buffers_reply(bytes: []const u8, ids: []const u64) !c_int {
 /// @return Host result, local initialization/exhaustion or sticky device loss.
 /// @note Allocation-free and mutex serialized; count>64 leaves output untouched.
 /// Records are pool-owned, published only after all exact host IDs validate.
+/// A fixed64 global metadata quota is reserved before native allocation; resets retain that quota.
 fn allocate_command_buffers(
     device: c.VkDevice,
     info: [*c]const c.VkCommandBufferAllocateInfo,
@@ -2682,6 +2697,14 @@ fn allocate_command_buffers(
         parent.id,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var metadata_indices: [64]u8 = undefined;
+    var metadata_count: usize = 0;
+    while (metadata_count < count) : (metadata_count += 1) {
+        metadata_indices[metadata_count] = profiles.reserve_slot(&command_registry.commands, compute_state.command_profile_t{}) catch {
+            for (metadata_indices[0..metadata_count]) |index| std.debug.assert(profiles.release_slot(&command_registry.commands, index));
+            return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        };
+    }
     var records: [64][*c]c.venus_object_t = undefined;
     var ids: [64]u64 = undefined;
     var reserved: usize = 0;
@@ -2700,6 +2723,7 @@ fn allocate_command_buffers(
                 c.VK_OBJECT_TYPE_COMMAND_BUFFER,
                 1,
             );
+            for (metadata_indices[0..count]) |index| std.debug.assert(profiles.release_slot(&command_registry.commands, index));
             return c.VK_ERROR_OUT_OF_HOST_MEMORY;
         }
         records[reserved] = record;
@@ -2725,10 +2749,11 @@ fn allocate_command_buffers(
             c.VK_OBJECT_TYPE_COMMAND_BUFFER,
             1,
         );
+        for (metadata_indices[0..count]) |index| std.debug.assert(profiles.release_slot(&command_registry.commands, index));
         return result;
     }
     for (records[0..count], 0..) |record, index| {
-        resource_state(record).* = .{ .id = record.*.id, .command_level = native_info.level };
+        resource_state(record).* = .{ .id = record.*.id, .command_level = native_info.level, .command_profile_index = metadata_indices[index] };
         output[index] = @ptrFromInt(record.*.handle);
     }
     return c.VK_SUCCESS;
@@ -2781,6 +2806,7 @@ fn free_command_buffers(
         return;
     }
     for (records[0..count]) |record| {
+        release_command_profile(resource_state(record));
         resource_state(record).* = .{};
         std.debug.assert(
             c.venus_objects_release(
@@ -2852,6 +2878,7 @@ fn begin_command_buffer(
         state.command_state = .Recording;
         state.command_flags = info.*.flags;
         state.buffer_references = [_]u64{0} ** 8;
+        reset_command_profile(state);
     } else if (lost == c.RingOk) state.command_state = .Invalid;
     return result;
 }
@@ -3298,6 +3325,7 @@ fn reset_command_buffer(buffer: c.VkCommandBuffer, flags: u32) callconv(.C) c_in
         resource_state(record).command_state = .Initial;
         resource_state(record).command_flags = 0;
         resource_state(record).buffer_references = [_]u64{0} ** 8;
+        reset_command_profile(resource_state(record));
     }
     return result;
 }
