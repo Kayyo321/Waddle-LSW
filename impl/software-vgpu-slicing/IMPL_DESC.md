@@ -991,3 +991,33 @@ they interpose system getauxval and invalidate program-header/page metadata.
 Regression fixtures link each distinct runtime/receiver object set and require
 nonzero AT_PHDR/AT_PHNUM plus AT_PAGESZ matching sysconf. Windows target objects
 retain their existing ABI/compiler options.
+
+### GPU command execution and timestamp output verification
+
+The workload part of the hardware gate records and executes actual timestamp
+commands on the previously associated queue. Require queue timestampValidBits
+in 1..64 as well as graphics/compute support. Allocate one primary command buffer
+from a queue-family command pool and one timestamp query pool with two slots.
+Record CmdResetQueryPool for both slots, CmdWriteTimestamp at TOP_OF_PIPE (slot 0)
+and BOTTOM_OF_PIPE (slot 1), then end the buffer. Submit that command buffer,
+complete the CPU reply, and wait for the corresponding GPU fence before reading
+query results. Repeat three completed submissions, resetting queries on each run.
+
+GetQueryPoolResults requests 32 bytes, stride 16, flags 64_BIT|WITH_AVAILABILITY,
+without WAIT. Its reply must contain command identity, VK_SUCCESS, a u64 blob
+extent exactly 32, then four little-endian u64 values: timestamp 0, availability 0,
+timestamp 1, availability 1. Require both availability values nonzero. Mask both
+timestamps to timestampValidBits; modular delta must be less than half the
+valid-bit counter range, including the 64-bit case without an overflowing shift.
+The output proves that GPU commands executed after reset and completed before
+host query access. It does not prove shader, presentation or compute API correctness;
+those remain in their separate guest/DMA-BUF/OpenCL tasks.
+
+All query parsing uses private bounded Zig slices; no mapped device memory or
+exported fd is introduced by this fixture. Destroy command pool (releasing its
+command buffer), query pool, device and instance after queue quiescence. Receiver
+teardown releases partial SDK objects on error. Test malformed/truncated result
+blobs, unavailable queries, invalid counter widths, wrapped counters and out-of-
+order deltas with std.testing.allocator. Hardware-required and software CI normal
+and owned-C sanitizer runs retain the existing five-second polling and whole-test
+30-second guards. No hardware workload progress is credited before those gates pass.

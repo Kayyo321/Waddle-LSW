@@ -515,7 +515,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Summary**: Preserve separate README and application image changes staged
     concurrently; no vGPU implementation credit.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): execute real Venus queue bootstrap`
+- **Commit `a54d571`**: `test(vgpu): execute real Venus queue bootstrap`
   - **Task Impact**: +0% to TODO: #2 (+0% overall); hardware bootstrap 2%
     gate awaits current CI before credit. Actual GPU workload output remains pending.
   - **Summary**: Add bounded Zig command/reply fixture for instance/device/family
@@ -528,3 +528,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     remains above 90%; Linux CI installs a system software Vulkan test driver.
     Production worker cancellation CI passed at `035c2e2` in run `37396744418`,
     and acceptance tracker CI passed at `2ac629b` in run `37397026658`.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): define GPU timestamp workload verification`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Specify real recorded command submission and GPU-written query
+    output checks, bounded blob parsing, availability/modular counter rules and
+    quiescent query/command ownership. Keep graphics/compute/presentation tasks separate.
