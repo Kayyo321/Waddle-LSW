@@ -9,8 +9,8 @@ pub const push_profile_t = struct {
     count: usize = 0,
     /// Owned complete range definition used for this stage's most recent writes.
     ranges: [profiles.MaxPushRanges]profiles.push_range_t = [_]profiles.push_range_t{.{}} ** profiles.MaxPushRanges,
-    /// Initialized byte bitmap for core128 push bytes, no pointers or allocation.
-    initialized: [2]u64 = .{ 0, 0 },
+    /// Initialized byte bitmap for bounded256 push bytes, no pointers or allocation.
+    initialized: [4]u64 = .{ 0, 0, 0, 0 },
 };
 /// Owned command bindings, scrubbed after successful reset or native command retirement.
 pub const command_profile_t = struct {
@@ -81,11 +81,11 @@ pub fn bind_sets(state: *command_profile_t, layout: *const profiles.pipeline_lay
 }
 /// Record acknowledged push writes independently of pipeline binding order.
 /// [in,out] state exclusive; [in] layout normalized borrowed definition copied by value.
-/// [in] stages positive core mask, offset/size aligned and inside128 bytes.
+/// [in] stages positive core mask, offset/size aligned and inside256 bytes.
 /// Returns Invalid before mutation if any requested stage lacks whole range coverage.
 /// A changed full push definition clears that stage's old initialized-byte bitmap.
 pub fn push_bytes(state: *command_profile_t, layout: *const profiles.pipeline_layout_t, stages: u32, offset: u32, size: u32) !void {
-    if (stages == 0 or stages & ~@as(u32, 0x3f) != 0 or offset % 4 != 0 or size == 0 or size % 4 != 0 or offset > 128 or size > 128 - offset) return error.Invalid;
+    if (stages == 0 or stages & ~@as(u32, 0x3f) != 0 or offset % 4 != 0 or size == 0 or size % 4 != 0 or offset > profiles.MaxPushBytes or size > profiles.MaxPushBytes - offset) return error.Invalid;
     var covered: u32 = 0;
     for (layout.pushes[0..layout.push_count]) |range| if (offset >= range.offset and size <= range.size and offset - range.offset <= range.size - size) {
         covered |= range.stage_flags;
@@ -98,7 +98,7 @@ pub fn push_bytes(state: *command_profile_t, layout: *const profiles.pipeline_la
             compatible = false;
             break;
         };
-        if (!compatible) push.initialized = .{ 0, 0 };
+        if (!compatible) push.initialized = .{ 0, 0, 0, 0 };
         push.count = layout.push_count;
         push.ranges = layout.pushes;
         for (offset..offset + size) |byte| push.initialized[byte / 64] |= @as(u64, 1) << @as(u6, @intCast(byte % 64));
@@ -310,4 +310,25 @@ test "independent initial upper gap disturbance and compatible suffix origins" {
     try std.testing.expectEqualSlices(u64, &.{ 0, 43, 42 }, state.sets[0..3]);
     try std.testing.expect(layouts_compatible(&state.descriptor_layout, &a, 2));
     try std.testing.expect(!layouts_compatible(&state.descriptor_layout, &compatible_lower, 2));
+}
+
+test "256 push initialization spans every bitmap word and clears definition changes" {
+    var state = command_profile_t{};
+    var definition = try profiles.normalize_pipeline(&.{}, &.{.{ .stage_flags = 32, .size = 256 }});
+    for ([_]u32{ 60, 124, 188, 252 }) |offset|
+        try fixture_t.test_push_bytes(&state, &definition, 32, offset, if (offset == 252) 4 else 8);
+    try std.testing.expectEqual([_]u64{ 0xf000000000000000, 0xf00000000000000f, 0xf00000000000000f, 0xf00000000000000f }, state.pushes[5].initialized);
+    try fixture_t.test_push_bytes(&state, &definition, 32, 0, 256);
+    try std.testing.expectEqual([_]u64{0xffffffffffffffff} ** 4, state.pushes[5].initialized);
+    const before = state.pushes[5];
+    for ([_][2]u32{ .{ 256, 4 }, .{ 252, 8 }, .{ 260, 4 }, .{ 0, 260 }, .{ 0xfffffffc, 4 } }) |range| {
+        try std.testing.expectError(error.Invalid, fixture_t.test_push_bytes(&state, &definition, 32, range[0], range[1]));
+        try std.testing.expectEqualDeep(before, state.pushes[5]);
+    }
+    definition.pushes[0].size = 4;
+    try fixture_t.test_push_bytes(&state, &definition, 32, 0, 4);
+    try std.testing.expectEqual([_]u64{ 15, 0, 0, 0 }, state.pushes[5].initialized);
+    try std.testing.expectEqual(@as(usize, 424), @sizeOf(push_profile_t));
+    try std.testing.expectEqual(@as(usize, 19600), @sizeOf(command_profile_t));
+    try std.testing.expectEqual(@as(usize, 1254912), @sizeOf(registry_t));
 }
