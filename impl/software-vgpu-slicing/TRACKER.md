@@ -478,7 +478,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Separate documentation work; no software vGPU implementation credit.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): record isolated receiver CI acceptance`
+- **Commit `2ac629b`**: `docs(vgpu): record isolated receiver CI acceptance`
   - **Task Impact**: +3% to TODO: #2 (+0.6% overall): +1% process ownership
     and +2% real service integration, terminal guest notification and fresh restart.
   - **Summary**: Credit completed acceptance gates without conflating mapped/UNIX
@@ -489,3 +489,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37396594127 .
     Production executable cancellation also passes locally at `035c2e2`; its
     additional CI run `37396744418` is tracked separately.
+
+- **Commit `8aacbda`**: `Updated default-window-icon.png`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall).
+  - **Summary**: Separate application artwork update; no vGPU task credit.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify real Venus queue acceptance`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Specify bounded Zig fixture serialization/parsing, physical
+    device selection, queue timeline association, CPU/GPU ordering, ownership
+    and software CI evidence. Split bootstrap (2%) from verified workload (6%)
+    without treating empty submissions as GPU workload execution.

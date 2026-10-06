@@ -947,3 +947,40 @@ completes a real CPU query, then sends SIGTERM to its owned child identity and p
 for cooperative exit without escalation. Require exit status zero, both rings closed
 and guest terminal notification. Instrument production executable and parent with
 ASan/LSan/UBSan in addition to the configurable service fixture.
+
+### Real Venus queue fixture and execution evidence
+
+The separate 8% hardware execution gate divides into 2% real instance/device/queue
+bootstrap and queue fence retirement, and 6% actual GPU command workload with
+verified output. Empty submissions and callback retirement alone cannot earn
+workload credit. These tests run on the Linux host through the public receiver;
+no Windows VM is required. Native guest and physical cross-VM acceptance stay
+with the previously agreed standalone fixtures and user hypervisor validation.
+
+Use a fixed 4096-byte private command/reply fixture in Zig for bounds-checked
+serialization and reply parsing. Read little-endian scalars from slices; never
+cast replies to native Vulkan structs. Every command bundle first resets the
+receiver's reply stream (resource 1, offset 0, extent 4096), then serializes one
+complete pinned Venus operation and requests a reply. Own no Vulkan native
+handles: use session-local nonzero virtual object IDs. The receiver copies each
+command before dispatch and retains actual SDK/native objects until teardown.
+
+Create an instance at Vulkan 1.1, enumerate device count then at most 16 devices,
+and query queue-family count then at most 32 families. Reject larger tables rather
+than allocate from peer lengths. Select a family with at least one graphics/compute
+queue. Create one device queue, obtain it using GetDeviceQueue2 with the Venus
+queue timeline chain assigning timeline 1, and submit a zero-command queue batch.
+Require VK_SUCCESS replies, completed CPU fences, then a real GPU fence/poll to
+retirement; repeat fences and validate monotonic identities. End references with
+device and instance destruction after GPU quiescence. On every failure destroy
+the receiver, which releases partial upstream object ownership. Every poll checks
+receiver health and a five-second monotonic bound; no unbounded wait is allowed.
+
+The hardware-required invocation must reject CPU Vulkan device types. Print the
+selected bounded name/type so physical evidence cannot be confused with CI's
+software driver. CI uses a system-provided software Vulkan driver for protocol
+and lifecycle reproducibility only; it is not a shipping fallback or hardware
+performance evidence. Run both normal and owned-C ASan/LSan/UBSan fixtures, plus
+Zig allocator/serialization failure tests. Hardware credit requires explicit
+local hardware success in addition to green CI; the later workload gate remains
+pending until output is read and checked after actual queue completion.
