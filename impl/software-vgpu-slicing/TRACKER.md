@@ -1562,7 +1562,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows fixture/DLL cross-link succeeds. Latest native Windows/runtime CI
     remains required. TODO #3 stays50%; commands/mapping/full API/DXVK pending.
 
-- **Commit (current; resolve by subject)**: `fix(vgpu): recover invalid command buffers through implicit begin reset`
+- **Commit `f2633b8`**: `fix(vgpu): recover invalid command buffers through implicit begin reset`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Follow the pinned Vulkan1.4.307 lifecycle: reset-capable pools
     permit Begin from Invalid as well as Executable. Recording and Pending still
@@ -1572,3 +1572,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Native unit/loader tests, five Zig tests and ASan/LSan/UBSan
     pass; coverage99.69% lines/94.09% branches. Windows native fixture, DLL and
     pinned-loader fixture cross-link pass. TODO #3 remains50%.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify core fill recording and resource invalidation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Define bounded buffer range validation, exact command118 encoding,
+    generation-safe slot reference tracking and invalidation on buffer destruction.
+    Specify reset/free ownership, Pending protection and recording-only acceptance.
+  - **Verification**: Inspect pinned encoder and Vulkan fill-buffer valid usage;
+    implementation and execution proof remain pending. TODO #3 remains50%.

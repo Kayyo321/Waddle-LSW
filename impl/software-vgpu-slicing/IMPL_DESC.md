@@ -2998,3 +2998,53 @@ trampoline first-word dispatch on Linux and in native Windows CI, with the same
 independent encoder backend. The real worker variant separately proves receiver
 allocation/recording/reset/free and implicit pool retirement. Empty recorded
 buffers are not counted as command execution or DXVK evidence.
+
+### Core fill-buffer recording and resource invalidation boundary
+
+This increment routes Vulkan1.0 vkCmdFillBuffer through pinned Venus command118;
+submission/GPU execution, copy/update commands, render passes and DXVK acceptance
+remain subsequent gates. Both primary and transfer-only secondary command buffers
+use the same encoding. Every call holds the ICD mutex, borrows native parameters
+only for the call and allocates no heap memory. Caller follows Vulkan host external
+synchronization and uses a graphics/compute-capable pool for this Vulkan1.0 command;
+queue capability requirements remain native Vulkan valid usage, enforced by the
+receiver's actual device. No transfer-only extension is advertised.
+
+Fixed per-object metadata retains requested buffer_size64 and buffer_usage32 from
+validated creation. Each command buffer owns a512-bit (eight64-bit words) set of
+referenced buffer slot indices. Slot generation cannot escape: destruction marks
+all referencing Recording/Executable command buffers Invalid and clears their
+entire reference sets before releasing the buffer slot. Thus later slot reuse
+cannot produce a stale dependency. Buffer destruction refuses a reference from a
+Pending command buffer before sending anything. Pool destruction/free clear child
+metadata; successful pool reset/individual reset/implicit begin reset clears the
+reference set. Loss retains uncertain objects and metadata until receiver-retired
+abandonment. The static metadata owner is the exclusive binding; clear resets it.
+
+Fill requires live private command buffer in Recording, its pool, a same-device
+buffer, bound memory and TRANSFER_DST usage. offset must be4-aligned and less than
+requested buffer size. Explicit size must be positive,4-aligned and no larger than
+buffer_size-offset, using subtraction without addition overflow. WHOLE_SIZE
+(UINT64_MAX) is preserved in the wire; the native receiver rounds the remainder
+down to a multiple of4, including a zero-byte remainder below4, exactly as
+[vkCmdFillBuffer](https://docs.vulkan.org/refpages/latest/refpages/source/vkCmdFillBuffer.html)
+specifies. No caller buffer contents are read or retained. Data32 is serialized
+little-endian under the existing guest/host byte-order contract.
+
+Invalid command-buffer handles or states send nothing and preserve existing state.
+For a live Recording buffer, invalid buffer identity/parent/binding/usage/range
+marks Recording Invalid, preventing later End from reporting successful recording.
+Wire is command11832/flags32(1)/command-buffer-ID64/buffer-ID64/offset64/size64/data32,
+a44-byte CPU command. Exact reply command118 acknowledges recording only; it is
+not GPU retirement or a fill-data result. Wrong tag/truncation/transport error
+poisons the binding; no reference is published until validated acknowledgment.
+The per-command-buffer buffer slot bit is set only on that acknowledgment.
+
+Verification compares independently encoded pinned Venus command118 bytes; checks
+null/foreign/stale/unbound/non-transfer buffers, initial/executable/invalid states,
+misaligned/out-of-range/zero/overflow sizes, explicit/full/rounded WHOLE_SIZE,
+recording invalidation and reset recovery, destruction/slot reuse, transport/reply
+loss and production-worker recording. Sanitizers must report zero bytes leaked,
+protocol metadata coverage must remain at least90%, and Windows ABI fixtures must
+compile and run in CI. Actual GPU contents are verified only after submission and
+mapping support is available; this recording increment grants no TODO #3 credit.
