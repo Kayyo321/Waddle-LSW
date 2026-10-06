@@ -751,7 +751,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Preserve host quota/codec authority and explicit lost-context
     discard without remote requests or undocumented ownership transfer.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): implement standalone render-only adapter ownership`
+- **Commit `b7e7a48`**: `feat(vgpu): implement standalone render-only adapter ownership`
   - **Task Impact**: +20% to TODO: #3 (+5.0% overall); native DLL acceptance 5% pending.
   - **Summary**: Add no-scanout render/compute adapter capabilities, eight distinct
     negotiated frontend bindings, monotonic context/allocation handles, 64-resource
@@ -762,3 +762,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     inspected. Native DLL fixture loads exports, calls init/query/free and verifies
     absence of kernel DriverEntry/internal frontend exports; CI acceptance pending.
     This implements the user-authorized stub scope, not an installed WDDM driver.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify credential-bound presentation FD handoff`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Define a separate trusted seqpacket/SCM_RIGHTS channel, exact
+    bounded Zig frame schema, kernel credential/context checks, descriptor rollback
+    and the separate worker/surface/release runtime integration requirement.
+  - **Verification**: No host FD enters the guest ring; borrowed socket/native
+    identity lifetime and every malformed-message cleanup obligation are explicit.

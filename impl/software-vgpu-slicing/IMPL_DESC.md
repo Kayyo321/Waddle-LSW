@@ -1445,3 +1445,47 @@ limits, duplicate frontend bindings, stale handle reuse, host acquisition failur
 GPU retirement/CPU free backpressure, lost-context discard, reuse/churn and symmetric
 teardown. Linux sanitizer/coverage and x86_64 Windows cross-link/native CI are
 required; reserve 5% of the 25% stub milestone for native CI acceptance.
+
+
+### Trusted worker-to-presenter FD channel (Task #4)
+
+The bridge uses a dedicated AF_UNIX nonblocking SOCK_SEQPACKET socket pair,
+never the guest control stream or shared ring. Both endpoints are CLOEXEC and
+prepared with SO_PASSCRED before worker launch. The caller owns socket lifetime
+and retains the worker's unreaped PID while receiving. Every packet carries
+SCM_CREDENTIALS and exactly one SCM_RIGHTS FD per active image plane. Receiver
+requires the expected live worker PID and its own real UID; kernel-validated
+credentials, not claimed frame fields, identify sender. Channel preparation owns
+no descriptors and intentionally enables credential delivery on the borrowed
+socket. Per-packet send/receive is nonblocking; Again means no side effect/retry.
+
+The fixed little-endian payload is exactly 1216 bytes: magic u32 0x57564431 at 0,
+version u32 one at 4, nonzero controller context u64 at 8, nonzero frame u64 at 16,
+plane count u32 at 24, damage count u32 at 28, width/height/fourcc u32 at 32/36/40,
+zero u32 at 44, modifier u64 at 48; four 32-byte plane entries at 56 containing
+resource ID u32, offset u32, stride u32, zero u32, size u64, extent u64. Bytes
+184..191 are zero. Sixty-four 16-byte signed damage rectangles start at 192.
+Inactive planes/resource IDs and inactive damage rectangles are all zero. Active
+resource IDs are 2..65 (duplicates permitted for shared allocation planes).
+Layout/damage are validated by the existing Zig APIs after scalar decoding.
+Codec input/output are immutable/disjoint private buffers; output frame is zero
+on decoding failure, encoded bytes are unchanged on local validation failure.
+
+Send validates payload before sendmsg, includes only borrowed valid caller FDs and
+kernel-checkable own credentials, and never closes originals. An exact successful
+send transfers only kernel FD duplicates. Receive uses MSG_CMSG_CLOEXEC and a
+bounded ancillary buffer, closes every delivered FD on malformed/truncated payload,
+unknown/duplicate ancillary records, wrong sender/context or wrong FD count. Kernel
+closes excess descriptors truncated from ancillary delivery. Success transfers
+owned CLOEXEC FDs into a four-slot output initialized to -1; cleanup closes/nulls
+all remaining owned entries. No fd numbers, host addresses or native padding are
+shared with the guest. Empty/disconnected stream is Closed; malformed messages
+are Corrupt; OS resource failures are Closed/Corrupt, preserving ownership.
+
+This bridge verifies credential/FD/payload ownership. Wiring the separate endpoint
+through the trusted worker launcher/service, mapping image identities to existing
+host window surfaces, and release acknowledgement to the guest are distinct runtime
+integration work. Split the 20% handoff milestone into 10% codec/native channel
+ownership and 10% actual worker/presentation/release routing. Require corruption,
+FD count/type/credential/context errors, descriptor closure and process-separated
+transfer under sanitizers plus >=90% protocol/native coverage.
