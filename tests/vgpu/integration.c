@@ -1,5 +1,6 @@
 /** @file integration.c @brief Independent mapped processes and real Venus CPU dispatch. */
 #include "waddle/venus_channel.h"
+#include "waddle/venus_capabilities.h"
 #include "waddle/venus_dispatch.h"
 #include "waddle/venus_worker.h"
 #include <limits.h>
@@ -49,6 +50,11 @@ static int guest_resources(venus_rpc_t *rpc) {
         input[index] = (unsigned char)index;
     venus_request_t request = {.kind = RequestCapabilities};
     if (!guest_exchange(rpc, request, NULL, capabilities, sizeof(capabilities), RequestSuccess))
+        return 0;
+    venus_capabilities_t decoded_capabilities;
+    if (venus_capabilities_decode(&decoded_capabilities, capabilities, sizeof(capabilities)) !=
+            RingOk ||
+        venus_capabilities_compatible(&decoded_capabilities) != RingOk)
         return 0;
     request = (venus_request_t){
         .kind = RequestCreate, .resource_id = 2, .flags = ResourceMap, .argument_one = 4096};

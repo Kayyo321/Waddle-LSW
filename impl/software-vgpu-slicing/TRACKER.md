@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 59% | Real device/queue bootstrap and retirement verified on NVIDIA/AMD and in CI; timestamp workload implemented, CI pending; negotiated multi-context runtime remains |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 65% | GPU timestamp workload verified on NVIDIA/AMD and in CI; capability decoding implemented, CI pending; negotiated policy and multi-context runtime remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `31.8%`
+**Total Feature Completion**: `33.0%`
 
 ## Commit History & Progress Log
 
@@ -550,9 +550,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398115404 .
     GPU timestamps verify queue commands, not guest shader/presentation/OpenCL APIs.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define pinned capability decoding`
+- **Commit `8f2e6f6`**: `docs(vgpu): define pinned capability decoding`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Specify exact portable capset offsets, flag shape, pinned
     version/profile compatibility, bounded explicit extension queries and
     private caller ownership. Allocate separate decoding, negotiation and
     multi-context acceptance gates without crediting unimplemented runtime policy.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): decode pinned capability snapshots safely`
+  - **Task Impact**: +6% to TODO: #2 (+1.2% overall) for verified hardware
+    workload; separate capability decoding 5% gate awaits current native CI.
+  - **Summary**: Add bounded Zig private capset decoding, exact pinned profile
+    policy and explicit extension queries, C ABI/header documentation and native
+    fixtures. Mapped/UNIX guest now validates the actual public receiver capset.
+  - **Verification**: Linux C/Zig tests, allocator checks, ASan/LSan/UBSan and
+    independent mapped/exec integration pass; Windows cross-link passes. Owned
+    Zig coverage 100% lines and 93.33% branches. CI adds Linux and native Windows
+    capability gates; session negotiation and context runtime remain pending.
+    GPU timestamp Linux/native Windows CI passed at `60321bc`:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398576725 .

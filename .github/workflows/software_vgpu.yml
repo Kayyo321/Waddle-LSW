@@ -42,6 +42,8 @@ jobs:
           export VK_DRIVER_FILES="$(find /usr/share/vulkan/icd.d -maxdepth 1 -name 'lvp_icd*.json' -print -quit)"
           test -n "$VK_DRIVER_FILES"
           make vgpu-gpu-unit vgpu-gpu-test vgpu-gpu-sanitizers
+      - name: Verify pinned capability snapshots and compatibility
+        run: make vgpu-capabilities-test vgpu-capabilities-sanitizers vgpu-capabilities-coverage
       - name: Verify portable receiver request envelopes
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership
@@ -110,6 +112,14 @@ jobs:
           zig test src/vgpu/venus_control.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_bounds.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_capabilities.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_capabilities_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/capabilities.c build/venus_capabilities_windows.lib -o build/vgpu_capabilities_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_capabilities_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_capabilities.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig build-lib src/vgpu/venus_request.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_request_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
