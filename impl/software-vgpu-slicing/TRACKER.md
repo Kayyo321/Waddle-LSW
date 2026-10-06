@@ -1296,7 +1296,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Commit53158a7 has all eight GitHub checks green. New device code remains under
     local verification and is not yet credited toward full dispatch acceptance.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch bounded device and queue lifecycles`
+- **Commit `449f7e4`**: `feat(vgpu): dispatch bounded device and queue lifecycles`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; complete runtime gate pending).
   - **Summary**: Add bounded core device creation/destruction and stable cached queue
     dispatch. Validate native queue counts/priorities/features, strip loader-only
@@ -1312,3 +1312,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Raise integration deadline20s to60s for16 actual host device lifecycles. Native
     Windows/updated-head GitHub checks remain required. TODO #3 stays40%; complete
     graphics/compute/memory/synchronization dispatch and actual DXVK remain pending.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify receiver GPU fence idle waits`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify queue/device idle through explicit issued and retired GPU
+    identities, exact envelope shapes and a monotonic whole-call deadline. Preserve
+    sole frontend ownership and session retirement on any terminal failure.

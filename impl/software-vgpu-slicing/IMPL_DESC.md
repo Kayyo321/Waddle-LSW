@@ -2569,3 +2569,36 @@ queue caching/invalid inputs and host failures, truncated/corrupt reply tests,
 production worker device lifecycle execution, ASan/LSan/UBSan, Zig allocator tests,
 90% line/branch safety coverage and native Windows CI. No completion credit is
 assigned until the larger dispatch acceptance gate is satisfied.
+
+### ICD idle waits using explicit receiver GPU fences
+
+Core vkQueueWaitIdle and vkDeviceWaitIdle must not send forbidden Venus commands19
+or20. They use the already negotiated RequestGpuFence/RequestGpuPoll envelope.
+Queue idle validates a private queue and its device cache/ring, then issues one
+GPU fence for that ring. Device idle iterates only initialized cached queues; no
+application can submit through an uninitialized queue handle. Each ring preserves
+its last accepted nonzero fence identity across device/cache reuse until the binding
+ends, requiring every new identity to increase strictly. The receiver owns GPU
+completion callbacks; CPU command completion is never interpreted as GPU idle.
+
+The ICD holds its process binding mutex, submits no Vulkan command concurrently,
+and uses only private stack envelopes. Both successful response kinds/direction,
+status, flags/resource fields and payload/argument fields are checked exactly.
+Fence success requires an identity; poll success requires zero argument fields.
+An Again issue is retried because receiver acceptance did not occur; once accepted,
+only poll requests reference that exact identity. No payload pointers are passed.
+
+One monotonic std.time.Timer bounds the complete idle call to one second, including
+all device queues and issue/poll retry sleeps. Check the deadline before each
+exchange and after callbacks, whose bounded-deadline contract remains required.
+Sleep at most1ms between pending replies. Clock failure, malformed responses,
+identity replay, transport errors or deadline expiry poison the binding and return
+VK_ERROR_DEVICE_LOST. The caller retires the receiver before abandon, so pending
+GPU fences never permit early session resource reuse. Empty healthy device idle
+returns VK_SUCCESS without issuing a fence; null/stale/wrong-kind handles return
+VK_ERROR_DEVICE_LOST without transport. No heap storage or public symbol additions.
+
+Verify the actual worker queue/device idle path, pending issue/poll, malformed
+response shape/replayed identity, timeout and transport failure. Existing sanitizer,
+Zig allocator,90% production coverage and native Windows gates apply. These idle
+functions are only part of the still incomplete synchronization/command API gate.
