@@ -3509,3 +3509,20 @@ and tracks image/view/memory references in the existing retirement bitsets.
 Independent generated C encoders verify image, view and barrier bytes; tests
 cover malformed values, duplicate families, counts and writer exhaustion.
 Codecs alone earn no runtime or DXVK completion credit.
+
+### Native DXVK black-box acceptance harness (TODO #3)
+
+The Windows C harness requires explicit absolute paths for vulkan-1.dll, DXVK
+dxgi.dll, DXVK d3d11.dll and one Waddle ICD manifest. It rejects multiple manifest
+paths, restricts VK_DRIVER_FILES, clears additive/legacy driver selection and
+disables implicit layers before loader discovery. Chosen DLLs are explicitly
+loaded and retained through object cleanup. The harness owns a Win32 window,
+FL11.0 D3D11 device, immediate context, swapchain, backbuffer, render target and
+GPU completion query. It clears the actual target, waits at most10s for EVENT
+retirement, requires successful Present and checks device removal. All COM
+references are released before HWND destruction and DLL unloading, including
+error exits. Missing prerequisites, unsupported API and failed operations fail
+the executable; cross-compilation alone is never DXVK acceptance. No DXVK source
+is vendored or modified. Native external DLL leak auditing and production ICD
+execution remain required. Current supported API1.0 without extensions does not
+meet DXVK1.10.3's1.1 or DXVK2.7.1's1.3 feature requirements.

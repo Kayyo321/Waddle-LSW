@@ -1820,3 +1820,27 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: ICD native queue concurrency fixtures, sanitizers, and
     coverage gates pass. `make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage`
     and `make vgpu-windows` execution verified locally.
+
+### Guide execution audit begun 2026-10-06
+
+- **Commit `9bc3547`**: `docs(vgpu): specify real device-memory mapping and image wire contracts`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Replace unsupported map-command/blob-zero assumptions with actual
+    nonzero-memory export/copy ownership, coherency and hardware acceptance gates.
+- **Commit `f6bfd69`**: `test(vgpu): allow image IDs in generated wire oracle`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Extend independent generated encoder fixture identities; existing
+    instance-wire native and five Zig tests pass.
+- **Commit `370e494`**: `test(vgpu): add native black-box DXVK execution gate`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Explicit DLL/manifest native device/swapchain/render/query/Present
+    fixture cross-compiles under strict Windows warnings. Real DXVK run pending.
+- **Commit `ac7bd54`**: `feat(vgpu): encode bounded core image and image-view requests`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Allocation-free image/view/barrier codecs match generated C oracle;
+    five Zig tests and Linux/Windows ReleaseSafe compilation pass. ICD lifetime
+    integration and actual image GPU execution remain pending.
+
+The documentation synchronization commit is identified by its unique subject
+`docs(vgpu): record guide audit and native DXVK acceptance contract`; +0% to TODO
+#3 and overall. No runtime completion is inferred from codecs or cross-builds.
