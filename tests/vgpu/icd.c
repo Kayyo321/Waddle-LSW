@@ -793,6 +793,7 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
             properties.limits.minStorageBufferOffsetAlignment = 32;
             properties.limits.maxUniformBufferRange = 256;
             properties.limits.maxStorageBufferRange = 4096;
+            properties.limits.maxPushConstantsSize = 128;
             for (unsigned axis = 0; axis < 3; axis++) properties.limits.maxComputeWorkGroupCount[axis] = 8;
             if (fixture->descriptor_properties == 2) properties.limits.minUniformBufferOffsetAlignment = 0;
             if (fixture->descriptor_properties == 3) properties.limits.minStorageBufferOffsetAlignment = 3;
@@ -2234,7 +2235,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) { shader_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
+        if (scenario == 0) { shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");

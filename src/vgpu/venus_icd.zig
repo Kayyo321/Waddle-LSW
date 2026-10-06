@@ -36,6 +36,8 @@ const device_cache_t = struct {
     descriptor_alignments: [2]u64 = [_]u64{0} ** 2,
     descriptor_ranges: [2]u32 = [_]u32{0} ** 2,
     compute_group_limits: [3]u32 = [_]u32{0} ** 3,
+    // Validated actual host push ceiling; zero until the complete raw properties cache is ready.
+    max_push_bytes: u32 = 0,
     family_count: usize = 0,
     families: [16]u32 = [_]u32{0} ** 16,
     counts: [16]u32 = [_]u32{0} ** 16,
@@ -984,6 +986,7 @@ fn properties(
         _ = failure(c.RingCorrupt);
         return;
     }
+    staged.limits.maxPushConstantsSize = @min(staged.limits.maxPushConstantsSize, profiles.MaxPushBytes);
     staged.apiVersion = c.VK_API_VERSION_1_0;
     staged.limits.nonCoherentAtomSize = 1;
     staged.limits.minMemoryMapAlignment = 4096;
@@ -1754,10 +1757,6 @@ fn create_pipeline_layout(device: c.VkDevice, info: [*c]const c.VkPipelineLayout
         info.*.setLayoutCount > profiles.MaxSets or (info.*.setLayoutCount != 0 and info.*.pSetLayouts == null) or
         info.*.pushConstantRangeCount > profiles.MaxPushRanges or
         (info.*.pushConstantRangeCount != 0 and info.*.pPushConstantRanges == null)) return c.VK_ERROR_INITIALIZATION_FAILED;
-    // Keep public support at the core128 guarantee until actual host limits gate256.
-    if (info.*.pushConstantRangeCount != 0) for (info.*.pPushConstantRanges[0..info.*.pushConstantRangeCount]) |range| {
-        if (range.offset > 128 or range.size > 128 - range.offset) return c.VK_ERROR_INITIALIZATION_FAILED;
-    };
     var ids: [profiles.MaxSets]u64 = undefined;
     var layouts: [profiles.MaxSets]profiles.descriptor_layout_t = undefined;
     if (info.*.setLayoutCount != 0) for (info.*.pSetLayouts[0..info.*.setLayoutCount], 0..) |layout, index| {
@@ -1767,6 +1766,13 @@ fn create_pipeline_layout(device: c.VkDevice, info: [*c]const c.VkPipelineLayout
         layouts[index] = (profiles.get_profile(&profile_registry.descriptor_layouts, resource_state(record).profile_index) orelse unreachable).*;
     };
     var writer = render_wire.create_pipeline_layout(@ptrCast(info), ids[0..info.*.setLayoutCount], parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.*.pushConstantRangeCount != 0) {
+        if (!ensure_descriptor_limits(parent)) return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_INITIALIZATION_FAILED;
+        const maximum = @min(device_cache(parent.handle).?.max_push_bytes, profiles.MaxPushBytes);
+        for (info.*.pPushConstantRanges[0..info.*.pushConstantRangeCount]) |range| {
+            if (range.offset >= maximum or range.size > maximum - range.offset) return c.VK_ERROR_INITIALIZATION_FAILED;
+        }
+    }
     var ranges: [profiles.MaxPushRanges]profiles.push_range_t = undefined;
     if (info.*.pushConstantRangeCount != 0) for (info.*.pPushConstantRanges[0..info.*.pushConstantRangeCount], 0..) |range, index| {
         ranges[index] = .{ .stage_flags = range.stageFlags, .offset = range.offset, .size = range.size };
@@ -2033,6 +2039,11 @@ fn ensure_descriptor_limits(parent: *const c.venus_object_t) bool {
         _ = failure(c.RingCorrupt);
         return false;
     };
+    if (value.limits.maxPushConstantsSize < 128) {
+        _ = failure(c.RingCorrupt);
+        return false;
+    }
+    entry.max_push_bytes = value.limits.maxPushConstantsSize;
     entry.descriptor_alignments = alignments;
     entry.descriptor_ranges = ranges;
     entry.compute_group_limits = value.limits.maxComputeWorkGroupCount;
@@ -3003,7 +3014,7 @@ fn bind_descriptor_sets(command_buffer: c.VkCommandBuffer, point: u32, layout: c
     for (targets[0..count]) |target| command_reference(state, target);
 }
 /// Record push bytes covered by declared ranges, including before pipeline binding.
-/// [in] command/layout tokens borrowed; stages core mask; values nonnull accessible size4..128.
+/// [in] command/layout tokens borrowed; stages core mask; values nonnull accessible size4..256.
 /// Void; malformed recording invalidates. Mutex serialized, no allocation/retained input pointer.
 /// Copied per-stage compatibility and initialized-byte state publishes after native acknowledgment.
 fn push_constants(command_buffer: c.VkCommandBuffer, layout: c.VkPipelineLayout, stages: u32, offset: u32, size: u32, values: ?*const anyopaque) callconv(.C) void {
@@ -3014,7 +3025,7 @@ fn push_constants(command_buffer: c.VkCommandBuffer, layout: c.VkPipelineLayout,
     const state = resource_state(record);
     if (state.command_state != .Recording) return;
     const pool = command_pool_for(record) orelse return;
-    if (layout == null or values == null or stages == 0 or stages & ~@as(u32, 0x3f) != 0 or offset % 4 != 0 or size == 0 or size % 4 != 0 or offset > 128 or size > 128 - offset) {
+    if (layout == null or values == null or stages == 0 or stages & ~@as(u32, 0x3f) != 0 or offset % 4 != 0 or size == 0 or size % 4 != 0 or offset > profiles.MaxPushBytes or size > profiles.MaxPushBytes - offset) {
         state.command_state = .Invalid;
         return;
     }
