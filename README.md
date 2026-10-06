@@ -1,6 +1,6 @@
 # Waddle-LSW (Waddle Linux Subsystem for Windows)
 
-<img align="right" width="180" height="180" alt="Waddle-LSW Logo" src="imgs/logo.png">
+<img align="right" width="180" height="180" alt="Waddle-LSW Logo" src="imgs/logo.png" style="margin-left: 24px; margin-bottom: 20px;">
 
 **Waddle-LSW** is an open-source compatibility layer and subsystem architecture designed to deliver seamless, borderless integration of Microsoft Windows applications directly into Linux Wayland desktop environments.
 
@@ -12,7 +12,7 @@ Unlike traditional full-screen virtual machine viewers, Waddle-LSW tracks indivi
 
 ## Waddle Usage
 
-<img align="left" width="180" height="180" alt="Waddle-LSW Application Icon" src="imgs/default-window-icon.png">
+<img align="left" width="180" height="180" alt="Waddle-LSW Application Icon" src="imgs/default-window-icon.png" style="margin-right: 24px; margin-bottom: 20px;">
 
 The `waddle` CLI provides command-line control for subsystem lifecycle management, guest process execution, and device configuration:
 
@@ -22,6 +22,7 @@ The `waddle` CLI provides command-line control for subsystem lifecycle managemen
 - **Filesystem Verification**: Validate VirtIO-FS shared directory mappings and read/write integrity with `waddle fs test`.
 
 <br clear="left" />
+<br />
 
 ```bash
 # Launch interactive Windows shell (auto-starts background subsystem)
