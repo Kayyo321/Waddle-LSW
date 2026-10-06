@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else 'ring'
-if mode not in ('ring', 'region', 'mapping', 'wait', 'session', 'receiver', 'worker', 'service', 'context', 'guest'):
+if mode not in ('ring', 'region', 'mapping', 'wait', 'session', 'receiver', 'worker', 'service', 'context', 'guest', 'present'):
     raise ValueError(mode)
 root = Path.cwd()
 output = root / 'build/coverage/vgpu' / mode
@@ -18,13 +18,14 @@ output.mkdir(parents=True)
 subprocess.run([
     'cc', '-D_GNU_SOURCE', '-std=c11', '-Iinclude', '-Isrc/vgpu', '-O0', '-g', '--coverage',
     '-fprofile-abs-path',
+    *(['-Ibuild'] if mode == 'present' else []),
     *(['-Isubmodules/virglrenderer/src', '-Ibuild/vendor/virglrenderer/src'] if mode == 'receiver' else []),
-    '-c', ('tests/vgpu/receiver_owner.c' if mode == 'receiver' else 'tests/vgpu/worker.c' if mode == 'worker' else 'tests/vgpu/context.c' if mode == 'context' else 'tests/vgpu/service_owner.c') if mode in ('receiver', 'worker', 'service', 'context') else f'src/vgpu/venus_{mode}{"_linux" if mode == "mapping" else ""}.c',
+    '-c', ('tests/vgpu/present.c' if mode == 'present' else 'tests/vgpu/receiver_owner.c' if mode == 'receiver' else 'tests/vgpu/worker.c' if mode == 'worker' else 'tests/vgpu/context.c' if mode == 'context' else 'tests/vgpu/service_owner.c') if mode in ('receiver', 'worker', 'service', 'context', 'present') else f'src/vgpu/venus_{mode}{"_linux" if mode == "mapping" else ""}.c',
     '-o', str(output / f'{mode}.o'),
 ], check=True)
 subprocess.run([
     'cc', '-D_GNU_SOURCE', '-std=c11', '-Iinclude',
-    *([f'tests/vgpu/{mode}.c'] if mode not in ('receiver', 'worker', 'service', 'context') else []), str(output / f'{mode}.o'),
+    *([f'tests/vgpu/{mode}.c'] if mode not in ('receiver', 'worker', 'service', 'context', 'present') else []), str(output / f'{mode}.o'),
     *(['src/vgpu/venus_ring.c', '-Isrc/vgpu'] if mode in ('region', 'mapping', 'wait', 'session', 'context') else []),
     *(['src/vgpu/venus_region.c'] if mode == 'context' else []),
     *(['src/vgpu/venus_region.c', 'build/venus_control.o'] if mode == 'session' else []),
@@ -32,6 +33,7 @@ subprocess.run([
     *(['src/vgpu/venus_session.c', 'src/vgpu/venus_region.c', 'src/vgpu/venus_ring.c', 'src/vgpu/venus_wait.c', 'src/vgpu/venus_rpc.c', '-Isrc/vgpu', 'build/venus_request.o', 'build/venus_control.o'] if mode == 'service' else []),
     *(['-pthread'] if mode == 'receiver' else []),
     *(['build/venus_capabilities.o'] if mode == 'guest' else []),
+    *(['build/venus_dmabuf.o'] if mode == 'present' else []),
     'build/venus_receiver_bounds.o' if mode == 'receiver' else 'build/venus_bounds.o', '--coverage', '-o', str(output / 'runner'),
 ], check=True)
 subprocess.run([str(output / 'runner')], check=True)

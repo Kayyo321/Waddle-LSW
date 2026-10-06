@@ -430,3 +430,22 @@ vgpu-guest-coverage: build/venus_capabilities.o build/venus_bounds.o
 vgpu-windows: build/vgpu_guest_test.exe
 
 build/vgpu_contexts_integration: $(VgpuGuestHeaders)
+
+# Presenters borrow the host window manager's already-role-bound surface.
+VgpuPresentHeaders = include/waddle/venus_present.h include/waddle/venus_dmabuf.h include/waddle/venus_ring.h
+build/venus_present.o: src/vgpu/venus_present.c $(VgpuPresentHeaders) build/linux_dmabuf_client.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Ibuild $(shell pkg-config --cflags wayland-client) -c $< -o $@
+
+build/vgpu_present_test: tests/vgpu/present.c src/vgpu/venus_present.c $(VgpuPresentHeaders) build/linux_dmabuf_client.h build/venus_dmabuf.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Ibuild -Isrc/vgpu tests/vgpu/present.c build/venus_dmabuf.o -o $@
+
+.PHONY: vgpu-present-test vgpu-present-sanitizers vgpu-present-coverage
+vgpu-present-test: build/vgpu_present_test build/venus_present.o
+	./build/vgpu_present_test
+
+vgpu-present-sanitizers: build/linux_dmabuf_client.h build/venus_dmabuf.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Ibuild -Isrc/vgpu tests/vgpu/present.c build/venus_dmabuf.o -o build/vgpu_present_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_present_sanitized
+
+vgpu-present-coverage: build/linux_dmabuf_client.h build/venus_dmabuf.o build/venus_bounds.o
+	python3 tests/vgpu/coverage.py present

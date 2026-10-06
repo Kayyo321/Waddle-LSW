@@ -1349,8 +1349,8 @@ A presenter borrows one live Wayland display, version-four-or-later linux-dmabuf
 global and version-four-or-later wl_surface on the same event queue. The host
 window manager owns surface roles (xdg_toplevel/subsurface), geometry and registry
 binding; the presenter imports into the provided target surface without changing
-its role. init owns a surface feedback proxy and fixed caller-owned metadata
-storage; it allocates no pixel buffers. All functions/listeners run on the same
+its role. create owns a surface feedback proxy and one fixed metadata
+allocation released by free; it allocates no pixel buffers. All functions/listeners run on the same
 Wayland event thread; no recursive destruction from completion callbacks.
 
 Feedback double-buffers bounded private format tables (65536 bytes) and tranche

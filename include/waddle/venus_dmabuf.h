@@ -51,6 +51,25 @@ venus_ring_status_t venus_dmabuf_layout_validate(const venus_dmabuf_layout_t *la
 venus_ring_status_t venus_dmabuf_feedback_match(const void *table, size_t table_bytes,
                                                 const void *indices, size_t index_bytes,
                                                 uint32_t fourcc, uint64_t modifier);
+/** @brief Private surface damage rectangle; signed Wayland coordinates, size 16.
+ * @note Caller-owned immutable metadata, no storage ownership or pointers.
+ */
+typedef struct venus_dmabuf_damage_t {
+    int32_t x;      /**< Nonnegative left pixel coordinate. */
+    int32_t y;      /**< Nonnegative top pixel coordinate. */
+    int32_t width;  /**< Positive width within image. */
+    int32_t height; /**< Positive height within image. */
+} venus_dmabuf_damage_t;
+/** @brief Validate all damage rectangles before native protocol publication.
+ * @param[in] width Image width 1..16384 pixels. @param[in] height Same for height.
+ * @param[in] damage Nonnull immutable private array[count], borrowed for call.
+ * @param[in] count Number of accessible rectangles, 1..64.
+ * @return RingOk or RingInvalid for NULL/range/geometry errors, no mutation.
+ * @note Pure/allocation-free/thread-safe; no pixel access or retained pointers.
+ */
+venus_ring_status_t venus_dmabuf_damage_validate(uint32_t width, uint32_t height,
+                                                 const venus_dmabuf_damage_t *damage, size_t count);
+_Static_assert(sizeof(venus_dmabuf_damage_t) == 16, "Damage C/Zig ABI");
 _Static_assert(sizeof(venus_dmabuf_plane_t) == 24, "Plane C/Zig ABI");
 _Static_assert(sizeof(venus_dmabuf_layout_t) == 120, "Layout C/Zig ABI");
 #endif

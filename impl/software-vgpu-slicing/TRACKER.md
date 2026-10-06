@@ -13,12 +13,12 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 5% | Negotiated guest frontend verified locally; Vulkan entry points, userland WDDM stubs and DXVK pending |
-| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 30% | Export and image/feedback validation verified locally; native codec CI, Wayland ownership and worker FD handoff pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 10% | Negotiated frontend passes native Windows and isolated-worker CI; Vulkan entry points, userland WDDM stubs and DXVK pending |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | In Progress | 15% | 60% | Export, native image/feedback validation and Wayland ownership verified; worker FD handoff and end-to-end GPU presentation pending |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `45.75%`
+**Total Feature Completion**: `51.5%`
 
 ## Commit History & Progress Log
 
@@ -719,10 +719,26 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ASan/LSan/UBSan runs with descriptor counts returned to baseline. Retain
     pre-negotiation/profile retry/repeated negotiation negative protocol tests.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify Wayland import pacing and release ownership`
+- **Commit `b8b8231`**: `docs(vgpu): specify Wayland import pacing and release ownership`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Define borrowed target surface/global, atomic feedback snapshots,
     bounded asynchronous import slots, damage validation, frame-versus-buffer
     retirement, rejection and safe display-loss teardown before implementation.
   - **Verification**: Preserve allocation FD ownership and prohibit freeing active
     listener cookies or CPU fallback; window roles and worker handoff stay separate.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): own asynchronous Wayland DMA-BUF presentation`
+  - **Task Impact**: +30% to TODO: #4 (+4.5% overall): 25% presenter ownership
+    and 5% native image-validation CI; +5% to TODO: #3 (+1.25% overall) for
+    integrated/native guest frontend acceptance.
+  - **Summary**: Add version-four surface feedback snapshots, real received-FD
+    map/close cleanup, supported-pair gating, asynchronous plane import, bounded
+    damage, independent frame pacing/buffer release and safe display-loss teardown.
+  - **Verification**: Linux unit/fault/churn tests, actual generated Wayland
+    protocol compilation and ASan/LSan/UBSan pass. Presenter production lines
+    99.07%, branches 94.12%; image/damage Zig lines/branches 100%.
+    Tests cover acquired descriptor/proxy faults, import rejection, three owned
+    buffers, both callback orders, stale frames, teardown refusal and abandonment.
+    Guest/image codec Linux and native Windows CI passed at 4ca8195:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37402655882 .
+    Hardware allocation/export, worker FD handoff and full ICD/DXVK remain pending.

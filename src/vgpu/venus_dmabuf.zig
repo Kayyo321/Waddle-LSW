@@ -67,6 +67,45 @@ export fn venus_dmabuf_feedback_match(table_pointer: ?[*]const u8, table_bytes: 
     return if (matched) 0 else 1;
 }
 
+const damage_t = extern struct { x: i32, y: i32, width: i32, height: i32 };
+/// in: image extent and nullable immutable damage[count]; returns 0 valid,
+/// -1 null/invalid geometry. Pure/thread-safe/allocation-free, no retained data.
+export fn venus_dmabuf_damage_validate(width: u32, height: u32, pointer: ?[*]const damage_t, count: usize) c_int {
+    const damage = pointer orelse return -1;
+    if (width == 0 or width > 16384 or height == 0 or height > 16384 or count == 0 or count > 64) return -1;
+    for (damage[0..count]) |rectangle| {
+        if (rectangle.x < 0 or rectangle.y < 0 or rectangle.width <= 0 or rectangle.height <= 0) return -1;
+        if (@as(i64, rectangle.x) + rectangle.width > width or @as(i64, rectangle.y) + rectangle.height > height) return -1;
+    }
+    return 0;
+}
+
+test "damage bounds reject every invalid field before publication" {
+    var damage = [_]damage_t{.{ .x = 0, .y = 0, .width = 32, .height = 16 }} ** 64;
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, venus_dmabuf_damage_validate, .{ @as(u32, 32), @as(u32, 16), null, @as(usize, 1) }));
+    for ([_]usize{ 0, 65, std.math.maxInt(usize) }) |count|
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, venus_dmabuf_damage_validate, .{ @as(u32, 32), @as(u32, 16), &damage, count }));
+    for ([_]u32{ 0, 16385 }) |size| {
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, venus_dmabuf_damage_validate, .{ size, @as(u32, 16), &damage, @as(usize, 1) }));
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, venus_dmabuf_damage_validate, .{ @as(u32, 32), size, &damage, @as(usize, 1) }));
+    }
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, venus_dmabuf_damage_validate, .{ @as(u32, 32), @as(u32, 16), &damage, @as(usize, 64) }));
+    for (0..4) |field| {
+        damage[0] = .{ .x = 0, .y = 0, .width = 32, .height = 16 };
+        switch (field) {
+            0 => damage[0].x = -1,
+            1 => damage[0].y = -1,
+            2 => damage[0].width = 0,
+            else => damage[0].height = 0,
+        }
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, venus_dmabuf_damage_validate, .{ @as(u32, 32), @as(u32, 16), &damage, @as(usize, 1) }));
+    }
+    damage[0] = .{ .x = std.math.maxInt(i32), .y = 0, .width = std.math.maxInt(i32), .height = 1 };
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, venus_dmabuf_damage_validate, .{ @as(u32, 32), @as(u32, 16), &damage, @as(usize, 1) }));
+    damage[0] = .{ .x = 0, .y = 16, .width = 1, .height = 1 };
+    try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, venus_dmabuf_damage_validate, .{ @as(u32, 32), @as(u32, 16), &damage, @as(usize, 1) }));
+}
+
 fn packed_layout() layout_t {
     return .{ .width = 32, .height = 16, .fourcc = Argb8888, .plane_count = 1, .modifier = 0, .planes = .{ .{ .offset = 0, .stride = 128, .size = 2048, .extent = 4096 }, std.mem.zeroes(plane_t), std.mem.zeroes(plane_t), std.mem.zeroes(plane_t) } };
 }
