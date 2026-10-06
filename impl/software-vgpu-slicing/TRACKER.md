@@ -313,7 +313,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Reviewed against codec limits, channel lifecycle and receiver
     ownership; integrated implementation and runtime acceptance remain pending.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch bounded sequential receiver exchanges`
+- **Commit `4253a51`**: `feat(vgpu): dispatch bounded sequential receiver exchanges`
   - **Task Impact**: +5% to TODO: #2 (+1.0% overall) for verified portable codec;
     runtime's separate 10% acceptance gate awaits native CI.
   - **Summary**: Added allocation-free caller-buffer RPC ownership, streamed
@@ -330,3 +330,12 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     peer crashes. Native runtime execution is queued; no GPU execution claim.
     Codec Linux/native Windows CI succeeded at `b6e825e` in
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392958717 .
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): track runtime prerequisites before integration rules`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Moved runtime source-list definitions before Make expands the
+    integration prerequisites, and added explicit ABI/private header dependencies.
+    Runtime edits now reliably rebuild integrated and portable fixtures.
+  - **Verification**: Inspected Make's expanded integration target and asserted
+    both runtime sources and ABI/private headers are present. Runtime behavior
+    is unchanged; the preceding validated integration build contained both sources.

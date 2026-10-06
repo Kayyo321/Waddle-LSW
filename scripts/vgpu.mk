@@ -153,6 +153,9 @@ build/vgpu_channel_test.exe: tests/vgpu/channel_windows.c $(VgpuChannelSources) 
 
 vgpu-windows: build/vgpu_channel_test.exe
 
+VgpuRuntimeSources = src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c
+VgpuRuntimeFixtureSources = $(VgpuRuntimeSources) src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c
+
 build/vgpu_integration_test: tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o | vgpu-renderer
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
 
@@ -193,8 +196,6 @@ build/vgpu_request_test.exe: tests/vgpu/request.c include/waddle/venus_request.h
 
 vgpu-windows: build/vgpu_request_test.exe
 
-VgpuRuntimeSources = src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c
-VgpuRuntimeFixtureSources = $(VgpuRuntimeSources) src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c
 build/vgpu_runtime_test: tests/vgpu/runtime.c $(VgpuRuntimeFixtureSources) include/waddle/venus_rpc.h include/waddle/venus_dispatch.h build/venus_request.o build/venus_bounds.o build/venus_control.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/runtime.c $(VgpuRuntimeFixtureSources) build/venus_request.o build/venus_bounds.o build/venus_control.o -o $@
 
@@ -213,3 +214,6 @@ vgpu-windows: build/vgpu_runtime_test.exe
 
 vgpu-runtime-coverage: build/venus_request.o build/venus_bounds.o build/venus_control.o
 	python3 tests/vgpu/runtime_coverage.py
+
+# Header changes must rebuild every consumer, including the integrated renderer.
+build/vgpu_integration_test build/vgpu_runtime_test build/vgpu_runtime_test.exe: src/vgpu/venus_rpc_internal.h include/waddle/venus_rpc.h include/waddle/venus_dispatch.h include/waddle/venus_request.h include/waddle/venus_receiver.h
