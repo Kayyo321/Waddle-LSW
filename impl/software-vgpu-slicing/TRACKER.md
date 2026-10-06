@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 54% | Health/native fixtures verified; process ownership implemented, CI pending; worker integration, hardware queue and multi-context milestones remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 57% | Isolated process/service ownership, guest closure and fresh restart verified in Linux/native Windows CI; hardware queue and negotiated multi-context milestones remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `30.8%`
+**Total Feature Completion**: `31.4%`
 
 ## Commit History & Progress Log
 
@@ -462,10 +462,30 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     All acquisition failures release owned memory and retain borrowed descriptors.
     Native Windows framing is unchanged; physical GPU queue evidence remains pending.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): exercise production worker cancellation`
+- **Commit `035c2e2`**: `test(vgpu): exercise production worker cancellation`
   - **Task Impact**: +0% to TODO: #2 (+0% overall); CI acceptance pending.
   - **Summary**: Launch the actual default-policy executable, execute a real
     Venus CPU query, send SIGTERM and observe a cooperative zero-status exit,
     closed rings and guest notification without forced termination.
   - **Verification**: Normal and ASan/LSan/UBSan integrated tests pass with the
     production executable instrumented separately from its parent.
+
+- **Commit `b61a83d`**: `docs(readme): add Waddle Usage section and application logo`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall).
+  - **Summary**: Separate documentation work; no software vGPU implementation credit.
+
+- **Commit `171ccda`**: `docs(readme): add padding and spacing around images and text`
+  - **Task Impact**: +0% to TODO: #1 (+0% overall).
+  - **Summary**: Separate documentation work; no software vGPU implementation credit.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): record isolated receiver CI acceptance`
+  - **Task Impact**: +3% to TODO: #2 (+0.6% overall): +1% process ownership
+    and +2% real service integration, terminal guest notification and fresh restart.
+  - **Summary**: Credit completed acceptance gates without conflating mapped/UNIX
+    recovery plumbing with physical GPU reset or cross-VM validation.
+  - **Verification**: Linux and native Windows Software vGPU CI passed at
+    `623f17e`, including service acquisition fault coverage, sanitizer-instrumented
+    mapped/exec integration and fresh launches:
+    https://github.com/Kayyo321/Waddle-LSW/actions/runs/37396594127 .
+    Production executable cancellation also passes locally at `035c2e2`; its
+    additional CI run `37396744418` is tracked separately.
