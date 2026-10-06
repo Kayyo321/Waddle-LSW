@@ -660,6 +660,14 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
             } else vn_encode_vkDestroyRenderPass(&encoder, 1, device,
                 (VkRenderPass)(uintptr_t)read_u64(bytes + 16), NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 106) {
+            assert(length == 36 + 32);
+            unsigned char expected[32];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            vn_encode_vkCmdDraw(&encoder, 1, (VkCommandBuffer)(uintptr_t)read_u64(bytes + 8),
+                                read_u32(bytes + 16), read_u32(bytes + 20), read_u32(bytes + 24),
+                                read_u32(bytes + 28));
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 133 || fixture->command == 135) {
             unsigned char expected[8192];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -2707,6 +2715,200 @@ static void graphics_bind_contract(VkDevice device, PFN_vkGetDeviceProcAddr look
     fixture->command_begin = NULL;
 }
 
+/** @brief Draw-only frontend contract, independent of image readback APIs.
+ * @param[in] device/lookup Live borrowed device/resolver; pipeline compiled compatibleRGBA8.
+ * @param[in,out] fixture Sole-thread backend; all borrowed infos cleared before return.
+ * @note Call after retiring pipeline's original shaders/layout/pass. Owns fresh compatible
+ * target/pool graph. Pipeline is borrowed and remains live after this helper. No heap.
+ * Native mock submit proves ownership only; actual pixels require physical GPU acceptance.
+ */
+static void graphics_draw_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
+                                   fixture_t *fixture, VkPipeline pipeline) {
+    PFN_vkCreateRenderPass create_pass =
+        (PFN_vkCreateRenderPass)lookup(device, "vkCreateRenderPass");
+    PFN_vkDestroyRenderPass destroy_pass =
+        (PFN_vkDestroyRenderPass)lookup(device, "vkDestroyRenderPass");
+    PFN_vkCreateFramebuffer create_fb =
+        (PFN_vkCreateFramebuffer)lookup(device, "vkCreateFramebuffer");
+    PFN_vkDestroyFramebuffer destroy_fb =
+        (PFN_vkDestroyFramebuffer)lookup(device, "vkDestroyFramebuffer");
+    PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
+    PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
+    PFN_vkGetImageMemoryRequirements requirements =
+        (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
+    PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+    PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+    PFN_vkBindImageMemory bind = (PFN_vkBindImageMemory)lookup(device, "vkBindImageMemory");
+    PFN_vkCreateImageView create_view = (PFN_vkCreateImageView)lookup(device, "vkCreateImageView");
+    PFN_vkDestroyImageView destroy_view =
+        (PFN_vkDestroyImageView)lookup(device, "vkDestroyImageView");
+    assert(create_fb && destroy_fb);
+    VkAttachmentDescription attachment = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+                                          .samples = VK_SAMPLE_COUNT_1_BIT,
+                                          .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                          .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                          .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                          .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                                          .finalLayout = VK_IMAGE_LAYOUT_GENERAL};
+    VkAttachmentReference color = {.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    .colorAttachmentCount = 1,
+                                    .pColorAttachments = &color};
+    VkRenderPassCreateInfo pass_info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+                                        .attachmentCount = 1,
+                                        .pAttachments = &attachment,
+                                        .subpassCount = 1,
+                                        .pSubpasses = &subpass};
+    fixture->render_pass_info = &pass_info;
+    VkRenderPass pass;
+    assert(create_pass(device, &pass_info, NULL, &pass) == VK_SUCCESS);
+    VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                    .imageType = VK_IMAGE_TYPE_2D,
+                                    .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                    .extent = {64, 64, 1},
+                                    .mipLevels = 1,
+                                    .arrayLayers = 1,
+                                    .samples = VK_SAMPLE_COUNT_1_BIT,
+                                    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                             VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
+    fixture->image_info = &image_info;
+    VkImage image;
+    assert(create_image(device, &image_info, NULL, &image) == VK_SUCCESS);
+    VkMemoryRequirements memory_requirements = {0};
+    requirements(device, image, &memory_requirements);
+    assert(memory_requirements.size);
+    VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                        .allocationSize = memory_requirements.size};
+    fixture->memory_info = &memory_info;
+    VkDeviceMemory memory;
+    assert(allocate(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+    assert(bind(device, image, memory, 0) == VK_SUCCESS);
+    VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                       .image = image,
+                                       .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                                       .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                       .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+    fixture->view_info = &view_info;
+    VkImageView view;
+    assert(create_view(device, &view_info, NULL, &view) == VK_SUCCESS);
+    VkFramebufferCreateInfo info = {.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                                    .renderPass = pass,
+                                    .attachmentCount = 1,
+                                    .pAttachments = &view,
+                                    .width = 64,
+                                    .height = 64,
+                                    .layers = 1};
+    fixture->framebuffer_info = &info;
+#define LoadDraw(type, variable, name)                                                             \
+    type variable = (type)lookup(device, name);                                                    \
+    assert(variable)
+    LoadDraw(PFN_vkCreateCommandPool, create_pool, "vkCreateCommandPool");
+    LoadDraw(PFN_vkDestroyCommandPool, destroy_pool, "vkDestroyCommandPool");
+    LoadDraw(PFN_vkAllocateCommandBuffers, allocate_commands, "vkAllocateCommandBuffers");
+    LoadDraw(PFN_vkBeginCommandBuffer, begin, "vkBeginCommandBuffer");
+    LoadDraw(PFN_vkEndCommandBuffer, end, "vkEndCommandBuffer");
+    LoadDraw(PFN_vkResetCommandBuffer, reset, "vkResetCommandBuffer");
+    LoadDraw(PFN_vkCmdBeginRenderPass, begin_pass, "vkCmdBeginRenderPass");
+    LoadDraw(PFN_vkCmdEndRenderPass, end_pass, "vkCmdEndRenderPass");
+    LoadDraw(PFN_vkCmdBindPipeline, bind_pipeline, "vkCmdBindPipeline");
+    LoadDraw(PFN_vkCmdDraw, draw, "vkCmdDraw");
+    LoadDraw(PFN_vkQueueSubmit, submit, "vkQueueSubmit");
+    LoadDraw(PFN_vkQueueWaitIdle, idle, "vkQueueWaitIdle");
+    LoadDraw(PFN_vkGetDeviceQueue, get_queue, "vkGetDeviceQueue");
+    LoadDraw(PFN_vkDestroyPipeline, destroy_pipeline, "vkDestroyPipeline");
+#undef LoadDraw
+    VkFramebuffer framebuffer;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_SUCCESS);
+    VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                                         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+    fixture->pool_info = &pool_info;
+    VkCommandPool pool;
+    assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+    VkCommandBufferAllocateInfo allocation = {.sType =
+                                                  VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                                              .commandPool = pool,
+                                              .commandBufferCount = 1};
+    fixture->command_allocate = &allocation;
+    VkCommandBuffer command;
+    assert(allocate_commands(device, &allocation, &command) == VK_SUCCESS);
+    VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    fixture->command_begin = &begin_info;
+    VkClearValue clear = {.color = {{0, 0, 0, 1}}};
+    VkRenderPassBeginInfo render_info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                                         .renderPass = pass,
+                                         .framebuffer = framebuffer,
+                                         .renderArea = {.extent = {64, 64}},
+                                         .clearValueCount = 1,
+                                         .pClearValues = &clear};
+    for (unsigned scenario = 0; scenario < 3; ++scenario) {
+        assert(begin(command, &begin_info) == VK_SUCCESS);
+        if (scenario == 1)
+            begin_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
+        if (scenario == 2) {
+            bind_pipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            begin_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
+            end_pass(command);
+        }
+        const unsigned before = fixture->submissions;
+        draw(command, 3, 1, 0, 0);
+        assert(fixture->submissions == before);
+        assert(end(command) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(fixture->submissions == before);
+        assert(reset(command, 0) == VK_SUCCESS);
+    }
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    /* Pipeline binding before pass is legal and uses copied creating-parent definitions. */
+    bind_pipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    begin_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
+    unsigned before = fixture->submissions;
+    draw(command, 3, 1, 0, 0);
+    assert(fixture->submissions == before + 1 && fixture->command == 106);
+    draw(command, 0, 0, UINT32_MAX, UINT32_MAX);
+    assert(fixture->submissions == before + 2 && fixture->command == 106);
+    end_pass(command);
+    assert(end(command) == VK_SUCCESS);
+    VkQueue queue;
+    get_queue(device, 0, 0, &queue);
+    assert(queue);
+    VkSubmitInfo submission = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                               .commandBufferCount = 1,
+                               .pCommandBuffers = &command};
+    assert(submit(queue, 1, &submission, NULL) == VK_SUCCESS);
+    before = fixture->submissions;
+    destroy_pipeline(device, pipeline, NULL);
+    destroy_pass(device, pass, NULL);
+    destroy_fb(device, framebuffer, NULL);
+    destroy_view(device, view, NULL);
+    destroy_image(device, image, NULL);
+    free_memory(device, memory, NULL);
+    destroy_pool(device, pool, NULL);
+    assert(fixture->submissions == before);
+    assert(idle(queue) == VK_SUCCESS);
+    assert(reset(command, 0) == VK_SUCCESS);
+    /* Binding inside an already active compatible pass is also legal. */
+    assert(begin(command, &begin_info) == VK_SUCCESS);
+    begin_pass(command, &render_info, VK_SUBPASS_CONTENTS_INLINE);
+    bind_pipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    draw(command, 3, 1, 0, 0);
+    end_pass(command);
+    assert(end(command) == VK_SUCCESS);
+    assert(reset(command, 0) == VK_SUCCESS);
+    destroy_pool(device, pool, NULL);
+    destroy_fb(device, framebuffer, NULL);
+    destroy_view(device, view, NULL);
+    destroy_pass(device, pass, NULL);
+    destroy_image(device, image, NULL);
+    free_memory(device, memory, NULL);
+    fixture->render_pass_info = NULL;
+    fixture->framebuffer_info = NULL;
+    fixture->image_info = NULL;
+    fixture->view_info = NULL;
+    fixture->memory_info = NULL;
+    fixture->pool_info = NULL;
+    fixture->command_allocate = NULL;
+    fixture->command_begin = NULL;
+}
+
 static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
                                        fixture_t *fixture) {
 #define LoadGraphics(type, variable, name)                                                         \
@@ -2889,6 +3091,7 @@ static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr 
            VK_ERROR_INITIALIZATION_FAILED);
     assert(fixture->submissions == before);
     graphics_bind_contract(device, lookup, fixture, pipeline);
+    graphics_draw_contract(device, lookup, fixture, pipeline);
     before = fixture->submissions;
     destroy_pipeline(device, pipeline, NULL);
     assert(fixture->submissions == before + 1);

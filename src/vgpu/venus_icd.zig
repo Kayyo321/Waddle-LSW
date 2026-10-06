@@ -3223,6 +3223,34 @@ fn end_render_pass(command_buffer: c.VkCommandBuffer) callconv(.C) void {
     if (!command_acknowledged(&writer, 135)) return;
     graphics_recording(state).* = staged;
 }
+/// Draw canonical vertexless pipeline. [in] nullable borrowed command token and full-u32 scalars.
+/// Void; requires active compatible pass and live graphics pipeline. No vertex arrays retained.
+/// Exact acknowledgment publishes pipeline reference; invalid ordering invalidates; mutex serialized.
+fn draw(command_buffer: c.VkCommandBuffer, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    const token = graphics_state.draw_pipeline(graphics_recording(state)) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    const pipeline = child_object(token, c.VK_OBJECT_TYPE_PIPELINE, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (resource_state(pipeline).pipeline_bind_point != 0) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const writer = graphics_command_wire.draw(record.id, .{ vertex_count, instance_count, first_vertex, first_instance }) catch unreachable;
+    if (!command_acknowledged(&writer, 106)) return;
+    command_reference(state, pipeline);
+}
+
 fn outside_render_pass(state: *resource_state_t) bool {
     if (state.command_profile_index == 0 or graphics_recording(state).active_format == 0) return true;
     state.command_state = .Invalid;
@@ -4251,6 +4279,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkDestroySemaphore", &destroy_semaphore },
         .{ "vkCmdBeginRenderPass", &begin_render_pass },
         .{ "vkCmdEndRenderPass", &end_render_pass },
+        .{ "vkCmdDraw", &draw },
         .{ "vkCmdBindPipeline", &bind_pipeline },
         .{ "vkCmdBindDescriptorSets", &bind_descriptor_sets },
         .{ "vkCmdPushConstants", &push_constants },
@@ -5167,7 +5196,7 @@ test "compute and graphics acknowledgments publish no references or state change
             return c.RingOk;
         }
     };
-    for (0..7) |operation| for (0..3) |mode| {
+    for (0..8) |operation| for (0..3) |mode| {
         var fixture = fixture_t{ .mode = mode };
         try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
         defer venus_icd_abandon();
@@ -5215,7 +5244,11 @@ test "compute and graphics acknowledgments publish no references or state change
             resource_state(framebuffer).* = .{ .render_format = 37, .framebuffer_view = view.*.handle, .framebuffer_extent = .{ 64, 64 } };
             resource_state(view).* = .{ .view_image = image.*.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
             resource_state(image).* = .{ .bound_memory = allocation.*.handle, .image_type = c.VK_IMAGE_TYPE_2D, .image_samples = 1, .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .image_levels = 1, .image_layers = 1, .image_extent = .{ 64, 64, 1 } };
-            if (operation == 6) graphics_recording(resource_state(recording)).active_format = 37;
+            if (operation >= 6) graphics_recording(resource_state(recording)).active_format = 37;
+            if (operation == 7) {
+                graphics_recording(resource_state(recording)).pipeline = pipeline.*.handle;
+                graphics_recording(resource_state(recording)).pipeline_format = 37;
+            }
         }
         const clear_value = std.mem.zeroes(c.VkClearValue);
         const begin_info: c.VkRenderPassBeginInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = @ptrFromInt(if (pass == null) 1 else pass.*.handle), .framebuffer = @ptrFromInt(if (framebuffer == null) 1 else framebuffer.*.handle), .renderArea = .{ .extent = .{ .width = 64, .height = 64 } }, .clearValueCount = 1, .pClearValues = &clear_value };
@@ -5262,10 +5295,11 @@ test "compute and graphics acknowledgments publish no references or state change
             4 => bind_pipeline(command_handle, 0, @ptrFromInt(pipeline.*.handle)),
             5 => begin_render_pass(command_handle, &begin_info, c.VK_SUBPASS_CONTENTS_INLINE),
             6 => end_render_pass(command_handle),
+            7 => draw(command_handle, 3, 1, 0, 0),
             else => unreachable,
         }
         if (operation >= 5) {
-            const expected_active: u32 = if (operation == 5) (if (mode == 0) 37 else 0) else (if (mode == 0) 0 else 37);
+            const expected_active: u32 = if (operation == 5) (if (mode == 0) 37 else 0) else if (operation == 6) (if (mode == 0) 0 else 37) else 37;
             try std.testing.expectEqual(expected_active, graphics_recording(resource_state(recording)).active_format);
             if (operation == 5 and mode == 0) {
                 var referenced: usize = 0;
