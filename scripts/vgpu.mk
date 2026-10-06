@@ -905,10 +905,6 @@ vgpu-descriptor-wire-test: build/venus_descriptor_wire_oracle.o build/venus_rend
 	$(ZIG) test src/vgpu/venus_descriptor_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_descriptor_wire_oracle.o build/venus_render_wire_oracle.o
 vgpu-descriptor-wire-coverage: build/venus_descriptor_wire_oracle.o build/venus_render_wire_oracle.o
 	python3 tests/av/coverage.py venus_descriptor_wire
-vgpu-icd-profiles-test:
-	$(ZIG) test
-vgpu-icd-profiles-coverage:
-	python3 tests/av/coverage.py venus_icd_profiles
 
 vgpu-icd-test: vgpu-descriptor-wire-test
 vgpu-icd-coverage: vgpu-descriptor-wire-coverage
