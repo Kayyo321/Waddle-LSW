@@ -868,10 +868,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Zig codecs100%/95.59%. Worker leases and guest polling remain pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define bounded worker presentation leases`
+- **Commit `4fea0af`**: `docs(vgpu): define bounded worker presentation leases`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Specify three receiver-backed leases, ordered frame publication,
     fence-bound plane export rollback, retained resource busy checks and exact-once
     guest completion consumption before implementing worker ownership.
   - **Verification**: Native release transport coverage97.92% lines/91.07% branches;
     runtime routing and controller acknowledgement retry remain pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): retain bounded worker presentation allocation leases`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add caller-owned three-slot fence-bound export owner with actual
+    DMA-BUF extent checks, ordered successful publication, resource busy guards,
+    authenticated completion pumping and exact-once guest completion consumption.
+  - **Verification**: Production C lines/branches100%; plane export rollback,
+    native send faults, allocation-size mismatch/query faults, full/busy leases,
+    duplicate/out-of-order acknowledgements and128 churn cycles pass normal and
+    ASan/LSan/UBSan runs with descriptor baselines. Add Linux CI gates. Service
+    envelopes, worker launch wiring and controller acknowledgement retry pending.

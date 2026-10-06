@@ -56,6 +56,8 @@ jobs:
         run: make vgpu-wddm-test vgpu-wddm-sanitizers vgpu-wddm-coverage
       - name: Verify credential-bound frame descriptor handoff
         run: make vgpu-frame-test vgpu-frame-sanitizers vgpu-frame-coverage
+      - name: Verify bounded worker export leases
+        run: make vgpu-export-test vgpu-export-sanitizers vgpu-export-coverage
       - name: Verify worker surface binding ownership
         run: make vgpu-surface-test vgpu-surface-sanitizers vgpu-surface-coverage
       - name: Verify native Wayland wire and frame FD integration

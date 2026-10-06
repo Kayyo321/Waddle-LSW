@@ -568,3 +568,18 @@ vgpu-image-hardware: build/vgpu_image_integration
 vgpu-image-hardware-sanitizers: $(VgpuImageIntegrationSources) $(VgpuPresentIntegrationHeaders) build/venus_frame.o build/venus_gpu_fixture.o build/venus_receiver_bounds.o vgpu-renderer
 	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -DVgpuHardwareImage $(VgpuReceiverIncludes) $(VgpuPresentIntegrationFlags) $(VgpuImageIntegrationSources) build/venus_frame.o build/venus_gpu_fixture.o build/venus_receiver_bounds.o $(VgpuPresentIntegrationLibraries) $(VgpuReceiverLibraries) -o build/vgpu_image_integration_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 RENDER_SERVER_EXEC_PATH="$(CURDIR)/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_image_integration_sanitized --require-hardware
+
+VgpuExportHeaders = include/waddle/venus_export.h include/waddle/venus_receiver.h $(VgpuFrameHeaders)
+build/vgpu_export_test: tests/vgpu/export.c src/vgpu/venus_export.c $(VgpuExportHeaders) build/venus_frame.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/export.c build/venus_frame.o -o $@
+
+.PHONY: vgpu-export-test vgpu-export-sanitizers vgpu-export-coverage
+vgpu-export-test: build/vgpu_export_test
+	./build/vgpu_export_test
+
+vgpu-export-sanitizers: build/venus_frame.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/export.c build/venus_frame.o -o build/vgpu_export_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_export_sanitized
+
+vgpu-export-coverage: build/venus_frame.o build/venus_bounds.o
+	python3 tests/vgpu/coverage.py export

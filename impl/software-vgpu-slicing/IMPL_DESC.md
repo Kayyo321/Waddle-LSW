@@ -1732,3 +1732,21 @@ zeroes its private release output on failure; absent ID is Invalid, live awaitin
 acknowledgement is Again, completed returns the copied release record exactly once
 and clears that lease. This worker helper alone does not route guest envelopes or
 own controller acknowledgement retries; no final5% acceptance credit yet.
+
+
+Before publication each exported DMA-BUF's actual allocation size is obtained with
+Linux DMA-BUF lseek(SEEK_END,0), without mapping pixels, and must equal that plane's
+validated declared extent. Failure/size mismatch is Invalid with all exports closed
+and no lease publication. Thus guest metadata cannot inflate an allocation bound
+passed to the compositor. The query modifies only the temporary FD's unused file
+position; DMA-BUF plane import uses explicit offsets, not that position.
+
+
+venus_export.h/.c now implement this caller-owned three-lease worker state. Native
+fault/unit tests prove plane export rollback including failure of a later plane,
+actual-FD size mismatch/query failure, send backpressure/terminal failures, occupied
+resource guards, exact-once completion, out-of-order valid releases, duplicate/
+unknown release corruption, all three full slots and128 sequential release cycles.
+Every temporary FD closes and descriptor counts return to baseline. Production
+lines/branches100% and ASan/LSan/UBSan pass. Linux CI includes these gates; guest
+service dispatch/worker launch and controller retry remain separate pending paths.
