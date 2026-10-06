@@ -2525,3 +2525,43 @@ symbol exactly once. Both image consumers compile, normal/sanitized RTX5080
 48-frame/3-context hardware regressions pass, and native ICD/loader/worker tests
 retain their gates. Native Windows dispatch and actual DLL exports already pass
 CI; final Linux consumer verification must pass on the corrected commit.
+
+### Bounded ICD device and queue lifecycle increment
+
+This increment implements core device creation, queue identity, device/queue idle,
+and destruction. It does not satisfy the separate command, memory, synchronization
+or DXVK acceptance gates. No additional extensions are advertised. Native caller
+inputs remain borrowed for one serialized call; the ICD allocates no heap memory.
+Device creation accepts one through16 unique queue families, one through16 queues
+per family, at most64 total queues, finite priorities in[0,1], flags0 and canonical
+VkDeviceCreateInfo/VkDeviceQueueCreateInfo tags. Only loader device chain records
+(tag48) are stripped, with a32-record bound. Application pNext chains, layers,
+and extensions are explicitly rejected. Core feature booleans must be0/1. Native
+SDK member spellings remain confined to the documented Vulkan ABI boundary.
+
+A16-entry private device cache stores the reserved device handle, up to16 family
+numbers/counts and64 initially empty queue handles. The registry holds each device
+under its physical parent and queues under their device. Creation reserves before
+submitting command11 and publishes only after command/result/tag/identity validation.
+Negative host results release the reservation; malformed/lost replies poison the
+binding and retain ownership until receiver retirement and abandon. All staging
+uses fixed private8192-byte command storage. Encode every scalar little endian in
+pinned generated order; feature structs serialize55 separate32-bit boolean words.
+Allocator pointers are always encoded as0; guest callbacks are never sent to host.
+
+GetDeviceQueue validates a family/index requested at creation. Each pair receives
+one reserved identity through command17, validates reply command17/tag1/identity,
+and caches that handle. Repeated queries return the same handle without submission.
+Invalid calls clear a nonnull output and submit nothing. Queue/device idle use
+commands19/20, respectively, validate the command and signed native result, and
+return transport corruption/loss as VK_ERROR_DEVICE_LOST. Device destruction sends
+command12 first and validates its reply before releasing queue records then device
+record/cache. Instance destruction while a device child remains does not submit
+anything; caller must destroy children first. Binding mutex covers every lifecycle
+operation and lookup; borrowed function pointers remain static after retirement.
+
+Verification requires independent pinned C encoder comparisons, native churn with
+queue caching/invalid inputs and host failures, truncated/corrupt reply tests,
+production worker device lifecycle execution, ASan/LSan/UBSan, Zig allocator tests,
+90% line/branch safety coverage and native Windows CI. No completion credit is
+assigned until the larger dispatch acceptance gate is satisfied.

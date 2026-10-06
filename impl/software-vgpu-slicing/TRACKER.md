@@ -1268,7 +1268,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     remain enforced. Device/API and real DXVK runtime acceptance remains pending.
 
 
-- **Commit (current; resolve by subject)**: `fix(vgpu): link shared query decoder once in remote image fixture`
+- **Commit `53158a7`**: `fix(vgpu): link shared query decoder once in remote image fixture`
   - **Task Impact**: +0% to TODO: #3; +0% to TODO: #4 (+0% overall).
   - **Summary**: Remove duplicate value decoder object after public ICD worker
     integration made it part of the shared guest object list. Restore clean
@@ -1279,3 +1279,9 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     image/remote consumers now compile, actual RTX5080 normal/sanitized48-frame
     fresh-context presentation runs pass, and loader/worker regressions pass.
     Full updated-head GitHub CI remains required.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded device and queue dispatch`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Specify device creation input bounds, parent ownership, stable queue
+    identity, exact pinned command11/12/17/19/20 semantics, error rollback, teardown
+    and verification before implementation. Full dispatch and DXVK remain pending.
