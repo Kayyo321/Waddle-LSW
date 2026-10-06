@@ -1,6 +1,6 @@
 # Feature Tracker: Software vGPU Slicing
 
-- **Contributors / Agents**: Antigravity, Codex (/root)
+- **Contributors / Agents**: Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk)
 - **Time Started**: 2026-10-05T18:35:00Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -19,6 +19,8 @@
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
+
+| #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | In Progress | 0% | 0% | User authorized DXVK submodule; stable2.7.1 immutable pin and license verification pending |
 
 **Total Feature Completion**: `68.75%`
 

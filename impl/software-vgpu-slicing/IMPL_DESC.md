@@ -3934,3 +3934,32 @@ and validated before effects. Whole update batches stage writes first and copies
 second in input order, invalidate destination recordings only after native
 acknowledgment, and leave source-only recordings untouched. Invalid batches and
 transport/corrupt replies publish no staged metadata or local invalidation.
+
+### Modern DXVK 2.x compatibility dependency target
+
+The user explicitly authorized adding DXVK as a submodule and targeting a modern
+2.x release. The compatibility target is upstream stablev2.7.1, commit
+`c3dd74be6baec53786d4e064a572185b70347a17`, verified against its public release
+tag. The submodule location is `submodules/dxvk`, public upstream URL
+`https://github.com/doitsujin/dxvk.git`. Its purpose is a reproducible black-box
+D3D11/DXGI client and precise compatibility requirement audit; owned guest/host
+transport remains C/Zig and the existing Windows harness remains C with COM ABI
+headers. Upstream C++ implementation stays unmodified inside the submodule.
+
+DXVK uses the permissive zlib/libpng license. Its original copyright/license
+notice is retained in the submodule; this is compatible with the repository's
+GPLv3 distribution requirements, with no claim of original authorship or changes
+to upstream source. Nested dependencies must remain immutable upstream gitlinks
+and retain their own notices. Configuration and build outputs belong under
+`build/`, never loose vendored source. Dependency addition is its own
+`chore(deps)` commit; task#9 tracks pinning, configuration and verification with
+zero overall weight, independently from TODO#3 functional acceptance.
+
+Building DXVK or finding its DLL exports is insufficient for compatibility
+acceptance. The existing harness must select only this ICD, initialize the
+D3D11 device and swapchain, complete an actual clear/GPU query/Present, verify
+device health and clean reverse-order teardown. ICD Vulkan API/extension/feature
+advertisement must reflect actually implemented and verified behavior. The
+current Vulkan1.0 bounded profiles require further work for modern2.x and do not
+receive full DXVK credit. Physical VM/hypervisor integration remains user-owned
+as established elsewhere; standalone native backend bootstrap is still required.
