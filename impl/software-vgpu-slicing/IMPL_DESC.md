@@ -3752,7 +3752,7 @@ All integers use little endian and all commands request their opcode acknowledgm
   Both translated IDs are nonzero; bind point0 graphics or1 compute is explicit.
 - `bind_descriptor_sets(command_id,layout_id,bind_point,first_set,set_ids,
   dynamic_offsets)` emits opcode103, exact `56+8*set_count+4*dynamic_count` bytes.
-  Translated IDs are nonzero, first set0..15, sets0..16-first_set, offsets0..1024.
+  Translated IDs are nonzero, first set0..15, sets1..16-first_set, offsets0..1024. Empty descriptor bindings are rejected by the public command and wire profile per core descriptorSetCount-arraylength; only the internal compatibility helper permits a no-op empty slice.
   Empty sets require empty offsets. Maximum packet4280 bytes. The caller proves
   each set's copied definition matches the target layout and calculates the exact
   number/order of dynamic descriptors and offsets, including native alignments.
