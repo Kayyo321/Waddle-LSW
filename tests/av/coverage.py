@@ -3,7 +3,7 @@
 
 Instrument Zig's ReleaseSafe LLVM IR before native code emission. Keep branches
 whose innermost debug scope belongs to an owned codec function. Compiler safety
-traps (panic destinations) and line-zero compiler blocks are reported separately;
+traps (panic and stack-canary failure destinations) and line-zero compiler blocks are reported separately;
 they are not source error returns. Standard-library parser internals remain Zig's
 responsibility; their allocation failures are exercised by the native unit tests.
 """
@@ -97,7 +97,7 @@ for line in ir.splitlines():
         instrumented.append(f'  call void @waddle_branch_hit(i32 {line_sites[key]}, i32 0)')
     if eligible and branch:
         targets=branch.groups()[1:3]
-        if any(any('panic' in body and 'call ' in body for body in blocks.get((function,target),[])) for target in targets):
+        if any(any(('panic' in body or '@__stack_chk_fail(' in body) and 'call ' in body for body in blocks.get((function,target),[])) for target in targets):
             traps+=1
         else:
             index=len(records); records.append({'function':owned,'line':int(lineno[1]),'column':int(column[1]) if column else 0,'edges':2})
@@ -106,7 +106,7 @@ for line in ir.splitlines():
     if eligible and switch:
         cases=re.findall(r'i'+switch[1]+r' (-?\d+), label %([\w.]+)',line)
         targets=list(dict.fromkeys([switch[3],*[target for _,target in cases]]))
-        if any(any('panic' in body and 'call ' in body for body in blocks.get((function,target),[])) for target in targets):
+        if any(any(('panic' in body or '@__stack_chk_fail(' in body) and 'call ' in body for body in blocks.get((function,target),[])) for target in targets):
             traps+=1
         else:
             index=len(records)
@@ -146,7 +146,7 @@ for kind in ('branch','line'):
     covered=sum(len(site['hits']) for site in sites.values())
     total=sum(site['count'] for site in sites.values())
     percent=100*covered/total
-    print(f'{mode} production {kind} coverage: {percent:.2f}% ({covered}/{total}); {traps} compiler panic guards excluded',flush=True)
+    print(f'{mode} production {kind} coverage: {percent:.2f}% ({covered}/{total}); {traps} compiler panic/stack-canary guards excluded',flush=True)
     missed=[{'function':key[0],'line':key[1],'column':key[2],'edge':edge} for key,site in sites.items() for edge in range(site['count']) if edge not in site['hits']]
     (output/(kind+'_missed.json')).write_text(json.dumps(missed,indent=2))
     if percent < 90: failed.append((kind,missed))

@@ -1280,8 +1280,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     fresh-context presentation runs pass, and loader/worker regressions pass.
     Full updated-head GitHub CI remains required.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded device and queue dispatch`
+- **Commit `6d2f73e`**: `docs(vgpu): specify bounded device and queue dispatch`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Specify device creation input bounds, parent ownership, stable queue
     identity, exact pinned command11/12/17/19/20 semantics, error rollback, teardown
     and verification before implementation. Full dispatch and DXVK remain pending.
+
+- **Commit (current; resolve by subject)**: `fix(test): recognize compiler stack canary coverage guards`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Exclude branches whose compiler-generated destination calls
+    __stack_chk_fail, matching the existing exclusion for compiler panic guards.
+    Keep stack protection enabled; no source bounds/error branch is excluded.
+  - **Verification**: Inspect generated LLVM destinations, run three ICD Zig/native
+    tests; 99.49% production lines and93.29% branches with the device increment.
+    Commit53158a7 has all eight GitHub checks green. New device code remains under
+    local verification and is not yet credited toward full dispatch acceptance.
