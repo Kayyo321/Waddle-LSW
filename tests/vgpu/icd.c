@@ -633,6 +633,8 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
             fixture->reply_again--;
             return RingAgain;
         }
+        // Native void replies initialize only their opcode; trailing scratch is unspecified.
+        if (fixture->command == 55 || fixture->command == 58) fixture->reply[123] = 0xa5;
         memcpy(output, fixture->reply, capacity);
         response->payload_bytes = (uint32_t)capacity;
     }

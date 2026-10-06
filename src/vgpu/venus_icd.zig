@@ -1508,8 +1508,7 @@ fn destroy_render_resource(device: c.VkDevice, handle: u64, kind: u32, command_i
     writer.put(u64, record.id);
     writer.put(u64, 0);
     const reply = transact(writer.bytes[0..writer.used]) orelse return;
-    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != command_id or
-        !std.mem.allEqual(u8, reply[4..], 0))
+    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != command_id)
     {
         _ = failure(c.RingCorrupt);
         return;
