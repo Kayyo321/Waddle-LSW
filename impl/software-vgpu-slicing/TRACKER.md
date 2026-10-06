@@ -1921,3 +1921,92 @@ Step2 public image lifecycle is implemented but image command GPU acceptance is
 pending. Steps3 and5 retain compute/graphics/full DXVK requirements. Step4's
 standalone adapter milestone was already credited before this guide began and
 must not receive duplicate completion credit. Task5 OpenCL is outside this guide.
+
+### Descriptor and physical image verification audit
+
+- **Commit `11cfb3f`**: `docs(vgpu): audit mapped GPU evidence and remaining guide gates`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Record real NVIDIA mapped-memory data validation through normal and sanitized direct/shared-loader workers, precise repeated lifecycle and timeout evidence, deterministic generator publication, image safety/coverage and shader fixture commits. Keep incomplete image commands, compute/graphics and native DXVK/bootstrap gates explicit; avoid duplicate adapter progress.
+- **Commit `d0b231f`**: `feat(vgpu): encode bounded single compute pipeline creation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Encode core compute pipeline creation with translated shader/layout/output identities, canonical count-one arrays and null pipeline cache. Reject unsupported flags/chains/specialization, derivative handles, invalid stage/IDs and empty or malformed UTF-8 names; scan at most 256 bytes and prove complete packet capacity before appending. Compare generated Venus bytes for ordinary and maximum 396-byte packets and exercise seventeen independent scalar failures, unterminated names and malformed UTF-8. Sixteen codec tests pass; render source coverage is 100% lines and 99.55% branches. Confine upstream GNU pointer-arithmetic warning suppression to the immutable oracle includes.
+- **Commit `1a289df`**: `test(vgpu): verify mapped allocation failure ownership and quota recovery`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Inject one production posix_memalign ENOMEM at the aligned guest shadow allocation and verify a null output, no host export, and successful retry. Exercise all 64 export slots, prove unmap preserves export ownership, and verify explicit memory free refunds and safely reuses the slot. Map a non-page allocation to verify page-rounded export padding never reaches flush or invalidate; reject malformed read response lengths with sticky loss and shadow cleanup. Scope the allocation hook to an explicit native linker target so ordinary, Windows, and Zig allocator fixtures remain unaffected. Verification: isolated committed ICD lifecycle source passed native and ASan/LSan/UBSan fixtures with production C allocator injection and seventeen mapping scenarios, zero leaks.
+- **Commit `e90fb35`**: `fix(vgpu): ignore unspecified scratch beyond image destroy reply prefix`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Real Venus void replies initialize only the four-byte command opcode in the fixed-capacity reply scratch. Requiring the remaining 4092 bytes to be zero incorrectly poisoned the binding after otherwise successful image or view destruction and retained live resource identities. Validate the defined command prefix and transport outcome only, preserving ownership on malformed opcode or transport failure. Native regression fixtures deliberately provide nonzero trailing scratch for image and view destruction; the full native lifecycle suite passes.
+- **Commit `f7e71a5`**: `test(vgpu): permit sampler and buffer view IDs in descriptor oracles`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Extend the bounded independent encoder handle-kind assertion to the two core descriptor resource kinds. Preserve native word copying and null identity behavior without adding pointer dereferences or production dispatch support. Verified nonzero and null sampler/buffer-view test identities with a strict C11 fixture. Required only for subsequent pinned descriptor serialization comparisons.
+- **Commit `038f7a5`**: `test(vgpu): run mapped allocation failures with libc leak checks`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Add repeatable native and ASan/LSan/UBSan ICD targets enabling one-shot posix_memalign ENOMEM injection. Include them in required ICD checks so production C allocator failure, rollback, retry and cleanup are exercised alongside Zig testing allocator coverage. Verification: both targets pass the native 128-cycle lifecycle fixture and seventeen mapping scenarios with zero sanitizer diagnostics.
+- **Commit `de2ba13`**: `feat(vgpu): track image barriers through bounded command recording`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Accept core image barriers for bound same-device images after validating canonical scalar fields, aspect and subresource extents, and configured queue-family pairs. Preflight the complete 64+20*memory+52*buffer+64*image packet against 8192-byte scratch before reading any arrays; publish resource references only after successful native acknowledgment. Extend the independent generated command encoder fixture for image records and add twelve native success/error cases. Prove pending images cannot be destroyed and recorded commands invalidate only after confirmed image destruction. Update the formerly unsupported-image negative fixture to reject image count 65 before reading its deliberately inaccessible pointer. Native and shared-loader tests, allocation fault cases, ASan/LSan/UBSan, Zig allocator and coverage pass. ICD: 91.13% branches, 99.28% lines. Renderer codec: 99.55% branches, 100% lines.
+- **Commit `477a17f`**: `docs(vgpu): specify bounded descriptor and initial graphics wire profiles`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Define pool/set/update quotas and translated resource identity boundaries, single-color render-pass/framebuffer/begin profiles, exact complete packet limits and clear-union tags. Clarify that short destruction acknowledgments ignore retained receiver scratch tails while preserving malformed-prefix ownership.
+- **Commit `92c5699`**: `feat(vgpu): expose bounded shader module ownership through ICD dispatch`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Publish core shader module creation and destruction entry points. Validate SPIR-V structural bounds before private identity reservation, return host errors without leaking reservations, and preserve uncertain identities on transport or malformed replies. Retire shader ownership only after the native destroy opcode acknowledgment. Use the reproducible Vulkan 1.0 compute shader fixture for independent generated-packet comparison. Cover invalid pointers/scalars, payload cap rejection before copy, native allocation failure and retry, plus duplicate destruction. Native and shared-loader tests, mapping OOM fault tests, ASan/LSan/UBSan and Zig allocator pass; ICD coverage is 91.14% branches and 99.28% lines.
+- **Commit `51de5d6`**: `test(vgpu): verify image and view lifetimes on the physical receiver`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Extend each repeated production device lifecycle with a real 64x64 BGRA image, exact native memory requirements, supported allocation and binding, and a 2D color image view. Retire view, image and device memory in dependency order before device teardown, with stage-specific failure diagnostics. The physical workload exposed unspecified stale reply scratch after void image destruction; the independent e90fb35 production fix now preserves the declared reply-prefix contract. Keep lifecycle verification distinct from image barrier and shader execution acceptance. Verification: direct and pinned shared-loader receiver integration passed on NVIDIA GeForce RTX 5080, including existing mapped exact-byte stress. Both ASan/LSan/UBSan integrations passed without errors or leaks and with balanced descriptors; sixteen full lifecycle repetitions per invocation.
+- **Commit `de94fa1`**: `docs(vgpu): define fixed descriptor and pipeline compatibility profiles`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Specify dedicated layout, pipeline and descriptor-set metadata quotas, by-value compatibility snapshots, valid early shader/layout retirement and exact reservation/error/destruction cleanup. Correct descriptor copy packet size from independent oracle evidence and distinguish codec bounds from public ICD profile budgets.
+- **Commit `940dfbe`**: `test(vgpu): isolate physical workload milestones without shortening stress`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Select full, mapping or image production workloads through a strict test-only environment policy. Keep the complete mapped and image workload as the default and preserve common instance/device/queue/fence/semaphore checks and sixteen normal/corrupt-release lifecycle repetitions for every accepted selection. Move shared memory-allocation procedure discovery into the common scope and retain forced post-acquisition loader-loss cleanup in each selected workload. Unknown selectors fail with status 2 before native resource acquisition; no unimplemented workload can pass as an empty test. Add dedicated image normal/shared-loader and sanitizer Make gates, with reusable sanitizer executable build targets and the forced-failure assertion. Existing full stress gates remain available unchanged. Verification: all four image-only direct/shared normal and ASan/LSan/UBSan integrations passed on NVIDIA RTX 5080 with balanced descriptors; image forced failure exited exactly 1 without sanitizer diagnostics; invalid selector exited exactly 2.
+- **Commit `8910019`**: `feat(vgpu): encode bounded descriptor pools sets and buffer updates`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Encode allocation-free descriptor pool creation, distinct set identity allocation, buffer descriptor families and exact descriptor copies using the shared render packet writer. Validate every scalar and borrowed array before construction and prove the entire packet fits before infallible scalar appends. Compare native packets against independently generated pinned Venus encoders, including pool592, allocation1088 and update8188 byte maxima. Reject malformed IDs, quota exhaustion, overflow and overlapping same-binding copies. Native and instrumented C-oracle ASan/LSan/UBSan tests pass with zero leaks; Windows x86_64 test executable crosscompiles; production coverage is100% lines74/74 and branches84/84.
+- **Commit `da59924`**: `docs(vgpu): quantify fixed metadata storage and framebuffer limits`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Specify each x86_64 table size and the complete 2,119,424-byte registry before public profile integration. Document exact framebuffer bounds of 1 through 4096 on each dimension. Static table ownership avoids hidden allocations.
+- **Commit `3acd87c`**: `feat(vgpu): encode bounded single-color render pass commands`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Add allocation-free render-pass, framebuffer and inline begin packets with complete preflight bounds. Preserve raw clear union words and translated IDs. Independently compare packets against pinned generated C encoders, including maximal dependencies and all malformed scalar guards. Native tests and instrumented oracle tests pass without leaks; Windows crosscompile passes. Production coverage is 100% lines and branches.
+- **Commit `5e532a1`**: `test(vgpu): execute image layout barriers on the physical queue`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Record an undefined-to-general full-color image transition in a real primary command buffer, submit it through the production receiver with an unsignaled Vulkan fence, and require fence retirement and queue idle before releasing the pool and image dependencies. Keep queue-family ownership ignored explicitly, use top-of-pipe to all-commands synchronization, and retain the existing forced-loss ownership fixture. Image workload selection provides sixteen real GPU submission lifecycles without rerunning the independently proven large mapped-transfer workload. Verification: direct and pinned shared-loader image integrations passed on NVIDIA GeForce RTX 5080; both ASan/LSan/UBSan variants passed with zero diagnostics and balanced descriptor counts. All source compiled with strict C warnings.
+- **Commit `a42fc4c`**: `feat(vgpu): own copied descriptor and pipeline layout profiles`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Expose core descriptor and pipeline layout creation/destruction with translated identities and fixed owned compatibility snapshots. Reserve metadata before native creation, refund ordinary failures, retain uncertain ownership until receiver abandon, and scrub slots only after native destruction acknowledgment. Exercise independent pinned packet encoders through native dispatch and shared loader. Prove32-slot exhaustion, full quota reuse, native allocation failure rollback, malformed inputs, and pipeline snapshots surviving destruction of their original descriptor layout tokens. Native and mapping fault ASan/LSan/UBSan suites pass with zero leaks; Windows fixture crosscompiles. ICD production coverage90.41% branches and99.32% lines.
+- **Commit `ae69d59`**: `test(vgpu): enforce descriptor wire oracle and coverage gates`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Run independent descriptor and imported render oracle tests in the ICD acceptance targets. Track descriptor source as an incremental build dependency on Linux and Windows and link its oracle into ICD source coverage. Twenty-four tests and 100% descriptor production line and branch coverage pass with the unchanged 90% threshold.
+- **Commit `ef69716`**: `fix(vgpu): remove incomplete metadata gate placeholders`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Remove temporary unconfigured profile test rules left during isolated descriptor gate publication. They are not acceptance prerequisites; complete metadata targets will be added after their source coverage passes. Descriptor tests and coverage remain unchanged.
+- **Commit `cff5452`**: `test(vgpu): audit fixed profile metadata and generic ownership helpers`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Add required standalone metadata tests and source coverage to ICD gates. Normalize Zig generic specialization suffixes only after verifying owned source attribution, so reserve/get/release slot helpers are included in coverage. All five tests pass with 98% branch and 100% line coverage, including exhaustion, reuse, malformed input and copied lifetime checks. Track profiles as an explicit Linux/Windows incremental ICD dependency.
+- **Commit `1d02691`**: `test(vgpu): enforce graphics wire oracle and coverage gates`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); full runtime/native acceptance gates remain open.
+  - **Summary**: Require independent single-color render pass, framebuffer and begin-record comparisons in ICD acceptance. Add production source instrumentation without reducing coverage thresholds. Twenty tests pass; owned graphics wire source has 100% line and branch coverage.
+
+Step1 now has actual mapped flush/GPU-copy/invalidate byte verification on the
+NVIDIA RTX5080. Step2 has real image/view/bind lifecycles plus16 layout transition
+submissions per direct/shared and normal/sanitized path, fence completion, queue
+idle, deterministic teardown and balanced descriptor counts. Step3 has public
+shader/layout ownership and independent descriptor/compute/graphics packet
+proofs; descriptor command binding, actual compute dispatch and triangle draw
+remain pending. Step4 standalone userland adapter was previously accepted. Step5
+black-box harness crosscompiles but initialization, surfaces, API/extensions and
+native backend bootstrap remain pending. No completion credit is awarded merely
+for serializers, command recording or a compiling DXVK harness.
+
+Metadata acceptance includes all generic fixed-slot ownership helpers in the
+coverage denominator:98% branches49/50 and100% lines45/45. Descriptor codec
+coverage is100% branches84/84 and100% lines74/74. Graphics wire coverage is100%
+branches82/82 and100% lines99/99. Public layout integration currently passes
+native/shared loader, ASan/LSan/UBSan, mapped libc OOM fixtures and Windows
+crosscompile; ICD coverage90.41% branches1405/1554 and99.32% lines1741/1753.
+Required native Windows CI acceptance of these increments remains pending.
+
+The synchronization commit is identified by unique subject
+`docs(vgpu): audit descriptor ownership and physical image barrier proof`;
++0% to TODO#3 and overall until corresponding remaining acceptance gates pass.
