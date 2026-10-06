@@ -8,6 +8,8 @@ const c = @cImport({
 pub const MaxNodes: usize = 8;
 /// Maximum accessible native headers walked before rejecting the next address unread.
 pub const MaxWalkNodes: usize = 64;
+/// Exact pinned core native Boolean count; immutable schema constant.
+pub const CoreFlags: usize = wire.CoreFlags;
 /// Owned Boolean record compatible with the checked receiver decoder; no pointer ownership.
 pub const node_t = wire.node_t;
 /// Copied tags and borrowed known targets. Underlying initialized objects must outlive use;
@@ -84,12 +86,19 @@ fn publish_node(output: *c.VkBaseOutStructure, flags: []const u32) void {
 const NativeTypes = .{ c.VkPhysicalDeviceVulkan11Features, c.VkPhysicalDeviceVulkan12Features, c.VkPhysicalDeviceVulkan13Features, c.VkPhysicalDeviceRobustness2FeaturesEXT, c.VkPhysicalDeviceMaintenance5FeaturesKHR, c.VkPhysicalDeviceHostQueryResetFeatures, c.VkPhysicalDeviceShaderDrawParametersFeatures, c.VkPhysicalDeviceTransformFeedbackFeaturesEXT };
 const Tags = [_]u32{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT };
 comptime {
+    const core_fields = @typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields;
+    if (core_fields.len != CoreFlags) @compileError("Pinned core feature count changed");
+    for (core_fields) |field| if (field.type != c.VkBool32) @compileError("Core feature member is not Boolean");
     for (NativeTypes, Tags) |native_t, tag| {
         const fields = @typeInfo(native_t).Struct.fields;
         if (fields.len != node_count(tag).? + 2) @compileError("Pinned feature Boolean count changed");
         for (fields[2..]) |field| if (field.type != c.VkBool32) @compileError("Native feature payload is not Boolean");
     }
     if (@sizeOf(usize) == 8) {
+        if (@sizeOf(c.VkPhysicalDeviceFeatures) != 220 or @alignOf(c.VkPhysicalDeviceFeatures) != 4 or
+            @sizeOf(c.VkPhysicalDeviceFeatures2) != 240 or @alignOf(c.VkPhysicalDeviceFeatures2) != 8 or
+            @offsetOf(c.VkPhysicalDeviceFeatures2, "features") != 16 or @offsetOf(c.VkPhysicalDeviceFeatures2, "pNext") != 8)
+            @compileError("Core Features2 native ABI changed");
         if (@sizeOf(chain_t) != 104 or @alignOf(chain_t) != 8 or @sizeOf(node_t) != 196 or
             @sizeOf([MaxWalkNodes]?*c.VkBaseOutStructure) != 512) @compileError("Native feature snapshot ABI changed");
         for (NativeTypes, .{ 64, 208, 80, 32, 24, 24, 24, 24 }) |native_t, size| {
@@ -107,7 +116,7 @@ fn native_size(tag: u32) usize {
 /// unchanged for count/tag/shape/Boolean/null/alignment/duplicate/overlap errors. Success writes
 /// only named Boolean members; headers, links, padding and unknown payloads remain unchanged.
 /// No allocation, transport, locks or shared state; caller owns all storage and synchronization.
-pub fn publish_batch(chain: *const chain_t, nodes: []const node_t) !void {
+fn validate_batch(chain: *const chain_t, nodes: []const node_t) !void {
     if (chain.count > MaxNodes or nodes.len != chain.count) return error.Invalid;
     for (nodes, 0..) |node, index| {
         const count = node_count(chain.tags[index]) orelse return error.Invalid;
@@ -125,7 +134,40 @@ pub fn publish_batch(chain: *const chain_t, nodes: []const node_t) !void {
             if (address < previous_end and previous_address < end) return error.Invalid;
         }
     }
+}
+/// Publish a complete checked chain. [in] chain/nodes borrowed immutable and disjoint from
+/// [in,out] accessible exclusive initialized native objects, all externally synchronized.
+/// Invalid leaves every target untouched; success writes only named Boolean members.
+/// No allocation, transport, pointer retention or shared state.
+pub fn publish_batch(chain: *const chain_t, nodes: []const node_t) !void {
+    try validate_batch(chain, nodes);
     for (nodes, 0..) |node, index| publish_node(chain.addresses[index].?, node.flags[0..node.flag_count]);
+}
+/// Publish core55 and extension outputs as one transaction. [in,out] output_address nullable;
+/// nonnull addresses must reference an exclusive
+/// initialized accessible Features2; [in] chain is collected from exactly output.pNext with
+/// immutable headers/links. Borrowed core/nodes/snapshot inputs are disjoint from every output;
+/// all native objects including unknown records are distinct and non-overlapping. Caller owns
+/// storage and synchronization until return. Invalid for outer alignment/tag, core count/Boolean,
+/// batch errors or known-target overlap with the entire outer object leaves all outputs untouched.
+/// Success writes only named Boolean fields, preserving outer/chain headers, padding and canaries.
+/// Fixed bounded scalar storage; no heap, locks, transport or pointer retention.
+pub fn publish_features2(output_address: ?*anyopaque, chain: *const chain_t, nodes: []const node_t, core: []const u32) !void {
+    const raw = output_address orelse return error.Invalid;
+    const address = @intFromPtr(raw);
+    if (address % @alignOf(c.VkPhysicalDeviceFeatures2) != 0) return error.Invalid;
+    const output: *c.VkPhysicalDeviceFeatures2 = @ptrCast(@alignCast(raw));
+    if (output.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 or core.len != CoreFlags) return error.Invalid;
+    for (core) |flag| if (flag > 1) return error.Invalid;
+    try validate_batch(chain, nodes);
+    const end = std.math.add(usize, address, @sizeOf(c.VkPhysicalDeviceFeatures2)) catch return error.Invalid;
+    for (nodes, 0..) |node, index| {
+        const target_address = @intFromPtr(chain.addresses[index].?);
+        const target_end = target_address + native_size(node.type_tag); // validate_batch proved no overflow.
+        if (address < target_end and target_address < end) return error.Invalid;
+    }
+    for (nodes, 0..) |node, index| publish_node(chain.addresses[index].?, node.flags[0..node.flag_count]);
+    publish_flags(c.VkPhysicalDeviceFeatures, &output.features, core);
 }
 
 // Test-only fixtures.
@@ -286,4 +328,114 @@ test "x64 native ABI ledger is identical on Linux and Windows" {
         try std.testing.expectEqual(@as(usize, 8), @alignOf(native_t));
     }
     try std.testing.expectEqual(@as(usize, 512), @sizeOf([MaxWalkNodes]?*c.VkBaseOutStructure));
+}
+
+test "all55 core one-hots preserve complete outer bytes and known adjacent output" {
+    const box_t = extern struct { before: u64, output: c.VkPhysicalDeviceFeatures2, known: c.VkPhysicalDeviceMaintenance5FeaturesKHR, after: u64 };
+    const core_fields = @typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields;
+    for (0..55) |selected| {
+        var box: box_t = undefined;
+        @memset(std.mem.asBytes(&box), 0xa5);
+        box.output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        box.output.pNext = &box.known;
+        box.known.sType = Tags[4];
+        box.known.pNext = null;
+        const chain = try collect_chain(box.output.pNext);
+        var node = record(Tags[4]);
+        node.flags[0] = 1;
+        var core = [_]u32{0} ** 55;
+        core[selected] = 1;
+        var expected = std.mem.asBytes(&box).*;
+        inline for (core_fields, 0..) |field, index| {
+            const offset = @offsetOf(box_t, "output") + @offsetOf(c.VkPhysicalDeviceFeatures2, "features") + @offsetOf(c.VkPhysicalDeviceFeatures, field.name);
+            std.mem.writeInt(u32, expected[offset..][0..4], @intFromBool(index == selected), @import("builtin").target.cpu.arch.endian());
+        }
+        const known_offset = @offsetOf(box_t, "known") + @offsetOf(c.VkPhysicalDeviceMaintenance5FeaturesKHR, "maintenance5");
+        std.mem.writeInt(u32, expected[known_offset..][0..4], 1, @import("builtin").target.cpu.arch.endian());
+        try @call(.never_inline, publish_features2, .{ &box.output, &chain, &[_]node_t{node}, &core });
+        try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&box));
+    }
+}
+test "Features2 malformed final core or chain leaves every output byte unchanged" {
+    const unknown_t = extern struct { base: c.VkBaseOutStructure, canary: u64 };
+    const box_t = extern struct { output: c.VkPhysicalDeviceFeatures2, unknown: unknown_t, first: c.VkPhysicalDeviceMaintenance5FeaturesKHR, middle: unknown_t, last: c.VkPhysicalDeviceHostQueryResetFeatures, tail: unknown_t, after: u64 };
+    var box: box_t = undefined;
+    @memset(std.mem.asBytes(&box), 0xa5);
+    box.output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    box.output.pNext = &box.unknown;
+    box.unknown.base.sType = 0x7fffffff;
+    box.unknown.base.pNext = @ptrCast(&box.first);
+    box.first.sType = Tags[4];
+    box.first.pNext = &box.middle;
+    box.middle.base.sType = 0x7fffffff;
+    box.middle.base.pNext = @ptrCast(&box.last);
+    box.last.sType = Tags[5];
+    box.last.pNext = &box.tail;
+    box.tail.base.sType = 0x7fffffff;
+    box.tail.base.pNext = null;
+    const chain = try collect_chain(box.output.pNext);
+    var nodes = [_]node_t{ record(Tags[4]), record(Tags[5]) };
+    var core = [_]u32{1} ** 56;
+    const before = std.mem.asBytes(&box).*;
+    for ([_]usize{ 0, 54, 56 }) |count| {
+        try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ &box.output, &chain, &nodes, core[0..count] }));
+        try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
+    }
+    for (0..55) |index| {
+        for ([_]u32{ 2, 0xffffffff }) |invalid| {
+            core[index] = invalid;
+            try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ &box.output, &chain, &nodes, core[0..55] }));
+            try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
+        }
+        core[index] = 1;
+    }
+    nodes[1].flags[0] = 2;
+    try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
+    nodes[1] = record(Tags[5]);
+    nodes[1].flag_count = 0;
+    try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
+    nodes[1] = record(Tags[5]);
+    nodes[1].type_tag = Tags[4];
+    try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
+    nodes[1] = record(Tags[5]);
+    box.output.sType = 0;
+    const invalid_header = std.mem.asBytes(&box).*;
+    try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
+    try std.testing.expectEqualSlices(u8, &invalid_header, std.mem.asBytes(&box));
+    box.output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    const misaligned: *anyopaque = @ptrFromInt(9);
+    try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ @as(?*anyopaque, null), &chain, &nodes, core[0..55] }));
+    try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ misaligned, &chain, &nodes, core[0..55] }));
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
+    const unknown_before = .{ box.unknown, box.middle, box.tail };
+    try publish_features2(&box.output, &chain, &nodes, core[0..55]);
+    try std.testing.expectEqualDeep(unknown_before, .{ box.unknown, box.middle, box.tail });
+}
+test "Features2 core versus chain overlap rejection and empty maximal chains" {
+    var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    const core = [_]u32{0} ** 55;
+    try publish_features2(&output, &chain_t{}, &.{}, &core);
+    const overlapping: *c.VkPhysicalDeviceMaintenance5FeaturesKHR = @ptrCast(@alignCast(&output.features));
+    overlapping.sType = Tags[4];
+    overlapping.pNext = null;
+    output.pNext = overlapping;
+    const chain = try collect_chain(output.pNext);
+    const before = std.mem.asBytes(&output).*;
+    try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ &output, &chain, &[_]node_t{record(Tags[4])}, &core }));
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&output));
+    var natives: std.meta.Tuple(&NativeTypes) = undefined;
+    var nodes: [MaxNodes]node_t = undefined;
+    inline for (NativeTypes, Tags, 0..) |native_t, tag, index| {
+        natives[index] = std.mem.zeroes(native_t);
+        natives[index].sType = tag;
+        if (index + 1 < MaxNodes) natives[index].pNext = &natives[index + 1];
+        nodes[index] = record(tag);
+    }
+    output.pNext = &natives[0];
+    const maximal = try collect_chain(output.pNext);
+    try publish_features2(&output, &maximal, &nodes, &core);
 }
