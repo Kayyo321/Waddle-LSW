@@ -3698,3 +3698,37 @@ references prohibit invalid reuse. Insufficient local profile capacity returns
 OUT_OF_HOST_MEMORY before native work. Abandon clears all fixed tables after
 receiver retirement. These quotas are initial implementation limits and do not
 establish full DXVK compatibility; expanding them requires documented budgets.
+
+### Bounded Vulkan 1.0 graphics pipeline packet profile
+
+`venus_graphics_pipeline_wire.zig` owns allocation-free core command65 serialization
+for exactly one graphics pipeline, device ID supplied by its caller, cache ID0,
+NULL allocation callbacks and one translated output ID. The caller retains all
+native records and resolves guest shader/layout/render-pass handles before entry.
+Five translated object IDs (two shaders, layout, pass, output) and device must be
+nonzero; this module never dereferences a guest handle or retains caller pointers.
+All caller records/arrays must be accessible for the synchronous call. Extension
+chains and create flags are rejected before any packet is returned.
+
+The profile is two ordered vertex and fragment stages named exactly `main`, no
+specialization, triangle-list input assembly without primitive restart, and zero
+vertex binding/attribute descriptions. Tessellation, depth/stencil and dynamic
+state pointers must be NULL. One static viewport and scissor are required: finite
+nonnegative viewport origin, width/height1..4096, sums within4096; depth range0..1;
+nonnegative scissor origin and extent1..4096 with sums within4096. Rasterization is
+fill, no depth clamp/discard/bias, line width1; cull mask0..3 and front face0..1.
+Single-sample multisampling disables shading, coverage and alpha-to-one and has
+no sample mask. One color attachment disables blending and writes all four color
+channels. Disabled/ignored scalar fields are canonical zero, including blend
+constants and logicOp. Subpass is0; base pipeline is NULL with index-1 or0.
+Every mandatory state has its exact core sType, NULL pNext and flags0.
+
+The canonical packet is exactly632 bytes, including each five-byte main string
+rounded to eight wire bytes. The returned writer owns its8192-byte storage; validation and fixed-size preflight
+prove the complete packet fits before serialization. No heap allocation, global
+state or shared scratch exists; concurrent calls are safe with disjoint borrowed
+inputs. Invalid profiles return error.Invalid without a partial packet escaping.
+The pinned generated C serializer is the independent byte oracle, including
+pointer markers, array lengths, strings, scalar order and translated IDs. Tests
+exercise malformed headers, counts, pointers, floats, enums and object IDs.
+This serializer alone gives no graphics rendering or DXVK acceptance credit.
