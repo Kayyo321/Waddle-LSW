@@ -1,5 +1,6 @@
 //! Experimental bounded Vulkan dispatch; full device API/DXVK support is separately gated.
 const std = @import("std");
+const render_wire = @import("venus_render_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 const MaxMappedBytes: u64 = 16777216;
@@ -42,6 +43,12 @@ const resource_state_t = struct {
     memory_offset: u64 = 0,
     buffer_size: u64 = 0,
     buffer_usage: u32 = 0,
+    image_levels: u32 = 0,
+    image_layers: u32 = 0,
+    image_format: u32 = 0,
+    image_type: u32 = 0,
+    image_usage: u32 = 0,
+    view_image: u64 = 0,
     buffer_references: [8]u64 = [_]u64{0} ** 8,
     queue_family: u32 = 0,
     pool_family: u32 = 0,
@@ -1384,6 +1391,211 @@ fn query_buffer_requirements(
         return null;
     }
     return value;
+}
+/// Publish a reserved resource only after an exact successful host identity reply.
+/// Caller holds mutex; packet is owned scratch, final eight bytes are reserved output identity.
+fn create_render_resource(parent: *c.venus_object_t, kind: u32, writer: *render_wire.writer_t, output: *u64) c_int {
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(&objects, kind, parent.id, 0, &record) != c.RingOk)
+        return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    std.mem.writeInt(u64, writer.bytes[writer.used - 8 ..][0..8], record.*.id, .little);
+    const command_id = std.mem.readInt(u32, writer.bytes[0..4], .little);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = identity_reply(reply, command_id, record.*.id, true) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0) return failure(c.RingCorrupt);
+    if (result != c.VK_SUCCESS) {
+        _ = c.venus_objects_release(&objects, record.*.handle, kind, 0);
+        return result;
+    }
+    resource_state(record).* = .{ .id = record.*.id };
+    output.* = record.*.handle;
+    return c.VK_SUCCESS;
+}
+/// Create a core device-owned image. [in] device/info borrowed nonnull, allocator nullable unused.
+/// [out] output nonnull handle storage, NULL on error. Returns host result/local invalid/OOM/loss.
+/// Mutex serialized, allocation-free; owns identity until exact host destruction or retired abandon.
+fn create_image(device: c.VkDevice, info: [*c]const c.VkImageCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkImage) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = render_wire.create_image(@ptrCast(info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    const dimension = @max(info.*.extent.width, @max(info.*.extent.height, info.*.extent.depth));
+    if (info.*.mipLevels > 32 - @clz(dimension) or
+        (info.*.samples != 1 and (info.*.imageType != c.VK_IMAGE_TYPE_2D or
+        info.*.mipLevels != 1 or info.*.tiling != c.VK_IMAGE_TILING_OPTIMAL))) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.*.sharingMode == c.VK_SHARING_MODE_CONCURRENT) {
+        const entry = device_cache(parent.handle).?;
+        for (info.*.pQueueFamilyIndices[0..info.*.queueFamilyIndexCount]) |family|
+            if (std.mem.indexOfScalar(u32, entry.families[0..entry.family_count], family) == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_IMAGE, &writer, &handle);
+    if (result != c.VK_SUCCESS) return result;
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_IMAGE, parent.id).?);
+    state.image_levels = info.*.mipLevels;
+    state.image_layers = info.*.arrayLayers;
+    state.image_format = info.*.format;
+    state.image_type = info.*.imageType;
+    state.image_usage = info.*.usage;
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+fn image_aspects(format: u32) u32 {
+    return switch (format) {
+        124, 125, 126 => c.VK_IMAGE_ASPECT_DEPTH_BIT,
+        127 => c.VK_IMAGE_ASPECT_STENCIL_BIT,
+        128, 129, 130 => c.VK_IMAGE_ASPECT_DEPTH_BIT | c.VK_IMAGE_ASPECT_STENCIL_BIT,
+        else => c.VK_IMAGE_ASPECT_COLOR_BIT,
+    };
+}
+fn image_range_valid(state: *const resource_state_t, range: c.VkImageSubresourceRange) bool {
+    if (range.aspectMask == 0 or range.aspectMask & ~image_aspects(state.image_format) != 0 or
+        range.baseMipLevel >= state.image_levels or range.baseArrayLayer >= state.image_layers or
+        range.levelCount == 0 or range.layerCount == 0) return false;
+    return (range.levelCount == std.math.maxInt(u32) or range.levelCount <= state.image_levels - range.baseMipLevel) and
+        (range.layerCount == std.math.maxInt(u32) or range.layerCount <= state.image_layers - range.baseArrayLayer);
+}
+/// Create a view retaining its image. [in] device/info nonnull borrowed, allocator nullable unused.
+/// [out] output nonnull storage, NULL on failure. Returns host result/local invalid/OOM/loss.
+/// Mutex serialized, allocation-free; rejects format reinterpretation and unbound/invalid image ranges.
+fn create_image_view(device: c.VkDevice, info: [*c]const c.VkImageViewCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkImageView) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or info.*.image == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const image = child_object(@intFromPtr(info.*.image.?), c.VK_OBJECT_TYPE_IMAGE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const state = resource_state(image);
+    if (state.bound_memory == 0 or info.*.format != state.image_format or !image_range_valid(state, info.*.subresourceRange)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const view_type = info.*.viewType;
+    if ((state.image_type == 0 and view_type != 0 and view_type != 4) or
+        (state.image_type == 1 and view_type != 1 and view_type != 5) or
+        (state.image_type == 2 and view_type != 2)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if ((view_type == 0 or view_type == 1 or view_type == 2) and
+        info.*.subresourceRange.layerCount != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = render_wire.create_image_view(@ptrCast(info), parent.id, image.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_IMAGE_VIEW, &writer, &handle);
+    if (result != c.VK_SUCCESS) return result;
+    resource_state(child_object(handle, c.VK_OBJECT_TYPE_IMAGE_VIEW, parent.id).?).view_image = image.handle;
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy quiescent rendering resource after exact acknowledgment. Caller holds mutex.
+/// Recorded references invalidate only after successful destruction; pending references retain ownership.
+fn destroy_render_resource(device: c.VkDevice, handle: u64, kind: u32, command_id: u32) void {
+    if (device == null or handle == 0) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(handle, kind, parent.id) orelse return;
+    const index = resource_index(record);
+    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+    if (resource_state(record).inflight_count != 0) return;
+    for (resource_states) |state| {
+        if (kind == c.VK_OBJECT_TYPE_IMAGE and state.view_image == handle) return;
+        if (state.command_state == .Pending and state.buffer_references[index / 64] & bit != 0) return;
+    }
+    var writer = writer_t{};
+    writer.header(command_id, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != command_id or
+        !std.mem.allEqual(u8, reply[4..], 0))
+    {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    for (&resource_states) |*state| if (state.buffer_references[index / 64] & bit != 0) {
+        state.command_state = .Invalid;
+        state.buffer_references = [_]u64{0} ** 8;
+    };
+    resource_state(record).* = .{};
+    std.debug.assert(c.venus_objects_release(&objects, handle, kind, 0) == c.RingOk);
+}
+/// Destroy image. [in] device/image nullable borrowed tokens; allocator nullable unused.
+/// Void; invalid/pending/live-view resources ignored. Mutex serialized; host loss retains ownership.
+fn destroy_image(device: c.VkDevice, image: c.VkImage, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    destroy_render_resource(device, if (image) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_IMAGE, 55);
+}
+/// Destroy view and release image retention. [in] nullable tokens/callbacks borrowed for call.
+/// Void; invalid/pending ignored. Mutex serialized; exact host acknowledgment precedes retirement.
+fn destroy_image_view(device: c.VkDevice, view: c.VkImageView, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    destroy_render_resource(device, if (view) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_IMAGE_VIEW, 58);
+}
+/// Query actual image requirements. [in] nullable private tokens borrowed; [out] nullable storage.
+/// Void; output preserved on failure. Mutex serialized, allocation-free; malformed host reply poisons binding.
+fn image_requirements(device: c.VkDevice, image: c.VkImage, output: [*c]c.VkMemoryRequirements) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or image == null or output == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(@intFromPtr(image.?), c.VK_OBJECT_TYPE_IMAGE, parent.id) orelse return;
+    const value = query_image_requirements(parent.id, record.id) orelse return;
+    resource_state(record).requirements = value;
+    output.* = value;
+}
+fn query_image_requirements(device_id: u64, image_id: u64) ?c.VkMemoryRequirements {
+    var writer = writer_t{};
+    writer.header(31, device_id);
+    writer.put(u64, image_id);
+    writer.put(u64, 1);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return null;
+    var reader = reader_t{ .bytes = reply };
+    const value = fixed_value(c.VkMemoryRequirements, &reader, 31) catch {
+        _ = failure(c.RingCorrupt);
+        return null;
+    };
+    if (value.size == 0 or value.alignment == 0 or value.alignment & (value.alignment - 1) != 0 or value.memoryTypeBits == 0) {
+        _ = failure(c.RingCorrupt);
+        return null;
+    }
+    return value;
+}
+/// Bind image memory. [in] nonnull same-device image/memory tokens borrowed; offset checked/aligned.
+/// Returns host result/local invalid/loss; mutex serialized, allocation-free, relationship published on success.
+fn bind_image_memory(device: c.VkDevice, image: c.VkImage, memory_handle: c.VkDeviceMemory, offset: u64) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or image == null or memory_handle == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const record = child_object(@intFromPtr(image.?), c.VK_OBJECT_TYPE_IMAGE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const memory_record = child_object(@intFromPtr(memory_handle.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const state = resource_state(record);
+    const allocation = resource_state(memory_record);
+    if (state.bound_memory != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (state.requirements.size == 0) state.requirements = query_image_requirements(parent.id, record.id) orelse return c.VK_ERROR_DEVICE_LOST;
+    const requirements = state.requirements;
+    if (requirements.memoryTypeBits & (@as(u32, 1) << @as(u5, @intCast(allocation.type_index))) == 0 or
+        offset % requirements.alignment != 0 or offset > allocation.allocation_size or requirements.size > allocation.allocation_size - offset)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = writer_t{};
+    writer.header(29, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, memory_record.id);
+    writer.put(u64, offset);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = result_reply(reply, 29, 0);
+    if (result == c.VK_SUCCESS) {
+        state.bound_memory = memory_record.handle;
+        state.memory_offset = offset;
+    }
+    return result;
 }
 /// Allocate private device memory with exact host identity validation.
 /// @param[in] device Nonnull private live parent, borrowed for call.
@@ -2909,6 +3121,12 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCreateFence", &create_fence },
         .{ "vkCreateSemaphore", &create_semaphore },
         .{ "vkDestroySemaphore", &destroy_semaphore },
+        .{ "vkCreateImage", &create_image },
+        .{ "vkDestroyImage", &destroy_image },
+        .{ "vkGetImageMemoryRequirements", &image_requirements },
+        .{ "vkBindImageMemory", &bind_image_memory },
+        .{ "vkCreateImageView", &create_image_view },
+        .{ "vkDestroyImageView", &destroy_image_view },
         .{ "vkCreateBuffer", &create_buffer },
         .{ "vkCreateCommandPool", &create_command_pool },
         .{ "vkAllocateCommandBuffers", &allocate_command_buffers },

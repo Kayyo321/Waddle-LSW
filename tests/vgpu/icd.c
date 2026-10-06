@@ -6,6 +6,8 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wpointer-arith"
 #include "vn_protocol_driver_buffer.h"
+#include "vn_protocol_driver_image.h"
+#include "vn_protocol_driver_image_view.h"
 #include "vn_protocol_driver_device.h"
 #include "vn_protocol_driver_command_buffer.h"
 #include "vn_protocol_driver_command_pool.h"
@@ -62,6 +64,8 @@ typedef struct fixture_t {
     unsigned fail_fill;
     const VkDeviceCreateInfo *device_info;
     const VkBufferCreateInfo *buffer_info;
+    const VkImageCreateInfo *image_info;
+    const VkImageViewCreateInfo *view_info;
     unsigned requirements_fault;
     uint64_t requirements_size;
     const void *update_data;
@@ -440,6 +444,45 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     (VkBuffer)(uintptr_t)read_u64(bytes + 16),
                     (VkDeviceMemory)(uintptr_t)read_u64(bytes + 24), read_u64(bytes + 32));
                 put_u32(fixture->reply + 4, (uint32_t)fixture->bind_result);
+            }
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 54 || fixture->command == 55 || fixture->command == 57 || fixture->command == 58 || fixture->command == 31 || fixture->command == 29) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 54 || fixture->command == 57) {
+                uint64_t id = read_u64(bytes + length - 44);
+                if (fixture->command == 54) {
+                    assert(fixture->image_info);
+                    VkImageCreateInfo info = *fixture->image_info;
+                    if (info.sharingMode == VK_SHARING_MODE_EXCLUSIVE) info.queueFamilyIndexCount = 0;
+                    VkImage image = (VkImage)(uintptr_t)id;
+                    vn_encode_vkCreateImage(&encoder, 1, device, &info, NULL, &image);
+                } else {
+                    assert(fixture->view_info);
+                    VkImageViewCreateInfo info = *fixture->view_info;
+                    info.image = (VkImage)(uintptr_t)read_u64(bytes + 40);
+                    VkImageView view = (VkImageView)(uintptr_t)id;
+                    vn_encode_vkCreateImageView(&encoder, 1, device, &info, NULL, &view);
+                }
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, 1);
+                put_u64(fixture->reply + 16, id);
+            } else if (fixture->command == 55) {
+                vn_encode_vkDestroyImage(&encoder, 1, device, (VkImage)(uintptr_t)read_u64(bytes + 16), NULL);
+            } else if (fixture->command == 58) {
+                vn_encode_vkDestroyImageView(&encoder, 1, device, (VkImageView)(uintptr_t)read_u64(bytes + 16), NULL);
+            } else if (fixture->command == 29) {
+                vn_encode_vkBindImageMemory(&encoder, 1, device, (VkImage)(uintptr_t)read_u64(bytes + 16),
+                    (VkDeviceMemory)(uintptr_t)read_u64(bytes + 24), read_u64(bytes + 32));
+                put_u32(fixture->reply + 4, (uint32_t)fixture->bind_result);
+            } else {
+                VkMemoryRequirements value = {0};
+                vn_encode_vkGetImageMemoryRequirements(&encoder, 1, device, (VkImage)(uintptr_t)read_u64(bytes + 16), &value);
+                put_u64(fixture->reply + 4, 1);
+                put_u64(fixture->reply + 12, fixture->requirements_fault == 2 ? 0 : fixture->requirements_size);
+                put_u64(fixture->reply + 20, fixture->requirements_fault == 3 ? 0 : fixture->requirements_fault == 4 ? 3 : 256);
+                put_u32(fixture->reply + 28, fixture->requirements_fault == 5 ? 0 : 7);
             }
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 50 || fixture->command == 51 || fixture->command == 30) {
@@ -1373,6 +1416,150 @@ static void device_failures(void) {
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
+static void image_contract(void) {
+    for (unsigned scenario = 0; scenario < 8; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2;
+        VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance, "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        const VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 1, .pQueuePriorities = &priority};
+        const VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue_info};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL;
+        assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
+        PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
+        PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
+        PFN_vkBindImageMemory bind = (PFN_vkBindImageMemory)lookup(device, "vkBindImageMemory");
+        PFN_vkCreateImageView create_view = (PFN_vkCreateImageView)lookup(device, "vkCreateImageView");
+        PFN_vkDestroyImageView destroy_view = (PFN_vkDestroyImageView)lookup(device, "vkDestroyImageView");
+        assert(create_image && destroy_image && requirements && bind && create_view && destroy_view);
+        VkImageCreateInfo info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+            .imageType = VK_IMAGE_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
+            .extent = {16, 16, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = 1,
+            .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
+        fixture.image_info = &info;
+        VkImage image = NULL;
+        unsigned before = fixture.submissions;
+        assert(create_image(device, NULL, NULL, &image) == VK_ERROR_INITIALIZATION_FAILED && !image);
+        assert(create_image(NULL, &info, NULL, &image) == VK_ERROR_INITIALIZATION_FAILED && !image);
+        assert(create_image(device, &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(fixture.submissions == before);
+        info.flags = 1;
+        assert(create_image(device, &info, NULL, &image) == VK_ERROR_INITIALIZATION_FAILED && !image);
+        info.flags = 0;
+        info.mipLevels = 6;
+        assert(create_image(device, &info, NULL, &image) == VK_ERROR_INITIALIZATION_FAILED && !image);
+        info.mipLevels = 1;
+        info.samples = 2; info.mipLevels = 2;
+        assert(create_image(device, &info, NULL, &image) == VK_ERROR_INITIALIZATION_FAILED && !image);
+        info.samples = 1; info.mipLevels = 1;
+        destroy_image(NULL, image, NULL);
+        destroy_image(device, NULL, NULL);
+        destroy_image(device, (VkImage)(uintptr_t)1, NULL);
+        if (scenario == 1) fixture.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        if (scenario == 2) fixture.corrupt_command = 54;
+        if (scenario == 3) fixture.fail_command = 54;
+        VkResult created = create_image(device, &info, NULL, &image);
+        if (scenario == 2 || scenario == 3) {
+            assert(created == VK_ERROR_DEVICE_LOST && !image);
+            venus_icd_abandon();
+            continue;
+        }
+        if (scenario == 1) {
+            assert(created == VK_ERROR_OUT_OF_DEVICE_MEMORY && !image);
+            fixture.create_result = VK_SUCCESS;
+            assert(create_image(device, &info, NULL, &image) == VK_SUCCESS && image);
+        } else assert(created == VK_SUCCESS && image);
+        VkMemoryRequirements value = {0};
+        requirements(NULL, image, &value);
+        requirements(device, NULL, &value);
+        requirements(device, image, NULL);
+        requirements(device, (VkImage)(uintptr_t)1, &value);
+        assert(!value.size);
+        if (scenario == 4) fixture.requirements_fault = 4;
+        requirements(device, image, &value);
+        if (scenario == 4) {
+            assert(!value.size);
+            venus_icd_abandon();
+            continue;
+        }
+        assert(value.size && value.alignment == 256);
+        VkMemoryAllocateInfo allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = value.size + 256, .memoryTypeIndex = 0};
+        fixture.memory_info = &allocation;
+        PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+        PFN_vkFreeMemory release = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+        VkDeviceMemory memory = NULL;
+        assert(allocate(device, &allocation, NULL, &memory) == VK_SUCCESS);
+        assert(bind(NULL, image, memory, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(bind(device, NULL, memory, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(bind(device, image, NULL, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(bind(device, (VkImage)(uintptr_t)1, memory, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(bind(device, image, (VkDeviceMemory)(uintptr_t)1, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(bind(device, image, memory, allocation.allocationSize) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(bind(device, image, memory, 1) == VK_ERROR_INITIALIZATION_FAILED);
+        if (scenario == 5) fixture.bind_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(bind(device, image, memory, 0) == (scenario == 5 ? VK_ERROR_OUT_OF_DEVICE_MEMORY : VK_SUCCESS));
+        fixture.bind_result = VK_SUCCESS;
+        if (scenario == 5) assert(bind(device, image, memory, 0) == VK_SUCCESS);
+        assert(bind(device, image, memory, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        before = fixture.submissions;
+        release(device, memory, NULL);
+        assert(fixture.submissions == before);
+        VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = info.format,
+            .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1}};
+        fixture.view_info = &view_info;
+        VkImageView view = NULL;
+        assert(create_view(device, &view_info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(create_view(NULL, &view_info, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(create_view(device, NULL, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED);
+        view_info.image = (VkImage)(uintptr_t)1;
+        assert(create_view(device, &view_info, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED);
+        view_info.image = image;
+        view_info.format = VK_FORMAT_B8G8R8A8_UNORM;
+        assert(create_view(device, &view_info, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED);
+        view_info.format = info.format;
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_3D;
+        assert(create_view(device, &view_info, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED);
+        view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view_info.components.r = 7;
+        assert(create_view(device, &view_info, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED);
+        view_info.components.r = 0;
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        assert(create_view(device, &view_info, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED);
+        view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view_info.subresourceRange.baseMipLevel = 1;
+        assert(create_view(device, &view_info, NULL, &view) == VK_ERROR_INITIALIZATION_FAILED && !view);
+        view_info.subresourceRange.baseMipLevel = 0;
+        if (scenario == 6) fixture.create_result = VK_ERROR_OUT_OF_HOST_MEMORY;
+        assert(create_view(device, &view_info, NULL, &view) == (scenario == 6 ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS));
+        fixture.create_result = VK_SUCCESS;
+        if (scenario == 6) assert(create_view(device, &view_info, NULL, &view) == VK_SUCCESS);
+        before = fixture.submissions;
+        destroy_image(device, image, NULL);
+        assert(fixture.submissions == before);
+        if (scenario == 7) fixture.corrupt_command = 58;
+        destroy_view(device, view, NULL);
+        if (scenario == 7) {
+            venus_icd_abandon();
+            continue;
+        }
+        destroy_image(device, image, NULL);
+        release(device, memory, NULL);
+        ((PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice"))(device, NULL);
+        destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
+
 static void buffer_contract(void) {
     for (unsigned scenario = 0; scenario < 15; scenario++) {
         fixture_t fixture = fresh();
@@ -3463,6 +3650,7 @@ int main(void) {
     failures();
     version_contract();
     buffer_contract();
+    image_contract();
     memory_contract();
     mapping_contract();
     pool_contract();
