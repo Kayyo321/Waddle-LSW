@@ -35,6 +35,8 @@ jobs:
         run: make vgpu-renderer
       - name: Verify real Venus CPU dispatch and receiver ownership
         run: make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage
+      - name: Verify independent mapped-file guest and real Venus replies
+        run: make vgpu-integration vgpu-integration-sanitizers
       - name: Verify ring safety and independent-process ordering
         run: make vgpu-test vgpu-sanitizers
       - name: Gate production C and Zig transport coverage

@@ -11,14 +11,14 @@
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | In Progress | 15% | 95% | Native Linux/Windows streams, handoff and waits verified; real cross-VM signed-driver test pending |
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 10% | Scoped public renderer/context/reply owner and real CPU dispatch verified; resource/session/GPU integration pending |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `21.25%`
+**Total Feature Completion**: `22.0%`
 
 ## Commit History & Progress Log
 
@@ -243,7 +243,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Named-pipe fixtures exercise Windows completion APIs, not a VirtIO driver;
     actual cross-VM signed IVSHMEM/VirtIO-Serial driver validation remains 5%.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): adopt authorized standalone validation scope`
+- **Commit `e2cb2e2`**: `docs(vgpu): adopt authorized standalone validation scope`
   - **Task Impact**: +0% to TODO: #1 (+0% overall).
   - **Summary**: Recorded the user's explicit mock-development direction and
     delegation of physical cross-VM testing. Replaced the final development gate
@@ -251,3 +251,15 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     preserving actual hardware validation as an unclaimed user follow-up.
   - **Verification**: Existing native Windows fixtures remain required. New
     integrated mock fixture is specified before implementation; no credit yet.
+
+- **Commit (current; resolve by subject)**: `test(vgpu): integrate independent mock guest and Venus replies`
+  - **Task Impact**: +5% to TODO: #1 (+0.75% overall).
+  - **Summary**: Completed the user-authorized mock gate using independently mapped
+    /dev/shm file views, a real UNIX control handshake, ordered ring requests,
+    actual Venus CPU dispatch/replies, simulated guest crash and partial EOF.
+    Host joins callbacks/child before unmapping; the exclusive test file is unlinked.
+  - **Verification**: `make vgpu-integration vgpu-integration-sanitizers` passed;
+    ASan/LSan/UBSan reported no findings. Existing production coverage/native
+    Windows gates remain enforced. CI now runs integrated mock dispatch as well.
+    Task #1 is complete for standalone development, with physical hypervisor
+    testing explicitly delegated to the user; no real guest driver/GPU claim.

@@ -152,3 +152,14 @@ build/vgpu_channel_test.exe: tests/vgpu/channel_windows.c $(VgpuChannelSources) 
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/channel_windows.c $(VgpuChannelSources) src/vgpu/venus_stream_windows.c build/venus_bounds_windows.lib build/venus_control_windows.lib -o $@
 
 vgpu-windows: build/vgpu_channel_test.exe
+
+build/vgpu_integration_test: tests/vgpu/integration.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o | vgpu-renderer
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/integration.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
+
+.PHONY: vgpu-integration vgpu-integration-sanitizers
+vgpu-integration: build/vgpu_integration_test
+	RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_test
+
+vgpu-integration-sanitizers: build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o vgpu-renderer
+	$(CC) $(CPPFLAGS) $(VgpuReceiverIncludes) $(VgpuReceiverSanitizers) tests/vgpu/integration.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o $(VgpuReceiverLibraries) -o build/vgpu_integration_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_sanitized
