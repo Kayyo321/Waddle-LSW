@@ -20,8 +20,7 @@
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
-
-| #10     | Pin and build Mesa RADV CPU cache lifecycle repair for zero-leak native driver enumeration | In Progress | 0% | 0% | Matched vendor prototype fixes3x128-byte unload leak; pinned build and full production CI pending |
+| #10     | Pin and build Mesa RADV CPU cache lifecycle repair for zero-leak native driver enumeration | In Progress | 0% | 50% | Immutable Mesa pin and offline patched build verified; repeated unload passes; full production CI pending |
 
 **Total Feature Completion**: `68.75%`
 
@@ -2186,3 +2185,91 @@ The production compute fixture33f7ed0 proves64 exact shader-produced storage wor
 Graphics state96d596a/cb2453b passes state-order/recovery tests,100% source branches16/16 and lines18/18, owned-function LLVM ASan and process-wide LSan. It has not yet been integrated into actual drawing. Windows11 installation from the supplied ISO is progressing in the isolated KVM guest; installation is not ICD/DXVK acceptance. Native Windows CI37536533350 has passed for checkpoint076ec9b; its Linux worker leak diagnostics remain pending.
 
 This synchronization commit is identified by subject `docs(vgpu): audit physical compute proof and completed DXVK build prerequisite`; +0% TODO#3/overall.
+
+- **Commit `922dd1c`**: `docs(vgpu): prove compact descriptor origins with independent state oracle`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Specify the exact live-prefix merge invariant and distinguish initially unbound gap origins from a previously bound compatible slot. Record the authoritative Khronos validation state algorithm and the exact48-layout160-operation independent oracle matrix before its test integration. Preserve the existing64-command metadata budget and avoid unnecessary larger prefix storage.
+
+- **Commit `afa59aa`**: `test(vgpu): compare compact descriptor state with independent per-set origins`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Add an allocation-free independent per-set compatibility oracle based on the authoritative Khronos validation state algorithm. Exercise48 canonical layout variants,160 legal bind operations, all25,600 ordered operation pairs and a distinct third rebind, comparing bound identities and live-prefix compatibility against every applicable layout after76,800 transitions. Add explicit initially undefined gap disturbance and compatible upper-suffix preservation regressions. These verify the compact representation after lower-set fix692f216 without increasing production storage, retaining pointers or assuming hash equality. Contract documented beforehand in922dd1c. Validation: all12 native Zig tests pass with no test allocator leaks; Windows GNU test executable crosscompile passes; production coverage91.38% branches53/58 and97.14% lines34/35. No production code changed. Affects TODO #3 (+0%: stronger independent state verification).
+
+- **Commit `7f88d25`**: `docs(vgpu): retain only acknowledged shader-consumed buffers before submission`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Replace descriptor-content submit rescanning with exact dispatch-time compute-visible buffer validation and acknowledged recorded references. Core destination updates invalidate recorded commands, preventing stale submission, while pending in-flight guards retain buffer and its bound memory. Unused noncompute or historical set bindings do not create false submit failures. Correct earlier lower-set disturbance wording to each lower set own compatibility prefix.
+
+- **Commit `64df87e`**: `feat(vgpu): expose acknowledged compute pipeline binding`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Expose vkCmdBindPipeline for validated same-device compute pipelines. Record the copied pipeline identity and lifetime reference only after the defined opcode93 acknowledgment. Add allocation-free shared acknowledgment/reference helpers and the bounded command codec import. The isolated incremental source compiles and passes the baseline128-cycle native fixture. Affects TODO #3; implements compute pipeline recording.
+
+- **Commit `e8af7f0`**: `feat(vgpu): expose compatible static descriptor set binding`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Expose vkCmdBindDescriptorSets for bounded static buffer descriptor sets. Validate parent, structural copied layout compatibility and count before payload access; reject unsupported dynamic offsets locally. Preserve legal binding-before-pipeline ordering and publish disturbance metadata/set references only after opcode103 acknowledgment. The isolated incremental source compiles and passes the baseline128-cycle native fixture. Affects TODO #3; implements static descriptor recording.
+
+- **Commit `b3c9c9c`**: `feat(vgpu): expose acknowledged bounded push constants`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Expose vkCmdPushConstants for covered aligned core128-byte push ranges. Prevalidate copied per-stage definitions without requiring prior pipeline binding; encode borrowed source bytes synchronously and publish initialized-byte metadata only after opcode132 acknowledgment. The isolated incremental source compiles and passes the baseline128-cycle native fixture. Affects TODO #3; implements push recording.
+
+- **Commit `d514ef5`**: `feat(vgpu): dispatch compute and retain consumed resources until retirement`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Expose vkCmdDispatch using actual cached host group limits and copied pipeline/set layout compatibility. Validate compute-visible buffer descriptors before encoding; publish exact consumed buffer references only after opcode110 acknowledgment. Queue submission retains every recorded identity transactionally and increments inflight counts only after native success. Buffer destruction refuses outstanding ticket references, including descriptor-only uses. The isolated source compiles; meaningful frontend submission rollback, Pending destruction/update/free refusal and retirement tests pass in the final fixture. Physical direct/shared and sanitized compute workloads pass on RTX5080. Affects TODO #3; implements compute dispatch lifetime ownership.
+
+- **Commit `be326c2`**: `test(vgpu): prove compute recording and pending descriptor buffer ownership`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Compare frontend pipeline/descriptor/push/dispatch packets with the independent pinned generated encoder. Exercise legal descriptor/push-before-pipeline ordering, malformed scalar and handle boundaries, real host group limits, undefined compute versus unused vertex descriptors and unconsumed historical sets. Prove queue OOM rollback, descriptor-only Pending buffer/memory/update/free/pool protection, idle retirement, core update invalidation and pre-submit consumed-buffer destruction invalidation. Add Zig transport/opcode failure regressions proving no unacknowledged metadata/reference publication. Native/shared and actual native-loader fixtures, ASan/LSan/UBSan C suites and Windows DLL crosscompile pass;52 Zig tests pass with90.00% production branch and99.21% line coverage. Affects TODO #3; validates the separate command API commits without changing production behavior.
+
+- **Commit `3fef306`**: `test(vgpu): verify copied push constants through physical dispatch`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Add an explicit compute_push production-worker workload using the owned Vulkan 1.0 shader and a four-byte compute-stage push range. Each of the sixteen complete resource lifetimes supplies a distinct runtime bias, mutates the borrowed source word immediately after recording, and compares all sixty-four GPU-written words after fence completion and mapped invalidation. The original fixed-seven compute workload remains a separate regression. Expose direct and pinned shared-loader normal and sanitizer targets, including the existing deterministic injected cleanup failure. All four physical NVIDIA RTX 5080 paths passed with no AddressSanitizer, LeakSanitizer or UndefinedBehaviorSanitizer diagnostics. The fixed-seven regression passed; injected sanitized shared-loader cleanup returned expected status 1 with balanced descriptors.
+
+- **Commit `be63993`**: `docs(vgpu): specify bounded256-byte push prerequisite and host limits`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Specify scalar range validation, exact300-byte command maximum, four-word per-stage initialized map and verified6144-byte fixed registry growth. Preserve64 live command owners and actual-host maxPushConstantsSize validation as a separate public API prerequisite. Define boundary/oracle/lifecycle/coverage verification without advertising unsupported Vulkan capabilities. Affects TODO #3; documentation only, no completion increase.
+
+- **Commit `8a743aa`**: `feat(vgpu): bound copied pipeline push ranges at256 bytes`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Introduce documented MaxPushBytes256 without changing scalar profile layouts or registry quota. Normalize aligned ranges with overflow-safe subtraction and retain stage overlap rules. Add full256-byte/final-word/overflow direction tests. Six native allocator tests, Windows test crosscompile and98% branch/100% line coverage pass. Actual host limit enforcement remains required separately before public256-byte acceptance. Affects TODO #3; pure metadata prerequisite.
+
+- **Commit `7b2ef53`**: `feat(vgpu): track all256 push bytes in owned command metadata`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Extend each stage initialized-byte bitmap to four owned64-bit words and validate the256-byte profile ceiling. Preserve partial-write accumulation and clear every word on definition change. Add every64-byte boundary, full initialization, no-mutation overflow failures and exact ABI budget assertions:1254912 bytes for64 command owners,6144 bytes added. Fourteen native allocator tests, Windows test crosscompile and91.38% branch/97.14% line coverage pass. Host/API capability advertisement remains unchanged pending separate actual-limit integration. Affects TODO #3; pure command metadata prerequisite.
+
+- **Commit `278c437`**: `docs(vgpu): preserve public push limits until actual host enforcement`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Define an explicit temporary core128 pipeline-layout ceiling while pure codecs and owned metadata expand to256. Specify tag/pointer/count validation before range reads, overflow-safe range subtraction, no native effects or quota reservations on rejection, and precise native regressions. Actual host limits and public property projection remain the next acceptance increment.
+
+- **Commit `a547ab1`**: `fix(vgpu): bound public pipeline pushes before native creation`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Keep the public pipeline-layout push ceiling at core128 while pure256 support is introduced. Reject malformed create headers and null nonempty arrays before dereference, and reject above-ceiling offsets/ranges before metadata reservation or native exchange. Native regressions prove offset128 and UINT32_MAX plus null ranges preserve transaction count and clear output. Native128-cycle fixture and C ASan/LSan/UBSan with mapping-OOM and graphics state gates pass with zero diagnostics. Actual host128/256 enforcement remains separate.
+
+- **Commit `9a695ad`**: `feat(vgpu): encode bounded256-byte pipeline push ranges`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Add the documented256-byte pure packet ceiling and preserve overflow-safe aligned push-range validation. Compare full256-byte and final252-offset word layout packets with the independent generated encoder; reject above-ceiling extents. Seventeen native tests, Windows test crosscompile and99.10% branch/100% line coverage pass. Public ICD retains its separately committed128-byte guard pending actual-host integration. Affects TODO #3; private pipeline layout codec prerequisite.
+
+- **Commit `67b1f7b`**: `feat(vgpu): encode all256 bounded push bytes`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Expand the command codec ceiling to256 borrowed bytes and prove exact300-byte maximum packets plus offset252 final-word encoding against the pinned generated oracle. Preserve original4/128-byte cases and reject overflow/alignment directions. Add runtime negative guard tests preventing constant-fold coverage gaps. Twenty linked native tests, Windows test crosscompile, C oracle ASan/LSan/UBSan zero leaks and90.91% branch/97.06% line coverage pass. Public ICD128-byte guard remains until actual host-limit integration. Affects TODO #3; private push command codec prerequisite.
+
+- **Commit `7a6d50b`**: `docs(vgpu): specify bounded Mesa CPU cache cleanup prerequisite`
+  - **Task Impact**: +0% to prerequisite TODO: #10 (+0% overall); full production CI remains pending.
+  - **Summary**: Record independently reproduced RADV driver leak ownership and identical baseline/patched prototype evidence. Define official immutable Mesa25.0.7 dependency, pristine source with ignored patched build copy, exact128KiB static mask bounds, compatible retained license notices, minimal offline AMD/ACO build and strict driver-unload regression. Allocate zero-weight dependency milestones while keeping Waddle graphics/DXVK acceptance pending.
+
+- **Commit `6c94455`**: `chore(deps): pin pristine Mesa 25.0.7 for CPU cache ownership repair`
+  - **Task Impact**: +20% to prerequisite TODO: #10 (+0% overall, zero-weight task).
+  - **Summary**: Track official public HTTPS Mesa repository at immutable release commit742a20f48c59e8649533c84c4d49dd95b403f5da. Keep the vendor checkout pristine; the planned bounded CPU affinity storage patch applies only to an ignored build copy. Mesa25.0.7 matches the system RADV allocation regression and uses its existing permissive component licenses, audited in the prior implementation contract7a6d50b. Verified advertised annotated release tag resolves to the exact checkout and gitlink; no vendor files modified. Affects TODO #3 (+0%: dependency prerequisite for genuine zero-leak runtime fix).
+
+- **Commit `dd5baab`**: `fix(vgpu): build Mesa with bounded module-owned CPU affinity masks`
+  - **Task Impact**: +30% to prerequisite TODO: #10 (+0% overall, zero-weight task).
+  - **Summary**: Replace the pinned Mesa CPU topology utility heap growth with1024 module-owned128-byte cache masks. Existing CPU discovery bounds prove each new cache index fits; the exact128KiB BSS lifetime ends with driver unload, eliminating the orphaned allocation without exported cleanup APIs or retained heap state. Build only AMD Vulkan/ACO from an archived pristine pinned checkout in ignored build storage. Apply the owned patch there, prohibit fallback dependency downloads, disable LLVM/Gallium/GL/platform surfaces, and generate an absolute private RADV manifest. Check the exact dependency SHA and clean tracked vendor sources on every explicit gate. Validated the real tracked675-unit build and3 ordinary Vulkan enumeration/destruction/unload cycles under ASan/LSan/UBSan with RTLD_NOLOAD proof and zero diagnostics. Identical unpatched prototype leaks384 bytes. Affects TODO #3 (+0%: genuine prerequisite ownership repair, no graphics/DXVK support credit).
+
+- **Commit `8563f84`**: `test(vgpu): verify Mesa CPU cache teardown and actual driver unload`
+  - **Task Impact**: +0% to prerequisite TODO: #10 (+0% overall); full production CI remains pending.
+  - **Summary**: Exercise three ordinary Vulkan create/enumerate/destroy cycles through the native loader, with deterministic cleanup for partial initialization and NULLed retired handles. Verify RTLD_NOLOAD reports the driver absent after each cycle so retained modules cannot hide leaks. Add native and ASan/LSan/UBSan targets against the pinned patched RADV build. Both pass with zero leaked bytes; the same fixture reproduces 384 leaked bytes against the matched unpatched build and cleans up a failed instance creation.
+
+- **Commit `81eeda0`**: `ci(vgpu): verify repaired Mesa teardown with all host ICDs preserved`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); integration and acceptance gates remain pending.
+  - **Summary**: Build the immutable same-version Mesa25.0.7 RADV repair offline and run three real native and ASan/LSan/UBSan teardown/unload cycles before production receiver verification. Fail closed if the installed Mesa source version changes. Substitute only RADV library_path in its original installed manifest, retaining every API/architecture setting and every other host ICD. Keep all existing receiver and full production worker workload tests; allow30minutes for the additional675-unit ACO driver build. Add required base-system glslang/zlib/expat tools and fetch the pinned Mesa gitlink. YAML,shell,Python syntax and exact manifest-field preservation verified locally; real clean CI remains mandatory.
+
+- **Commit (this entry, resolved by subject)**: `docs(vgpu): audit compute ownership and bounded Mesa prerequisite progress`
+  - **Task Impact**: +0% to TODO: #3 and #10 (+0% overall).
+  - **Summary**: Attribute each atomic source, regression, push-profile and Mesa prerequisite commit. Native Windows 11 build26300.9457 executed eight owned PE fixtures successfully; this establishes unit execution only. Physical compute/push direct/shared sanitizer paths passed; complete graphics and native DXVK remain pending.
