@@ -3,6 +3,7 @@ const std = @import("std");
 const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
 const compute_state = @import("venus_compute_state.zig");
+const compute_wire = @import("venus_compute_wire.zig");
 var command_registry = compute_state.registry_t{};
 var profile_registry = profiles.registry_t{};
 // Mutex-owned230400-byte batch staging; no native pointers, scrubbed after every call and abandon.
@@ -2905,6 +2906,43 @@ fn end_command_buffer(buffer: c.VkCommandBuffer) callconv(.C) c_int {
         state.command_state = if (result == c.VK_SUCCESS) .Executable else .Invalid;
     return result;
 }
+fn command_profile(record: *const c.venus_object_t) *compute_state.command_profile_t {
+    return profiles.get_profile(&command_registry.commands, resource_state(record).command_profile_index).?;
+}
+fn command_reference(state: *resource_state_t, target: *const c.venus_object_t) void {
+    const index = resource_index(target);
+    state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+}
+fn command_acknowledged(writer: *const compute_wire.writer_t, opcode: u32) bool {
+    const reply = transact(writer.bytes[0..writer.used]) orelse return false;
+    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != opcode) {
+        _ = failure(c.RingCorrupt);
+        return false;
+    }
+    return true;
+}
+/// Bind compute pipeline without disturbing existing descriptor or push state.
+/// [in] nullable private borrowed command/pipeline tokens and point1.
+/// Void; malformed recording inputs invalidate. Mutex serialized, allocation-free.
+/// Exact opcode acknowledgment precedes local state and lifetime reference publication.
+fn bind_pipeline(command_buffer: c.VkCommandBuffer, point: u32, pipeline: c.VkPipeline) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    const target = if (pipeline) |value| child_object(@intFromPtr(value), c.VK_OBJECT_TYPE_PIPELINE, pool.parent_id) else null;
+    if (point != 1 or target == null or resource_state(target.?).pipeline_bind_point != point) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const writer = compute_wire.bind_pipeline(record.id, target.?.id, point) catch unreachable;
+    if (!command_acknowledged(&writer, 93)) return;
+    command_profile(record).pipeline = target.?.handle;
+    command_reference(state, target.?);
+}
 /// Record a bounded fill of a private device buffer; CPU acknowledgment only.
 /// @param[in] command_buffer Nullable private borrowed handle; invalid states ignored.
 /// @param[in] buffer Nullable same-device bound TRANSFER_DST token, no ownership transfer.
@@ -3728,6 +3766,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkAllocateCommandBuffers", &allocate_command_buffers },
         .{ "vkFreeCommandBuffers", &free_command_buffers },
         .{ "vkBeginCommandBuffer", &begin_command_buffer },
+        .{ "vkCmdBindPipeline", &bind_pipeline },
         .{ "vkCmdFillBuffer", &fill_buffer },
         .{ "vkCmdCopyBuffer", &copy_buffer },
         .{ "vkCmdUpdateBuffer", &update_buffer },
