@@ -441,10 +441,23 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Kept parent process shutdown budgets mandatory for blocked
     SDK teardown; mock restart does not prove physical GPU recovery.
 
-- **Commit (current; resolve by subject)**: `fix(build): declare worker coverage object prerequisite`
+- **Commit `42637d1`**: `fix(build): declare worker coverage object prerequisite`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Build the transport bounds object before worker coverage linking
     on a clean checkout; avoid reliance on unrelated earlier targets.
   - **Verification**: Diagnosed missing object in Linux CI run `37395678271`;
     worker functional and sanitizer tests passed there. Local worker coverage
     passes at 98.35% lines and 94.26% branches.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): run receiver in isolated mapped service`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall); the separate process/service
+    acceptance gates await CI before progress credit.
+  - **Summary**: Added a trusted worker executable and symmetric service ownership
+    over borrowed CLOEXEC mapping/control descriptors, fresh random session IDs,
+    host policy, private storage and real receiver dispatch. Added acquisition
+    fault tests and exec-isolated guest disconnect/corruption/termination/restart
+    fixtures with instrumented parent and service child.
+  - **Verification**: Service, integrated mapped/UNIX tests and ASan/LSan/UBSan
+    pass locally; service production coverage 100% lines and 98.65% branches.
+    All acquisition failures release owned memory and retain borrowed descriptors.
+    Native Windows framing is unchanged; physical GPU queue evidence remains pending.

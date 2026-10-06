@@ -914,7 +914,9 @@ resource count/bytes and CPU/GPU/operation timeouts. Default command/reply exten
 are 65536 bytes, additional resources 64/64MiB and all timeouts 5000ms. Host policy
 is supplied through the service config; guest bytes cannot alter it.
 
-The inherited file must be regular, power-of-two 4096..one GiB, immutable in size
+The executable marks inherited fd 3/4 CLOEXEC before renderer startup; the
+service requires CLOEXEC borrowed descriptors so later renderer execs cannot
+retain the guest control stream or mapping fd. The inherited file must be regular, power-of-two 4096..one GiB, immutable in size
 while active. Map shared read/write, then validate and attach the existing dedicated
 region without reinitializing shared cursors. Generate a fresh nonzero u64 session
 identity using nonblocking getrandom, at most four exact-size attempts. Failed

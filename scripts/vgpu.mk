@@ -156,16 +156,16 @@ vgpu-windows: build/vgpu_channel_test.exe
 VgpuRuntimeSources = src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c
 VgpuRuntimeFixtureSources = $(VgpuRuntimeSources) src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c
 
-build/vgpu_integration_test: tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o | vgpu-renderer
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
+build/vgpu_integration_test: build/vgpu_service_fixture tests/vgpu/integration.c src/vgpu/venus_worker.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o | vgpu-renderer
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/integration.c src/vgpu/venus_worker.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
 
 .PHONY: vgpu-integration vgpu-integration-sanitizers
 vgpu-integration: build/vgpu_integration_test
 	RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_test
 
-vgpu-integration-sanitizers: build/venus_bounds.o build/venus_control.o build/venus_request.o vgpu-renderer
-	$(CC) $(CPPFLAGS) $(VgpuReceiverIncludes) $(VgpuReceiverSanitizers) tests/vgpu/integration.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o $(VgpuReceiverLibraries) -o build/vgpu_integration_sanitized
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_sanitized
+vgpu-integration-sanitizers: build/vgpu_service_fixture_sanitized build/venus_bounds.o build/venus_control.o build/venus_request.o vgpu-renderer
+	$(CC) $(CPPFLAGS) $(VgpuReceiverIncludes) $(VgpuReceiverSanitizers) tests/vgpu/integration.c src/vgpu/venus_worker.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_request.o $(VgpuReceiverLibraries) -o build/vgpu_integration_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_SERVICE_FIXTURE=build/vgpu_service_fixture_sanitized RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_sanitized
 
 # Request codec reuses and includes the exported Zig resource-bound helpers.
 # Link this object alone (not also venus_receiver_bounds.o) in dispatch binaries.
@@ -231,3 +231,36 @@ vgpu-worker-sanitizers:
 
 vgpu-worker-coverage: build/venus_bounds.o
 	python3 tests/vgpu/coverage.py worker
+
+
+VgpuServiceSources = src/vgpu/venus_service.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c
+VgpuServiceObjects = build/venus_bounds.o build/venus_control.o build/venus_request.o
+build/vgpu_service_fixture: tests/vgpu/service_child.c $(VgpuServiceSources) include/waddle/venus_service.h $(VgpuServiceObjects) | vgpu-renderer
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/service_child.c $(VgpuServiceSources) $(VgpuServiceObjects) $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
+
+build/waddle_vgpu_worker: src/vgpu/worker_main.c $(VgpuServiceSources) include/waddle/venus_service.h $(VgpuServiceObjects) | vgpu-renderer
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) src/vgpu/worker_main.c $(VgpuServiceSources) $(VgpuServiceObjects) $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
+
+.PHONY: vgpu-service
+vgpu-service: build/waddle_vgpu_worker
+
+VgpuServiceFixtureSources = src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c src/vgpu/venus_rpc.c
+build/vgpu_service_owner_test: tests/vgpu/service_owner.c src/vgpu/venus_service.c include/waddle/venus_service.h $(VgpuServiceFixtureSources) $(VgpuServiceObjects)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/service_owner.c $(VgpuServiceFixtureSources) $(VgpuServiceObjects) -o $@
+
+build/vgpu_service_fixture_sanitized: tests/vgpu/service_child.c $(VgpuServiceSources) include/waddle/venus_service.h $(VgpuServiceObjects) | vgpu-renderer
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) $(VgpuReceiverIncludes) tests/vgpu/service_child.c $(VgpuServiceSources) $(VgpuServiceObjects) $(VgpuReceiverLibraries) -o $@
+
+.PHONY: vgpu-service-test vgpu-service-sanitizers vgpu-service-coverage
+vgpu-service-test: build/vgpu_service_owner_test build/waddle_vgpu_worker
+	./build/vgpu_service_owner_test
+
+vgpu-service-sanitizers: $(VgpuServiceObjects)
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/service_owner.c $(VgpuServiceFixtureSources) $(VgpuServiceObjects) -o build/vgpu_service_owner_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_service_owner_sanitized
+
+vgpu-service-coverage: $(VgpuServiceObjects)
+	python3 tests/vgpu/coverage.py service
+
+# Service consumers share receiver, transport and framing ABI headers.
+build/vgpu_service_fixture build/vgpu_service_fixture_sanitized build/waddle_vgpu_worker build/vgpu_service_owner_test: include/waddle/venus_worker.h include/waddle/venus_receiver.h include/waddle/venus_request.h include/waddle/venus_rpc.h include/waddle/venus_dispatch.h include/waddle/venus_channel.h include/waddle/venus_session.h include/waddle/venus_region.h include/waddle/venus_ring.h src/vgpu/venus_rpc_internal.h src/vgpu/venus_receiver_bounds.h src/vgpu/venus_stream.h
