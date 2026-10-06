@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -77,6 +78,8 @@ typedef struct fixture_t {
     uint64_t submit_fence;
     uint64_t gpu_issued[64];
     uint32_t gpu_pending;
+    _Atomic unsigned idle_issued;
+    unsigned retire_on_submit;
     uint32_t gpu_issue_pending;
     uint32_t gpu_corrupt;
     int32_t gpu_failure;
@@ -116,6 +119,7 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 return RingAgain;
             }
             response->argument_zero = ++fixture->gpu_issued[request->argument_zero];
+            atomic_store_explicit(&fixture->idle_issued, 1, memory_order_release);
             if (fixture->gpu_corrupt == 1)
                 response->argument_zero = 0;
         } else {
@@ -238,6 +242,7 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                    (VkFence)(uintptr_t)fixture->submit_fence);
             assert(encoder.used == offset && !memcmp(expected, bytes, offset));
             put_u32(fixture->reply + 4, (uint32_t)fixture->submit_result);
+            if (fixture->retire_on_submit) fixture->gpu_pending = 0;
         } else if (fixture->command == 40 || fixture->command == 41) {
             unsigned char expected[128];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -1002,6 +1007,94 @@ static void fence_failures(void) {
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
+/** @brief Borrowed idle thread inputs; result read only after native thread join. */
+typedef struct idle_thread_t {
+    VkQueue queue; /**< Live externally synchronized private queue. */
+    PFN_vkQueueWaitIdle idle; /**< Static borrowed native function. */
+    VkResult result; /**< Thread writes once; join publishes to controller. */
+} idle_thread_t;
+#ifdef _WIN32
+static DWORD WINAPI idle_thread(void *argument) {
+#else
+static void *idle_thread(void *argument) {
+#endif
+    idle_thread_t *state = argument;
+    state->result = state->idle(state->queue);
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+static void idle_concurrency_contract(void) {
+    for (unsigned scenario = 0; scenario < 3; scenario++) {
+        fixture_t fixture = fresh(), replacement = fresh();
+        assert(venus_icd_bind(exchange,&fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2; VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,"vkEnumeratePhysicalDevices"))(
+            instance,&count,physical) == VK_SUCCESS);
+        const float priorities[2] = {1,1};
+        VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 2, .pQueuePriorities = priorities};
+        VkDeviceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue_info};
+        fixture.device_info = &info;
+        VkDevice device = NULL;
+        assert(((PFN_vkCreateDevice)lookup_external(instance,"vkCreateDevice"))(
+            physical[0],&info,NULL,&device) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance,"vkGetDeviceProcAddr");
+        PFN_vkGetDeviceQueue get_queue = (PFN_vkGetDeviceQueue)lookup(device,"vkGetDeviceQueue");
+        PFN_vkQueueWaitIdle idle = (PFN_vkQueueWaitIdle)lookup(device,"vkQueueWaitIdle");
+        PFN_vkDeviceWaitIdle device_idle = (PFN_vkDeviceWaitIdle)lookup(device,"vkDeviceWaitIdle");
+        PFN_vkQueueSubmit submit = (PFN_vkQueueSubmit)lookup(device,"vkQueueSubmit");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device,"vkDestroyDevice");
+        VkQueue queues[2] = {NULL,NULL};
+        get_queue(device,0,0,&queues[0]); get_queue(device,0,1,&queues[1]);
+        fixture.gpu_pending = UINT32_MAX; fixture.retire_on_submit = 1;
+        idle_thread_t state = {.queue = queues[0], .idle = idle, .result = VK_NOT_READY};
+#ifdef _WIN32
+        HANDLE thread = CreateThread(NULL,0,idle_thread,&state,0,NULL); assert(thread);
+#else
+        pthread_t thread; assert(pthread_create(&thread,NULL,idle_thread,&state) == 0);
+#endif
+        unsigned attempts = 0;
+        while (!atomic_load_explicit(&fixture.idle_issued,memory_order_acquire)) {
+            assert(++attempts < 1000);
+#ifdef _WIN32
+            Sleep(1);
+#else
+            const struct timespec pause = {.tv_nsec = 1000000}; (void)nanosleep(&pause,NULL);
+#endif
+        }
+        if (scenario == 0) {
+            unsigned before = fixture.submissions;
+            assert(submit(queues[0],0,NULL,NULL) == VK_ERROR_INITIALIZATION_FAILED);
+            assert(idle(queues[0]) == VK_ERROR_DEVICE_LOST);
+            assert(device_idle(device) == VK_ERROR_DEVICE_LOST);
+            destroy_device(device,NULL);
+            assert(fixture.submissions == before);
+            assert(submit(queues[1],0,NULL,NULL) == VK_SUCCESS);
+        } else {
+            /* Defensive stale-namespace cleanup after the fake peer is retired. */
+            venus_icd_abandon();
+            if (scenario == 2) assert(venus_icd_bind(exchange,&replacement) == RingOk);
+        }
+#ifdef _WIN32
+        assert(WaitForSingleObject(thread,2000) == WAIT_OBJECT_0); assert(CloseHandle(thread));
+#else
+        assert(pthread_join(thread,NULL) == 0);
+#endif
+        if (scenario == 0) {
+            assert(state.result == VK_SUCCESS && idle(queues[1]) == VK_SUCCESS);
+            destroy_device(device,NULL); destroy(instance);
+        } else {
+            assert(state.result == VK_ERROR_DEVICE_LOST);
+        }
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
+
 static void idle_failures(void) {
     for (unsigned scenario = 0; scenario < 7; scenario++) {
         fixture_t fixture = fresh();
@@ -3215,6 +3308,7 @@ int main(void) {
     concurrent();
     fence_failures();
     idle_failures();
+    idle_concurrency_contract();
     device_failures();
     failures();
     version_contract();

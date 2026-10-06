@@ -26,6 +26,7 @@ const command_state_t = enum { Initial, Recording, Executable, Invalid, Pending 
 const resource_state_t = struct {
     id: u64 = 0,
     inflight_count: u32 = 0,
+    idle_refs: u32 = 0,
     allocation_size: u64 = 0,
     type_index: u32 = 0,
     bound_memory: u64 = 0,
@@ -787,6 +788,7 @@ fn create_device(
         return result;
     }
     entry.* = staged;
+    resource_state(record).* = .{ .id = record.*.id };
     output.* = @ptrFromInt(entry.handle);
     return c.VK_SUCCESS;
 }
@@ -866,6 +868,10 @@ fn destroy_device(
     if (device == null) return;
     const entry = device_cache(@intFromPtr(device.?)) orelse return;
     const record = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    if (resource_state(record).idle_refs != 0) return;
+    for (entry.queues) |handle| if (handle != 0) {
+        if (resource_state(object(handle, c.VK_OBJECT_TYPE_QUEUE).?).idle_refs != 0) return;
+    };
     for (submission_tickets) |ticket| {
         if (ticket.queue != 0 and object(ticket.queue, c.VK_OBJECT_TYPE_QUEUE).?.parent_id == record.id)
             return;
@@ -892,6 +898,7 @@ fn destroy_device(
         std.debug.assert(c.venus_objects_release(&objects, handle, c.VK_OBJECT_TYPE_QUEUE, 1) ==
             c.RingOk);
     };
+    resource_state(record).* = .{};
     std.debug.assert(c.venus_objects_release(&objects, entry.handle, c.VK_OBJECT_TYPE_DEVICE, 1) ==
         c.RingOk);
     for (entry.rings) |ring| if (ring != 0) {
@@ -2465,9 +2472,20 @@ fn gpu_exchange(kind: u32, ring: u32, fence: u64, response: *c.venus_request_t) 
         return c.RingCorrupt;
     return c.RingOk;
 }
+fn end_idle(handle: u64, kind: u32, id: u64, binding_namespace: u32) void {
+    if (objects.namespace_id != binding_namespace) return;
+    const record = object(handle, kind) orelse return;
+    if (record.id != id) return;
+    const state = resource_state(record);
+    std.debug.assert(state.idle_refs == 1);
+    state.idle_refs = 0;
+}
 fn ring_idle(ring: u32, timer: *std.time.Timer) c_int {
+    const binding_namespace = objects.namespace_id;
     var fence: u64 = 0;
     while (true) {
+        if (objects.namespace_id != binding_namespace or command.exchange == null or lost != c.RingOk)
+            return c.VK_ERROR_DEVICE_LOST;
         if (timer.read() >= IdleDeadlineNs) return failure(c.RingTimeout);
         var response: c.venus_request_t = undefined;
         const kind: u32 = if (fence == 0) c.RequestGpuFence else c.RequestGpuPoll;
@@ -2481,7 +2499,9 @@ fn ring_idle(ring: u32, timer: *std.time.Timer) c_int {
         } else if (status != c.RingAgain) {
             return failure(status);
         }
-        if (status == c.RingAgain) std.time.sleep(std.time.ns_per_ms);
+        mutex.unlock();
+        if (status == c.RingAgain) std.time.sleep(std.time.ns_per_ms) else std.Thread.yield() catch {};
+        mutex.lock();
     }
 }
 /// Wait for actual retirement of every initialized queue in the borrowed device.
@@ -2493,6 +2513,17 @@ fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
     defer mutex.unlock();
     if (device == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const entry = device_cache(@intFromPtr(device.?)) orelse return c.VK_ERROR_DEVICE_LOST;
+    const record = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    if (resource_state(record).idle_refs != 0) return c.VK_ERROR_DEVICE_LOST;
+    for (entry.queues) |handle| if (handle != 0) {
+        if (resource_state(object(handle, c.VK_OBJECT_TYPE_QUEUE).?).idle_refs != 0)
+            return c.VK_ERROR_DEVICE_LOST;
+    };
+    resource_state(record).idle_refs = 1;
+    const idle_handle = record.handle;
+    const idle_id = record.id;
+    const idle_namespace = objects.namespace_id;
+    defer end_idle(idle_handle, c.VK_OBJECT_TYPE_DEVICE, idle_id, idle_namespace);
     var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
     for (entry.rings, 0..) |ring, index| if (entry.ready[index]) {
         const result = ring_idle(ring, &timer);
@@ -2504,7 +2535,8 @@ fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
 /// Wait for actual GPU retirement of the queue using its receiver timeline.
 /// @param[in] queue Nullable private handle, validated without dereference.
 /// @return VK_SUCCESS or VK_ERROR_DEVICE_LOST; same deadline/lifetime contract as device idle.
-/// @note No allocation; binding mutex held across issue/poll. CPU completion is separate.
+/// @note No allocation; mutex held per exchange, released between polls so other queues progress.
+/// Active idle reference prevents queue/device destruction and same-queue submission.
 fn queue_wait_idle(queue: c.VkQueue) callconv(.C) c_int {
     mutex.lock();
     defer mutex.unlock();
@@ -2515,10 +2547,18 @@ fn queue_wait_idle(queue: c.VkQueue) callconv(.C) c_int {
     ) orelse return c.VK_ERROR_DEVICE_LOST;
     for (&device_caches) |*entry| {
         if (entry.handle == 0) continue;
-        for (entry.queues, 0..) |handle, index| if (handle == record.handle) {
+        for (entry.queues, 0..) |handle, index| if (handle == record.handle and entry.ready[index]) {
+            const parent = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
+            if (resource_state(record).idle_refs != 0 or resource_state(parent).idle_refs != 0)
+                return c.VK_ERROR_DEVICE_LOST;
+            resource_state(record).idle_refs = 1;
+            const idle_handle = record.handle;
+            const idle_id = record.id;
+            const idle_namespace = objects.namespace_id;
+            defer end_idle(idle_handle, c.VK_OBJECT_TYPE_QUEUE, idle_id, idle_namespace);
             var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
             const result = ring_idle(entry.rings[index], &timer);
-            if (result == c.VK_SUCCESS) retire_queue(record.handle);
+            if (result == c.VK_SUCCESS) retire_queue(idle_handle);
             return result;
         };
     }
@@ -2552,6 +2592,9 @@ fn queue_submit(
     };
     const target = available orelse return c.VK_ERROR_OUT_OF_HOST_MEMORY;
     if (submission_sequence == std.math.maxInt(u64)) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    const parent = object(device_cache_for_queue(record).handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    if (resource_state(record).idle_refs != 0 or resource_state(parent).idle_refs != 0)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
     var staged = submission_ticket_t{ .queue = record.handle };
     var fence_record: ?*c.venus_object_t = null;
     if (fence != null) {
@@ -2605,7 +2648,6 @@ fn queue_submit(
         };
     };
     if (fence_record) |selected| {
-        const parent = object(device_cache_for_queue(record).handle, c.VK_OBJECT_TYPE_DEVICE).?;
         const status = fence_status_locked(parent, selected);
         if (status == c.VK_SUCCESS) return c.VK_ERROR_INITIALIZATION_FAILED;
         if (status != c.VK_NOT_READY) return status;
