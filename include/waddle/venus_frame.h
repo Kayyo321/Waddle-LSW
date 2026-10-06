@@ -65,6 +65,15 @@ venus_ring_status_t venus_release_encode(const venus_release_t *release, void *b
  */
 venus_ring_status_t venus_release_decode(venus_release_t *release, const void *bytes,
                                          size_t length);
+/** @brief Parse one exact fixed hexadecimal trusted worker binding argument.
+ * @param[out] identity Nonnull private output, zeroed on every failure.
+ * @param[in] bytes Nonnull immutable disjoint bytes[length], borrowed for call.
+ * @param[in] length Exactly16 lowercase hexadecimal ASCII bytes, no terminator.
+ * @return RingOk nonzero identity, RingInvalid NULL/length/character/zero value.
+ * @note Allocation-free/thread-safe, no retained pointers or native FD ownership.
+ */
+venus_ring_status_t venus_frame_context_decode(uint64_t *identity, const void *bytes,
+                                               size_t length);
 #ifndef _WIN32
 /** @brief Verify borrowed trusted socket and enable kernel credential delivery.
  * @param[in] socket_fd Borrowed CLOEXEC/nonblocking AF_UNIX SOCK_SEQPACKET endpoint.

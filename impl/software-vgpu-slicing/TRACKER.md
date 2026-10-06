@@ -955,9 +955,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     and sanitized production workers. Native frame launch/ack retry still pending.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define presented worker exec binding`
+- **Commit `faa8eae`**: `docs(vgpu): define presented worker exec binding`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Specify prepared fd5 isolation, three-source duplication rollback,
     fixed bounded argument encoding, retained parent identity and unbound compatibility.
   - **Verification**: Service lifetime tests and actual mapped/exec regressions pass;
     worker launcher and argument decoding implementation follows separately.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): decode fixed worker context arguments safely`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add allocation-free bounded Zig fixed hexadecimal argument decoder
+    with explicit C ABI, zero failure output and strict lowercase/nonzero policy.
+  - **Verification**: Six Zig allocator tests, native frame transport sanitizers,
+    Windows cross-link and frame codec coverage100% lines/95.12% branches pass.
+    Tests cover every invalid character position, bounds, zero and maximum identity.

@@ -1882,3 +1882,11 @@ argument/PID causes exit2 without receiver initialization. Unbound argv and entr
 point remain unchanged. SIGTERM/INT, owned process-group shutdown and old-context
 teardown follow existing worker rules. Native frame endpoint closes after service
 return; caller still owns its originals. No spontaneous surface/socket creation.
+
+
+venus_frame_context_decode now implements the worker argument boundary in Zig.
+Every malformed character position, NULL, shorter/longer length, zero identity and
+maximum u64 are tested with zeroed failure output and testing allocator cleanup.
+Native Windows ABI fixture checks exact numeric value and uppercase rejection;
+Linux allocator/sanitizer and Windows cross-link pass. Combined frame codecs have
+100% production line/95.12% branch coverage. Worker launch is not yet connected.

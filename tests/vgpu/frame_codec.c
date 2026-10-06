@@ -28,5 +28,10 @@ int main(void) {
     release_bytes[28] = 1;
     assert(venus_release_decode(&completion, release_bytes, sizeof(release_bytes)) == RingCorrupt);
     assert(!completion.context && !completion.frame);
+    uint64_t identity;
+    assert(venus_frame_context_decode(&identity, "0123456789abcdef", 16) == RingOk);
+    assert(identity == UINT64_C(0x0123456789abcdef));
+    assert(venus_frame_context_decode(&identity, "0123456789abcdeF", 16) == RingInvalid);
+    assert(!identity);
     return 0;
 }

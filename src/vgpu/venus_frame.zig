@@ -289,3 +289,57 @@ test "release exact ABI, all identities/statuses, padding, NULL and bounds" {
         try expect_release(-2, &decoded, bytes.ptr, bytes.len);
     }
 }
+
+/// out: nullable disjoint private identity zeroed on failure; in: immutable
+/// nullable bytes[length], exactly16 lowercase hex characters. Returns0 success,
+/// -1 NULL/shape/zero. Allocation-free/thread-safe, no retained pointer/ownership.
+export fn venus_frame_context_decode(output: ?*u64, input: ?[*]const u8, length: usize) c_int {
+    const identity = output orelse return -1;
+    identity.* = 0;
+    const bytes = input orelse return -1;
+    if (length != 16) return -1;
+    var value: u64 = 0;
+    for (bytes[0..16]) |byte| {
+        const digit: u64 = switch (byte) {
+            '0'...'9' => byte - '0',
+            'a'...'f' => byte - 'a' + 10,
+            else => return -1,
+        };
+        value = (value << 4) | digit;
+    }
+    if (value == 0) return -1;
+    identity.* = value;
+    return 0;
+}
+fn expect_context(status: c_int, identity: ?*u64, bytes: ?[*]const u8, length: usize) !void {
+    const result = @call(.never_inline, venus_frame_context_decode, .{ identity, bytes, length });
+    try std.testing.expectEqual(status, result);
+    if (status != 0) if (identity) |output| try std.testing.expectEqual(@as(u64, 0), output.*);
+}
+test "fixed context argument rejects all malformed and zero identities" {
+    const bytes = try std.testing.allocator.alloc(u8, 16);
+    defer std.testing.allocator.free(bytes);
+    var identity: u64 = 9;
+    @memcpy(bytes, "0123456789abcdef");
+    try expect_context(-1, null, bytes.ptr, 16);
+    try expect_context(-1, &identity, null, 16);
+    for ([_]usize{ 0, 15, 17, std.math.maxInt(usize) }) |length|
+        try expect_context(-1, &identity, bytes.ptr, length);
+    try expect_context(0, &identity, bytes.ptr, 16);
+    try std.testing.expectEqual(@as(u64, 0x0123456789abcdef), identity);
+    @memset(bytes, 'f');
+    try expect_context(0, &identity, bytes.ptr, 16);
+    try std.testing.expectEqual(std.math.maxInt(u64), identity);
+    @memset(bytes, '0');
+    try expect_context(-1, &identity, bytes.ptr, 16);
+    for ([_]u8{ 'A', 'F', '/', ':', '`', 'g', 'x', '+', '-', ' ', 0, 255 }) |byte| {
+        for (0..16) |index| {
+            bytes[index] = byte;
+            try expect_context(-1, &identity, bytes.ptr, 16);
+            bytes[index] = '0';
+        }
+    }
+    bytes[15] = '1';
+    try expect_context(0, &identity, bytes.ptr, 16);
+    try std.testing.expectEqual(@as(u64, 1), identity);
+}
