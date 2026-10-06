@@ -980,3 +980,15 @@ vgpu-features-wire-coverage: build/venus_features_query_oracle.o build/venus_fea
 	python3 tests/av/coverage.py venus_features_wire
 vgpu-icd-test: vgpu-features-wire-test
 vgpu-icd-coverage: vgpu-features-wire-coverage
+
+# Copied single-color recording compatibility is checked separately from wire bytes.
+.PHONY: vgpu-graphics-state-test vgpu-graphics-state-sanitizers vgpu-graphics-state-coverage
+vgpu-graphics-state-test:
+	$(ZIG) test src/vgpu/venus_graphics_state.zig
+vgpu-graphics-state-sanitizers:
+	python3 tests/vgpu/state_sanitizers.py venus_graphics_state
+vgpu-graphics-state-coverage:
+	python3 tests/av/coverage.py venus_graphics_state
+vgpu-icd-test: vgpu-graphics-state-test
+vgpu-icd-sanitizers: vgpu-graphics-state-sanitizers
+vgpu-icd-coverage: vgpu-graphics-state-coverage
