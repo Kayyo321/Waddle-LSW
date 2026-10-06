@@ -2323,3 +2323,13 @@ worker/client executions pass. On any error, the fixture abandons the guest sess
 before clearing command/registry storage; success retires the host instance before
 local release and confirms zero live objects. This verifies these components
 jointly but still does not create public Vulkan loader/device/API or DXVK support.
+
+
+Core wire changes through0dea65c pass Linux and native Windows CI run37490205909,
+both jobs successful. Native Windows executes C ABI and all five allocator-backed
+instance wire tests; Linux additionally gates sanitizer/coverage and real
+production-worker instance ownership. Query decoder gates remain100% lines/90%
+branches; instance wire gates100% lines/95.59% branches. This accepts these
+components only. TODO #3 stays40%; remaining public ICD loader/manifest,
+instance/device/API dispatch, memory/synchronization and actual DXVK acceptance
+must be implemented and verified before TODO #3 can be marked Done.

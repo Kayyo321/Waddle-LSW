@@ -25,7 +25,11 @@ struct instance_encoder_t {
     size_t capacity;      /**< Accessible bounded extent. */
     size_t used;          /**< Initialized prefix extent. */
 };
-/** @brief Native external encoder hook; borrows encoder, returns initialized byte count. */
+/** @brief Read initialized length from the bounded test writer.
+ * @param[in] encoder Nonnull borrowed owner, retained by the synchronous test call.
+ * @return Initialized prefix byte count; no error path for valid private owner.
+ * @note Allocation-free, sole test thread; no ownership transfer or retained pointer.
+ */
 static inline size_t vn_cs_encoder_get_len(const struct instance_encoder_t *encoder) {
     return encoder->used;
 }

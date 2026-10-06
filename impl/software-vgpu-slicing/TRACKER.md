@@ -13,7 +13,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 40% | Guest frontend, userland adapter/DLL, command owner and bounded Vulkan object lifetime storage native CI pass; full ICD/API dispatch and DXVK pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 40% | Guest frontend, userland adapter/DLL, command/object ownership and core query/instance wire native CI pass; public ICD/device/API dispatch and DXVK pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -1185,7 +1185,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Public loader/device/API dispatch and DXVK remain pending with no helper credit.
 
 
-- **Commit (current; resolve by subject)**: `test(vgpu): retire guest instance reservations through production worker`
+- **Commit `0dea65c`**: `test(vgpu): retire guest instance reservations through production worker`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Integrate registry reservation, production instance packet,
     exclusive command owner and negotiated frontend through two fresh worker
@@ -1194,3 +1194,15 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     namespaces never reuse and success ends with zero live registry objects.
     Error paths abandon transport before clearing borrowed storage. Public
     ICD/device/API dispatch and real DXVK still pending; TODO #3 remains40%.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): record native core wire verification`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Record Linux and native Windows acceptance of bounded core query
+    and instance wire components; synchronize remaining ICD/device/DXVK scope and
+    complete the test encoder length hook's structured ownership documentation.
+  - **Verification**: Both jobs at0dea65c pass, run37490205909. Linux runs native
+    ABI, allocator, sanitizer, coverage and actual production-worker instance
+    retirement; Windows executes native ABI and all five instance wire Zig tests.
+    TODO #3 remains40%, overall65.0%, In Progress, Time Ended TBD. No public ICD
+    loader/device/API implementation or DXVK acceptance is claimed by these tests.
