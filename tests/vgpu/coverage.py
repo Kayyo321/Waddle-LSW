@@ -30,7 +30,7 @@ subprocess.run([
     *(['src/vgpu/venus_region.c'] if mode == 'context' else []),
     *(['src/vgpu/venus_region.c', 'build/venus_control.o'] if mode == 'session' else []),
     *(['src/vgpu/venus_region.c', '-Isrc/vgpu', '-Wl,--wrap=memfd_create,--wrap=ftruncate,--wrap=fcntl,--wrap=mmap,--wrap=venus_region_init,--wrap=venus_region_attach'] if mode == 'mapping' else []),
-    *(['src/vgpu/venus_session.c', 'src/vgpu/venus_region.c', 'src/vgpu/venus_ring.c', 'src/vgpu/venus_wait.c', 'src/vgpu/venus_rpc.c', '-Isrc/vgpu', 'build/venus_request.o', 'build/venus_control.o'] if mode == 'service' else []),
+    *(['src/vgpu/venus_session.c', 'src/vgpu/venus_region.c', 'src/vgpu/venus_ring.c', 'src/vgpu/venus_wait.c', 'src/vgpu/venus_rpc.c', '-Isrc/vgpu', 'build/venus_request.o', 'build/venus_control.o', 'build/venus_frame.o'] if mode == 'service' else []),
     *(['-pthread'] if mode == 'receiver' else []),
     *(['build/venus_capabilities.o'] if mode == 'guest' else []),
     *(['build/venus_dmabuf.o'] if mode == 'present' else []),

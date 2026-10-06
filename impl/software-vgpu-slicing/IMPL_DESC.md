@@ -1846,3 +1846,14 @@ channel first, zeroes export state, destroys receiver, then releases private byt
 and mapping. Native leases are abandoned only together with old receiver context
 teardown; controller must discard old guest allocations on session loss. Healthy
 standalone service callers remain unbound and require no presentation socket.
+
+
+Production service now implements the optional binding and unbound compatibility
+entry points. Linux build scopes native export/channel sources and bounded frame
+object to service targets. Acquisition fault tests verify partial binding rejection,
+failed export initialization, all four adapters, pending/invalid release outcomes,
+exact encoded completion and export-before-receiver cleanup. Service coverage is
+100% lines/99.02% branches; normal and ASan/LSan/UBSan tests pass. Existing real
+mapped/exec-isolated service, quotas and fresh restart regressions also pass with
+normal and sanitized production workers. Worker launch still supplies only the
+unbound entry point until dedicated native frame FD routing is implemented.

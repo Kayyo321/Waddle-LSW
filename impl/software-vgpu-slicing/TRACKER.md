@@ -936,9 +936,20 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     coverage and native Windows cross-link pass; monitor pointers remain cleared.
 
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): define production service presentation lifetime`
+- **Commit `d6707d5`**: `docs(vgpu): define production service presentation lifetime`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Specify optional borrowed frame channel binding, distinct descriptor
     checks, export owner acquisition and teardown order with existing service state.
   - **Verification**: Bound dispatch/native Windows cross-link and negotiation
     tests pass; service construction and worker launch wiring are next gates.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): bind presentation leases into the production receiver service`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add optional trusted frame endpoint/controller/context service run,
+    acquire caller-owned export leases, route bound callbacks and encode consumed
+    completions through Zig; abandon leases with old receiver during teardown.
+  - **Verification**: Service acquisition faults/callback outcomes/descriptor checks
+    pass normal/ASan/LSan/UBSan; production coverage100% lines/99.02% branches.
+    Real mapped/exec-isolated receiver and fresh restart regressions pass normal
+    and sanitized production workers. Native frame launch/ack retry still pending.

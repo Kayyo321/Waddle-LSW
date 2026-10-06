@@ -233,8 +233,8 @@ vgpu-worker-coverage: build/venus_bounds.o
 	python3 tests/vgpu/coverage.py worker
 
 
-VgpuServiceSources = src/vgpu/venus_service.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c
-VgpuServiceObjects = build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
+VgpuServiceSources = src/vgpu/venus_service.c src/vgpu/venus_export.c src/vgpu/venus_frame_linux.c $(VgpuRuntimeSources) $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c
+VgpuServiceObjects = build/venus_frame.o build/venus_bounds.o build/venus_control.o build/venus_request.o build/venus_capabilities.o
 build/vgpu_service_fixture: tests/vgpu/service_child.c $(VgpuServiceSources) include/waddle/venus_service.h $(VgpuServiceObjects) | vgpu-renderer
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuReceiverIncludes) tests/vgpu/service_child.c $(VgpuServiceSources) $(VgpuServiceObjects) $(LDFLAGS) $(VgpuReceiverLibraries) -o $@
 
@@ -583,3 +583,6 @@ vgpu-export-sanitizers: build/venus_frame.o
 
 vgpu-export-coverage: build/venus_frame.o build/venus_bounds.o
 	python3 tests/vgpu/coverage.py export
+
+# Presented service consumers share native frame/lease ABI changes.
+build/vgpu_service_fixture build/vgpu_service_fixture_sanitized build/waddle_vgpu_worker build/waddle_vgpu_worker_sanitized build/vgpu_service_owner_test: include/waddle/venus_export.h $(VgpuFrameHeaders)

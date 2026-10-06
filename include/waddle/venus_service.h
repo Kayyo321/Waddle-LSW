@@ -34,4 +34,24 @@ venus_ring_status_t venus_service_config_init(venus_service_config_t *config);
  */
 venus_ring_status_t venus_service_run(const venus_service_config_t *config, int mapping_fd,
                                       int stream_fd, const _Atomic uint32_t *cancel);
+/** @brief Run a receiver service with optional trusted native presentation binding.
+ * @param[in] config Nonnull immutable trusted policy retained for run.
+ * @param[in] mapping_fd Borrowed CLOEXEC fixed-size regular initialized region.
+ * @param[in] stream_fd Borrowed CLOEXEC/nonblocking connected guest stream.
+ * @param[in] frame_fd Borrowed prepared native seqpacket endpoint distinct from
+ * mapping/stream, or -1 for unbound operation.
+ * @param[in] controller_pid Positive retained controller PID; zero only if unbound.
+ * @param[in] context Nonzero exact controller identity; zero only if unbound.
+ * @param[in] cancel Nullable borrowed atomic flag retained for run.
+ * @return Same service status policy as venus_service_run; Invalid malformed
+ * presentation binding; acquired state unwinds on every failure.
+ * @note Sole service thread. Owns call-scoped export leases/receiver, borrows all
+ * descriptors/identities. Closes rings before abandoning leases/receiver, then
+ * unmaps/frees private storage. Caller stops worker before socket/window teardown
+ * and discards old-context allocations on loss; no pixel mapping/copy.
+ */
+venus_ring_status_t venus_service_run_presented(const venus_service_config_t *config,
+                                                int mapping_fd, int stream_fd, int frame_fd,
+                                                int32_t controller_pid, uint64_t context,
+                                                const _Atomic uint32_t *cancel);
 #endif

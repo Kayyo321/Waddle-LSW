@@ -1,4 +1,5 @@
 /** @file service_owner.c @brief Service acquisition and ownership fault boundary. */
+#include "waddle/venus_export.h"
 #include "waddle/venus_service.h"
 #include <assert.h>
 #include <fcntl.h>
@@ -123,6 +124,73 @@ venus_ring_status_t venus_dispatch_serve(venus_rpc_t *rpc, venus_receiver_t *rec
     assert(rpc->channel && receiver && timeout);
     return dispatches++ ? RingClosed : RingOk;
 }
+static int export_live, export_inits, export_frees, export_callbacks, take_fault;
+venus_ring_status_t venus_export_init(venus_export_t *owner, venus_receiver_t *receiver, int fd,
+                                      int32_t pid, uint64_t context) {
+    assert(!owner->receiver && receiver && fd == 5 && pid == 23 && context == 17);
+    export_inits++;
+    if (fault == 20)
+        return RingInvalid;
+    owner->receiver = receiver;
+    export_live = 1;
+    return RingOk;
+}
+void venus_export_free(venus_export_t *owner) {
+    if (owner->receiver) {
+        assert(export_live && live_receiver);
+        export_live = 0;
+        export_frees++;
+    }
+    memset(owner, 0, sizeof(*owner));
+}
+venus_ring_status_t venus_export_submit(venus_export_t *owner, const void *bytes, size_t length,
+                                        uint32_t timeline, uint64_t fence) {
+    assert(export_live && owner->receiver && bytes && length == 1216 && timeline == 1 &&
+           fence == 1);
+    export_callbacks++;
+    return RingAgain;
+}
+venus_ring_status_t venus_export_take(venus_export_t *owner, uint64_t frame,
+                                      venus_release_t *release) {
+    assert(export_live && owner->receiver && frame == 1 && release);
+    export_callbacks++;
+    if (take_fault == 1)
+        return RingAgain;
+    *release = (venus_release_t){
+        .context = 17, .frame = 1, .status = take_fault == 2 ? RingCorrupt : RingOk};
+    return RingOk;
+}
+int venus_export_resource_busy(const venus_export_t *owner, uint32_t id) {
+    assert(export_live && owner->receiver && id == 2);
+    export_callbacks++;
+    return 1;
+}
+venus_ring_status_t venus_export_pump(venus_export_t *owner) {
+    assert(export_live && owner->receiver);
+    export_callbacks++;
+    return RingOk;
+}
+venus_ring_status_t
+venus_dispatch_serve_presented(venus_rpc_t *rpc, venus_receiver_t *receiver,
+                               const venus_dispatch_presentation_t *presentation,
+                               uint32_t timeout) {
+    if (presentation) {
+        unsigned char frame[1216] = {0}, bytes[32];
+        assert(presentation->submit(presentation->context, frame, sizeof(frame), 1, 1) ==
+               RingAgain);
+        assert(presentation->resource_busy(presentation->context, 2));
+        assert(presentation->pump(presentation->context) == RingOk);
+        venus_ring_status_t status =
+            presentation->take(presentation->context, 1, bytes, sizeof(bytes));
+        assert(status == (take_fault == 1 ? RingAgain : take_fault == 2 ? RingCorrupt : RingOk));
+        if (status == RingOk) {
+            venus_release_t release;
+            assert(venus_release_decode(&release, bytes, sizeof(bytes)) == RingOk);
+            assert(release.context == 17 && release.frame == 1 && release.status == RingOk);
+        }
+    }
+    return venus_dispatch_serve(rpc, receiver, timeout);
+}
 #define fcntl fixture_flags
 #define fstat fixture_stat
 #define mmap fixture_map
@@ -140,6 +208,24 @@ int main(void) {
     assert(venus_service_run(NULL, 3, 4, NULL) == RingInvalid);
     assert(venus_service_run(&config, -1, 4, NULL) == RingInvalid);
     assert(venus_service_run(&config, 3, -1, NULL) == RingInvalid);
+    assert(venus_service_run_presented(&config, 3, 4, -2, 0, 0, NULL) == RingInvalid);
+    assert(venus_service_run_presented(&config, 3, 4, -1, 23, 0, NULL) == RingInvalid);
+    assert(venus_service_run_presented(&config, 3, 4, -1, 0, 17, NULL) == RingInvalid);
+    assert(venus_service_run_presented(&config, 3, 4, 5, 0, 17, NULL) == RingInvalid);
+    assert(venus_service_run_presented(&config, 3, 4, 5, 23, 0, NULL) == RingInvalid);
+    assert(venus_service_run_presented(&config, 3, 4, 3, 23, 17, NULL) == RingInvalid);
+    assert(venus_service_run_presented(&config, 3, 4, 4, 23, 17, NULL) == RingInvalid);
+    fault = 20;
+    assert(venus_service_run_presented(&config, 3, 4, 5, 23, 17, NULL) == RingInvalid);
+    assert(export_inits == 1 && !export_live && !export_frees && !mapped && !allocated &&
+           !live_receiver);
+    fault = 0;
+    for (take_fault = 0; take_fault < 3; take_fault++) {
+        dispatches = 0;
+        assert(venus_service_run_presented(&config, 3, 4, 5, 23, 17, NULL) == RingClosed);
+        assert(!export_live && !mapped && !allocated && !live_receiver);
+    }
+    assert(export_inits == 4 && export_frees == 3 && export_callbacks == 24);
     for (int mode = 0; mode < 12; mode++) {
         venus_service_config_t bad = config;
         switch (mode) {
@@ -186,8 +272,8 @@ int main(void) {
         attempts = dispatches = 0;
         venus_ring_status_t status = venus_service_run(&config, 3, 4, NULL);
         assert(status == (stage == 0 ? RingClosed
-                          : stage == 1 || stage == 2 || stage == 3 || stage == 8 || stage == 11 || stage == 12 || stage == 18 ||
-                                  stage == 19
+                          : stage == 1 || stage == 2 || stage == 3 || stage == 8 || stage == 11 ||
+                                  stage == 12 || stage == 18 || stage == 19
                               ? RingInvalid
                           : stage == 9  ? RingClosed
                           : stage == 10 ? RingTimeout
