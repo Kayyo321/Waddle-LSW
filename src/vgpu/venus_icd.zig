@@ -24,6 +24,7 @@ const device_cache_t = struct {
 const command_state_t = enum { Initial, Recording, Executable, Invalid, Pending };
 const resource_state_t = struct {
     id: u64 = 0,
+    inflight_count: u32 = 0,
     allocation_size: u64 = 0,
     type_index: u32 = 0,
     bound_memory: u64 = 0,
@@ -659,7 +660,9 @@ fn identity_reply(bytes: []const u8, command_id: u32, id: u64, has_result: bool)
     var reader = reader_t{ .bytes = bytes };
     if (try reader.scalar(u32) != command_id) return error.Value;
     const result = if (has_result) try reader.scalar(i32) else 0;
-    if (try reader.scalar(u64) != 1 or try reader.scalar(u64) != id) return error.Value;
+    if (try reader.scalar(u64) != 1) return error.Value;
+    const returned_id = try reader.scalar(u64);
+    if (returned_id != id and !(result < 0 and returned_id == 0)) return error.Value;
     return result;
 }
 /// Borrowed native input, allocation-free serialized reservation/publication; NULL output on error.
@@ -1001,6 +1004,95 @@ fn destroy_fence(
         return;
     }
     std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_FENCE, 0) ==
+        c.RingOk);
+}
+/// Create one device-owned nondispatchable semaphore without allocation.
+/// @param[in] device Nonnull live private device, validated without native dereference.
+/// @param[in] info Nonnull borrowed canonical flags0/no-extension native input.
+/// @param[in] allocator Nullable borrowed callbacks, not retained or invoked.
+/// @param[out] output Nonnull native handle storage, NULL on any failure.
+/// @return Host result, explicit local validation/memory errors or sticky device loss.
+/// @note Mutex serialized; publish only a validated host reservation. Caller owns the semaphore.
+fn create_semaphore(
+    device: c.VkDevice,
+    info: [*c]const c.VkSemaphoreCreateInfo,
+    allocator: [*c]const c.VkAllocationCallbacks,
+    output: [*c]c.VkSemaphore,
+) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO or
+        info.*.pNext != null or info.*.flags != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(
+        @intFromPtr(device.?),
+        c.VK_OBJECT_TYPE_DEVICE,
+    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_SEMAPHORE, parent.id, 0, &record) !=
+        c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var writer = writer_t{};
+    writer.header(40, parent.id);
+    writer.put(u64, 1);
+    writer.put(u32, c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
+    writer.put(u64, 0);
+    writer.put(u32, info.*.flags);
+    writer.put(u64, 0);
+    writer.put(u64, 1);
+    writer.put(u64, record.*.id);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = identity_reply(reply, 40, record.*.id, true) catch
+        return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0) return failure(c.RingCorrupt);
+    if (result != c.VK_SUCCESS) {
+        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_SEMAPHORE, 0);
+        return result;
+    }
+    resource_state(record).* = .{ .id = record.*.id };
+    output.* = @ptrFromInt(record.*.handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy a quiescent device-owned semaphore; invalid/foreign handles ignored.
+/// @param[in] device Nonnull live private parent; no native handle dereference.
+/// @param[in] semaphore Nullable private token, borrowed until successful host destruction.
+/// @param[in] allocator Nullable unused borrowed callbacks; no allocation or retained pointer.
+/// @note Mutex serialized; caller retires GPU references first. Loss retains ownership.
+fn destroy_semaphore(
+    device: c.VkDevice,
+    semaphore: c.VkSemaphore,
+    allocator: [*c]const c.VkAllocationCallbacks,
+) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or semaphore == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(
+        @intFromPtr(semaphore.?),
+        c.VK_OBJECT_TYPE_SEMAPHORE,
+        parent.id,
+    ) orelse return;
+    if (resource_state(record).inflight_count != 0) return;
+    var writer = writer_t{};
+    writer.header(41, parent.id);
+    writer.put(u64, record.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 41) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    resource_state(record).* = .{};
+    std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_SEMAPHORE, 0) ==
         c.RingOk);
 }
 /// Create a device-owned core buffer after validating bounded native input.
@@ -2338,6 +2430,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkDeviceWaitIdle", &device_wait_idle },
         .{ "vkQueueWaitIdle", &queue_wait_idle },
         .{ "vkCreateFence", &create_fence },
+        .{ "vkCreateSemaphore", &create_semaphore },
+        .{ "vkDestroySemaphore", &destroy_semaphore },
         .{ "vkCreateBuffer", &create_buffer },
         .{ "vkCreateCommandPool", &create_command_pool },
         .{ "vkAllocateCommandBuffers", &allocate_command_buffers },
@@ -2734,7 +2828,7 @@ test "command buffer batch replies validate every truncation result count and id
     );
 }
 
-test "pending buffer references prevent host destruction before GPU retirement" {
+test "pending references prevent buffer pool and semaphore destruction before GPU retirement" {
     const fixture_t = struct {
         fn exchange(
             _: ?*anyopaque,
@@ -2758,6 +2852,7 @@ test "pending buffer references prevent host destruction before GPU retirement" 
     var buffer: [*c]c.venus_object_t = null;
     var recording: [*c]c.venus_object_t = null;
     var pool: [*c]c.venus_object_t = null;
+    var semaphore: [*c]c.venus_object_t = null;
     try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
         &objects,
         c.VK_OBJECT_TYPE_DEVICE,
@@ -2786,6 +2881,14 @@ test "pending buffer references prevent host destruction before GPU retirement" 
         1,
         &recording,
     ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_SEMAPHORE,
+        device.*.id,
+        0,
+        &semaphore,
+    ));
+    resource_state(semaphore).inflight_count = 1;
     const index = resource_index(buffer);
     resource_state(recording).command_state = .Pending;
     resource_state(recording).buffer_references[index / 64] =
@@ -2794,7 +2897,10 @@ test "pending buffer references prevent host destruction before GPU retirement" 
     try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
     destroy_command_pool(@ptrFromInt(device.*.handle), @ptrFromInt(pool.*.handle), null);
     try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    try std.testing.expectEqual(@as(usize, 4), objects.live_count);
+    destroy_semaphore(@ptrFromInt(device.*.handle), @ptrFromInt(semaphore.*.handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(usize, 5), objects.live_count);
+    try std.testing.expectEqual(@as(u32, 1), resource_state(semaphore).inflight_count);
     try std.testing.expectEqual(command_state_t.Pending, resource_state(recording).command_state);
 }
 
@@ -2885,4 +2991,37 @@ test "inline update staging captures input and scrubs success transport and malf
         );
         try std.testing.expectEqual(mode == 0, lost == c.RingOk);
     }
+}
+
+test "constructor identities allow null only after negative native results" {
+    var bytes = [_]u8{0} ** 24;
+    std.mem.writeInt(u32, bytes[0..4], 40, .little);
+    std.mem.writeInt(u32, bytes[4..8], @bitCast(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY)), .little);
+    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+    try std.testing.expectEqual(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try identity_reply(
+        &bytes,
+        40,
+        123,
+        true,
+    ));
+    for (0..bytes.len) |length| try std.testing.expectError(error.Bounds, identity_reply(
+        bytes[0..length],
+        40,
+        123,
+        true,
+    ));
+    std.mem.writeInt(u64, bytes[16..24], 123, .little);
+    try std.testing.expectEqual(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try identity_reply(
+        &bytes,
+        40,
+        123,
+        true,
+    ));
+    std.mem.writeInt(u64, bytes[16..24], 124, .little);
+    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
+    std.mem.writeInt(u64, bytes[16..24], 0, .little);
+    std.mem.writeInt(u32, bytes[4..8], 0, .little);
+    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
+    std.mem.writeInt(u32, bytes[4..8], 1, .little);
+    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
 }

@@ -3272,3 +3272,12 @@ Exercise real native binary semaphore creation/destruction through static/shared
 ICD production workers, pinned Linux/Windows loaders, zero-leak sanitizers and >=90%
 metadata coverage. Real wait/signal execution is a submission gate; lifecycle alone
 grants no additional TODO #3 completion credit.
+
+The shared single-object constructor decoder also accepts a null returned native
+handle after a strictly negative VkResult for device, fence, semaphore, buffer,
+memory and pool creation. The returned array count must still be exactly one;
+nonzero identities must match the reserved ID. Success or positive status with a
+null identity remains corrupt. GetDeviceQueue2 has no result field and therefore
+never accepts null. This follows native failure output semantics and preserves
+rollback only for known negative errors; device loss and malformed replies retain
+uncertain ownership until receiver retirement.

@@ -11,6 +11,7 @@
 #include "vn_protocol_driver_command_pool.h"
 #include "vn_protocol_driver_device_memory.h"
 #include "vn_protocol_driver_fence.h"
+#include "vn_protocol_driver_semaphore.h"
 #include "vn_protocol_driver_queue.h"
 #pragma GCC diagnostic pop
 #include <assert.h>
@@ -71,6 +72,7 @@ typedef struct fixture_t {
     const VkCommandBufferBeginInfo *command_begin;
     int32_t command_result;
     unsigned command_array_fault;
+    unsigned semaphore_fault;
     uint64_t gpu_issued[64];
     uint32_t gpu_pending;
     uint32_t gpu_issue_pending;
@@ -188,6 +190,23 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                             &queue_info, &queue);
                 assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
             }
+        } else if (fixture->command == 40 || fixture->command == 41) {
+            unsigned char expected[128];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 40) {
+                VkSemaphore semaphore = (VkSemaphore)(uintptr_t)read_u64(bytes + 56);
+                const VkSemaphoreCreateInfo info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+                vn_encode_vkCreateSemaphore(&encoder, 1, device, &info, NULL, &semaphore);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, fixture->semaphore_fault == 3 ? 0 : 1);
+                put_u64(fixture->reply + 16, fixture->semaphore_fault == 1 || fixture->semaphore_fault == 4 ?
+                    0 : (uintptr_t)semaphore + (fixture->semaphore_fault == 2));
+            } else {
+                vn_encode_vkDestroySemaphore(&encoder, 1, device,
+                    (VkSemaphore)(uintptr_t)read_u64(bytes + 16), NULL);
+            }
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 126) {
             unsigned char expected[8192];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -2051,6 +2070,88 @@ static void fill_buffer_contract(void) {
         assert(venus_icd_unbind() == RingOk);
     }
 }
+static void semaphore_contract(void) {
+    for (unsigned scenario = 0; scenario < 12; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2;
+        VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,
+            "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 1, .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &device_info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkCreateSemaphore create_semaphore = (PFN_vkCreateSemaphore)lookup(device, "vkCreateSemaphore");
+        PFN_vkDestroySemaphore release = (PFN_vkDestroySemaphore)lookup(device, "vkDestroySemaphore");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
+        assert(create_semaphore && release && destroy_device);
+        VkSemaphoreCreateInfo info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkSemaphore semaphore = (VkSemaphore)(uintptr_t)1;
+        unsigned submissions = fixture.submissions;
+        assert(create_semaphore(device, &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(create_semaphore(NULL, &info, NULL, &semaphore) == VK_ERROR_INITIALIZATION_FAILED && !semaphore);
+        assert(create_semaphore((VkDevice)(uintptr_t)1, &info, NULL, &semaphore) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(create_semaphore(device, NULL, NULL, &semaphore) == VK_ERROR_INITIALIZATION_FAILED);
+        info.sType = 0;
+        assert(create_semaphore(device, &info, NULL, &semaphore) == VK_ERROR_INITIALIZATION_FAILED);
+        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO; info.pNext = &info;
+        assert(create_semaphore(device, &info, NULL, &semaphore) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pNext = NULL; info.flags = 1;
+        assert(create_semaphore(device, &info, NULL, &semaphore) == VK_ERROR_INITIALIZATION_FAILED);
+        info.flags = 0;
+        assert(fixture.submissions == submissions);
+        fixture.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(create_semaphore(device, &info, NULL, &semaphore) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !semaphore);
+        fixture.semaphore_fault = 4;
+        assert(create_semaphore(device, &info, NULL, &semaphore) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !semaphore);
+        fixture.semaphore_fault = 0; fixture.create_result = VK_SUCCESS;
+        if (scenario < 7) {
+            if (scenario == 0) fixture.fail_command = 40;
+            if (scenario == 1) fixture.corrupt_command = 40;
+            if (scenario >= 2 && scenario <= 4) fixture.semaphore_fault = scenario - 1;
+            if (scenario == 5) fixture.create_result = VK_ERROR_DEVICE_LOST;
+            if (scenario == 6) fixture.create_result = VK_NOT_READY;
+            assert(create_semaphore(device, &info, NULL, &semaphore) == VK_ERROR_DEVICE_LOST && !semaphore);
+            assert(create_semaphore(device, &info, NULL, &semaphore) == VK_ERROR_DEVICE_LOST);
+            venus_icd_abandon(); continue;
+        }
+        assert(create_semaphore(device, &info, (const void *)(uintptr_t)1, &semaphore) == VK_SUCCESS && semaphore);
+        submissions = fixture.submissions;
+        release(NULL, semaphore, NULL); release((VkDevice)(uintptr_t)1, semaphore, NULL);
+        release(foreign, semaphore, NULL); release(device, NULL, NULL);
+        release(device, (VkSemaphore)(uintptr_t)1, NULL); release(device, (VkSemaphore)device, NULL);
+        destroy_device(device, NULL); /* Live child preserves parent. */
+        assert(fixture.submissions == submissions);
+        if (scenario == 7) fixture.fail_command = 41;
+        if (scenario == 8) fixture.corrupt_command = 41;
+        if (scenario == 9) {
+            VkSemaphore extra[506];
+            for (unsigned index = 0; index < 506; index++)
+                assert(create_semaphore(device, &info, NULL, &extra[index]) == VK_SUCCESS);
+            VkSemaphore exhausted = NULL;
+            submissions = fixture.submissions;
+            assert(create_semaphore(device, &info, NULL, &exhausted) == VK_ERROR_OUT_OF_HOST_MEMORY && !exhausted);
+            assert(fixture.submissions == submissions);
+            for (unsigned index = 0; index < 506; index++) release(device, extra[index], NULL);
+        }
+        release(device, semaphore, (const void *)(uintptr_t)1);
+        if (scenario == 7 || scenario == 8) { venus_icd_abandon(); continue; }
+        submissions = fixture.submissions;
+        release(device, semaphore, NULL);
+        assert(fixture.submissions == submissions);
+        destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
 static void command_buffer_contract(void) {
     for (unsigned scenario = 0; scenario < 20; scenario++) {
         fixture_t fixture = fresh();
@@ -2753,6 +2854,13 @@ static void loader_fixture(void) {
         destroy_buffer(device, buffer, NULL); release(device, memory, NULL);
 
 
+        PFN_vkCreateSemaphore create_semaphore = (PFN_vkCreateSemaphore)device_proc(device, "vkCreateSemaphore");
+        PFN_vkDestroySemaphore destroy_semaphore = (PFN_vkDestroySemaphore)device_proc(device, "vkDestroySemaphore");
+        const VkSemaphoreCreateInfo semaphore_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkSemaphore semaphore = NULL;
+        assert(create_semaphore && destroy_semaphore);
+        assert(create_semaphore(device, &semaphore_info, NULL, &semaphore) == VK_SUCCESS && semaphore);
+        destroy_semaphore(device, semaphore, NULL);
         destroy_device(device, NULL);
         PFN_vkDestroyInstance destroy =
             (PFN_vkDestroyInstance)lookup(instance, "vkDestroyInstance");
@@ -2791,6 +2899,7 @@ int main(void) {
     copy_buffer_contract();
     update_buffer_contract();
     pipeline_barrier_contract();
+    semaphore_contract();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();

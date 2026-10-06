@@ -293,6 +293,16 @@ static int icd_cycles(venus_guest_t *guest) {
             wait_fences(device, 1, &fence, VK_TRUE, 0) != VK_TIMEOUT)
             goto fail;
         destroy_fence(device, fence, NULL);
+        PFN_vkCreateSemaphore create_semaphore =
+            (PFN_vkCreateSemaphore)device_proc(device, "vkCreateSemaphore");
+        PFN_vkDestroySemaphore destroy_semaphore =
+            (PFN_vkDestroySemaphore)device_proc(device, "vkDestroySemaphore");
+        if (!create_semaphore || !destroy_semaphore) goto fail;
+        const VkSemaphoreCreateInfo semaphore_info = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        VkSemaphore semaphore = NULL;
+        if (create_semaphore(device, &semaphore_info, NULL, &semaphore) != VK_SUCCESS || !semaphore)
+            goto fail;
+        destroy_semaphore(device, semaphore, NULL);
         PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)device_proc(device, "vkCreateBuffer");
         PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)device_proc(device, "vkDestroyBuffer");
         PFN_vkGetBufferMemoryRequirements requirements =

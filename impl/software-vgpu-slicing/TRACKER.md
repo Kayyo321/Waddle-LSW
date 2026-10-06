@@ -1716,7 +1716,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     object/identity transaction contracts; implementation/execution pending.
     TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `test(vgpu): expand coverage recorder for CI instrumentation`
+- **Commit `cb463c6`**: `test(vgpu): expand coverage recorder for CI instrumentation`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Increase fixed atomic site capacity from4096 to16384 without
     changing edge limits, generated metadata guards or coverage thresholds.
@@ -1725,3 +1725,18 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     rejects out-of-range sites before indexing. TODO #3 remains50%.
   - **Verification**: Strict C boundary probe accepts16383/31 and aborts on
     16384/0 and0/32. Latest native ICD coverage remains required.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): implement binary semaphore ownership and pending guards`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Dispatch canonical binary semaphore create/destroy40/41 with
+    exact identity publication, known-error rollback and loss retention. Add fixed
+    in-flight counts and refuse pending destruction. Shared constructors accept
+    null failure outputs only after negative native results, preserving exact
+    positive/success identities and result-less queue behavior.
+  - **Verification**: Independent pinned encoder, native malformed/negative/null/
+    capacity/foreign/stale/transport guards and private pending tests pass. Eight
+    Zig tests and ASan/LSan/UBSan pass; coverage99.75% lines/94.01% branches with
+    2233/16384 sites. Real static/shared-loader worker and pinned native loader
+    normal/sanitized semaphore lifecycles pass, including forced-failure cleanup.
+    Windows fixture/DLL/loader cross-link passes. Queue submission and full API/
+    mapping/DXVK remain pending; TODO #3 stays50%. Latest CI required.
