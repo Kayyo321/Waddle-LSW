@@ -203,3 +203,4 @@ device-stress: build/waddle
 include scripts/av.mk
 
 include scripts/vgpu.mk
+include scripts/vgpu_dxvk.mk
