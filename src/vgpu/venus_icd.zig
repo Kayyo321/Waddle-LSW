@@ -55,7 +55,11 @@ var command = std.mem.zeroes(c.venus_command_t);
 var objects = std.mem.zeroes(c.venus_objects_t);
 var slots: [512]c.venus_object_t = undefined;
 var caches = [_]instance_cache_t{.{}} ** MaxInstances;
-var tx: [8192]u8 = undefined;
+const MaxUpdateBytes: usize = 65536;
+const MaxUpdateWireBytes: usize = 48 + MaxUpdateBytes;
+const CommandPrefixBytes: usize = 36;
+var update_encoded: [MaxUpdateWireBytes]u8 = undefined;
+var tx: [CommandPrefixBytes + MaxUpdateWireBytes]u8 = undefined;
 var rx: [4096]u8 = undefined;
 var lost: c_int = c.RingOk;
 const exchange_t = *const fn (
@@ -75,6 +79,7 @@ fn clear() void {
     ring_slots = [_]bool{false} ** 64;
     gpu_fences = [_]u64{0} ** 64;
     resource_states = [_]resource_state_t{.{}} ** 512;
+    @memset(&update_encoded, 0);
     lost = c.RingOk;
 }
 /// Borrow one exclusive negotiated backend; public header defines ownership/deadlines/threads.
@@ -1920,6 +1925,77 @@ fn copy_buffer(
         state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
     }
 }
+/// Capture and record a complete bounded inline update, including the65536-byte limit.
+/// @param[in] command_buffer Nullable private borrowed Recording handle.
+/// @param[in] buffer Nullable same-device bound TRANSFER_DST token, borrowed.
+/// @param[in] offset Four-byte aligned offset below requested buffer size.
+/// @param[in] data_size Positive four-byte multiple at most65536 and within buffer bounds.
+/// @param[in] data Nonnull accessible source[data_size], copied before dispatch; not retained.
+/// @return Void; invalid Recording inputs invalidate; peer/transport loss poisons binding.
+/// @note Mutex serialized; no heap allocation. Private staging scrubbed before unlock.
+fn update_buffer(
+    command_buffer: c.VkCommandBuffer,
+    buffer: c.VkBuffer,
+    offset: u64,
+    data_size: u64,
+    data: ?*const anyopaque,
+) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(
+        @intFromPtr(command_buffer.?),
+        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+    ) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    const target = if (buffer != null) child_object(
+        @intFromPtr(buffer.?),
+        c.VK_OBJECT_TYPE_BUFFER,
+        pool.parent_id,
+    ) else null;
+    if (target == null or data == null or data_size == 0 or data_size > MaxUpdateBytes or
+        data_size % 4 != 0 or offset % 4 != 0)
+    {
+        state.command_state = .Invalid;
+        return;
+    }
+    const destination = resource_state(target.?);
+    if (destination.bound_memory == 0 or destination.buffer_usage & 2 == 0 or
+        offset >= destination.buffer_size or data_size > destination.buffer_size - offset)
+    {
+        state.command_state = .Invalid;
+        return;
+    }
+    var writer = writer_t{};
+    writer.header(117, record.id);
+    writer.put(u64, target.?.id);
+    writer.put(u64, offset);
+    writer.put(u64, data_size);
+    writer.put(u64, data_size);
+    std.debug.assert(writer.used == 48);
+    const length = writer.used + @as(usize, @intCast(data_size));
+    defer @memset(update_encoded[0..length], 0);
+    defer @memset(tx[0 .. CommandPrefixBytes + length], 0);
+    @memcpy(update_encoded[0..writer.used], writer.bytes[0..writer.used]);
+    @memcpy(
+        update_encoded[writer.used..length],
+        @as([*]const u8, @ptrCast(data.?))[0..@intCast(data_size)],
+    );
+    const reply = transact(update_encoded[0..length]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 117) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    const index = resource_index(target.?);
+    state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+}
 /// Reset an individual nonpending buffer from a reset-capable private pool.
 /// @param[in] buffer Nonnull private borrowed handle; no ownership transfer.
 /// @param[in] flags0/1 release-resources only.
@@ -2134,6 +2210,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkBeginCommandBuffer", &begin_command_buffer },
         .{ "vkCmdFillBuffer", &fill_buffer },
         .{ "vkCmdCopyBuffer", &copy_buffer },
+        .{ "vkCmdUpdateBuffer", &update_buffer },
         .{ "vkEndCommandBuffer", &end_command_buffer },
         .{ "vkResetCommandBuffer", &reset_command_buffer },
         .{ "vkDestroyCommandPool", &destroy_command_pool },
@@ -2583,4 +2660,93 @@ test "pending buffer references prevent host destruction before GPU retirement" 
     try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
     try std.testing.expectEqual(@as(usize, 4), objects.live_count);
     try std.testing.expectEqual(command_state_t.Pending, resource_state(recording).command_state);
+}
+
+test "inline update staging captures input and scrubs success transport and malformed reply paths" {
+    const fixture_t = struct {
+        mode: u32,
+        captured: bool = false,
+        fn exchange(
+            context: ?*anyopaque,
+            request: [*c]const c.venus_request_t,
+            input: ?*const anyopaque,
+            length: usize,
+            response: [*c]c.venus_request_t,
+            output: ?*anyopaque,
+            capacity: usize,
+        ) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+                if (length != 92 or !std.mem.eql(u8, bytes[84..92], &.{ 1, 2, 3, 4, 5, 6, 7, 8 }))
+                    return c.RingCorrupt;
+                fixture.captured = true;
+                if (fixture.mode == 1) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], if (fixture.mode == 2) 118 else 117, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..3) |mode| {
+        var fixture = fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(
+            @as(c_int, c.RingOk),
+            venus_icd_bind(fixture_t.exchange, &fixture),
+        );
+        defer venus_icd_abandon();
+        var device: [*c]c.venus_object_t = null;
+        var pool: [*c]c.venus_object_t = null;
+        var recording: [*c]c.venus_object_t = null;
+        var buffer: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_DEVICE,
+            0,
+            1,
+            &device,
+        ));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_COMMAND_POOL,
+            device.*.id,
+            0,
+            &pool,
+        ));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+            pool.*.id,
+            1,
+            &recording,
+        ));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_BUFFER,
+            device.*.id,
+            0,
+            &buffer,
+        ));
+        resource_state(recording).command_state = .Recording;
+        resource_state(buffer).* = .{ .buffer_size = 8, .buffer_usage = 2, .bound_memory = 1 };
+        const data = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+        update_buffer(@ptrFromInt(recording.*.handle), @ptrFromInt(buffer.*.handle), 0, 8, &data);
+        try std.testing.expect(fixture.captured);
+        for (update_encoded[0..56]) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+        for (tx[0..92]) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+        const index = resource_index(buffer);
+        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+        try std.testing.expectEqual(
+            if (mode == 0) bit else @as(u64, 0),
+            resource_state(recording).buffer_references[index / 64],
+        );
+        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
+    }
 }

@@ -299,7 +299,7 @@ static int icd_cycles(venus_guest_t *guest) {
             (PFN_vkGetBufferMemoryRequirements)device_proc(device, "vkGetBufferMemoryRequirements");
         if (!create_buffer || !destroy_buffer || !requirements) goto fail;
         VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = 4096, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+            .size = 65536, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
         VkBuffer buffer = NULL;
         if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto fail;
         VkMemoryRequirements buffer_memory = {0};
@@ -348,8 +348,10 @@ static int icd_cycles(venus_guest_t *guest) {
             (PFN_vkCmdFillBuffer)device_proc(device, "vkCmdFillBuffer");
         PFN_vkCmdCopyBuffer copy_buffer =
             (PFN_vkCmdCopyBuffer)device_proc(device, "vkCmdCopyBuffer");
+        PFN_vkCmdUpdateBuffer update_buffer =
+            (PFN_vkCmdUpdateBuffer)device_proc(device, "vkCmdUpdateBuffer");
         if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer ||
-            !fill_buffer || !copy_buffer)
+            !fill_buffer || !copy_buffer || !update_buffer)
             goto fail;
         VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
@@ -361,6 +363,10 @@ static int icd_cycles(venus_guest_t *guest) {
         fill_buffer(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
         const VkBufferCopy copy_region = {.srcOffset = 0, .dstOffset = 2048, .size = 1024};
         copy_buffer(commands[0], buffer, buffer, 1, &copy_region);
+        unsigned char update_data[65536];
+        for (unsigned index = 0; index < sizeof(update_data); index++)
+            update_data[index] = (unsigned char)(index * 13);
+        update_buffer(commands[0], buffer, 0, sizeof(update_data), update_data);
         if (end_buffer(commands[0]) != VK_SUCCESS || reset_buffer(commands[0], 0) != VK_SUCCESS ||
             begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
             end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)
@@ -409,7 +415,7 @@ static int run_fixture(int corrupt) {
     venus_channel_t channel = {0};
     venus_rpc_t rpc = {0};
     venus_guest_t guest = {0};
-    unsigned char scratch[4096], bytes[VenusFrameBytes], completion[VenusReleaseBytes];
+    unsigned char scratch[131072], bytes[VenusFrameBytes], completion[VenusReleaseBytes];
     char executable[PATH_MAX];
     const char *configured = getenv("WADDLE_PRODUCTION_WORKER");
     if (!realpath(configured ? configured : "build/waddle_vgpu_worker", executable))
@@ -517,7 +523,7 @@ cleanup:
     return result;
 }
 int main(void) {
-    alarm(90);
+    alarm(180);
     int result = 1;
     unsigned baseline = descriptors();
     if (!baseline) goto cleanup;

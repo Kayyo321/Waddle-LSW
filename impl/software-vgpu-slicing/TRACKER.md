@@ -1634,7 +1634,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     overlap checks/36-byte prefix and Vulkan update valid usage. Implementation
     and full-size production-worker proof remain pending. TODO #3 stays50%.
 
-- **Commit (current; resolve by subject)**: `fix(vgpu): size default worker commands for full inline updates`
+- **Commit `690b4ce`**: `fix(vgpu): size default worker commands for full inline updates`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Raise the bounded default command/private-transfer allocation
     to131072 bytes so65536-byte native data plus48-byte command and36-byte
@@ -1646,3 +1646,22 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     rejected its oversized request with prior4096-byte guest scratch; the pending
     recording increment expands scratch and verifies fragmented full-size input.
     TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): capture full-size inline buffer updates in bounded staging`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; GPU execution pending).
+  - **Summary**: Route command117 with native1..65536-byte data after complete
+    identity/binding/usage/alignment/range validation. Keep the8192-byte stack
+    writer; use disjoint fixed65584-byte scratch and65620-byte tx. Capture source
+    before dispatch, retain destination dependency after exact acknowledgment and
+    erase scratch/used tx on success and every error. Document backend extent;
+    provide131072-byte guest scratch and180-second full-fixture watchdog for
+   16 cycles of full updates fragmented through64-byte rings.
+  - **Verification**: Independent pinned encoder verifies4/8/65536-byte patterns;
+    rejected scalar guards do not read deliberately invalid source pointers.
+    Seven Zig tests include source capture and exact erasure/reference publication
+    on success/transport/malformed reply paths. Zero-leak ASan/LSan/UBSan and
+    coverage99.73% lines/94.04% branches pass. Actual static/shared-loader full-size
+    worker recording passes normal/safety plus injected failure descriptor/heap
+    cleanup. Pinned native Linux loader public update passes normal/sanitized;
+    Windows fixture, DLL and loader fixture cross-link pass. Latest CI required.
+    TODO #3 stays50%; synchronization/submission/full API/mapping/DXVK pending.

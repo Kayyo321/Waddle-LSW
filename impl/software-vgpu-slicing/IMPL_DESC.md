@@ -3155,3 +3155,11 @@ production-worker fixture supplies131072-byte guest RPC scratch and streams the
 full payload through its existing64-byte ring, exercising actual fragmentation.
 The service owner test checks maximum update plus both header extents fit in the
 default; existing acquisition/fault/teardown sanitizer tests remain mandatory.
+
+The complete worker fixture watchdog is180 seconds for16 native device cycles
+with full65536-byte updates fragmented through64-byte rings. Local full-size
+normal runs take over60 seconds, versus shorter earlier recording-only cases;
+this outer budget accommodates slower CI while each RPC/CPU/GPU operation keeps
+its existing bounded deadline. It does not convert per-operation timeout into
+success. Native encoder expected storage grows only in the command117 branch,
+not in every writer/frame; fixture source storage is explicitly65536 bytes.
