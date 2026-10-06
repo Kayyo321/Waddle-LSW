@@ -1542,7 +1542,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     passes actual loader normal/sanitized worker cycles and forced cleanup.
     Full latest-head CI remains required at task completion independently.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch command buffer allocation and recording lifecycles`
+- **Commit `4df9b74`**: `feat(vgpu): dispatch command buffer allocation and recording lifecycles`
   - **Task Impact**: +0% to TODO: #3 (+0% overall; actual command execution pending).
   - **Summary**: Add transactional1..64 dispatchable pool-owned allocation batches,
     validated batch free, primary/secondary begin inheritance, explicit Initial/
@@ -1561,3 +1561,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Linux loader command-buffer dispatch/first-word trampoline tests pass; native
     Windows fixture/DLL cross-link succeeds. Latest native Windows/runtime CI
     remains required. TODO #3 stays50%; commands/mapping/full API/DXVK pending.
+
+- **Commit (current; resolve by subject)**: `fix(vgpu): recover invalid command buffers through implicit begin reset`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Follow the pinned Vulkan1.4.307 lifecycle: reset-capable pools
+    permit Begin from Invalid as well as Executable. Recording and Pending still
+    fail locally; non-reset pools permit Initial only. Validate recovery from a
+    host Begin allocation error and ensure non-reset Invalid rejection sends no
+    request. Document the versioned specification boundary explicitly.
+  - **Verification**: Native unit/loader tests, five Zig tests and ASan/LSan/UBSan
+    pass; coverage99.69% lines/94.09% branches. Windows native fixture, DLL and
+    pinned-loader fixture cross-link pass. TODO #3 remains50%.

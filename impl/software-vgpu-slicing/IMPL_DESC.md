@@ -2938,9 +2938,13 @@ GPU uses before free or pool destruction.
 
 Begin validates a live private buffer/pool, canonical tag42/no pNext and flags
 confined to ONE_TIME_SUBMIT(1) and SIMULTANEOUS_USE(4). RENDER_PASS_CONTINUE(2) is
-unsupported until render-pass inheritance is implemented. State must be Initial
-or Executable; Executable additionally requires pool RESET_COMMAND_BUFFER(2)
-because begin implicitly resets. Primary buffers normalize ignored inheritance to
+unsupported until render-pass inheritance is implemented. State must be Initial,
+Invalid or Executable; either non-initial state additionally requires pool
+RESET_COMMAND_BUFFER(2) because begin implicitly resets. Recording and Pending
+are rejected under the pinned Vulkan1.4.307 VUID00049. This follows the
+[versioned specification](https://github.com/KhronosGroup/Vulkan-Docs/blob/v1.4.307/chapters/cmdbuffers.adoc),
+which explicitly permits implicit reset from Invalid; later specification changes
+to Recording are outside the currently pinned compatibility contract. Primary buffers normalize ignored inheritance to
 NULL without dereferencing it. Secondary buffers require accessible canonical
 tag41/no pNext, NULL renderPass/framebuffer, subpass0 and all query enable/flags/
 statistics fields0 for the initial transfer/compute scope. Retain no native pointer.

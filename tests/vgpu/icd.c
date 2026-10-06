@@ -1507,8 +1507,9 @@ static void command_buffer_contract(void) {
         begin_info.pInheritanceInfo = (const VkCommandBufferInheritanceInfo *)(uintptr_t)1;
         fixture.command_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
         assert(begin(buffers[0], &begin_info) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
-        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
         fixture.command_result = VK_SUCCESS;
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        assert(end(buffers[0]) == VK_SUCCESS);
         assert(reset(buffers[0], 0) == VK_SUCCESS);
         if (scenario >= 7 && scenario <= 12) {
             unsigned command = 90 + (scenario - 7) / 2;
@@ -1607,6 +1608,13 @@ static void command_buffer_contract(void) {
         assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
         assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
         assert(reset(buffers[0], 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset_pool(device, other_pool, 0) == VK_SUCCESS);
+        fixture.command_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        fixture.command_result = VK_SUCCESS;
+        submissions = fixture.submissions;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(fixture.submissions == submissions);
         assert(reset_pool(device, other_pool, 0) == VK_SUCCESS);
         assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
         destroy_pool(device, other_pool, NULL);

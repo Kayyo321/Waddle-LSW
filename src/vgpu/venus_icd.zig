@@ -1659,9 +1659,9 @@ fn begin_command_buffer(
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const pool = command_pool_for(record) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const state = resource_state(record);
-    if (state.command_state != .Initial and state.command_state != .Executable)
+    if (state.command_state == .Recording or state.command_state == .Pending)
         return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (state.command_state == .Executable and resource_state(pool).pool_flags & 2 == 0)
+    if (state.command_state != .Initial and resource_state(pool).pool_flags & 2 == 0)
         return c.VK_ERROR_INITIALIZATION_FAILED;
     const secondary = state.command_level == 1;
     if (!secondary and info.*.flags == 5) return c.VK_ERROR_INITIALIZATION_FAILED;
