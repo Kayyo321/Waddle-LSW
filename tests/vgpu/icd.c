@@ -4,8 +4,10 @@
 #include "waddle/venus_icd.h"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wpointer-arith"
 #include "vn_protocol_driver_buffer.h"
 #include "vn_protocol_driver_device.h"
+#include "vn_protocol_driver_command_buffer.h"
 #include "vn_protocol_driver_command_pool.h"
 #include "vn_protocol_driver_device_memory.h"
 #include "vn_protocol_driver_fence.h"
@@ -63,6 +65,10 @@ typedef struct fixture_t {
     int32_t bind_result;
     const VkCommandPoolCreateInfo *pool_info;
     int32_t pool_reset_result;
+    const VkCommandBufferAllocateInfo *command_allocate;
+    const VkCommandBufferBeginInfo *command_begin;
+    int32_t command_result;
+    unsigned command_array_fault;
     uint64_t gpu_issued[64];
     uint32_t gpu_pending;
     uint32_t gpu_issue_pending;
@@ -180,6 +186,50 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                             &queue_info, &queue);
                 assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
             }
+        } else if (fixture->command >= 88 && fixture->command <= 92) {
+            unsigned char expected[4096];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            if (fixture->command == 88) {
+                assert(fixture->command_allocate);
+                VkCommandBufferAllocateInfo info = *fixture->command_allocate;
+                info.commandPool = (VkCommandPool)(uintptr_t)read_u64(bytes + 36);
+                VkCommandBuffer buffers[64];
+                for (uint32_t index = 0; index < info.commandBufferCount; index++)
+                    buffers[index] = (VkCommandBuffer)(uintptr_t)read_u64(bytes + 60 + index * 8);
+                vn_encode_vkAllocateCommandBuffers(&encoder, 1,
+                    (VkDevice)(uintptr_t)read_u64(bytes + 8), &info, buffers);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, fixture->command_array_fault == 1 ?
+                        info.commandBufferCount + 1 : info.commandBufferCount);
+                for (uint32_t index = 0; index < info.commandBufferCount; index++) {
+                    uint64_t id = (uintptr_t)buffers[index];
+                    if (fixture->command_array_fault == 2 && index == info.commandBufferCount - 1) id++;
+                    if (fixture->command_array_fault == 3 || fixture->command_array_fault == 4) id = 0;
+                    put_u64(fixture->reply + 16 + index * 8, id);
+                }
+            } else if (fixture->command == 89) {
+                uint32_t count = read_u32(bytes + 24);
+                VkCommandBuffer buffers[64];
+                for (uint32_t index = 0; index < count; index++)
+                    buffers[index] = (VkCommandBuffer)(uintptr_t)read_u64(bytes + 36 + index * 8);
+                vn_encode_vkFreeCommandBuffers(&encoder, 1,
+                    (VkDevice)(uintptr_t)read_u64(bytes + 8),
+                    (VkCommandPool)(uintptr_t)read_u64(bytes + 16), count, buffers);
+            } else {
+                VkCommandBuffer buffer = (VkCommandBuffer)(uintptr_t)read_u64(bytes + 8);
+                if (fixture->command == 90) {
+                    assert(fixture->command_begin);
+                    VkCommandBufferBeginInfo info = *fixture->command_begin;
+                    if (!read_u64(bytes + 40)) info.pInheritanceInfo = NULL;
+                    vn_encode_vkBeginCommandBuffer(&encoder, 1, buffer, &info);
+                } else if (fixture->command == 91) {
+                    vn_encode_vkEndCommandBuffer(&encoder, 1, buffer);
+                } else {
+                    vn_encode_vkResetCommandBuffer(&encoder, 1, buffer, read_u32(bytes + 16));
+                }
+                put_u32(fixture->reply + 4, (uint32_t)fixture->command_result);
+            }
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command >= 85 && fixture->command <= 87) {
             unsigned char expected[4096];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -1360,6 +1410,210 @@ static void pool_contract(void) {
         assert(venus_icd_unbind() == RingOk);
     }
 }
+static void command_buffer_contract(void) {
+    for (unsigned scenario = 0; scenario < 20; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2;
+        VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,
+            "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 1, .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &device_info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)lookup(device, "vkCreateCommandPool");
+        PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)lookup(device, "vkDestroyCommandPool");
+        PFN_vkResetCommandPool reset_pool = (PFN_vkResetCommandPool)lookup(device, "vkResetCommandPool");
+        PFN_vkAllocateCommandBuffers allocate = (PFN_vkAllocateCommandBuffers)lookup(device, "vkAllocateCommandBuffers");
+        PFN_vkFreeCommandBuffers release = (PFN_vkFreeCommandBuffers)lookup(device, "vkFreeCommandBuffers");
+        PFN_vkBeginCommandBuffer begin = (PFN_vkBeginCommandBuffer)lookup(device, "vkBeginCommandBuffer");
+        PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)lookup(device, "vkEndCommandBuffer");
+        PFN_vkResetCommandBuffer reset = (PFN_vkResetCommandBuffer)lookup(device, "vkResetCommandBuffer");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
+        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+        fixture.pool_info = &pool_info;
+        VkCommandPool pool = NULL, other_pool = NULL;
+        assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+        pool_info.flags = 0;
+        assert(create_pool(device, &pool_info, NULL, &other_pool) == VK_SUCCESS);
+        VkCommandBufferAllocateInfo info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
+        fixture.command_allocate = &info;
+        VkCommandBuffer buffers[64] = {0};
+        assert(allocate(device, &info, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(allocate(device, NULL, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(allocate(NULL, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(allocate((VkDevice)(uintptr_t)1, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        info.commandBufferCount = 0;
+        assert(allocate(device, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        info.commandBufferCount = 65;
+        buffers[0] = (VkCommandBuffer)(uintptr_t)1;
+        assert(allocate(device, &info, buffers) == VK_ERROR_OUT_OF_HOST_MEMORY && buffers[0]);
+        info.commandBufferCount = 2; info.sType = 0;
+        assert(allocate(device, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED && !buffers[0]);
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO; info.pNext = &info;
+        assert(allocate(device, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        info.pNext = NULL; info.level = 99;
+        assert(allocate(device, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; info.commandPool = NULL;
+        assert(allocate(device, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        info.commandPool = (VkCommandPool)(uintptr_t)1;
+        assert(allocate(device, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        info.commandPool = pool;
+        assert(allocate(foreign, &info, buffers) == VK_ERROR_INITIALIZATION_FAILED);
+        fixture.create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(allocate(device, &info, buffers) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !buffers[0] && !buffers[1]);
+        fixture.command_array_fault = 4;
+        assert(allocate(device, &info, buffers) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !buffers[0] && !buffers[1]);
+        fixture.command_array_fault = 0; fixture.create_result = VK_SUCCESS;
+        if (scenario < 7) {
+            if (scenario == 0) fixture.fail_command = 88;
+            if (scenario == 1) fixture.corrupt_command = 88;
+            if (scenario >= 2 && scenario <= 4) fixture.command_array_fault = scenario - 1;
+            if (scenario == 5) fixture.create_result = VK_ERROR_DEVICE_LOST;
+            if (scenario == 6) fixture.create_result = VK_NOT_READY;
+            assert(allocate(device, &info, buffers) == VK_ERROR_DEVICE_LOST && !buffers[0] && !buffers[1]);
+            assert(allocate(device, &info, buffers) == VK_ERROR_DEVICE_LOST);
+            venus_icd_abandon(); continue;
+        }
+        assert(allocate(device, &info, buffers) == VK_SUCCESS && buffers[0] && buffers[1]);
+        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        fixture.command_begin = &begin_info;
+        assert(end(NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(end((VkCommandBuffer)(uintptr_t)1) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(begin(NULL, &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(begin((VkCommandBuffer)(uintptr_t)1, &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(begin(buffers[0], NULL) == VK_ERROR_INITIALIZATION_FAILED);
+        begin_info.sType = 0;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO; begin_info.pNext = &begin_info;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        begin_info.pNext = NULL; begin_info.flags = VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        begin_info.flags = 5;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        begin_info.flags = 0;
+        begin_info.pInheritanceInfo = (const VkCommandBufferInheritanceInfo *)(uintptr_t)1;
+        fixture.command_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        fixture.command_result = VK_SUCCESS;
+        assert(reset(buffers[0], 0) == VK_SUCCESS);
+        if (scenario >= 7 && scenario <= 12) {
+            unsigned command = 90 + (scenario - 7) / 2;
+            if (command != 90) assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            if (scenario % 2) fixture.fail_command = command;
+            else fixture.corrupt_command = command;
+            VkResult result = command == 90 ? begin(buffers[0], &begin_info) :
+                              command == 91 ? end(buffers[0]) : reset(buffers[0], 0);
+            assert(result == VK_ERROR_DEVICE_LOST);
+            assert(begin(buffers[0], &begin_info) == VK_ERROR_DEVICE_LOST);
+            assert(end(buffers[0]) == VK_ERROR_DEVICE_LOST);
+            assert(reset(buffers[0], 0) == VK_ERROR_DEVICE_LOST);
+            venus_icd_abandon(); continue;
+        }
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        fixture.command_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(end(buffers[0]) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        assert(end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        fixture.command_result = VK_SUCCESS;
+        assert(reset(buffers[0], 1) == VK_SUCCESS);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        assert(reset(NULL, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset((VkCommandBuffer)(uintptr_t)1, 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset(buffers[0], 2) == VK_ERROR_INITIALIZATION_FAILED);
+        fixture.command_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(reset(buffers[0], 0) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+        fixture.command_result = VK_SUCCESS;
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        assert(reset_pool(device, pool, 0) == VK_SUCCESS);
+        assert(end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        unsigned submissions = fixture.submissions;
+        release(NULL, pool, 2, buffers); release((VkDevice)(uintptr_t)1, pool, 2, buffers);
+        release(foreign, pool, 2, buffers); release(device, NULL, 2, buffers);
+        release(device, (VkCommandPool)(uintptr_t)1, 2, buffers);
+        release(device, other_pool, 2, buffers); release(device, pool, 65, buffers);
+        release(device, pool, 0, NULL); release(device, pool, 2, NULL);
+        VkCommandBuffer duplicate[2] = {buffers[0], buffers[0]};
+        release(device, pool, 2, duplicate);
+        duplicate[1] = NULL; release(device, pool, 2, duplicate);
+        duplicate[1] = (VkCommandBuffer)(uintptr_t)1; release(device, pool, 2, duplicate);
+        assert(fixture.submissions == submissions);
+        if (scenario == 13) fixture.fail_command = 89;
+        if (scenario == 14) fixture.corrupt_command = 89;
+        release(device, pool, 2, buffers);
+        if (scenario == 13 || scenario == 14) { venus_icd_abandon(); continue; }
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        release(device, pool, 2, buffers);
+        if (scenario == 15) {
+            VkCommandBuffer batches[8][64];
+            info.commandBufferCount = 64;
+            for (unsigned index = 0; index < 7; index++)
+                assert(allocate(device, &info, batches[index]) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            assert(allocate(device, &info, batches[7]) == VK_ERROR_OUT_OF_HOST_MEMORY);
+            assert(fixture.submissions == submissions);
+            for (unsigned index = 0; index < 64; index++) assert(!batches[7][index]);
+            info.commandBufferCount = 57;
+            assert(allocate(device, &info, batches[7]) == VK_SUCCESS);
+            info.commandBufferCount = 1;
+            assert(allocate(device, &info, buffers) == VK_ERROR_OUT_OF_HOST_MEMORY && !buffers[0]);
+            for (unsigned index = 0; index < 7; index++) release(device, pool, 64, batches[index]);
+            release(device, pool, 57, batches[7]);
+        }
+        info.commandBufferCount = 2; info.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+        assert(allocate(device, &info, buffers) == VK_SUCCESS);
+        begin_info.pInheritanceInfo = NULL;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        VkCommandBufferInheritanceInfo inheritance = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+        begin_info.pInheritanceInfo = &inheritance;
+        inheritance.sType = 0;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO; inheritance.pNext = &inheritance;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.pNext = NULL; inheritance.renderPass = (VkRenderPass)(uintptr_t)1;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.renderPass = NULL; inheritance.framebuffer = (VkFramebuffer)(uintptr_t)1;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.framebuffer = NULL; inheritance.subpass = 1;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.subpass = 0; inheritance.occlusionQueryEnable = 1;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.occlusionQueryEnable = 0; inheritance.queryFlags = 1;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.queryFlags = 0; inheritance.pipelineStatistics = 1;
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        inheritance.pipelineStatistics = 0; begin_info.flags = 5;
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        destroy_pool(device, pool, NULL); /* Implicitly retires both child buffers. */
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        info.commandPool = other_pool; info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; info.commandBufferCount = 1;
+        assert(allocate(device, &info, buffers) == VK_SUCCESS);
+        begin_info.flags = 0;
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        assert(begin(buffers[0], &begin_info) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset(buffers[0], 0) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(reset_pool(device, other_pool, 0) == VK_SUCCESS);
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS && end(buffers[0]) == VK_SUCCESS);
+        destroy_pool(device, other_pool, NULL);
+        destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
 static void version_contract(void) {
   fixture_t fixture = fresh();
   assert(venus_icd_bind(exchange, &fixture) == RingOk);
@@ -1807,6 +2061,31 @@ static void loader_fixture(void) {
         assert(bind(device, buffer, memory, 0) == VK_SUCCESS);
         destroy_buffer(device, buffer, NULL);
         release(device, memory, NULL);
+        PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
+        PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)device_proc(device, "vkDestroyCommandPool");
+        PFN_vkAllocateCommandBuffers allocate_buffers = (PFN_vkAllocateCommandBuffers)device_proc(device, "vkAllocateCommandBuffers");
+        PFN_vkFreeCommandBuffers free_buffers = (PFN_vkFreeCommandBuffers)device_proc(device, "vkFreeCommandBuffers");
+        PFN_vkBeginCommandBuffer begin = (PFN_vkBeginCommandBuffer)device_proc(device, "vkBeginCommandBuffer");
+        PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)device_proc(device, "vkEndCommandBuffer");
+        PFN_vkResetCommandBuffer reset = (PFN_vkResetCommandBuffer)device_proc(device, "vkResetCommandBuffer");
+        assert(create_pool && destroy_pool && allocate_buffers && free_buffers && begin && end && reset);
+        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+        fixture.pool_info = &pool_info;
+        VkCommandPool pool = NULL;
+        assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS && pool);
+        VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .commandBufferCount = 2};
+        fixture.command_allocate = &command_info;
+        VkCommandBuffer commands[2] = {NULL, NULL};
+        assert(allocate_buffers(device, &command_info, commands) == VK_SUCCESS && commands[0] && commands[1]);
+        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        fixture.command_begin = &begin_info;
+        assert(begin(commands[0], &begin_info) == VK_SUCCESS && end(commands[0]) == VK_SUCCESS);
+        assert(reset(commands[0], 0) == VK_SUCCESS);
+        free_buffers(device, pool, 1, commands);
+        destroy_pool(device, pool, NULL);
+
 
         destroy_device(device, NULL);
         PFN_vkDestroyInstance destroy =
@@ -1841,6 +2120,7 @@ int main(void) {
     buffer_contract();
     memory_contract();
     pool_contract();
+    command_buffer_contract();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();

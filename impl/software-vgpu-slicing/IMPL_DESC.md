@@ -2984,3 +2984,13 @@ memory dispatch. Accept loader ABI/manifest10%, bringing TODO #3 to50% and overa
 67.5%. Remaining instance/device/procedure10%, full bounded graphics/compute/
 memory/synchronization20% and real DXVK20% retain their separate implementation
 and verification gates; latest-head complete CI is still required.
+
+The pinned command-buffer encoder header contains upstream GNU void-pointer
+arithmetic in unrelated multi-draw encoders. The independent oracle's existing
+vendor-only diagnostic scope also suppresses pointer-arithmetic warnings for those
+immutable imported headers; owned fixture/production code retains strict warnings.
+The integration loader fixture exercises actual command-buffer allocation and
+trampoline first-word dispatch on Linux and in native Windows CI, with the same
+independent encoder backend. The real worker variant separately proves receiver
+allocation/recording/reset/free and implicit pool retirement. Empty recorded
+buffers are not counted as command execution or DXVK evidence.

@@ -1530,7 +1530,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Summary**: Record Khronos VUID02840 primary-only prohibition of combined
     one-time/simultaneous flags5, preserving the supported secondary combination.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): accept native loader milestone through production workers`
+- **Commit `8e5f540`**: `docs(vgpu): accept native loader milestone through production workers`
   - **Task Impact**: +10% to TODO: #3 (+2.5% overall).
   - **Summary**: Accept loader ABI/manifest milestone with real shared ICD device
     creation and public object/memory calls through the production negotiated
@@ -1541,3 +1541,23 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     loader manifest/device/fence/memory tests. Local pool increment additionally
     passes actual loader normal/sanitized worker cycles and forced cleanup.
     Full latest-head CI remains required at task completion independently.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): dispatch command buffer allocation and recording lifecycles`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; actual command execution pending).
+  - **Summary**: Add transactional1..64 dispatchable pool-owned allocation batches,
+    validated batch free, primary/secondary begin inheritance, explicit Initial/
+    Recording/Executable/Invalid states and individual/pool reset. Publish only
+    exact complete host identities; retain uncertain ownership on loss and retire
+    implicit children after validated pool destruction. Confine generated encoder
+    GNU pointer arithmetic warning adaptation to the imported oracle headers.
+  - **Verification**: Independent pinned encoders compare commands88..92. Every
+    batch reply truncation, wrong count/identity/positive result, primary-only
+    flags5 rejection, secondary inheritance guards, native allocation/recording
+    errors, duplicate/stale/foreign arrays, local57-slot partial rollback and
+    505-buffer exhaustion pass. Five Zig tests, ASan/LSan/UBSan and coverage pass:
+    99.68% lines/94.10% branches. Actual static and shared-loader production worker
+    allocate/begin/end/reset/free/implicit-pool-release cycles pass normal/safety;
+    forced loader failure restores descriptors and leaks zero bytes. Actual pinned
+    Linux loader command-buffer dispatch/first-word trampoline tests pass; native
+    Windows fixture/DLL cross-link succeeds. Latest native Windows/runtime CI
+    remains required. TODO #3 stays50%; commands/mapping/full API/DXVK pending.

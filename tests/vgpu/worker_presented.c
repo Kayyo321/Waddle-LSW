@@ -336,6 +336,31 @@ static int icd_cycles(venus_guest_t *guest) {
             reset_pool(device, pool, 0) != VK_SUCCESS ||
             reset_pool(device, pool, VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT) != VK_SUCCESS)
             goto fail;
+        PFN_vkAllocateCommandBuffers allocate_buffers =
+            (PFN_vkAllocateCommandBuffers)device_proc(device, "vkAllocateCommandBuffers");
+        PFN_vkFreeCommandBuffers free_buffers =
+            (PFN_vkFreeCommandBuffers)device_proc(device, "vkFreeCommandBuffers");
+        PFN_vkBeginCommandBuffer begin_buffer =
+            (PFN_vkBeginCommandBuffer)device_proc(device, "vkBeginCommandBuffer");
+        PFN_vkEndCommandBuffer end_buffer =
+            (PFN_vkEndCommandBuffer)device_proc(device, "vkEndCommandBuffer");
+        PFN_vkResetCommandBuffer reset_buffer =
+            (PFN_vkResetCommandBuffer)device_proc(device, "vkResetCommandBuffer");
+        if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer)
+            goto fail;
+        VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
+        VkCommandBuffer commands[2] = {NULL, NULL};
+        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+        if (allocate_buffers(device, &command_info, commands) != VK_SUCCESS || !commands[0] ||
+            !commands[1] || begin_buffer(commands[0], &begin_info) != VK_SUCCESS ||
+            end_buffer(commands[0]) != VK_SUCCESS || reset_buffer(commands[0], 0) != VK_SUCCESS ||
+            begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
+            end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)
+            goto fail;
+        free_buffers(device, pool, 1, commands);
+        /* Pool destruction implicitly retires the second loader-dispatchable buffer. */
         destroy_pool(device, pool, NULL);
 
 
