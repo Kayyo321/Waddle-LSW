@@ -1,7 +1,10 @@
 //! Experimental bounded Vulkan dispatch; full device API/DXVK support is separately gated.
 const std = @import("std");
+const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
 var profile_registry = profiles.registry_t{};
+// Mutex-owned230400-byte batch staging; no native pointers, scrubbed after every call and abandon.
+var descriptor_allocation_snapshots = [_]profiles.descriptor_set_t{.{}} ** 64;
 const render_wire = @import("venus_render_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
@@ -34,6 +37,10 @@ const command_state_t = enum { Initial, Recording, Executable, Invalid, Pending 
 const resource_state_t = struct {
     id: u64 = 0,
     profile_index: u8 = 0,
+    descriptor_max_sets: u32 = 0,
+    descriptor_live_sets: u32 = 0,
+    descriptor_capacity: [11]u32 = [_]u32{0} ** 11,
+    descriptor_used: [11]u32 = [_]u32{0} ** 11,
     inflight_count: u32 = 0,
     idle_refs: u32 = 0,
     allocation_size: u64 = 0,
@@ -145,6 +152,7 @@ fn clear() void {
     ring_slots = [_]bool{false} ** 64;
     gpu_fences = [_]u64{0} ** 64;
     profile_registry = .{};
+    @memset(&descriptor_allocation_snapshots, .{});
     resource_states = [_]resource_state_t{.{}} ** 512;
     submission_tickets = [_]submission_ticket_t{.{}} ** 128;
     submission_sequence = 0;
@@ -1715,6 +1723,222 @@ fn destroy_pipeline_layout(device: c.VkDevice, layout: c.VkPipelineLayout, alloc
     destroy_render_resource(device, if (layout) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, 69);
 }
 
+/// Create fixed-quota pool metadata. [in] nullable borrowed device/info/callbacks.
+/// [out] output nonnull, NULL on failure. Returns native/local invalid/OOM/loss.
+/// Mutex serialized; owns native identity and quotas until destruction or retired abandon.
+fn create_descriptor_pool(device: c.VkDevice, info: [*c]const c.VkDescriptorPoolCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorPool) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = descriptor_wire.create_pool(@ptrCast(info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, &writer, &handle);
+    if (result != c.VK_SUCCESS) return result;
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id).?);
+    state.pool_flags = info.*.flags;
+    state.descriptor_max_sets = info.*.maxSets;
+    if (info.*.poolSizeCount != 0) for (info.*.pPoolSizes[0..info.*.poolSizeCount]) |size| {
+        state.descriptor_capacity[size.type] += size.descriptorCount;
+    };
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+fn descriptor_pool_for(record: *const c.venus_object_t) ?*c.venus_object_t {
+    for (&slots) |*slot| if (slot.id != 0 and slot.id == record.parent_id and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_POOL) return slot;
+    return null;
+}
+fn descriptor_set_for(handle: c.VkDescriptorSet, device_id: u64) ?*c.venus_object_t {
+    var found: [*c]c.venus_object_t = null;
+    if (c.venus_objects_lookup(&objects, if (handle) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, 0, &found) != c.RingOk) return null;
+    const record: *c.venus_object_t = @ptrCast(found);
+    const pool = descriptor_pool_for(record) orelse return null;
+    return if (pool.parent_id == device_id) record else null;
+}
+fn descriptor_set_idle(record: *const c.venus_object_t) bool {
+    return resource_state(record).inflight_count == 0;
+}
+fn retire_descriptor_set(record: *c.venus_object_t, pool: *c.venus_object_t) void {
+    const state = resource_state(record);
+    const profile = profiles.get_profile(&profile_registry.sets, state.profile_index).?;
+    const owner = resource_state(pool);
+    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| owner.descriptor_used[binding.descriptor_type] -= binding.descriptor_count;
+    owner.descriptor_live_sets -= 1;
+    const index = resource_index(record);
+    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+    for (&resource_states) |*command_state| if (command_state.buffer_references[index / 64] & bit != 0) {
+        command_state.command_state = .Invalid;
+        command_state.buffer_references = [_]u64{0} ** 8;
+    };
+    std.debug.assert(profiles.release_slot(&profile_registry.sets, state.profile_index));
+    state.* = .{};
+    std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, 0) == c.RingOk);
+}
+fn descriptor_pool_idle(pool: *const c.venus_object_t) bool {
+    for (&slots) |*child| if (child.id != 0 and child.parent_id == pool.id and !descriptor_set_idle(child)) return false;
+    return true;
+}
+fn retire_pool_sets(pool: *c.venus_object_t) void {
+    for (&slots) |*child| if (child.id != 0 and child.parent_id == pool.id) retire_descriptor_set(child, pool);
+}
+/// Reset pool and all sets only after exact native success. [in] nullable borrowed private tokens.
+/// flags must0. Returns native/local invalid/loss; pending sets prohibit reset.
+/// Mutex serialized, allocation-free; successful retirement scrubs profiles and refunds all quotas.
+fn reset_descriptor_pool(device: c.VkDevice, pool_handle: c.VkDescriptorPool, flags: u32) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (device == null or pool_handle == null or flags != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const pool = child_object(@intFromPtr(pool_handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (!descriptor_pool_idle(pool)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = writer_t{};
+    writer.header(76, parent.id);
+    writer.put(u64, pool.id);
+    writer.put(u32, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = result_reply(reply, 76, 0);
+    if (result == c.VK_SUCCESS) retire_pool_sets(pool);
+    return result;
+}
+/// Destroy quiescent pool and implicit child sets. [in] nullable borrowed tokens/callbacks.
+/// Void; invalid/pending ignored. Mutex serialized; prefix acknowledgment precedes every release.
+fn destroy_descriptor_pool(device: c.VkDevice, pool_handle: c.VkDescriptorPool, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (device == null or pool_handle == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const pool = child_object(@intFromPtr(pool_handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id) orelse return;
+    if (!descriptor_pool_idle(pool)) return;
+    var writer = writer_t{};
+    writer.header(75, parent.id);
+    writer.put(u64, pool.id);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != 75) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    retire_pool_sets(pool);
+    resource_state(pool).* = .{};
+    std.debug.assert(c.venus_objects_release(&objects, pool.handle, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, 0) == c.RingOk);
+}
+fn descriptor_sets_reply(bytes: []const u8, ids: []const u64) !c_int {
+    var reader = reader_t{ .bytes = bytes };
+    if (try reader.scalar(u32) != 77) return error.Value;
+    const result = try reader.scalar(i32);
+    if (result > 0 or try reader.scalar(u64) != ids.len) return error.Value;
+    for (ids) |id| {
+        const received = try reader.scalar(u64);
+        if (received != id and (result == 0 or received != 0)) return error.Value;
+    }
+    return result;
+}
+fn rollback_descriptor_sets(records: []const *c.venus_object_t) void {
+    for (records) |record| {
+        const state = resource_state(record);
+        std.debug.assert(profiles.release_slot(&profile_registry.sets, state.profile_index));
+        state.* = .{};
+        std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, 0) == c.RingOk);
+    }
+}
+/// Allocate a transactional batch of pool-owned sets with copied layout definitions.
+/// [in] nonnull borrowed device/info; native accessible arrays1..64, no chain.
+/// [out] output nonnull handles[count], cleared for bounded failures; count>64 preserves storage.
+/// Returns native/local invalid/OOM/loss. Mutex serialized, allocation-free; uncertain IDs retained until abandon.
+fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSetAllocateInfo, output: [*c]c.VkDescriptorSet) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    defer @memset(&descriptor_allocation_snapshots, .{});
+    if (info == null or output == null or info.*.descriptorSetCount == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const count = info.*.descriptorSetCount;
+    if (count > 64) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    @memset(output[0..count], null);
+    if (device == null or info.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO or info.*.pNext != null or info.*.descriptorPool == null or info.*.pSetLayouts == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const pool = child_object(@intFromPtr(info.*.descriptorPool.?), c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const owner = resource_state(pool);
+    if (count > owner.descriptor_max_sets - owner.descriptor_live_sets) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var layouts: [64]u64 = undefined;
+    const snapshots = &descriptor_allocation_snapshots;
+    var needed = [_]u32{0} ** 11;
+    for (info.*.pSetLayouts[0..count], 0..) |handle, index| {
+        if (handle == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+        const layout = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+        const profile = profiles.get_profile(&profile_registry.descriptor_layouts, resource_state(layout).profile_index).?;
+        snapshots[index] = profiles.create_set_profile(profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        layouts[index] = layout.id;
+        for (profile.bindings[0..profile.binding_count]) |binding| needed[binding.descriptor_type] += binding.descriptor_count;
+    }
+    for (needed, 0..) |value, kind| if (value > owner.descriptor_capacity[kind] - owner.descriptor_used[kind]) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var records: [64]*c.venus_object_t = undefined;
+    var ids: [64]u64 = undefined;
+    var reserved: usize = 0;
+    while (reserved < count) : (reserved += 1) {
+        const index = profiles.reserve_slot(&profile_registry.sets, snapshots[reserved]) catch {
+            rollback_descriptor_sets(records[0..reserved]);
+            return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        };
+        var record: [*c]c.venus_object_t = null;
+        if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.id, 0, &record) != c.RingOk) {
+            std.debug.assert(profiles.release_slot(&profile_registry.sets, index));
+            rollback_descriptor_sets(records[0..reserved]);
+            return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        resource_state(record).* = .{ .id = record.*.id, .profile_index = index };
+        records[reserved] = record;
+        ids[reserved] = record.*.id;
+    }
+    var writer = descriptor_wire.allocate_sets(@ptrCast(info), layouts[0..count], parent.id, pool.id, ids[0..count]) catch unreachable;
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = descriptor_sets_reply(reply, ids[0..count]) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result != c.VK_SUCCESS) {
+        rollback_descriptor_sets(records[0..count]);
+        return result;
+    }
+    owner.descriptor_live_sets += count;
+    for (needed, 0..) |value, kind| owner.descriptor_used[kind] += value;
+    for (records[0..count], 0..) |record, index| output[index] = @ptrFromInt(record.handle);
+    return c.VK_SUCCESS;
+}
+/// Free a whole validated pool-owned batch after native success. [in] borrowed nullable tokens/array.
+/// count0 is a no-op;1..64 requires accessible nonnull immutable sets and FREE_SET pool flag.
+/// Returns native/local invalid/loss. Mutex serialized; duplicates/foreign/pending reject before native work.
+fn free_descriptor_sets(device: c.VkDevice, pool_handle: c.VkDescriptorPool, count: u32, handles: [*c]const c.VkDescriptorSet) callconv(.C) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (count == 0) return c.VK_SUCCESS;
+    if (count > 64 or device == null or pool_handle == null or handles == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const pool = child_object(@intFromPtr(pool_handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (resource_state(pool).pool_flags & 1 == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var records: [64]*c.venus_object_t = undefined;
+    var writer = writer_t{};
+    writer.header(78, parent.id);
+    writer.put(u64, pool.id);
+    writer.put(u32, count);
+    writer.put(u64, count);
+    for (handles[0..count], 0..) |handle, index| {
+        const record = descriptor_set_for(handle, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (record.parent_id != pool.id or !descriptor_set_idle(record)) return c.VK_ERROR_INITIALIZATION_FAILED;
+        for (records[0..index]) |previous| if (previous.id == record.id) return c.VK_ERROR_INITIALIZATION_FAILED;
+        records[index] = record;
+        writer.put(u64, record.id);
+    }
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = result_reply(reply, 78, 0);
+    if (result == c.VK_SUCCESS) for (records[0..count]) |record| retire_descriptor_set(record, pool);
+    return result;
+}
+
 /// Allocate private device memory with exact host identity validation.
 /// @param[in] device Nonnull private live parent, borrowed for call.
 /// @param[in] info Nonnull canonical allocation info, borrowed; no pNext supported.
@@ -3271,6 +3495,11 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkDestroyDescriptorSetLayout", &destroy_descriptor_layout },
         .{ "vkCreatePipelineLayout", &create_pipeline_layout },
         .{ "vkDestroyPipelineLayout", &destroy_pipeline_layout },
+        .{ "vkCreateDescriptorPool", &create_descriptor_pool },
+        .{ "vkDestroyDescriptorPool", &destroy_descriptor_pool },
+        .{ "vkResetDescriptorPool", &reset_descriptor_pool },
+        .{ "vkAllocateDescriptorSets", &allocate_descriptor_sets },
+        .{ "vkFreeDescriptorSets", &free_descriptor_sets },
         .{ "vkCreateImage", &create_image },
         .{ "vkDestroyImage", &destroy_image },
         .{ "vkGetImageMemoryRequirements", &image_requirements },
@@ -3991,4 +4220,74 @@ test "image barrier references retain pending images and invalidate recorded com
     pipeline_barrier(@ptrFromInt(recording.*.handle), 1, 1, 0, 64, @ptrFromInt(8), 64, @ptrFromInt(8), 64, @ptrFromInt(8));
     try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
     try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
+}
+
+test "descriptor batch replies reject truncation unexpected status count tag and identity" {
+    const ids = [_]u64{ 42, 43 };
+    var bytes: [32]u8 = undefined;
+    std.mem.writeInt(u32, bytes[0..4], 77, .little);
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u64, bytes[8..16], 2, .little);
+    std.mem.writeInt(u64, bytes[16..24], 42, .little);
+    std.mem.writeInt(u64, bytes[24..32], 43, .little);
+    for (0..bytes.len) |length| try std.testing.expectError(error.Bounds, @call(.never_inline, descriptor_sets_reply, .{ bytes[0..length], &ids }));
+    try std.testing.expectEqual(@as(c_int, 0), try @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u32, bytes[0..4], 78, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u32, bytes[0..4], 77, .little);
+    std.mem.writeInt(i32, bytes[4..8], 1, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u64, bytes[8..16], 2, .little);
+    std.mem.writeInt(u64, bytes[24..32], 0, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_DEVICE_MEMORY, .little);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u64, bytes[24..32], 44, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+}
+
+test "pending descriptor sets protect pool ownership and exact retirement refunds references" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
+            return c.RingInvalid;
+        }
+    };
+    var sentinel: u8 = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &sentinel));
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var pool: [*c]c.venus_object_t = null;
+    var set: [*c]c.venus_object_t = null;
+    var recording: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &pool));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &set));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, device.*.id, 1, &recording));
+    const layout = try profiles.normalize_bindings(&.{.{ .binding = 3, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
+    resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&layout));
+    resource_state(set).inflight_count = 1;
+    resource_state(pool).pool_flags = 1;
+    resource_state(pool).descriptor_live_sets = 1;
+    resource_state(pool).descriptor_used[7] = 1;
+    const handles = [_]c.VkDescriptorSet{@ptrFromInt(set.*.handle)};
+    const native_device: c.VkDevice = @ptrFromInt(device.*.handle);
+    const native_pool: c.VkDescriptorPool = @ptrFromInt(pool.*.handle);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), free_descriptor_sets(native_device, native_pool, 1, &handles));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), reset_descriptor_pool(native_device, native_pool, 0));
+    destroy_descriptor_pool(native_device, native_pool, null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(usize, 4), objects.live_count);
+    const index = resource_index(set);
+    resource_state(recording).command_state = .Executable;
+    resource_state(recording).buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+    resource_state(set).inflight_count = 0;
+    retire_descriptor_set(@ptrCast(set), @ptrCast(pool));
+    try std.testing.expectEqual(@as(u32, 0), resource_state(pool).descriptor_live_sets);
+    try std.testing.expectEqual(@as(u32, 0), resource_state(pool).descriptor_used[7]);
+    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+    try std.testing.expect(descriptor_set_for(handles[0], device.*.id) == null);
+    try std.testing.expect(descriptor_pool_for(@ptrCast(recording)) == null);
 }

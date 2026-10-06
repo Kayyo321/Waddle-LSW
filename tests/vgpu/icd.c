@@ -10,6 +10,8 @@
 #include "vn_protocol_driver_image.h"
 #include "vn_protocol_driver_shader_module.h"
 #include "vn_protocol_driver_descriptor_set_layout.h"
+#include "vn_protocol_driver_descriptor_pool.h"
+#include "vn_protocol_driver_descriptor_set.h"
 #include "vn_protocol_driver_pipeline_layout.h"
 #include "vn_protocol_driver_image_view.h"
 #include "vn_protocol_driver_device.h"
@@ -97,6 +99,8 @@ typedef struct fixture_t {
     const VkShaderModuleCreateInfo *shader_info;
     const VkDescriptorSetLayoutCreateInfo *descriptor_layout_info;
     const VkPipelineLayoutCreateInfo *pipeline_layout_info;
+    const VkDescriptorPoolCreateInfo *descriptor_pool_info;
+    const VkDescriptorSetAllocateInfo *descriptor_allocate_info;
     unsigned requirements_fault;
     uint64_t requirements_size;
     const void *update_data;
@@ -490,6 +494,45 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     (VkBuffer)(uintptr_t)read_u64(bytes + 16),
                     (VkDeviceMemory)(uintptr_t)read_u64(bytes + 24), read_u64(bytes + 32));
                 put_u32(fixture->reply + 4, (uint32_t)fixture->bind_result);
+            }
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command >= 74 && fixture->command <= 78) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 74) {
+                assert(fixture->descriptor_pool_info);
+                VkDescriptorPool pool = (VkDescriptorPool)(uintptr_t)read_u64(bytes + length - 44);
+                vn_encode_vkCreateDescriptorPool(&encoder, 1, device, fixture->descriptor_pool_info, NULL, &pool);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, 1); put_u64(fixture->reply + 16, (uintptr_t)pool);
+            } else if (fixture->command == 75) vn_encode_vkDestroyDescriptorPool(&encoder, 1, device,
+                (VkDescriptorPool)(uintptr_t)read_u64(bytes + 16), NULL);
+            else if (fixture->command == 76) {
+                vn_encode_vkResetDescriptorPool(&encoder, 1, device,
+                    (VkDescriptorPool)(uintptr_t)read_u64(bytes + 16), read_u32(bytes + 24));
+                put_u32(fixture->reply + 4, (uint32_t)fixture->pool_reset_result);
+            } else if (fixture->command == 77) {
+                assert(fixture->descriptor_allocate_info);
+                VkDescriptorSetAllocateInfo info = *fixture->descriptor_allocate_info;
+                info.descriptorPool = (VkDescriptorPool)(uintptr_t)read_u64(bytes + 36);
+                VkDescriptorSetLayout layouts[64]; VkDescriptorSet sets[64];
+                for (uint32_t index = 0; index < info.descriptorSetCount; index++) {
+                    layouts[index] = (VkDescriptorSetLayout)(uintptr_t)read_u64(bytes + 56 + index * 8);
+                    sets[index] = (VkDescriptorSet)(uintptr_t)read_u64(bytes + 64 + info.descriptorSetCount * 8 + index * 8);
+                }
+                info.pSetLayouts = layouts;
+                vn_encode_vkAllocateDescriptorSets(&encoder, 1, device, &info, sets);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, info.descriptorSetCount);
+                for (uint32_t index = 0; index < info.descriptorSetCount; index++) put_u64(fixture->reply + 16 + index * 8, (uintptr_t)sets[index]);
+            } else {
+                const uint32_t count = read_u32(bytes + 24);
+                VkDescriptorSet sets[64];
+                for (uint32_t index = 0; index < count; index++) sets[index] = (VkDescriptorSet)(uintptr_t)read_u64(bytes + 36 + index * 8);
+                vn_encode_vkFreeDescriptorSets(&encoder, 1, device,
+                    (VkDescriptorPool)(uintptr_t)read_u64(bytes + 16), count, sets);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->command_result);
             }
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 72 || fixture->command == 73 || fixture->command == 68 || fixture->command == 69) {
@@ -1505,6 +1548,139 @@ static void device_failures(void) {
     destroy(instance);
     assert(venus_icd_unbind() == RingOk);
 }
+/** @brief Verify transactional set publication, pool quota refunds and implicit ownership retirement. */
+static void descriptor_lifecycle_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
+    PFN_vkCreateDescriptorSetLayout create_layout = (PFN_vkCreateDescriptorSetLayout)lookup(device, "vkCreateDescriptorSetLayout");
+    PFN_vkDestroyDescriptorSetLayout destroy_layout = (PFN_vkDestroyDescriptorSetLayout)lookup(device, "vkDestroyDescriptorSetLayout");
+    PFN_vkCreateDescriptorPool create_pool = (PFN_vkCreateDescriptorPool)lookup(device, "vkCreateDescriptorPool");
+    PFN_vkDestroyDescriptorPool destroy_pool = (PFN_vkDestroyDescriptorPool)lookup(device, "vkDestroyDescriptorPool");
+    PFN_vkResetDescriptorPool reset_pool = (PFN_vkResetDescriptorPool)lookup(device, "vkResetDescriptorPool");
+    PFN_vkAllocateDescriptorSets allocate = (PFN_vkAllocateDescriptorSets)lookup(device, "vkAllocateDescriptorSets");
+    PFN_vkFreeDescriptorSets free_sets = (PFN_vkFreeDescriptorSets)lookup(device, "vkFreeDescriptorSets");
+    assert(create_pool && destroy_pool && reset_pool && allocate && free_sets);
+    VkDescriptorSetLayoutBinding binding = {.binding = 3, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 2, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
+    VkDescriptorSetLayoutCreateInfo layout_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1, .pBindings = &binding};
+    fixture->descriptor_layout_info = &layout_info;
+    VkDescriptorSetLayout layout;
+    assert(create_layout(device, &layout_info, NULL, &layout) == VK_SUCCESS);
+    VkDescriptorPoolSize size = {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 128};
+    VkDescriptorPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT, .maxSets = 64, .poolSizeCount = 1, .pPoolSizes = &size};
+    fixture->descriptor_pool_info = &pool_info;
+    VkDescriptorPool pools[3], pool = NULL;
+    unsigned before = fixture->submissions;
+    assert(create_pool(NULL, &pool_info, NULL, &pool) == VK_ERROR_INITIALIZATION_FAILED && !pool);
+    assert(create_pool(device, NULL, NULL, &pool) == VK_ERROR_INITIALIZATION_FAILED && !pool);
+    assert(create_pool(device, &pool_info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_pool((VkDevice)(uintptr_t)1, &pool_info, NULL, &pool) == VK_ERROR_INITIALIZATION_FAILED && !pool);
+    pool_info.flags = 2;
+    assert(create_pool(device, &pool_info, NULL, &pool) == VK_ERROR_INITIALIZATION_FAILED && !pool);
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    assert(fixture->submissions == before);
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(create_pool(device, &pool_info, NULL, &pool) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !pool);
+    fixture->create_result = VK_SUCCESS;
+    for (unsigned index = 0; index < 3; index++) assert(create_pool(device, &pool_info, NULL, &pools[index]) == VK_SUCCESS);
+    VkDescriptorSetLayout layouts[64];
+    for (unsigned index = 0; index < 64; index++) layouts[index] = layout;
+    VkDescriptorSetAllocateInfo info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = pools[0], .descriptorSetCount = 64, .pSetLayouts = layouts};
+    fixture->descriptor_allocate_info = &info;
+    VkDescriptorSet sets[3][64] = {{0}};
+    before = fixture->submissions;
+    assert(allocate(NULL, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED && !sets[0][0]);
+    assert(allocate(device, NULL, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(allocate(device, &info, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    info.descriptorSetCount = 0;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    info.descriptorSetCount = 65;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_OUT_OF_HOST_MEMORY);
+    info.descriptorSetCount = 64;
+    info.sType = 0;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED && !sets[0][63]);
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    info.pNext = (void *)(uintptr_t)1;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    info.pNext = NULL; info.descriptorPool = NULL;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    info.descriptorPool = (VkDescriptorPool)(uintptr_t)1;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    info.descriptorPool = pools[0]; info.pSetLayouts = NULL;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    info.pSetLayouts = layouts; layouts[0] = NULL;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    layouts[0] = (VkDescriptorSetLayout)(uintptr_t)1;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    layouts[0] = layout;
+    assert(fixture->submissions == before);
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_OUT_OF_DEVICE_MEMORY && !sets[0][63]);
+    fixture->create_result = VK_SUCCESS;
+    assert(allocate(device, &info, sets[0]) == VK_SUCCESS);
+    before = fixture->submissions;
+    assert(allocate(device, &info, sets[1]) == VK_ERROR_OUT_OF_HOST_MEMORY && !sets[1][0]);
+    assert(fixture->submissions == before);
+    info.descriptorPool = pools[1];
+    assert(allocate(device, &info, sets[1]) == VK_SUCCESS);
+    info.descriptorPool = pools[2];
+    before = fixture->submissions;
+    assert(allocate(device, &info, sets[2]) == VK_ERROR_OUT_OF_HOST_MEMORY && !sets[2][63]);
+    assert(fixture->submissions == before);
+    assert(free_sets(device, pools[0], 0, NULL) == VK_SUCCESS);
+    assert(free_sets(NULL, pools[0], 1, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(free_sets(device, NULL, 1, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(free_sets(device, pools[0], 65, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(free_sets(device, pools[0], 1, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    VkDescriptorSet duplicate[2] = {sets[0][0], sets[0][0]};
+    assert(free_sets(device, pools[0], 2, duplicate) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(free_sets(device, pools[1], 1, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    const VkDescriptorSet null_set = NULL;
+    assert(free_sets(device, pools[0], 1, &null_set) == VK_ERROR_INITIALIZATION_FAILED);
+    fixture->command_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(free_sets(device, pools[0], 64, sets[0]) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    fixture->command_result = VK_SUCCESS;
+    assert(free_sets(device, pools[0], 64, sets[0]) == VK_SUCCESS);
+    assert(free_sets(device, pools[0], 1, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(allocate(device, &info, sets[2]) == VK_SUCCESS);
+    /* Original layout may retire while sets retain copied definitions. */
+    destroy_layout(device, layout, NULL);
+    assert(reset_pool(NULL, pools[1], 0) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset_pool(device, NULL, 0) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset_pool(device, pools[1], 1) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset_pool((VkDevice)(uintptr_t)1, pools[1], 0) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset_pool(device, (VkDescriptorPool)(uintptr_t)1, 0) == VK_ERROR_INITIALIZATION_FAILED);
+    fixture->pool_reset_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(reset_pool(device, pools[1], 0) == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+    fixture->pool_reset_result = VK_SUCCESS;
+    assert(reset_pool(device, pools[1], 0) == VK_SUCCESS);
+    assert(free_sets(device, pools[1], 1, sets[1]) == VK_ERROR_INITIALIZATION_FAILED);
+    destroy_pool(device, pools[2], NULL); /* Native destruction implicitly retires64 sets. */
+    destroy_pool(device, pools[1], NULL); destroy_pool(device, pools[0], NULL);
+    before = fixture->submissions;
+    destroy_pool(NULL, pools[0], NULL); destroy_pool(device, NULL, NULL); destroy_pool(device, pools[0], NULL);
+    assert(fixture->submissions == before);
+    /* Per-type quota checked separately from set quota; reset-only pool disallows free. */
+    pool_info.flags = 0; pool_info.maxSets = 2; size.descriptorCount = 1;
+    assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+    assert(create_layout(device, &layout_info, NULL, &layout) == VK_SUCCESS);
+    layouts[0] = layout; info.descriptorPool = pool; info.descriptorSetCount = 1;
+    before = fixture->submissions;
+    assert(allocate(device, &info, sets[0]) == VK_ERROR_OUT_OF_HOST_MEMORY);
+    assert(fixture->submissions == before);
+    destroy_pool(device, pool, NULL);
+    size.descriptorCount = 2;
+    assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+    info.descriptorPool = pool;
+    assert(allocate(device, &info, sets[0]) == VK_SUCCESS);
+    assert(free_sets(device, pool, 1, sets[0]) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(reset_pool(device, pool, 0) == VK_SUCCESS);
+    assert(allocate(device, &info, sets[0]) == VK_SUCCESS);
+    destroy_pool(device, pool, NULL); destroy_layout(device, layout, NULL);
+    fixture->descriptor_layout_info = NULL; fixture->descriptor_pool_info = NULL; fixture->descriptor_allocate_info = NULL;
+}
+
 /** @brief Prove copied layout ownership, native identity translation and fixed quota refund. */
 static void layout_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fixture_t *fixture) {
     PFN_vkCreateDescriptorSetLayout create_layout = (PFN_vkCreateDescriptorSetLayout)lookup(device, "vkCreateDescriptorSetLayout");
@@ -1633,7 +1809,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) { shader_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); }
+        if (scenario == 0) { shader_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
