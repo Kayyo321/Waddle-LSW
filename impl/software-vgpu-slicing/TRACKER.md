@@ -331,7 +331,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Codec Linux/native Windows CI succeeded at `b6e825e` in
     https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392958717 .
 
-- **Commit (current; resolve by subject)**: `fix(vgpu): track runtime prerequisites before integration rules`
+- **Commit `f99723a`**: `fix(vgpu): track runtime prerequisites before integration rules`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Moved runtime source-list definitions before Make expands the
     integration prerequisites, and added explicit ABI/private header dependencies.
@@ -339,3 +339,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspected Make's expanded integration target and asserted
     both runtime sources and ABI/private headers are present. Runtime behavior
     is unchanged; the preceding validated integration build contained both sources.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify GPU queue fence ownership`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Defined bounded queue timeline slots, independent issued/retired
+    identities, inline callback publication, stale/future callback handling and
+    CPU versus GPU semantics. Split ownership, hardware and recovery acceptance.
+  - **Verification**: Matched the pinned public fence ABI and vkr queue association;
+    callback retirement does not by itself prove successful GPU execution.

@@ -747,3 +747,55 @@ resource quota/refund/reuse, malformed/stale/partial requests and responses,
 disconnect/cancellation/deadline closure, deterministic partial teardown, and >=90%
 owned C production line/branch coverage plus sanitizer cleanliness. Portable guest
 framing also requires native Windows execution before milestone credit.
+
+### GPU queue fence ownership
+
+Task #2's 25% GPU synchronization/recovery milestone consists of 8% bounded
+per-queue public-ABI fence ownership and callback tests, 8% real hardware Venus
+queue execution/completion verification, and 9% bounded deadline/cancellation,
+terminal device-loss recovery and runtime guest notification. Mock callback tests
+prove ownership/ordering only and cannot substitute for hardware queue evidence.
+
+Pinned vkr has 64 timeline slots. Slot zero remains the CPU decoder timeline;
+slots 1..63 require an already-created Venus VkQueue associated through
+VkDeviceQueueTimelineInfoMESA at queue creation. The public Waddle GPU fence API
+accepts only 1..63, validated in Zig before indexing; it never creates a queue or
+infers GPU completion from CPU retirement. Upstream validates actual association.
+An unassociated queue/public fence failure is terminal corruption, requiring a
+new receiver/session. Guest queue creation must complete its CPU fence first.
+
+The receiver embeds fixed 64-entry atomic issued/retired arrays (slot zero unused
+for GPU accounting). Initialization explicitly initializes each atomic; no fence
+heap allocation occurs. GPU fence creation is session-thread-only, requires CPU
+quiescence, and permits at most one pending fence per queue. Different queues may
+have independent pending fences. IDs start at one and increase without wrapping
+within each queue; exhaustion poisons the receiver. The session thread release-
+publishes the issued ID before the public SDK call so an inline callback can
+validate it safely. An SDK failure poisons the owner and does not return a usable
+fence ID; retained accounting remains until destruction.
+
+Callbacks validate bootstrap context identity, timeline range, nonzero fence and
+GPU fence <=issued with acquire synchronization. Unknown/future GPU callbacks
+poison the whole owner. Valid callbacks release-publish a monotonically increasing
+retired maximum using atomic compare/exchange; old/duplicate callbacks cannot
+regress completion. CPU callback behavior remains separate. GPU poll takes an
+explicit already-issued nonzero fence and returns Ok only after acquire observes
+retirement at or above that ID; Again means pending, Invalid means null/bad slot/
+unissued ID, Corrupt means poisoned owner. GPU poll does not require CPU quiescence
+and can run on the sole session thread while a later CPU submission is pending.
+
+No public callback exposes a GPU success/device-loss distinction: upstream may
+retire a lost-device fence as part of error recovery. Therefore retirement proves
+ordering/retirement only; Vulkan command replies and the later health/recovery
+layer must establish whether GPU work succeeded. Resource free/destroy still
+requires callers to end all live Venus object references; CPU mapping APIs never
+map device memory. Final receiver destruction joins context/worker callbacks before
+freeing fixed arrays and cookie storage, including pending GPU fences. A hung
+kernel driver is not repaired by freeing a cookie still reachable by a callback.
+
+Acceptance for the 8% ownership gate includes all 63 slots, invalid/unissued IDs,
+independent pending queues, per-queue backpressure, inline callbacks, duplicate/old/
+future/wrong-identity callbacks, CPU/GPU separation, SDK error and ID exhaustion,
+poisoned operations and destruction with GPU fences pending. >=90% owned coverage
+and zero-leak sanitizer gates remain mandatory. Hardware queue, runtime fence wire
+operations, device-loss success semantics and bounded hang recovery remain pending.
