@@ -31,6 +31,30 @@
 #include <dlfcn.h>
 #endif
 #endif
+#if defined(VgpuMappingAllocationFaults) && !defined(_WIN32)
+#include <errno.h>
+/** @brief One-shot native shadow allocation failure injection, sole fixture thread. */
+static _Atomic unsigned mapping_fail_allocation;
+/** @brief Linker ABI for libc allocation, without ownership changes.
+ * @param[out] output Nonnull borrowed pointer storage, allocated pointer on success.
+ * @param[in] alignment Valid power-of-two alignment. @param[in] size Allocation bytes.
+ * @return Zero transfers allocation to caller for libc free; errno code on failure.
+ * @note Native libc thread-safe allocation; test-only linker wrapper target.
+ */
+extern int __real_posix_memalign(void **output, size_t alignment, size_t size);
+/** @brief Fail exactly one aligned ICD shadow allocation before any export.
+ * @param[out] output Nonnull borrowed pointer storage, unchanged on injected ENOMEM.
+ * @param[in] alignment Native allocation alignment. @param[in] size Native bytes.
+ * @return ENOMEM when armed for4096-aligned16384-byte shadow, otherwise libc result.
+ * @note Test-only atomic injection; successful allocation owner still caller/free.
+ */
+int __wrap_posix_memalign(void **output, size_t alignment, size_t size) {
+    if (alignment == 4096 && size == 16384 &&
+        atomic_exchange_explicit(&mapping_fail_allocation, 0, memory_order_relaxed))
+        return ENOMEM;
+    return __real_posix_memalign(output, alignment, size);
+}
+#endif
 /** @brief Test-only immutable renderer encoder oracle, borrows output for the
  * call.
  * @param[in] kind Pinned query3/6/8.
@@ -147,7 +171,8 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 fixture->mapping_writes++;
             }
         }
-        if (fixture->mapping_corrupt) response->flags = 1;
+        if (fixture->mapping_corrupt == 1) response->flags = 1;
+        if (fixture->mapping_corrupt == 2 && request->kind == RequestRead) response->payload_bytes = 0;
         return RingOk;
     }
     if (request->kind == RequestGpuFence || request->kind == RequestGpuPoll) {
@@ -939,7 +964,7 @@ static void concurrent(void) {
     assert(venus_icd_unbind() == RingOk);
 }
 static void fence_failures(void) {
-    for (unsigned scenario = 0; scenario < 14; scenario++) {
+    for (unsigned scenario = 0; scenario < 17; scenario++) {
         fixture_t fixture = fresh();
         assert(venus_icd_bind(exchange, &fixture) == RingOk);
         VkInstance instance = create();
@@ -1800,7 +1825,7 @@ static void memory_contract(void) {
     }
 }
 static void mapping_contract(void) {
-    for (unsigned scenario = 0; scenario < 14; scenario++) {
+    for (unsigned scenario = 0; scenario < 17; scenario++) {
         fixture_t fixture = fresh(); fixture.mapping_enabled = 1;
         assert(venus_icd_bind(exchange, &fixture) == RingOk);
         VkInstance instance = create();
@@ -1825,6 +1850,7 @@ static void mapping_contract(void) {
         assert(map && unmap && flush && invalidate);
         VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = 16384, .memoryTypeIndex = 0};
         if (scenario == 13) memory_info.allocationSize = 16777217;
+        if (scenario == 15) memory_info.allocationSize = 16383;
         fixture.memory_info = &memory_info;
         VkDeviceMemory memory = NULL;
         assert(allocate(device, &memory_info, NULL, &memory) == VK_SUCCESS);
@@ -1838,6 +1864,60 @@ static void mapping_contract(void) {
         assert(map(device, memory, 0, 0, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
         assert(map(device, memory, memory_info.allocationSize, 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
         assert(map(device, memory, 1, UINT64_MAX - 1, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED);
+        if (scenario == 14) {
+            VkDeviceMemory allocations[65] = {memory};
+            for (unsigned index = 1; index < 65; index++)
+                assert(allocate(device, &memory_info, NULL, &allocations[index]) == VK_SUCCESS);
+            for (unsigned index = 0; index < 64; index++)
+                assert(map(device, allocations[index], 0, VK_WHOLE_SIZE, 0, &pointer) == VK_SUCCESS);
+            assert(fixture.mapping_creates == 64);
+            assert(map(device, allocations[64], 0, VK_WHOLE_SIZE, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED && !pointer);
+            unmap(device, allocations[0]);
+            assert(map(device, allocations[64], 0, VK_WHOLE_SIZE, 0, &pointer) == VK_ERROR_MEMORY_MAP_FAILED && !pointer);
+            release(device, allocations[0], NULL);
+            allocations[0] = NULL;
+            assert(map(device, allocations[64], 0, VK_WHOLE_SIZE, 0, &pointer) == VK_SUCCESS);
+            assert(fixture.mapping_creates == 65 && fixture.mapping_frees == 1);
+            for (unsigned index = 1; index < 65; index++) release(device, allocations[index], NULL);
+            assert(fixture.mapping_frees == 65);
+            destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+            assert(venus_icd_unbind() == RingOk); continue;
+        }
+        if (scenario == 15) {
+            assert(map(device, memory, 0, VK_WHOLE_SIZE, 0, &pointer) == VK_SUCCESS);
+            assert(fixture.mapping_creates == 1 && fixture.mapping_reads == 4);
+            memset(pointer, 0x7f, 16383);
+            fixture.mapping_storage[16383] = 0xa7;
+            VkMappedMemoryRange range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                .memory = memory, .size = VK_WHOLE_SIZE};
+            assert(flush(device, 1, &range) == VK_SUCCESS);
+            assert(fixture.mapping_writes == 4 && fixture.mapping_storage[16382] == 0x7f &&
+                fixture.mapping_storage[16383] == 0xa7);
+            memset(fixture.mapping_storage, 0x6b, 16383);
+            assert(invalidate(device, 1, &range) == VK_SUCCESS);
+            assert(((unsigned char *)pointer)[16382] == 0x6b);
+            unmap(device, memory);
+            assert(map(device, memory, 16382, 1, 0, &pointer) == VK_SUCCESS);
+            assert(*(unsigned char *)pointer == 0x6b && fixture.mapping_creates == 1);
+            release(device, memory, NULL);
+            assert(fixture.mapping_frees == 1);
+            destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+            assert(venus_icd_unbind() == RingOk); continue;
+        }
+        if (scenario == 16) {
+            fixture.mapping_corrupt = 2;
+            assert(map(device, memory, 0, VK_WHOLE_SIZE, 0, &pointer) == VK_ERROR_DEVICE_LOST && !pointer);
+            assert(fixture.mapping_creates == 1 && fixture.mapping_reads == 1);
+            venus_icd_abandon(); continue;
+        }
+#if defined(VgpuMappingAllocationFaults) && !defined(_WIN32)
+        if (scenario == 0) {
+            atomic_store_explicit(&mapping_fail_allocation, 1, memory_order_relaxed);
+            assert(map(device, memory, 0, VK_WHOLE_SIZE, 0, &pointer) == VK_ERROR_OUT_OF_HOST_MEMORY && !pointer);
+            assert(!atomic_load_explicit(&mapping_fail_allocation, memory_order_relaxed));
+            assert(fixture.mapping_creates == 0 && fixture.mapping_reads == 0);
+        }
+#endif
         if (scenario == 1) fixture.mapping_noncoherent = 1;
         if (scenario == 2) { fixture.mapping_fail_kind = RequestCreate; fixture.mapping_failure = RingLimit; }
         if (scenario == 3) { fixture.mapping_fail_kind = RequestCreate; fixture.mapping_failure = RingCorrupt; }
