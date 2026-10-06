@@ -1684,3 +1684,14 @@ release identities/status and checks reserved-byte corruption/zeroed output too.
 Linux allocator, boundary, status and output-preservation tests pass; combined
 owned frame/release codec coverage is100% lines and95.59% branches. No socket or
 lease implementation credit is implied by these codec tests.
+
+
+Native release send/receive is now implemented alongside frame transfer. The
+sender explicitly supplies its own kernel-checkable credentials. Receiver accepts
+only one exact credential record and no rights, closes every delivered unexpected
+FD, and leaves decoded output zero on failure. Kernel truncation closes undelivered
+rights. Real socket-buffer exhaustion verifies Again and exact retained-record
+retry; fork identity, wrong PID/UID/context, duplicate/malformed credentials,
+unknown ancillary records, truncation, all statuses and128 churn cycles pass with
+unchanged descriptor baselines under ASan/LSan/UBSan. These primitives do not yet
+own a controller retry queue, worker leases or guest release requests.

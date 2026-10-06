@@ -133,3 +133,79 @@ venus_ring_status_t venus_frame_receive(int socket_fd, int32_t expected_pid,
         close(acquired[index]);
     return result == 0 ? RingClosed : RingCorrupt;
 }
+
+venus_ring_status_t venus_release_send(int socket_fd, const venus_release_t *release) {
+    unsigned char bytes[VenusReleaseBytes];
+    if (venus_release_encode(release, bytes, sizeof(bytes)) != RingOk)
+        return RingInvalid;
+    union {
+        struct cmsghdr alignment;
+        unsigned char bytes[CMSG_SPACE(sizeof(struct ucred))];
+    } control = {0};
+    struct iovec vector = {.iov_base = bytes, .iov_len = sizeof(bytes)};
+    struct msghdr message = {.msg_iov = &vector,
+                             .msg_iovlen = 1,
+                             .msg_control = control.bytes,
+                             .msg_controllen = sizeof(control.bytes)};
+    struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_CREDENTIALS;
+    header->cmsg_len = CMSG_LEN(sizeof(struct ucred));
+    const struct ucred Credentials = {.pid = getpid(), .uid = getuid(), .gid = getgid()};
+    memcpy(CMSG_DATA(header), &Credentials, sizeof(Credentials));
+    ssize_t result = sendmsg(socket_fd, &message, MSG_NOSIGNAL | MSG_DONTWAIT);
+    if (result < 0)
+        return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? RingAgain : RingClosed;
+    return result == (ssize_t)sizeof(bytes) ? RingOk : RingCorrupt;
+}
+venus_ring_status_t venus_release_receive(int socket_fd, int32_t expected_pid,
+                                          uint64_t expected_context, venus_release_t *release) {
+    if (!release)
+        return RingInvalid;
+    memset(release, 0, sizeof(*release));
+    if (expected_pid <= 0 || !expected_context)
+        return RingInvalid;
+    unsigned char bytes[VenusReleaseBytes];
+    union {
+        struct cmsghdr alignment;
+        unsigned char bytes[CMSG_SPACE(sizeof(int) * 4) + CMSG_SPACE(sizeof(struct ucred))];
+    } control = {0};
+    struct iovec vector = {.iov_base = bytes, .iov_len = sizeof(bytes)};
+    struct msghdr message = {.msg_iov = &vector,
+                             .msg_iovlen = 1,
+                             .msg_control = control.bytes,
+                             .msg_controllen = sizeof(control.bytes)};
+    ssize_t result = recvmsg(socket_fd, &message, MSG_CMSG_CLOEXEC | MSG_DONTWAIT);
+    if (result < 0)
+        return errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR ? RingAgain : RingClosed;
+    int valid = !(message.msg_flags & (MSG_CTRUNC | MSG_TRUNC));
+    int credentials_seen = 0;
+    for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header;
+         header = CMSG_NXTHDR(&message, header)) {
+        if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS) {
+            size_t count = (header->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+            for (size_t index = 0; index < count; index++) {
+                int fd;
+                memcpy(&fd, CMSG_DATA(header) + index * sizeof(int), sizeof(fd));
+                close(fd);
+            }
+            valid = 0;
+        } else if (header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_CREDENTIALS &&
+                   header->cmsg_len == CMSG_LEN(sizeof(struct ucred))) {
+            struct ucred credentials;
+            memcpy(&credentials, CMSG_DATA(header), sizeof(credentials));
+            if (credentials_seen++ || credentials.pid != expected_pid ||
+                credentials.uid != getuid())
+                valid = 0;
+        } else
+            valid = 0;
+    }
+    venus_release_t decoded;
+    if (valid && credentials_seen == 1 &&
+        venus_release_decode(&decoded, bytes, (size_t)result) == RingOk &&
+        decoded.context == expected_context) {
+        *release = decoded;
+        return RingOk;
+    }
+    return result == 0 ? RingClosed : RingCorrupt;
+}

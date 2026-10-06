@@ -99,6 +99,26 @@ venus_ring_status_t venus_frame_send(int socket_fd, const venus_frame_t *frame, 
 venus_ring_status_t venus_frame_receive(int socket_fd, int32_t expected_pid,
                                         uint64_t expected_context, venus_frame_t *frame,
                                         int fds[4]);
+/** @brief Queue one authenticated release packet without transferring descriptors.
+ * @param[in] socket_fd Prepared borrowed socket, sole native send thread.
+ * @param[in] release Nonnull immutable record borrowed for call.
+ * @return RingOk queued; Again would-block/interrupted, Invalid local codec,
+ * Closed native error, Corrupt impossible partial packet.
+ * @note Allocation-free; caller retains record and retries on Again. Owns no FDs.
+ */
+venus_ring_status_t venus_release_send(int socket_fd, const venus_release_t *release);
+/** @brief Receive a release only from the retained controller identity.
+ * @param[in] socket_fd Prepared borrowed socket, sole native receive thread.
+ * @param[in] expected_pid Positive live/retained controller PID, never reused.
+ * @param[in] expected_context Nonzero exact context binding.
+ * @param[out] release Nonnull private output, zeroed on failure.
+ * @return RingOk, Again no packet/interrupted, Invalid arguments, Closed peer/native
+ * error, Corrupt wire/credential/context/ancillary error including any descriptors.
+ * @note Allocation-free; closes all received FDs even on error. Checks real UID.
+ * Worker must separately match frame against live leases; no resource is freed here.
+ */
+venus_ring_status_t venus_release_receive(int socket_fd, int32_t expected_pid,
+                                          uint64_t expected_context, venus_release_t *release);
 /** @brief Close/reset an owned four-slot descriptor result after import/cancellation.
  * @param[in,out] fds Nullable private four-slot array, each slot -1 or owned FD.
  * @note Sole ownership thread, idempotent after first call; sets all entries -1.

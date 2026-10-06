@@ -847,7 +847,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     separate integration gates, with no runtime completion credit.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): encode bounded presentation release records`
+- **Commit `b0e1b66`**: `feat(vgpu): encode bounded presentation release records`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add documented C ABI and allocation-free Zig release codec with
     exact little-endian size, explicit completion statuses and zeroed error output.
@@ -855,3 +855,14 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows x86_64 cross-link and coverage pass. Frame codec production lines100%,
     branches95.59%; native frame transport96.77%/90.74%. Native Windows CI retains
     the ABI roundtrip/corruption fixture; release socket routing remains pending.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): authenticate native presentation release delivery`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Add nonblocking reverse-channel release send/receive with exact
+    controller PID/UID/context checks and closure of every unexpected received FD.
+  - **Verification**: Real fork credentials, kernel send-buffer exhaustion/retry,
+    all completion statuses, 128 churn cycles, descriptor baselines, malformed
+    credentials/payloads and truncated/unexpected FD batches pass normal and
+    ASan/LSan/UBSan runs. Native transport coverage exceeds90% lines/branches;
+    Zig codecs100%/95.59%. Worker leases and guest polling remain pending.

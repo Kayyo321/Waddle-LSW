@@ -53,6 +53,18 @@ static ssize_t fixture_recvmsg(int fd, struct msghdr *message, int flags) {
             if (header->cmsg_type == SCM_CREDENTIALS)
                 header->cmsg_type = 1234;
     }
+    if (result >= 0 && receive_fault == 6) {
+        struct cmsghdr *header = CMSG_FIRSTHDR(message);
+        assert(header && header->cmsg_type == SCM_CREDENTIALS);
+        size_t extent = CMSG_SPACE(sizeof(struct ucred));
+        memcpy((unsigned char *)message->msg_control + extent, header, extent);
+        message->msg_controllen = extent * 2;
+    }
+    if (result >= 0 && receive_fault == 7) {
+        struct cmsghdr *header = CMSG_FIRSTHDR(message);
+        assert(header && header->cmsg_type == SCM_CREDENTIALS);
+        header->cmsg_len--;
+    }
     return result;
 }
 #define getsockopt fixture_getsockopt
@@ -103,6 +115,102 @@ static void raw_send(int socket_fd, const void *bytes, size_t length, int fd, un
     }
     assert(sendmsg(socket_fd, &message, MSG_NOSIGNAL) == (ssize_t)length);
 }
+static void releases(int sockets[2], int source) {
+    venus_release_t release = {.context = 17, .frame = 1, .status = RingOk}, decoded;
+    assert(venus_release_send(sockets[0], NULL) == RingInvalid);
+    assert(venus_release_receive(sockets[1], getpid(), 17, NULL) == RingInvalid);
+    assert(venus_release_receive(sockets[1], 0, 17, &decoded) == RingInvalid);
+    assert(venus_release_receive(sockets[1], getpid(), 0, &decoded) == RingInvalid);
+    assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingAgain);
+    for (send_fault = 1; send_fault <= 4; send_fault++) {
+        venus_ring_status_t expected = send_fault < 3    ? RingAgain
+                                       : send_fault == 3 ? RingClosed
+                                                         : RingCorrupt;
+        assert(venus_release_send(sockets[0], &release) == expected);
+    }
+    send_fault = 0;
+    for (receive_fault = 1; receive_fault <= 3; receive_fault++)
+        assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) ==
+               (receive_fault < 3 ? RingAgain : RingClosed));
+    receive_fault = 0;
+    unsigned baseline = descriptors();
+    const venus_ring_status_t Statuses[] = {RingOk, RingInvalid, RingCancelled, RingClosed};
+    for (unsigned iteration = 0; iteration < 128; iteration++) {
+        release.frame++;
+        release.status = Statuses[iteration % 4];
+        assert(venus_release_send(sockets[0], &release) == RingOk);
+        assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingOk);
+        assert(decoded.frame == release.frame && decoded.status == release.status);
+        assert(descriptors() == baseline);
+    }
+    /* Exercise actual kernel backpressure and exact caller-owned retry. */
+    int send_bytes = 4096;
+    assert(!setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &send_bytes, sizeof(send_bytes)));
+    unsigned queued = 0;
+    venus_ring_status_t queued_status;
+    while ((queued_status = venus_release_send(sockets[0], &release)) == RingOk) {
+        queued++;
+        assert(queued < 4096);
+    }
+    assert(queued && queued_status == RingAgain);
+    for (unsigned index = 0; index < queued; index++) {
+        assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingOk);
+        assert(decoded.frame == release.frame && decoded.status == release.status);
+    }
+    assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingAgain);
+    assert(venus_release_send(sockets[0], &release) == RingOk);
+    assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingOk);
+    assert(descriptors() == baseline);
+    for (int mode = 0; mode < 6; mode++) {
+        assert(venus_release_send(sockets[0], &release) == RingOk);
+        receive_fault = mode >= 2 ? mode + 2 : 0;
+        assert(venus_release_receive(sockets[1], mode == 0 ? getpid() + 1 : getpid(),
+                                     mode == 1 ? 18 : 17, &decoded) == RingCorrupt);
+        assert(!decoded.context && !decoded.frame && descriptors() == baseline);
+    }
+    receive_fault = 0;
+    unsigned char bytes[VenusReleaseBytes + 1];
+    assert(venus_release_encode(&release, bytes, VenusReleaseBytes) == RingOk);
+    for (unsigned count = 1; count <= 16; count++) {
+        raw_send(sockets[0], bytes, VenusReleaseBytes, source, count);
+        assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingCorrupt);
+        assert(descriptors() == baseline && !decoded.context);
+    }
+    raw_send(sockets[0], bytes, 12, source, 0);
+    assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingCorrupt);
+    raw_send(sockets[0], bytes, sizeof(bytes), source, 0);
+    assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingCorrupt);
+    bytes[28] = 1;
+    raw_send(sockets[0], bytes, VenusReleaseBytes, source, 0);
+    assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingCorrupt);
+    bytes[28] = 0;
+    int disabled = 0;
+    assert(!setsockopt(sockets[1], SOL_SOCKET, SO_PASSCRED, &disabled, sizeof(disabled)));
+    raw_send(sockets[0], bytes, VenusReleaseBytes, source, 0);
+    assert(venus_release_receive(sockets[1], getpid(), 17, &decoded) == RingCorrupt);
+    assert(venus_frame_prepare(sockets[1]) == RingOk);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) {
+        close(sockets[1]);
+        assert(venus_release_send(sockets[0], &release) == RingOk);
+        close(sockets[0]);
+        close(source);
+        _exit(0);
+    }
+    venus_ring_status_t status;
+    unsigned attempts = 0;
+    do {
+        status = venus_release_receive(sockets[1], child, 17, &decoded);
+        usleep(1000);
+        assert(++attempts < 5000);
+    } while (status == RingAgain);
+    assert(status == RingOk && decoded.frame == release.frame);
+    int child_status;
+    assert(waitpid(child, &child_status, 0) == child && WIFEXITED(child_status) &&
+           !WEXITSTATUS(child_status));
+    assert(descriptors() == baseline);
+}
 int main(void) {
     unsigned initial = descriptors();
     int sockets[2];
@@ -126,6 +234,7 @@ int main(void) {
     assert(venus_frame_prepare(sockets[1]) == RingOk);
     int source = memfd_create("dma-buf-fixture", MFD_CLOEXEC);
     assert(source >= 0 && !ftruncate(source, 4096));
+    releases(sockets, source);
     venus_frame_t frame = example(), decoded;
     int output[4];
     assert(venus_frame_receive(sockets[1], getpid(), 17, NULL, output) == RingInvalid);
@@ -236,6 +345,9 @@ int main(void) {
     close(sockets[0]);
     assert(venus_frame_receive(sockets[1], getpid(), 17, &decoded, output) == RingClosed);
     assert(venus_frame_send(sockets[1], &frame, &source, 1) == RingClosed);
+    venus_release_t release = {.context = 17, .frame = 1, .status = RingOk}, completed;
+    assert(venus_release_receive(sockets[1], getpid(), 17, &completed) == RingClosed);
+    assert(venus_release_send(sockets[1], &release) == RingClosed);
     close(sockets[1]);
     close(source);
     assert(descriptors() == initial);
