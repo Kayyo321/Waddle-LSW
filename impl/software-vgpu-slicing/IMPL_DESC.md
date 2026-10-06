@@ -3732,3 +3732,43 @@ The pinned generated C serializer is the independent byte oracle, including
 pointer markers, array lengths, strings, scalar order and translated IDs. Tests
 exercise malformed headers, counts, pointers, floats, enums and object IDs.
 This serializer alone gives no graphics rendering or DXVK acceptance credit.
+
+### Bounded core command encoding contract
+
+`venus_compute_wire.zig` owns each returned 8192-byte scratch packet and shares no
+mutable state. Arrays are borrowed only during the call; no allocation, retained
+pointer, device handle dereference or implicit host limit assumption occurs in the
+codec. The caller serializes access to the ICD and validates recording state,
+same-device identities, structural layout compatibility, native capabilities and
+GPU lifetimes before submission. `Invalid` rejects malformed scalar/identity
+inputs; `Limit` rejects profile extents. Each constructor proves the entire packet
+fits before writing its first byte; no partially encoded packet reaches a peer.
+All integers use little endian and all commands request their opcode acknowledgment.
+
+- `bind_pipeline(command_id,pipeline_id,bind_point)` emits opcode93, fixed28 bytes.
+  Both translated IDs are nonzero; bind point0 graphics or1 compute is explicit.
+- `bind_descriptor_sets(command_id,layout_id,bind_point,first_set,set_ids,
+  dynamic_offsets)` emits opcode103, exact `56+8*set_count+4*dynamic_count` bytes.
+  Translated IDs are nonzero, first set0..15, sets0..16-first_set, offsets0..1024.
+  Empty sets require empty offsets. Maximum packet4280 bytes. The caller proves
+  each set's copied definition matches the target layout and calculates the exact
+  number/order of dynamic descriptors and offsets, including native alignments.
+- `push_constants(command_id,layout_id,stage_flags,offset,values)` emits opcode132,
+  exact `44+value_bytes` bytes, maximum172. IDs are nonzero, stages are a positive
+  core mask within0x3f, offset and nonempty length are four-aligned, and their extent
+  fits core128 bytes. The caller verifies declared stage/range coverage and eventual
+  bound pipeline push-range compatibility; bytes are copied into the owned packet.
+- `dispatch(command_id,groups[3])` emits opcode110, fixed28 bytes. The command ID is
+  nonzero; all scalar group values, including zero no-op groups, encode unchanged.
+  The caller checks each value against actual queried device limits and validates
+  bound compute pipeline and required descriptors. Encoding never invents a limit.
+
+`tests/vgpu/compute_wire_oracle.c` independently uses the pinned generated Venus
+encoders, with an isolated test ring symbol so multiple oracle objects can link.
+Tests compare every initialized byte for both bind points, empty/ordinary/max set
+and dynamic arrays, four/max128 push bytes, zero/ordinary/full-u32 dispatch groups.
+Negative cases cover each ID, enum, empty/nonaligned push extent, stage mask, set
+and dynamic quota. Native Zig tests use no heap allocation; maximum C oracle paths
+pass AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer with zero leaks.
+The oracle and Zig test executable cross-compile for x86_64 Windows. Production
+coverage is100% branches20/20 and96.97% lines32/33; no threshold is lowered.
