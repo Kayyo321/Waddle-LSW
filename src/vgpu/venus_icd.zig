@@ -1996,6 +1996,141 @@ fn update_buffer(
     const index = resource_index(target.?);
     state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
 }
+fn configured_family_pair(parent_id: u64, source: u32, destination: u32) bool {
+    if (source == std.math.maxInt(u32) or destination == std.math.maxInt(u32))
+        return source == destination;
+    for (device_caches) |entry| {
+        if (entry.handle == 0 or object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?.id != parent_id)
+            continue;
+        return std.mem.indexOfScalar(u32, entry.families[0..entry.family_count], source) != null and
+            std.mem.indexOfScalar(u32, entry.families[0..entry.family_count], destination) != null;
+    }
+    return false;
+}
+/// Record core execution/global/buffer dependencies after validating complete arrays.
+/// @param[in] command_buffer Nullable private borrowed Recording handle.
+/// @param[in] source_stage Nonzero core Vulkan1.0 mask; caller ensures native compatibility.
+/// @param[in] destination_stage Nonzero core mask; caller supplies feature/queue validity.
+/// @param[in] dependency_flags Core0/1 BY_REGION only.
+/// @param[in] memory_count Borrowed global barrier count0..64.
+/// @param[in] memory_barriers Nullable only for zero count; canonical borrowed records.
+/// @param[in] buffer_count Borrowed private buffer barrier count0..64.
+/// @param[in] buffer_barriers Nullable only for zero count; same-device bound byte ranges.
+/// @param[in] image_count Must be zero until image APIs/layout ownership are implemented.
+/// @param[in] image_barriers Ignored zero-count pointer; never read or retained.
+/// @return Void; invalid Recording inputs invalidate; peer/transport loss poisons binding.
+/// @note Mutex serialized, no allocations; CPU acknowledgment is not GPU retirement.
+fn pipeline_barrier(
+    command_buffer: c.VkCommandBuffer,
+    source_stage: u32,
+    destination_stage: u32,
+    dependency_flags: u32,
+    memory_count: u32,
+    memory_barriers: [*c]const c.VkMemoryBarrier,
+    buffer_count: u32,
+    buffer_barriers: [*c]const c.VkBufferMemoryBarrier,
+    image_count: u32,
+    image_barriers: [*c]const c.VkImageMemoryBarrier,
+) callconv(.C) void {
+    _ = image_barriers;
+    mutex.lock();
+    defer mutex.unlock();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(
+        @intFromPtr(command_buffer.?),
+        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+    ) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    if (source_stage == 0 or destination_stage == 0 or
+        (source_stage | destination_stage) & ~@as(u32, 0x1ffff) != 0 or
+        dependency_flags > 1 or image_count != 0 or memory_count > 64 or buffer_count > 64 or
+        (memory_count != 0 and memory_barriers == null) or
+        (buffer_count != 0 and buffer_barriers == null))
+    {
+        state.command_state = .Invalid;
+        return;
+    }
+    if (memory_count != 0) for (memory_barriers[0..memory_count]) |barrier| {
+        if (barrier.sType != c.VK_STRUCTURE_TYPE_MEMORY_BARRIER or barrier.pNext != null or
+            (barrier.srcAccessMask | barrier.dstAccessMask) & ~@as(u32, 0x1ffff) != 0)
+        {
+            state.command_state = .Invalid;
+            return;
+        }
+    };
+    var references: [64]*c.venus_object_t = undefined;
+    if (buffer_count != 0) for (buffer_barriers[0..buffer_count], 0..) |barrier, index| {
+        const target = if (barrier.buffer != null) child_object(
+            @intFromPtr(barrier.buffer.?),
+            c.VK_OBJECT_TYPE_BUFFER,
+            pool.parent_id,
+        ) else null;
+        if (target == null or barrier.sType != c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER or
+            barrier.pNext != null or
+            (barrier.srcAccessMask | barrier.dstAccessMask) & ~@as(u32, 0x1ffff) != 0 or
+            !configured_family_pair(
+            pool.parent_id,
+            barrier.srcQueueFamilyIndex,
+            barrier.dstQueueFamilyIndex,
+        )) {
+            state.command_state = .Invalid;
+            return;
+        }
+        const destination = resource_state(target.?);
+        if (destination.bound_memory == 0 or barrier.offset >= destination.buffer_size or
+            (barrier.size != std.math.maxInt(u64) and (barrier.size == 0 or
+            barrier.size > destination.buffer_size - barrier.offset)))
+        {
+            state.command_state = .Invalid;
+            return;
+        }
+        references[index] = target.?;
+    };
+    var writer = writer_t{};
+    writer.header(126, record.id);
+    writer.put(u32, source_stage);
+    writer.put(u32, destination_stage);
+    writer.put(u32, dependency_flags);
+    writer.put(u32, memory_count);
+    writer.put(u64, memory_count);
+    if (memory_count != 0) for (memory_barriers[0..memory_count]) |barrier| {
+        writer.put(u32, c.VK_STRUCTURE_TYPE_MEMORY_BARRIER);
+        writer.put(u64, 0);
+        writer.put(u32, barrier.srcAccessMask);
+        writer.put(u32, barrier.dstAccessMask);
+    };
+    writer.put(u32, buffer_count);
+    writer.put(u64, buffer_count);
+    if (buffer_count != 0) for (buffer_barriers[0..buffer_count], 0..) |barrier, index| {
+        writer.put(u32, c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER);
+        writer.put(u64, 0);
+        writer.put(u32, barrier.srcAccessMask);
+        writer.put(u32, barrier.dstAccessMask);
+        writer.put(u32, barrier.srcQueueFamilyIndex);
+        writer.put(u32, barrier.dstQueueFamilyIndex);
+        writer.put(u64, references[index].id);
+        writer.put(u64, barrier.offset);
+        writer.put(u64, barrier.size);
+    };
+    writer.put(u32, 0);
+    writer.put(u64, 0);
+    const reply = transact(writer.bytes[0..writer.used]) orelse return;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    if (received != 126) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    for (references[0..buffer_count]) |buffer_record| {
+        const index = resource_index(buffer_record);
+        state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+    }
+}
 /// Reset an individual nonpending buffer from a reset-capable private pool.
 /// @param[in] buffer Nonnull private borrowed handle; no ownership transfer.
 /// @param[in] flags0/1 release-resources only.
@@ -2211,6 +2346,7 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCmdFillBuffer", &fill_buffer },
         .{ "vkCmdCopyBuffer", &copy_buffer },
         .{ "vkCmdUpdateBuffer", &update_buffer },
+        .{ "vkCmdPipelineBarrier", &pipeline_barrier },
         .{ "vkEndCommandBuffer", &end_command_buffer },
         .{ "vkResetCommandBuffer", &reset_command_buffer },
         .{ "vkDestroyCommandPool", &destroy_command_pool },

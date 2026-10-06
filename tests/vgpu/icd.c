@@ -188,6 +188,33 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                                             &queue_info, &queue);
                 assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
             }
+        } else if (fixture->command == 126) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            uint32_t memory_count = read_u32(bytes + 28);
+            assert(memory_count <= 64);
+            VkMemoryBarrier memory[64];
+            for (uint32_t index = 0; index < memory_count; index++)
+                memory[index] = (VkMemoryBarrier){.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .srcAccessMask = read_u32(bytes + 52 + index * 20),
+                    .dstAccessMask = read_u32(bytes + 56 + index * 20)};
+            size_t buffer_start = 52 + memory_count * 20;
+            uint32_t buffer_count = read_u32(bytes + buffer_start - 12);
+            assert(buffer_count <= 64);
+            VkBufferMemoryBarrier buffers[64];
+            for (uint32_t index = 0; index < buffer_count; index++) {
+                const unsigned char *record = bytes + buffer_start + index * 52;
+                buffers[index] = (VkBufferMemoryBarrier){.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                    .srcAccessMask = read_u32(record + 12), .dstAccessMask = read_u32(record + 16),
+                    .srcQueueFamilyIndex = read_u32(record + 20), .dstQueueFamilyIndex = read_u32(record + 24),
+                    .buffer = (VkBuffer)(uintptr_t)read_u64(record + 28),
+                    .offset = read_u64(record + 36), .size = read_u64(record + 44)};
+            }
+            vn_encode_vkCmdPipelineBarrier(&encoder, 1,
+                (VkCommandBuffer)(uintptr_t)read_u64(bytes + 8), read_u32(bytes + 16),
+                read_u32(bytes + 20), read_u32(bytes + 24), memory_count,
+                memory_count ? memory : NULL, buffer_count, buffer_count ? buffers : NULL, 0, NULL);
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 117) {
             unsigned char expected[65584];
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
@@ -1738,6 +1765,166 @@ static void update_buffer_contract(void) {
         assert(venus_icd_unbind() == RingOk);
     }
 }
+static void pipeline_barrier_contract(void) {
+    for (unsigned scenario = 0; scenario < 5; scenario++) {
+        fixture_t fixture = fresh();
+        assert(venus_icd_bind(exchange, &fixture) == RingOk);
+        VkInstance instance = create();
+        uint32_t count = 2;
+        VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,
+            "vkEnumeratePhysicalDevices"))(instance, &count, physical) == VK_SUCCESS);
+        const float priority = 1;
+        VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueCount = 1, .pQueuePriorities = &priority};
+        VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue};
+        fixture.device_info = &device_info;
+        VkDevice device = NULL, foreign = NULL;
+        PFN_vkCreateDevice create_device = (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
+        assert(create_device(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
+        assert(create_device(physical[0], &device_info, NULL, &foreign) == VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
+        PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)lookup(device, "vkCreateCommandPool");
+        PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)lookup(device, "vkDestroyCommandPool");
+        PFN_vkResetCommandPool reset_pool = (PFN_vkResetCommandPool)lookup(device, "vkResetCommandPool");
+        PFN_vkAllocateCommandBuffers allocate = (PFN_vkAllocateCommandBuffers)lookup(device, "vkAllocateCommandBuffers");
+        PFN_vkFreeCommandBuffers release = (PFN_vkFreeCommandBuffers)lookup(device, "vkFreeCommandBuffers");
+        PFN_vkBeginCommandBuffer begin = (PFN_vkBeginCommandBuffer)lookup(device, "vkBeginCommandBuffer");
+        PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)lookup(device, "vkEndCommandBuffer");
+        PFN_vkResetCommandBuffer reset = (PFN_vkResetCommandBuffer)lookup(device, "vkResetCommandBuffer");
+        PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
+        VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+        fixture.pool_info = &pool_info;
+        VkCommandPool pool = NULL, other_pool = NULL;
+        assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+        pool_info.flags = 0;
+        assert(create_pool(device, &pool_info, NULL, &other_pool) == VK_SUCCESS);
+        VkCommandBufferAllocateInfo info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
+        fixture.command_allocate = &info;
+        PFN_vkCmdPipelineBarrier barrier = (PFN_vkCmdPipelineBarrier)lookup(device, "vkCmdPipelineBarrier");
+        PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)lookup(device, "vkCreateBuffer");
+        PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)lookup(device, "vkDestroyBuffer");
+        PFN_vkAllocateMemory allocate_memory = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+        PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+        PFN_vkBindBufferMemory bind = (PFN_vkBindBufferMemory)lookup(device, "vkBindBufferMemory");
+        assert(barrier && create_buffer && destroy_buffer && allocate_memory && free_memory && bind);
+        VkCommandBuffer buffers[2] = {NULL, NULL};
+        assert(allocate(device, &info, buffers) == VK_SUCCESS);
+        VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        fixture.command_begin = &begin_info;
+        VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 4096, .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT};
+        fixture.buffer_info = &buffer_info;
+        VkBuffer target = NULL, unbound = NULL, foreign_buffer = NULL;
+        assert(create_buffer(device, &buffer_info, NULL, &target) == VK_SUCCESS);
+        assert(create_buffer(device, &buffer_info, NULL, &unbound) == VK_SUCCESS);
+        assert(create_buffer(foreign, &buffer_info, NULL, &foreign_buffer) == VK_SUCCESS);
+        VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = 16384, .memoryTypeIndex = 0};
+        fixture.memory_info = &memory_info;
+        VkDeviceMemory memory = NULL;
+        assert(allocate_memory(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+        assert(bind(device, target, memory, 0) == VK_SUCCESS);
+        VkMemoryBarrier memory_barriers[64];
+        VkBufferMemoryBarrier buffer_barriers[64];
+        for (unsigned index = 0; index < 64; index++) {
+            memory_barriers[index] = (VkMemoryBarrier){.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT};
+            buffer_barriers[index] = (VkBufferMemoryBarrier){.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .buffer = target, .offset = 1, .size = 7};
+        }
+        unsigned submissions = fixture.submissions;
+        barrier(NULL, 4096, 4096, 0, 0, NULL, 0, NULL, 0, NULL);
+        barrier((VkCommandBuffer)(uintptr_t)1, 4096, 4096, 0, 0, NULL, 0, NULL, 0, NULL);
+        barrier(buffers[0], 4096, 4096, 0, 0, NULL, 0, NULL, 0, NULL);
+        assert(fixture.submissions == submissions);
+        for (unsigned invalid = 0; invalid < 9; invalid++) {
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            barrier(buffers[0], invalid == 0 ? 0 : invalid == 2 ? UINT32_MAX : 4096,
+                invalid == 1 ? 0 : invalid == 3 ? UINT32_MAX : 4096,
+                invalid == 4 ? 2 : 0, invalid == 5 ? 65 : invalid == 7 ? 1 : 0,
+                invalid == 7 ? NULL : memory_barriers,
+                invalid == 6 ? 65 : invalid == 8 ? 1 : 0, invalid == 8 ? NULL : buffer_barriers,
+                0, NULL);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        }
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        submissions = fixture.submissions;
+        barrier(buffers[0], 4096, 4096, 0, 0, NULL, 0, NULL, 1, (const void *)(uintptr_t)1);
+        assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+        for (unsigned invalid = 0; invalid < 4; invalid++) {
+            VkMemoryBarrier saved = memory_barriers[63];
+            if (invalid == 0) memory_barriers[63].sType = 0;
+            if (invalid == 1) memory_barriers[63].pNext = &memory_barriers;
+            if (invalid == 2) memory_barriers[63].srcAccessMask = UINT32_MAX;
+            if (invalid == 3) memory_barriers[63].dstAccessMask = UINT32_MAX;
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            barrier(buffers[0], 4096, 4096, 0, 64, memory_barriers, 0, NULL, 0, NULL);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+            memory_barriers[63] = saved;
+        }
+        for (unsigned invalid = 0; invalid < 16; invalid++) {
+            VkBufferMemoryBarrier saved = buffer_barriers[63];
+            if (invalid == 0) buffer_barriers[63].sType = 0;
+            if (invalid == 1) buffer_barriers[63].pNext = &buffer_barriers;
+            if (invalid == 2) buffer_barriers[63].srcAccessMask = UINT32_MAX;
+            if (invalid == 3) buffer_barriers[63].dstAccessMask = UINT32_MAX;
+            if (invalid == 4) buffer_barriers[63].buffer = NULL;
+            if (invalid == 5) buffer_barriers[63].buffer = (VkBuffer)(uintptr_t)1;
+            if (invalid == 6) buffer_barriers[63].buffer = foreign_buffer;
+            if (invalid == 7) buffer_barriers[63].buffer = unbound;
+            if (invalid == 8) buffer_barriers[63].srcQueueFamilyIndex = 0;
+            if (invalid == 9) buffer_barriers[63].dstQueueFamilyIndex = 0;
+            if (invalid == 10) buffer_barriers[63].srcQueueFamilyIndex = buffer_barriers[63].dstQueueFamilyIndex = 99;
+            if (invalid == 11) { buffer_barriers[63].srcQueueFamilyIndex = 0; buffer_barriers[63].dstQueueFamilyIndex = 99; }
+            if (invalid == 12) buffer_barriers[63].offset = 4096;
+            if (invalid == 13) buffer_barriers[63].size = 0;
+            if (invalid == 14) buffer_barriers[63].size = UINT64_MAX - 1;
+            if (invalid == 15) { buffer_barriers[63].offset = 4093; buffer_barriers[63].size = 4; }
+            assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+            submissions = fixture.submissions;
+            barrier(buffers[0], 4096, 4096, 0, 0, NULL, 64, buffer_barriers, 0, NULL);
+            assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
+            buffer_barriers[63] = saved;
+        }
+        assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
+        if (scenario == 0) fixture.fail_command = 126;
+        if (scenario == 1) fixture.corrupt_command = 126;
+        barrier(buffers[0], 4096, 4096, 1, 64, memory_barriers, 64, buffer_barriers, 0, NULL);
+        if (scenario < 2) { assert(end(buffers[0]) == VK_ERROR_DEVICE_LOST); venus_icd_abandon(); continue; }
+        barrier(buffers[0], 4096, 4096, 0, 0, (const void *)(uintptr_t)1,
+                0, (const void *)(uintptr_t)1, 0, (const void *)(uintptr_t)1);
+        buffer_barriers[0].srcQueueFamilyIndex = buffer_barriers[0].dstQueueFamilyIndex = 0;
+        buffer_barriers[0].offset = 0; buffer_barriers[0].size = VK_WHOLE_SIZE;
+        memory_barriers[0].dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        buffer_barriers[0].dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        barrier(buffers[0], 4096, 16384, 0, 1, memory_barriers, 1, buffer_barriers, 0, NULL);
+        assert(end(buffers[0]) == VK_SUCCESS);
+        submissions = fixture.submissions;
+        barrier(buffers[0], 4096, 4096, 0, 0, NULL, 0, NULL, 0, NULL);
+        assert(fixture.submissions == submissions);
+        assert(begin(buffers[1], &begin_info) == VK_SUCCESS);
+        buffer_barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier(buffers[1], 4096, 4096, 0, 0, NULL, 1, buffer_barriers, 0, NULL);
+        if (scenario == 3) assert(reset_pool(device, pool, 0) == VK_SUCCESS);
+        if (scenario == 4) assert(reset(buffers[1], 0) == VK_SUCCESS);
+        destroy_buffer(device, target, NULL);
+        assert(end(buffers[1]) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(begin(buffers[1], &begin_info) == VK_SUCCESS && end(buffers[1]) == VK_SUCCESS);
+        destroy_buffer(device, unbound, NULL); destroy_buffer(foreign, foreign_buffer, NULL);
+        free_memory(device, memory, NULL); release(device, pool, 2, buffers);
+        destroy_pool(device, pool, NULL); destroy_pool(device, other_pool, NULL);
+        destroy_device(device, NULL); destroy_device(foreign, NULL); destroy(instance);
+        assert(venus_icd_unbind() == RingOk);
+    }
+}
 static void fill_buffer_contract(void) {
     for (unsigned scenario = 0; scenario < 5; scenario++) {
         fixture_t fixture = fresh();
@@ -2553,6 +2740,12 @@ static void loader_fixture(void) {
         fixture.update_data = update_data;
         assert(update);
         update(commands[0], buffer, 0, sizeof(update_data), update_data);
+        PFN_vkCmdPipelineBarrier barrier = (PFN_vkCmdPipelineBarrier)device_proc(device, "vkCmdPipelineBarrier");
+        const VkMemoryBarrier memory_barrier = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+        assert(barrier);
+        barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+                0, 1, &memory_barrier, 0, NULL, 0, NULL);
         assert(end(commands[0]) == VK_SUCCESS);
         assert(reset(commands[0], 0) == VK_SUCCESS);
         free_buffers(device, pool, 1, commands);
@@ -2597,6 +2790,7 @@ int main(void) {
     fill_buffer_contract();
     copy_buffer_contract();
     update_buffer_contract();
+    pipeline_barrier_contract();
     venus_icd_abandon();
 #ifdef VgpuIcdLoader
     loader_fixture();

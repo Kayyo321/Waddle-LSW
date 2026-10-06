@@ -350,8 +350,10 @@ static int icd_cycles(venus_guest_t *guest) {
             (PFN_vkCmdCopyBuffer)device_proc(device, "vkCmdCopyBuffer");
         PFN_vkCmdUpdateBuffer update_buffer =
             (PFN_vkCmdUpdateBuffer)device_proc(device, "vkCmdUpdateBuffer");
+        PFN_vkCmdPipelineBarrier pipeline_barrier =
+            (PFN_vkCmdPipelineBarrier)device_proc(device, "vkCmdPipelineBarrier");
         if (!allocate_buffers || !free_buffers || !begin_buffer || !end_buffer || !reset_buffer ||
-            !fill_buffer || !copy_buffer || !update_buffer)
+            !fill_buffer || !copy_buffer || !update_buffer || !pipeline_barrier)
             goto fail;
         VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 2};
@@ -361,12 +363,22 @@ static int icd_cycles(venus_guest_t *guest) {
         if (allocate_buffers(device, &command_info, commands) != VK_SUCCESS || !commands[0] ||
             !commands[1] || begin_buffer(commands[0], &begin_info) != VK_SUCCESS) goto fail;
         fill_buffer(commands[0], buffer, 0, VK_WHOLE_SIZE, 0x12345678);
+        VkMemoryBarrier memory_barrier = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT};
+        pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &memory_barrier, 0, NULL, 0, NULL);
         const VkBufferCopy copy_region = {.srcOffset = 0, .dstOffset = 2048, .size = 1024};
         copy_buffer(commands[0], buffer, buffer, 1, &copy_region);
+        pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 1, &memory_barrier, 0, NULL, 0, NULL);
         unsigned char update_data[65536];
         for (unsigned index = 0; index < sizeof(update_data); index++)
             update_data[index] = (unsigned char)(index * 13);
         update_buffer(commands[0], buffer, 0, sizeof(update_data), update_data);
+        memory_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        pipeline_barrier(commands[0], VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+            0, 1, &memory_barrier, 0, NULL, 0, NULL);
         if (end_buffer(commands[0]) != VK_SUCCESS || reset_buffer(commands[0], 0) != VK_SUCCESS ||
             begin_buffer(commands[1], &begin_info) != VK_SUCCESS ||
             end_buffer(commands[1]) != VK_SUCCESS || reset_pool(device, pool, 0) != VK_SUCCESS)

@@ -1666,7 +1666,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     Windows fixture, DLL and loader fixture cross-link pass. Latest CI required.
     TODO #3 stays50%; synchronization/submission/full API/mapping/DXVK pending.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify core memory and buffer pipeline barriers`
+- **Commit `e7beb91`**: `docs(vgpu): specify core memory and buffer pipeline barriers`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Define exact command126 and bounded canonical memory/buffer
     barrier arrays, core masks and family/range validation. Specify execution-only
@@ -1675,3 +1675,21 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Inspect pinned encoder record strides/ordering and Vulkan
     valid usage; implementation and actual worker dependency recording pending.
     TODO #3 stays50%.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): record bounded global and buffer pipeline barriers`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall; full execution pending).
+  - **Summary**: Dispatch pinned command126 for execution-only/global/private
+    buffer dependencies. Validate complete canonical arrays, core masks, family
+    pairs and byte/WHOLE_SIZE bounds before sending; track buffer references only
+    after acknowledgment. Normalize ignored zero-count pointers and reject image
+    scope until image layout/ownership APIs are implemented. Add transfer hazards
+    and host-read dependencies to the real worker's fill/copy/update recording.
+  - **Verification**: Independent encoder checks zero/one/64 arrays; invalid final
+    record sends no partial command. Range, identity/binding/family/mask/tag guards
+    and destruction/reset tests pass. Seven Zig tests and ASan/LSan/UBSan pass;
+    coverage99.74% lines/93.78% branches. Actual static/shared-loader worker and
+    native loader recording pass normal/sanitized, including failure cleanup.
+    Windows fixture/DLL/loader cross-link pass. Native Windows inline update CI
+    ce01f55 passes; one Linux coverage run aborts while parallel same-head run
+    passes that stage, under investigation/retry. Latest-head checks remain
+    required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending.
