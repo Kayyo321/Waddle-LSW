@@ -2402,3 +2402,8 @@ This synchronization commit is identified by subject `docs(vgpu): audit physical
 - **Commit (this entry, resolved by subject)**: `feat(vgpu): record bounded acknowledged image buffer readback`
   - **Task Impact**: +0% to TODO: #3 (+0% overall); actual physical triangle and DXVK acceptance remain pending.
   - **Summary**: Validate live RGBA/BGRA2D sample1 transfer owners and1..64 bounded tight regions before116. Reject inside-pass, invalid/foreign/stale/unbound/usages, destination overlap and conservative shared-allocation source-span intersections; permit exact adjacency. Publish exact image/buffer/both memory references only after ACK; failed replies preserve state. Independent generated encoder, mapped destination, pending ownership, native/shared128 lifecycles, ASan/LSan/UBSan and Windows object pass;74 Zig tests, fresh C-oracle production branch90.13% (2055/2280), line99.08% (2382/2404).
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): require positive Lavapipe devices and dual unload proof`
+  - **Task Impact**: +0% to TODO: #3 and prerequisite #10 (+0% overall).
+  - **Summary**: Specify exact option preflight, positive Lavapipe enumeration, balanced residency probe, strict three-cycle unload, isolated dual-build outputs and unchanged complete CI gate before fixture implementation.
