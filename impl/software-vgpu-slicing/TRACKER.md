@@ -897,7 +897,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     envelope codec, service binding and controller retries remain pending.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): validate presentation request envelope operations`
+- **Commit `d2aa43f`**: `feat(vgpu): validate presentation request envelope operations`
   - **Task Impact**: +0% to TODO: #4 (+0% overall).
   - **Summary**: Add bounded operations12/13 with exact frame/release payload,
     GPU timeline/fence and completion identity rules. Explicitly reject both in
@@ -906,3 +906,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     suites and Windows x86_64 cross-links pass. Request coverage98.46% lines/97.80%
     branches; RPC/dispatch coverage exceeds90%. Unbound pre/post-negotiation frames
     consume payload and return Invalid with no receiver calls. Bound routing pending.
+
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify optional bound presentation dispatch`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall).
+  - **Summary**: Define trusted sole-thread submit/take/busy/pump callbacks, resource
+    free guards, portable unbound behavior and bounded health-monitor integration.
+  - **Verification**: Request and unbound RPC tests/coverage/sanitizers pass; earlier
+    Linux/native Windows CI passed at beba08e, run37406662469. Bound routing pending.

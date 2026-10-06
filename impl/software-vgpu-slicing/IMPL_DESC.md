@@ -1784,3 +1784,31 @@ service explicitly returns Invalid for them before any receiver polling, with
 pre/post-negotiation native RPC tests covering complete1216-byte payload delivery.
 Request codec coverage98.46% lines/97.80% branches, existing RPC/dispatch thresholds,
 sanitisers and Windows cross-links pass. Bound service integration is pending.
+
+
+### Optional trusted presentation dispatch binding (Task #4)
+
+The portable host dispatcher accepts an optional immutable caller-owned
+venus_dispatch_presentation_t for one serve call. It borrows a nonnull context
+and four nonnull sole-thread callbacks: submit(private bytes,length,timeline,fence),
+take(frame ID,private output,length32), resource_busy(resource ID), pump(). All
+callbacks refer to the same receiver/session as dispatch; only trusted controller
+code constructs this binding, never guest memory. Invalid partial bindings are
+rejected before request consumption. Existing venus_dispatch_serve passes NULL
+and retains explicit Invalid presentation responses without native dependencies.
+
+Bound dispatch routes only negotiated RequestPresent/PresentPoll to submit/take.
+Success poll response has exactly32 bytes; every error clears payload/arguments
+using existing wire status policy. The take callback must encode its private
+release via Zig before returning success. RequestFree calls resource_busy first
+and returns Again without SDK mutation for every occupied lease. Other operations
+retain original semantics. This guard cannot introspect arbitrary Vulkan command
+streams; the guest contract still forbids writes/destruction of leased images.
+
+During framing/waits the existing call-scoped health monitor first checks receiver
+health/cancellation/deadlines, then pumps native releases through the binding.
+Terminal native errors close the mapped session before further publication.
+Monitor/context pointers are cleared on every return and retain no call-scoped
+binding after serve. Pending release records remain owned by the worker's lease
+module, which processes a bounded three packets per sample. The portable callback
+boundary keeps Linux DMA-BUF operations out of Windows ABI validation builds.
