@@ -8,6 +8,7 @@
 #include "waddle/venus_instance_wire.h"
 #include "waddle/venus_objects.h"
 #include "waddle/venus_worker.h"
+#include "shaders/compute_shader.h"
 #include <dirent.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -23,7 +24,8 @@
 typedef enum fixture_workload_t {
     FullWorkload, /**< Default mapped transfer plus image lifecycle acceptance. */
     MappingWorkload, /**< Exact-byte mapped CPU/GPU transfer workload. */
-    ImageWorkload /**< Native image/view lifecycle and subsequent image commands. */
+    ImageWorkload, /**< Native image/view lifecycle and subsequent image commands. */
+    ComputeWorkload /**< Actual shader dispatch and exact mapped output comparison. */
 } fixture_workload_t;
 static fixture_workload_t selected_workload = FullWorkload;
 static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *) = venus_icd_bind;
@@ -180,6 +182,229 @@ cleanup:
     venus_objects_free(&objects);
     return result;
 }
+/** @brief Look up a borrowed compute entry point and name any unavailable API.
+ * @param[in] device Live borrowed device.
+ * @param[in] device_proc Nonnull borrowed dispatcher, valid for device lifetime.
+ * @param[in] name Nonnull borrowed NUL-terminated static Vulkan API name.
+ * @return Borrowed function pointer or NULL; retains nothing, no allocation.
+ * @details Single-threaded diagnostic fixture; dispatcher determines thread safety.
+ */
+static PFN_vkVoidFunction compute_proc(VkDevice device, PFN_vkGetDeviceProcAddr device_proc,
+    const char *name) {
+    PFN_vkVoidFunction function = device_proc(device, name);
+    if (!function) fprintf(stderr, "ICD compute acceptance missing entry point: %s\n", name);
+    return function;
+}
+/** @brief Execute actual storage-buffer shader and compare every result word.
+ * @param[in] device Borrowed live device, retained by caller until return.
+ * @param[in] queue Borrowed compute-capable queue of family.
+ * @param[in] family Existing queue family index.
+ * @param[in] supported_memory Borrowed queried actual guest memory properties.
+ * @param[in] device_proc Nonnull live device dispatch lookup.
+ * @return 0 on exact64-word GPU proof,1 on failure; single-threaded fixture.
+ * Local resource owner is this function; cleanup releases every acquired resource.
+ * supported_memory has1..VK_MAX_MEMORY_TYPES validated records.
+ */
+static int compute_probe(VkDevice device, VkQueue queue, uint32_t family,
+    const VkPhysicalDeviceMemoryProperties *supported_memory, PFN_vkGetDeviceProcAddr device_proc) {
+    PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)compute_proc(device, device_proc, "vkCreateBuffer");
+    if (!create_buffer) return 1;
+    PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)compute_proc(device, device_proc, "vkDestroyBuffer");
+    if (!destroy_buffer) return 1;
+    PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements = (PFN_vkGetBufferMemoryRequirements)compute_proc(device, device_proc, "vkGetBufferMemoryRequirements");
+    if (!get_buffer_memory_requirements) return 1;
+    PFN_vkAllocateMemory allocate_memory = (PFN_vkAllocateMemory)compute_proc(device, device_proc, "vkAllocateMemory");
+    if (!allocate_memory) return 1;
+    PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)compute_proc(device, device_proc, "vkFreeMemory");
+    if (!free_memory) return 1;
+    PFN_vkBindBufferMemory bind_buffer_memory = (PFN_vkBindBufferMemory)compute_proc(device, device_proc, "vkBindBufferMemory");
+    if (!bind_buffer_memory) return 1;
+    PFN_vkMapMemory map_memory = (PFN_vkMapMemory)compute_proc(device, device_proc, "vkMapMemory");
+    if (!map_memory) return 1;
+    PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges =
+        (PFN_vkFlushMappedMemoryRanges)compute_proc(device, device_proc, "vkFlushMappedMemoryRanges");
+    if (!flush_mapped_memory_ranges) return 1;
+    PFN_vkUnmapMemory unmap_memory = (PFN_vkUnmapMemory)compute_proc(device, device_proc, "vkUnmapMemory");
+    if (!unmap_memory) return 1;
+    PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges = (PFN_vkInvalidateMappedMemoryRanges)compute_proc(device, device_proc, "vkInvalidateMappedMemoryRanges");
+    if (!invalidate_mapped_memory_ranges) return 1;
+    PFN_vkCreateShaderModule create_shader_module = (PFN_vkCreateShaderModule)compute_proc(device, device_proc, "vkCreateShaderModule");
+    if (!create_shader_module) return 1;
+    PFN_vkDestroyShaderModule destroy_shader_module = (PFN_vkDestroyShaderModule)compute_proc(device, device_proc, "vkDestroyShaderModule");
+    if (!destroy_shader_module) return 1;
+    PFN_vkCreateDescriptorSetLayout create_descriptor_set_layout = (PFN_vkCreateDescriptorSetLayout)compute_proc(device, device_proc, "vkCreateDescriptorSetLayout");
+    if (!create_descriptor_set_layout) return 1;
+    PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout = (PFN_vkDestroyDescriptorSetLayout)compute_proc(device, device_proc, "vkDestroyDescriptorSetLayout");
+    if (!destroy_descriptor_set_layout) return 1;
+    PFN_vkCreatePipelineLayout create_pipeline_layout = (PFN_vkCreatePipelineLayout)compute_proc(device, device_proc, "vkCreatePipelineLayout");
+    if (!create_pipeline_layout) return 1;
+    PFN_vkDestroyPipelineLayout destroy_pipeline_layout = (PFN_vkDestroyPipelineLayout)compute_proc(device, device_proc, "vkDestroyPipelineLayout");
+    if (!destroy_pipeline_layout) return 1;
+    PFN_vkCreateDescriptorPool create_descriptor_pool = (PFN_vkCreateDescriptorPool)compute_proc(device, device_proc, "vkCreateDescriptorPool");
+    if (!create_descriptor_pool) return 1;
+    PFN_vkDestroyDescriptorPool destroy_descriptor_pool = (PFN_vkDestroyDescriptorPool)compute_proc(device, device_proc, "vkDestroyDescriptorPool");
+    if (!destroy_descriptor_pool) return 1;
+    PFN_vkAllocateDescriptorSets allocate_descriptor_sets = (PFN_vkAllocateDescriptorSets)compute_proc(device, device_proc, "vkAllocateDescriptorSets");
+    if (!allocate_descriptor_sets) return 1;
+    PFN_vkUpdateDescriptorSets update_descriptor_sets = (PFN_vkUpdateDescriptorSets)compute_proc(device, device_proc, "vkUpdateDescriptorSets");
+    if (!update_descriptor_sets) return 1;
+    PFN_vkCreateComputePipelines create_compute_pipelines = (PFN_vkCreateComputePipelines)compute_proc(device, device_proc, "vkCreateComputePipelines");
+    if (!create_compute_pipelines) return 1;
+    PFN_vkDestroyPipeline destroy_pipeline = (PFN_vkDestroyPipeline)compute_proc(device, device_proc, "vkDestroyPipeline");
+    if (!destroy_pipeline) return 1;
+    PFN_vkCreateCommandPool create_command_pool = (PFN_vkCreateCommandPool)compute_proc(device, device_proc, "vkCreateCommandPool");
+    if (!create_command_pool) return 1;
+    PFN_vkDestroyCommandPool destroy_command_pool = (PFN_vkDestroyCommandPool)compute_proc(device, device_proc, "vkDestroyCommandPool");
+    if (!destroy_command_pool) return 1;
+    PFN_vkAllocateCommandBuffers allocate_command_buffers = (PFN_vkAllocateCommandBuffers)compute_proc(device, device_proc, "vkAllocateCommandBuffers");
+    if (!allocate_command_buffers) return 1;
+    PFN_vkBeginCommandBuffer begin_command_buffer = (PFN_vkBeginCommandBuffer)compute_proc(device, device_proc, "vkBeginCommandBuffer");
+    if (!begin_command_buffer) return 1;
+    PFN_vkEndCommandBuffer end_command_buffer = (PFN_vkEndCommandBuffer)compute_proc(device, device_proc, "vkEndCommandBuffer");
+    if (!end_command_buffer) return 1;
+    PFN_vkCmdBindPipeline cmd_bind_pipeline = (PFN_vkCmdBindPipeline)compute_proc(device, device_proc, "vkCmdBindPipeline");
+    if (!cmd_bind_pipeline) return 1;
+    PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets = (PFN_vkCmdBindDescriptorSets)compute_proc(device, device_proc, "vkCmdBindDescriptorSets");
+    if (!cmd_bind_descriptor_sets) return 1;
+    PFN_vkCmdDispatch cmd_dispatch = (PFN_vkCmdDispatch)compute_proc(device, device_proc, "vkCmdDispatch");
+    if (!cmd_dispatch) return 1;
+    PFN_vkCmdPipelineBarrier cmd_pipeline_barrier = (PFN_vkCmdPipelineBarrier)compute_proc(device, device_proc, "vkCmdPipelineBarrier");
+    if (!cmd_pipeline_barrier) return 1;
+    PFN_vkCreateFence create_fence = (PFN_vkCreateFence)compute_proc(device, device_proc, "vkCreateFence");
+    if (!create_fence) return 1;
+    PFN_vkDestroyFence destroy_fence = (PFN_vkDestroyFence)compute_proc(device, device_proc, "vkDestroyFence");
+    if (!destroy_fence) return 1;
+    PFN_vkQueueSubmit queue_submit = (PFN_vkQueueSubmit)compute_proc(device, device_proc, "vkQueueSubmit");
+    if (!queue_submit) return 1;
+    PFN_vkWaitForFences wait_for_fences = (PFN_vkWaitForFences)compute_proc(device, device_proc, "vkWaitForFences");
+    if (!wait_for_fences) return 1;
+    PFN_vkQueueWaitIdle queue_wait_idle = (PFN_vkQueueWaitIdle)compute_proc(device, device_proc, "vkQueueWaitIdle");
+    if (!queue_wait_idle) return 1;
+    int result = 1, submitted = 0;
+    const char *stage = "buffer acquisition";
+    VkBuffer buffer = NULL;
+    VkDeviceMemory allocation = NULL;
+    void *mapped = NULL;
+    VkShaderModule shader = NULL;
+    VkDescriptorSetLayout set_layout = NULL;
+    VkPipelineLayout pipeline_layout = NULL;
+    VkDescriptorPool descriptor_pool = NULL;
+    VkPipeline pipeline = NULL;
+    VkCommandPool command_pool = NULL;
+    VkFence fence = NULL;
+    const VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = 256, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto cleanup;
+    VkMemoryRequirements memory_requirements = {0};
+    get_buffer_memory_requirements(device, buffer, &memory_requirements);
+    uint32_t memory_type = VK_MAX_MEMORY_TYPES;
+    for (uint32_t index = 0; index < supported_memory->memoryTypeCount; index++) {
+        if ((memory_requirements.memoryTypeBits & (UINT32_C(1) << index)) &&
+            (supported_memory->memoryTypes[index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+            memory_type = index; break;
+        }
+    }
+    if (memory_type == VK_MAX_MEMORY_TYPES) goto cleanup;
+    const VkMemoryAllocateInfo allocation_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = memory_requirements.size, .memoryTypeIndex = memory_type};
+    if (allocate_memory(device, &allocation_info, NULL, &allocation) != VK_SUCCESS || !allocation ||
+        bind_buffer_memory(device, buffer, allocation, 0) != VK_SUCCESS ||
+        map_memory(device, allocation, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS || !mapped) goto cleanup;
+    memset(mapped, 0xa5, 256);
+    const VkMappedMemoryRange range = {.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+        .memory = allocation, .size = VK_WHOLE_SIZE};
+    stage = "compute mapped poison and flush";
+    if (flush_mapped_memory_ranges(device, 1, &range) != VK_SUCCESS) goto cleanup;
+#ifdef VgpuIcdLoader
+    if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto cleanup;
+#endif
+    stage = "shader and descriptor acquisition";
+    const VkShaderModuleCreateInfo shader_info = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(ComputeShader), .pCode = ComputeShader};
+    if (create_shader_module(device, &shader_info, NULL, &shader) != VK_SUCCESS || !shader) goto cleanup;
+    const VkDescriptorSetLayoutBinding binding = {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
+    const VkDescriptorSetLayoutCreateInfo set_layout_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 1, .pBindings = &binding};
+    if (create_descriptor_set_layout(device, &set_layout_info, NULL, &set_layout) != VK_SUCCESS || !set_layout) goto cleanup;
+    const VkPipelineLayoutCreateInfo pipeline_layout_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, .pSetLayouts = &set_layout};
+    if (create_pipeline_layout(device, &pipeline_layout_info, NULL, &pipeline_layout) != VK_SUCCESS || !pipeline_layout) goto cleanup;
+    const VkDescriptorPoolSize pool_size = {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1};
+    const VkDescriptorPoolCreateInfo descriptor_pool_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &pool_size};
+    if (create_descriptor_pool(device, &descriptor_pool_info, NULL, &descriptor_pool) != VK_SUCCESS || !descriptor_pool) goto cleanup;
+    const VkDescriptorSetAllocateInfo set_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = descriptor_pool, .descriptorSetCount = 1, .pSetLayouts = &set_layout};
+    VkDescriptorSet descriptor_set = NULL;
+    if (allocate_descriptor_sets(device, &set_info, &descriptor_set) != VK_SUCCESS || !descriptor_set) goto cleanup;
+    const VkDescriptorBufferInfo descriptor_buffer = {.buffer = buffer, .range = 256};
+    const VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = descriptor_set, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        .pBufferInfo = &descriptor_buffer};
+    update_descriptor_sets(device, 1, &write, 0, NULL);
+    stage = "compute pipeline creation";
+    const VkComputePipelineCreateInfo pipeline_info = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = shader, .pName = "main"},
+        .layout = pipeline_layout, .basePipelineIndex = -1};
+    if (create_compute_pipelines(device, NULL, 1, &pipeline_info, NULL, &pipeline) != VK_SUCCESS || !pipeline) goto cleanup;
+    const VkCommandPoolCreateInfo command_pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .queueFamilyIndex = family};
+    if (create_command_pool(device, &command_pool_info, NULL, &command_pool) != VK_SUCCESS || !command_pool) goto cleanup;
+    const VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = command_pool, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
+    VkCommandBuffer command = NULL;
+    if (allocate_command_buffers(device, &command_info, &command) != VK_SUCCESS || !command) goto cleanup;
+    const VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    if (begin_command_buffer(command, &begin_info) != VK_SUCCESS) goto cleanup;
+    stage = "compute command recording";
+    cmd_bind_pipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    cmd_bind_descriptor_sets(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline_layout, 0, 1, &descriptor_set, 0, NULL);
+    cmd_dispatch(command, 64, 1, 1);
+    const VkMemoryBarrier barrier = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+    cmd_pipeline_barrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 1, &barrier, 0, NULL, 0, NULL);
+    const VkFenceCreateInfo fence_info = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (end_command_buffer(command) != VK_SUCCESS ||
+        create_fence(device, &fence_info, NULL, &fence) != VK_SUCCESS || !fence) goto cleanup;
+    const VkSubmitInfo submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1, .pCommandBuffers = &command};
+    stage = "compute submission";
+    if (queue_submit(queue, 1, &submit, fence) != VK_SUCCESS) goto cleanup;
+    submitted = 1;
+    if (wait_for_fences(device, 1, &fence, VK_TRUE, UINT64_C(1000000000)) != VK_SUCCESS ||
+        queue_wait_idle(queue) != VK_SUCCESS) goto cleanup;
+    submitted = 0;
+    stage = "compute mapped output comparison";
+    if (invalidate_mapped_memory_ranges(device, 1, &range) != VK_SUCCESS) goto cleanup;
+    const uint32_t *words = mapped;
+    for (uint32_t index = 0; index < 64; index++) {
+        if (words[index] != index * 13 + 7) {
+            fprintf(stderr, "ICD compute output word%u: got0x%08x, expected0x%08x\n",
+                index, words[index], index * 13 + 7);
+            goto cleanup;
+        }
+    }
+    result = 0;
+cleanup:
+    if (result) fprintf(stderr, "ICD compute acceptance failed: %s\n", stage);
+    if (submitted) (void)queue_wait_idle(queue);
+    if (fence) { destroy_fence(device, fence, NULL); fence = NULL; }
+    if (command_pool) { destroy_command_pool(device, command_pool, NULL); command_pool = NULL; }
+    if (pipeline) { destroy_pipeline(device, pipeline, NULL); pipeline = NULL; }
+    if (descriptor_pool) { destroy_descriptor_pool(device, descriptor_pool, NULL); descriptor_pool = NULL; }
+    if (pipeline_layout) { destroy_pipeline_layout(device, pipeline_layout, NULL); pipeline_layout = NULL; }
+    if (set_layout) { destroy_descriptor_set_layout(device, set_layout, NULL); set_layout = NULL; }
+    if (shader) { destroy_shader_module(device, shader, NULL); shader = NULL; }
+    if (mapped) { unmap_memory(device, allocation); mapped = NULL; }
+    if (buffer) { destroy_buffer(device, buffer, NULL); buffer = NULL; }
+    if (allocation) { free_memory(device, allocation, NULL); allocation = NULL; }
+    return result;
+}
+
 static int icd_cycles(venus_guest_t *guest) {
 #ifdef VgpuIcdLoader
     /* Host receiver is already initialized with its original driver environment. */
@@ -250,11 +475,13 @@ static int icd_cycles(venus_guest_t *guest) {
         uint32_t family_count = 64;
         VkQueueFamilyProperties families[64] = {0};
         queue_properties(devices[0], &family_count, families);
+        if (!family_count || family_count > 64) goto fail;
         uint32_t family = 0;
-        while (family < family_count && !families[family].queueCount)
+        while (family < family_count && (!families[family].queueCount ||
+            (selected_workload == ComputeWorkload &&
+             !(families[family].queueFlags & VK_QUEUE_COMPUTE_BIT))))
             family++;
-        if (!family_count || family_count > 64 || family == family_count)
-            goto fail;
+        if (family == family_count) goto fail;
         float priority = 0.5f;
         VkDeviceQueueCreateInfo queue_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
                                               .queueFamilyIndex = family,
@@ -321,7 +548,7 @@ static int icd_cycles(venus_guest_t *guest) {
         memory(devices[0], &supported_memory);
         if (!allocate || !release || !supported_memory.memoryTypeCount ||
             supported_memory.memoryTypeCount > VK_MAX_MEMORY_TYPES) goto fail;
-        if (selected_workload != ImageWorkload) {
+        if (selected_workload == FullWorkload || selected_workload == MappingWorkload) {
             PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)device_proc(device, "vkCreateBuffer");
             PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)device_proc(device, "vkDestroyBuffer");
             PFN_vkGetBufferMemoryRequirements requirements =
@@ -488,7 +715,7 @@ static int icd_cycles(venus_guest_t *guest) {
 
         }
 
-        if (selected_workload != MappingWorkload) {
+        if (selected_workload == FullWorkload || selected_workload == ImageWorkload) {
             /* Exercise actual receiver image and view ownership independently of
              * mapped transfer storage. Destruction must retire each dependency. */
             PFN_vkCreateImage create_image = (PFN_vkCreateImage)device_proc(device, "vkCreateImage");
@@ -601,6 +828,9 @@ static int icd_cycles(venus_guest_t *guest) {
             image_stage = "device teardown after image release";
 
         }
+
+        if (selected_workload == ComputeWorkload &&
+            compute_probe(device, queue, family, &supported_memory, device_proc)) goto fail;
 
         destroy_device(device, NULL);
         cleanup_device = NULL;
@@ -754,8 +984,9 @@ int main(void) {
     if (workload && strcmp(workload, "full")) {
         if (!strcmp(workload, "mapping")) selected_workload = MappingWorkload;
         else if (!strcmp(workload, "image")) selected_workload = ImageWorkload;
+        else if (!strcmp(workload, "compute")) selected_workload = ComputeWorkload;
         else {
-            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping or image\n", stderr);
+            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping, image or compute\n", stderr);
             return 2;
         }
     }
