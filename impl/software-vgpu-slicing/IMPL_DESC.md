@@ -3797,3 +3797,37 @@ queried uniform/storage alignment/range limits into private staged snapshots bef
 one command79 transaction. Snapshot publication follows acknowledgment; an invalid
 batch publishes nothing and sends no partial update. Buffer identities are validated
 again when used, so destruction cannot turn a copied descriptor into a reused token.
+
+### Direct graphics commands and tightly packed color readback
+
+`venus_graphics_command_wire.zig` serializes pinned core command135 render-pass
+end (16 bytes), command106 direct draw (32 bytes) and command116 image-to-buffer
+copy (48-byte prefix plus56 bytes per region). Every packet owns its8192-byte
+writer storage and allocates nothing. The caller resolves live host IDs and checks
+command recording state, render-pass/pipeline state, resource usage flags, bound
+memory and synchronization before invoking this pure serializer. Zero command or
+resource IDs are invalid. Draw accepts all four u32 scalar values, including0 and
+maximum values; vertex-range correctness belongs to the caller's resource/state
+validation rather than this scalar wire boundary. No input pointer is retained.
+
+Copy input is1..64 borrowed accessible VkBufferImageCopy records and resolved host
+image/buffer IDs. Caller verifies actual image format is RGBA8 or BGRA8 UNORM and
+supplies its actual mip0 width/height1..4096 and actual nonzero buffer size. Layout
+must be GENERAL or TRANSFER_SRC_OPTIMAL. Every record is exactly COLOR aspect,
+mip0, base layer0, layer count1 and depth1. bufferRowLength/bufferImageHeight must
+be0 (tight packing). x/y image offsets are nonnegative, z0; positive2D extents and
+widened offset+extent sums must fit the supplied image dimensions. bufferOffset
+must be4-byte aligned; checked subtraction proves width*height*4 bytes fit within
+the supplied buffer after that offset, without offset addition overflow. Distinct
+regions may target arbitrary in-bounds offsets; caller is responsible for Vulkan
+resource/state validity beyond this scalar profile.
+
+Complete validation precedes encoding. Since dimension validation bounds each
+accepted extent by4096, widened u64 pixel multiplication cannot overflow; each
+region has exactly56 bytes and the maximum packet is3632 bytes, below8192. Invalid
+IDs/counts/layout/metadata/regions return error.Invalid without a packet escaping.
+Functions are thread-safe with disjoint borrowed records and independent returned
+writers. Independent pinned generated C encoders compare end/draw scalar extremes
+and ordinary/maximum copy arrays. Negative tests cover individual subresource,
+offset, extent, alignment, destination bounds and metadata failure paths. This
+wire milestone gives no graphics rendering or DXVK acceptance credit.
