@@ -1788,7 +1788,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Native ABI result/error boundary and fixed object/ring
     capacity inspected; implementation and lifecycle/capacity tests pending.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): reserve all requested queues before native device creation`
+- **Commit `6cbe845`**: `feat(vgpu): reserve all requested queues before native device creation`
   - **Task Impact**: +0% to TODO: #3 (+0% overall).
   - **Summary**: Stage every requested queue identity and timeline ring before
     CreateDevice. Fully roll back partial local/known native failures; retain
@@ -1803,3 +1803,11 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     sanitized execution plus injected-failure cleanup pass; Windows fixture/DLL/
     loader cross-link passes. All eight CI checks on previous df4299b are green;
     latest-head checks still required. TODO #3 remains50%.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify idle polling across independent queue submissions`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Define idle metadata references, namespace/ID guards and mutex
+    release between complete GPU polls so another queue can signal pending work.
+    Preserve same-queue external synchronization and one-second whole deadline.
+  - **Verification**: Inspect current idle/submit transport ownership and native
+    external synchronization contract; thread regression/implementation pending.

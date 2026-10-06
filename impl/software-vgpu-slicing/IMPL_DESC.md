@@ -3426,3 +3426,39 @@ and verify already-created queues can still be retrieved when the registry is
 otherwise full. Adjust capacity tests to charge pre-reserved queues even before
 retrieval. Run native codec fixtures, allocation-free Zig coverage, sanitizers,
 Windows native ABI checks and actual worker/shared-loader lifecycle tests.
+
+### Idle polling permits signaling from another queue
+
+QueueWaitIdle externally synchronizes its queue, while another queue of the same
+device may validly submit a semaphore signal that the idle queue is waiting for.
+The process-wide transport mutex must therefore be released between GPU issue/
+poll rounds. DeviceWaitIdle externally synchronizes all of its device queues;
+it may also release the transport mutex so other devices can progress.
+
+Track a bounded active idle reference in device/queue metadata for each idle
+entry point. Keep the binding mutex during validation, each individual backend
+exchange and proof retirement. Release it before the one-millisecond polling
+pause, then reacquire before touching shared state or transport. QueueSubmit
+refuses a queue with an active queue idle or active parent device idle; such
+same-queue/same-device overlap already violates the native external-sync contract.
+DestroyDevice refuses active idle references even for an empty device, preventing
+queue/cache/ring reuse during a pending proof. Cleanup decrements exactly once
+while retaining the mutex. Native object IDs and the binding namespace guard
+reacquisition/cleanup; an improperly concurrent retired-backend abandon cannot
+cause stale pointer dereference, underflow or a null callback invocation.
+
+The monotonic whole-operation one-second deadline is unchanged. A successful
+proof retires matching queue tickets while still holding the mutex; same-queue
+submissions cannot slip past its fence. Only another queue/device's independent
+submission may interleave. The existing CPU command state machine remains sole
+threaded by the mutex; polling releases it only between complete exchanges.
+
+A native Linux/Windows thread regression holds one fake GPU timeline pending,
+starts QueueWaitIdle and waits for its issue callback. The main thread submits on
+another initialized queue; the accepted submission releases the pending fixture
+proof. Idle must return SUCCESS, not lose the device by blocking the signal for
+its deadline. The fixture's shared condition updates occur only in serialized
+exchange callbacks; an atomic issue marker synchronizes thread readiness. This
+is a mutex/concurrency regression, separate from the existing actual production
+worker GPU proofs. Run native fixture, Zig coverage, sanitizers, Windows ABI CI
+and real static/shared-loader worker lifecycle checks.
