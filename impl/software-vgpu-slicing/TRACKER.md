@@ -390,7 +390,9 @@ Each row preserves its atomic commit, task/overall delta and evidence. Historica
 | `46cd546` | feat(vgpu): implement authenticated sequential TCP client ownership; Implement and verify bounded authenticated TCP client with real peers, staging, alias/deadline/sequence/cancel and retirement checks. | #3/#11 +0%; overall +0%. | 31portable peer cases plus5Linux dependency faults,8cycles each;100%lines131/131,92.11%branches175/190; zero FD/native Win11 handle leaks; build/tcp_client_coverage.log, tcp_client_sanitizers.log, windows11_vm/tcp_client_peer_units_final.log; actual deployed SHA matches. |
 | `4768f82` | docs(vgpu): synchronize resumed prerequisite commit evidence; Attribute every previously omitted atomic commit and resumed agent increment without duplicating historical acceptance deltas. | #3/#10/#11 +0%; overall +0%. | Exact feature-history set audit from2cac52d through prior HEAD; TODO3 stays55%, #10 stays50%, #11 stays60%. |
 
-| current (resolve by subject) | docs(vgpu): specify side-effect-free Features2 topology preflight; Extract exact whole-publication validation before hardware query/cache effects, preserving current native Boolean and overlap rules. | #3 +0%; overall +0%. | Pure native adapter contract; no query/advertisement acceptance. |
+| `d6ca59f` | docs(vgpu): specify side-effect-free Features2 topology preflight; Extract exact whole-publication validation before hardware query/cache effects, preserving current native Boolean and overlap rules. | #3 +0%; overall +0%. | Pure native adapter contract; no query/advertisement acceptance. |
+
+| current (resolve by subject) | chore(vgpu): expose committed TCP gates through the main makefile; Include isolated TCP build/test targets in GNUmakefile. | #3/#11 +0%; overall +0%. | All eight wire/socket native, sanitizer, coverage and Windows crossbuild gates pass through main makefile; build/tcp_gnu_integration_gates.log. |
 
 ## Historical acceptance notes
 

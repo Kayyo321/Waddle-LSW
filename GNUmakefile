@@ -207,3 +207,5 @@ include scripts/vgpu.mk
 include scripts/vgpu_features.mk
 include scripts/vgpu_dxvk.mk
 include scripts/vgpu_workloads.mk
+
+include scripts/vgpu_tcp.mk
