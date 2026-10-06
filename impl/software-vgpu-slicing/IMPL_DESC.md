@@ -123,7 +123,8 @@ that operation may finish. Lifecycle owners must join workers before unmapping.
 ## 5. Concurrency, Threading & Synchronization
 - **Lock-Free Queue**: The Venus command ring buffer operates as a lock-free Single-Producer Single-Consumer (SPSC) queue.
 - **Atomic Operations**: `atomic_thread_fence` with C11 `memory_order_release` and `memory_order_acquire` ensure cross-boundary memory visibility.
-- **Host Threading**: The host receiver uses dedicated threads per guest Venus context to maximize throughput and minimize latency for bare-metal performance.
+- **Host Threading**: Each isolated context worker has one session thread and
+  upstream fence callbacks; the bounded controller owns worker process lifetimes.
 
 ## 6. Error Handling & Failure Modes
 - **Buffer Overflow**: If the Venus ring buffer is full, the guest ICD must block and wait.
@@ -1072,7 +1073,7 @@ and multi-context APIs remain separate later gates.
 
 Transport readiness and Venus compatibility are separate states. A new RPC is
 unnegotiated. Capabilities (operation 1) and Negotiate (operation 11) alone are
-accepted before negotiation. All other valid operations are drained normally and
+accepted before negotiation. Within the scratch limit, other valid operations are drained normally and
 return RequestInvalid without calling the renderer. Negotiate has exactly 160
 payload bytes and zero resource/flags/arguments. Its success response has no
 payload/arguments. The guest sends its supported pinned profile, encoded in the
@@ -1102,7 +1103,7 @@ line/branch coverage and sanitizer/allocator/native Windows codec/runtime gates.
 venus_context_manager_t is a caller-owned fixed array of eight worker slots,
 configured by a trusted host count (1..8) and aggregate mapping byte ceiling
 (4096..8GiB). init/free are symmetric; it allocates no heap. Each slot retains a
-worker, a duplicate CLOEXEC mapping fd and the stat device/inode/size identity.
+worker, a duplicate CLOEXEC mapping fd and the stat device/inode/size identity and validated ring capacity/offsets.
 Only the controller thread mutates the manager. Context IDs are monotonic nonzero
 u64 handles allocated by the controller; never native renderer IDs or guest
 pointers. Freed handles never address a reused slot; wrap exhaustion returns
@@ -1123,7 +1124,7 @@ copy after launch. Shared storage must remain fixed-size until worker release.
 The guest owns its peer and separate mapping view. No shared renderer global is
 called by the controller; worker processes execute simultaneously.
 
-poll accepts only a live handle. Exit closes both validated ring views via a
+poll accepts only a live handle. Exit closes both rings at creation-time snapshotted offsets via a
 short-lived mmap after the worker and descendants are reaped, then refunds the
 mapping budget, closes the retained fd, and clears the slot. Crash status is
 terminal RingClosed; callers can start a fresh context and mapping afterwards.
@@ -1131,7 +1132,7 @@ destroy requests the existing bounded TERM/KILL shutdown for one context; timeou
 or OS failure retains its slot/budget/fd for retry. Successful destroy closes rings
 and refunds resources. free visits every occupied slot and returns the first
 failure, retaining only failed ownership; no unreaped worker is abandoned. The
-manager becomes zero only when all ownership is released. Ring closure mapping
+manager becomes zero only when all ownership is released. Peer metadata changes never select a teardown address. Ring closure mapping
 failure returns RingCorrupt after joined resources are released; original caller
 views must still be closed by their lifecycle owner. Other contexts are untouched.
 Each destroy has its own 1..60000ms budget, so free may take count times that budget.
@@ -1144,3 +1145,8 @@ shutdown and zero leaked allocations/descriptors under ASan/LSan/UBSan. Physical
 hypervisor/Windows driver integration remains the previously delegated user gate;
 Task #2 acceptance uses independent Linux mapped/UNIX guests and native Windows
 portable fixtures. Graphics presentation and OpenCL remain Tasks #4/#5.
+
+
+The 20% multi-context milestone is split into 10% for the verified bounded native
+controller API/ownership/fault coverage, and 10% for simultaneous real worker
+execution, independent resource/reply identity and crash/restart stress in CI.

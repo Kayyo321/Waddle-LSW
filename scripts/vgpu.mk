@@ -343,3 +343,19 @@ build/vgpu_capabilities_test.exe: tests/vgpu/capabilities.c include/waddle/venus
 vgpu-windows: build/vgpu_capabilities_test.exe
 
 build/vgpu_capabilities_test build/vgpu_capabilities_test.exe: include/waddle/venus_ring.h
+
+# Bounded process-per-context routing; no renderer singleton in the controller.
+build/vgpu_context_test: tests/vgpu/context.c src/vgpu/venus_context.c include/waddle/venus_context.h build/venus_bounds.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/vgpu tests/vgpu/context.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_bounds.o -o $@
+
+.PHONY: vgpu-context-test vgpu-context-sanitizers vgpu-context-coverage
+vgpu-context-test: build/vgpu_context_test
+	./build/vgpu_context_test
+
+vgpu-context-sanitizers: build/venus_bounds.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) -Isrc/vgpu tests/vgpu/context.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_bounds.o -o build/vgpu_context_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_context_sanitized
+
+vgpu-context-coverage: build/venus_bounds.o
+	python3 tests/vgpu/coverage.py context
+

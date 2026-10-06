@@ -12,13 +12,13 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
-| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 70% | Capability decoding passed Linux/native Windows CI; negotiated policy and isolated multi-context runtime remain |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | In Progress | 20% | 80% | Bounded isolated context ownership verified locally; negotiation native CI and simultaneous worker CI remain |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Pending | 25% | 0% | Requires DXVK integration testing |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Pending | 15% | 0% | - |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 
-**Total Feature Completion**: `34.0%`
+**Total Feature Completion**: `36.0%`
 
 ## Commit History & Progress Log
 
@@ -581,7 +581,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     No credit yet for negotiation or context manager implementation.
 
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): gate receiver dispatch on pinned negotiation`
+- **Commit `35076e2`**: `feat(vgpu): gate receiver dispatch on pinned negotiation`
   - **Task Impact**: +0% to TODO: #2 (+0% overall); 10% negotiation gate awaits native CI.
   - **Summary**: Add bounded operation-11 guest profile declaration, pinned host
     compatibility checks, pre-negotiation SDK rejection and private session state.
@@ -590,3 +590,16 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     ASan/LSan/UBSan and Zig allocator checks pass. Request codec production
     coverage exceeds 90%; dispatch lines 99.10%, branches 93.94%; RPC coverage
     passes. Windows request/runtime cross-link passes; native CI follows.
+
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): bound isolated context lifetimes and mapping budgets`
+  - **Task Impact**: +10% to TODO: #2 (+2.0% overall) for bounded controller ownership.
+  - **Summary**: Add eight-slot process-isolated controller, monotonic nonreused
+    handles, aggregate mapping/count budgets, duplicate backing rejection,
+    retained CLOEXEC fd ownership, bounded individual shutdown and failure retry.
+    Teardown uses validated creation-time offsets even after peer metadata changes.
+  - **Verification**: Native Linux fixtures exercise all acquisition/shutdown
+    failures, per-slot budget refunds and 128 churn cycles under ASan/LSan/UBSan.
+    Production C line coverage 100%, branch coverage 96.61%. Existing worker
+    process-launch and recovery fixtures remain separately gated. Simultaneous
+    renderer execution is the next distinct 10% acceptance gate.

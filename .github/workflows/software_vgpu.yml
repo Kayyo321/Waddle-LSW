@@ -48,6 +48,8 @@ jobs:
         run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify isolated receiver process ownership
         run: make vgpu-worker-test vgpu-worker-sanitizers vgpu-worker-coverage
+      - name: Verify bounded isolated context ownership
+        run: make vgpu-context-test vgpu-context-sanitizers vgpu-context-coverage
       - name: Verify isolated receiver service acquisition and cleanup
         run: make vgpu-service-test vgpu-service-sanitizers vgpu-service-coverage
       - name: Verify bounded receiver runtime and failure paths
