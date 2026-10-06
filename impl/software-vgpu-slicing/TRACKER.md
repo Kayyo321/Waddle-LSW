@@ -2371,6 +2371,18 @@ This synchronization commit is identified by subject `docs(vgpu): audit physical
   - **Task Impact**: +20% to prerequisite #11 (+0% overall); actual medium-integrity guest discovery passed. +0% to TODO: #3 and prerequisite #10.
   - **Summary**: Actual installed Windows11 build26300.9457 ran unmodified pinned loader against the private ICD with eight loader lifecycles and128 ICD dispatch cycles; all six deployed hashes match isolated source1584200. Evidence build/windows11_vm/windows_loader_discovery.log and windows_loader_deployment.json. This verifies native discovery with an owned mock callback, not real GPU/DXVK. CI37542450701 and37542446871: Windows passed, Linux native full16 passed, first sanitized production lifetime still leaked128B through an unloaded unknown driver; standalone repaired RADV gate passed. Retain #10 at50% pending exact loader-map diagnostics and clean full production CI.
 
-- **Commit (this entry, resolved by subject)**: `feat(vgpu): record acknowledged vertexless draws with pending ownership`
+- **Commit `267474e`**: `feat(vgpu): record acknowledged vertexless draws with pending ownership`
   - **Task Impact**: +0% to TODO: #3 (+0% overall); real triangle pixels and DXVK acceptance remain pending.
   - **Summary**: Require an active compatible pass and live compiled graphics pipeline before draw106. Exact acknowledgment precedes pipeline-reference publication. Independently generated native packets exercise ordinary and zero-count/full-u32 draws, binding before/inside a pass, retired creating shaders/layout/pass, and pending protection of pipeline/pass/framebuffer/view/image/memory/pool until queue idle. Corrupt/transport acknowledgment tests preserve references and active state. Native/shared128 lifecycles, ASan/LSan/UBSan, Windows object compilation and74 Zig tests pass; production branch90.04% (2024/2248), line99.03% (2343/2366).
+
+- **Commit `399e7e9`**: `feat(vgpu): adapt native feature chains with transactional publication`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall); actual feature query/cache/device enablement remain pending.
+  - **Summary**: Collect at most64 aligned native headers and eight distinct recognized tags without touching unknown payloads. Prevalidate whole Boolean batches and disjoint output extents before named-member writes. All25 native and freshly instrumented oracle sanitizer tests pass; Windows executable crosscompiles.
+
+- **Commit `2e7833a`**: `fix(vgpu): exclude native feature fixtures from production coverage`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Add explicit test-only boundary before native adapter helper functions. Correct production-only coverage97.96% branches(48/49),95.74% lines(45/47);25 tests pass.
+
+- **Commit (this entry, resolved by subject)**: `docs(vgpu): record bounded native feature adapter verification`
+  - **Task Impact**: +0% to TODO: #3 (+0% overall).
+  - **Summary**: Record native/Windows exact storage ledger, overlap ownership preconditions, structured Boolean ABI assertions and corrected production-only sanitizer/coverage evidence. No hardware feature or API advertisement credit.
