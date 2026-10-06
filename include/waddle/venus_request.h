@@ -15,8 +15,8 @@ typedef enum venus_request_kind_t {
     RequestReply = 3,        /**< Copy completed CPU reply range. */
     RequestCreate = 4,       /**< Register bounded CPU SHM or existing device memory. */
     RequestFree = 5,         /**< Free registered resource after references end. */
-    RequestRead = 6,         /**< Copy completed CPU SHM into response payload. */
-    RequestWrite = 7,        /**< Copy request payload into CPU SHM. */
+    RequestRead = 6,         /**< Copy synchronized mapped storage into response payload. */
+    RequestWrite = 7,        /**< Copy request payload into synchronized mapped storage. */
     RequestPoll = 8,         /**< Acquire latest CPU submission completion. */
     RequestGpuFence = 9,     /**< Fence an existing GPU queue, returns GPU identity. */
     RequestGpuPoll = 10,     /**< Acquire an explicitly issued GPU fence retirement. */

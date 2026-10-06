@@ -341,7 +341,7 @@ static venus_ring_status_t copy_resource(venus_receiver_t *receiver, uint32_t id
     if (result != RingOk)
         return result;
     venus_receiver_resource_t *resource = find_resource(receiver, id);
-    if (!resource || resource->blob_id != 0 || (writing ? !input : !output) ||
+    if (!resource || !(resource->flags & ResourceMap) || (writing ? !input : !output) ||
         !venus_receiver_resource_range(resource->bytes, offset, length))
         return RingInvalid;
     if (!resource->mapped) {
@@ -349,7 +349,8 @@ static venus_ring_status_t copy_resource(venus_receiver_t *receiver, uint32_t id
         if (virgl_renderer_resource_map(id, &resource->memory, &bytes) != 0)
             return poison_receiver(receiver);
         resource->mapped = 1;
-        if (!resource->memory || bytes != resource->bytes)
+        if (!resource->memory || bytes < resource->bytes ||
+            (!resource->blob_id && bytes != resource->bytes))
             return poison_receiver(receiver);
     }
     return writing

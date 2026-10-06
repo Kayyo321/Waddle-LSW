@@ -118,25 +118,27 @@ venus_ring_status_t venus_receiver_resource_create(venus_receiver_t *receiver, u
  * any Venus ring/object referencing it first; no GPU queue completion is inferred.
  */
 venus_ring_status_t venus_receiver_resource_free(venus_receiver_t *receiver, uint32_t resource_id);
-/** @brief Read a CPU SHM resource into private caller output after CPU completion.
+/** @brief Read mapped resource storage into private caller output after CPU completion.
  * @param[in,out] receiver Nonnull live session-thread-owned record; lazy map owned.
- * @param[in] resource_id Live CPU SHM ID, 2..65; device-memory copy unsupported.
+ * @param[in] resource_id Live ResourceMap ID, 2..65; CPU SHM or host-coherent device memory.
  * @param[in] offset Byte offset within declared extent.
  * @param[out] output Nonnull disjoint private output[length], unchanged on failure.
  * @param[in] length Nonzero bytes, must fit extent after offset.
  * @return RingOk, RingInvalid, poll status, or RingCorrupt for poisoned SDK map.
  * @note Zig validates bounds before mapping/copy; no native pointer escapes.
+ * Caller must retire GPU use and ensure device memory is host coherent.
  */
 venus_ring_status_t venus_receiver_resource_read(venus_receiver_t *receiver, uint32_t resource_id,
                                                  uint64_t offset, void *output, size_t length);
-/** @brief Write private caller input into a CPU SHM resource after CPU completion.
+/** @brief Write private caller input into mapped resource storage after CPU completion.
  * @param[in,out] receiver Nonnull live session-thread-owned record; lazy map owned.
- * @param[in] resource_id Live CPU SHM ID, 2..65; device-memory copy unsupported.
+ * @param[in] resource_id Live ResourceMap ID, 2..65; CPU SHM or host-coherent device memory.
  * @param[in] offset Byte offset within declared extent.
  * @param[in] input Nonnull immutable disjoint private input[length].
  * @param[in] length Nonzero bytes, must fit extent after offset.
  * @return RingOk, RingInvalid, poll status, or RingCorrupt for poisoned SDK map.
  * @note No native pointer escapes; borrowed input retained only for this call.
+ * Caller must retire GPU use and ensure device memory is host coherent.
  */
 venus_ring_status_t venus_receiver_resource_write(venus_receiver_t *receiver, uint32_t resource_id,
                                                   uint64_t offset, const void *input,

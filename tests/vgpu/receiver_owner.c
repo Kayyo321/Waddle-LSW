@@ -44,6 +44,7 @@ static _Alignas(64) uint8_t reply_memory[4096];
 static int additional_live[VenusReceiverMaxResources];
 static void *additional_maps[VenusReceiverMaxResources];
 static uint64_t additional_bytes[VenusReceiverMaxResources];
+static uint64_t additional_map_bytes[VenusReceiverMaxResources];
 
 static void *fixture_calloc(size_t count, size_t bytes) {
     if (fault == 1)
@@ -139,13 +140,14 @@ static int fixture_map(uint32_t resource, void **pointer, uint64_t *bytes) {
         assert(slot < VenusReceiverMaxResources && additional_live[slot] && !additional_maps[slot]);
         if (fault == 15)
             return -1;
-        void *memory = mmap(NULL, (size_t)additional_bytes[slot], PROT_READ | PROT_WRITE,
+        additional_map_bytes[slot] = additional_bytes[slot] + (fault == 19 ? 4096 : 0);
+        void *memory = mmap(NULL, (size_t)additional_map_bytes[slot], PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         assert(memory != MAP_FAILED);
         additional_maps[slot] = memory;
         active_map++;
         *pointer = fault == 16 ? NULL : memory;
-        *bytes = fault == 17 ? 1 : additional_bytes[slot];
+        *bytes = fault == 17 ? 1 : additional_map_bytes[slot];
         return 0;
     }
     assert(active_resource && resource == 1 && !active_map);
@@ -162,7 +164,7 @@ static int fixture_unmap(uint32_t resource) {
         assert(additional_live[slot] && additional_maps[slot]);
         if (fault == 18)
             return -1;
-        assert(munmap(additional_maps[slot], (size_t)additional_bytes[slot]) == 0);
+        assert(munmap(additional_maps[slot], (size_t)additional_map_bytes[slot]) == 0);
         additional_maps[slot] = NULL;
         active_map--;
         return 0;
@@ -187,6 +189,7 @@ static void fixture_unref(uint32_t resource) {
         }
         additional_live[slot] = 0;
         additional_bytes[slot] = 0;
+        additional_map_bytes[slot] = 0;
         active_resource--;
         return;
     }
@@ -359,6 +362,19 @@ static void test_resources(void) {
                                           ResourceShare | ResourceCrossDevice) == RingOk);
     assert(venus_receiver_resource_read(receiver, 2, 0, output, sizeof(output)) == RingInvalid);
     assert(venus_receiver_resource_free(receiver, 2) == RingOk);
+    /* Actual nonzero memory blobs use the same bounded mapped copy ownership. */
+    assert(venus_receiver_resource_create(receiver, 2, 44, 4096, ResourceMap) == RingOk);
+    assert(venus_receiver_resource_write(receiver, 2, 4092, Input, sizeof(Input)) == RingOk);
+    assert(venus_receiver_resource_read(receiver, 2, 4092, output, sizeof(Input)) == RingOk);
+    assert(memcmp(output, Input, sizeof(Input)) == 0);
+    assert(venus_receiver_resource_read(receiver, 2, 4096, output, 1) == RingInvalid);
+    assert(venus_receiver_resource_free(receiver, 2) == RingOk);
+    fault = 19; /* SDK device mapping may include inaccessible-to-guest padding. */
+    assert(venus_receiver_resource_create(receiver, 2, 45, 4096, ResourceMap) == RingOk);
+    assert(venus_receiver_resource_read(receiver, 2, 4092, output, 4) == RingOk);
+    assert(venus_receiver_resource_write(receiver, 2, 4096, Input, 1) == RingInvalid);
+    assert(venus_receiver_resource_free(receiver, 2) == RingOk);
+    fault = 0;
     assert(venus_receiver_resource_limits(receiver, 64, VenusReceiverDefaultResourceBytes) ==
            RingOk);
     for (uint32_t id = 2; id <= 65; id++)
@@ -389,6 +405,12 @@ static void test_resources(void) {
         venus_receiver_destroy(&receiver);
         no_resources();
     }
+    create(&receiver);
+    fault = 19; /* CPU SHM retains its exact declared extent contract. */
+    assert(venus_receiver_resource_create(receiver, 2, 0, 4096, ResourceMap) == RingOk);
+    assert(venus_receiver_resource_read(receiver, 2, 0, output, sizeof(output)) == RingCorrupt);
+    venus_receiver_destroy(&receiver);
+    no_resources();
     create(&receiver);
     assert(venus_receiver_resource_create(receiver, 2, 0, 4096, ResourceMap) == RingOk);
     assert(venus_receiver_resource_read(receiver, 2, 0, output, sizeof(output)) == RingOk);
