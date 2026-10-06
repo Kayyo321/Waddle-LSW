@@ -16,6 +16,7 @@
 #include "vn_protocol_driver_pipeline.h"
 #include "vn_protocol_driver_image_view.h"
 #include "vn_protocol_driver_render_pass.h"
+#include "vn_protocol_driver_framebuffer.h"
 #include "vn_protocol_driver_device.h"
 #include "vn_protocol_driver_command_buffer.h"
 #include "vn_protocol_driver_command_pool.h"
@@ -104,6 +105,7 @@ typedef struct fixture_t {
     const VkDeviceCreateInfo *device_info;
     const VkBufferCreateInfo *buffer_info;
     const VkRenderPassCreateInfo *render_pass_info;
+    const VkFramebufferCreateInfo *framebuffer_info;
     const VkImageCreateInfo *image_info;
     const VkImageViewCreateInfo *view_info;
     const VkShaderModuleCreateInfo *shader_info;
@@ -622,6 +624,24 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 (VkDescriptorSetLayout)(uintptr_t)read_u64(bytes + 16), NULL);
             else vn_encode_vkDestroyPipelineLayout(&encoder, 1, device,
                 (VkPipelineLayout)(uintptr_t)read_u64(bytes + 16), NULL);
+            assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 80 || fixture->command == 81) {
+            unsigned char expected[8192];
+            struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
+            VkDevice device = (VkDevice)(uintptr_t)read_u64(bytes + 8);
+            if (fixture->command == 80) {
+                assert(fixture->framebuffer_info && length == 36 + 104);
+                VkFramebufferCreateInfo info = *fixture->framebuffer_info;
+                info.renderPass = (VkRenderPass)(uintptr_t)read_u64(bytes + 40);
+                VkImageView view = (VkImageView)(uintptr_t)read_u64(bytes + 60);
+                info.pAttachments = &view;
+                VkFramebuffer framebuffer = (VkFramebuffer)(uintptr_t)read_u64(bytes + 96);
+                vn_encode_vkCreateFramebuffer(&encoder, 1, device, &info, NULL, &framebuffer);
+                put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
+                put_u64(fixture->reply + 8, 1);
+                put_u64(fixture->reply + 16, (uintptr_t)framebuffer);
+            } else vn_encode_vkDestroyFramebuffer(&encoder, 1, device,
+                (VkFramebuffer)(uintptr_t)read_u64(bytes + 16), NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 82 || fixture->command == 83) {
             unsigned char expected[8192];
@@ -2284,6 +2304,298 @@ static void render_pass_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup
     fixture->render_pass_info = NULL;
 }
 
+/** @brief Framebuffer frontend identity/bounds/lifecycle contract.
+ * @param[in] device Live borrowed device; lookup immutable device resolver.
+ * @param[in,out] fixture Sole-thread fake backend, borrows create infos only for calls.
+ * @note All successfully created identities are explicitly retired; no heap storage.
+ */
+static void framebuffer_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
+                                 fixture_t *fixture) {
+    PFN_vkCreateRenderPass create_pass =
+        (PFN_vkCreateRenderPass)lookup(device, "vkCreateRenderPass");
+    PFN_vkDestroyRenderPass destroy_pass =
+        (PFN_vkDestroyRenderPass)lookup(device, "vkDestroyRenderPass");
+    PFN_vkCreateFramebuffer create_fb =
+        (PFN_vkCreateFramebuffer)lookup(device, "vkCreateFramebuffer");
+    PFN_vkDestroyFramebuffer destroy_fb =
+        (PFN_vkDestroyFramebuffer)lookup(device, "vkDestroyFramebuffer");
+    PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
+    PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
+    PFN_vkGetImageMemoryRequirements requirements =
+        (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");
+    PFN_vkAllocateMemory allocate = (PFN_vkAllocateMemory)lookup(device, "vkAllocateMemory");
+    PFN_vkFreeMemory free_memory = (PFN_vkFreeMemory)lookup(device, "vkFreeMemory");
+    PFN_vkBindImageMemory bind = (PFN_vkBindImageMemory)lookup(device, "vkBindImageMemory");
+    PFN_vkCreateImageView create_view = (PFN_vkCreateImageView)lookup(device, "vkCreateImageView");
+    PFN_vkDestroyImageView destroy_view =
+        (PFN_vkDestroyImageView)lookup(device, "vkDestroyImageView");
+    assert(create_fb && destroy_fb);
+    VkAttachmentDescription attachment = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+                                          .samples = VK_SAMPLE_COUNT_1_BIT,
+                                          .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                                          .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                          .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                          .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                                          .finalLayout = VK_IMAGE_LAYOUT_GENERAL};
+    VkAttachmentReference color = {.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    .colorAttachmentCount = 1,
+                                    .pColorAttachments = &color};
+    VkRenderPassCreateInfo pass_info = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+                                        .attachmentCount = 1,
+                                        .pAttachments = &attachment,
+                                        .subpassCount = 1,
+                                        .pSubpasses = &subpass};
+    fixture->render_pass_info = &pass_info;
+    VkRenderPass pass, other_pass;
+    assert(create_pass(device, &pass_info, NULL, &pass) == VK_SUCCESS);
+    attachment.format = VK_FORMAT_B8G8R8A8_UNORM;
+    assert(create_pass(device, &pass_info, NULL, &other_pass) == VK_SUCCESS);
+    attachment.format = VK_FORMAT_R8G8B8A8_UNORM;
+    VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                    .imageType = VK_IMAGE_TYPE_2D,
+                                    .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                    .extent = {64, 64, 1},
+                                    .mipLevels = 2,
+                                    .arrayLayers = 2,
+                                    .samples = VK_SAMPLE_COUNT_1_BIT,
+                                    .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                             VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
+    fixture->image_info = &image_info;
+    VkImage image;
+    assert(create_image(device, &image_info, NULL, &image) == VK_SUCCESS);
+    VkMemoryRequirements memory_requirements = {0};
+    requirements(device, image, &memory_requirements);
+    assert(memory_requirements.size);
+    VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                        .allocationSize = memory_requirements.size};
+    fixture->memory_info = &memory_info;
+    VkDeviceMemory memory;
+    assert(allocate(device, &memory_info, NULL, &memory) == VK_SUCCESS);
+    assert(bind(device, image, memory, 0) == VK_SUCCESS);
+    VkImageViewCreateInfo view_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                       .image = image,
+                                       .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                                       .format = VK_FORMAT_R8G8B8A8_UNORM,
+                                       .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}};
+    fixture->view_info = &view_info;
+    VkImageView view;
+    assert(create_view(device, &view_info, NULL, &view) == VK_SUCCESS);
+    VkFramebufferCreateInfo info = {.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+                                    .renderPass = pass,
+                                    .attachmentCount = 1,
+                                    .pAttachments = &view,
+                                    .width = 64,
+                                    .height = 64,
+                                    .layers = 1};
+    fixture->framebuffer_info = &info;
+    VkFramebuffer framebuffer = (VkFramebuffer)(uintptr_t)42;
+    unsigned before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(create_fb(NULL, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(create_fb((VkDevice)(uintptr_t)1, &info, NULL, &framebuffer) ==
+               VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(create_fb(device, NULL, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    info.pNext = (void *)(uintptr_t)1;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.pNext = NULL;
+    info.flags = 1;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.flags = 0;
+    info.attachmentCount = 0;
+    info.pAttachments = (void *)(uintptr_t)1;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.attachmentCount = 2;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.attachmentCount = 1;
+    info.pAttachments = NULL;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.pAttachments = &view;
+    info.renderPass = NULL;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.renderPass = other_pass;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    info.renderPass = pass;
+    for (unsigned index = 0; index < 6; ++index) {
+        info.width = index == 0 ? 0 : index == 1 ? 65 : 64;
+        info.height = index == 2 ? 0 : index == 3 ? 65 : 64;
+        info.layers = index == 4 ? 0 : index == 5 ? 2 : 1;
+        assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+               !framebuffer);
+    }
+    info.width = 64;
+    info.height = 64;
+    info.layers = 1;
+    assert(fixture->submissions == before);
+    fixture->create_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_OUT_OF_DEVICE_MEMORY &&
+           !framebuffer);
+    fixture->create_result = VK_SUCCESS;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_SUCCESS && framebuffer);
+    before = fixture->submissions;
+    destroy_fb(NULL, framebuffer, NULL);
+    destroy_fb(device, NULL, NULL);
+    destroy_fb(device, (VkFramebuffer)(uintptr_t)1, NULL);
+    assert(fixture->submissions == before);
+    destroy_fb(device, framebuffer, NULL);
+    assert(fixture->submissions == before + 1 && fixture->command == 81);
+    destroy_fb(device, framebuffer, NULL);
+    assert(fixture->submissions == before + 1);
+    /* Bounds must use the selected mip, not the base image extent. */
+    view_info.subresourceRange.baseMipLevel = 1;
+    VkImageView mip_view;
+    assert(create_view(device, &view_info, NULL, &mip_view) == VK_SUCCESS);
+    info.pAttachments = &mip_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    info.width = 32;
+    info.height = 32;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_SUCCESS);
+    destroy_fb(device, framebuffer, NULL);
+    destroy_view(device, mip_view, NULL);
+    view_info.subresourceRange.baseMipLevel = 0;
+    view_info.components.r = VK_COMPONENT_SWIZZLE_B;
+    VkImageView swizzle_view;
+    assert(create_view(device, &view_info, NULL, &swizzle_view) == VK_SUCCESS);
+    info.pAttachments = &swizzle_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    destroy_view(device, swizzle_view, NULL);
+    /* Reject views spanning multiple native mip/layer attachments. */
+    view_info.components = (VkComponentMapping){0};
+    view_info.subresourceRange.levelCount = 2;
+    VkImageView wide_view;
+    assert(create_view(device, &view_info, NULL, &wide_view) == VK_SUCCESS);
+    info.pAttachments = &wide_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    destroy_view(device, wide_view, NULL);
+    view_info.subresourceRange.levelCount = 1;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    view_info.subresourceRange.layerCount = 2;
+    assert(create_view(device, &view_info, NULL, &wide_view) == VK_SUCCESS);
+    info.pAttachments = &wide_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    destroy_view(device, wide_view, NULL);
+    /* Remaining counts resolve to exactly one mip/layer at the final subresource. */
+    view_info.subresourceRange = (VkImageSubresourceRange){
+        VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_REMAINING_MIP_LEVELS, 1, VK_REMAINING_ARRAY_LAYERS};
+    view_info.components = (VkComponentMapping){VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G,
+                                                VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
+    assert(create_view(device, &view_info, NULL, &wide_view) == VK_SUCCESS);
+    info.pAttachments = &wide_view;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_SUCCESS);
+    destroy_fb(device, framebuffer, NULL);
+    destroy_view(device, wide_view, NULL);
+    /* A stale attachment rejects independently of a live creating render pass. */
+    info.pAttachments = &wide_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    VkImageView absent_view = NULL;
+    info.pAttachments = &absent_view;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    /* A bound image without COLOR_ATTACHMENT usage cannot back a framebuffer. */
+    image_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VkImage transfer_image;
+    assert(create_image(device, &image_info, NULL, &transfer_image) == VK_SUCCESS);
+    assert(bind(device, transfer_image, memory, 0) == VK_SUCCESS);
+    view_info.image = transfer_image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.components = (VkComponentMapping){0};
+    view_info.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    assert(create_view(device, &view_info, NULL, &wide_view) == VK_SUCCESS);
+    info.pAttachments = &wide_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    destroy_view(device, wide_view, NULL);
+    destroy_image(device, transfer_image, NULL);
+    image_info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    view_info.image = image;
+    image_info.mipLevels = 1;
+    image_info.arrayLayers = 1;
+    image_info.samples = VK_SAMPLE_COUNT_4_BIT;
+    assert(create_image(device, &image_info, NULL, &transfer_image) == VK_SUCCESS);
+    assert(bind(device, transfer_image, memory, 0) == VK_SUCCESS);
+    view_info.image = transfer_image;
+    assert(create_view(device, &view_info, NULL, &wide_view) == VK_SUCCESS);
+    info.pAttachments = &wide_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    destroy_view(device, wide_view, NULL);
+    destroy_image(device, transfer_image, NULL);
+    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+    image_info.imageType = VK_IMAGE_TYPE_1D;
+    image_info.extent.height = 1;
+    assert(create_image(device, &image_info, NULL, &transfer_image) == VK_SUCCESS);
+    assert(bind(device, transfer_image, memory, 0) == VK_SUCCESS);
+    view_info.image = transfer_image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_1D;
+    assert(create_view(device, &view_info, NULL, &wide_view) == VK_SUCCESS);
+    info.pAttachments = &wide_view;
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_ERROR_INITIALIZATION_FAILED &&
+           !framebuffer);
+    assert(fixture->submissions == before);
+    destroy_view(device, wide_view, NULL);
+    destroy_image(device, transfer_image, NULL);
+    image_info.imageType = VK_IMAGE_TYPE_2D;
+    image_info.extent.height = 64;
+    image_info.mipLevels = 2;
+    image_info.arrayLayers = 2;
+    view_info.image = image;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    info.pAttachments = &view;
+    info.width = 64;
+    info.height = 64;
+    assert(create_fb(device, &info, NULL, &framebuffer) == VK_SUCCESS);
+    /* FB copies pass compatibility; quiescent view destruction is legal. */
+    destroy_pass(device, pass, NULL);
+    destroy_view(device, view, NULL);
+    before = fixture->submissions;
+    assert(create_fb(device, &info, NULL, &(VkFramebuffer){0}) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(fixture->submissions == before);
+    destroy_fb(device, framebuffer, NULL);
+    destroy_pass(device, other_pass, NULL);
+    destroy_image(device, image, NULL);
+    free_memory(device, memory, NULL);
+    fixture->render_pass_info = NULL;
+    fixture->framebuffer_info = NULL;
+    fixture->image_info = NULL;
+    fixture->view_info = NULL;
+    fixture->memory_info = NULL;
+}
+
 static void image_contract(void) {
     for (unsigned scenario = 0; scenario < 8; scenario++) {
         fixture_t fixture = fresh();
@@ -2301,7 +2613,7 @@ static void image_contract(void) {
         VkDevice device = NULL;
         assert(((PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice"))(physical[0], &device_info, NULL, &device) == VK_SUCCESS);
         PFN_vkGetDeviceProcAddr lookup = (PFN_vkGetDeviceProcAddr)lookup_external(instance, "vkGetDeviceProcAddr");
-        if (scenario == 0) { render_pass_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
+        if (scenario == 0) { render_pass_contract(device, lookup, &fixture); framebuffer_contract(device, lookup, &fixture); shader_contract(device, lookup, &fixture); descriptor_lifecycle_contract(device, lookup, &fixture); layout_contract(device, lookup, &fixture); compute_pipeline_contract(device, lookup, &fixture); }
         PFN_vkCreateImage create_image = (PFN_vkCreateImage)lookup(device, "vkCreateImage");
         PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)lookup(device, "vkDestroyImage");
         PFN_vkGetImageMemoryRequirements requirements = (PFN_vkGetImageMemoryRequirements)lookup(device, "vkGetImageMemoryRequirements");

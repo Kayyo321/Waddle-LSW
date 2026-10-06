@@ -71,6 +71,13 @@ const resource_state_t = struct {
     render_format: u32 = 0,
     render_initial_layout: u32 = 0,
     render_final_layout: u32 = 0,
+    framebuffer_view: u64 = 0,
+    framebuffer_extent: [2]u32 = .{ 0, 0 },
+    image_extent: [3]u32 = .{ 0, 0, 0 },
+    image_samples: u32 = 0,
+    view_type: u32 = 0,
+    view_range: c.VkImageSubresourceRange = std.mem.zeroes(c.VkImageSubresourceRange),
+    view_components: c.VkComponentMapping = std.mem.zeroes(c.VkComponentMapping),
     image_levels: u32 = 0,
     image_layers: u32 = 0,
     image_format: u32 = 0,
@@ -1480,6 +1487,66 @@ fn destroy_render_pass(device: c.VkDevice, pass: c.VkRenderPass, allocator: [*c]
     destroy_render_resource(device, if (pass) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_RENDER_PASS, 83);
 }
 
+fn framebuffer_attachment(view: *const c.venus_object_t, width: u32, height: u32, format: u32) bool {
+    const state = resource_state(view);
+    const image = child_object(state.view_image, c.VK_OBJECT_TYPE_IMAGE, view.parent_id) orelse return false;
+    const image_state = resource_state(image);
+    if (image_state.bound_memory == 0 or image_state.image_type != c.VK_IMAGE_TYPE_2D or
+        image_state.image_samples != 1 or image_state.image_format != format or
+        image_state.image_usage & c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT == 0 or
+        (state.view_type != c.VK_IMAGE_VIEW_TYPE_2D and state.view_type != c.VK_IMAGE_VIEW_TYPE_2D_ARRAY)) return false;
+    const range = state.view_range;
+    if (range.aspectMask != c.VK_IMAGE_ASPECT_COLOR_BIT or !image_range_valid(image_state, range)) return false;
+    const levels = if (range.levelCount == std.math.maxInt(u32)) image_state.image_levels - range.baseMipLevel else range.levelCount;
+    const layers = if (range.layerCount == std.math.maxInt(u32)) image_state.image_layers - range.baseArrayLayer else range.layerCount;
+    if (levels != 1 or layers != 1) return false;
+    const components = state.view_components;
+    for ([_]u32{ components.r, components.g, components.b, components.a }, 0..) |component, index|
+        if (component != c.VK_COMPONENT_SWIZZLE_IDENTITY and component != index + 3) return false;
+    const shift: u5 = @intCast(range.baseMipLevel);
+    return width <= @max(@as(u32, 1), image_state.image_extent[0] >> shift) and
+        height <= @max(@as(u32, 1), image_state.image_extent[1] >> shift);
+}
+/// Create one-color framebuffer. [in] nonnull device/info/one-view array borrowed; allocator nullable unused.
+/// [out] nonnull output NULL on failure, owned guest token on success. Returns host/local invalid/OOM/loss.
+/// Resolves bound live image, exact mip/layer, identity components and actual dimensions before reservation.
+/// Copies scalar compatibility/view identity; no array retention or heap allocation; mutex serialized.
+fn create_framebuffer(device: c.VkDevice, info: [*c]const c.VkFramebufferCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkFramebuffer) callconv(.C) c_int {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.*.sType != c.VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO or info.*.pNext != null or
+        info.*.flags != 0 or info.*.renderPass == null or info.*.attachmentCount != 1 or
+        info.*.pAttachments == null or info.*.pAttachments[0] == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const pass = child_object(@intFromPtr(info.*.renderPass.?), c.VK_OBJECT_TYPE_RENDER_PASS, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const view = child_object(@intFromPtr(info.*.pAttachments[0].?), c.VK_OBJECT_TYPE_IMAGE_VIEW, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const format = resource_state(pass).render_format;
+    if (!framebuffer_attachment(view, info.*.width, info.*.height, format)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var writer = graphics_wire.create_framebuffer(@ptrCast(info), parent.id, pass.id, view.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_FRAMEBUFFER, &writer, &handle);
+    if (result != c.VK_SUCCESS) return result;
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_FRAMEBUFFER, parent.id).?);
+    state.render_format = format;
+    state.framebuffer_view = view.handle;
+    state.framebuffer_extent = .{ info.*.width, info.*.height };
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+/// Destroy quiescent framebuffer. [in] nullable borrowed device/framebuffer/callback tokens.
+/// Void; invalid/pending ignored. Exact native acknowledgment retires owned token; mutex serialized.
+fn destroy_framebuffer(device: c.VkDevice, framebuffer: c.VkFramebuffer, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    mutex.lock();
+    defer mutex.unlock();
+    destroy_render_resource(device, if (framebuffer) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_FRAMEBUFFER, 81);
+}
+
 /// Create a core device-owned image. [in] device/info borrowed nonnull, allocator nullable unused.
 /// [out] output nonnull handle storage, NULL on error. Returns host result/local invalid/OOM/loss.
 /// Mutex serialized, allocation-free; owns identity until exact host destruction or retired abandon.
@@ -1506,6 +1573,8 @@ fn create_image(device: c.VkDevice, info: [*c]const c.VkImageCreateInfo, allocat
     const result = create_render_resource(parent, c.VK_OBJECT_TYPE_IMAGE, &writer, &handle);
     if (result != c.VK_SUCCESS) return result;
     const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_IMAGE, parent.id).?);
+    state.image_extent = .{ info.*.extent.width, info.*.extent.height, info.*.extent.depth };
+    state.image_samples = info.*.samples;
     state.image_levels = info.*.mipLevels;
     state.image_layers = info.*.arrayLayers;
     state.image_format = info.*.format;
@@ -1554,7 +1623,11 @@ fn create_image_view(device: c.VkDevice, info: [*c]const c.VkImageViewCreateInfo
     var handle: u64 = 0;
     const result = create_render_resource(parent, c.VK_OBJECT_TYPE_IMAGE_VIEW, &writer, &handle);
     if (result != c.VK_SUCCESS) return result;
-    resource_state(child_object(handle, c.VK_OBJECT_TYPE_IMAGE_VIEW, parent.id).?).view_image = image.handle;
+    const view_state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_IMAGE_VIEW, parent.id).?);
+    view_state.view_image = image.handle;
+    view_state.view_type = info.*.viewType;
+    view_state.view_range = info.*.subresourceRange;
+    view_state.view_components = info.*.components;
     output.* = @ptrFromInt(handle);
     return c.VK_SUCCESS;
 }
@@ -3997,6 +4070,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkAllocateDescriptorSets", &allocate_descriptor_sets },
         .{ "vkFreeDescriptorSets", &free_descriptor_sets },
         .{ "vkUpdateDescriptorSets", &update_descriptor_sets },
+        .{ "vkCreateFramebuffer", &create_framebuffer },
+        .{ "vkDestroyFramebuffer", &destroy_framebuffer },
         .{ "vkCreateRenderPass", &create_render_pass },
         .{ "vkDestroyRenderPass", &destroy_render_pass },
         .{ "vkCreateImage", &create_image },
