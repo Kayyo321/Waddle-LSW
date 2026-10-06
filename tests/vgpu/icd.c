@@ -2144,6 +2144,16 @@ static void layout_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fix
     layouts[0] = (VkDescriptorSetLayout)(uintptr_t)1;
     assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
     layouts[0] = saved_layout;
+    before = fixture->submissions;
+    range.offset = 128;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    range.offset = UINT32_MAX;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    range.offset = 0;
+    pipeline_info.pPushConstantRanges = NULL;
+    assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
+    pipeline_info.pPushConstantRanges = &range;
+    assert(fixture->submissions == before);
     range.stageFlags = 0;
     assert(create_pipeline(device, &pipeline_info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
     range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;

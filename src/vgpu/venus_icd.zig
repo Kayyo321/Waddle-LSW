@@ -1750,8 +1750,14 @@ fn create_pipeline_layout(device: c.VkDevice, info: [*c]const c.VkPipelineLayout
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    if (info.*.setLayoutCount > profiles.MaxSets or (info.*.setLayoutCount != 0 and info.*.pSetLayouts == null) or
-        info.*.pushConstantRangeCount > profiles.MaxPushRanges) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.*.sType != c.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO or info.*.pNext != null or info.*.flags != 0 or
+        info.*.setLayoutCount > profiles.MaxSets or (info.*.setLayoutCount != 0 and info.*.pSetLayouts == null) or
+        info.*.pushConstantRangeCount > profiles.MaxPushRanges or
+        (info.*.pushConstantRangeCount != 0 and info.*.pPushConstantRanges == null)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    // Keep public support at the core128 guarantee until actual host limits gate256.
+    if (info.*.pushConstantRangeCount != 0) for (info.*.pPushConstantRanges[0..info.*.pushConstantRangeCount]) |range| {
+        if (range.offset > 128 or range.size > 128 - range.offset) return c.VK_ERROR_INITIALIZATION_FAILED;
+    };
     var ids: [profiles.MaxSets]u64 = undefined;
     var layouts: [profiles.MaxSets]profiles.descriptor_layout_t = undefined;
     if (info.*.setLayoutCount != 0) for (info.*.pSetLayouts[0..info.*.setLayoutCount], 0..) |layout, index| {
