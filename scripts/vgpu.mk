@@ -163,3 +163,32 @@ vgpu-integration: build/vgpu_integration_test
 vgpu-integration-sanitizers: build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o vgpu-renderer
 	$(CC) $(CPPFLAGS) $(VgpuReceiverIncludes) $(VgpuReceiverSanitizers) tests/vgpu/integration.c $(VgpuChannelSources) src/vgpu/venus_stream_linux.c src/vgpu/venus_receiver.c build/venus_bounds.o build/venus_control.o build/venus_receiver_bounds.o $(VgpuReceiverLibraries) -o build/vgpu_integration_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 RENDER_SERVER_EXEC_PATH="$(CURDIR)/$(VgpuRendererBuildDirectory)/server/virgl_render_server" ./build/vgpu_integration_sanitized
+
+# Request codec reuses and includes the exported Zig resource-bound helpers.
+# Link this object alone (not also venus_receiver_bounds.o) in dispatch binaries.
+build/venus_request.o: src/vgpu/venus_request.zig src/vgpu/venus_receiver_bounds.zig | build
+	$(ZIG) build-obj $< -O ReleaseSafe -fPIC -fcompiler-rt -femit-bin=$@
+
+build/vgpu_request_test: tests/vgpu/request.c include/waddle/venus_request.h build/venus_request.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/vgpu/request.c build/venus_request.o $(LDFLAGS) -o $@
+
+.PHONY: vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
+vgpu-request-test: build/vgpu_request_test
+	./build/vgpu_request_test
+	$(ZIG) test src/vgpu/venus_request.zig
+
+vgpu-request-sanitizers: build/venus_request.o
+	$(CC) $(CPPFLAGS) $(VgpuReceiverSanitizers) tests/vgpu/request.c build/venus_request.o -o build/vgpu_request_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_request_sanitized
+	$(ZIG) test src/vgpu/venus_request.zig
+
+vgpu-request-coverage:
+	python3 tests/av/coverage.py venus_request
+
+build/venus_request_windows.lib: src/vgpu/venus_request.zig src/vgpu/venus_receiver_bounds.zig | build
+	$(ZIG) build-lib $< -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
+
+build/vgpu_request_test.exe: tests/vgpu/request.c include/waddle/venus_request.h build/venus_request_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/request.c build/venus_request_windows.lib -o $@
+
+vgpu-windows: build/vgpu_request_test.exe

@@ -35,6 +35,8 @@ jobs:
         run: make vgpu-renderer
       - name: Verify real Venus CPU dispatch and receiver ownership
         run: make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage
+      - name: Verify portable receiver request envelopes
+        run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
       - name: Verify independent mapped-file guest and real Venus replies
         run: make vgpu-integration vgpu-integration-sanitizers
       - name: Verify ring safety and independent-process ordering
@@ -95,4 +97,12 @@ jobs:
           zig test src/vgpu/venus_control.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_bounds.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_request.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_request_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/request.c build/venus_request_windows.lib -o build/vgpu_request_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_request_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_request.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

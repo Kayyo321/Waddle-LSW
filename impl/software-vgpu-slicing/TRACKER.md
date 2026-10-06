@@ -284,10 +284,23 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     CPU SHM copies and independent mapped-file/UNIX integration passed. Device
     memory export, GPU completion and runtime wire dispatch remain separate gates.
 
-- **Commit (current; resolve by subject)**: `docs(vgpu): specify bounded receiver request envelopes`
+- **Commit `e546879`**: `docs(vgpu): specify bounded receiver request envelopes`
   - **Task Impact**: +0% to TODO: #2 (+0% overall).
   - **Summary**: Defined the 64-byte little-endian header, operation-specific
     fields, explicit wire statuses, payload bounds and sequential exchange contract.
     Split remaining dispatch work into portable codec and integrated runtime gates.
   - **Verification**: Checked against resource quotas, CPU fences, fixed capset
     extent and the backing-agnostic ring/channel ownership contracts.
+
+- **Commit (current; resolve by subject)**: `feat(vgpu): validate portable receiver request envelopes`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall); 5% codec gate awaits native CI.
+  - **Summary**: Added a documented C ABI and allocation-free Zig request/response
+    codec with explicit little-endian fields, per-operation policy validation,
+    resource-policy reuse, exact payload bounds and error output guarantees.
+    Added independent C golden-wire/policy fixtures, Zig mutation/allocator tests,
+    sanitizer/coverage targets and Linux/native Windows CI execution.
+  - **Verification**: `make vgpu-request-test vgpu-request-sanitizers
+    vgpu-request-coverage build/vgpu_request_test.exe` passed. Codec branch coverage
+    100%, line coverage 98.33%; sanitizers and Zig allocator tests pass. Native
+    Windows execution remains pending. Resource commit `8766015` passed both jobs
+    in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392534083 .

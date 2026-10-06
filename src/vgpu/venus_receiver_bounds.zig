@@ -64,14 +64,14 @@ test "receiver bounds validate every error before touching private output" {
 
 /// in: untrusted host ID; returns one-based slot 1..64 or zero if outside 2..65.
 /// Pure/thread-safe, no allocation, validates before any C ledger index access.
-export fn venus_receiver_resource_slot(id: u32) u32 {
+pub export fn venus_receiver_resource_slot(id: u32) u32 {
     return if (id >= 2 and id <= 65) id - 1 else 0;
 }
 
 /// in: proposed ID/blob/bytes/flags; returns one when bounded (2..65 ID,
 /// page-aligned nonzero bytes <=one GiB, known flags, CrossDevice requires Share,
 /// blob zero exactly Map); otherwise zero. Pure/thread-safe, allocation-free.
-export fn venus_receiver_resource_request(id: u32, blob: u64, bytes: u64, flags: u32) c_int {
+pub export fn venus_receiver_resource_request(id: u32, blob: u64, bytes: u64, flags: u32) c_int {
     if (venus_receiver_resource_slot(id) == 0 or bytes == 0 or bytes > 1073741824 or bytes & 4095 != 0) return 0;
     if (flags > 7 or (flags & 4 != 0 and flags & 2 == 0) or (blob == 0 and flags != 1)) return 0;
     return 1;
