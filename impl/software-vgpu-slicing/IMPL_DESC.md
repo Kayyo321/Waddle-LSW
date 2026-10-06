@@ -833,3 +833,38 @@ remaining health/recovery layer must bound that failure. The guest still owns it
 Vulkan queue/object lifecycle; no native queue handle or host pointer is exposed.
 Native portable fixtures, SDK-boundary routing/error tests, codec size/field/fence
 boundaries, >=90% coverage and sanitizer gates are required for the 3% wire credit.
+
+### Receiver health deadlines and cancellation
+
+The receiver defaults to 5000ms CPU and GPU fence budgets. Trusted host policy may
+set each to 1..60000ms only when CPU and all GPU queues are quiescent. Guests cannot
+configure or extend these budgets. Each accepted submission arms an absolute
+CLOCK_MONOTONIC deadline before the SDK call; each later submission replaces only
+its own completed fence's deadline. GPU queues keep independent deadlines.
+
+Health checks are session-thread-only, allocate nothing and sample a monotonic
+millisecond clock. Clock failure, malformed timespec, arithmetic overflow or clock
+regression poisons the owner with Corrupt. Optional borrowed atomic cancellation
+is acquire-read; nonzero poisons with Cancelled before considering deadlines.
+Already poisoned owners return Corrupt. Pending CPU/GPU fences whose deadline is
+reached poison with Timeout, even if the peer keeps issuing Poll requests. Retired
+fences are ignored at deadline; health Ok means healthy, not completed. Subsequent
+owner operations reject poison and require full destruction/new session.
+
+Host dispatch installs a private health callback only for its call, with a stack
+cookie borrowing receiver and cancellation flag. Framing invokes it before each
+chunk and every backpressure retry, followed by native channel readiness checks.
+The callback/cookie are cleared on every serve return and never retained between
+calls. Thus a pending fence can time out while waiting for a new request, streaming
+payload or publishing a response; per-exchange deadlines do not reset fence budgets.
+Timeout/Cancelled close both rings with Deadline/Cancel and return that status;
+no unreadable terminal response is promised. Receiver callback joining remains
+required before owner/buffer/mapping release.
+
+Sampling cannot preempt a blocking SDK call or repair a stuck kernel GPU driver.
+The separate isolated-process recovery milestone must bound worker teardown and
+notify/restart the guest after such failures; this health gate alone does not
+complete hang recovery. Acceptance includes exact boundary retirement/expiry,
+independent queues, repeated-poll budget retention, configuration with pending
+work, cancellation, clock error/regression/overflow, poisoned cleanup, runtime
+idle/backpressure timeout and unchanged output, >=90% coverage and sanitizer gates.

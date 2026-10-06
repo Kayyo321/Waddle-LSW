@@ -374,7 +374,7 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
   - **Verification**: Reviewed against bounded per-queue receiver APIs; no queue
     creation or hardware execution evidence is implied by the wire extension.
 
-- **Commit (current; resolve by subject)**: `feat(vgpu): route GPU fence requests through bounded runtime`
+- **Commit `fb16a1d`**: `feat(vgpu): route GPU fence requests through bounded runtime`
   - **Task Impact**: +0% to TODO: #2 (+0% overall); 3% GPU wire gate awaits native CI.
   - **Summary**: Extended the codec with GpuFence/GpuPoll, validated u64 timelines
     before narrowing and routed accepted private requests to per-queue APIs.
@@ -385,3 +385,10 @@ the preceding entry's actual hash; `git log` resolves the latest entry directly.
     integration also passes. Codec lines 98.36%, branches 100%; RPC lines 100%,
     branches 97.73%; dispatch lines 98.78%, branches 93.75%. Native CI is pending.
     Mock routing does not prove real GPU queue execution or bounded hang recovery.
+
+- **Commit (current; resolve by subject)**: `docs(vgpu): specify receiver health deadline policy`
+  - **Task Impact**: +0% to TODO: #2 (+0% overall).
+  - **Summary**: Defined independent absolute fence budgets, host-only policy,
+    monotonic clock/cancellation poison and scoped runtime health callbacks.
+  - **Verification**: Distinguished bounded health sampling from preempting SDK
+    calls and isolated worker recovery, which remain separate requirements.
