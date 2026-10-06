@@ -956,3 +956,14 @@ vgpu-compute-state-coverage:
 
 vgpu-icd-test: vgpu-compute-state-test
 vgpu-icd-coverage: vgpu-compute-state-coverage
+
+# Draw/end/copy records are checked with pinned guest serializers.
+build/venus_graphics_command_wire_oracle.o: tests/vgpu/graphics_command_wire_oracle.c tests/vgpu/encoder/vn_cs.h | vgpu-protocol
+	$(CC) $(CFLAGS) $(VgpuInstanceOracleIncludes) -c $< -o $@
+.PHONY: vgpu-graphics-command-wire-test vgpu-graphics-command-wire-coverage
+vgpu-graphics-command-wire-test: build/venus_graphics_command_wire_oracle.o build/venus_render_wire_oracle.o
+	$(ZIG) test src/vgpu/venus_graphics_command_wire.zig $(VgpuInstanceWireIncludes) -lc build/venus_graphics_command_wire_oracle.o build/venus_render_wire_oracle.o
+vgpu-graphics-command-wire-coverage: build/venus_graphics_command_wire_oracle.o build/venus_render_wire_oracle.o
+	python3 tests/av/coverage.py venus_graphics_command_wire
+vgpu-icd-test: vgpu-graphics-command-wire-test
+vgpu-icd-coverage: vgpu-graphics-command-wire-coverage
