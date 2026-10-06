@@ -350,10 +350,24 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     .buffer = (VkBuffer)(uintptr_t)read_u64(record + 28),
                     .offset = read_u64(record + 36), .size = read_u64(record + 44)};
             }
+            size_t image_start = buffer_start + buffer_count * 52 + 12;
+            uint32_t image_count = read_u32(bytes + image_start - 12);
+            assert(image_count <= 64);
+            VkImageMemoryBarrier images[64];
+            for (uint32_t index = 0; index < image_count; index++) {
+                const unsigned char *record = bytes + image_start + index * 64;
+                images[index] = (VkImageMemoryBarrier){.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                    .srcAccessMask = read_u32(record + 12), .dstAccessMask = read_u32(record + 16),
+                    .oldLayout = read_u32(record + 20), .newLayout = read_u32(record + 24),
+                    .srcQueueFamilyIndex = read_u32(record + 28), .dstQueueFamilyIndex = read_u32(record + 32),
+                    .image = (VkImage)(uintptr_t)read_u64(record + 36),
+                    .subresourceRange = {.aspectMask = read_u32(record + 44), .baseMipLevel = read_u32(record + 48),
+                        .levelCount = read_u32(record + 52), .baseArrayLayer = read_u32(record + 56), .layerCount = read_u32(record + 60)}};
+            }
             vn_encode_vkCmdPipelineBarrier(&encoder, 1,
                 (VkCommandBuffer)(uintptr_t)read_u64(bytes + 8), read_u32(bytes + 16),
                 read_u32(bytes + 20), read_u32(bytes + 24), memory_count,
-                memory_count ? memory : NULL, buffer_count, buffer_count ? buffers : NULL, 0, NULL);
+                memory_count ? memory : NULL, buffer_count, buffer_count ? buffers : NULL, image_count, image_count ? images : NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
         } else if (fixture->command == 117) {
             unsigned char expected[65584];
@@ -1570,6 +1584,51 @@ static void image_contract(void) {
         assert(create_view(device, &view_info, NULL, &view) == (scenario == 6 ? VK_ERROR_OUT_OF_HOST_MEMORY : VK_SUCCESS));
         fixture.create_result = VK_SUCCESS;
         if (scenario == 6) assert(create_view(device, &view_info, NULL, &view) == VK_SUCCESS);
+        if (scenario == 0) {
+            PFN_vkCreateCommandPool create_pool = (PFN_vkCreateCommandPool)lookup(device, "vkCreateCommandPool");
+            PFN_vkDestroyCommandPool destroy_pool = (PFN_vkDestroyCommandPool)lookup(device, "vkDestroyCommandPool");
+            PFN_vkAllocateCommandBuffers allocate_commands = (PFN_vkAllocateCommandBuffers)lookup(device, "vkAllocateCommandBuffers");
+            PFN_vkBeginCommandBuffer begin = (PFN_vkBeginCommandBuffer)lookup(device, "vkBeginCommandBuffer");
+            PFN_vkEndCommandBuffer end = (PFN_vkEndCommandBuffer)lookup(device, "vkEndCommandBuffer");
+            PFN_vkCmdPipelineBarrier barrier = (PFN_vkCmdPipelineBarrier)lookup(device, "vkCmdPipelineBarrier");
+            VkCommandPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+                .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+            fixture.pool_info = &pool_info;
+            VkCommandPool pool = NULL;
+            assert(create_pool(device, &pool_info, NULL, &pool) == VK_SUCCESS);
+            VkCommandBufferAllocateInfo command_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+                .commandPool = pool, .commandBufferCount = 1};
+            fixture.command_allocate = &command_info;
+            VkCommandBuffer recording = NULL;
+            assert(allocate_commands(device, &command_info, &recording) == VK_SUCCESS);
+            VkCommandBufferBeginInfo begin_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            fixture.command_begin = &begin_info;
+            const VkImageMemoryBarrier initial = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .newLayout = VK_IMAGE_LAYOUT_GENERAL, .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .image = image,
+                .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1}};
+            for (unsigned invalid = 0; invalid < 12; invalid++) {
+                VkImageMemoryBarrier item = initial;
+                if (invalid == 2) item.sType = 0;
+                if (invalid == 3) item.pNext = &item;
+                if (invalid == 4) item.image = NULL;
+                if (invalid == 5) item.image = (VkImage)(uintptr_t)1;
+                if (invalid == 6) item.subresourceRange.levelCount = 2;
+                if (invalid == 7) item.srcQueueFamilyIndex = 0;
+                if (invalid == 8) item.newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                if (invalid == 9) item.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+                if (invalid == 10) item.dstAccessMask = UINT32_MAX;
+                assert(begin(recording, &begin_info) == VK_SUCCESS);
+                unsigned submitted = fixture.submissions;
+                if (invalid == 11)
+                    barrier(recording, 1, 4096, 0, 64, (const void *)(uintptr_t)8,
+                            64, (const void *)(uintptr_t)8, 64, (const void *)(uintptr_t)8);
+                else barrier(recording, 1, 4096, 0, 0, NULL, 0, NULL, 1, invalid == 1 ? NULL : &item);
+                assert(fixture.submissions == submitted + (invalid == 0));
+                assert(end(recording) == (invalid == 0 ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED));
+            }
+            destroy_pool(device, pool, NULL);
+        }
         before = fixture.submissions;
         destroy_image(device, image, NULL);
         assert(fixture.submissions == before);
@@ -2470,7 +2529,7 @@ static void pipeline_barrier_contract(void) {
         }
         assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
         submissions = fixture.submissions;
-        barrier(buffers[0], 4096, 4096, 0, 0, NULL, 0, NULL, 1, (const void *)(uintptr_t)1);
+        barrier(buffers[0], 4096, 4096, 0, 0, NULL, 0, NULL, 65, (const void *)(uintptr_t)1);
         assert(fixture.submissions == submissions && end(buffers[0]) == VK_ERROR_INITIALIZATION_FAILED);
         for (unsigned invalid = 0; invalid < 4; invalid++) {
             VkMemoryBarrier saved = memory_barriers[63];

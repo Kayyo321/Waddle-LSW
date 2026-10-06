@@ -1508,8 +1508,7 @@ fn destroy_render_resource(device: c.VkDevice, handle: u64, kind: u32, command_i
     writer.put(u64, record.id);
     writer.put(u64, 0);
     const reply = transact(writer.bytes[0..writer.used]) orelse return;
-    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != command_id)
-    {
+    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != command_id) {
         _ = failure(c.RingCorrupt);
         return;
     }
@@ -2602,8 +2601,8 @@ fn configured_family_pair(parent_id: u64, source: u32, destination: u32) bool {
 /// @param[in] memory_barriers Nullable only for zero count; canonical borrowed records.
 /// @param[in] buffer_count Borrowed private buffer barrier count0..64.
 /// @param[in] buffer_barriers Nullable only for zero count; same-device bound byte ranges.
-/// @param[in] image_count Must be zero until image APIs/layout ownership are implemented.
-/// @param[in] image_barriers Ignored zero-count pointer; never read or retained.
+/// @param[in] image_count Borrowed private image barrier count0..64; aggregate packet <=8192.
+/// @param[in] image_barriers Nullable only for zero count; same-device bound images and valid ranges.
 /// @return Void; invalid Recording inputs invalidate; peer/transport loss poisons binding.
 /// @note Mutex serialized, no allocations; CPU acknowledgment is not GPU retirement.
 fn pipeline_barrier(
@@ -2618,7 +2617,6 @@ fn pipeline_barrier(
     image_count: u32,
     image_barriers: [*c]const c.VkImageMemoryBarrier,
 ) callconv(.C) void {
-    _ = image_barriers;
     mutex.lock();
     defer mutex.unlock();
     if (lost != c.RingOk or command_buffer == null) return;
@@ -2631,7 +2629,9 @@ fn pipeline_barrier(
     const pool = command_pool_for(record) orelse return;
     if (source_stage == 0 or destination_stage == 0 or
         (source_stage | destination_stage) & ~@as(u32, 0x1ffff) != 0 or
-        dependency_flags > 1 or image_count != 0 or memory_count > 64 or buffer_count > 64 or
+        dependency_flags > 1 or image_count > 64 or memory_count > 64 or buffer_count > 64 or
+        @as(u64, 64) + @as(u64, memory_count) * 20 + @as(u64, buffer_count) * 52 + @as(u64, image_count) * 64 > 8192 or
+        (image_count != 0 and image_barriers == null) or
         (memory_count != 0 and memory_barriers == null) or
         (buffer_count != 0 and buffer_barriers == null))
     {
@@ -2674,6 +2674,25 @@ fn pipeline_barrier(
         }
         references[index] = target.?;
     };
+    var image_references: [64]*c.venus_object_t = undefined;
+    var image_encoded = render_wire.writer_t{};
+    if (image_count != 0) for (image_barriers[0..image_count], 0..) |barrier, index| {
+        const target = if (barrier.image != null) child_object(@intFromPtr(barrier.image.?), c.VK_OBJECT_TYPE_IMAGE, pool.parent_id) else null;
+        if (target == null or !configured_family_pair(pool.parent_id, barrier.srcQueueFamilyIndex, barrier.dstQueueFamilyIndex)) {
+            state.command_state = .Invalid;
+            return;
+        }
+        const destination = resource_state(target.?);
+        if (destination.bound_memory == 0 or !image_range_valid(destination, barrier.subresourceRange)) {
+            state.command_state = .Invalid;
+            return;
+        }
+        render_wire.image_barrier(&image_encoded, @ptrCast(&barrier), target.?.id) catch {
+            state.command_state = .Invalid;
+            return;
+        };
+        image_references[index] = target.?;
+    };
     var writer = writer_t{};
     writer.header(126, record.id);
     writer.put(u32, source_stage);
@@ -2700,8 +2719,10 @@ fn pipeline_barrier(
         writer.put(u64, barrier.offset);
         writer.put(u64, barrier.size);
     };
-    writer.put(u32, 0);
-    writer.put(u64, 0);
+    writer.put(u32, image_count);
+    writer.put(u64, image_count);
+    @memcpy(writer.bytes[writer.used..][0..image_encoded.used], image_encoded.bytes[0..image_encoded.used]);
+    writer.used += image_encoded.used;
     const reply = transact(writer.bytes[0..writer.used]) orelse return;
     var reader = reader_t{ .bytes = reply };
     const received = reader.scalar(u32) catch {
@@ -2711,6 +2732,10 @@ fn pipeline_barrier(
     if (received != 126) {
         _ = failure(c.RingCorrupt);
         return;
+    }
+    for (image_references[0..image_count]) |image_record| {
+        const index = resource_index(image_record);
+        state.buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
     }
     for (references[0..buffer_count]) |buffer_record| {
         const index = resource_index(buffer_record);
@@ -3781,4 +3806,63 @@ test "fence completion retires a queue prefix while simultaneous references rema
         null,
     ));
     try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+}
+
+test "image barrier references retain pending images and invalidate recorded commands after destruction" {
+    const fixture_t = struct {
+        command_id: u32 = 0,
+        submissions: usize = 0,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+                fixture.command_id = std.mem.readInt(u32, bytes[36..40], .little);
+                fixture.submissions += 1;
+                response.*.argument_zero = fixture.submissions;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], fixture.command_id, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    var fixture = fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var pool: [*c]c.venus_object_t = null;
+    var recording: [*c]c.venus_object_t = null;
+    var image: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_POOL, device.*.id, 0, &pool));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.*.id, 1, &recording));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE, device.*.id, 0, &image));
+    resource_state(image).* = .{ .id = image.*.id, .bound_memory = 999, .image_levels = 1, .image_layers = 1, .image_format = 37 };
+    resource_state(recording).command_state = .Recording;
+    var barrier = c.VkImageMemoryBarrier{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, .newLayout = c.VK_IMAGE_LAYOUT_GENERAL, .srcQueueFamilyIndex = 0xffffffff, .dstQueueFamilyIndex = 0xffffffff, .image = @ptrFromInt(image.*.handle), .subresourceRange = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 } };
+    pipeline_barrier(@ptrFromInt(recording.*.handle), 1, 0x1000, 0, 0, null, 0, null, 1, &barrier);
+    try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    const index = resource_index(image);
+    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+    try std.testing.expect(resource_state(recording).buffer_references[index / 64] & bit != 0);
+    resource_state(recording).command_state = .Pending;
+    destroy_image(@ptrFromInt(device.*.handle), @ptrFromInt(image.*.handle), null);
+    try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+    resource_state(recording).command_state = .Executable;
+    destroy_image(@ptrFromInt(device.*.handle), @ptrFromInt(image.*.handle), null);
+    try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
+    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+    try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+    try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
+    // An oversized combined packet rejects before dereferencing any array input.
+    resource_state(recording).command_state = .Recording;
+    pipeline_barrier(@ptrFromInt(recording.*.handle), 1, 1, 0, 64, @ptrFromInt(8), 64, @ptrFromInt(8), 64, @ptrFromInt(8));
+    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+    try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
 }
