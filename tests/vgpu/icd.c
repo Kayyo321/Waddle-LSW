@@ -115,6 +115,7 @@ typedef struct fixture_t {
     uint32_t descriptor_write_count;
     uint32_t descriptor_copy_count;
     unsigned descriptor_properties;
+    unsigned push_limit_mode;
     unsigned requirements_fault;
     uint64_t requirements_size;
     const void *update_data;
@@ -793,7 +794,9 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
             properties.limits.minStorageBufferOffsetAlignment = 32;
             properties.limits.maxUniformBufferRange = 256;
             properties.limits.maxStorageBufferRange = 4096;
-            properties.limits.maxPushConstantsSize = 128;
+            const uint32_t PushLimits[] = {128,128,256,512,0,126,127,129};
+            assert(fixture->push_limit_mode < sizeof(PushLimits)/sizeof(PushLimits[0]));
+            properties.limits.maxPushConstantsSize = PushLimits[fixture->push_limit_mode];
             for (unsigned axis = 0; axis < 3; axis++) properties.limits.maxComputeWorkGroupCount[axis] = 8;
             if (fixture->descriptor_properties == 2) properties.limits.minUniformBufferOffsetAlignment = 0;
             if (fixture->descriptor_properties == 3) properties.limits.minStorageBufferOffsetAlignment = 3;
@@ -4547,6 +4550,96 @@ static void loader_fixture(void) {
          "lifecycles passed");
 }
 #endif
+/* Mock host push modes0..7: default128,128,256,512,0,126,127,129.
+ * Each fresh device validates and caches the actual raw reply before native layout creation.
+ * Scalar range alignment remains independent of the host limit's byte granularity.
+ */
+/** @brief Record exact push bytes without a pipeline binding; borrowed source may change after acknowledgment. */
+static void push_range_recording_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup,
+    fixture_t *fixture, VkPipelineLayout layout, uint32_t offset, uint32_t size) {
+    PFN_vkCreateCommandPool create_pool=(PFN_vkCreateCommandPool)lookup(device,"vkCreateCommandPool");
+    PFN_vkDestroyCommandPool destroy_pool=(PFN_vkDestroyCommandPool)lookup(device,"vkDestroyCommandPool");
+    PFN_vkAllocateCommandBuffers allocate=(PFN_vkAllocateCommandBuffers)lookup(device,"vkAllocateCommandBuffers");
+    PFN_vkBeginCommandBuffer begin=(PFN_vkBeginCommandBuffer)lookup(device,"vkBeginCommandBuffer");
+    PFN_vkEndCommandBuffer end=(PFN_vkEndCommandBuffer)lookup(device,"vkEndCommandBuffer");
+    PFN_vkCmdPushConstants push=(PFN_vkCmdPushConstants)lookup(device,"vkCmdPushConstants");
+    VkCommandPoolCreateInfo pool_info={.sType=VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT};
+    fixture->pool_info=&pool_info;VkCommandPool pool;assert(create_pool(device,&pool_info,NULL,&pool)==VK_SUCCESS);
+    VkCommandBufferAllocateInfo command_info={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=pool,.commandBufferCount=1};
+    fixture->command_allocate=&command_info;VkCommandBuffer command;assert(allocate(device,&command_info,&command)==VK_SUCCESS);
+    VkCommandBufferBeginInfo begin_info={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};fixture->command_begin=&begin_info;
+    assert(begin(command,&begin_info)==VK_SUCCESS);
+    unsigned char values[256];for(unsigned index=0;index<sizeof(values);++index)values[index]=(unsigned char)index;
+    unsigned before=fixture->submissions;push(command,layout,VK_SHADER_STAGE_COMPUTE_BIT,offset,size,values);
+    assert(fixture->submissions==before+1&&fixture->command==132);
+    memset(values,0xff,sizeof(values));assert(end(command)==VK_SUCCESS);
+    destroy_pool(device,pool,NULL);fixture->pool_info=NULL;fixture->command_allocate=NULL;fixture->command_begin=NULL;
+}
+
+/** @brief Prove actual128/256 push limit gates, immutable cache, honest public clamp and sticky hostile replies. */
+static void push_limits_contract(void) {
+    for(unsigned mode=1;mode<=9;++mode){
+        fixture_t fixture=fresh();
+        assert(venus_icd_bind(exchange,&fixture)==RingOk);
+        VkInstance instance=create();uint32_t count=2;VkPhysicalDevice physical[2];
+        assert(((PFN_vkEnumeratePhysicalDevices)lookup_external(instance,"vkEnumeratePhysicalDevices"))(instance,&count,physical)==VK_SUCCESS);
+        fixture.descriptor_properties=1;fixture.push_limit_mode=mode<=6?mode:(mode==9?7:2);
+        const float priority=1;
+        const VkDeviceQueueCreateInfo queue={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueCount=1,.pQueuePriorities=&priority};
+        const VkDeviceCreateInfo device_info={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.queueCreateInfoCount=1,.pQueueCreateInfos=&queue};
+        fixture.device_info=&device_info;VkDevice device;
+        assert(((PFN_vkCreateDevice)lookup_external(instance,"vkCreateDevice"))(physical[0],&device_info,NULL,&device)==VK_SUCCESS);
+        PFN_vkGetDeviceProcAddr lookup=(PFN_vkGetDeviceProcAddr)lookup_external(instance,"vkGetDeviceProcAddr");
+        PFN_vkCreatePipelineLayout create_layout=(PFN_vkCreatePipelineLayout)lookup(device,"vkCreatePipelineLayout");
+        PFN_vkDestroyPipelineLayout destroy_layout=(PFN_vkDestroyPipelineLayout)lookup(device,"vkDestroyPipelineLayout");
+        VkPushConstantRange range={.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT,.size=4};
+        VkPipelineLayoutCreateInfo info={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.pushConstantRangeCount=1,.pPushConstantRanges=&range};
+        fixture.pipeline_layout_info=&info;VkPipelineLayout layout=(VkPipelineLayout)(uintptr_t)42;
+        if(mode==7)fixture.corrupt_command=6;
+        if(mode==8)fixture.fail_command=6;
+        unsigned before=fixture.submissions;
+        VkResult result=create_layout(device,&info,NULL,&layout);
+        if(mode>=4&&mode<=8){
+            assert(result==VK_ERROR_DEVICE_LOST&&!layout&&fixture.command==6);
+            unsigned after=fixture.submissions;
+            assert(create_layout(device,&info,NULL,&layout)==VK_ERROR_DEVICE_LOST&&!layout);
+            assert(fixture.submissions==after);
+            assert(((PFN_vkDeviceWaitIdle)lookup(device,"vkDeviceWaitIdle"))(device)==VK_ERROR_DEVICE_LOST);
+            /* Sole mocked receiver retired; uncertain native state is cleared only by abandon. */
+            venus_icd_abandon();continue;
+        }
+        assert(result==VK_SUCCESS&&layout&&fixture.submissions==before+2&&fixture.command==68);
+        destroy_layout(device,layout,NULL);
+        VkPhysicalDeviceProperties properties;
+        ((PFN_vkGetPhysicalDeviceProperties)lookup_external(instance,"vkGetPhysicalDeviceProperties"))(physical[0],&properties);
+        assert(properties.limits.maxPushConstantsSize==(mode==1?128:mode==9?129:256));
+        /* Valid actual host limit cached once per device: a later mock reply change
+         * must neither change acceptance nor cause a repeated query. */
+        fixture.push_limit_mode=4;
+        range.size=256;before=fixture.submissions;
+        result=create_layout(device,&info,NULL,&layout);
+        assert(result==((mode==1||mode==9)?VK_ERROR_INITIALIZATION_FAILED:VK_SUCCESS));
+        assert(fixture.submissions==before+((mode==1||mode==9)?0:1));
+        if(mode!=1&&mode!=9){assert(layout);push_range_recording_contract(device,lookup,&fixture,layout,0,256);destroy_layout(device,layout,NULL);}else assert(!layout);
+        range.offset=252;range.size=4;before=fixture.submissions;
+        result=create_layout(device,&info,NULL,&layout);
+        assert(result==((mode==1||mode==9)?VK_ERROR_INITIALIZATION_FAILED:VK_SUCCESS));
+        assert(fixture.submissions==before+((mode==1||mode==9)?0:1));
+        if(mode!=1&&mode!=9){push_range_recording_contract(device,lookup,&fixture,layout,252,4);destroy_layout(device,layout,NULL);}else assert(!layout);
+        range.offset=256;before=fixture.submissions;
+        assert(create_layout(device,&info,NULL,&layout)==VK_ERROR_INITIALIZATION_FAILED&&!layout);
+        assert(fixture.submissions==before);
+        range.offset=0;range.size=128;fixture.create_result=VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        assert(create_layout(device,&info,NULL,&layout)==VK_ERROR_OUT_OF_DEVICE_MEMORY&&!layout);
+        fixture.create_result=VK_SUCCESS;
+        assert(create_layout(device,&info,NULL,&layout)==VK_SUCCESS);destroy_layout(device,layout,NULL);
+        fixture.push_limit_mode=mode==9?7:mode;
+        assert(((PFN_vkDeviceWaitIdle)lookup(device,"vkDeviceWaitIdle"))(device)==VK_SUCCESS);
+        ((PFN_vkDestroyDevice)lookup(device,"vkDestroyDevice"))(device,NULL);
+        destroy(instance);assert(venus_icd_unbind()==RingOk);
+    }
+}
+
 int main(void) {
     assert(venus_icd_unbind() == RingOk);
     assert(venus_icd_bind(NULL, NULL) == RingInvalid);
@@ -4565,6 +4658,7 @@ int main(void) {
     buffer_contract();
     image_contract();
     descriptor_limits_contract();
+    push_limits_contract();
     memory_contract();
     mapping_contract();
     pool_contract();
