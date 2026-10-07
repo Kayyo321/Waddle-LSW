@@ -5251,1885 +5251,6 @@ comptime {
     @export(venus_icd_get_physical_proc_addr, .{ .name = "vk_icdGetPhysicalDeviceProcAddr" });
 }
 
-// Test-only fixtures.
-extern fn venus_icd_native_fixture() c_int;
-test "native ABI lifecycle churn routing and concurrent transport serialization" {
-    try std.testing.expectEqual(@as(c_int, 0), venus_icd_native_fixture());
-}
-test "bounded fixed and array replies reject every truncation and invalid tags" {
-    var bytes: [64]u8 = undefined;
-    @memset(&bytes, 0);
-    std.mem.writeInt(u32, bytes[0..4], 4, .little);
-    std.mem.writeInt(u64, bytes[4..12], 1, .little);
-    for (0..24) |length| {
-        var reader = reader_t{ .bytes = bytes[0..length] };
-        try std.testing.expectError(error.Bounds, fixed_value(c.VkFormatProperties, &reader, 4));
-    }
-    for ([_]usize{ 0, 4 }) |offset| {
-        bytes[offset] = 9;
-        var reader = reader_t{ .bytes = &bytes };
-        try std.testing.expectError(error.Value, fixed_value(c.VkFormatProperties, &reader, 4));
-        bytes[offset] = if (offset == 0) 4 else 1;
-    }
-    @memset(&bytes, 0);
-    std.mem.writeInt(u32, bytes[0..4], 7, .little);
-    std.mem.writeInt(u64, bytes[4..12], 1, .little);
-    std.mem.writeInt(u32, bytes[12..16], 1, .little);
-    std.mem.writeInt(u64, bytes[16..24], 1, .little);
-    var count: u32 = 99;
-    var queue: c.VkQueueFamilyProperties = std.mem.zeroes(c.VkQueueFamilyProperties);
-    for (0..48) |length| {
-        var reader = reader_t{ .bytes = bytes[0..length] };
-        try std.testing.expectError(
-            error.Bounds,
-            array_values(c.VkQueueFamilyProperties, &reader, 7, 1, true, &count, &queue),
-        );
-        try std.testing.expectEqual(@as(u32, 99), count);
-    }
-    for ([_]usize{ 0, 4, 12, 16 }) |offset| {
-        const before = bytes[offset];
-        bytes[offset] = 99;
-        var reader = reader_t{ .bytes = &bytes };
-        try std.testing.expectError(
-            error.Value,
-            array_values(c.VkQueueFamilyProperties, &reader, 7, 1, true, &count, &queue),
-        );
-        bytes[offset] = before;
-    }
-    var reader = reader_t{ .bytes = &bytes };
-    try std.testing.expectError(
-        error.Value,
-        array_values(c.VkQueueFamilyProperties, &reader, 7, 0, true, &count, &queue),
-    );
-    @memset(&bytes, 0);
-    std.mem.writeInt(u32, bytes[0..4], 5, .little);
-    std.mem.writeInt(u64, bytes[8..16], 1, .little);
-    var image: c.VkImageFormatProperties = std.mem.zeroes(c.VkImageFormatProperties);
-    for (0..48) |length| {
-        reader = .{ .bytes = bytes[0..length] };
-        try std.testing.expectError(error.Bounds, image_value(&reader, &image));
-    }
-    bytes[0] = 4;
-    reader = .{ .bytes = &bytes };
-    try std.testing.expectError(error.Value, image_value(&reader, &image));
-    bytes[0] = 5;
-    bytes[4] = 1;
-    reader = .{ .bytes = &bytes };
-    try std.testing.expectError(error.Value, image_value(&reader, &image));
-    bytes[4] = 0;
-    bytes[8] = 0;
-    reader = .{ .bytes = &bytes };
-    try std.testing.expectError(error.Value, image_value(&reader, &image));
-    bytes[8] = 1;
-    std.mem.writeInt(i32, bytes[4..8], -11, .little);
-    reader = .{ .bytes = &bytes };
-    try std.testing.expectEqual(@as(i32, -11), try image_value(&reader, &image));
-}
-test "bounded device input validation and identity reply truncations" {
-    var priorities = [_]f32{ 0.25, 0.75 } ** 8;
-    var queues = [_]c.VkDeviceQueueCreateInfo{.{
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .pNext = null,
-        .flags = 0,
-        .queueFamilyIndex = 0,
-        .queueCount = 1,
-        .pQueuePriorities = &priorities,
-    }} ** 16;
-    var feature = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
-    var info = c.VkDeviceCreateInfo{
-        .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = null,
-        .flags = 0,
-        .queueCreateInfoCount = 1,
-        .pQueueCreateInfos = &queues,
-        .enabledLayerCount = 0,
-        .ppEnabledLayerNames = null,
-        .enabledExtensionCount = 0,
-        .ppEnabledExtensionNames = null,
-        .pEnabledFeatures = &feature,
-    };
-    _ = try device_native.preflight(&info);
-    feature.robustBufferAccess = 2;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    feature.robustBufferAccess = 1;
-    try std.testing.expectError(error.FeatureNotPresent, device_native.preflight(&info));
-    feature.robustBufferAccess = 0;
-    info.enabledLayerCount = 1;
-    try std.testing.expectError(error.LayerNotPresent, device_native.preflight(&info));
-    info.enabledLayerCount = 0;
-    info.enabledExtensionCount = 1;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    info.enabledExtensionCount = 0;
-    var link = c.VkBaseInStructure{
-        .sType = c.VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
-        .pNext = null,
-    };
-    info.pNext = &link;
-    _ = try device_native.preflight(&info);
-    link.pNext = &link;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    link.pNext = null;
-    link.sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    _ = try device_native.preflight(&info); // Experimental unknown-header skip, not legal application use.
-    info.pNext = null;
-    info.queueCreateInfoCount = 2;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    for (&queues, 0..) |*queue, index| queue.queueFamilyIndex = @intCast(index);
-    info.queueCreateInfoCount = 16;
-    for (&queues) |*queue| queue.queueCount = 16;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    for (&queues) |*queue| queue.queueCount = 4;
-    _ = try device_native.preflight(&info);
-    info.queueCreateInfoCount = 1;
-    for ([_]f32{ -1, 2, std.math.inf(f32), std.math.nan(f32) }) |priority| {
-        priorities[0] = priority;
-        try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    }
-    priorities[0] = 0.5;
-    queues[0].pQueuePriorities = null;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    queues[0].pQueuePriorities = &priorities;
-    queues[0].queueCount = 0;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    queues[0].queueCount = 17;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    queues[0].queueCount = 1;
-    queues[0].flags = 1;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    queues[0].flags = 0;
-    queues[0].pNext = &link;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    queues[0].pNext = null;
-    queues[0].sType = 0;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    queues[0].sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    info.sType = 0;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    info.sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    info.flags = 1;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    info.flags = 0;
-    info.queueCreateInfoCount = 0;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    info.queueCreateInfoCount = 17;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    info.queueCreateInfoCount = 1;
-    info.pQueueCreateInfos = null;
-    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
-    var bytes: [24]u8 = undefined;
-    std.mem.writeInt(u32, bytes[0..4], 11, .little);
-    std.mem.writeInt(i32, bytes[4..8], 0, .little);
-    std.mem.writeInt(u64, bytes[8..16], 1, .little);
-    std.mem.writeInt(u64, bytes[16..24], 2, .little);
-    try std.testing.expectEqual(@as(i32, 0), try identity_reply(&bytes, 11, 2, true));
-    for (0..24) |length| {
-        if (identity_reply(bytes[0..length], 11, 2, true)) |_| {
-            return error.AcceptedTruncation;
-        } else |_| {}
-    }
-    for ([_]usize{ 0, 8, 16 }) |offset| {
-        bytes[offset] ^= 1;
-        try std.testing.expectError(error.Value, identity_reply(&bytes, 11, 2, true));
-        bytes[offset] ^= 1;
-    }
-    std.mem.writeInt(u32, bytes[0..4], 155, .little);
-    std.mem.writeInt(u64, bytes[4..12], 1, .little);
-    std.mem.writeInt(u64, bytes[12..20], 2, .little);
-    _ = try identity_reply(bytes[0..20], 155, 2, false);
-    for (0..20) |length| {
-        if (identity_reply(bytes[0..length], 155, 2, false)) |_| {
-            return error.AcceptedTruncation;
-        } else |_| {}
-    }
-}
-test "fence result replies reject truncation malformed tags and unexpected positive statuses" {
-    defer lost = c.RingOk;
-    var bytes: [8]u8 = undefined;
-    std.mem.writeInt(u32, bytes[0..4], 38, .little);
-    std.mem.writeInt(i32, bytes[4..8], 0, .little);
-    for (0..8) |length| {
-        try std.testing.expectEqual(
-            @as(c_int, c.VK_ERROR_DEVICE_LOST),
-            @call(.never_inline, result_reply, .{ bytes[0..length], @as(u32, 38), @as(i32, 1) }),
-        );
-        try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
-        lost = c.RingOk;
-    }
-    try std.testing.expectEqual(
-        @as(c_int, 0),
-        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
-    );
-    std.mem.writeInt(i32, bytes[4..8], c.VK_NOT_READY, .little);
-    try std.testing.expectEqual(
-        @as(c_int, c.VK_NOT_READY),
-        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
-    );
-    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_HOST_MEMORY, .little);
-    try std.testing.expectEqual(
-        @as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY),
-        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
-    );
-    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_DEVICE_LOST, .little);
-    try std.testing.expectEqual(
-        @as(c_int, c.VK_ERROR_DEVICE_LOST),
-        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
-    );
-    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
-    lost = c.RingOk;
-    std.mem.writeInt(i32, bytes[4..8], c.VK_INCOMPLETE, .little);
-    try std.testing.expectEqual(
-        @as(c_int, c.VK_ERROR_DEVICE_LOST),
-        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
-    );
-    std.mem.writeInt(i32, bytes[4..8], 0, .little);
-    std.mem.writeInt(u32, bytes[0..4], 39, .little);
-    try std.testing.expectEqual(
-        @as(c_int, c.VK_ERROR_DEVICE_LOST),
-        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
-    );
-}
-
-test "command buffer batch replies validate every truncation result count and identity" {
-    const Ids = [_]u64{ 7, 9 };
-    var writer = writer_t{};
-    writer.put(u32, 88);
-    writer.put(i32, 0);
-    writer.put(u64, Ids.len);
-    for (Ids) |id| writer.put(u64, id);
-    for (0..writer.used) |length| {
-        try std.testing.expectError(
-            error.Bounds,
-            @call(
-                .never_inline,
-                command_buffers_reply,
-                .{ writer.bytes[0..length], &Ids },
-            ),
-        );
-    }
-    try std.testing.expectEqual(
-        @as(c_int, c.VK_SUCCESS),
-        try command_buffers_reply(writer.bytes[0..writer.used], &Ids),
-    );
-    writer.bytes[0] ^= 1;
-    try std.testing.expectError(
-        error.Value,
-        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
-    );
-    writer.bytes[0] ^= 1;
-    std.mem.writeInt(u64, writer.bytes[8..16], 3, .little);
-    try std.testing.expectError(
-        error.Value,
-        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
-    );
-    std.mem.writeInt(u64, writer.bytes[8..16], Ids.len, .little);
-    std.mem.writeInt(i32, writer.bytes[4..8], c.VK_NOT_READY, .little);
-    try std.testing.expectError(
-        error.Value,
-        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
-    );
-    std.mem.writeInt(i32, writer.bytes[4..8], 0, .little);
-    std.mem.writeInt(u64, writer.bytes[24..32], 10, .little);
-    try std.testing.expectError(
-        error.Value,
-        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
-    );
-    std.mem.writeInt(u64, writer.bytes[16..24], 0, .little);
-    std.mem.writeInt(u64, writer.bytes[24..32], 0, .little);
-    try std.testing.expectError(
-        error.Value,
-        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
-    );
-    std.mem.writeInt(i32, writer.bytes[4..8], c.VK_ERROR_OUT_OF_HOST_MEMORY, .little);
-    try std.testing.expectEqual(
-        @as(
-            c_int,
-            c.VK_ERROR_OUT_OF_HOST_MEMORY,
-        ),
-        try command_buffers_reply(writer.bytes[0..writer.used], &Ids),
-    );
-}
-
-test "pending references prevent buffer pool and semaphore destruction before GPU retirement" {
-    const fixture_t = struct {
-        fn exchange(
-            _: ?*anyopaque,
-            _: [*c]const c.venus_request_t,
-            _: ?*const anyopaque,
-            _: usize,
-            _: [*c]c.venus_request_t,
-            _: ?*anyopaque,
-            _: usize,
-        ) callconv(.C) c_int {
-            return c.RingInvalid;
-        }
-    };
-    var sentinel: u8 = 0;
-    try std.testing.expectEqual(
-        @as(c_int, c.RingOk),
-        venus_icd_bind(fixture_t.exchange, &sentinel),
-    );
-    defer venus_icd_abandon();
-    var device: [*c]c.venus_object_t = null;
-    var buffer: [*c]c.venus_object_t = null;
-    var recording: [*c]c.venus_object_t = null;
-    var pool: [*c]c.venus_object_t = null;
-    var semaphore: [*c]c.venus_object_t = null;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-        &objects,
-        c.VK_OBJECT_TYPE_DEVICE,
-        0,
-        1,
-        &device,
-    ));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-        &objects,
-        c.VK_OBJECT_TYPE_BUFFER,
-        device.*.id,
-        0,
-        &buffer,
-    ));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-        &objects,
-        c.VK_OBJECT_TYPE_COMMAND_POOL,
-        device.*.id,
-        0,
-        &pool,
-    ));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-        &objects,
-        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
-        pool.*.id,
-        1,
-        &recording,
-    ));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-        &objects,
-        c.VK_OBJECT_TYPE_SEMAPHORE,
-        device.*.id,
-        0,
-        &semaphore,
-    ));
-    resource_state(semaphore).inflight_count = 1;
-    const index = resource_index(buffer);
-    resource_state(recording).command_state = .Pending;
-    resource_state(recording).buffer_references[index / 64] =
-        @as(u64, 1) << @as(u6, @intCast(index % 64));
-    destroy_buffer(@ptrFromInt(device.*.handle), @ptrFromInt(buffer.*.handle), null);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    destroy_command_pool(@ptrFromInt(device.*.handle), @ptrFromInt(pool.*.handle), null);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    destroy_semaphore(@ptrFromInt(device.*.handle), @ptrFromInt(semaphore.*.handle), null);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    try std.testing.expectEqual(@as(usize, 5), objects.live_count);
-    try std.testing.expectEqual(@as(u32, 1), resource_state(semaphore).inflight_count);
-    try std.testing.expectEqual(command_state_t.Pending, resource_state(recording).command_state);
-}
-
-test "inline update staging captures input and scrubs success transport and malformed reply paths" {
-    const fixture_t = struct {
-        mode: u32,
-        captured: bool = false,
-        fn exchange(
-            context: ?*anyopaque,
-            request: [*c]const c.venus_request_t,
-            input: ?*const anyopaque,
-            length: usize,
-            response: [*c]c.venus_request_t,
-            output: ?*anyopaque,
-            capacity: usize,
-        ) callconv(.C) c_int {
-            const fixture: *@This() = @ptrCast(@alignCast(context.?));
-            response.* = std.mem.zeroes(c.venus_request_t);
-            response.*.kind = request.*.kind;
-            response.*.direction = 1;
-            if (request.*.kind == c.RequestSubmit) {
-                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
-                if (length != 92 or !std.mem.eql(u8, bytes[84..92], &.{ 1, 2, 3, 4, 5, 6, 7, 8 }))
-                    return c.RingCorrupt;
-                fixture.captured = true;
-                if (fixture.mode == 1) return c.RingClosed;
-                response.*.argument_zero = 1;
-            } else if (request.*.kind == c.RequestReply) {
-                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
-                @memset(bytes, 0);
-                std.mem.writeInt(u32, bytes[0..4], if (fixture.mode == 2) 118 else 117, .little);
-                response.*.payload_bytes = @intCast(capacity);
-            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
-            return c.RingOk;
-        }
-    };
-    for (0..3) |mode| {
-        var fixture = fixture_t{ .mode = @intCast(mode) };
-        try std.testing.expectEqual(
-            @as(c_int, c.RingOk),
-            venus_icd_bind(fixture_t.exchange, &fixture),
-        );
-        defer venus_icd_abandon();
-        var device: [*c]c.venus_object_t = null;
-        var pool: [*c]c.venus_object_t = null;
-        var recording: [*c]c.venus_object_t = null;
-        var buffer: [*c]c.venus_object_t = null;
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-            &objects,
-            c.VK_OBJECT_TYPE_DEVICE,
-            0,
-            1,
-            &device,
-        ));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-            &objects,
-            c.VK_OBJECT_TYPE_COMMAND_POOL,
-            device.*.id,
-            0,
-            &pool,
-        ));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-            &objects,
-            c.VK_OBJECT_TYPE_COMMAND_BUFFER,
-            pool.*.id,
-            1,
-            &recording,
-        ));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-            &objects,
-            c.VK_OBJECT_TYPE_BUFFER,
-            device.*.id,
-            0,
-            &buffer,
-        ));
-        resource_state(recording).command_state = .Recording;
-        resource_state(buffer).* = .{ .buffer_size = 8, .buffer_usage = 2, .bound_memory = 1 };
-        const data = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
-        update_buffer(@ptrFromInt(recording.*.handle), @ptrFromInt(buffer.*.handle), 0, 8, &data);
-        try std.testing.expect(fixture.captured);
-        for (update_encoded[0..56]) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-        for (tx[0..92]) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-        const index = resource_index(buffer);
-        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
-        try std.testing.expectEqual(
-            if (mode == 0) bit else @as(u64, 0),
-            resource_state(recording).buffer_references[index / 64],
-        );
-        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
-    }
-}
-
-test "constructor identities allow null only after negative native results" {
-    var bytes = [_]u8{0} ** 24;
-    std.mem.writeInt(u32, bytes[0..4], 40, .little);
-    std.mem.writeInt(u32, bytes[4..8], @bitCast(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY)), .little);
-    std.mem.writeInt(u64, bytes[8..16], 1, .little);
-    try std.testing.expectEqual(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try identity_reply(
-        &bytes,
-        40,
-        123,
-        true,
-    ));
-    for (0..bytes.len) |length| try std.testing.expectError(error.Bounds, identity_reply(
-        bytes[0..length],
-        40,
-        123,
-        true,
-    ));
-    std.mem.writeInt(u64, bytes[16..24], 123, .little);
-    try std.testing.expectEqual(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try identity_reply(
-        &bytes,
-        40,
-        123,
-        true,
-    ));
-    std.mem.writeInt(u64, bytes[16..24], 124, .little);
-    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
-    std.mem.writeInt(u64, bytes[16..24], 0, .little);
-    std.mem.writeInt(u32, bytes[4..8], 0, .little);
-    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
-    std.mem.writeInt(u32, bytes[4..8], 1, .little);
-    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
-}
-
-test "fence completion retires a queue prefix while simultaneous references remain pending" {
-    const fixture_t = struct {
-        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
-            return c.RingInvalid;
-        }
-    };
-    var context: u8 = 0;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &context));
-    defer venus_icd_abandon();
-    var records: [7][*c]c.venus_object_t = [_][*c]c.venus_object_t{null} ** 7;
-    const Kinds = [_]u32{ c.VK_OBJECT_TYPE_DEVICE, c.VK_OBJECT_TYPE_QUEUE, c.VK_OBJECT_TYPE_QUEUE, c.VK_OBJECT_TYPE_COMMAND_BUFFER, c.VK_OBJECT_TYPE_COMMAND_BUFFER, c.VK_OBJECT_TYPE_SEMAPHORE, c.VK_OBJECT_TYPE_FENCE };
-    for (Kinds, 0..) |kind, index| {
-        const dispatchable: u32 = if (index < 5) 1 else 0;
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
-            &objects,
-            kind,
-            if (index == 0) 0 else records[0].*.id,
-            dispatchable,
-            &records[index],
-        ));
-    }
-    const first = resource_state(records[3]);
-    const second = resource_state(records[4]);
-    const semaphore = resource_state(records[5]);
-    const fence = resource_state(records[6]);
-    first.* = .{ .inflight_count = 3, .command_state = .Pending, .command_flags = 4 };
-    second.* = .{ .inflight_count = 1, .command_state = .Pending, .command_flags = 1 };
-    semaphore.inflight_count = 2;
-    fence.inflight_count = 1;
-    submission_tickets[0] = .{ .queue = records[1].*.handle, .sequence = 1 };
-    submission_tickets[1] = .{ .queue = records[1].*.handle, .sequence = 2, .fence = records[6].*.handle };
-    submission_tickets[2] = .{ .queue = records[2].*.handle, .sequence = 3 };
-    for (submission_tickets[0..3], 0..) |_, index| _ = include_reference(&submission_tickets[index], records[3]);
-    _ = include_reference(&submission_tickets[0], records[5]);
-    _ = include_reference(&submission_tickets[1], records[6]);
-    _ = include_reference(&submission_tickets[2], records[4]);
-    _ = include_reference(&submission_tickets[2], records[5]);
-    retire_fence(records[6].*.handle);
-    try std.testing.expectEqual(@as(u32, 1), first.inflight_count);
-    try std.testing.expectEqual(command_state_t.Pending, first.command_state);
-    try std.testing.expectEqual(@as(u32, 1), semaphore.inflight_count);
-    try std.testing.expectEqual(@as(u32, 0), fence.inflight_count);
-    try std.testing.expectEqual(@as(u64, 0), submission_tickets[0].queue);
-    try std.testing.expectEqual(@as(u64, 0), submission_tickets[1].queue);
-    retire_queue(records[2].*.handle);
-    try std.testing.expectEqual(command_state_t.Executable, first.command_state);
-    try std.testing.expectEqual(command_state_t.Invalid, second.command_state);
-    try std.testing.expectEqual(@as(u32, 0), semaphore.inflight_count);
-    resource_state(records[1]).id = records[1].*.id;
-    submission_sequence = std.math.maxInt(u64);
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), queue_submit(
-        @ptrFromInt(records[1].*.handle),
-        0,
-        null,
-        null,
-    ));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-}
-
-test "image barrier references retain pending images and invalidate recorded commands after destruction" {
-    const fixture_t = struct {
-        command_id: u32 = 0,
-        submissions: usize = 0,
-        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
-            const fixture: *@This() = @ptrCast(@alignCast(context.?));
-            response.* = std.mem.zeroes(c.venus_request_t);
-            response.*.kind = request.*.kind;
-            response.*.direction = 1;
-            if (request.*.kind == c.RequestSubmit) {
-                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
-                fixture.command_id = std.mem.readInt(u32, bytes[36..40], .little);
-                fixture.submissions += 1;
-                response.*.argument_zero = fixture.submissions;
-            } else if (request.*.kind == c.RequestReply) {
-                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
-                @memset(bytes, 0);
-                std.mem.writeInt(u32, bytes[0..4], fixture.command_id, .little);
-                response.*.payload_bytes = @intCast(capacity);
-            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
-            return c.RingOk;
-        }
-    };
-    var fixture = fixture_t{};
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
-    defer venus_icd_abandon();
-    var device: [*c]c.venus_object_t = null;
-    var pool: [*c]c.venus_object_t = null;
-    var recording: [*c]c.venus_object_t = null;
-    var image: [*c]c.venus_object_t = null;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_POOL, device.*.id, 0, &pool));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.*.id, 1, &recording));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE, device.*.id, 0, &image));
-    resource_state(image).* = .{ .id = image.*.id, .bound_memory = 999, .image_levels = 1, .image_layers = 1, .image_format = 37 };
-    resource_state(recording).command_state = .Recording;
-    var barrier = c.VkImageMemoryBarrier{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, .newLayout = c.VK_IMAGE_LAYOUT_GENERAL, .srcQueueFamilyIndex = 0xffffffff, .dstQueueFamilyIndex = 0xffffffff, .image = @ptrFromInt(image.*.handle), .subresourceRange = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 } };
-    pipeline_barrier(@ptrFromInt(recording.*.handle), 1, 0x1000, 0, 0, null, 0, null, 1, &barrier);
-    try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    const index = resource_index(image);
-    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
-    try std.testing.expect(resource_state(recording).buffer_references[index / 64] & bit != 0);
-    resource_state(recording).command_state = .Pending;
-    destroy_image(@ptrFromInt(device.*.handle), @ptrFromInt(image.*.handle), null);
-    try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
-    resource_state(recording).command_state = .Executable;
-    destroy_image(@ptrFromInt(device.*.handle), @ptrFromInt(image.*.handle), null);
-    try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
-    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
-    try std.testing.expectEqual(@as(usize, 3), objects.live_count);
-    try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
-    // An oversized combined packet rejects before dereferencing any array input.
-    resource_state(recording).command_state = .Recording;
-    pipeline_barrier(@ptrFromInt(recording.*.handle), 1, 1, 0, 64, @ptrFromInt(8), 64, @ptrFromInt(8), 64, @ptrFromInt(8));
-    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
-    try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
-}
-
-test "descriptor batch replies reject truncation unexpected status count tag and identity" {
-    const ids = [_]u64{ 42, 43 };
-    var bytes: [32]u8 = undefined;
-    std.mem.writeInt(u32, bytes[0..4], 77, .little);
-    std.mem.writeInt(i32, bytes[4..8], 0, .little);
-    std.mem.writeInt(u64, bytes[8..16], 2, .little);
-    std.mem.writeInt(u64, bytes[16..24], 42, .little);
-    std.mem.writeInt(u64, bytes[24..32], 43, .little);
-    for (0..bytes.len) |length| try std.testing.expectError(error.Bounds, @call(.never_inline, descriptor_sets_reply, .{ bytes[0..length], &ids }));
-    try std.testing.expectEqual(@as(c_int, 0), try @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
-    std.mem.writeInt(u32, bytes[0..4], 78, .little);
-    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
-    std.mem.writeInt(u32, bytes[0..4], 77, .little);
-    std.mem.writeInt(i32, bytes[4..8], 1, .little);
-    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
-    std.mem.writeInt(i32, bytes[4..8], 0, .little);
-    std.mem.writeInt(u64, bytes[8..16], 1, .little);
-    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
-    std.mem.writeInt(u64, bytes[8..16], 2, .little);
-    std.mem.writeInt(u64, bytes[24..32], 0, .little);
-    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
-    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_DEVICE_MEMORY, .little);
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
-    std.mem.writeInt(u64, bytes[24..32], 44, .little);
-    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
-}
-
-test "pending descriptor sets protect pool ownership and exact retirement refunds references" {
-    const fixture_t = struct {
-        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
-            return c.RingInvalid;
-        }
-    };
-    var sentinel: u8 = 0;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &sentinel));
-    defer venus_icd_abandon();
-    var device: [*c]c.venus_object_t = null;
-    var pool: [*c]c.venus_object_t = null;
-    var set: [*c]c.venus_object_t = null;
-    var recording: [*c]c.venus_object_t = null;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &pool));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &set));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, device.*.id, 1, &recording));
-    const layout = try profiles.normalize_bindings(&.{.{ .binding = 3, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
-    resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&layout));
-    resource_state(set).inflight_count = 1;
-    resource_state(pool).pool_flags = 1;
-    resource_state(pool).descriptor_live_sets = 1;
-    resource_state(pool).descriptor_used[7] = 1;
-    const handles = [_]c.VkDescriptorSet{@ptrFromInt(set.*.handle)};
-    const native_device: c.VkDevice = @ptrFromInt(device.*.handle);
-    const native_pool: c.VkDescriptorPool = @ptrFromInt(pool.*.handle);
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), free_descriptor_sets(native_device, native_pool, 1, &handles));
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), reset_descriptor_pool(native_device, native_pool, 0));
-    destroy_descriptor_pool(native_device, native_pool, null);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    try std.testing.expectEqual(@as(usize, 4), objects.live_count);
-    const index = resource_index(set);
-    resource_state(recording).command_state = .Executable;
-    resource_state(recording).buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
-    resource_state(set).inflight_count = 0;
-    retire_descriptor_set(@ptrCast(set), @ptrCast(pool));
-    try std.testing.expectEqual(@as(u32, 0), resource_state(pool).descriptor_live_sets);
-    try std.testing.expectEqual(@as(u32, 0), resource_state(pool).descriptor_used[7]);
-    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
-    try std.testing.expect(descriptor_set_for(handles[0], device.*.id) == null);
-    try std.testing.expect(descriptor_pool_for(@ptrCast(recording)) == null);
-}
-
-test "descriptor staging publishes only acknowledged metadata and scrubs every outcome" {
-    const fixture_t = struct {
-        mode: usize,
-        captured: bool = false,
-        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
-            const fixture: *@This() = @ptrCast(@alignCast(context.?));
-            response.* = std.mem.zeroes(c.venus_request_t);
-            response.*.kind = request.*.kind;
-            response.*.direction = 1;
-            if (request.*.kind == c.RequestSubmit) {
-                if (length < 40 or std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little) != 79) return c.RingCorrupt;
-                fixture.captured = true;
-                if (fixture.mode == 1) return c.RingClosed;
-                response.*.argument_zero = 1;
-            } else if (request.*.kind == c.RequestReply) {
-                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
-                @memset(bytes, 0);
-                std.mem.writeInt(u32, bytes[0..4], if (fixture.mode == 2) 78 else 79, .little);
-                response.*.payload_bytes = @intCast(capacity);
-            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
-            return c.RingOk;
-        }
-    };
-    for (0..11) |mode| {
-        var fixture = fixture_t{ .mode = mode };
-        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
-        defer venus_icd_abandon();
-        var device: [*c]c.venus_object_t = null;
-        var pool: [*c]c.venus_object_t = null;
-        var set: [*c]c.venus_object_t = null;
-        var destination_set: [*c]c.venus_object_t = null;
-        var buffer: [*c]c.venus_object_t = null;
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &pool));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &set));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &destination_set));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &buffer));
-        device_caches[0] = .{ .handle = device.*.handle, .descriptor_limits_ready = true, .descriptor_alignments = .{ 16, 16 }, .descriptor_ranges = .{ 256, 512 } };
-        const kind: u32 = if (mode == 4 or mode == 5) 6 else 7;
-        const layout = try profiles.normalize_bindings(&.{.{ .binding = 3, .descriptor_type = kind, .descriptor_count = 1, .stage_flags = 32 }});
-        var profile = try profiles.create_set_profile(&layout);
-        if (mode == 7 or mode == 8 or mode == 10) {
-            profile.descriptors[0].buffer = if (mode == 10) 1 else buffer.*.handle;
-            profile.descriptors[0].range = 64;
-        }
-        resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, profile);
-        resource_state(destination_set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&layout));
-        resource_state(buffer).* = .{ .buffer_size = 512, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, .bound_memory = 1 };
-        if (mode == 3 or mode == 7) resource_state(set).inflight_count = 1;
-        if (mode == 8) resource_state(destination_set).inflight_count = 1;
-        var observers: [2][*c]c.venus_object_t = undefined;
-        for (&observers, 0..) |*observer, observer_index| {
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, device.*.id, 1, observer));
-            const observed = resource_index(if (mode >= 7 and observer_index == 1) destination_set else set);
-            resource_state(observer.*).command_state = if (observer_index == 0) .Recording else .Executable;
-            resource_state(observer.*).buffer_references[observed / 64] |= @as(u64, 1) << @as(u6, @intCast(observed % 64));
-        }
-        const info: c.VkDescriptorBufferInfo = .{ .buffer = @ptrFromInt(buffer.*.handle), .offset = 16, .range = if (mode == 5) 257 else 128 };
-        const initial: c.VkWriteDescriptorSet = .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set.*.handle), .dstBinding = 3, .descriptorCount = 1, .descriptorType = kind, .pBufferInfo = &info };
-        var writes = [_]c.VkWriteDescriptorSet{initial} ** 2;
-        writes[1].dstBinding = 99;
-        const copy: c.VkCopyDescriptorSet = .{ .sType = c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET, .srcSet = @ptrFromInt(set.*.handle), .srcBinding = 3, .dstSet = @ptrFromInt(destination_set.*.handle), .dstBinding = 3, .descriptorCount = 1 };
-        if (mode >= 7) update_descriptor_sets(@ptrFromInt(device.*.handle), 0, null, 1, &copy) else update_descriptor_sets(@ptrFromInt(device.*.handle), if (mode == 6) 2 else 1, &writes, 0, null);
-        const expected_success = mode == 0 or mode == 4;
-        const current = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
-        try std.testing.expectEqual(if (expected_success) buffer.*.handle else profile.descriptors[0].buffer, current.descriptors[0].buffer);
-        try std.testing.expectEqual(expected_success or mode == 1 or mode == 2 or mode == 7 or mode == 9 or mode == 10, fixture.captured);
-        const copied = profiles.get_profile(&profile_registry.sets, resource_state(destination_set).profile_index).?;
-        try std.testing.expectEqual(if (mode == 7) buffer.*.handle else @as(u64, 0), copied.descriptors[0].buffer);
-        try std.testing.expectEqual(mode != 1 and mode != 2, lost == c.RingOk);
-        for (observers, 0..) |observer, observer_index| {
-            const invalidated = expected_success or ((mode == 7 or mode == 9 or mode == 10) and observer_index == 1);
-            try std.testing.expectEqual(if (invalidated) command_state_t.Invalid else if (observer_index == 0) command_state_t.Recording else command_state_t.Executable, resource_state(observer).command_state);
-        }
-        for (std.mem.asBytes(&descriptor_update_snapshots)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-        for (std.mem.asBytes(&descriptor_wire_buffers)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
-    }
-}
-test "compute and graphics acknowledgments publish no references or state changes on failures" {
-    const fixture_t = struct {
-        mode: usize,
-        opcode: u32 = 0,
-        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
-            const fixture: *@This() = @ptrCast(@alignCast(context.?));
-            response.* = std.mem.zeroes(c.venus_request_t);
-            response.*.kind = request.*.kind;
-            response.*.direction = 1;
-            if (request.*.kind == c.RequestSubmit) {
-                if (length < 40) return c.RingInvalid;
-                fixture.opcode = std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little);
-                if (fixture.mode == 1) return c.RingClosed;
-                response.*.argument_zero = 1;
-            } else if (request.*.kind == c.RequestReply) {
-                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
-                @memset(bytes, 0);
-                std.mem.writeInt(u32, bytes[0..4], fixture.opcode + @as(u32, if (fixture.mode == 2) 1 else 0), .little);
-                response.*.payload_bytes = @intCast(capacity);
-            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
-            return c.RingOk;
-        }
-    };
-    for (0..9) |operation| for (0..3) |mode| {
-        var fixture = fixture_t{ .mode = mode };
-        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
-        defer venus_icd_abandon();
-        var device: [*c]c.venus_object_t = null;
-        var pool: [*c]c.venus_object_t = null;
-        var recording: [*c]c.venus_object_t = null;
-        var pipeline: [*c]c.venus_object_t = null;
-        var layout: [*c]c.venus_object_t = null;
-        var descriptor_pool: [*c]c.venus_object_t = null;
-        var set: [*c]c.venus_object_t = null;
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_POOL, device.*.id, 0, &pool));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.*.id, 1, &recording));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PIPELINE, device.*.id, 0, &pipeline));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, device.*.id, 0, &layout));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &descriptor_pool));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, descriptor_pool.*.id, 0, &set));
-        const empty = profiles.descriptor_layout_t{};
-        const definition = if (operation >= 4) try profiles.normalize_pipeline(&.{}, &.{}) else try profiles.normalize_pipeline(&.{empty}, &.{.{ .stage_flags = 32, .offset = 0, .size = 4 }});
-        resource_state(layout).profile_index = try profiles.reserve_slot(&profile_registry.pipeline_layouts, definition);
-        resource_state(pipeline).profile_index = try profiles.reserve_slot(&profile_registry.pipelines, definition);
-        resource_state(pipeline).pipeline_bind_point = if (operation >= 4) 0 else 1;
-        resource_state(pipeline).render_format = 37;
-        resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&empty));
-        resource_state(recording).command_profile_index = try profiles.reserve_slot(&command_registry.commands, compute_state.command_profile_t{ .pipeline = pipeline.*.handle });
-        resource_state(recording).command_state = .Recording;
-        device_caches[0] = .{ .handle = device.*.handle, .descriptor_limits_ready = true, .compute_group_limits = .{ 8, 8, 8 } };
-        if (operation >= 4) {
-            device_caches[0].graphics_queue_ready = true;
-            device_caches[0].graphics_queue_count = 1;
-            device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
-        }
-        var pass: [*c]c.venus_object_t = null;
-        var framebuffer: [*c]c.venus_object_t = null;
-        var view: [*c]c.venus_object_t = null;
-        var image: [*c]c.venus_object_t = null;
-        var allocation: [*c]c.venus_object_t = null;
-        var copy_target: [*c]c.venus_object_t = null;
-        var copy_memory: [*c]c.venus_object_t = null;
-        if (operation >= 5) {
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_RENDER_PASS, device.*.id, 0, &pass));
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_FRAMEBUFFER, device.*.id, 0, &framebuffer));
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE_VIEW, device.*.id, 0, &view));
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE, device.*.id, 0, &image));
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &allocation));
-            resource_state(pass).* = .{ .render_format = 37, .render_final_layout = c.VK_IMAGE_LAYOUT_GENERAL };
-            resource_state(framebuffer).* = .{ .render_format = 37, .framebuffer_view = view.*.handle, .framebuffer_extent = .{ 64, 64 } };
-            resource_state(view).* = .{ .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .view_image = image.*.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
-            resource_state(image).* = .{ .bound_memory = allocation.*.handle, .image_type = c.VK_IMAGE_TYPE_2D, .image_samples = 1, .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .image_levels = 1, .image_layers = 1, .image_extent = .{ 64, 64, 1 } };
-            if (operation == 6 or operation == 7) graphics_recording(resource_state(recording)).active_format = 37;
-            if (operation == 7) {
-                graphics_recording(resource_state(recording)).pipeline = pipeline.*.handle;
-                graphics_recording(resource_state(recording)).pipeline_format = 37;
-            }
-        }
-        if (operation == 8) {
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &copy_target));
-            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &copy_memory));
-            resource_state(copy_target).* = .{ .buffer_size = 16384, .buffer_usage = c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, .bound_memory = copy_memory.*.handle };
-        }
-        const copy_region: c.VkBufferImageCopy = .{ .imageSubresource = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 }, .imageExtent = .{ .width = 64, .height = 64, .depth = 1 } };
-        const clear_value = std.mem.zeroes(c.VkClearValue);
-        const begin_info: c.VkRenderPassBeginInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = @ptrFromInt(if (pass == null) 1 else pass.*.handle), .framebuffer = @ptrFromInt(if (framebuffer == null) 1 else framebuffer.*.handle), .renderArea = .{ .extent = .{ .width = 64, .height = 64 } }, .clearValueCount = 1, .pClearValues = &clear_value };
-        const command_handle: c.VkCommandBuffer = @ptrFromInt(recording.*.handle);
-        const handles = [_]c.VkDescriptorSet{@ptrFromInt(set.*.handle)};
-        const value: u32 = 42;
-        if (mode == 0 and operation == 0) {
-            resource_state(pipeline).pipeline_bind_point = 0;
-            bind_pipeline(command_handle, 1, @ptrFromInt(pipeline.*.handle));
-            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
-            resource_state(pipeline).pipeline_bind_point = 1;
-            resource_state(recording).command_state = .Recording;
-        }
-        if (mode == 0 and operation == 1) {
-            const profile = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
-            profile.layout = try profiles.normalize_bindings(&.{.{ .binding = 4, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
-            bind_descriptor_sets(command_handle, 1, @ptrFromInt(layout.*.handle), 0, 1, &handles, 0, null);
-            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
-            profile.layout = empty;
-            resource_state(recording).command_state = .Recording;
-        }
-        if (mode == 0 and operation == 3) {
-            const profile = profiles.get_profile(&profile_registry.pipelines, resource_state(pipeline).profile_index).?;
-            profile.sets[0] = try profiles.normalize_bindings(&.{.{ .binding = 0, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
-            dispatch(command_handle, 1, 1, 1);
-            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
-            profile.sets[0] = empty;
-            resource_state(recording).command_state = .Recording;
-        }
-        if (mode == 0 and operation == 4) {
-            device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_COMPUTE_BIT;
-            bind_pipeline(command_handle, 0, @ptrFromInt(pipeline.*.handle));
-            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
-            try std.testing.expectEqual(@as(u64, 0), graphics_recording(resource_state(recording)).pipeline);
-            try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
-            device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
-            resource_state(recording).command_state = .Recording;
-        }
-        switch (operation) {
-            0 => bind_pipeline(command_handle, 1, @ptrFromInt(pipeline.*.handle)),
-            1 => bind_descriptor_sets(command_handle, 1, @ptrFromInt(layout.*.handle), 0, 1, &handles, 0, null),
-            2 => push_constants(command_handle, @ptrFromInt(layout.*.handle), 32, 0, 4, &value),
-            3 => dispatch(command_handle, 1, 1, 1),
-            4 => bind_pipeline(command_handle, 0, @ptrFromInt(pipeline.*.handle)),
-            5 => begin_render_pass(command_handle, &begin_info, c.VK_SUBPASS_CONTENTS_INLINE),
-            6 => end_render_pass(command_handle),
-            7 => draw(command_handle, 3, 1, 0, 0),
-            8 => copy_image_to_buffer(command_handle, @ptrFromInt(image.*.handle), c.VK_IMAGE_LAYOUT_GENERAL, @ptrFromInt(copy_target.*.handle), 1, &copy_region),
-            else => unreachable,
-        }
-        if (operation >= 5) {
-            const expected_active: u32 = if (operation == 5) (if (mode == 0) 37 else 0) else if (operation == 6) (if (mode == 0) 0 else 37) else if (operation == 7) 37 else 0;
-            try std.testing.expectEqual(expected_active, graphics_recording(resource_state(recording)).active_format);
-            if ((operation == 5 or operation == 8) and mode == 0) {
-                var referenced: usize = 0;
-                for (resource_state(recording).buffer_references) |word| referenced += @popCount(word);
-                try std.testing.expectEqual(@as(usize, if (operation == 5) 5 else 4), referenced);
-            }
-        }
-        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 1) c.RingClosed else c.RingCorrupt), lost);
-        if (mode != 0) {
-            try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
-            if (operation == 4) try std.testing.expectEqual(@as(u64, 0), graphics_recording(resource_state(recording)).pipeline);
-            try std.testing.expect(!command_profile(recording).descriptor_layout_ready);
-            try std.testing.expectEqual(@as(u64, 0), command_profile(recording).pushes[5].initialized[0]);
-        } else if (operation == 2) try std.testing.expectEqual(@as(u64, 15), command_profile(recording).pushes[5].initialized[0]);
-    };
-}
-
-test "graphics queue flags cache rejects malformed and impossible actual families before publication" {
-    const fixture_t = struct {
-        mode: u32,
-        submitted: u32 = 0,
-        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
-            const fixture: *@This() = @ptrCast(@alignCast(context.?));
-            response.* = std.mem.zeroes(c.venus_request_t);
-            response.*.kind = request.*.kind;
-            response.*.direction = 1;
-            if (request.*.kind == c.RequestSubmit) {
-                std.debug.assert(length >= 40 and input != null);
-                std.debug.assert(std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little) == 7);
-                fixture.submitted += 1;
-                if (fixture.mode == 4) return c.RingClosed;
-                response.*.argument_zero = 1;
-            } else if (request.*.kind == c.RequestReply) {
-                std.debug.assert(capacity >= 48);
-                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
-                @memset(bytes, 0);
-                std.mem.writeInt(u32, bytes[0..4], 7, .little);
-                std.mem.writeInt(u64, bytes[4..12], if (fixture.mode == 1) 0 else 1, .little);
-                const count: u32 = if (fixture.mode == 2) 0 else 1;
-                std.mem.writeInt(u32, bytes[12..16], count, .little);
-                std.mem.writeInt(u64, bytes[16..24], count, .little);
-                std.mem.writeInt(u32, bytes[24..28], c.VK_QUEUE_GRAPHICS_BIT, .little);
-                std.mem.writeInt(u32, bytes[28..32], if (fixture.mode == 3) 0 else 1, .little);
-                std.mem.writeInt(u32, bytes[32..36], 64, .little);
-                for (0..3) |index| std.mem.writeInt(u32, bytes[36 + index * 4 ..][0..4], 1, .little);
-                response.*.payload_bytes = @intCast(capacity);
-            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
-            return c.RingOk;
-        }
-    };
-    for (0..5) |mode| {
-        var fixture = fixture_t{ .mode = @intCast(mode) };
-        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
-        var physical: [*c]c.venus_object_t = null;
-        var device: [*c]c.venus_object_t = null;
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, 0, 1, &physical));
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, physical.*.id, 1, &device));
-        device_caches[0] = .{ .handle = device.*.handle, .family_count = 1 };
-        device_caches[0].counts[0] = 1;
-        const accepted = @call(.never_inline, ensure_graphics_queue_flags, .{@as(*const c.venus_object_t, @ptrCast(device))});
-        try std.testing.expectEqual(mode == 0, accepted);
-        try std.testing.expectEqual(@as(u32, 1), fixture.submitted);
-        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 4) c.RingClosed else c.RingCorrupt), lost);
-        if (mode == 0) {
-            try std.testing.expectEqual(@as(u32, c.VK_QUEUE_GRAPHICS_BIT), device_caches[0].graphics_queue_flags[0]);
-            fixture.mode = 4;
-            try std.testing.expect(@call(.never_inline, ensure_graphics_queue_flags, .{@as(*const c.venus_object_t, @ptrCast(device))}));
-            try std.testing.expectEqual(@as(u32, 1), fixture.submitted);
-        } else {
-            try std.testing.expect(!device_caches[0].graphics_queue_ready);
-            try std.testing.expectEqual([_]u32{0} ** 64, device_caches[0].graphics_queue_flags);
-        }
-        venus_icd_abandon();
-        try std.testing.expectEqualDeep(device_cache_t{}, device_caches[0]);
-    }
-}
-
-test "negotiated binding owns the entire profile and rejected calls preserve the live session" {
-    const fixture_t = struct {
-        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
-            return c.RingInvalid; // Binding never contacts the receiver.
-        }
-    };
-    var context: u8 = 0;
-    var capabilities = std.mem.zeroes(c.venus_capabilities_t);
-    capabilities.wire_format_version = 1;
-    capabilities.vk_xml_version = c.VenusPinnedXmlVersion;
-    capabilities.vk_ext_command_serialization_spec_version = 1;
-    capabilities.vk_mesa_venus_protocol_spec_version = 3;
-    capabilities.supports_blob_id_0 = 1;
-    capabilities.supports_multiple_timelines = 1;
-    capabilities.vk_extension_mask1[0] = 1;
-    capabilities.vk_extension_mask1[12] = 3;
-    capabilities.vk_extension_mask1[31] = 0xa5a5a5a5;
-    const expected = capabilities;
-    for (0..8) |mode| {
-        var invalid = expected;
-        switch (mode) {
-            3 => invalid.wire_format_version = 0,
-            4 => invalid.allow_vk_wait_syncs = 2,
-            5 => invalid.supports_blob_id_0 = 0,
-            6 => invalid.vk_extension_mask1[0] = 0,
-            7 => invalid.vk_extension_mask1[12] = 1,
-            else => {},
-        }
-        const previous_namespace = namespace_id;
-        try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind_capabilities(if (mode == 0) null else fixture_t.exchange, if (mode == 1) null else &context, if (mode == 2) null else &invalid));
-        try std.testing.expectEqual(previous_namespace, namespace_id);
-        try std.testing.expect(command.exchange == null);
-        try std.testing.expect(!negotiated_capabilities_ready);
-        try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
-    }
-    const previous_namespace = namespace_id;
-    namespace_id = std.math.maxInt(u32);
-    const exhausted = venus_icd_bind_capabilities(fixture_t.exchange, &context, &capabilities);
-    namespace_id = previous_namespace;
-    try std.testing.expectEqual(@as(c_int, c.RingLimit), exhausted);
-    try std.testing.expect(!negotiated_capabilities_ready);
-    try std.testing.expect(command.exchange == null);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(fixture_t.exchange, &context, &capabilities));
-    defer venus_icd_abandon();
-    @memset(std.mem.asBytes(&capabilities), 0);
-    try std.testing.expect(negotiated_capabilities_ready);
-    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
-    const bound_namespace = namespace_id;
-    try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind_capabilities(fixture_t.exchange, &context, &expected));
-    try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind(fixture_t.exchange, &context));
-    try std.testing.expectEqual(bound_namespace, namespace_id);
-    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
-    var instance: [*c]c.venus_object_t = null;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
-    try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
-    try std.testing.expect(negotiated_capabilities_ready);
-    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, instance.*.handle, c.VK_OBJECT_TYPE_INSTANCE, 1));
-    // An accepted CPU command owns the binding even with no live Vulkan object.
-    for ([_]u32{ c.CommandSubmitted, c.CommandReading, c.CommandReady }) |phase| {
-        command.state = phase;
-        command.reply_offset = if (phase == c.CommandReady) command.rx_bytes else 0;
-        command.cpu_fence = 7;
-        command.command_id = 137;
-        const expected_command = command;
-        try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
-        try std.testing.expectEqualDeep(expected_command, command);
-        try std.testing.expectEqual(bound_namespace, namespace_id);
-        try std.testing.expect(negotiated_capabilities_ready);
-        try std.testing.expectEqualDeep(expected, negotiated_capabilities);
-    }
-    command.state = c.CommandIdle;
-    command.reply_offset = 0;
-    command.cpu_fence = 0;
-    command.command_id = 0;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_unbind());
-    try std.testing.expect(!negotiated_capabilities_ready);
-    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &context));
-    try std.testing.expect(!negotiated_capabilities_ready);
-    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
-    venus_icd_abandon();
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(fixture_t.exchange, &context, &expected));
-    venus_icd_abandon();
-    try std.testing.expect(!negotiated_capabilities_ready);
-    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
-}
-
-extern fn venus_features_test_query([*]const u32, usize, [*]u8) usize;
-extern fn venus_features_test_reply([*]const u32, usize, [*]u8) usize;
-extern fn venus_features_test_reply_one_hot([*]const u32, usize, usize, [*]u8) usize;
-extern fn venus_properties_test_fixture([*]const u32, usize, *c.VkPhysicalDeviceProperties, [*]properties_wire.data_t) void;
-extern fn venus_properties_test_encode([*]const u32, usize, *const c.VkPhysicalDeviceProperties, [*]const properties_wire.data_t, [*]u8) usize;
-extern fn venus_values_test_encode(u32, [*]u8, usize) usize;
-extern fn venus_values_test_properties(*const c.VkPhysicalDeviceProperties, [*]u8, usize) usize;
-const feature_fixture_t = struct {
-    api: u32 = c.VK_API_VERSION_1_3,
-    tags: [8]u32 = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR },
-    count: usize = 8,
-    hot: ?usize = null,
-    corrupt_word: ?usize = null,
-    truncate: ?usize = null,
-    fail_command: u32 = std.math.maxInt(u32),
-    current: u32 = 0,
-    commands: u32 = 0,
-    feature_commands: u32 = 0,
-    create_result: i32 = 0,
-    corrupt_create: bool = false,
-    corrupt_create_identity: bool = false,
-    corrupt_destroy: bool = false,
-    expected_device_info: ?*const c.VkDeviceCreateInfo = null,
-    reply: [4096]u8 = undefined,
-    bytes: usize = 0,
-    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
-        const self: *feature_fixture_t = @ptrCast(@alignCast(context.?));
-        response.* = std.mem.zeroes(c.venus_request_t);
-        response.*.kind = request.*.kind;
-        response.*.direction = 1;
-        switch (request.*.kind) {
-            c.RequestSubmit => {
-                std.debug.assert(input != null and length >= 44);
-                const wire = @as([*]const u8, @ptrCast(input.?))[36..length];
-                self.current = std.mem.readInt(u32, wire[0..4], .little);
-                self.commands += 1;
-                if (self.current == self.fail_command) return c.RingClosed;
-                response.*.argument_zero = self.commands;
-                @memset(&self.reply, 0);
-                switch (self.current) {
-                    0 => {
-                        std.mem.writeInt(u32, self.reply[0..4], 0, .little);
-                        std.mem.writeInt(i32, self.reply[4..8], c.VK_SUCCESS, .little);
-                        std.mem.writeInt(u64, self.reply[8..16], 1, .little);
-                        std.mem.writeInt(u64, self.reply[16..24], std.mem.readInt(u64, wire[wire.len - 8 ..][0..8], .little), .little);
-                        self.bytes = 24;
-                    },
-                    6 => {
-                        var value = std.mem.zeroes(c.VkPhysicalDeviceProperties);
-                        value.apiVersion = self.api;
-                        self.bytes = venus_values_test_properties(&value, &self.reply, self.reply.len);
-                    },
-                    1 => {
-                        std.mem.writeInt(u32, self.reply[0..4], 1, .little);
-                        self.bytes = 4;
-                    },
-                    3 => self.bytes = venus_values_test_encode(3, &self.reply, self.reply.len),
-                    11 => {
-                        const physical_id = std.mem.readInt(u64, wire[8..16], .little);
-                        const device_id = std.mem.readInt(u64, wire[wire.len - 8 ..][0..8], .little);
-                        if (self.expected_device_info) |info| {
-                            var expected: [8192]u8 = undefined;
-                            const used = venus_device_test_encode(info, physical_id, device_id, &expected);
-                            std.debug.assert(std.mem.eql(u8, expected[0..used], wire));
-                        }
-                        std.mem.writeInt(u32, self.reply[0..4], if (self.corrupt_create) 99 else 11, .little);
-                        std.mem.writeInt(i32, self.reply[4..8], self.create_result, .little);
-                        std.mem.writeInt(u64, self.reply[8..16], 1, .little);
-                        std.mem.writeInt(u64, self.reply[16..24], if (self.create_result < 0) 0 else if (self.corrupt_create_identity) device_id ^ 1 else device_id, .little);
-                        self.bytes = 24;
-                    },
-                    12 => {
-                        std.mem.writeInt(u32, self.reply[0..4], if (self.corrupt_destroy) 99 else 12, .little);
-                        self.bytes = 4;
-                    },
-                    148 => {
-                        var tags: [properties_wire.MaxNodes]u32 = undefined;
-                        var count: usize = 0;
-                        var offset: usize = 28;
-                        while (std.mem.readInt(u64, wire[offset..][0..8], .little) != 0) : (offset += 12) {
-                            tags[count] = std.mem.readInt(u32, wire[offset + 8 ..][0..4], .little);
-                            count += 1;
-                        }
-                        var core: c.VkPhysicalDeviceProperties = undefined;
-                        var nodes: [5]properties_wire.data_t = undefined;
-                        venus_properties_test_fixture(&tags, count, &core, &nodes);
-                        core.apiVersion = self.api;
-                        self.bytes = venus_properties_test_encode(&tags, count, &core, &nodes, &self.reply);
-                    },
-                    147 => {
-                        self.feature_commands += 1;
-                        var expected: [4096]u8 = undefined;
-                        const count = self.count;
-                        const expected_bytes = venus_features_test_query(&self.tags, count, &expected);
-                        std.mem.writeInt(u64, expected[8..16], std.mem.readInt(u64, wire[8..16], .little), .little);
-                        std.debug.assert(std.mem.eql(u8, expected[0..expected_bytes], wire));
-                        self.bytes = if (self.hot) |selected| venus_features_test_reply_one_hot(&self.tags, count, selected, &self.reply) else venus_features_test_reply(&self.tags, count, &self.reply);
-                        if (self.corrupt_word) |word| std.mem.writeInt(u32, self.reply[word * 4 ..][0..4], 99, .little);
-                    },
-                    else => return c.RingInvalid,
-                }
-                std.debug.assert(self.bytes > 0);
-            },
-            c.RequestPoll => {},
-            c.RequestReply => {
-                std.debug.assert(output != null and capacity == 4096);
-                const bytes = if (self.current == 147 and self.truncate != null) self.truncate.? else capacity;
-                @memcpy(@as([*]u8, @ptrCast(output.?))[0..bytes], self.reply[0..bytes]);
-                response.*.payload_bytes = @intCast(bytes);
-            },
-            else => return c.RingInvalid,
-        }
-        return c.RingOk;
-    }
-};
-fn feature_test_capabilities() c.venus_capabilities_t {
-    var value = std.mem.zeroes(c.venus_capabilities_t);
-    value.wire_format_version = 1;
-    value.vk_xml_version = c.VenusPinnedXmlVersion;
-    value.vk_ext_command_serialization_spec_version = 1;
-    value.vk_mesa_venus_protocol_spec_version = 3;
-    value.supports_blob_id_0 = 1;
-    value.supports_multiple_timelines = 1;
-    value.vk_extension_mask1[0] = 1;
-    value.vk_extension_mask1[12] = 3;
-    for ([_]u32{ 29, 287, 471 }) |bit| value.vk_extension_mask1[bit / 32] |= @as(u32, 1) << @as(u5, @intCast(bit % 32));
-    return value;
-}
-fn feature_test_physical(fixture: *feature_fixture_t, capabilities: *const c.venus_capabilities_t) !c.VkPhysicalDevice {
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(feature_fixture_t.exchange, fixture, capabilities));
-    var instance: [*c]c.venus_object_t = null;
-    var physical: [*c]c.venus_object_t = null;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.*.id, 1, &physical));
-    caches[0].handle = instance.*.handle;
-    caches[0].ready = true;
-    caches[0].count = 1;
-    caches[0].physical[0] = physical.*.handle;
-    return @ptrFromInt(physical.*.handle);
-}
-test "Features2 cached raw137 one-hots are immutable while public flags stay false" {
-    const capabilities = feature_test_capabilities();
-    for (0..137) |selected| {
-        var fixture = feature_fixture_t{ .hot = selected };
-        const physical = try feature_test_physical(&fixture, &capabilities);
-        defer venus_icd_abandon();
-        var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features2(physical, &output);
-        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
-        try std.testing.expectEqual(@as(u32, 1), fixture.feature_commands);
-        const entry = physical_features_cache(physical).?;
-        try std.testing.expect(entry.actual_api_ready and entry.raw_features_ready);
-        try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_3), entry.actual_api_version);
-        var position: usize = 0;
-        for (entry.raw.core) |flag| {
-            try std.testing.expectEqual(@as(u32, @intFromBool(position == selected)), flag);
-            position += 1;
-        }
-        for (entry.raw.nodes[0..entry.raw.count]) |node| for (node.flags[0..node.flag_count]) |flag| {
-            try std.testing.expectEqual(@as(u32, @intFromBool(position == selected)), flag);
-            position += 1;
-        };
-        try std.testing.expectEqual(@as(usize, 137), position);
-        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| try std.testing.expectEqual(@as(u32, 0), @field(output.features, field.name));
-        const raw_before = entry.raw;
-        @memset(std.mem.asBytes(&output.features), 0xa5);
-        features2(physical, &output);
-        var core = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
-        features(physical, &core);
-        try std.testing.expectEqualDeep(std.mem.zeroes(c.VkPhysicalDeviceFeatures), core);
-        try std.testing.expectEqualDeep(core, output.features);
-        try std.testing.expectEqualDeep(raw_before, entry.raw);
-        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
-    }
-}
-test "Features2 actual API gates aggregates correctly and never147 on API1.0" {
-    const capabilities = feature_test_capabilities();
-    for ([_]u32{ c.VK_API_VERSION_1_0, c.VK_API_VERSION_1_1, c.VK_API_VERSION_1_2, c.VK_API_VERSION_1_3 }) |api| {
-        var fixture = feature_fixture_t{ .api = api };
-        if (api == c.VK_API_VERSION_1_1) {
-            fixture.tags = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, 0, 0, 0, 0 };
-            fixture.count = 4;
-        } else if (api == c.VK_API_VERSION_1_2) {
-            fixture.tags = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, 0 };
-            fixture.count = 7;
-        }
-        const physical = try feature_test_physical(&fixture, &capabilities);
-        defer venus_icd_abandon();
-        var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        features2(physical, &output);
-        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
-        try std.testing.expectEqual(@as(u32, if (api == c.VK_API_VERSION_1_0) 0 else 1), fixture.feature_commands);
-        const entry = physical_features_cache(physical).?;
-        try std.testing.expectEqual(api, entry.actual_api_version);
-        try std.testing.expectEqual(@as(u8, @intCast(if (api == c.VK_API_VERSION_1_0) 0 else fixture.count)), entry.raw.count);
-    }
-}
-test "Features2 every truncated or corrupted initialized reply preserves complete output and raw cache" {
-    const capabilities = feature_test_capabilities();
-    for (0..2) |mode| {
-        const attempts: usize = if (mode == 0) 668 else 668 / 4;
-        for (0..attempts) |index| {
-            var fixture = feature_fixture_t{};
-            if (mode == 0) fixture.truncate = index else fixture.corrupt_word = index;
-            const physical = try feature_test_physical(&fixture, &capabilities);
-            defer venus_icd_abandon();
-            var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-            output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-            @memset(std.mem.asBytes(&output.features), 0xa5);
-            const before = std.mem.asBytes(&output).*;
-            features2(physical, &output);
-            try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&output));
-            try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
-            const entry = physical_features_cache(physical).?;
-            try std.testing.expect(entry.actual_api_ready and !entry.raw_features_ready);
-            try std.testing.expectEqualDeep(features_wire.result_t{}, entry.raw);
-            const commands = fixture.commands;
-            features2(physical, &output);
-            try std.testing.expectEqual(commands, fixture.commands);
-        }
-    }
-}
-
-test "Features2 native invalid topology cannot publish or transact" {
-    const capabilities = feature_test_capabilities();
-    var fixture = feature_fixture_t{};
-    const physical = try feature_test_physical(&fixture, &capabilities);
-    defer venus_icd_abandon();
-    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    @memset(std.mem.asBytes(&outer.features), 0xa5);
-    var node = std.mem.zeroes(c.VkPhysicalDeviceShaderDrawParametersFeatures);
-    node.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
-    node.shaderDrawParameters = 0xa5a5a5a5;
-    var duplicate = node;
-    var unknown = std.mem.zeroes(c.VkBaseOutStructure);
-    unknown.sType = 999999;
-    for (0..8) |mode| {
-        outer.pNext = &node;
-        node.pNext = null;
-        switch (mode) {
-            0 => outer.sType = 0,
-            1 => node.pNext = &node,
-            2 => {
-                node.pNext = &duplicate;
-                duplicate.pNext = null;
-            },
-            3 => outer.pNext = &outer,
-            4 => outer.pNext = @ptrFromInt(@intFromPtr(&node) + 1),
-            5 => {
-                unknown.pNext = &unknown;
-                outer.pNext = &unknown;
-            },
-            else => {},
-        }
-        const before = std.mem.asBytes(&outer).*;
-        const node_before = std.mem.asBytes(&node).*;
-        const address: ?*anyopaque = if (mode == 6) null else if (mode == 7) @ptrFromInt(@intFromPtr(&outer) + 1) else &outer;
-        features2(physical, address);
-        try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&outer));
-        try std.testing.expectEqualSlices(u8, &node_before, std.mem.asBytes(&node));
-        try std.testing.expectEqual(@as(u32, 0), fixture.commands);
-        try std.testing.expect(!physical_features_cache(physical).?.actual_api_ready);
-        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    }
-}
-test "Features2 parser masks are copied and unavailable requested nodes publish false" {
-    var capabilities = feature_test_capabilities();
-    capabilities.vk_extension_mask1[29 / 32] &= ~(@as(u32, 1) << 29);
-    capabilities.vk_extension_mask1[287 / 32] &= ~(@as(u32, 1) << 31);
-    capabilities.vk_extension_mask1[471 / 32] &= ~(@as(u32, 1) << 23);
-    var fixture = feature_fixture_t{ .count = 5 };
-    const physical = try feature_test_physical(&fixture, &capabilities);
-    defer venus_icd_abandon();
-    @memset(std.mem.asBytes(&capabilities), 0xff);
-    var transform = std.mem.zeroes(c.VkPhysicalDeviceTransformFeedbackFeaturesEXT);
-    transform.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
-    transform.transformFeedback = 1;
-    transform.geometryStreams = 1;
-    var robust = std.mem.zeroes(c.VkPhysicalDeviceRobustness2FeaturesEXT);
-    robust.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
-    robust.robustBufferAccess2 = 1;
-    robust.robustImageAccess2 = 1;
-    robust.nullDescriptor = 1;
-    transform.pNext = &robust;
-    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    outer.pNext = &transform;
-    features2(physical, &outer);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    try std.testing.expectEqual(@as(u32, 0), transform.transformFeedback | transform.geometryStreams | robust.robustBufferAccess2 | robust.robustImageAccess2 | robust.nullDescriptor);
-    try std.testing.expectEqual(@as(u8, 5), physical_features_cache(physical).?.raw.count);
-    try std.testing.expectEqual(@as(?*anyopaque, &robust), transform.pNext);
-}
-test "Features2 raw API mismatch invalid versions and failed backend preserve callers" {
-    const capabilities = feature_test_capabilities();
-    for ([_]u32{ 0, c.VK_API_VERSION_1_3 | (@as(u32, 1) << 29), (@as(u32, 2) << 22), c.VK_API_VERSION_1_3 }) |api| {
-        var fixture = feature_fixture_t{ .api = api };
-        const physical = try feature_test_physical(&fixture, &capabilities);
-        defer venus_icd_abandon();
-        var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-        @memset(std.mem.asBytes(&outer.features), 0xa5);
-        const before = std.mem.asBytes(&outer).*;
-        if (api == c.VK_API_VERSION_1_3) fixture.fail_command = 147;
-        features2(physical, &outer);
-        try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&outer));
-        try std.testing.expect(!physical_features_cache(physical).?.raw_features_ready);
-        try std.testing.expectEqual(@as(c_int, if (api == c.VK_API_VERSION_1_3) c.RingClosed else c.RingCorrupt), lost);
-    }
-    var fixture = feature_fixture_t{};
-    const physical = try feature_test_physical(&fixture, &capabilities);
-    defer venus_icd_abandon();
-    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features2(physical, &outer);
-    var value = std.mem.zeroes(c.VkPhysicalDeviceProperties);
-    properties(physical, &value);
-    try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_0), value.apiVersion);
-    fixture.api = c.VK_API_VERSION_1_2;
-    @memset(std.mem.asBytes(&value), 0xa5);
-    const before = std.mem.asBytes(&value).*;
-    properties(physical, &value);
-    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&value));
-    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
-}
-test "Features2 distinct physical caches clear only with acknowledged parent teardown" {
-    const capabilities = feature_test_capabilities();
-    var fixture = feature_fixture_t{ .hot = 0 };
-    const first = try feature_test_physical(&fixture, &capabilities);
-    defer venus_icd_abandon();
-    var second: [*c]c.venus_object_t = null;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, object(caches[0].handle, c.VK_OBJECT_TYPE_INSTANCE).?.id, 1, &second));
-    caches[0].count = 2;
-    caches[0].physical[1] = second.*.handle;
-    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features2(first, &outer);
-    fixture.hot = 1;
-    const next: c.VkPhysicalDevice = @ptrFromInt(second.*.handle);
-    features2(next, &outer);
-    try std.testing.expectEqual(@as(u32, 4), fixture.commands);
-    try std.testing.expectEqual(@as(u32, 1), physical_features_cache(first).?.raw.core[0]);
-    try std.testing.expectEqual(@as(u32, 0), physical_features_cache(first).?.raw.core[1]);
-    try std.testing.expectEqual(@as(u32, 0), physical_features_cache(next).?.raw.core[0]);
-    try std.testing.expectEqual(@as(u32, 1), physical_features_cache(next).?.raw.core[1]);
-    const instance: c.VkInstance = @ptrFromInt(caches[0].handle);
-    destroy_instance(instance, null);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    try std.testing.expectEqualDeep(instance_cache_t{}, caches[0]);
-    try std.testing.expect(physical_features_cache(first) == null and physical_features_cache(next) == null);
-    features2(first, &outer);
-    try std.testing.expectEqual(@as(u32, 5), fixture.commands);
-}
-test "Features2 complete reordered native chain preserves every non-Boolean byte and raw ownership" {
-    const capabilities = feature_test_capabilities();
-    var fixture = feature_fixture_t{};
-    const physical = try feature_test_physical(&fixture, &capabilities);
-    defer venus_icd_abandon();
-    const native_t = struct {
-        v11: c.VkPhysicalDeviceVulkan11Features,
-        v12: c.VkPhysicalDeviceVulkan12Features,
-        v13: c.VkPhysicalDeviceVulkan13Features,
-        draw: c.VkPhysicalDeviceShaderDrawParametersFeatures,
-        reset: c.VkPhysicalDeviceHostQueryResetFeatures,
-        transform: c.VkPhysicalDeviceTransformFeedbackFeaturesEXT,
-        robust: c.VkPhysicalDeviceRobustness2FeaturesEXT,
-        maintenance: c.VkPhysicalDeviceMaintenance5FeaturesKHR,
-    };
-    const Fields = .{ "v11", "v12", "v13", "draw", "reset", "transform", "robust", "maintenance" };
-    var native: native_t = undefined;
-    @memset(std.mem.asBytes(&native), 0xa5);
-    inline for (FeatureTags, 0..) |tag, index| {
-        const field = Fields[index];
-        @field(native, field).sType = tag;
-        @field(native, field).pNext = if (index == 0) null else &@field(native, Fields[index - 1]);
-    }
-    var expected = std.mem.asBytes(&native).*;
-    inline for (FeatureTags, 0..) |_, index| {
-        const field = Fields[index];
-        const node_t = @TypeOf(@field(native, field));
-        inline for (@typeInfo(node_t).Struct.fields) |member| {
-            if (comptime !std.mem.eql(u8, member.name, "sType") and !std.mem.eql(u8, member.name, "pNext")) {
-                const offset = @offsetOf(@TypeOf(native), field) + @offsetOf(node_t, member.name);
-                std.mem.writeInt(u32, expected[offset..][0..4], 0, .little);
-            }
-        }
-    }
-    var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    output.pNext = &native.maintenance;
-    features2(physical, &output);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&native));
-    const entry = physical_features_cache(physical).?;
-    const raw = entry.raw;
-    @memset(&fixture.reply, 0xff);
-    @memset(std.mem.asBytes(&output.features), 0xa5);
-    features2(physical, &output);
-    try std.testing.expectEqualDeep(raw, entry.raw);
-    try std.testing.expectEqual(@as(u32, 2), fixture.commands);
-    try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&native));
-}
-test "Features2 failed parent teardown retains raw cache until explicit abandonment" {
-    const capabilities = feature_test_capabilities();
-    var fixture = feature_fixture_t{};
-    const physical = try feature_test_physical(&fixture, &capabilities);
-    var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
-    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-    features2(physical, &output);
-    const before = caches[0];
-    fixture.fail_command = 1;
-    destroy_instance(@ptrFromInt(caches[0].handle), null);
-    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
-    try std.testing.expectEqualDeep(before, caches[0]);
-    venus_icd_abandon();
-    try std.testing.expectEqualDeep(instance_cache_t{}, caches[0]);
-    try std.testing.expect(physical_features_cache(physical) == null);
-    try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2") == null);
-    try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2KHR") == null);
-}
-
-extern fn venus_device_test_encode(*const c.VkDeviceCreateInfo, u64, u64, [*]u8) usize;
-const device_native_test_node_t = extern struct { type_tag: u32, next: ?*const anyopaque = null, flags: [55]u32 = [_]u32{0} ** 55 };
-fn device_test_info(queues: []const c.VkDeviceQueueCreateInfo) c.VkDeviceCreateInfo {
-    return .{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = @intCast(queues.len), .pQueueCreateInfos = queues.ptr };
-}
-fn device_test_queue(priorities: []const f32) c.VkDeviceQueueCreateInfo {
-    return .{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueCount = @intCast(priorities.len), .pQueuePriorities = priorities.ptr };
-}
-fn expect_disabled_device(entry: *const device_cache_t) !void {
-    try std.testing.expectEqualDeep(disabled_device_state(), entry.enabled_state);
-    try std.testing.expectEqual(@as(u8, 8), entry.enabled_state.features.count);
-}
-
-test "public device preflight rejects192 true flags before identity cache ring and transport mutation" {
-    const priorities = [_]f32{1};
-    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
-    var info = device_test_info(&queues);
-    for ([_]bool{ false, true }) |warm| {
-        var fixture = feature_fixture_t{ .hot = 0 };
-        const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
-        defer venus_icd_abandon();
-        if (warm) {
-            var core: c.VkPhysicalDeviceFeatures = undefined;
-            features(physical, &core);
-            try std.testing.expectEqual(@as(u32, 1), physical_features_cache(physical).?.raw.core[0]);
-        }
-        const previous_objects = objects;
-        const previous_slots = slots;
-        const previous_caches = device_caches;
-        const previous_rings = ring_slots;
-        const previous_physical = caches;
-        const previous_commands = fixture.commands;
-        var output: c.VkDevice = null;
-        var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
-        info.pEnabledFeatures = &legacy;
-        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| {
-            @field(legacy, field.name) = 1;
-            try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
-            try std.testing.expect(output == null);
-            @field(legacy, field.name) = 0;
-        }
-        info.pEnabledFeatures = null;
-        const tags = [_]u32{c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2} ++ FeatureTags;
-        const counts = [_]u8{55} ++ FeatureCounts;
-        for (tags, counts) |tag, count| {
-            var node = device_native_test_node_t{ .type_tag = tag };
-            info.pNext = &node;
-            for (0..count) |index| {
-                node.flags[index] = 1;
-                try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
-                try std.testing.expect(output == null);
-                node.flags[index] = 0;
-            }
-        }
-        info.pNext = null;
-        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, @ptrFromInt(1), null, @ptrCast(&output)));
-        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, &info, null, @ptrFromInt(1)));
-        const names = [_][*c]const u8{"VK_EXT_unsupported"};
-        info.enabledExtensionCount = 1;
-        info.ppEnabledExtensionNames = &names;
-        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_EXTENSION_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
-        info.enabledExtensionCount = 0;
-        info.enabledLayerCount = 1;
-        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_LAYER_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
-        info.enabledLayerCount = 0;
-        try std.testing.expectEqualDeep(previous_objects, objects);
-        try std.testing.expectEqualDeep(previous_slots, slots);
-        try std.testing.expectEqualDeep(previous_caches, device_caches);
-        try std.testing.expectEqualDeep(previous_rings, ring_slots);
-        try std.testing.expectEqualDeep(previous_physical, caches);
-        try std.testing.expectEqual(previous_commands, fixture.commands);
-    }
-}
-
-test "public device ACK owns immutable canonical state and exact independent minimal maximum packets" {
-    var fixture = feature_fixture_t{};
-    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
-    defer venus_icd_abandon();
-    var priorities = [_]f32{0.5} ** 16;
-    var queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(priorities[0..4])} ** 16;
-    for (&queues, 0..) |*queue, index| queue.queueFamilyIndex = @intCast(index);
-    var info = device_test_info(&queues);
-    var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
-    info.pEnabledFeatures = &legacy;
-    const maximum = try device_native.preflight(&info);
-    const maximum_packet = try encode_device(&maximum, 7, 42);
-    var expected: [8192]u8 = undefined;
-    const maximum_used = venus_device_test_encode(&info, 7, 42, &expected);
-    try std.testing.expectEqual(@as(usize, 1096), maximum_packet.used);
-    try std.testing.expectEqualSlices(u8, expected[0..maximum_used], maximum_packet.bytes[0..maximum_packet.used]);
-    info.queueCreateInfoCount = 1;
-    queues[0].queueCount = 1;
-    fixture.expected_device_info = &info;
-    var first: c.VkDevice = null;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&first)));
-    try std.testing.expectEqual(@as(u32, 1), fixture.commands); // No hidden API/features query.
-    const first_entry = device_cache(@intFromPtr(first.?)).?;
-    try expect_disabled_device(first_entry);
-    const retained = first_entry.*;
-    legacy.robustBufferAccess = 1;
-    priorities[0] = 0.75;
-    try std.testing.expectEqualDeep(retained, first_entry.*);
-    info.pEnabledFeatures = null;
-    var modern = device_native_test_node_t{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
-    var extension = device_native_test_node_t{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT };
-    modern.next = &extension;
-    info.pNext = &modern;
-    var selected = info;
-    selected.pNext = null;
-    fixture.expected_device_info = &selected;
-    var second: c.VkDevice = null;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&second)));
-    const second_entry = device_cache(@intFromPtr(second.?)).?;
-    try std.testing.expect(first_entry != second_entry);
-    try expect_disabled_device(second_entry);
-    extension.flags[0] = 1;
-    modern.flags[0] = 1;
-    priorities[0] = 0.25;
-    try expect_disabled_device(first_entry);
-    try expect_disabled_device(second_entry);
-    var child: [*c]c.venus_object_t = null;
-    const first_record = object(@intFromPtr(first.?), c.VK_OBJECT_TYPE_DEVICE).?;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, first_record.id, 1, &child));
-    const before_refusal = fixture.commands;
-    destroy_device(first, null);
-    try std.testing.expectEqual(before_refusal, fixture.commands);
-    try expect_disabled_device(first_entry);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, child.*.handle, c.VK_OBJECT_TYPE_BUFFER, 1));
-    destroy_device(first, null);
-    try std.testing.expectEqualDeep(device_cache_t{}, first_entry.*);
-    try expect_disabled_device(second_entry);
-    fixture.fail_command = 12;
-    destroy_device(second, null);
-    try expect_disabled_device(second_entry);
-    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
-    venus_icd_abandon();
-    try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
-}
-
-test "public device explicit failure rolls back while uncertain create retains only opaque owners" {
-    const priorities = [_]f32{1};
-    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
-    const info = device_test_info(&queues);
-    for (0..4) |mode| {
-        var fixture = feature_fixture_t{};
-        const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
-        defer venus_icd_abandon();
-        if (mode == 0) fixture.create_result = c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
-        if (mode == 1) fixture.corrupt_create = true;
-        if (mode == 2) fixture.fail_command = 11;
-        if (mode == 3) fixture.corrupt_create_identity = true;
-        var output: c.VkDevice = null;
-        const result = create_device(physical, &info, null, @ptrCast(&output));
-        try std.testing.expect(output == null);
-        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_ERROR_DEVICE_LOST), result);
-        try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
-        var live_devices: usize = 0;
-        var live_queues: usize = 0;
-        for (slots) |slot| {
-            if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DEVICE) live_devices += 1;
-            if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_QUEUE) live_queues += 1;
-        }
-        try std.testing.expectEqual(@as(usize, @intFromBool(mode != 0)), live_devices);
-        try std.testing.expectEqual(live_devices, live_queues);
-        try std.testing.expectEqual(mode != 0, ring_slots[1]);
-        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 2) c.RingClosed else c.RingCorrupt), lost);
-        try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
-        venus_icd_abandon();
-        try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
-        try std.testing.expectEqualDeep([_]bool{false} ** 64, ring_slots);
-    }
-}
-
-test "public device full registry preflight precedence queue rollback and idle-owner refusal retain state" {
-    var fixture = feature_fixture_t{};
-    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
-    defer venus_icd_abandon();
-    const priorities = [_]f32{1};
-    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
-    var info = device_test_info(&queues);
-    var first: c.VkDevice = null;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&first)));
-    const first_entry = device_cache(@intFromPtr(first.?)).?;
-    const first_record = object(@intFromPtr(first.?), c.VK_OBJECT_TYPE_DEVICE).?;
-    const retained = first_entry.*;
-    var handles: [508]u64 = undefined;
-    for (&handles) |*handle| {
-        var child: [*c]c.venus_object_t = null;
-        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, first_record.id, 0, &child));
-        handle.* = child.*.handle;
-    }
-    try std.testing.expectEqual(@as(u32, 512), objects.live_count);
-    const previous_id = objects.next_id;
-    const previous_commands = fixture.commands;
-    var output: c.VkDevice = null;
-    var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
-    legacy.robustBufferAccess = 1;
-    info.pEnabledFeatures = &legacy;
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
-    try std.testing.expectEqual(previous_id, objects.next_id);
-    info.pEnabledFeatures = null;
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), create_device(physical, &info, null, @ptrCast(&output)));
-    try std.testing.expectEqual(previous_id, objects.next_id);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, handles[507], c.VK_OBJECT_TYPE_BUFFER, 0));
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), create_device(physical, &info, null, @ptrCast(&output)));
-    try std.testing.expectEqual(previous_id + 1, objects.next_id); // Queue failure consumed/released device only.
-    try std.testing.expectEqual(@as(u32, 511), objects.live_count);
-    try std.testing.expect(output == null);
-    try std.testing.expectEqual(previous_commands, fixture.commands);
-    try std.testing.expectEqualDeep(retained, first_entry.*);
-    try std.testing.expect(ring_slots[1] and !ring_slots[2]);
-    for (handles[0..507]) |handle| try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, handle, c.VK_OBJECT_TYPE_BUFFER, 0));
-    resource_state(first_record).idle_refs = 1; // A live waiter owns this device until its completion.
-    destroy_device(first, null);
-    try std.testing.expectEqual(previous_commands, fixture.commands);
-    try std.testing.expectEqualDeep(retained, first_entry.*);
-    resource_state(first_record).idle_refs = 0;
-    destroy_device(first, null);
-    try std.testing.expectEqualDeep(device_cache_t{}, first_entry.*);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-}
-
-
-test "public malformed device destruction retains immutable state with exact output physical loss precedence" {
-    var fixture = feature_fixture_t{};
-    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
-    defer venus_icd_abandon();
-    const priorities = [_]f32{1};
-    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
-    const info = device_test_info(&queues);
-    var output: c.VkDevice = null;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&output)));
-    const entry = device_cache(@intFromPtr(output.?)).?;
-    const retained = entry.*;
-    const live = objects.live_count;
-    fixture.corrupt_destroy = true;
-    destroy_device(output, null);
-    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
-    try std.testing.expectEqualDeep(retained, entry.*);
-    try std.testing.expectEqual(live, objects.live_count);
-    try std.testing.expect(ring_slots[1]);
-    const before = fixture.commands;
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), create_device(physical, @ptrFromInt(1), null, @ptrCast(&output)));
-    try std.testing.expect(output == null);
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(null, @ptrFromInt(1), null, @ptrCast(&output)));
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, @ptrFromInt(1), null, null));
-    try std.testing.expectEqual(before, fixture.commands);
-    try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
-    try std.testing.expectEqualDeep(retained, entry.*);
-    venus_icd_abandon();
-    try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
-}
-
-const timed_fixture_t = struct {
-    now: u64 = 1,
-    deadline: u64 = 0,
-    command_id: u32 = 0,
-    submitted: u32 = 0,
-    reads: u32 = 0,
-    last_offset: usize = 0,
-    expire_reply: bool = false,
-    reply: [extensions_wire.MaxReplyBytes]u8 = [_]u8{0} ** extensions_wire.MaxReplyBytes,
-    fn clock(context: ?*anyopaque) callconv(.C) u64 {
-        const self: *@This() = @ptrCast(@alignCast(context.?));
-        return self.now;
-    }
-    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque,
-        length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize, deadline: u64) callconv(.C) c_int {
-        const self: *@This() = @ptrCast(@alignCast(context.?));
-        std.debug.assert(deadline > self.now);
-        response.* = std.mem.zeroes(c.venus_request_t);
-        response.*.kind = request.*.kind;
-        response.*.direction = 1;
-        if (self.submitted == 0 and request.*.kind == c.RequestReply) {
-            std.debug.assert(capacity == 1);
-            if (request.*.argument_zero == TimedReplyBytes) {
-                response.*.status = c.RequestInvalid;
-                return c.RingInvalid;
-            }
-            std.debug.assert(request.*.argument_zero == TimedReplyBytes - 1);
-            @as(*u8, @ptrCast(output.?)).* = 0;
-            response.*.payload_bytes = 1;
-            return c.RingOk;
-        }
-        switch (request.*.kind) {
-            c.RequestSubmit => {
-                const wire = @as([*]const u8, @ptrCast(input.?))[36..length];
-                self.command_id = std.mem.readInt(u32, wire[0..4], .little);
-                std.debug.assert(self.command_id == 14);
-                self.submitted += 1;
-                self.deadline = deadline;
-                response.*.argument_zero = self.submitted;
-                @memset(&self.reply, 0);
-                std.mem.writeInt(u32, self.reply[0..4], 14, .little);
-                std.mem.writeInt(u64, self.reply[8..16], 1, .little);
-                std.mem.writeInt(u32, self.reply[16..20], 1024, .little);
-                const count = std.mem.readInt(u32, wire[32..36], .little);
-                std.mem.writeInt(u64, self.reply[20..28], count, .little);
-                for (0..count) |index| {
-                    const start = 28 + index * 268;
-                    std.mem.writeInt(u64, self.reply[start..][0..8], 256, .little);
-                    const name_bytes = std.fmt.bufPrint(self.reply[start + 8 ..][0..256], "VK_test_{d:0>4}", .{index}) catch unreachable;
-                    self.reply[start + 8 + name_bytes.len] = 0;
-                    std.mem.writeInt(u32, self.reply[start + 264 ..][0..4], 1, .little);
-                }
-                self.last_offset = 0;
-                self.reads = 0;
-            },
-            c.RequestPoll => std.debug.assert(deadline == self.deadline),
-            c.RequestReply => {
-                std.debug.assert(deadline == self.deadline and request.*.argument_zero == self.last_offset);
-                std.debug.assert(capacity <= 4096);
-                @memcpy(@as([*]u8, @ptrCast(output.?))[0..capacity], self.reply[self.last_offset..][0..capacity]);
-                self.last_offset += capacity;
-                self.reads += 1;
-                response.*.payload_bytes = @intCast(capacity);
-                if (self.expire_reply) self.now = deadline;
-            },
-            else => return c.RingInvalid,
-        }
-        return c.RingOk;
-    }
-};
-test "timed actual reply proof and1024 extension cache use68 bounded reads with one deadline" {
-    var fixture = timed_fixture_t{};
-    const capabilities = feature_test_capabilities();
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_timed(timed_fixture_t.exchange,
-        timed_fixture_t.clock, &fixture, &capabilities, TimedReplyBytes));
-    defer venus_icd_abandon();
-    var instance: [*c]c.venus_object_t = null;
-    var physical: [*c]c.venus_object_t = null;
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
-    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.*.id, 1, &physical));
-    const handle: c.VkPhysicalDevice = @ptrFromInt(physical.*.handle);
-    const cached = try ensure_raw_extensions(handle);
-    try std.testing.expectEqual(@as(usize, 1024), cached.records.?.len);
-    try std.testing.expectEqual(@as(u32, 68), fixture.reads);
-    try std.testing.expectEqual(@as(usize, extensions_wire.MaxReplyBytes), fixture.last_offset);
-    try std.testing.expectEqual(@as(u32, 2), fixture.submitted);
-    try std.testing.expectEqualStrings("VK_test_1023", std.mem.sliceTo(&cached.records.?[1023].name, 0));
-    _ = try ensure_raw_extensions(handle);
-    try std.testing.expectEqual(@as(u32, 2), fixture.submitted);
-    fixture.now = 0;
-    const request = try extensions_wire.encode_count(physical.*.id);
-    try std.testing.expect(transact(&request.bytes) == null);
-    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
-}
-
-test "public Properties2 preserves headers and shares legacy guest limit projection" {
-    var fixture = feature_fixture_t{};
-    const capabilities = feature_test_capabilities();
-    const physical = try feature_test_physical(&fixture, &capabilities);
-    defer venus_icd_abandon();
-    var node = std.mem.zeroes(c.VkPhysicalDeviceVulkan13Properties);
-    node.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES;
-    var output = std.mem.zeroes(c.VkPhysicalDeviceProperties2);
-    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-    output.pNext = &node;
-    properties2(physical, &output);
-    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
-    try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_0), output.properties.apiVersion);
-    try std.testing.expectEqual(@as(u64, 1), output.properties.limits.nonCoherentAtomSize);
-    try std.testing.expectEqual(@as(usize, 4096), output.properties.limits.minMemoryMapAlignment);
-    try std.testing.expectEqual(@as(u32, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES), node.sType);
-    try std.testing.expect(output.pNext == @as(?*anyopaque, @ptrCast(&node)));
-    try std.testing.expect(node.pNext == null);
-    try std.testing.expect(physical_proc("vkGetPhysicalDeviceProperties2") != null);
-    const before = output;
-    output.sType = 0;
-    const calls = fixture.commands;
-    properties2(physical, &output);
-    try std.testing.expectEqual(calls, fixture.commands);
-    output.sType = before.sType;
-    try std.testing.expectEqualDeep(before, output);
-}
-
-test "timed callback completion at whole deadline is sticky and never publishes its reply" {
-    var fixture = timed_fixture_t{ .expire_reply = true };
-    const capabilities = feature_test_capabilities();
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_timed(timed_fixture_t.exchange,
-        timed_fixture_t.clock, &fixture, &capabilities, TimedReplyBytes));
-    defer venus_icd_abandon();
-    const request = try extensions_wire.encode_count(1);
-    try std.testing.expect(transact(&request.bytes) == null);
-    try std.testing.expectEqual(@as(c_int, c.RingTimeout), lost);
-    try std.testing.expectEqual(@as(u32, c.CommandLost), command.state);
-    var view: ?*const anyopaque = null;
-    var length: usize = 0;
-    try std.testing.expectEqual(@as(c_int, c.RingTimeout), c.venus_command_take(&command, &view, &length));
-    try std.testing.expect(view == null and length == 0);
-}
 
 // WSI callbacks borrow one stack-owned device/queue context for this synchronous transaction.
 const wsi_callback_context_t = struct { device: u64, queue: c.VkQueue = null };
@@ -7459,38 +5580,6 @@ fn queue_present(queue: c.VkQueue, info: [*c]const c.VkPresentInfoKHR) callconv(
         if (overall == c.VK_SUCCESS and result != c.VK_SUCCESS) overall = result;
     }
     return overall;
-}
-
-test "public WSI surface namespace native queries and nested lock ownership preserve HWND lifetime" {
-    var fixture = feature_fixture_t{};
-    const capabilities = feature_test_capabilities();
-    const physical = try feature_test_physical(&fixture, &capabilities);
-    defer venus_icd_abandon();
-    const instance: c.VkInstance = @ptrFromInt(caches[0].handle);
-    const info = win32_surface_info_t{ .type_tag = c.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
-        .next = null, .flags = 0, .instance = @ptrFromInt(1), .window = @ptrFromInt(1) };
-    var surface: c.VkSurfaceKHR = null;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_win32_surface(instance, &info, null, &surface));
-    var values = std.mem.zeroes(c.VkSurfaceCapabilitiesKHR);
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_capabilities(physical, surface, &values));
-    try std.testing.expectEqual(@as(u32, 64), values.currentExtent.width);
-    var count: u32 = 0;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_formats(physical, surface, &count, null));
-    try std.testing.expect(count >= 2);
-    var formats: [4]c.VkSurfaceFormatKHR = undefined;
-    count = 1;
-    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), surface_formats(physical, surface, &count, &formats));
-    try std.testing.expectEqual(@as(u32, 1), count);
-    try std.testing.expectEqual(@as(usize, 0), lock_depth);
-    lock_icd();
-    lock_icd();
-    try std.testing.expectEqual(@as(usize, 2), lock_depth);
-    unlock_icd();
-    try std.testing.expectEqual(@as(usize, 1), lock_depth);
-    unlock_icd();
-    destroy_surface(instance, surface, null);
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_SURFACE_LOST_KHR), surface_capabilities(physical, surface, &values));
-    try std.testing.expectEqual(@as(u32, 0), fixture.commands);
 }
 
 /// Create device-owned sampler. [in] device/info borrowed nonnull; callbacks nullable unused.
@@ -7838,38 +5927,6 @@ fn reset_query_pool(device: c.VkDevice, pool: c.VkQueryPool, first: u32, count: 
     if (state.inflight_count != 0 or first > state.buffer_size or count > state.buffer_size - first) return;
     const packet = modern_sync.reset_query_pool(parent.id, record.id, first, count) catch return;
     _ = command_acknowledged(&packet, 171);
-}
-
-test "legal API1.0 guest Properties2 extension admission gates aliases without forwarding host names" {
-    var fixture = feature_fixture_t{};
-    const capabilities = feature_test_capabilities();
-    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(feature_fixture_t.exchange, &fixture, &capabilities));
-    defer venus_icd_abandon();
-    var count: u32 = 0;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), enumerate_instance_extensions(null, &count, null));
-    try std.testing.expectEqual(@as(u32, 3), count);
-    var values: [3]c.VkExtensionProperties = undefined;
-    count = 1;
-    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), enumerate_instance_extensions(null, &count, &values));
-    try std.testing.expectEqualStrings("VK_KHR_get_physical_device_properties2", std.mem.sliceTo(&values[0].extensionName, 0));
-    const names = [_][*c]const u8{"VK_KHR_get_physical_device_properties2"};
-    var info = c.VkInstanceCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-        .enabledExtensionCount = names.len, .ppEnabledExtensionNames = &names };
-    var instance: c.VkInstance = null;
-    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_instance(&info, null, &instance));
-    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkGetPhysicalDeviceFeatures2KHR") != null);
-    try std.testing.expect(venus_icd_get_physical_proc_addr(instance, "vkGetPhysicalDeviceProperties2KHR") != null);
-    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkGetPhysicalDeviceFeatures2") == null);
-    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkCreateWin32SurfaceKHR") == null);
-    const prior = fixture.commands;
-    const unknown = [_][*c]const u8{"VK_EXT_unsupported"};
-    info.ppEnabledExtensionNames = &unknown;
-    var rejected: c.VkInstance = @ptrFromInt(1);
-    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_EXTENSION_NOT_PRESENT), create_instance(&info, null, &rejected));
-    try std.testing.expect(rejected == null);
-    try std.testing.expectEqual(prior, fixture.commands);
-    destroy_instance(instance, null);
-    for (instance_advertisements) |entry| try std.testing.expect(entry.handle == 0);
 }
 
 // Merge into ICD: const requirements2_wire=@import("venus_requirements2_wire.zig");
@@ -10114,6 +8171,2030 @@ fn retain_pending_descriptor_update(parent: *const c.venus_object_t,set: *const 
     }
 }
 
+/// [in] live borrowed physical and immutable core external buffer query.
+/// [out] caller-owned initialized output; headers/unknown chain bytes preserved.
+/// No external allocation import/export path is implemented, so all support bits
+/// are zero. Invalid input preserves output; serialized, no allocation/retention.
+fn external_buffer_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalBufferInfo, output: [*c]c.VkExternalBufferProperties) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalBufferProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES) return;
+    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    output.*.externalMemoryProperties = std.mem.zeroes(c.VkExternalMemoryProperties);
+}
+/// [in] live borrowed physical/core fence query; [out] initialized caller storage.
+/// Unsupported external fence capabilities are zero; headers/unknown nodes stay
+/// intact. Invalid input preserves output. Serialized, no heap or retained pointer.
+fn external_fence_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalFenceInfo, output: [*c]c.VkExternalFenceProperties) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalFenceProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_FENCE_PROPERTIES) return;
+    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    output.*.exportFromImportedHandleTypes = 0;
+    output.*.compatibleHandleTypes = 0;
+    output.*.externalFenceFeatures = 0;
+}
+/// [in] live borrowed physical/core semaphore query; [out] initialized storage.
+/// No external semaphore handles supported: zero features/import/export bits.
+/// Headers/unknown nodes preserved. Serialized, no allocation/retained pointer.
+fn external_semaphore_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalSemaphoreInfo, output: [*c]c.VkExternalSemaphoreProperties) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalSemaphoreProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES) return;
+    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    output.*.exportFromImportedHandleTypes = 0;
+    output.*.compatibleHandleTypes = 0;
+    output.*.externalSemaphoreFeatures = 0;
+}
+/// [in] live borrowed physical; [in,out] count/optional array caller owned.
+/// No installed guest ICD tools: count zero, success, array bytes untouched.
+/// Invalid arguments return INITIALIZATION_FAILED. Serialized, no allocation.
+fn tool_properties(physical: c.VkPhysicalDevice, count: [*c]u32, output: [*c]c.VkPhysicalDeviceToolProperties) callconv(.C) c_int {
+    _ = output;
+    lock_icd(); defer unlock_icd();
+    if (physical == null or count == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    count.* = 0;
+    return c.VK_SUCCESS;
+}
+
+/// [in] live borrowed device/native layout definition; [out] initialized caller
+/// support storage and optional variable-count node. Shares creation preflight,
+/// then queries actual host support. Unsupported local quotas/features yield false;
+/// headers/unknown nodes preserved. Host failure preserves output and poisons binding.
+/// Serialized; no allocations or retained pointers.
+fn descriptor_layout_support(device: c.VkDevice, info: [*c]const c.VkDescriptorSetLayoutCreateInfo, output: [*c]c.VkDescriptorSetLayoutSupport) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (device == null or info == null or output == null or @intFromPtr(output) % @alignOf(c.VkDescriptorSetLayoutSupport) != 0 or output.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    var variable: ?*c.VkDescriptorSetVariableDescriptorCountLayoutSupport = null;
+    var current = output.*.pNext;
+    while (current) |pointer| {
+        const header: *c.VkBaseOutStructure = @ptrCast(@alignCast(pointer));
+        if (header.sType == c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT) {
+            if (variable != null or @intFromPtr(pointer) % @alignOf(c.VkDescriptorSetVariableDescriptorCountLayoutSupport) != 0) return;
+            variable = @ptrCast(@alignCast(pointer));
+        }
+        current = @ptrCast(header.pNext);
+    }
+    const prepared = preflight_descriptor_layout(parent, info) catch {
+        output.*.supported = 0;
+        if (variable) |value| value.maxVariableDescriptorCount = 0;
+        return;
+    };
+    const packet = extra_wire.descriptor_layout_support(parent.id, prepared.writer.bytes[0..prepared.writer.used]) catch return;
+    const reply = transact(packet.bytes[0..packet.used]) orelse return;
+    const supported = extra_wire.decode_descriptor_layout_support(reply) catch { _ = failure(c.RingCorrupt); return; };
+    output.*.supported = @intFromBool(supported);
+    // Variable descriptor count is not advertised or admitted by implemented policy.
+    if (variable) |value| value.maxVariableDescriptorCount = 0;
+}
+
+// Test-only fixtures.
+
+extern fn venus_icd_native_fixture() c_int;
+test "native ABI lifecycle churn routing and concurrent transport serialization" {
+    try std.testing.expectEqual(@as(c_int, 0), venus_icd_native_fixture());
+}
+test "bounded fixed and array replies reject every truncation and invalid tags" {
+    var bytes: [64]u8 = undefined;
+    @memset(&bytes, 0);
+    std.mem.writeInt(u32, bytes[0..4], 4, .little);
+    std.mem.writeInt(u64, bytes[4..12], 1, .little);
+    for (0..24) |length| {
+        var reader = reader_t{ .bytes = bytes[0..length] };
+        try std.testing.expectError(error.Bounds, fixed_value(c.VkFormatProperties, &reader, 4));
+    }
+    for ([_]usize{ 0, 4 }) |offset| {
+        bytes[offset] = 9;
+        var reader = reader_t{ .bytes = &bytes };
+        try std.testing.expectError(error.Value, fixed_value(c.VkFormatProperties, &reader, 4));
+        bytes[offset] = if (offset == 0) 4 else 1;
+    }
+    @memset(&bytes, 0);
+    std.mem.writeInt(u32, bytes[0..4], 7, .little);
+    std.mem.writeInt(u64, bytes[4..12], 1, .little);
+    std.mem.writeInt(u32, bytes[12..16], 1, .little);
+    std.mem.writeInt(u64, bytes[16..24], 1, .little);
+    var count: u32 = 99;
+    var queue: c.VkQueueFamilyProperties = std.mem.zeroes(c.VkQueueFamilyProperties);
+    for (0..48) |length| {
+        var reader = reader_t{ .bytes = bytes[0..length] };
+        try std.testing.expectError(
+            error.Bounds,
+            array_values(c.VkQueueFamilyProperties, &reader, 7, 1, true, &count, &queue),
+        );
+        try std.testing.expectEqual(@as(u32, 99), count);
+    }
+    for ([_]usize{ 0, 4, 12, 16 }) |offset| {
+        const before = bytes[offset];
+        bytes[offset] = 99;
+        var reader = reader_t{ .bytes = &bytes };
+        try std.testing.expectError(
+            error.Value,
+            array_values(c.VkQueueFamilyProperties, &reader, 7, 1, true, &count, &queue),
+        );
+        bytes[offset] = before;
+    }
+    var reader = reader_t{ .bytes = &bytes };
+    try std.testing.expectError(
+        error.Value,
+        array_values(c.VkQueueFamilyProperties, &reader, 7, 0, true, &count, &queue),
+    );
+    @memset(&bytes, 0);
+    std.mem.writeInt(u32, bytes[0..4], 5, .little);
+    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+    var image: c.VkImageFormatProperties = std.mem.zeroes(c.VkImageFormatProperties);
+    for (0..48) |length| {
+        reader = .{ .bytes = bytes[0..length] };
+        try std.testing.expectError(error.Bounds, image_value(&reader, &image));
+    }
+    bytes[0] = 4;
+    reader = .{ .bytes = &bytes };
+    try std.testing.expectError(error.Value, image_value(&reader, &image));
+    bytes[0] = 5;
+    bytes[4] = 1;
+    reader = .{ .bytes = &bytes };
+    try std.testing.expectError(error.Value, image_value(&reader, &image));
+    bytes[4] = 0;
+    bytes[8] = 0;
+    reader = .{ .bytes = &bytes };
+    try std.testing.expectError(error.Value, image_value(&reader, &image));
+    bytes[8] = 1;
+    std.mem.writeInt(i32, bytes[4..8], -11, .little);
+    reader = .{ .bytes = &bytes };
+    try std.testing.expectEqual(@as(i32, -11), try image_value(&reader, &image));
+}
+test "bounded device input validation and identity reply truncations" {
+    var priorities = [_]f32{ 0.25, 0.75 } ** 8;
+    var queues = [_]c.VkDeviceQueueCreateInfo{.{
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .queueFamilyIndex = 0,
+        .queueCount = 1,
+        .pQueuePriorities = &priorities,
+    }} ** 16;
+    var feature = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+    var info = c.VkDeviceCreateInfo{
+        .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = null,
+        .flags = 0,
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &queues,
+        .enabledLayerCount = 0,
+        .ppEnabledLayerNames = null,
+        .enabledExtensionCount = 0,
+        .ppEnabledExtensionNames = null,
+        .pEnabledFeatures = &feature,
+    };
+    _ = try device_native.preflight(&info);
+    feature.robustBufferAccess = 2;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    feature.robustBufferAccess = 1;
+    try std.testing.expectError(error.FeatureNotPresent, device_native.preflight(&info));
+    feature.robustBufferAccess = 0;
+    info.enabledLayerCount = 1;
+    try std.testing.expectError(error.LayerNotPresent, device_native.preflight(&info));
+    info.enabledLayerCount = 0;
+    info.enabledExtensionCount = 1;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    info.enabledExtensionCount = 0;
+    var link = c.VkBaseInStructure{
+        .sType = c.VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
+        .pNext = null,
+    };
+    info.pNext = &link;
+    _ = try device_native.preflight(&info);
+    link.pNext = &link;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    link.pNext = null;
+    link.sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    _ = try device_native.preflight(&info); // Experimental unknown-header skip, not legal application use.
+    info.pNext = null;
+    info.queueCreateInfoCount = 2;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    for (&queues, 0..) |*queue, index| queue.queueFamilyIndex = @intCast(index);
+    info.queueCreateInfoCount = 16;
+    for (&queues) |*queue| queue.queueCount = 16;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    for (&queues) |*queue| queue.queueCount = 4;
+    _ = try device_native.preflight(&info);
+    info.queueCreateInfoCount = 1;
+    for ([_]f32{ -1, 2, std.math.inf(f32), std.math.nan(f32) }) |priority| {
+        priorities[0] = priority;
+        try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    }
+    priorities[0] = 0.5;
+    queues[0].pQueuePriorities = null;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    queues[0].pQueuePriorities = &priorities;
+    queues[0].queueCount = 0;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    queues[0].queueCount = 17;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    queues[0].queueCount = 1;
+    queues[0].flags = 1;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    queues[0].flags = 0;
+    queues[0].pNext = &link;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    queues[0].pNext = null;
+    queues[0].sType = 0;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    queues[0].sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    info.sType = 0;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    info.sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    info.flags = 1;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    info.flags = 0;
+    info.queueCreateInfoCount = 0;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    info.queueCreateInfoCount = 17;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    info.queueCreateInfoCount = 1;
+    info.pQueueCreateInfos = null;
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
+    var bytes: [24]u8 = undefined;
+    std.mem.writeInt(u32, bytes[0..4], 11, .little);
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+    std.mem.writeInt(u64, bytes[16..24], 2, .little);
+    try std.testing.expectEqual(@as(i32, 0), try identity_reply(&bytes, 11, 2, true));
+    for (0..24) |length| {
+        if (identity_reply(bytes[0..length], 11, 2, true)) |_| {
+            return error.AcceptedTruncation;
+        } else |_| {}
+    }
+    for ([_]usize{ 0, 8, 16 }) |offset| {
+        bytes[offset] ^= 1;
+        try std.testing.expectError(error.Value, identity_reply(&bytes, 11, 2, true));
+        bytes[offset] ^= 1;
+    }
+    std.mem.writeInt(u32, bytes[0..4], 155, .little);
+    std.mem.writeInt(u64, bytes[4..12], 1, .little);
+    std.mem.writeInt(u64, bytes[12..20], 2, .little);
+    _ = try identity_reply(bytes[0..20], 155, 2, false);
+    for (0..20) |length| {
+        if (identity_reply(bytes[0..length], 155, 2, false)) |_| {
+            return error.AcceptedTruncation;
+        } else |_| {}
+    }
+}
+test "fence result replies reject truncation malformed tags and unexpected positive statuses" {
+    defer lost = c.RingOk;
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(u32, bytes[0..4], 38, .little);
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    for (0..8) |length| {
+        try std.testing.expectEqual(
+            @as(c_int, c.VK_ERROR_DEVICE_LOST),
+            @call(.never_inline, result_reply, .{ bytes[0..length], @as(u32, 38), @as(i32, 1) }),
+        );
+        try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+        lost = c.RingOk;
+    }
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], c.VK_NOT_READY, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_NOT_READY),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_HOST_MEMORY, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_DEVICE_LOST, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_DEVICE_LOST),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    lost = c.RingOk;
+    std.mem.writeInt(i32, bytes[4..8], c.VK_INCOMPLETE, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_DEVICE_LOST),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u32, bytes[0..4], 39, .little);
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_ERROR_DEVICE_LOST),
+        @call(.never_inline, result_reply, .{ &bytes, @as(u32, 38), @as(i32, 1) }),
+    );
+}
+
+test "command buffer batch replies validate every truncation result count and identity" {
+    const Ids = [_]u64{ 7, 9 };
+    var writer = writer_t{};
+    writer.put(u32, 88);
+    writer.put(i32, 0);
+    writer.put(u64, Ids.len);
+    for (Ids) |id| writer.put(u64, id);
+    for (0..writer.used) |length| {
+        try std.testing.expectError(
+            error.Bounds,
+            @call(
+                .never_inline,
+                command_buffers_reply,
+                .{ writer.bytes[0..length], &Ids },
+            ),
+        );
+    }
+    try std.testing.expectEqual(
+        @as(c_int, c.VK_SUCCESS),
+        try command_buffers_reply(writer.bytes[0..writer.used], &Ids),
+    );
+    writer.bytes[0] ^= 1;
+    try std.testing.expectError(
+        error.Value,
+        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
+    );
+    writer.bytes[0] ^= 1;
+    std.mem.writeInt(u64, writer.bytes[8..16], 3, .little);
+    try std.testing.expectError(
+        error.Value,
+        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
+    );
+    std.mem.writeInt(u64, writer.bytes[8..16], Ids.len, .little);
+    std.mem.writeInt(i32, writer.bytes[4..8], c.VK_NOT_READY, .little);
+    try std.testing.expectError(
+        error.Value,
+        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
+    );
+    std.mem.writeInt(i32, writer.bytes[4..8], 0, .little);
+    std.mem.writeInt(u64, writer.bytes[24..32], 10, .little);
+    try std.testing.expectError(
+        error.Value,
+        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
+    );
+    std.mem.writeInt(u64, writer.bytes[16..24], 0, .little);
+    std.mem.writeInt(u64, writer.bytes[24..32], 0, .little);
+    try std.testing.expectError(
+        error.Value,
+        command_buffers_reply(writer.bytes[0..writer.used], &Ids),
+    );
+    std.mem.writeInt(i32, writer.bytes[4..8], c.VK_ERROR_OUT_OF_HOST_MEMORY, .little);
+    try std.testing.expectEqual(
+        @as(
+            c_int,
+            c.VK_ERROR_OUT_OF_HOST_MEMORY,
+        ),
+        try command_buffers_reply(writer.bytes[0..writer.used], &Ids),
+    );
+}
+
+test "pending references prevent buffer pool and semaphore destruction before GPU retirement" {
+    const fixture_t = struct {
+        fn exchange(
+            _: ?*anyopaque,
+            _: [*c]const c.venus_request_t,
+            _: ?*const anyopaque,
+            _: usize,
+            _: [*c]c.venus_request_t,
+            _: ?*anyopaque,
+            _: usize,
+        ) callconv(.C) c_int {
+            return c.RingInvalid;
+        }
+    };
+    var sentinel: u8 = 0;
+    try std.testing.expectEqual(
+        @as(c_int, c.RingOk),
+        venus_icd_bind(fixture_t.exchange, &sentinel),
+    );
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var buffer: [*c]c.venus_object_t = null;
+    var recording: [*c]c.venus_object_t = null;
+    var pool: [*c]c.venus_object_t = null;
+    var semaphore: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_DEVICE,
+        0,
+        1,
+        &device,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_BUFFER,
+        device.*.id,
+        0,
+        &buffer,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_COMMAND_POOL,
+        device.*.id,
+        0,
+        &pool,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+        pool.*.id,
+        1,
+        &recording,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+        &objects,
+        c.VK_OBJECT_TYPE_SEMAPHORE,
+        device.*.id,
+        0,
+        &semaphore,
+    ));
+    resource_state(semaphore).inflight_count = 1;
+    const index = resource_index(buffer);
+    resource_state(recording).command_state = .Pending;
+    resource_state(recording).buffer_references[index / 64] =
+        @as(u64, 1) << @as(u6, @intCast(index % 64));
+    destroy_buffer(@ptrFromInt(device.*.handle), @ptrFromInt(buffer.*.handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    destroy_command_pool(@ptrFromInt(device.*.handle), @ptrFromInt(pool.*.handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    destroy_semaphore(@ptrFromInt(device.*.handle), @ptrFromInt(semaphore.*.handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(usize, 5), objects.live_count);
+    try std.testing.expectEqual(@as(u32, 1), resource_state(semaphore).inflight_count);
+    try std.testing.expectEqual(command_state_t.Pending, resource_state(recording).command_state);
+}
+
+test "inline update staging captures input and scrubs success transport and malformed reply paths" {
+    const fixture_t = struct {
+        mode: u32,
+        captured: bool = false,
+        fn exchange(
+            context: ?*anyopaque,
+            request: [*c]const c.venus_request_t,
+            input: ?*const anyopaque,
+            length: usize,
+            response: [*c]c.venus_request_t,
+            output: ?*anyopaque,
+            capacity: usize,
+        ) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+                if (length != 92 or !std.mem.eql(u8, bytes[84..92], &.{ 1, 2, 3, 4, 5, 6, 7, 8 }))
+                    return c.RingCorrupt;
+                fixture.captured = true;
+                if (fixture.mode == 1) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], if (fixture.mode == 2) 118 else 117, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..3) |mode| {
+        var fixture = fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(
+            @as(c_int, c.RingOk),
+            venus_icd_bind(fixture_t.exchange, &fixture),
+        );
+        defer venus_icd_abandon();
+        var device: [*c]c.venus_object_t = null;
+        var pool: [*c]c.venus_object_t = null;
+        var recording: [*c]c.venus_object_t = null;
+        var buffer: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_DEVICE,
+            0,
+            1,
+            &device,
+        ));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_COMMAND_POOL,
+            device.*.id,
+            0,
+            &pool,
+        ));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_COMMAND_BUFFER,
+            pool.*.id,
+            1,
+            &recording,
+        ));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            c.VK_OBJECT_TYPE_BUFFER,
+            device.*.id,
+            0,
+            &buffer,
+        ));
+        resource_state(recording).command_state = .Recording;
+        resource_state(buffer).* = .{ .buffer_size = 8, .buffer_usage = 2, .bound_memory = 1 };
+        const data = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8 };
+        update_buffer(@ptrFromInt(recording.*.handle), @ptrFromInt(buffer.*.handle), 0, 8, &data);
+        try std.testing.expect(fixture.captured);
+        for (update_encoded[0..56]) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+        for (tx[0..92]) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+        const index = resource_index(buffer);
+        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+        try std.testing.expectEqual(
+            if (mode == 0) bit else @as(u64, 0),
+            resource_state(recording).buffer_references[index / 64],
+        );
+        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
+    }
+}
+
+test "constructor identities allow null only after negative native results" {
+    var bytes = [_]u8{0} ** 24;
+    std.mem.writeInt(u32, bytes[0..4], 40, .little);
+    std.mem.writeInt(u32, bytes[4..8], @bitCast(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY)), .little);
+    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+    try std.testing.expectEqual(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try identity_reply(
+        &bytes,
+        40,
+        123,
+        true,
+    ));
+    for (0..bytes.len) |length| try std.testing.expectError(error.Bounds, identity_reply(
+        bytes[0..length],
+        40,
+        123,
+        true,
+    ));
+    std.mem.writeInt(u64, bytes[16..24], 123, .little);
+    try std.testing.expectEqual(@as(i32, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try identity_reply(
+        &bytes,
+        40,
+        123,
+        true,
+    ));
+    std.mem.writeInt(u64, bytes[16..24], 124, .little);
+    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
+    std.mem.writeInt(u64, bytes[16..24], 0, .little);
+    std.mem.writeInt(u32, bytes[4..8], 0, .little);
+    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
+    std.mem.writeInt(u32, bytes[4..8], 1, .little);
+    try std.testing.expectError(error.Value, identity_reply(&bytes, 40, 123, true));
+}
+
+test "fence completion retires a queue prefix while simultaneous references remain pending" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
+            return c.RingInvalid;
+        }
+    };
+    var context: u8 = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &context));
+    defer venus_icd_abandon();
+    var records: [7][*c]c.venus_object_t = [_][*c]c.venus_object_t{null} ** 7;
+    const Kinds = [_]u32{ c.VK_OBJECT_TYPE_DEVICE, c.VK_OBJECT_TYPE_QUEUE, c.VK_OBJECT_TYPE_QUEUE, c.VK_OBJECT_TYPE_COMMAND_BUFFER, c.VK_OBJECT_TYPE_COMMAND_BUFFER, c.VK_OBJECT_TYPE_SEMAPHORE, c.VK_OBJECT_TYPE_FENCE };
+    for (Kinds, 0..) |kind, index| {
+        const dispatchable: u32 = if (index < 5) 1 else 0;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(
+            &objects,
+            kind,
+            if (index == 0) 0 else records[0].*.id,
+            dispatchable,
+            &records[index],
+        ));
+    }
+    const first = resource_state(records[3]);
+    const second = resource_state(records[4]);
+    const semaphore = resource_state(records[5]);
+    const fence = resource_state(records[6]);
+    first.* = .{ .inflight_count = 3, .command_state = .Pending, .command_flags = 4 };
+    second.* = .{ .inflight_count = 1, .command_state = .Pending, .command_flags = 1 };
+    semaphore.inflight_count = 2;
+    fence.inflight_count = 1;
+    submission_tickets[0] = .{ .queue = records[1].*.handle, .sequence = 1 };
+    submission_tickets[1] = .{ .queue = records[1].*.handle, .sequence = 2, .fence = records[6].*.handle };
+    submission_tickets[2] = .{ .queue = records[2].*.handle, .sequence = 3 };
+    for (submission_tickets[0..3], 0..) |_, index| _ = include_reference(&submission_tickets[index], records[3]);
+    _ = include_reference(&submission_tickets[0], records[5]);
+    _ = include_reference(&submission_tickets[1], records[6]);
+    _ = include_reference(&submission_tickets[2], records[4]);
+    _ = include_reference(&submission_tickets[2], records[5]);
+    retire_fence(records[6].*.handle);
+    try std.testing.expectEqual(@as(u32, 1), first.inflight_count);
+    try std.testing.expectEqual(command_state_t.Pending, first.command_state);
+    try std.testing.expectEqual(@as(u32, 1), semaphore.inflight_count);
+    try std.testing.expectEqual(@as(u32, 0), fence.inflight_count);
+    try std.testing.expectEqual(@as(u64, 0), submission_tickets[0].queue);
+    try std.testing.expectEqual(@as(u64, 0), submission_tickets[1].queue);
+    retire_queue(records[2].*.handle);
+    try std.testing.expectEqual(command_state_t.Executable, first.command_state);
+    try std.testing.expectEqual(command_state_t.Invalid, second.command_state);
+    try std.testing.expectEqual(@as(u32, 0), semaphore.inflight_count);
+    resource_state(records[1]).id = records[1].*.id;
+    submission_sequence = std.math.maxInt(u64);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), queue_submit(
+        @ptrFromInt(records[1].*.handle),
+        0,
+        null,
+        null,
+    ));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+}
+
+test "image barrier references retain pending images and invalidate recorded commands after destruction" {
+    const fixture_t = struct {
+        command_id: u32 = 0,
+        submissions: usize = 0,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+                fixture.command_id = std.mem.readInt(u32, bytes[36..40], .little);
+                fixture.submissions += 1;
+                response.*.argument_zero = fixture.submissions;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], fixture.command_id, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    var fixture = fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var pool: [*c]c.venus_object_t = null;
+    var recording: [*c]c.venus_object_t = null;
+    var image: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_POOL, device.*.id, 0, &pool));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.*.id, 1, &recording));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE, device.*.id, 0, &image));
+    resource_state(image).* = .{ .id = image.*.id, .bound_memory = 999, .image_levels = 1, .image_layers = 1, .image_format = 37 };
+    resource_state(recording).command_state = .Recording;
+    var barrier = c.VkImageMemoryBarrier{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER, .newLayout = c.VK_IMAGE_LAYOUT_GENERAL, .srcQueueFamilyIndex = 0xffffffff, .dstQueueFamilyIndex = 0xffffffff, .image = @ptrFromInt(image.*.handle), .subresourceRange = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 } };
+    pipeline_barrier(@ptrFromInt(recording.*.handle), 1, 0x1000, 0, 0, null, 0, null, 1, &barrier);
+    try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    const index = resource_index(image);
+    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+    try std.testing.expect(resource_state(recording).buffer_references[index / 64] & bit != 0);
+    resource_state(recording).command_state = .Pending;
+    destroy_image(@ptrFromInt(device.*.handle), @ptrFromInt(image.*.handle), null);
+    try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+    resource_state(recording).command_state = .Executable;
+    destroy_image(@ptrFromInt(device.*.handle), @ptrFromInt(image.*.handle), null);
+    try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
+    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+    try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+    try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
+    // An oversized combined packet rejects before dereferencing any array input.
+    resource_state(recording).command_state = .Recording;
+    pipeline_barrier(@ptrFromInt(recording.*.handle), 1, 1, 0, 64, @ptrFromInt(8), 64, @ptrFromInt(8), 64, @ptrFromInt(8));
+    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+    try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
+}
+
+test "descriptor batch replies reject truncation unexpected status count tag and identity" {
+    const ids = [_]u64{ 42, 43 };
+    var bytes: [32]u8 = undefined;
+    std.mem.writeInt(u32, bytes[0..4], 77, .little);
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u64, bytes[8..16], 2, .little);
+    std.mem.writeInt(u64, bytes[16..24], 42, .little);
+    std.mem.writeInt(u64, bytes[24..32], 43, .little);
+    for (0..bytes.len) |length| try std.testing.expectError(error.Bounds, @call(.never_inline, descriptor_sets_reply, .{ bytes[0..length], &ids }));
+    try std.testing.expectEqual(@as(c_int, 0), try @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u32, bytes[0..4], 78, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u32, bytes[0..4], 77, .little);
+    std.mem.writeInt(i32, bytes[4..8], 1, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(i32, bytes[4..8], 0, .little);
+    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u64, bytes[8..16], 2, .little);
+    std.mem.writeInt(u64, bytes[24..32], 0, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_DEVICE_MEMORY, .little);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), try @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+    std.mem.writeInt(u64, bytes[24..32], 44, .little);
+    try std.testing.expectError(error.Value, @call(.never_inline, descriptor_sets_reply, .{ &bytes, &ids }));
+}
+
+test "pending descriptor sets protect pool ownership and exact retirement refunds references" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
+            return c.RingInvalid;
+        }
+    };
+    var sentinel: u8 = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &sentinel));
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var pool: [*c]c.venus_object_t = null;
+    var set: [*c]c.venus_object_t = null;
+    var recording: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &pool));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &set));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, device.*.id, 1, &recording));
+    const layout = try profiles.normalize_bindings(&.{.{ .binding = 3, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
+    resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&layout));
+    resource_state(set).inflight_count = 1;
+    resource_state(pool).pool_flags = 1;
+    resource_state(pool).descriptor_live_sets = 1;
+    resource_state(pool).descriptor_used[7] = 1;
+    const handles = [_]c.VkDescriptorSet{@ptrFromInt(set.*.handle)};
+    const native_device: c.VkDevice = @ptrFromInt(device.*.handle);
+    const native_pool: c.VkDescriptorPool = @ptrFromInt(pool.*.handle);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), free_descriptor_sets(native_device, native_pool, 1, &handles));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), reset_descriptor_pool(native_device, native_pool, 0));
+    destroy_descriptor_pool(native_device, native_pool, null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(usize, 4), objects.live_count);
+    const index = resource_index(set);
+    resource_state(recording).command_state = .Executable;
+    resource_state(recording).buffer_references[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64));
+    resource_state(set).inflight_count = 0;
+    retire_descriptor_set(@ptrCast(set), @ptrCast(pool));
+    try std.testing.expectEqual(@as(u32, 0), resource_state(pool).descriptor_live_sets);
+    try std.testing.expectEqual(@as(u32, 0), resource_state(pool).descriptor_used[7]);
+    try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+    try std.testing.expect(descriptor_set_for(handles[0], device.*.id) == null);
+    try std.testing.expect(descriptor_pool_for(@ptrCast(recording)) == null);
+}
+
+test "descriptor staging publishes only acknowledged metadata and scrubs every outcome" {
+    const fixture_t = struct {
+        mode: usize,
+        captured: bool = false,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                if (length < 40 or std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little) != 79) return c.RingCorrupt;
+                fixture.captured = true;
+                if (fixture.mode == 1) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], if (fixture.mode == 2) 78 else 79, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..11) |mode| {
+        var fixture = fixture_t{ .mode = mode };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var device: [*c]c.venus_object_t = null;
+        var pool: [*c]c.venus_object_t = null;
+        var set: [*c]c.venus_object_t = null;
+        var destination_set: [*c]c.venus_object_t = null;
+        var buffer: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &pool));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &set));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.*.id, 0, &destination_set));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &buffer));
+        device_caches[0] = .{ .handle = device.*.handle, .descriptor_limits_ready = true, .descriptor_alignments = .{ 16, 16 }, .descriptor_ranges = .{ 256, 512 } };
+        const kind: u32 = if (mode == 4 or mode == 5) 6 else 7;
+        const layout = try profiles.normalize_bindings(&.{.{ .binding = 3, .descriptor_type = kind, .descriptor_count = 1, .stage_flags = 32 }});
+        var profile = try profiles.create_set_profile(&layout);
+        if (mode == 7 or mode == 8 or mode == 10) {
+            profile.descriptors[0].buffer = if (mode == 10) 1 else buffer.*.handle;
+            profile.descriptors[0].range = 64;
+        }
+        resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, profile);
+        resource_state(destination_set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&layout));
+        resource_state(buffer).* = .{ .buffer_size = 512, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, .bound_memory = 1 };
+        if (mode == 3 or mode == 7) resource_state(set).inflight_count = 1;
+        if (mode == 8) resource_state(destination_set).inflight_count = 1;
+        var observers: [2][*c]c.venus_object_t = undefined;
+        for (&observers, 0..) |*observer, observer_index| {
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, device.*.id, 1, observer));
+            const observed = resource_index(if (mode >= 7 and observer_index == 1) destination_set else set);
+            resource_state(observer.*).command_state = if (observer_index == 0) .Recording else .Executable;
+            resource_state(observer.*).buffer_references[observed / 64] |= @as(u64, 1) << @as(u6, @intCast(observed % 64));
+        }
+        const info: c.VkDescriptorBufferInfo = .{ .buffer = @ptrFromInt(buffer.*.handle), .offset = 16, .range = if (mode == 5) 257 else 128 };
+        const initial: c.VkWriteDescriptorSet = .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set.*.handle), .dstBinding = 3, .descriptorCount = 1, .descriptorType = kind, .pBufferInfo = &info };
+        var writes = [_]c.VkWriteDescriptorSet{initial} ** 2;
+        writes[1].dstBinding = 99;
+        const copy: c.VkCopyDescriptorSet = .{ .sType = c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET, .srcSet = @ptrFromInt(set.*.handle), .srcBinding = 3, .dstSet = @ptrFromInt(destination_set.*.handle), .dstBinding = 3, .descriptorCount = 1 };
+        if (mode >= 7) update_descriptor_sets(@ptrFromInt(device.*.handle), 0, null, 1, &copy) else update_descriptor_sets(@ptrFromInt(device.*.handle), if (mode == 6) 2 else 1, &writes, 0, null);
+        const expected_success = mode == 0 or mode == 4;
+        const current = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
+        try std.testing.expectEqual(if (expected_success) buffer.*.handle else profile.descriptors[0].buffer, current.descriptors[0].buffer);
+        try std.testing.expectEqual(expected_success or mode == 1 or mode == 2 or mode == 7 or mode == 9 or mode == 10, fixture.captured);
+        const copied = profiles.get_profile(&profile_registry.sets, resource_state(destination_set).profile_index).?;
+        try std.testing.expectEqual(if (mode == 7) buffer.*.handle else @as(u64, 0), copied.descriptors[0].buffer);
+        try std.testing.expectEqual(mode != 1 and mode != 2, lost == c.RingOk);
+        for (observers, 0..) |observer, observer_index| {
+            const invalidated = expected_success or ((mode == 7 or mode == 9 or mode == 10) and observer_index == 1);
+            try std.testing.expectEqual(if (invalidated) command_state_t.Invalid else if (observer_index == 0) command_state_t.Recording else command_state_t.Executable, resource_state(observer).command_state);
+        }
+        for (std.mem.asBytes(&descriptor_update_snapshots)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+        for (std.mem.asBytes(&descriptor_wire_buffers)) |byte| try std.testing.expectEqual(@as(u8, 0), byte);
+    }
+}
+test "compute and graphics acknowledgments publish no references or state changes on failures" {
+    const fixture_t = struct {
+        mode: usize,
+        opcode: u32 = 0,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                if (length < 40) return c.RingInvalid;
+                fixture.opcode = std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little);
+                if (fixture.mode == 1) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], fixture.opcode + @as(u32, if (fixture.mode == 2) 1 else 0), .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..9) |operation| for (0..3) |mode| {
+        var fixture = fixture_t{ .mode = mode };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var device: [*c]c.venus_object_t = null;
+        var pool: [*c]c.venus_object_t = null;
+        var recording: [*c]c.venus_object_t = null;
+        var pipeline: [*c]c.venus_object_t = null;
+        var layout: [*c]c.venus_object_t = null;
+        var descriptor_pool: [*c]c.venus_object_t = null;
+        var set: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_POOL, device.*.id, 0, &pool));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.*.id, 1, &recording));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PIPELINE, device.*.id, 0, &pipeline));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, device.*.id, 0, &layout));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.*.id, 0, &descriptor_pool));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, descriptor_pool.*.id, 0, &set));
+        const empty = profiles.descriptor_layout_t{};
+        const definition = if (operation >= 4) try profiles.normalize_pipeline(&.{}, &.{}) else try profiles.normalize_pipeline(&.{empty}, &.{.{ .stage_flags = 32, .offset = 0, .size = 4 }});
+        resource_state(layout).profile_index = try profiles.reserve_slot(&profile_registry.pipeline_layouts, definition);
+        resource_state(pipeline).profile_index = try profiles.reserve_slot(&profile_registry.pipelines, definition);
+        resource_state(pipeline).pipeline_bind_point = if (operation >= 4) 0 else 1;
+        resource_state(pipeline).render_format = 37;
+        resource_state(set).profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_set_profile(&empty));
+        resource_state(recording).command_profile_index = try profiles.reserve_slot(&command_registry.commands, compute_state.command_profile_t{ .pipeline = pipeline.*.handle });
+        resource_state(recording).command_state = .Recording;
+        device_caches[0] = .{ .handle = device.*.handle, .descriptor_limits_ready = true, .compute_group_limits = .{ 8, 8, 8 } };
+        if (operation >= 4) {
+            device_caches[0].graphics_queue_ready = true;
+            device_caches[0].graphics_queue_count = 1;
+            device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
+        }
+        var pass: [*c]c.venus_object_t = null;
+        var framebuffer: [*c]c.venus_object_t = null;
+        var view: [*c]c.venus_object_t = null;
+        var image: [*c]c.venus_object_t = null;
+        var allocation: [*c]c.venus_object_t = null;
+        var copy_target: [*c]c.venus_object_t = null;
+        var copy_memory: [*c]c.venus_object_t = null;
+        if (operation >= 5) {
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_RENDER_PASS, device.*.id, 0, &pass));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_FRAMEBUFFER, device.*.id, 0, &framebuffer));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE_VIEW, device.*.id, 0, &view));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE, device.*.id, 0, &image));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &allocation));
+            resource_state(pass).* = .{ .render_format = 37, .render_final_layout = c.VK_IMAGE_LAYOUT_GENERAL };
+            resource_state(framebuffer).* = .{ .render_format = 37, .framebuffer_view = view.*.handle, .framebuffer_extent = .{ 64, 64 } };
+            resource_state(view).* = .{ .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .view_image = image.*.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
+            resource_state(image).* = .{ .bound_memory = allocation.*.handle, .image_type = c.VK_IMAGE_TYPE_2D, .image_samples = 1, .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .image_levels = 1, .image_layers = 1, .image_extent = .{ 64, 64, 1 } };
+            if (operation == 6 or operation == 7) graphics_recording(resource_state(recording)).active_format = 37;
+            if (operation == 7) {
+                graphics_recording(resource_state(recording)).pipeline = pipeline.*.handle;
+                graphics_recording(resource_state(recording)).pipeline_format = 37;
+            }
+        }
+        if (operation == 8) {
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &copy_target));
+            try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &copy_memory));
+            resource_state(copy_target).* = .{ .buffer_size = 16384, .buffer_usage = c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, .bound_memory = copy_memory.*.handle };
+        }
+        const copy_region: c.VkBufferImageCopy = .{ .imageSubresource = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 }, .imageExtent = .{ .width = 64, .height = 64, .depth = 1 } };
+        const clear_value = std.mem.zeroes(c.VkClearValue);
+        const begin_info: c.VkRenderPassBeginInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, .renderPass = @ptrFromInt(if (pass == null) 1 else pass.*.handle), .framebuffer = @ptrFromInt(if (framebuffer == null) 1 else framebuffer.*.handle), .renderArea = .{ .extent = .{ .width = 64, .height = 64 } }, .clearValueCount = 1, .pClearValues = &clear_value };
+        const command_handle: c.VkCommandBuffer = @ptrFromInt(recording.*.handle);
+        const handles = [_]c.VkDescriptorSet{@ptrFromInt(set.*.handle)};
+        const value: u32 = 42;
+        if (mode == 0 and operation == 0) {
+            resource_state(pipeline).pipeline_bind_point = 0;
+            bind_pipeline(command_handle, 1, @ptrFromInt(pipeline.*.handle));
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            resource_state(pipeline).pipeline_bind_point = 1;
+            resource_state(recording).command_state = .Recording;
+        }
+        if (mode == 0 and operation == 1) {
+            const profile = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
+            profile.layout = try profiles.normalize_bindings(&.{.{ .binding = 4, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
+            bind_descriptor_sets(command_handle, 1, @ptrFromInt(layout.*.handle), 0, 1, &handles, 0, null);
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            profile.layout = empty;
+            resource_state(recording).command_state = .Recording;
+        }
+        if (mode == 0 and operation == 3) {
+            const profile = profiles.get_profile(&profile_registry.pipelines, resource_state(pipeline).profile_index).?;
+            profile.sets[0] = try profiles.normalize_bindings(&.{.{ .binding = 0, .descriptor_type = 7, .descriptor_count = 1, .stage_flags = 32 }});
+            dispatch(command_handle, 1, 1, 1);
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            profile.sets[0] = empty;
+            resource_state(recording).command_state = .Recording;
+        }
+        if (mode == 0 and operation == 4) {
+            device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_COMPUTE_BIT;
+            bind_pipeline(command_handle, 0, @ptrFromInt(pipeline.*.handle));
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            try std.testing.expectEqual(@as(u64, 0), graphics_recording(resource_state(recording)).pipeline);
+            try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
+            device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
+            resource_state(recording).command_state = .Recording;
+        }
+        switch (operation) {
+            0 => bind_pipeline(command_handle, 1, @ptrFromInt(pipeline.*.handle)),
+            1 => bind_descriptor_sets(command_handle, 1, @ptrFromInt(layout.*.handle), 0, 1, &handles, 0, null),
+            2 => push_constants(command_handle, @ptrFromInt(layout.*.handle), 32, 0, 4, &value),
+            3 => dispatch(command_handle, 1, 1, 1),
+            4 => bind_pipeline(command_handle, 0, @ptrFromInt(pipeline.*.handle)),
+            5 => begin_render_pass(command_handle, &begin_info, c.VK_SUBPASS_CONTENTS_INLINE),
+            6 => end_render_pass(command_handle),
+            7 => draw(command_handle, 3, 1, 0, 0),
+            8 => copy_image_to_buffer(command_handle, @ptrFromInt(image.*.handle), c.VK_IMAGE_LAYOUT_GENERAL, @ptrFromInt(copy_target.*.handle), 1, &copy_region),
+            else => unreachable,
+        }
+        if (operation >= 5) {
+            const expected_active: u32 = if (operation == 5) (if (mode == 0) 37 else 0) else if (operation == 6) (if (mode == 0) 0 else 37) else if (operation == 7) 37 else 0;
+            try std.testing.expectEqual(expected_active, graphics_recording(resource_state(recording)).active_format);
+            if ((operation == 5 or operation == 8) and mode == 0) {
+                var referenced: usize = 0;
+                for (resource_state(recording).buffer_references) |word| referenced += @popCount(word);
+                try std.testing.expectEqual(@as(usize, if (operation == 5) 5 else 4), referenced);
+            }
+        }
+        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 1) c.RingClosed else c.RingCorrupt), lost);
+        if (mode != 0) {
+            try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
+            if (operation == 4) try std.testing.expectEqual(@as(u64, 0), graphics_recording(resource_state(recording)).pipeline);
+            try std.testing.expect(!command_profile(recording).descriptor_layout_ready);
+            try std.testing.expectEqual(@as(u64, 0), command_profile(recording).pushes[5].initialized[0]);
+        } else if (operation == 2) try std.testing.expectEqual(@as(u64, 15), command_profile(recording).pushes[5].initialized[0]);
+    };
+}
+
+test "graphics queue flags cache rejects malformed and impossible actual families before publication" {
+    const fixture_t = struct {
+        mode: u32,
+        submitted: u32 = 0,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                std.debug.assert(length >= 40 and input != null);
+                std.debug.assert(std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little) == 7);
+                fixture.submitted += 1;
+                if (fixture.mode == 4) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                std.debug.assert(capacity >= 48);
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], 7, .little);
+                std.mem.writeInt(u64, bytes[4..12], if (fixture.mode == 1) 0 else 1, .little);
+                const count: u32 = if (fixture.mode == 2) 0 else 1;
+                std.mem.writeInt(u32, bytes[12..16], count, .little);
+                std.mem.writeInt(u64, bytes[16..24], count, .little);
+                std.mem.writeInt(u32, bytes[24..28], c.VK_QUEUE_GRAPHICS_BIT, .little);
+                std.mem.writeInt(u32, bytes[28..32], if (fixture.mode == 3) 0 else 1, .little);
+                std.mem.writeInt(u32, bytes[32..36], 64, .little);
+                for (0..3) |index| std.mem.writeInt(u32, bytes[36 + index * 4 ..][0..4], 1, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..5) |mode| {
+        var fixture = fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+        var physical: [*c]c.venus_object_t = null;
+        var device: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, 0, 1, &physical));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, physical.*.id, 1, &device));
+        device_caches[0] = .{ .handle = device.*.handle, .family_count = 1 };
+        device_caches[0].counts[0] = 1;
+        const accepted = @call(.never_inline, ensure_graphics_queue_flags, .{@as(*const c.venus_object_t, @ptrCast(device))});
+        try std.testing.expectEqual(mode == 0, accepted);
+        try std.testing.expectEqual(@as(u32, 1), fixture.submitted);
+        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 4) c.RingClosed else c.RingCorrupt), lost);
+        if (mode == 0) {
+            try std.testing.expectEqual(@as(u32, c.VK_QUEUE_GRAPHICS_BIT), device_caches[0].graphics_queue_flags[0]);
+            fixture.mode = 4;
+            try std.testing.expect(@call(.never_inline, ensure_graphics_queue_flags, .{@as(*const c.venus_object_t, @ptrCast(device))}));
+            try std.testing.expectEqual(@as(u32, 1), fixture.submitted);
+        } else {
+            try std.testing.expect(!device_caches[0].graphics_queue_ready);
+            try std.testing.expectEqual([_]u32{0} ** 64, device_caches[0].graphics_queue_flags);
+        }
+        venus_icd_abandon();
+        try std.testing.expectEqualDeep(device_cache_t{}, device_caches[0]);
+    }
+}
+
+test "negotiated binding owns the entire profile and rejected calls preserve the live session" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
+            return c.RingInvalid; // Binding never contacts the receiver.
+        }
+    };
+    var context: u8 = 0;
+    var capabilities = std.mem.zeroes(c.venus_capabilities_t);
+    capabilities.wire_format_version = 1;
+    capabilities.vk_xml_version = c.VenusPinnedXmlVersion;
+    capabilities.vk_ext_command_serialization_spec_version = 1;
+    capabilities.vk_mesa_venus_protocol_spec_version = 3;
+    capabilities.supports_blob_id_0 = 1;
+    capabilities.supports_multiple_timelines = 1;
+    capabilities.vk_extension_mask1[0] = 1;
+    capabilities.vk_extension_mask1[12] = 3;
+    capabilities.vk_extension_mask1[31] = 0xa5a5a5a5;
+    const expected = capabilities;
+    for (0..8) |mode| {
+        var invalid = expected;
+        switch (mode) {
+            3 => invalid.wire_format_version = 0,
+            4 => invalid.allow_vk_wait_syncs = 2,
+            5 => invalid.supports_blob_id_0 = 0,
+            6 => invalid.vk_extension_mask1[0] = 0,
+            7 => invalid.vk_extension_mask1[12] = 1,
+            else => {},
+        }
+        const previous_namespace = namespace_id;
+        try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind_capabilities(if (mode == 0) null else fixture_t.exchange, if (mode == 1) null else &context, if (mode == 2) null else &invalid));
+        try std.testing.expectEqual(previous_namespace, namespace_id);
+        try std.testing.expect(command.exchange == null);
+        try std.testing.expect(!negotiated_capabilities_ready);
+        try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+    }
+    const previous_namespace = namespace_id;
+    namespace_id = std.math.maxInt(u32);
+    const exhausted = venus_icd_bind_capabilities(fixture_t.exchange, &context, &capabilities);
+    namespace_id = previous_namespace;
+    try std.testing.expectEqual(@as(c_int, c.RingLimit), exhausted);
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expect(command.exchange == null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(fixture_t.exchange, &context, &capabilities));
+    defer venus_icd_abandon();
+    @memset(std.mem.asBytes(&capabilities), 0);
+    try std.testing.expect(negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    const bound_namespace = namespace_id;
+    try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind_capabilities(fixture_t.exchange, &context, &expected));
+    try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind(fixture_t.exchange, &context));
+    try std.testing.expectEqual(bound_namespace, namespace_id);
+    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    var instance: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
+    try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+    try std.testing.expect(negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, instance.*.handle, c.VK_OBJECT_TYPE_INSTANCE, 1));
+    // An accepted CPU command owns the binding even with no live Vulkan object.
+    for ([_]u32{ c.CommandSubmitted, c.CommandReading, c.CommandReady }) |phase| {
+        command.state = phase;
+        command.reply_offset = if (phase == c.CommandReady) command.rx_bytes else 0;
+        command.cpu_fence = 7;
+        command.command_id = 137;
+        const expected_command = command;
+        try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+        try std.testing.expectEqualDeep(expected_command, command);
+        try std.testing.expectEqual(bound_namespace, namespace_id);
+        try std.testing.expect(negotiated_capabilities_ready);
+        try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    }
+    command.state = c.CommandIdle;
+    command.reply_offset = 0;
+    command.cpu_fence = 0;
+    command.command_id = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_unbind());
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &context));
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+    venus_icd_abandon();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(fixture_t.exchange, &context, &expected));
+    venus_icd_abandon();
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+}
+
+extern fn venus_features_test_query([*]const u32, usize, [*]u8) usize;
+extern fn venus_features_test_reply([*]const u32, usize, [*]u8) usize;
+extern fn venus_features_test_reply_one_hot([*]const u32, usize, usize, [*]u8) usize;
+extern fn venus_properties_test_fixture([*]const u32, usize, *c.VkPhysicalDeviceProperties, [*]properties_wire.data_t) void;
+extern fn venus_properties_test_encode([*]const u32, usize, *const c.VkPhysicalDeviceProperties, [*]const properties_wire.data_t, [*]u8) usize;
+extern fn venus_values_test_encode(u32, [*]u8, usize) usize;
+extern fn venus_values_test_properties(*const c.VkPhysicalDeviceProperties, [*]u8, usize) usize;
+const feature_fixture_t = struct {
+    api: u32 = c.VK_API_VERSION_1_3,
+    tags: [8]u32 = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR },
+    count: usize = 8,
+    hot: ?usize = null,
+    corrupt_word: ?usize = null,
+    truncate: ?usize = null,
+    fail_command: u32 = std.math.maxInt(u32),
+    current: u32 = 0,
+    commands: u32 = 0,
+    feature_commands: u32 = 0,
+    create_result: i32 = 0,
+    corrupt_create: bool = false,
+    corrupt_create_identity: bool = false,
+    corrupt_destroy: bool = false,
+    expected_device_info: ?*const c.VkDeviceCreateInfo = null,
+    reply: [4096]u8 = undefined,
+    bytes: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const self: *feature_fixture_t = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = request.*.kind;
+        response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                std.debug.assert(input != null and length >= 44);
+                const wire = @as([*]const u8, @ptrCast(input.?))[36..length];
+                self.current = std.mem.readInt(u32, wire[0..4], .little);
+                self.commands += 1;
+                if (self.current == self.fail_command) return c.RingClosed;
+                response.*.argument_zero = self.commands;
+                @memset(&self.reply, 0);
+                switch (self.current) {
+                    0 => {
+                        std.mem.writeInt(u32, self.reply[0..4], 0, .little);
+                        std.mem.writeInt(i32, self.reply[4..8], c.VK_SUCCESS, .little);
+                        std.mem.writeInt(u64, self.reply[8..16], 1, .little);
+                        std.mem.writeInt(u64, self.reply[16..24], std.mem.readInt(u64, wire[wire.len - 8 ..][0..8], .little), .little);
+                        self.bytes = 24;
+                    },
+                    6 => {
+                        var value = std.mem.zeroes(c.VkPhysicalDeviceProperties);
+                        value.apiVersion = self.api;
+                        self.bytes = venus_values_test_properties(&value, &self.reply, self.reply.len);
+                    },
+                    1 => {
+                        std.mem.writeInt(u32, self.reply[0..4], 1, .little);
+                        self.bytes = 4;
+                    },
+                    3 => self.bytes = venus_values_test_encode(3, &self.reply, self.reply.len),
+                    11 => {
+                        const physical_id = std.mem.readInt(u64, wire[8..16], .little);
+                        const device_id = std.mem.readInt(u64, wire[wire.len - 8 ..][0..8], .little);
+                        if (self.expected_device_info) |info| {
+                            var expected: [8192]u8 = undefined;
+                            const used = venus_device_test_encode(info, physical_id, device_id, &expected);
+                            std.debug.assert(std.mem.eql(u8, expected[0..used], wire));
+                        }
+                        std.mem.writeInt(u32, self.reply[0..4], if (self.corrupt_create) 99 else 11, .little);
+                        std.mem.writeInt(i32, self.reply[4..8], self.create_result, .little);
+                        std.mem.writeInt(u64, self.reply[8..16], 1, .little);
+                        std.mem.writeInt(u64, self.reply[16..24], if (self.create_result < 0) 0 else if (self.corrupt_create_identity) device_id ^ 1 else device_id, .little);
+                        self.bytes = 24;
+                    },
+                    12 => {
+                        std.mem.writeInt(u32, self.reply[0..4], if (self.corrupt_destroy) 99 else 12, .little);
+                        self.bytes = 4;
+                    },
+                    148 => {
+                        var tags: [properties_wire.MaxNodes]u32 = undefined;
+                        var count: usize = 0;
+                        var offset: usize = 28;
+                        while (std.mem.readInt(u64, wire[offset..][0..8], .little) != 0) : (offset += 12) {
+                            tags[count] = std.mem.readInt(u32, wire[offset + 8 ..][0..4], .little);
+                            count += 1;
+                        }
+                        var core: c.VkPhysicalDeviceProperties = undefined;
+                        var nodes: [5]properties_wire.data_t = undefined;
+                        venus_properties_test_fixture(&tags, count, &core, &nodes);
+                        core.apiVersion = self.api;
+                        self.bytes = venus_properties_test_encode(&tags, count, &core, &nodes, &self.reply);
+                    },
+                    147 => {
+                        self.feature_commands += 1;
+                        var expected: [4096]u8 = undefined;
+                        const count = self.count;
+                        const expected_bytes = venus_features_test_query(&self.tags, count, &expected);
+                        std.mem.writeInt(u64, expected[8..16], std.mem.readInt(u64, wire[8..16], .little), .little);
+                        std.debug.assert(std.mem.eql(u8, expected[0..expected_bytes], wire));
+                        self.bytes = if (self.hot) |selected| venus_features_test_reply_one_hot(&self.tags, count, selected, &self.reply) else venus_features_test_reply(&self.tags, count, &self.reply);
+                        if (self.corrupt_word) |word| std.mem.writeInt(u32, self.reply[word * 4 ..][0..4], 99, .little);
+                    },
+                    else => return c.RingInvalid,
+                }
+                std.debug.assert(self.bytes > 0);
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                std.debug.assert(output != null and capacity == 4096);
+                const bytes = if (self.current == 147 and self.truncate != null) self.truncate.? else capacity;
+                @memcpy(@as([*]u8, @ptrCast(output.?))[0..bytes], self.reply[0..bytes]);
+                response.*.payload_bytes = @intCast(bytes);
+            },
+            else => return c.RingInvalid,
+        }
+        return c.RingOk;
+    }
+};
+fn feature_test_capabilities() c.venus_capabilities_t {
+    var value = std.mem.zeroes(c.venus_capabilities_t);
+    value.wire_format_version = 1;
+    value.vk_xml_version = c.VenusPinnedXmlVersion;
+    value.vk_ext_command_serialization_spec_version = 1;
+    value.vk_mesa_venus_protocol_spec_version = 3;
+    value.supports_blob_id_0 = 1;
+    value.supports_multiple_timelines = 1;
+    value.vk_extension_mask1[0] = 1;
+    value.vk_extension_mask1[12] = 3;
+    for ([_]u32{ 29, 287, 471 }) |bit| value.vk_extension_mask1[bit / 32] |= @as(u32, 1) << @as(u5, @intCast(bit % 32));
+    return value;
+}
+fn feature_test_physical(fixture: *feature_fixture_t, capabilities: *const c.venus_capabilities_t) !c.VkPhysicalDevice {
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(feature_fixture_t.exchange, fixture, capabilities));
+    var instance: [*c]c.venus_object_t = null;
+    var physical: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.*.id, 1, &physical));
+    caches[0].handle = instance.*.handle;
+    caches[0].ready = true;
+    caches[0].count = 1;
+    caches[0].physical[0] = physical.*.handle;
+    return @ptrFromInt(physical.*.handle);
+}
+test "Features2 cached raw137 one-hots are immutable while public flags stay false" {
+    const capabilities = feature_test_capabilities();
+    for (0..137) |selected| {
+        var fixture = feature_fixture_t{ .hot = selected };
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2(physical, &output);
+        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+        try std.testing.expectEqual(@as(u32, 1), fixture.feature_commands);
+        const entry = physical_features_cache(physical).?;
+        try std.testing.expect(entry.actual_api_ready and entry.raw_features_ready);
+        try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_3), entry.actual_api_version);
+        var position: usize = 0;
+        for (entry.raw.core) |flag| {
+            try std.testing.expectEqual(@as(u32, @intFromBool(position == selected)), flag);
+            position += 1;
+        }
+        for (entry.raw.nodes[0..entry.raw.count]) |node| for (node.flags[0..node.flag_count]) |flag| {
+            try std.testing.expectEqual(@as(u32, @intFromBool(position == selected)), flag);
+            position += 1;
+        };
+        try std.testing.expectEqual(@as(usize, 137), position);
+        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| try std.testing.expectEqual(@as(u32, 0), @field(output.features, field.name));
+        const raw_before = entry.raw;
+        @memset(std.mem.asBytes(&output.features), 0xa5);
+        features2(physical, &output);
+        var core = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+        features(physical, &core);
+        try std.testing.expectEqualDeep(std.mem.zeroes(c.VkPhysicalDeviceFeatures), core);
+        try std.testing.expectEqualDeep(core, output.features);
+        try std.testing.expectEqualDeep(raw_before, entry.raw);
+        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+    }
+}
+test "Features2 actual API gates aggregates correctly and never147 on API1.0" {
+    const capabilities = feature_test_capabilities();
+    for ([_]u32{ c.VK_API_VERSION_1_0, c.VK_API_VERSION_1_1, c.VK_API_VERSION_1_2, c.VK_API_VERSION_1_3 }) |api| {
+        var fixture = feature_fixture_t{ .api = api };
+        if (api == c.VK_API_VERSION_1_1) {
+            fixture.tags = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, 0, 0, 0, 0 };
+            fixture.count = 4;
+        } else if (api == c.VK_API_VERSION_1_2) {
+            fixture.tags = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, 0 };
+            fixture.count = 7;
+        }
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2(physical, &output);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+        try std.testing.expectEqual(@as(u32, if (api == c.VK_API_VERSION_1_0) 0 else 1), fixture.feature_commands);
+        const entry = physical_features_cache(physical).?;
+        try std.testing.expectEqual(api, entry.actual_api_version);
+        try std.testing.expectEqual(@as(u8, @intCast(if (api == c.VK_API_VERSION_1_0) 0 else fixture.count)), entry.raw.count);
+    }
+}
+test "Features2 every truncated or corrupted initialized reply preserves complete output and raw cache" {
+    const capabilities = feature_test_capabilities();
+    for (0..2) |mode| {
+        const attempts: usize = if (mode == 0) 668 else 668 / 4;
+        for (0..attempts) |index| {
+            var fixture = feature_fixture_t{};
+            if (mode == 0) fixture.truncate = index else fixture.corrupt_word = index;
+            const physical = try feature_test_physical(&fixture, &capabilities);
+            defer venus_icd_abandon();
+            var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+            output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            @memset(std.mem.asBytes(&output.features), 0xa5);
+            const before = std.mem.asBytes(&output).*;
+            features2(physical, &output);
+            try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&output));
+            try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+            const entry = physical_features_cache(physical).?;
+            try std.testing.expect(entry.actual_api_ready and !entry.raw_features_ready);
+            try std.testing.expectEqualDeep(features_wire.result_t{}, entry.raw);
+            const commands = fixture.commands;
+            features2(physical, &output);
+            try std.testing.expectEqual(commands, fixture.commands);
+        }
+    }
+}
+
+test "Features2 native invalid topology cannot publish or transact" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    @memset(std.mem.asBytes(&outer.features), 0xa5);
+    var node = std.mem.zeroes(c.VkPhysicalDeviceShaderDrawParametersFeatures);
+    node.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+    node.shaderDrawParameters = 0xa5a5a5a5;
+    var duplicate = node;
+    var unknown = std.mem.zeroes(c.VkBaseOutStructure);
+    unknown.sType = 999999;
+    for (0..8) |mode| {
+        outer.pNext = &node;
+        node.pNext = null;
+        switch (mode) {
+            0 => outer.sType = 0,
+            1 => node.pNext = &node,
+            2 => {
+                node.pNext = &duplicate;
+                duplicate.pNext = null;
+            },
+            3 => outer.pNext = &outer,
+            4 => outer.pNext = @ptrFromInt(@intFromPtr(&node) + 1),
+            5 => {
+                unknown.pNext = &unknown;
+                outer.pNext = &unknown;
+            },
+            else => {},
+        }
+        const before = std.mem.asBytes(&outer).*;
+        const node_before = std.mem.asBytes(&node).*;
+        const address: ?*anyopaque = if (mode == 6) null else if (mode == 7) @ptrFromInt(@intFromPtr(&outer) + 1) else &outer;
+        features2(physical, address);
+        try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&outer));
+        try std.testing.expectEqualSlices(u8, &node_before, std.mem.asBytes(&node));
+        try std.testing.expectEqual(@as(u32, 0), fixture.commands);
+        try std.testing.expect(!physical_features_cache(physical).?.actual_api_ready);
+        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    }
+}
+test "Features2 parser masks are copied and unavailable requested nodes publish false" {
+    var capabilities = feature_test_capabilities();
+    capabilities.vk_extension_mask1[29 / 32] &= ~(@as(u32, 1) << 29);
+    capabilities.vk_extension_mask1[287 / 32] &= ~(@as(u32, 1) << 31);
+    capabilities.vk_extension_mask1[471 / 32] &= ~(@as(u32, 1) << 23);
+    var fixture = feature_fixture_t{ .count = 5 };
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    @memset(std.mem.asBytes(&capabilities), 0xff);
+    var transform = std.mem.zeroes(c.VkPhysicalDeviceTransformFeedbackFeaturesEXT);
+    transform.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
+    transform.transformFeedback = 1;
+    transform.geometryStreams = 1;
+    var robust = std.mem.zeroes(c.VkPhysicalDeviceRobustness2FeaturesEXT);
+    robust.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
+    robust.robustBufferAccess2 = 1;
+    robust.robustImageAccess2 = 1;
+    robust.nullDescriptor = 1;
+    transform.pNext = &robust;
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    outer.pNext = &transform;
+    features2(physical, &outer);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(u32, 0), transform.transformFeedback | transform.geometryStreams | robust.robustBufferAccess2 | robust.robustImageAccess2 | robust.nullDescriptor);
+    try std.testing.expectEqual(@as(u8, 5), physical_features_cache(physical).?.raw.count);
+    try std.testing.expectEqual(@as(?*anyopaque, &robust), transform.pNext);
+}
+test "Features2 raw API mismatch invalid versions and failed backend preserve callers" {
+    const capabilities = feature_test_capabilities();
+    for ([_]u32{ 0, c.VK_API_VERSION_1_3 | (@as(u32, 1) << 29), (@as(u32, 2) << 22), c.VK_API_VERSION_1_3 }) |api| {
+        var fixture = feature_fixture_t{ .api = api };
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        @memset(std.mem.asBytes(&outer.features), 0xa5);
+        const before = std.mem.asBytes(&outer).*;
+        if (api == c.VK_API_VERSION_1_3) fixture.fail_command = 147;
+        features2(physical, &outer);
+        try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&outer));
+        try std.testing.expect(!physical_features_cache(physical).?.raw_features_ready);
+        try std.testing.expectEqual(@as(c_int, if (api == c.VK_API_VERSION_1_3) c.RingClosed else c.RingCorrupt), lost);
+    }
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2(physical, &outer);
+    var value = std.mem.zeroes(c.VkPhysicalDeviceProperties);
+    properties(physical, &value);
+    try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_0), value.apiVersion);
+    fixture.api = c.VK_API_VERSION_1_2;
+    @memset(std.mem.asBytes(&value), 0xa5);
+    const before = std.mem.asBytes(&value).*;
+    properties(physical, &value);
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&value));
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+}
+test "Features2 distinct physical caches clear only with acknowledged parent teardown" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{ .hot = 0 };
+    const first = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var second: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, object(caches[0].handle, c.VK_OBJECT_TYPE_INSTANCE).?.id, 1, &second));
+    caches[0].count = 2;
+    caches[0].physical[1] = second.*.handle;
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2(first, &outer);
+    fixture.hot = 1;
+    const next: c.VkPhysicalDevice = @ptrFromInt(second.*.handle);
+    features2(next, &outer);
+    try std.testing.expectEqual(@as(u32, 4), fixture.commands);
+    try std.testing.expectEqual(@as(u32, 1), physical_features_cache(first).?.raw.core[0]);
+    try std.testing.expectEqual(@as(u32, 0), physical_features_cache(first).?.raw.core[1]);
+    try std.testing.expectEqual(@as(u32, 0), physical_features_cache(next).?.raw.core[0]);
+    try std.testing.expectEqual(@as(u32, 1), physical_features_cache(next).?.raw.core[1]);
+    const instance: c.VkInstance = @ptrFromInt(caches[0].handle);
+    destroy_instance(instance, null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqualDeep(instance_cache_t{}, caches[0]);
+    try std.testing.expect(physical_features_cache(first) == null and physical_features_cache(next) == null);
+    features2(first, &outer);
+    try std.testing.expectEqual(@as(u32, 5), fixture.commands);
+}
+test "Features2 complete reordered native chain preserves every non-Boolean byte and raw ownership" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    const native_t = struct {
+        v11: c.VkPhysicalDeviceVulkan11Features,
+        v12: c.VkPhysicalDeviceVulkan12Features,
+        v13: c.VkPhysicalDeviceVulkan13Features,
+        draw: c.VkPhysicalDeviceShaderDrawParametersFeatures,
+        reset: c.VkPhysicalDeviceHostQueryResetFeatures,
+        transform: c.VkPhysicalDeviceTransformFeedbackFeaturesEXT,
+        robust: c.VkPhysicalDeviceRobustness2FeaturesEXT,
+        maintenance: c.VkPhysicalDeviceMaintenance5FeaturesKHR,
+    };
+    const Fields = .{ "v11", "v12", "v13", "draw", "reset", "transform", "robust", "maintenance" };
+    var native: native_t = undefined;
+    @memset(std.mem.asBytes(&native), 0xa5);
+    inline for (FeatureTags, 0..) |tag, index| {
+        const field = Fields[index];
+        @field(native, field).sType = tag;
+        @field(native, field).pNext = if (index == 0) null else &@field(native, Fields[index - 1]);
+    }
+    var expected = std.mem.asBytes(&native).*;
+    inline for (FeatureTags, 0..) |_, index| {
+        const field = Fields[index];
+        const node_t = @TypeOf(@field(native, field));
+        inline for (@typeInfo(node_t).Struct.fields) |member| {
+            if (comptime !std.mem.eql(u8, member.name, "sType") and !std.mem.eql(u8, member.name, "pNext")) {
+                const offset = @offsetOf(@TypeOf(native), field) + @offsetOf(node_t, member.name);
+                std.mem.writeInt(u32, expected[offset..][0..4], 0, .little);
+            }
+        }
+    }
+    var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    output.pNext = &native.maintenance;
+    features2(physical, &output);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&native));
+    const entry = physical_features_cache(physical).?;
+    const raw = entry.raw;
+    @memset(&fixture.reply, 0xff);
+    @memset(std.mem.asBytes(&output.features), 0xa5);
+    features2(physical, &output);
+    try std.testing.expectEqualDeep(raw, entry.raw);
+    try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+    try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&native));
+}
+test "Features2 failed parent teardown retains raw cache until explicit abandonment" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2(physical, &output);
+    const before = caches[0];
+    fixture.fail_command = 1;
+    destroy_instance(@ptrFromInt(caches[0].handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    try std.testing.expectEqualDeep(before, caches[0]);
+    venus_icd_abandon();
+    try std.testing.expectEqualDeep(instance_cache_t{}, caches[0]);
+    try std.testing.expect(physical_features_cache(physical) == null);
+    try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2") == null);
+    try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2KHR") == null);
+}
+
+extern fn venus_device_test_encode(*const c.VkDeviceCreateInfo, u64, u64, [*]u8) usize;
+const device_native_test_node_t = extern struct { type_tag: u32, next: ?*const anyopaque = null, flags: [55]u32 = [_]u32{0} ** 55 };
+fn device_test_info(queues: []const c.VkDeviceQueueCreateInfo) c.VkDeviceCreateInfo {
+    return .{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = @intCast(queues.len), .pQueueCreateInfos = queues.ptr };
+}
+fn device_test_queue(priorities: []const f32) c.VkDeviceQueueCreateInfo {
+    return .{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueCount = @intCast(priorities.len), .pQueuePriorities = priorities.ptr };
+}
+fn expect_disabled_device(entry: *const device_cache_t) !void {
+    try std.testing.expectEqualDeep(disabled_device_state(), entry.enabled_state);
+    try std.testing.expectEqual(@as(u8, 8), entry.enabled_state.features.count);
+}
+
+test "public device preflight rejects192 true flags before identity cache ring and transport mutation" {
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    var info = device_test_info(&queues);
+    for ([_]bool{ false, true }) |warm| {
+        var fixture = feature_fixture_t{ .hot = 0 };
+        const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+        defer venus_icd_abandon();
+        if (warm) {
+            var core: c.VkPhysicalDeviceFeatures = undefined;
+            features(physical, &core);
+            try std.testing.expectEqual(@as(u32, 1), physical_features_cache(physical).?.raw.core[0]);
+        }
+        const previous_objects = objects;
+        const previous_slots = slots;
+        const previous_caches = device_caches;
+        const previous_rings = ring_slots;
+        const previous_physical = caches;
+        const previous_commands = fixture.commands;
+        var output: c.VkDevice = null;
+        var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+        info.pEnabledFeatures = &legacy;
+        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| {
+            @field(legacy, field.name) = 1;
+            try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+            try std.testing.expect(output == null);
+            @field(legacy, field.name) = 0;
+        }
+        info.pEnabledFeatures = null;
+        const tags = [_]u32{c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2} ++ FeatureTags;
+        const counts = [_]u8{55} ++ FeatureCounts;
+        for (tags, counts) |tag, count| {
+            var node = device_native_test_node_t{ .type_tag = tag };
+            info.pNext = &node;
+            for (0..count) |index| {
+                node.flags[index] = 1;
+                try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+                try std.testing.expect(output == null);
+                node.flags[index] = 0;
+            }
+        }
+        info.pNext = null;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, @ptrFromInt(1), null, @ptrCast(&output)));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, &info, null, @ptrFromInt(1)));
+        const names = [_][*c]const u8{"VK_EXT_unsupported"};
+        info.enabledExtensionCount = 1;
+        info.ppEnabledExtensionNames = &names;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_EXTENSION_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+        info.enabledExtensionCount = 0;
+        info.enabledLayerCount = 1;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_LAYER_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+        info.enabledLayerCount = 0;
+        try std.testing.expectEqualDeep(previous_objects, objects);
+        try std.testing.expectEqualDeep(previous_slots, slots);
+        try std.testing.expectEqualDeep(previous_caches, device_caches);
+        try std.testing.expectEqualDeep(previous_rings, ring_slots);
+        try std.testing.expectEqualDeep(previous_physical, caches);
+        try std.testing.expectEqual(previous_commands, fixture.commands);
+    }
+}
+
+test "public device ACK owns immutable canonical state and exact independent minimal maximum packets" {
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    var priorities = [_]f32{0.5} ** 16;
+    var queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(priorities[0..4])} ** 16;
+    for (&queues, 0..) |*queue, index| queue.queueFamilyIndex = @intCast(index);
+    var info = device_test_info(&queues);
+    var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+    info.pEnabledFeatures = &legacy;
+    const maximum = try device_native.preflight(&info);
+    const maximum_packet = try encode_device(&maximum, 7, 42);
+    var expected: [8192]u8 = undefined;
+    const maximum_used = venus_device_test_encode(&info, 7, 42, &expected);
+    try std.testing.expectEqual(@as(usize, 1096), maximum_packet.used);
+    try std.testing.expectEqualSlices(u8, expected[0..maximum_used], maximum_packet.bytes[0..maximum_packet.used]);
+    info.queueCreateInfoCount = 1;
+    queues[0].queueCount = 1;
+    fixture.expected_device_info = &info;
+    var first: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&first)));
+    try std.testing.expectEqual(@as(u32, 1), fixture.commands); // No hidden API/features query.
+    const first_entry = device_cache(@intFromPtr(first.?)).?;
+    try expect_disabled_device(first_entry);
+    const retained = first_entry.*;
+    legacy.robustBufferAccess = 1;
+    priorities[0] = 0.75;
+    try std.testing.expectEqualDeep(retained, first_entry.*);
+    info.pEnabledFeatures = null;
+    var modern = device_native_test_node_t{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    var extension = device_native_test_node_t{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT };
+    modern.next = &extension;
+    info.pNext = &modern;
+    var selected = info;
+    selected.pNext = null;
+    fixture.expected_device_info = &selected;
+    var second: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&second)));
+    const second_entry = device_cache(@intFromPtr(second.?)).?;
+    try std.testing.expect(first_entry != second_entry);
+    try expect_disabled_device(second_entry);
+    extension.flags[0] = 1;
+    modern.flags[0] = 1;
+    priorities[0] = 0.25;
+    try expect_disabled_device(first_entry);
+    try expect_disabled_device(second_entry);
+    var child: [*c]c.venus_object_t = null;
+    const first_record = object(@intFromPtr(first.?), c.VK_OBJECT_TYPE_DEVICE).?;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, first_record.id, 1, &child));
+    const before_refusal = fixture.commands;
+    destroy_device(first, null);
+    try std.testing.expectEqual(before_refusal, fixture.commands);
+    try expect_disabled_device(first_entry);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, child.*.handle, c.VK_OBJECT_TYPE_BUFFER, 1));
+    destroy_device(first, null);
+    try std.testing.expectEqualDeep(device_cache_t{}, first_entry.*);
+    try expect_disabled_device(second_entry);
+    fixture.fail_command = 12;
+    destroy_device(second, null);
+    try expect_disabled_device(second_entry);
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    venus_icd_abandon();
+    try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+}
+
+test "public device explicit failure rolls back while uncertain create retains only opaque owners" {
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    const info = device_test_info(&queues);
+    for (0..4) |mode| {
+        var fixture = feature_fixture_t{};
+        const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+        defer venus_icd_abandon();
+        if (mode == 0) fixture.create_result = c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        if (mode == 1) fixture.corrupt_create = true;
+        if (mode == 2) fixture.fail_command = 11;
+        if (mode == 3) fixture.corrupt_create_identity = true;
+        var output: c.VkDevice = null;
+        const result = create_device(physical, &info, null, @ptrCast(&output));
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_ERROR_DEVICE_LOST), result);
+        try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+        var live_devices: usize = 0;
+        var live_queues: usize = 0;
+        for (slots) |slot| {
+            if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DEVICE) live_devices += 1;
+            if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_QUEUE) live_queues += 1;
+        }
+        try std.testing.expectEqual(@as(usize, @intFromBool(mode != 0)), live_devices);
+        try std.testing.expectEqual(live_devices, live_queues);
+        try std.testing.expectEqual(mode != 0, ring_slots[1]);
+        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 2) c.RingClosed else c.RingCorrupt), lost);
+        try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+        venus_icd_abandon();
+        try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+        try std.testing.expectEqualDeep([_]bool{false} ** 64, ring_slots);
+    }
+}
+
+test "public device full registry preflight precedence queue rollback and idle-owner refusal retain state" {
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    var info = device_test_info(&queues);
+    var first: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&first)));
+    const first_entry = device_cache(@intFromPtr(first.?)).?;
+    const first_record = object(@intFromPtr(first.?), c.VK_OBJECT_TYPE_DEVICE).?;
+    const retained = first_entry.*;
+    var handles: [508]u64 = undefined;
+    for (&handles) |*handle| {
+        var child: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, first_record.id, 0, &child));
+        handle.* = child.*.handle;
+    }
+    try std.testing.expectEqual(@as(u32, 512), objects.live_count);
+    const previous_id = objects.next_id;
+    const previous_commands = fixture.commands;
+    var output: c.VkDevice = null;
+    var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+    legacy.robustBufferAccess = 1;
+    info.pEnabledFeatures = &legacy;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+    try std.testing.expectEqual(previous_id, objects.next_id);
+    info.pEnabledFeatures = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), create_device(physical, &info, null, @ptrCast(&output)));
+    try std.testing.expectEqual(previous_id, objects.next_id);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, handles[507], c.VK_OBJECT_TYPE_BUFFER, 0));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), create_device(physical, &info, null, @ptrCast(&output)));
+    try std.testing.expectEqual(previous_id + 1, objects.next_id); // Queue failure consumed/released device only.
+    try std.testing.expectEqual(@as(u32, 511), objects.live_count);
+    try std.testing.expect(output == null);
+    try std.testing.expectEqual(previous_commands, fixture.commands);
+    try std.testing.expectEqualDeep(retained, first_entry.*);
+    try std.testing.expect(ring_slots[1] and !ring_slots[2]);
+    for (handles[0..507]) |handle| try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, handle, c.VK_OBJECT_TYPE_BUFFER, 0));
+    resource_state(first_record).idle_refs = 1; // A live waiter owns this device until its completion.
+    destroy_device(first, null);
+    try std.testing.expectEqual(previous_commands, fixture.commands);
+    try std.testing.expectEqualDeep(retained, first_entry.*);
+    resource_state(first_record).idle_refs = 0;
+    destroy_device(first, null);
+    try std.testing.expectEqualDeep(device_cache_t{}, first_entry.*);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+}
+
+
+test "public malformed device destruction retains immutable state with exact output physical loss precedence" {
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    const info = device_test_info(&queues);
+    var output: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&output)));
+    const entry = device_cache(@intFromPtr(output.?)).?;
+    const retained = entry.*;
+    const live = objects.live_count;
+    fixture.corrupt_destroy = true;
+    destroy_device(output, null);
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+    try std.testing.expectEqualDeep(retained, entry.*);
+    try std.testing.expectEqual(live, objects.live_count);
+    try std.testing.expect(ring_slots[1]);
+    const before = fixture.commands;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), create_device(physical, @ptrFromInt(1), null, @ptrCast(&output)));
+    try std.testing.expect(output == null);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(null, @ptrFromInt(1), null, @ptrCast(&output)));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, @ptrFromInt(1), null, null));
+    try std.testing.expectEqual(before, fixture.commands);
+    try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+    try std.testing.expectEqualDeep(retained, entry.*);
+    venus_icd_abandon();
+    try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+}
+
+const timed_fixture_t = struct {
+    now: u64 = 1,
+    deadline: u64 = 0,
+    command_id: u32 = 0,
+    submitted: u32 = 0,
+    reads: u32 = 0,
+    last_offset: usize = 0,
+    expire_reply: bool = false,
+    reply: [extensions_wire.MaxReplyBytes]u8 = [_]u8{0} ** extensions_wire.MaxReplyBytes,
+    fn clock(context: ?*anyopaque) callconv(.C) u64 {
+        const self: *@This() = @ptrCast(@alignCast(context.?));
+        return self.now;
+    }
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque,
+        length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize, deadline: u64) callconv(.C) c_int {
+        const self: *@This() = @ptrCast(@alignCast(context.?));
+        std.debug.assert(deadline > self.now);
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = request.*.kind;
+        response.*.direction = 1;
+        if (self.submitted == 0 and request.*.kind == c.RequestReply) {
+            std.debug.assert(capacity == 1);
+            if (request.*.argument_zero == TimedReplyBytes) {
+                response.*.status = c.RequestInvalid;
+                return c.RingInvalid;
+            }
+            std.debug.assert(request.*.argument_zero == TimedReplyBytes - 1);
+            @as(*u8, @ptrCast(output.?)).* = 0;
+            response.*.payload_bytes = 1;
+            return c.RingOk;
+        }
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                const wire = @as([*]const u8, @ptrCast(input.?))[36..length];
+                self.command_id = std.mem.readInt(u32, wire[0..4], .little);
+                std.debug.assert(self.command_id == 14);
+                self.submitted += 1;
+                self.deadline = deadline;
+                response.*.argument_zero = self.submitted;
+                @memset(&self.reply, 0);
+                std.mem.writeInt(u32, self.reply[0..4], 14, .little);
+                std.mem.writeInt(u64, self.reply[8..16], 1, .little);
+                std.mem.writeInt(u32, self.reply[16..20], 1024, .little);
+                const count = std.mem.readInt(u32, wire[32..36], .little);
+                std.mem.writeInt(u64, self.reply[20..28], count, .little);
+                for (0..count) |index| {
+                    const start = 28 + index * 268;
+                    std.mem.writeInt(u64, self.reply[start..][0..8], 256, .little);
+                    const name_bytes = std.fmt.bufPrint(self.reply[start + 8 ..][0..256], "VK_test_{d:0>4}", .{index}) catch unreachable;
+                    self.reply[start + 8 + name_bytes.len] = 0;
+                    std.mem.writeInt(u32, self.reply[start + 264 ..][0..4], 1, .little);
+                }
+                self.last_offset = 0;
+                self.reads = 0;
+            },
+            c.RequestPoll => std.debug.assert(deadline == self.deadline),
+            c.RequestReply => {
+                std.debug.assert(deadline == self.deadline and request.*.argument_zero == self.last_offset);
+                std.debug.assert(capacity <= 4096);
+                @memcpy(@as([*]u8, @ptrCast(output.?))[0..capacity], self.reply[self.last_offset..][0..capacity]);
+                self.last_offset += capacity;
+                self.reads += 1;
+                response.*.payload_bytes = @intCast(capacity);
+                if (self.expire_reply) self.now = deadline;
+            },
+            else => return c.RingInvalid,
+        }
+        return c.RingOk;
+    }
+};
+test "timed actual reply proof and1024 extension cache use68 bounded reads with one deadline" {
+    var fixture = timed_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_timed(timed_fixture_t.exchange,
+        timed_fixture_t.clock, &fixture, &capabilities, TimedReplyBytes));
+    defer venus_icd_abandon();
+    var instance: [*c]c.venus_object_t = null;
+    var physical: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.*.id, 1, &physical));
+    const handle: c.VkPhysicalDevice = @ptrFromInt(physical.*.handle);
+    const cached = try ensure_raw_extensions(handle);
+    try std.testing.expectEqual(@as(usize, 1024), cached.records.?.len);
+    try std.testing.expectEqual(@as(u32, 68), fixture.reads);
+    try std.testing.expectEqual(@as(usize, extensions_wire.MaxReplyBytes), fixture.last_offset);
+    try std.testing.expectEqual(@as(u32, 2), fixture.submitted);
+    try std.testing.expectEqualStrings("VK_test_1023", std.mem.sliceTo(&cached.records.?[1023].name, 0));
+    _ = try ensure_raw_extensions(handle);
+    try std.testing.expectEqual(@as(u32, 2), fixture.submitted);
+    fixture.now = 0;
+    const request = try extensions_wire.encode_count(physical.*.id);
+    try std.testing.expect(transact(&request.bytes) == null);
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+}
+
+test "public Properties2 preserves headers and shares legacy guest limit projection" {
+    var fixture = feature_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var node = std.mem.zeroes(c.VkPhysicalDeviceVulkan13Properties);
+    node.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES;
+    var output = std.mem.zeroes(c.VkPhysicalDeviceProperties2);
+    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    output.pNext = &node;
+    properties2(physical, &output);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_0), output.properties.apiVersion);
+    try std.testing.expectEqual(@as(u64, 1), output.properties.limits.nonCoherentAtomSize);
+    try std.testing.expectEqual(@as(usize, 4096), output.properties.limits.minMemoryMapAlignment);
+    try std.testing.expectEqual(@as(u32, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES), node.sType);
+    try std.testing.expect(output.pNext == @as(?*anyopaque, @ptrCast(&node)));
+    try std.testing.expect(node.pNext == null);
+    try std.testing.expect(physical_proc("vkGetPhysicalDeviceProperties2") != null);
+    const before = output;
+    output.sType = 0;
+    const calls = fixture.commands;
+    properties2(physical, &output);
+    try std.testing.expectEqual(calls, fixture.commands);
+    output.sType = before.sType;
+    try std.testing.expectEqualDeep(before, output);
+}
+
+test "timed callback completion at whole deadline is sticky and never publishes its reply" {
+    var fixture = timed_fixture_t{ .expire_reply = true };
+    const capabilities = feature_test_capabilities();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_timed(timed_fixture_t.exchange,
+        timed_fixture_t.clock, &fixture, &capabilities, TimedReplyBytes));
+    defer venus_icd_abandon();
+    const request = try extensions_wire.encode_count(1);
+    try std.testing.expect(transact(&request.bytes) == null);
+    try std.testing.expectEqual(@as(c_int, c.RingTimeout), lost);
+    try std.testing.expectEqual(@as(u32, c.CommandLost), command.state);
+    var view: ?*const anyopaque = null;
+    var length: usize = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingTimeout), c.venus_command_take(&command, &view, &length));
+    try std.testing.expect(view == null and length == 0);
+}
+
+test "public WSI surface namespace native queries and nested lock ownership preserve HWND lifetime" {
+    var fixture = feature_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    const instance: c.VkInstance = @ptrFromInt(caches[0].handle);
+    const info = win32_surface_info_t{ .type_tag = c.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+        .next = null, .flags = 0, .instance = @ptrFromInt(1), .window = @ptrFromInt(1) };
+    var surface: c.VkSurfaceKHR = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_win32_surface(instance, &info, null, &surface));
+    var values = std.mem.zeroes(c.VkSurfaceCapabilitiesKHR);
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_capabilities(physical, surface, &values));
+    try std.testing.expectEqual(@as(u32, 64), values.currentExtent.width);
+    var count: u32 = 0;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_formats(physical, surface, &count, null));
+    try std.testing.expect(count >= 2);
+    var formats: [4]c.VkSurfaceFormatKHR = undefined;
+    count = 1;
+    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), surface_formats(physical, surface, &count, &formats));
+    try std.testing.expectEqual(@as(u32, 1), count);
+    try std.testing.expectEqual(@as(usize, 0), lock_depth);
+    lock_icd();
+    lock_icd();
+    try std.testing.expectEqual(@as(usize, 2), lock_depth);
+    unlock_icd();
+    try std.testing.expectEqual(@as(usize, 1), lock_depth);
+    unlock_icd();
+    destroy_surface(instance, surface, null);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_SURFACE_LOST_KHR), surface_capabilities(physical, surface, &values));
+    try std.testing.expectEqual(@as(u32, 0), fixture.commands);
+}
+
+test "legal API1.0 guest Properties2 extension admission gates aliases without forwarding host names" {
+    var fixture = feature_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(feature_fixture_t.exchange, &fixture, &capabilities));
+    defer venus_icd_abandon();
+    var count: u32 = 0;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), enumerate_instance_extensions(null, &count, null));
+    try std.testing.expectEqual(@as(u32, 3), count);
+    var values: [3]c.VkExtensionProperties = undefined;
+    count = 1;
+    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), enumerate_instance_extensions(null, &count, &values));
+    try std.testing.expectEqualStrings("VK_KHR_get_physical_device_properties2", std.mem.sliceTo(&values[0].extensionName, 0));
+    const names = [_][*c]const u8{"VK_KHR_get_physical_device_properties2"};
+    var info = c.VkInstanceCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .enabledExtensionCount = names.len, .ppEnabledExtensionNames = &names };
+    var instance: c.VkInstance = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_instance(&info, null, &instance));
+    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkGetPhysicalDeviceFeatures2KHR") != null);
+    try std.testing.expect(venus_icd_get_physical_proc_addr(instance, "vkGetPhysicalDeviceProperties2KHR") != null);
+    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkGetPhysicalDeviceFeatures2") == null);
+    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkCreateWin32SurfaceKHR") == null);
+    const prior = fixture.commands;
+    const unknown = [_][*c]const u8{"VK_EXT_unsupported"};
+    info.ppEnabledExtensionNames = &unknown;
+    var rejected: c.VkInstance = @ptrFromInt(1);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_EXTENSION_NOT_PRESENT), create_instance(&info, null, &rejected));
+    try std.testing.expect(rejected == null);
+    try std.testing.expectEqual(prior, fixture.commands);
+    destroy_instance(instance, null);
+    for (instance_advertisements) |entry| try std.testing.expect(entry.handle == 0);
+}
+
 test "mutable pending descriptors retain new allocation owners exactly until ticket completion" {
     const fixture_t = struct {
         fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int { return c.RingInvalid; }
@@ -10208,52 +10289,6 @@ test "modern admission intersects backend flags and publishes only owned request
     try std.testing.expectEqualDeep([_]u32{0} ** 47, state.features.nodes[1].flags);
 }
 
-/// [in] live borrowed physical and immutable core external buffer query.
-/// [out] caller-owned initialized output; headers/unknown chain bytes preserved.
-/// No external allocation import/export path is implemented, so all support bits
-/// are zero. Invalid input preserves output; serialized, no allocation/retention.
-fn external_buffer_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalBufferInfo, output: [*c]c.VkExternalBufferProperties) callconv(.C) void {
-    lock_icd(); defer unlock_icd();
-    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalBufferProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES) return;
-    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
-    _ = query2_chain(output.*.pNext) catch return;
-    output.*.externalMemoryProperties = std.mem.zeroes(c.VkExternalMemoryProperties);
-}
-/// [in] live borrowed physical/core fence query; [out] initialized caller storage.
-/// Unsupported external fence capabilities are zero; headers/unknown nodes stay
-/// intact. Invalid input preserves output. Serialized, no heap or retained pointer.
-fn external_fence_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalFenceInfo, output: [*c]c.VkExternalFenceProperties) callconv(.C) void {
-    lock_icd(); defer unlock_icd();
-    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalFenceProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_FENCE_PROPERTIES) return;
-    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
-    _ = query2_chain(output.*.pNext) catch return;
-    output.*.exportFromImportedHandleTypes = 0;
-    output.*.compatibleHandleTypes = 0;
-    output.*.externalFenceFeatures = 0;
-}
-/// [in] live borrowed physical/core semaphore query; [out] initialized storage.
-/// No external semaphore handles supported: zero features/import/export bits.
-/// Headers/unknown nodes preserved. Serialized, no allocation/retained pointer.
-fn external_semaphore_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalSemaphoreInfo, output: [*c]c.VkExternalSemaphoreProperties) callconv(.C) void {
-    lock_icd(); defer unlock_icd();
-    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalSemaphoreProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES) return;
-    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
-    _ = query2_chain(output.*.pNext) catch return;
-    output.*.exportFromImportedHandleTypes = 0;
-    output.*.compatibleHandleTypes = 0;
-    output.*.externalSemaphoreFeatures = 0;
-}
-/// [in] live borrowed physical; [in,out] count/optional array caller owned.
-/// No installed guest ICD tools: count zero, success, array bytes untouched.
-/// Invalid arguments return INITIALIZATION_FAILED. Serialized, no allocation.
-fn tool_properties(physical: c.VkPhysicalDevice, count: [*c]u32, output: [*c]c.VkPhysicalDeviceToolProperties) callconv(.C) c_int {
-    _ = output;
-    lock_icd(); defer unlock_icd();
-    if (physical == null or count == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    count.* = 0;
-    return c.VK_SUCCESS;
-}
-
 test "unsupported external and tool queries preserve output headers and unknown payloads" {
     const transport_t = struct {
         request_count: u32 = 0,
@@ -10299,39 +10334,6 @@ test "unsupported external and tool queries preserve output headers and unknown 
     try std.testing.expectEqual(@as(u32, 15), tool.purposes);
     try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), tool_properties(null, &count, null));
     try std.testing.expectEqual(@as(u32, 0), transport.request_count);
-}
-
-/// [in] live borrowed device/native layout definition; [out] initialized caller
-/// support storage and optional variable-count node. Shares creation preflight,
-/// then queries actual host support. Unsupported local quotas/features yield false;
-/// headers/unknown nodes preserved. Host failure preserves output and poisons binding.
-/// Serialized; no allocations or retained pointers.
-fn descriptor_layout_support(device: c.VkDevice, info: [*c]const c.VkDescriptorSetLayoutCreateInfo, output: [*c]c.VkDescriptorSetLayoutSupport) callconv(.C) void {
-    lock_icd(); defer unlock_icd();
-    if (device == null or info == null or output == null or @intFromPtr(output) % @alignOf(c.VkDescriptorSetLayoutSupport) != 0 or output.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT) return;
-    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
-    _ = query2_chain(output.*.pNext) catch return;
-    var variable: ?*c.VkDescriptorSetVariableDescriptorCountLayoutSupport = null;
-    var current = output.*.pNext;
-    while (current) |pointer| {
-        const header: *c.VkBaseOutStructure = @ptrCast(@alignCast(pointer));
-        if (header.sType == c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT) {
-            if (variable != null or @intFromPtr(pointer) % @alignOf(c.VkDescriptorSetVariableDescriptorCountLayoutSupport) != 0) return;
-            variable = @ptrCast(@alignCast(pointer));
-        }
-        current = @ptrCast(header.pNext);
-    }
-    const prepared = preflight_descriptor_layout(parent, info) catch {
-        output.*.supported = 0;
-        if (variable) |value| value.maxVariableDescriptorCount = 0;
-        return;
-    };
-    const packet = extra_wire.descriptor_layout_support(parent.id, prepared.writer.bytes[0..prepared.writer.used]) catch return;
-    const reply = transact(packet.bytes[0..packet.used]) orelse return;
-    const supported = extra_wire.decode_descriptor_layout_support(reply) catch { _ = failure(c.RingCorrupt); return; };
-    output.*.supported = @intFromBool(supported);
-    // Variable descriptor count is not advertised or admitted by implemented policy.
-    if (variable) |value| value.maxVariableDescriptorCount = 0;
 }
 
 test "timeline wait retains nondispatchable duplicate owners and releases only idle references" {
