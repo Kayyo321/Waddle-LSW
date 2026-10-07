@@ -72,8 +72,49 @@ const FeatureTags = [_]u32{
     c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
 };
 const FeatureCounts = [_]u8{ 12, 47, 15, 1, 1, 2, 3, 1 };
-const CoreFeatureAllowlist = [_]u32{0} ** features_wire.CoreFlags;
-const NodeFeatureAllowlists = [_][features_wire.MaxNodeFlags]u32{[_]u32{0} ** features_wire.MaxNodeFlags} ** features_wire.MaxNodes;
+fn boolean_mask(comptime native_t: type, comptime first: []const u8, comptime count: usize, comptime names: anytype) [count]u32 {
+    var result = [_]u32{0} ** count;
+    const start = @offsetOf(native_t, first);
+    inline for (names) |name| {
+        if (@sizeOf(@TypeOf(@field(@as(native_t, undefined), name))) != 4) @compileError("Feature field must be VkBool32");
+        const offset = @offsetOf(native_t, name);
+        if (offset < start or (offset - start) % 4 != 0 or (offset - start) / 4 >= count) @compileError("Feature field outside canonical Boolean extent");
+        result[(offset - start) / 4] = 1;
+    }
+    return result;
+}
+/// Minimal required core feature policy. Geometry/dual blend/multiviewports/indexed draws
+/// use native generalized pipeline/commands and validated image/query paths.
+/// These policy bits require actual backend support before becoming public.
+const CoreFeatureAllowlist = boolean_mask(c.VkPhysicalDeviceFeatures, "robustBufferAccess", 55, .{
+    "depthBiasClamp",            "depthClamp",         "dualSrcBlend",                           "fillModeNonSolid",     "fullDrawIndexUint32",
+    "geometryShader",            "imageCubeArray",     "independentBlend",                       "multiDrawIndirect",    "multiViewport",
+    "occlusionQueryPrecise",     "robustBufferAccess", "sampleRateShading",                      "shaderClipDistance",   "shaderCullDistance",
+    "shaderImageGatherExtended", "shaderInt64",        "shaderSampledImageArrayDynamicIndexing", "textureCompressionBC",
+});
+/// Implemented canonical node policy in exact FeatureTags order, unused suffix zero.
+/// Required shader capabilities execute natively; BDA/timeline/query/maintenance/sync2/dynamic
+/// rendering have concrete transport commands. Descriptor updates refresh command and
+/// pending ticket references while retaining previous GPU owners until completion.
+/// Transform feedback remains entirely disabled and its extension unadvertised.
+const NodeFeatureAllowlists = [8][47]u32{
+    boolean_mask(c.VkPhysicalDeviceVulkan11Features, "storageBuffer16BitAccess", 47, .{"shaderDrawParameters"}),
+    boolean_mask(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge", 47, .{
+        "bufferDeviceAddress",                       "descriptorIndexing",              "descriptorBindingSampledImageUpdateAfterBind",
+        "descriptorBindingUpdateUnusedWhilePending", "descriptorBindingPartiallyBound", "hostQueryReset",
+        "runtimeDescriptorArray",                    "samplerMirrorClampToEdge",        "timelineSemaphore",
+        "uniformBufferStandardLayout",               "vulkanMemoryModel",
+    }),
+    boolean_mask(c.VkPhysicalDeviceVulkan13Features, "robustImageAccess", 47, .{
+        "dynamicRendering",                    "maintenance4",     "shaderDemoteToHelperInvocation",
+        "shaderZeroInitializeWorkgroupMemory", "synchronization2",
+    }),
+    boolean_mask(c.VkPhysicalDeviceShaderDrawParametersFeatures, "shaderDrawParameters", 47, .{"shaderDrawParameters"}),
+    boolean_mask(c.VkPhysicalDeviceHostQueryResetFeatures, "hostQueryReset", 47, .{"hostQueryReset"}),
+    [_]u32{0} ** 47,
+    boolean_mask(c.VkPhysicalDeviceRobustness2FeaturesEXT, "robustBufferAccess2", 47, .{ "robustBufferAccess2", "nullDescriptor" }),
+    boolean_mask(c.VkPhysicalDeviceMaintenance5FeaturesKHR, "maintenance5", 47, .{"maintenance5"}),
+};
 // Each raw extension array is owned by one physical namespace until acknowledged parent retirement.
 const extension_cache_t = struct {
     handle: u64 = 0,
@@ -554,7 +595,7 @@ fn create_instance(
     if (info.*.pApplicationInfo != null) {
         const version = info.*.pApplicationInfo.*.apiVersion;
         if (version != 0 and (version >> 29 != 0 or
-            ((version >> 22) & 0x7f) != 1 or ((version >> 12) & 0x3ff) != 0))
+            ((version >> 22) & 0x7f) != 1 or version > (if (reply_profile_ready) ImplementedApiVersion | 0xfff else c.VK_API_VERSION_1_0 | 0xfff)))
             return c.VK_ERROR_INCOMPATIBLE_DRIVER;
     }
     const extension_mask = admit_instance_extensions(@ptrCast(info)) catch |err| return
@@ -989,6 +1030,101 @@ fn device_cache(handle: u64) ?*device_cache_t {
     for (&device_caches) |*entry| if (entry.handle == handle) return entry;
     return null;
 }
+// Implemented policy only; every public feature and forwarded extension intersects real host data.
+const DeviceExtensionNames = [_][]const u8{
+    "VK_KHR_swapchain", "VK_EXT_robustness2", "VK_KHR_maintenance5", "VK_KHR_pipeline_library",
+};
+const DeviceExtensionBits = [_]u32{ 0, 287, 471, 291 };
+const ImplementedApiVersion: u32 = c.VK_API_VERSION_1_3;
+fn raw_extension_version(raw: *const extension_cache_t, name: []const u8) ?u32 {
+    for (raw.records orelse &.{}) |record| {
+        const length = std.mem.indexOfScalar(u8, &record.name, 0) orelse unreachable;
+        if (std.mem.eql(u8, record.name[0..length], name)) return record.version;
+    }
+    return null;
+}
+fn supported_device_extensions(physical: c.VkPhysicalDevice, names: *[4][]const u8, versions: *[4]u32) !usize {
+    var count: usize = 0;
+    // Guest swapchain is an implemented Win32 presentation facade, not a host name.
+    if (builtin.os.tag == .windows) {
+        names[count] = DeviceExtensionNames[0]; versions[count] = 70; count += 1;
+    }
+    if (!reply_profile_ready) return count;
+    const raw = try ensure_raw_extensions(physical);
+    for (DeviceExtensionNames[1..], DeviceExtensionBits[1..]) |name, bit| {
+        if (c.venus_capabilities_extension(&negotiated_capabilities, bit) == 0) continue;
+        const version = raw_extension_version(raw, name) orelse continue;
+        names[count] = name; versions[count] = version; count += 1;
+    }
+    return count;
+}
+fn feature_node_extension_supported(tag: u32, names: []const []const u8) bool {
+    const required: []const u8 = switch (tag) {
+        c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT => "VK_EXT_robustness2",
+        c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR => "VK_KHR_maintenance5",
+        else => return true,
+    };
+    for (names) |name| if (std.mem.eql(u8, name, required)) return true;
+    return false;
+}
+fn project_device_feature_nodes(raw: *const features_wire.result_t, names: []const []const u8) [8]device_wire.feature_node_t {
+    var nodes = [_]device_wire.feature_node_t{.{}} ** 8;
+    for (FeatureTags, FeatureCounts, 0..) |tag, count, index| {
+        nodes[index].type_tag = tag; nodes[index].flag_count = count;
+        if (!feature_node_extension_supported(tag, names)) continue;
+        for (raw.nodes[0..raw.count]) |source| {
+            if (source.type_tag != tag) continue;
+            for (source.flags[0..count], NodeFeatureAllowlists[index][0..count], 0..) |flag, mask, field|
+                nodes[index].flags[field] = flag & mask;
+            break;
+        }
+    }
+    return nodes;
+}
+fn enabled_device_request(request: *const device_native.owned_request_t, names: []const []const u8) device_enabled_state_t {
+    var result = disabled_device_state();
+    result.features.core = request.legacy;
+    for (request.nodes[0..request.node_count]) |node| {
+        if (node.type_tag == c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) {
+            @memcpy(&result.features.core, node.flags[0..55]); continue;
+        }
+        const index = feature_index(node.type_tag);
+        @memcpy(result.features.nodes[index].flags[0..node.flag_count], node.flags[0..node.flag_count]);
+    }
+    // Promoted names refer to the same requested feature; do not enable additional features.
+    const shader_index = (@offsetOf(c.VkPhysicalDeviceVulkan11Features, "shaderDrawParameters") - @offsetOf(c.VkPhysicalDeviceVulkan11Features, "storageBuffer16BitAccess")) / 4;
+    const query_index = (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "hostQueryReset") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4;
+    const shader = result.features.nodes[0].flags[shader_index] | result.features.nodes[3].flags[0];
+    result.features.nodes[0].flags[shader_index] = shader; result.features.nodes[3].flags[0] = shader;
+    const query_reset = result.features.nodes[1].flags[query_index] | result.features.nodes[4].flags[0];
+    result.features.nodes[1].flags[query_index] = query_reset; result.features.nodes[4].flags[0] = query_reset;
+    for (request.extension_ids[0..request.extension_count]) |id| {
+        std.debug.assert(id < names.len);
+        for (DeviceExtensionNames, 0..) |known, index| if (std.mem.eql(u8, known, names[id])) {
+            result.extension_mask |= @as(u32, 1) << @as(u5, @intCast(index)); break;
+        };
+    }
+    return result;
+}
+fn encode_device_supported(request: *const device_native.owned_request_t, physical_id: u64, id: u64, names: []const []const u8) !render_wire.writer_t {
+    var queues: [16]device_wire.queue_t = undefined;
+    var offset: usize = 0;
+    for (0..request.queue_count) |index| {
+        const count = request.counts[index];
+        queues[index] = .{ .family_index = request.families[index], .priorities = request.priorities[offset..][0..count] };
+        offset += count;
+    }
+    var host_names: [32][]const u8 = undefined;
+    var host_count: usize = 0;
+    for (request.extension_ids[0..request.extension_count]) |extension_id| {
+        if (extension_id >= names.len) return error.Invalid;
+        const name = names[extension_id];
+        if (std.mem.eql(u8, name, "VK_KHR_swapchain")) continue;
+        host_names[host_count] = name; host_count += 1;
+    }
+    return device_wire.create_device(physical_id, id, queues[0..request.queue_count], host_names[0..host_count], if (request.legacy_present) &request.legacy else null, request.nodes[0..request.node_count]);
+}
+
 fn encode_device(request: *const device_native.owned_request_t, physical_id: u64, id: u64) !render_wire.writer_t {
     var queues: [16]device_wire.queue_t = undefined;
     var offset: usize = 0;
@@ -1019,8 +1155,8 @@ fn identity_reply(bytes: []const u8, command_id: u32, id: u64, has_result: bool)
     return result;
 }
 /// Borrowed native input, allocation-free serialized reservation/publication; NULL output on error.
-/// Full bounded native preflight precedes namespace/reservations; all optional true/names rejected.
-/// Valid unknown headers and false modern records omit without payload/host-support queries.
+/// Full bounded native preflight precedes reservations. True features/names require
+/// implemented policy and actual host/protocol support; unknown headers omit without payload access.
 /// @param[in] physical Nonnull live private physical handle, validated without dereference.
 /// @param[in] info_address Nullable untyped accessible immutable disjoint native structs/arrays,
 /// bounded names and features for this synchronous call; no retained input pointer.
@@ -1048,14 +1184,54 @@ fn create_device(
         c.VK_OBJECT_TYPE_PHYSICAL_DEVICE,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    const guest_extensions: []const []const u8 = if (builtin.os.tag == .windows) &.{"VK_KHR_swapchain"} else &.{};
-    const support_policy = device_native.support_policy_t{ .legacy = [_]u32{0} ** 55, .nodes = &.{}, .extension_names = guest_extensions };
-    const request = (if (builtin.os.tag == .windows) device_native.preflight_supported(info_address, &support_policy) else device_native.preflight(info_address)) catch |err| return switch (err) {
-        error.LayerNotPresent => c.VK_ERROR_LAYER_NOT_PRESENT,
-        error.FeatureNotPresent => c.VK_ERROR_FEATURE_NOT_PRESENT,
-        error.ExtensionNotPresent => c.VK_ERROR_EXTENSION_NOT_PRESENT,
-        else => c.VK_ERROR_INITIALIZATION_FAILED,
+    // Preserve the no-query fast path for legacy/all-false requests. Structural
+    // errors are rejected before host queries; true/named requests intersect caches.
+    const simple: ?device_native.owned_request_t = device_native.preflight(info_address) catch |err| switch (err) {
+        error.FeatureNotPresent, error.ExtensionNotPresent => null,
+        error.LayerNotPresent => return c.VK_ERROR_LAYER_NOT_PRESENT,
+        else => return c.VK_ERROR_INITIALIZATION_FAILED,
     };
+    if (simple == null and !reply_profile_ready) {
+        _ = device_native.preflight(info_address) catch |err| return switch (err) {
+            error.FeatureNotPresent => c.VK_ERROR_FEATURE_NOT_PRESENT,
+            error.ExtensionNotPresent => c.VK_ERROR_EXTENSION_NOT_PRESENT,
+            else => c.VK_ERROR_INITIALIZATION_FAILED,
+        };
+        unreachable;
+    }
+    var supported_names: [4][]const u8 = undefined;
+    var supported_versions: [4]u32 = undefined;
+    var supported_count: usize = 0;
+    const request = simple orelse blk: {
+        const raw = ensure_raw_features(physical) orelse return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_INITIALIZATION_FAILED;
+        supported_count = supported_device_extensions(physical, &supported_names, &supported_versions) catch |err| return switch (err) {
+            error.OutOfMemory => c.VK_ERROR_OUT_OF_HOST_MEMORY,
+            error.Backend => extension_backend_result,
+            error.Lost => c.VK_ERROR_DEVICE_LOST,
+            else => c.VK_ERROR_INITIALIZATION_FAILED,
+        };
+        const supported_nodes = project_device_feature_nodes(raw, supported_names[0..supported_count]);
+        const support_policy = device_native.support_policy_t{ .legacy = project_core(&raw.core), .nodes = &supported_nodes, .extension_names = supported_names[0..supported_count] };
+        break :blk device_native.preflight_supported(info_address, &support_policy) catch |err| return switch (err) {
+            error.LayerNotPresent => c.VK_ERROR_LAYER_NOT_PRESENT,
+            error.FeatureNotPresent => c.VK_ERROR_FEATURE_NOT_PRESENT,
+            error.ExtensionNotPresent => c.VK_ERROR_EXTENSION_NOT_PRESENT,
+            else => c.VK_ERROR_INITIALIZATION_FAILED,
+        };
+    };
+    // Extension feature structures require the extension to be enabled in this
+    // request, not merely present on the physical device.
+    for (request.nodes[0..request.node_count]) |node| {
+        const required: ?[]const u8 = switch (node.type_tag) {
+            c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT => DeviceExtensionNames[1],
+            c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR => DeviceExtensionNames[2],
+            else => null,
+        };
+        const name = required orelse continue;
+        var enabled = false;
+        for (request.extension_ids[0..request.extension_count]) |id| if (std.mem.eql(u8, supported_names[id], name)) { enabled = true; break; };
+        if (!enabled) for (node.flags[0..node.flag_count]) |flag| if (flag != 0) return c.VK_ERROR_FEATURE_NOT_PRESENT;
+    }
     var available: ?*device_cache_t = null;
     for (&device_caches) |*entry| if (entry.handle == 0) {
         available = entry;
@@ -1065,7 +1241,7 @@ fn create_device(
     var record: [*c]c.venus_object_t = null;
     if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, parent.id, 1, &record) !=
         c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    const encoded = encode_device(&request, parent.id, record.*.id) catch {
+    const encoded = encode_device_supported(&request, parent.id, record.*.id, supported_names[0..supported_count]) catch {
         // Internal owned-profile invariant failure: no peer/queue/ring ownership yet.
         // Release exactly this device; monotonic namespace identity is never rewound.
         const release_status = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1);
@@ -1107,8 +1283,7 @@ fn create_device(
         release_device_reservation(&staged, record);
         return result;
     }
-    staged.enabled_state = disabled_device_state();
-    if (request.extension_count != 0) staged.enabled_state.extension_mask = 1;
+    staged.enabled_state = enabled_device_request(&request, supported_names[0..supported_count]);
     entry.* = staged;
     resource_state(record).* = .{ .id = record.*.id };
     output.* = @ptrFromInt(entry.handle);
@@ -1274,33 +1449,34 @@ fn ensure_raw_extensions(physical: c.VkPhysicalDevice) !*const extension_cache_t
 /// Enumerate the implemented intersection; raw backend names never grant unsupported behavior.
 /// Borrowed caller storage/count, mutex serialized. Raw heap cache belongs to physical namespace
 /// and is freed on acknowledged parent destruction or receiver-retired abandonment.
+/// Enumerate only implemented guest WSI and actual host/protocol extension intersection.
+/// [in] physical live handle, nullable layer unsupported; [in,out] count/caller array
+/// borrowed for call. No pointer escapes. Raw cache owner is physical namespace.
 fn device_extensions(physical: c.VkPhysicalDevice, layer: [*c]const u8,
     count: [*c]u32, output: [*c]c.VkExtensionProperties) callconv(.C) c_int {
-    lock_icd();
-    defer unlock_icd();
-    if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null)
+    lock_icd(); defer unlock_icd();
+    if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null or count == null)
         return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (count == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     if (layer != null) return c.VK_ERROR_LAYER_NOT_PRESENT;
-    if (reply_profile_ready) _ = ensure_raw_extensions(physical) catch |err| return switch (err) {
+    var names: [4][]const u8 = undefined;
+    var versions: [4]u32 = undefined;
+    const total = supported_device_extensions(physical, &names, &versions) catch |err| return switch (err) {
         error.OutOfMemory => c.VK_ERROR_OUT_OF_HOST_MEMORY,
         error.Backend => extension_backend_result,
         error.Lost => c.VK_ERROR_DEVICE_LOST,
         else => c.VK_ERROR_INITIALIZATION_FAILED,
     };
-    if (builtin.os.tag == .windows) {
-        if (output == null) { count.* = 1; return c.VK_SUCCESS; }
-        const capacity = count.*;
-        count.* = @min(capacity, 1);
-        if (capacity == 0) return c.VK_INCOMPLETE;
-        output[0] = std.mem.zeroes(c.VkExtensionProperties);
-        const name = "VK_KHR_swapchain";
-        @memcpy(output[0].extensionName[0..name.len], name);
-        output[0].specVersion = 70;
-        return c.VK_SUCCESS;
+    if (output == null) { count.* = @intCast(total); return c.VK_SUCCESS; }
+    const copied = @min(count.*, total);
+    for (0..copied) |index| {
+        output[index] = std.mem.zeroes(c.VkExtensionProperties);
+        @memcpy(output[index].extensionName[0..names[index].len], names[index]);
+        output[index].specVersion = versions[index];
     }
-    return enumerate_extensions(layer, count, output);
+    count.* = @intCast(copied);
+    return if (copied < total) c.VK_INCOMPLETE else c.VK_SUCCESS;
 }
+
 // Caller holds mutex; live physical namespace selects its parent-owned scalar cache only.
 fn physical_features_cache(physical: c.VkPhysicalDevice) ?*physical_feature_cache_t {
     if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null) return null;
@@ -1390,6 +1566,7 @@ fn zero_feature_nodes(chain: *const features_native.chain_t) [features_wire.MaxN
     return nodes;
 }
 fn project_core(flags: *const [features_wire.CoreFlags]u32) [features_wire.CoreFlags]u32 {
+    if (!reply_profile_ready) return [_]u32{0} ** features_wire.CoreFlags;
     var projected: [features_wire.CoreFlags]u32 = undefined;
     for (&projected, flags, CoreFeatureAllowlist) |*output, raw, mask| output.* = raw & mask;
     return projected;
@@ -1413,12 +1590,16 @@ fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv
     features_native.validate_features2(output_address, &chain, nodes[0..chain.count], &zero_core) catch return;
     const raw = ensure_raw_features(physical) orelse return;
     const core = project_core(&raw.core);
+    var supported_names: [4][]const u8 = undefined;
+    var supported_versions: [4]u32 = undefined;
+    const supported_count = if (reply_profile_ready) supported_device_extensions(physical, &supported_names, &supported_versions) catch return else 0;
     for (nodes[0..chain.count]) |*node| {
+        if (!feature_node_extension_supported(node.type_tag, supported_names[0..supported_count])) continue;
         const index = feature_index(node.type_tag);
         for (raw.nodes[0..raw.count]) |source| {
             if (source.type_tag != node.type_tag) continue;
             for (node.flags[0..node.flag_count], source.flags[0..source.flag_count], NodeFeatureAllowlists[index][0..node.flag_count]) |*target, flag, mask|
-                target.* = flag & mask;
+                target.* = if (reply_profile_ready) flag & mask else 0;
             break;
         }
     }
@@ -1459,7 +1640,7 @@ fn properties2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callco
 // All physical property entrypoints use the same guest implementation limits.
 fn project_properties(staged: *c.VkPhysicalDeviceProperties) void {
     staged.limits.maxPushConstantsSize = @min(staged.limits.maxPushConstantsSize, profiles.MaxPushBytes);
-    staged.apiVersion = c.VK_API_VERSION_1_0;
+    staged.apiVersion = if (reply_profile_ready) @min(staged.apiVersion, ImplementedApiVersion) else c.VK_API_VERSION_1_0;
     staged.limits.nonCoherentAtomSize = 1;
     staged.limits.minMemoryMapAlignment = 4096;
 }
@@ -1564,7 +1745,8 @@ fn enumerate_extensions(
 /// Report the implemented API ceiling; no ownership or transport, thread-safe.
 fn enumerate_version(version: [*c]u32) callconv(.C) c_int {
     if (version == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    version.* = 1 << 22;
+    lock_icd(); defer unlock_icd();
+    version.* = if (reply_profile_ready) ImplementedApiVersion else c.VK_API_VERSION_1_0;
     return c.VK_SUCCESS;
 }
 fn child_object(handle: u64, kind: u32, parent_id: u64) ?*c.venus_object_t {
@@ -2026,8 +2208,8 @@ fn framebuffer_attachment(view: *const c.venus_object_t, width: u32, height: u32
     const image = child_object(state.view_image, c.VK_OBJECT_TYPE_IMAGE, view.parent_id) orelse return false;
     const image_state = resource_state(image);
     if (image_state.bound_memory == 0 or image_state.image_type != c.VK_IMAGE_TYPE_2D or
-        image_state.image_samples != 1 or image_state.image_format != format or
-        image_state.image_usage & c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT == 0 or
+        image_state.image_samples != 1 or state.image_format != format or
+        state.image_usage & c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT == 0 or
         (state.view_type != c.VK_IMAGE_VIEW_TYPE_2D and state.view_type != c.VK_IMAGE_VIEW_TYPE_2D_ARRAY)) return false;
     const range = state.view_range;
     if (range.aspectMask != c.VK_IMAGE_ASPECT_COLOR_BIT or !image_range_valid(image_state, range)) return false;
@@ -2163,6 +2345,7 @@ fn create_image_view(device: c.VkDevice, info: [*c]const c.VkImageViewCreateInfo
     view_state.view_type = info.*.viewType;
     view_state.view_range = normalized.subresourceRange;
     view_state.image_format = info.*.format;
+    view_state.image_usage = (image_view_native.view_usage(@ptrCast(info)) catch unreachable) orelse state.image_usage;
     view_state.view_components = info.*.components;
     output.* = @ptrFromInt(handle);
     return c.VK_SUCCESS;
@@ -2616,7 +2799,7 @@ fn descriptor_resource_valid(parent: *const c.venus_object_t, value: *const prof
     const view = child_object(value.image_view,c.VK_OBJECT_TYPE_IMAGE_VIEW,parent.id) orelse return false;
     const image = child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_IMAGE,parent.id) orelse return false;
     const usage: u32 = switch (value.descriptor_type) { 1,2 => c.VK_IMAGE_USAGE_SAMPLED_BIT, 3=>c.VK_IMAGE_USAGE_STORAGE_BIT, 10=>c.VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT, else=>return false };
-    return resource_state(image).bound_memory != 0 and resource_state(image).image_usage & usage != 0 and
+    return resource_state(image).bound_memory != 0 and resource_state(view).image_usage & usage != 0 and
         (value.image_layout == c.VK_IMAGE_LAYOUT_GENERAL or (value.descriptor_type != 3 and (value.image_layout == c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL or value.image_layout == c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)));
 }
 /// Transactional mixed image/texel/buffer descriptor writes and copies. Caller
@@ -5890,7 +6073,7 @@ test "compute and graphics acknowledgments publish no references or state change
             try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &allocation));
             resource_state(pass).* = .{ .render_format = 37, .render_final_layout = c.VK_IMAGE_LAYOUT_GENERAL };
             resource_state(framebuffer).* = .{ .render_format = 37, .framebuffer_view = view.*.handle, .framebuffer_extent = .{ 64, 64 } };
-            resource_state(view).* = .{ .view_image = image.*.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
+            resource_state(view).* = .{ .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .view_image = image.*.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
             resource_state(image).* = .{ .bound_memory = allocation.*.handle, .image_type = c.VK_IMAGE_TYPE_2D, .image_samples = 1, .image_format = 37, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .image_levels = 1, .image_layers = 1, .image_extent = .{ 64, 64, 1 } };
             if (operation == 6 or operation == 7) graphics_recording(resource_state(recording)).active_format = 37;
             if (operation == 7) {
@@ -8405,7 +8588,7 @@ fn resolve_rendering_attachment(
     if ((view_state.view_type != c.VK_IMAGE_VIEW_TYPE_2D and view_state.view_type != c.VK_IMAGE_VIEW_TYPE_2D_ARRAY) or
         !image_range_valid(image_state, view_state.view_range) or view_state.view_range.aspectMask & aspect == 0 or
         (view_state.view_range.levelCount != 1 and !(view_state.view_range.levelCount == std.math.maxInt(u32) and view_state.view_range.baseMipLevel + 1 == image_state.image_levels)) or
-        image_state.image_usage & (if (aspect == c.VK_IMAGE_ASPECT_COLOR_BIT) @as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) else c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0) return null;
+        view_state.image_usage & (if (aspect == c.VK_IMAGE_ASPECT_COLOR_BIT) @as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) else c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0) return null;
     const shift: u5 = @intCast(@min(view_state.view_range.baseMipLevel, 31));
     const width = @max(@as(u32, 1), image_state.image_extent[0] >> shift);
     const height = @max(@as(u32, 1), image_state.image_extent[1] >> shift);
@@ -8427,8 +8610,8 @@ fn resolve_rendering_attachment(
         const resolve_image = child_object(resolve_view_state.view_image, c.VK_OBJECT_TYPE_IMAGE, parent_id) orelse return null;
         const resolve_state = resource_state(resolve_image);
         const resolve_memory = child_object(resolve_state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent_id) orelse return null;
-        if (image_state.image_samples <= 1 or resolve_state.image_samples != 1 or resolve_state.image_format != image_state.image_format or
-            resolve_state.image_usage & (if (aspect == c.VK_IMAGE_ASPECT_COLOR_BIT) @as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) else c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0 or
+        if (image_state.image_samples <= 1 or resolve_state.image_samples != 1 or resolve_view_state.image_format != view_state.image_format or
+            resolve_view_state.image_usage & (if (aspect == c.VK_IMAGE_ASPECT_COLOR_BIT) @as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) else c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0 or
             !image_range_valid(resolve_state, resolve_view_state.view_range) or resolve_view_state.view_range.aspectMask & aspect == 0 or resolve_view_state.view_range.levelCount != 1) return null;
         const resolve_shift: u5 = @intCast(@min(resolve_view_state.view_range.baseMipLevel, 31));
         const resolve_layers = if (resolve_view_state.view_range.layerCount == std.math.maxInt(u32)) resolve_state.image_layers - resolve_view_state.view_range.baseArrayLayer else resolve_view_state.view_range.layerCount;
@@ -9948,4 +10131,48 @@ test "coherent merge preserves CPU changes and replaces completed GPU bytes" {
     merge_mapping(&current, &baseline, &incoming);
     try std.testing.expectEqualSlices(u8, &.{ 5, 9, 7, 8 }, &current);
     try std.testing.expectEqualSlices(u8, &incoming, &baseline);
+}
+
+test "modern admission intersects backend flags and publishes only owned requested features" {
+    const prior = reply_profile_ready;
+    reply_profile_ready = true;
+    defer reply_profile_ready = prior;
+    var raw = features_wire.result_t{};
+    raw.core = [_]u32{1} ** 55;
+    raw.count = 8;
+    for (FeatureTags, FeatureCounts, 0..) |tag, count, index| {
+        raw.nodes[index].type_tag = tag;
+        raw.nodes[index].flag_count = count;
+        @memset(raw.nodes[index].flags[0..count], 1);
+    }
+    const core = project_core(&raw.core);
+    var core_count: usize = 0;
+    for (core) |flag| core_count += flag;
+    try std.testing.expectEqual(@as(usize, 19), core_count);
+    raw.core[@offsetOf(c.VkPhysicalDeviceFeatures, "geometryShader") / 4] = 0;
+    try std.testing.expectEqual(@as(u32, 0), project_core(&raw.core)[@offsetOf(c.VkPhysicalDeviceFeatures, "geometryShader") / 4]);
+    const projected = project_device_feature_nodes(&raw, &DeviceExtensionNames);
+    const unnamed = project_device_feature_nodes(&raw, &.{});
+    try std.testing.expectEqualDeep([_]u32{0} ** 55, unnamed[6].flags);
+    try std.testing.expectEqualDeep([_]u32{0} ** 55, unnamed[7].flags);
+    const totals = [_]usize{ 1, 11, 5, 1, 1, 0, 2, 1 };
+    for (projected, totals) |node, expected| {
+        var count: usize = 0;
+        for (node.flags) |flag| count += flag;
+        try std.testing.expectEqual(expected, count);
+    }
+    var request = device_native.owned_request_t{};
+    request.node_count = 1;
+    request.nodes[0] = .{ .type_tag = FeatureTags[3], .flag_count = 1 };
+    request.nodes[0].flags[0] = 1;
+    request.extension_count = 2;
+    request.extension_ids[0] = 2;
+    request.extension_ids[1] = 0;
+    const state = enabled_device_request(&request, &DeviceExtensionNames);
+    const shader_index = (@offsetOf(c.VkPhysicalDeviceVulkan11Features, "shaderDrawParameters") - @offsetOf(c.VkPhysicalDeviceVulkan11Features, "storageBuffer16BitAccess")) / 4;
+    try std.testing.expectEqual(@as(u32, 1), state.features.nodes[0].flags[shader_index]);
+    try std.testing.expectEqual(@as(u32, 1), state.features.nodes[3].flags[0]);
+    try std.testing.expectEqual(@as(u32, 5), state.extension_mask);
+    try std.testing.expectEqualDeep([_]u32{0} ** 55, state.features.core);
+    try std.testing.expectEqualDeep([_]u32{0} ** 47, state.features.nodes[1].flags);
 }
