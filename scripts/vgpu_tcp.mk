@@ -90,3 +90,25 @@ build/vgpu_tcp_receiver_test.exe: $(VgpuTcpPeerSources) include/waddle/venus_tcp
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $(VgpuTcpPeerSources) build/tcp_peer_request_windows.lib build/tcp_peer_capabilities_windows.lib build/venus_tcp_wire_windows.lib -lws2_32 -lbcrypt -o $@
 
 vgpu-tcp-client-windows: build/vgpu_tcp_receiver_test.exe
+
+VgpuTcpServerSources = tests/vgpu/tcp_receiver_server.c tests/vgpu/tcp_wire_oracle.c src/vgpu/venus_tcp_server.c src/vgpu/venus_tcp_socket.c
+VgpuTcpServerWrapFlags = -Wl,--wrap=send,--wrap=recv,--wrap=clock_gettime,--wrap=getrandom
+
+build/vgpu_tcp_server_test: $(VgpuTcpServerSources) include/waddle/venus_tcp.h $(VgpuTcpPeerObjects) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DTcpPeerFaultTests $(VgpuTcpServerSources) $(VgpuTcpPeerObjects) $(VgpuTcpServerWrapFlags) -pthread -o $@
+
+.PHONY: vgpu-tcp-server-test vgpu-tcp-server-sanitizers vgpu-tcp-server-coverage vgpu-tcp-server-windows
+vgpu-tcp-server-test: build/vgpu_tcp_server_test
+	./build/vgpu_tcp_server_test
+
+vgpu-tcp-server-sanitizers: $(VgpuTcpPeerObjects)
+	$(CC) $(CPPFLAGS) -DTcpPeerFaultTests -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuTcpServerSources) $(VgpuTcpPeerObjects) $(VgpuTcpServerWrapFlags) -pthread -o build/vgpu_tcp_server_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 ./build/vgpu_tcp_server_sanitized
+
+vgpu-tcp-server-coverage:
+	python3 tests/vgpu/tcp_receiver_coverage.py server
+
+build/vgpu_tcp_server_test.exe: $(VgpuTcpServerSources) include/waddle/venus_tcp.h build/tcp_peer_request_windows.lib build/tcp_peer_capabilities_windows.lib build/venus_tcp_wire_windows.lib | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $(VgpuTcpServerSources) build/tcp_peer_request_windows.lib build/tcp_peer_capabilities_windows.lib build/venus_tcp_wire_windows.lib -lws2_32 -lbcrypt -o $@
+
+vgpu-tcp-server-windows: build/vgpu_tcp_server_test.exe
