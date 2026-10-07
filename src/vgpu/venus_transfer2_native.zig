@@ -169,3 +169,33 @@ test "malformed modern topology rejects before unread quota pointers and frees n
     info.srcBuffer = null;
     try std.testing.expectError(error.Invalid, copy_buffer(&info));
 }
+
+test "download resolve and buffer identities reject before region dereference" {
+    var buffer: c.VkCopyBufferInfo2 = .{ .sType = c.VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2, .srcBuffer = @ptrFromInt(42), .dstBuffer = @ptrFromInt(43) };
+    buffer.sType = 0;
+    try std.testing.expectError(error.Invalid, copy_buffer(&buffer));
+    buffer.sType = c.VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2;
+    buffer.dstBuffer = null;
+    try std.testing.expectError(error.Invalid, copy_buffer(&buffer));
+    buffer.dstBuffer = @ptrFromInt(43);
+    buffer.regionCount = 1;
+    var region: c.VkBufferCopy2 = .{ .sType = 0 };
+    buffer.pRegions = &region;
+    try std.testing.expectError(error.Invalid, copy_buffer(&buffer));
+    var download: c.VkCopyImageToBufferInfo2 = .{ .sType = 0, .srcImage = @ptrFromInt(42), .dstBuffer = @ptrFromInt(43) };
+    try std.testing.expectError(error.Invalid, copy_image_to_buffer(&download));
+    download.sType = c.VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2;
+    download.srcImage = null;
+    try std.testing.expectError(error.Invalid, copy_image_to_buffer(&download));
+    download.srcImage = @ptrFromInt(42);
+    download.dstBuffer = null;
+    try std.testing.expectError(error.Invalid, copy_image_to_buffer(&download));
+    var resolve: c.VkResolveImageInfo2 = .{ .sType = 0, .srcImage = @ptrFromInt(42), .dstImage = @ptrFromInt(43) };
+    try std.testing.expectError(error.Invalid, resolve_image(&resolve));
+    resolve.sType = c.VK_STRUCTURE_TYPE_RESOLVE_IMAGE_INFO_2;
+    resolve.srcImage = null;
+    try std.testing.expectError(error.Invalid, resolve_image(&resolve));
+    resolve.srcImage = @ptrFromInt(42);
+    resolve.dstImage = null;
+    try std.testing.expectError(error.Invalid, resolve_image(&resolve));
+}
