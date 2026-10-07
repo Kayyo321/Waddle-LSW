@@ -3691,8 +3691,9 @@ fn destroy_command_pool(
 /// @param[in] device Nullable private parent, borrowed for call.
 /// @param[in] pool Nullable private device-owned token, no ownership transfer.
 /// @param[in] flags Core0/1 release-resources flags only.
-/// @return Host result, local initialization error or sticky device loss.
-/// @note Mutex serialized, allocation-free; caller ensures no child is pending GPU use.
+/// @return Host result or local initialization error; loss resets guest definitions locally.
+/// @note Mutex serialized, allocation-free; uncertain native owners remain retained.
+/// Healthy devices require actual GPU completion and acknowledged native reset.
 /// Opt-in bounded failure record for command lifecycle diagnosis. Inputs borrowed
 /// only for this call under ICD mutex; no allocation, pointer retention or state
 /// change. WADDLE_ICD_DIAGNOSTICS must exist in this process environment.
@@ -3700,22 +3701,40 @@ fn command_rejection_diagnostic(api: []const u8, state: *const resource_state_t)
     if (!std.process.hasEnvVarConstant("WADDLE_ICD_DIAGNOSTICS")) return;
     std.debug.print("Waddle ICD {s} rejected: state={s}, inflight={d}, flags={d}, lost={d}\n", .{ api, @tagName(state.command_state), state.inflight_count, state.command_flags, lost });
 }
+// Device loss ends pending-use restrictions, but never acknowledges native
+// retirement. Vulkan device-loss pending-use rules:
+// https://docs.vulkan.org/spec/latest/chapters/devsandqueues.html#devsandqueues-lost-device
+// Reset only the guest recording definition; tickets, inflight
+// counts, hidden fences, allocation exports and native identities stay owned.
+fn reset_command_definition(state: *resource_state_t) void {
+    state.command_state = .Initial;
+    state.command_flags = 0;
+    state.buffer_references = [_]u64{0} ** 8;
+    reset_command_profile(state);
+}
+fn reset_pool_definitions(pool_id: u64) void {
+    for (slots, 0..) |child, index| if (child.id != 0 and child.parent_id == pool_id)
+        reset_command_definition(&resource_states[index]);
+}
+fn lost_reset_diagnostic(api: []const u8, id: u64) void {
+    if (std.process.hasEnvVarConstant("WADDLE_ICD_DIAGNOSTICS"))
+        std.debug.print("Waddle ICD {s} local lost-device reset: id={d}, lost={d}\n", .{ api, id, lost });
+}
 fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) callconv(.C) c_int {
     lock_icd();
     defer unlock_icd();
-    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (device == null or pool == null or flags > 1) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const parent = object(
-        @intFromPtr(device.?),
-        c.VK_OBJECT_TYPE_DEVICE,
-    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const record = child_object(
-        @intFromPtr(pool.?),
-        c.VK_OBJECT_TYPE_COMMAND_POOL,
-        parent.id,
-    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const proof = poll_submission_fences(parent);
-    if (proof != c.VK_SUCCESS) return proof;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const record = child_object(@intFromPtr(pool.?), c.VK_OBJECT_TYPE_COMMAND_POOL, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost == c.RingOk) {
+        const proof = poll_submission_fences(parent);
+        if (proof != c.VK_SUCCESS and lost == c.RingOk) return proof;
+    }
+    if (lost != c.RingOk) {
+        lost_reset_diagnostic("vkResetCommandPool", record.id);
+        reset_pool_definitions(record.id);
+        return c.VK_SUCCESS;
+    }
     for (slots, 0..) |child, index|
         if (child.parent_id == record.id and resource_states[index].command_state == .Pending) {
             command_rejection_diagnostic("vkResetCommandPool", &resource_states[index]);
@@ -3725,14 +3744,16 @@ fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) cal
     writer.header(87, parent.id);
     writer.put(u64, record.id);
     writer.put(u32, flags);
-    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
-    const result = result_reply(reply, 87, 0);
-    if (result == c.VK_SUCCESS) for (slots, 0..) |child, index| if (child.parent_id == record.id) {
-        resource_states[index].command_state = .Initial;
-        resource_states[index].command_flags = 0;
-        resource_states[index].buffer_references = [_]u64{0} ** 8;
-        reset_command_profile(&resource_states[index]);
+    const reply = transact(writer.bytes[0..writer.used]) orelse {
+        reset_pool_definitions(record.id);
+        return c.VK_SUCCESS;
     };
+    const result = result_reply(reply, 87, 0);
+    if (lost != c.RingOk) {
+        reset_pool_definitions(record.id);
+        return c.VK_SUCCESS;
+    }
+    if (result == c.VK_SUCCESS) reset_pool_definitions(record.id);
     return result;
 }
 fn command_pool_for(record: *const c.venus_object_t) ?*c.venus_object_t {
@@ -4743,34 +4764,40 @@ fn pipeline_barrier(
 /// Reset an individual nonpending buffer from a reset-capable private pool.
 /// @param[in] buffer Nonnull private borrowed handle; no ownership transfer.
 /// @param[in] flags0/1 release-resources only.
-/// @return Host result, initialization error or sticky device loss.
-/// @note Mutex serialized, allocation-free; changes state only after exact host success.
+/// @return Host result or initialization error; loss permits local guest reset.
+/// @note Mutex serialized, allocation-free; native ownership is retained on loss.
+/// Guest definitions reset after host success or locally after device loss.
 fn reset_command_buffer(buffer: c.VkCommandBuffer, flags: u32) callconv(.C) c_int {
     lock_icd();
     defer unlock_icd();
-    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (buffer == null or flags > 1) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const record = object(
-        @intFromPtr(buffer.?),
-        c.VK_OBJECT_TYPE_COMMAND_BUFFER,
-    ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const record = object(@intFromPtr(buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const pool = command_pool_for(record) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = device_by_id(pool.parent_id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const proof = poll_submission_fences(parent);
-    if (proof != c.VK_SUCCESS) return proof;
-    if (resource_state(pool).pool_flags & 2 == 0 or
-        resource_state(record).command_state == .Pending) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (resource_state(pool).pool_flags & 2 == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost == c.RingOk) {
+        const proof = poll_submission_fences(parent);
+        if (proof != c.VK_SUCCESS and lost == c.RingOk) return proof;
+    }
+    if (lost != c.RingOk) {
+        lost_reset_diagnostic("vkResetCommandBuffer", record.id);
+        reset_command_definition(resource_state(record));
+        return c.VK_SUCCESS;
+    }
+    if (resource_state(record).command_state == .Pending) return c.VK_ERROR_INITIALIZATION_FAILED;
     var writer = writer_t{};
     writer.header(92, record.id);
     writer.put(u32, flags);
-    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const reply = transact(writer.bytes[0..writer.used]) orelse {
+        reset_command_definition(resource_state(record));
+        return c.VK_SUCCESS;
+    };
     const result = result_reply(reply, 92, 0);
-    if (result == c.VK_SUCCESS) {
-        resource_state(record).command_state = .Initial;
-        resource_state(record).command_flags = 0;
-        resource_state(record).buffer_references = [_]u64{0} ** 8;
-        reset_command_profile(resource_state(record));
+    if (lost != c.RingOk) {
+        reset_command_definition(resource_state(record));
+        return c.VK_SUCCESS;
     }
+    if (result == c.VK_SUCCESS) reset_command_definition(resource_state(record));
     return result;
 }
 fn encode_fences(command_id: u32, device: c.VkDevice, fences: []const c.VkFence) ?writer_t {
@@ -13655,4 +13682,67 @@ test "retired WSI images await actual frontend queue proof before last view ACK 
             try std.testing.expect(submission_tickets[0].queue!=0);
         }
     }
+}
+test "command reset on lost device resets guest command definitions without retiring uncertain native owners" {
+    inline for (.{false,true}) |individual| {
+        var fixture = root_sync_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(root_sync_fixture_t.exchange,&fixture));
+        defer venus_icd_abandon();
+        const parent=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const pool=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL,parent.id,0);
+        const command_record=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER,pool.id,1);
+        const allocation=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent.id,0);
+        const fence=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_FENCE,parent.id,0);
+        resource_state(pool).pool_flags=2;
+        resource_state(command_record).command_state=.Pending;
+        resource_state(command_record).command_flags=1;
+        resource_state(command_record).inflight_count=1;
+        resource_state(command_record).buffer_references[0]=0x1234;
+        resource_state(command_record).descriptor_uses[0]=0x5678;
+        resource_state(allocation).mapping_resource=77;
+        resource_state(allocation).inflight_count=1;
+        resource_state(fence).internal_fence=true;
+        submission_tickets[0]=.{.queue=99,.sequence=7,.fence=fence.handle,.fence_owned=true};
+        _=include_reference(&submission_tickets[0],command_record);
+        _=include_reference(&submission_tickets[0],allocation);
+        const ticket=submission_tickets[0];
+        lost=c.RingClosed;
+        const result=if(individual) root_runtime_fn(reset_command_buffer)(@ptrFromInt(command_record.handle),1) else root_runtime_fn(reset_command_pool)(@ptrFromInt(parent.handle),@ptrFromInt(pool.handle),1);
+        try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),result);
+        try std.testing.expectEqual(command_state_t.Initial,resource_state(command_record).command_state);
+        try std.testing.expectEqual(@as(u32,0),resource_state(command_record).command_flags);
+        try std.testing.expectEqual([_]u64{0} ** 8,resource_state(command_record).buffer_references);
+        try std.testing.expectEqual([_]u64{0} ** 8,resource_state(command_record).descriptor_uses);
+        try std.testing.expectEqualDeep(ticket,submission_tickets[0]);
+        try std.testing.expectEqual(@as(u32,1),resource_state(command_record).inflight_count);
+        try std.testing.expectEqual(@as(u32,1),resource_state(allocation).inflight_count);
+        try std.testing.expectEqual(@as(u64,77),resource_state(allocation).mapping_resource);
+        try std.testing.expect(resource_state(fence).internal_fence);
+        try std.testing.expectEqual(@as(usize,5),objects.live_count);
+        try std.testing.expectEqual(@as(usize,0),fixture.calls);
+        try std.testing.expectEqual(@as(c_int,c.RingClosed),lost);
+        try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(reset_command_pool)(null,@ptrFromInt(pool.handle),0));
+        try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(reset_command_buffer)(@ptrFromInt(command_record.handle),2));
+        resource_state(pool).pool_flags=0;
+        try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(reset_command_buffer)(@ptrFromInt(command_record.handle),0));
+        try std.testing.expectEqualDeep(ticket,submission_tickets[0]);
+    }
+}
+test "command reset preserves healthy OOM and locally resets after reset reply device loss" {
+    inline for (.{false,true}) |individual| for([_]i32{c.VK_SUCCESS,c.VK_ERROR_OUT_OF_DEVICE_MEMORY,c.VK_ERROR_DEVICE_LOST}) |status| {
+        var fixture=root_sync_fixture_t{.result=status};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(root_sync_fixture_t.exchange,&fixture));
+        defer venus_icd_abandon();
+        const parent=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const pool=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL,parent.id,0);
+        const command_record=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER,pool.id,1);
+        resource_state(pool).pool_flags=2;
+        resource_state(command_record).command_state=.Executable;
+        const result=if(individual) root_runtime_fn(reset_command_buffer)(@ptrFromInt(command_record.handle),0) else root_runtime_fn(reset_command_pool)(@ptrFromInt(parent.handle),@ptrFromInt(pool.handle),0);
+        try std.testing.expectEqual(if(status==c.VK_ERROR_OUT_OF_DEVICE_MEMORY) status else @as(c_int,c.VK_SUCCESS),result);
+        try std.testing.expectEqual(if(status==c.VK_ERROR_OUT_OF_DEVICE_MEMORY) command_state_t.Executable else command_state_t.Initial,resource_state(command_record).command_state);
+        try std.testing.expectEqual(@as(usize,1),fixture.calls);
+        try std.testing.expectEqual(@as(usize,3),objects.live_count);
+        try std.testing.expectEqual(@as(c_int,if(status==c.VK_ERROR_DEVICE_LOST)c.RingClosed else c.RingOk),lost);
+    };
 }

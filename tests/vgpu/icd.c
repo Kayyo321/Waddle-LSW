@@ -4650,8 +4650,8 @@ static void pool_contract(void) {
         if (scenario == 6) fixture.pool_reset_result = VK_ERROR_DEVICE_LOST;
         if (scenario == 7) fixture.pool_reset_result = VK_NOT_READY;
         if (scenario >= 4 && scenario <= 7) {
-            assert(reset_pool(device, pool, 0) == VK_ERROR_DEVICE_LOST);
-            assert(reset_pool(device, pool, 0) == VK_ERROR_DEVICE_LOST);
+            assert(reset_pool(device, pool, 0) == VK_SUCCESS);
+            assert(reset_pool(device, pool, 0) == VK_SUCCESS);
             assert(create_pool(device, &info, NULL, &pool) == VK_ERROR_DEVICE_LOST);
             venus_icd_abandon(); continue;
         }
@@ -5686,10 +5686,10 @@ static void command_buffer_contract(void) {
             else fixture.corrupt_command = command;
             VkResult result = command == 90 ? begin(buffers[0], &begin_info) :
                               command == 91 ? end(buffers[0]) : reset(buffers[0], 0);
-            assert(result == VK_ERROR_DEVICE_LOST);
+            assert(result == (command == 92 ? VK_SUCCESS : VK_ERROR_DEVICE_LOST));
             assert(begin(buffers[0], &begin_info) == VK_ERROR_DEVICE_LOST);
             assert(end(buffers[0]) == VK_ERROR_DEVICE_LOST);
-            assert(reset(buffers[0], 0) == VK_ERROR_DEVICE_LOST);
+            assert(reset(buffers[0], 0) == VK_SUCCESS);
             venus_icd_abandon(); continue;
         }
         assert(begin(buffers[0], &begin_info) == VK_SUCCESS);
