@@ -15850,3 +15850,123 @@ test "native swapchain frontend validates device surface ancestors and publishes
         }
     }
 }
+
+test "general graphics native boolean blend and rendering header guards preserve null outputs and native owners" {
+    for(0..12) |case| {
+        var fixture=graphics_creation_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(graphics_creation_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const graph=try graphics_creation_graph_t.init();var inputs=graphics_creation_inputs_t{};inputs.link(graph);
+        var rendering=c.VkPipelineRenderingCreateInfo{.sType=c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        switch(case) {
+            0=>inputs.assembly.primitiveRestartEnable=2,
+            1=>inputs.raster.rasterizerDiscardEnable=2,
+            2=>inputs.raster.depthClampEnable=2,
+            3=>inputs.raster.depthBiasEnable=2,
+            4=>inputs.blend.attachmentCount=9,
+            5=>inputs.blend.pAttachments=null,
+            6=>inputs.blend_attachment.blendEnable=2,
+            7=>{inputs.info.renderPass=null;inputs.info.pNext=@ptrFromInt(1);},
+            8=>{inputs.info.renderPass=null;inputs.info.pNext=&rendering;rendering.colorAttachmentCount=9;},
+            9=>{inputs.info.renderPass=null;inputs.info.pNext=&rendering;rendering.colorAttachmentCount=1;},
+            10=>{inputs.info.renderPass=null;inputs.info.pNext=&rendering;rendering.pNext=&rendering;rendering.sType=c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR;},
+            11=>{for(0..profile_registry.pipelines.len) |_| _=try profiles.reserve_slot(&profile_registry.pipelines,profiles.pipeline_layout_t{});},
+            else=>unreachable,
+        }
+        var output:c.VkPipeline=@ptrFromInt(8);
+        const result=create_graphics_pipelines(@ptrFromInt(graph.device.handle),null,1,&inputs.info,null,&output);
+        try std.testing.expectEqual(@as(c_int,if(case==11)c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED),result);
+        try std.testing.expect(output==null);
+        try std.testing.expectEqual(@as(usize,0),fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize,5),objects.live_count);
+    }
+}
+test "general rendering format traversal handles color holes and depth-only discard pipelines without borrowed state" {
+    for(0..2) |case| {
+        var fixture=graphics_creation_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(graphics_creation_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const graph=try graphics_creation_graph_t.init();var inputs=graphics_creation_inputs_t{};inputs.link(graph);
+        const formats=[_]c.VkFormat{c.VK_FORMAT_UNDEFINED,c.VK_FORMAT_UNDEFINED,c.VK_FORMAT_R8G8B8A8_UNORM};
+        var rendering=c.VkPipelineRenderingCreateInfo{.sType=c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,.colorAttachmentCount=if(case==0)formats.len else 0,.pColorAttachmentFormats=if(case==0)&formats else null,.depthAttachmentFormat=if(case==1)c.VK_FORMAT_D32_SFLOAT else 0};
+        inputs.info.renderPass=null;inputs.info.pNext=&rendering;inputs.info.pColorBlendState=null;
+        var output:c.VkPipeline=null;
+        try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),create_graphics_pipelines(@ptrFromInt(graph.device.handle),null,1,&inputs.info,null,&output));
+        const record=child_object(@intFromPtr(output.?),c.VK_OBJECT_TYPE_PIPELINE,graph.device.id).?;
+        try std.testing.expectEqual(@as(u32,if(case==0)37 else graphics_state.NoColor),resource_state(record).render_format);
+        rendering.colorAttachmentCount=9;
+        try std.testing.expectEqual(@as(u32,if(case==0)37 else graphics_state.NoColor),resource_state(record).render_format);
+        destroy_pipeline(@ptrFromInt(graph.device.handle),output,null);
+        try std.testing.expectEqual(@as(usize,5),objects.live_count);
+    }
+}
+
+test "native vertex and index bindings reject invalid owner spans and preserve previously staged index definition" {
+    for(0..11) |case| {
+        var fixture=image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const graph=try graphics_ownership_graph_t.init();const before=resource_state(graph.recording).*;
+        var buffer:c.VkBuffer=@ptrFromInt(graph.buffer.handle);var offset:u64=0;const oversized:u64=257;
+        const cmd:c.VkCommandBuffer=@ptrFromInt(graph.recording.handle);
+        switch(case) {
+            0=>bind_vertex_buffers(cmd,0,0,&buffer,&offset),
+            1=>bind_vertex_buffers(cmd,0,1,null,&offset),
+            2=>{buffer=null;bind_vertex_buffers(cmd,0,1,&buffer,&offset);},
+            3=>{resource_state(graph.buffer).bound_memory=999;bind_vertex_buffers(cmd,0,1,&buffer,&offset);},
+            4=>bind_vertex_buffers2(cmd,0,1,&buffer,&offset,&oversized,null),
+            5=>bind_index_buffer(cmd,null,0,c.VK_INDEX_TYPE_UINT16),
+            6=>{resource_state(graph.buffer).bound_memory=999;bind_index_buffer(cmd,buffer,0,c.VK_INDEX_TYPE_UINT16);},
+            7=>{resource_state(graph.buffer).buffer_usage=c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;bind_index_buffer(cmd,buffer,0,c.VK_INDEX_TYPE_UINT16);},
+            8=>bind_index_buffer(cmd,buffer,257,c.VK_INDEX_TYPE_UINT16),
+            9=>bind_index_buffer2(cmd,buffer,0,oversized,c.VK_INDEX_TYPE_UINT16),
+            10=>bind_index_buffer(cmd,buffer,0,c.VK_INDEX_TYPE_UINT8_EXT),
+            else=>unreachable,
+        }
+        try std.testing.expectEqual(command_state_t.Invalid,resource_state(graph.recording).command_state);
+        try std.testing.expectEqual(@as(usize,0),fixture.submissions);
+        try std.testing.expectEqual(before.index_buffer,resource_state(graph.recording).index_buffer);
+        try std.testing.expectEqual(before.index_size,resource_state(graph.recording).index_size);
+        try std.testing.expectEqual(before.index_type,resource_state(graph.recording).index_type);
+        try std.testing.expectEqual([_]u64{0} ** 8,resource_state(graph.recording).buffer_references);
+    }
+}
+test "native whole-size vertex and index bindings retain exact resources only after ACK" {
+    for([_]bool{false,true}) |indexed| for(0..3) |mode| {
+        var fixture=image_ownership_fixture_t{.mode=@intCast(mode)};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const graph=try graphics_ownership_graph_t.init();const cmd:c.VkCommandBuffer=@ptrFromInt(graph.recording.handle);
+        const buffer:c.VkBuffer=@ptrFromInt(graph.buffer.handle);const offset:u64=8;const size:u64=c.VK_WHOLE_SIZE;
+        const enabled=&device_caches[0].enabled_state.features;enabled.count=1;enabled.nodes[0].type_tag=c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR;enabled.nodes[0].flag_count=1;enabled.nodes[0].flags[0]=1;
+        if(indexed)bind_index_buffer2(cmd,buffer,offset,size,c.VK_INDEX_TYPE_UINT32) else bind_vertex_buffers2(cmd,0,1,&buffer,&offset,&size,null);
+        try std.testing.expectEqual(@as(usize,1),fixture.submissions);
+        try std.testing.expectEqual(mode==0,image_ownership_fixture_t.retained(graph.recording,graph.buffer));
+        try std.testing.expectEqual(mode==0,image_ownership_fixture_t.retained(graph.recording,graph.memory));
+        if(indexed)try std.testing.expectEqual(@as(u64,if(mode==0)248 else 256),resource_state(graph.recording).index_size);
+        try std.testing.expectEqual(@as(usize,6),objects.live_count);
+    };
+}
+
+test "coverage descriptor copy topology and payload-family mismatch preserve copied sets without transport" {
+    for(0..18) |case| {
+        var fixture=descriptor_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(descriptor_ownership_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        var graph=try descriptor_ownership_graph_t.init();
+        const source=try graph.reserve_set();const destination=try graph.reserve_set();
+        var copy=c.VkCopyDescriptorSet{.sType=c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET,.srcSet=@ptrFromInt(source.handle),.dstSet=@ptrFromInt(destination.handle),.descriptorCount=1};
+        var write=c.VkWriteDescriptorSet{.sType=c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=@ptrFromInt(destination.handle),.descriptorCount=1,.descriptorType=7};
+        var native=c.VkDescriptorBufferInfo{};write.pBufferInfo=&native;
+        const saved=profile_registry.sets[resource_state(destination).profile_index-1].profile;
+        var use_write=false;
+        switch(case) {
+            0=>copy.sType=0,1=>copy.pNext=@ptrFromInt(8),2=>copy.descriptorCount=0,3=>copy.descriptorCount=129,
+            4=>copy.srcArrayElement=std.math.maxInt(u32),5=>copy.dstArrayElement=std.math.maxInt(u32),6=>copy.srcSet=null,7=>copy.dstSet=null,
+            8=>copy.dstBinding=3,9=>resource_state(destination).inflight_count=1,10=>copy.srcBinding=3,11=>copy.srcArrayElement=2,12=>copy.dstArrayElement=2,
+            13=>{profiles.get_profile(&profile_registry.sets,resource_state(destination).profile_index).?.layout.bindings[0].descriptor_type=6;},
+            14=>{use_write=true;write.dstBinding=3;},15=>{use_write=true;write.descriptorType=6;},
+            16=>{use_write=true;write.pBufferInfo=null;},17=>{use_write=true;write.dstArrayElement=2;},else=>unreachable,
+        }
+        const before=profiles.get_profile(&profile_registry.sets,resource_state(destination).profile_index).?.*;
+        if(use_write)root_runtime_fn(update_descriptor_sets)(@ptrFromInt(graph.device.handle),1,&write,0,null) else root_runtime_fn(update_descriptor_sets)(@ptrFromInt(graph.device.handle),0,null,1,&copy);
+        try std.testing.expectEqualDeep(before,profiles.get_profile(&profile_registry.sets,resource_state(destination).profile_index).?.*);
+        try std.testing.expectEqual(@as(usize,5),objects.live_count);try std.testing.expectEqual(@as(usize,0),fixture.base.submissions);
+        _=saved;
+    }
+}
