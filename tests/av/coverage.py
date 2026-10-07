@@ -15,6 +15,23 @@ import re
 import shutil
 import subprocess
 import sys
+ModernOracleNames = ('shader', 'modern_sync', 'extra_objects', 'requirements2_query',
+                     'requirements2_reply', 'image_transfer_wire', 'dynamic_rendering_wire',
+                     'graphics_general_wire', 'graphics_dynamic_wire', 'sampler_descriptor_wire',
+                     'properties_query', 'properties_reply', 'extensions_request', 'extensions_reply')
+ModernModeOracles = {
+    'venus_shader_wire': ('shader',),
+    'venus_pipeline_wire_helpers': ('graphics_general_wire', 'render_wire'),
+    'venus_modern_sync_wire': ('modern_sync', 'render_wire'),
+    'venus_extra_objects_wire': ('extra_objects', 'render_wire'),
+    'venus_requirements2_wire': ('requirements2_query', 'requirements2_reply', 'render_wire'),
+    'venus_image_transfer_wire': ('image_transfer_wire', 'render_wire'),
+    'venus_dynamic_rendering_wire': ('dynamic_rendering_wire', 'render_wire'),
+    'venus_graphics_general_wire': ('graphics_general_wire', 'render_wire'),
+    'venus_graphics_dynamic_wire': ('graphics_dynamic_wire', 'render_wire'),
+    'venus_sampler_descriptor_wire': ('sampler_descriptor_wire', 'descriptor_wire', 'render_wire'),
+}
+
 mode=sys.argv[1]
 assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native','venus_modern_sync_wire','venus_extra_objects_wire','venus_requirements2_wire','venus_image_transfer_wire','venus_dynamic_rendering_wire','venus_graphics_general_wire','venus_graphics_dynamic_wire','venus_sampler_descriptor_wire','venus_transfer2_native','venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native')
 if mode == 'av_video':
@@ -92,22 +109,6 @@ if mode == 'venus_icd':
                      'build/venus_render_wire_oracle.o','build/venus_descriptor_wire_oracle.o',
                      'build/venus_compute_wire_oracle.o', 'build/venus_graphics_wire_oracle.o',
                      'build/venus_graphics_pipeline_wire_oracle.o', 'build/venus_graphics_command_wire_oracle.o']
-ModernOracleNames = ('shader', 'modern_sync', 'extra_objects', 'requirements2_query',
-                     'requirements2_reply', 'image_transfer_wire', 'dynamic_rendering_wire',
-                     'graphics_general_wire', 'graphics_dynamic_wire', 'sampler_descriptor_wire',
-                     'properties_query', 'properties_reply', 'extensions_request', 'extensions_reply')
-ModernModeOracles = {
-    'venus_shader_wire': ('shader',),
-    'venus_pipeline_wire_helpers': ('graphics_general_wire', 'render_wire'),
-    'venus_modern_sync_wire': ('modern_sync', 'render_wire'),
-    'venus_extra_objects_wire': ('extra_objects', 'render_wire'),
-    'venus_requirements2_wire': ('requirements2_query', 'requirements2_reply', 'render_wire'),
-    'venus_image_transfer_wire': ('image_transfer_wire', 'render_wire'),
-    'venus_dynamic_rendering_wire': ('dynamic_rendering_wire', 'render_wire'),
-    'venus_graphics_general_wire': ('graphics_general_wire', 'render_wire'),
-    'venus_graphics_dynamic_wire': ('graphics_dynamic_wire', 'render_wire'),
-    'venus_sampler_descriptor_wire': ('sampler_descriptor_wire', 'descriptor_wire', 'render_wire'),
-}
 if mode == 'venus_icd':
     link_objects += ['build/venus_' + name + '_oracle.o' for name in ModernOracleNames]
 if mode in ModernModeOracles:

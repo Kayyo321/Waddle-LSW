@@ -707,3 +707,40 @@ shader packets accept bounded SPIR-V up to65536 bytes instead of the legacy8KiB
 packet ceiling. Debug/ReleaseSafe tests compare ordinary, >8KiB and exact-maximum
 packets with the independent pinned C encoder. Native/Windows oracle builds pass.
 Task Impact: TODO #3 +0%; overall +0%; core integration and final acceptance pending.
+
+
+### Graphics, descriptor and presentation integration milestone
+
+- **Commit `a6c2d7d`**: `test(vgpu): exercise real Win32 swapchain rendering and presentation`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `ed225c4`**: `feat(vgpu): integrate general pipelines and dynamic rendering ownership`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `67ca728`**: `feat(vgpu): own and expand descriptor update template inputs`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `56e6f85`**: `feat(vgpu): execute mixed descriptors in independent graphics and compute domains`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `aacd210`**: `feat(vgpu): validate broad image transfer geometry and readback packets`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `ad8e689`**: `feat(vgpu): serialize bounded graphics pipeline library links`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `fc1b0a8`**: `fix(vgpu): enforce image blit numeric format compatibility`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `1608205`**: `test(vgpu): integrate template and image geometry native checks`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `9e951f4`**: `feat(vgpu): integrate broad graphics transfers and sync2 command ownership`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `940a082`**: `fix(test): retire native fixture owners in valid loader order`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `68a236b`**: `fix(vgpu): send interactive TCP RPC packets without Nagle delay`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+
+The actual Windows smoke at `build/windows11_vm/tcp_gpu_2f5da43f` used
+core `ed225c4` and fixture `940a082`. Two complete device/window/surface/swapchain
+lifetimes produced four FIFO/IMMEDIATE frames; every4096 client RGB pixel matched
+independent GPU staging readback. Native handle baseline197 and GDI/USER baselines
+returned exactly after both lifetimes. Native/controller/worker exited0, the owned
+session emptied without observer errors or signals, and four critical guest file
+hashes matched before/after. This is functional evidence for that copied snapshot;
+the full48-frame workload and actual pinned DXVK qualification remain pending.
+
+Remaining integration includes coherent mapped-memory synchronization, mutable
+and cube image views, and host-intersected Vulkan1.3 capability admission. Backend
+blob creation already permits page-aligned extents through one GiB; increasing the
+native mapped allocation ceiling to256MiB does not require changing TCP payload
+or ring bounds. Final sanitizer/leak/coverage/stress checks remain deferred until
+basic end-to-end execution of the integrated implementation works. TODO #3
+remains55%; overall68.75%.
+
+This milestone also fixes the existing coverage runner's module-oracle registry
+initialization order: modes without an oracle previously referenced the registry
+before its definition. No threshold, production scope, or acceptance assertion
+is changed. Task Impact: TODO #3 +0%; overall +0%.
