@@ -528,3 +528,23 @@ test "reply retries retain accepted CPU fence and every reply failure is sticky"
         );
     }
 }
+
+test "callback without its borrowed context rejects before owner or transport mutation" {
+    var owner = std.mem.zeroes(c.venus_command_t);
+    owner.exchange = fixture_t.exchange;
+    const before = owner;
+    var view: ?*const anyopaque = &VersionCommand;
+    var length: usize = VersionCommand.len;
+    try std.testing.expectEqual(c.RingInvalid, @call(.never_inline, venus_command_start, .{
+        &owner, &VersionCommand, VersionCommand.len,
+    }));
+    try std.testing.expectEqual(c.RingInvalid, @call(.never_inline, venus_command_poll, .{&owner}));
+    try std.testing.expectEqual(c.RingInvalid, @call(.never_inline, venus_command_take, .{
+        &owner, &view, &length,
+    }));
+    try std.testing.expectEqualDeep(before, owner);
+    try std.testing.expect(view == null);
+    try std.testing.expectEqual(@as(usize, 0), length);
+    @call(.never_inline, venus_command_free, .{&owner});
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_command_t), owner);
+}
