@@ -5,6 +5,40 @@ const render=@import("venus_render_wire.zig");
 const c=@cImport({@cInclude("vulkan/vulkan.h");});
 /// Owned8192-byte initialized prefix; no borrowed pointers, allocation or shared state.
 pub const writer_t=render.writer_t;
+/// Caller-owned canonical allocation flags; DEVICE_MASK selects the sole host
+/// device and DEVICE_ADDRESS is permitted only when the caller enabled BDA.
+pub const allocation_flags_t=struct {
+    /// Vulkan allocation flags; only bits1 and2 are implemented.
+    flags:u32,
+    /// Native single-device mask; ignored by Vulkan when flag1 is absent.
+    device_mask:u32,
+};
+/// Resolved borrowed dedicated resource identities; exactly one nonzero owner.
+pub const dedicated_t=struct {
+    /// Host image identity, or zero when dedicating a buffer.
+    image:u64,
+    /// Host buffer identity, or zero when dedicating an image.
+    buffer:u64,
+};
+/// [in] nonzero device/id, positive allocation extent, native memory type index;
+/// optional canonical flags and resolved dedicated resource. Caller validates
+/// actual memory limits, enabled BDA, native pNext shape, and resource ownership.
+/// [out] Exact owned allocate21 packet with deterministic flags/dedicated chain;
+/// Invalid unsupported flags, nonsingle device mask, missing/conflicting resource.
+/// No pointers retained, allocation or shared mutation; host lifetime is caller's.
+pub fn allocate_memory(device:u64,id:u64,size:u64,index:u32,flags:?allocation_flags_t,dedicated:?dedicated_t) !writer_t {
+    if(device==0 or id==0 or size==0 or index>=32)return error.Invalid;
+    if(flags) |node| if(node.flags & ~@as(u32,3)!=0 or (node.flags & 1!=0 and node.device_mask!=1))return error.Invalid;
+    if(dedicated) |node| if((node.image==0)==(node.buffer==0))return error.Invalid;
+    var writer:writer_t=.{};try writer.header(21,device);
+    try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+    if(flags!=null) {try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO);}
+    if(dedicated!=null) {try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO);}
+    try writer.put(u64,0);
+    if(dedicated) |node| {try writer.put(u64,node.image);try writer.put(u64,node.buffer);}
+    if(flags) |node| {try writer.put(u32,node.flags);try writer.put(u32,node.device_mask);}
+    try writer.put(u64,size);try writer.put(u32,index);try finish(&writer,id);return writer;
+}
 fn create_header(writer:*writer_t,opcode:u32,device:u64,tag:u32) !void {
     try writer.header(opcode,device);
     try writer.put(u64,1);try writer.put(u32,tag);try writer.put(u64,0);
@@ -222,4 +256,24 @@ test "query/cache replies validate entire bounded output before publication" {
     try std.testing.expectEqualSlices(u8,&([_]u8{0x19} ** 32),&target);
     try std.testing.expectError(error.Corrupt,decode_cache_data(reply[0..63],&target));
     std.mem.writeInt(u64,reply[24..32],0,.little);std.mem.writeInt(u64,reply[16..24],1<<30,.little);const count_result=try decode_cache_data(&reply,null);try std.testing.expectEqual(@as(u64,1<<30),count_result.size);
+}
+
+test "device-address and dedicated allocation chains match pinned encoder without owner retention" {
+    var dedicated=c.VkMemoryDedicatedAllocateInfo{.sType=c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,.buffer=@ptrFromInt(13)};
+    var flags=c.VkMemoryAllocateFlagsInfo{.sType=c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,.flags=2,.deviceMask=0};
+    var info=c.VkMemoryAllocateInfo{.sType=c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=4096,.memoryTypeIndex=3};
+    try compare(try allocate_memory(7,11,4096,3,null,null),21,&info);
+    info.pNext=&dedicated;try compare(try allocate_memory(7,11,4096,3,null,.{.image=0,.buffer=13}),21,&info);
+    info.pNext=&flags;try compare(try allocate_memory(7,11,4096,3,.{.flags=2,.device_mask=0},null),21,&info);
+    flags.pNext=&dedicated;try compare(try allocate_memory(7,11,4096,3,.{.flags=2,.device_mask=0},.{.image=0,.buffer=13}),21,&info);
+    flags.flags=3;flags.deviceMask=1;try compare(try allocate_memory(7,11,4096,3,.{.flags=3,.device_mask=1},.{.image=0,.buffer=13}),21,&info);
+    dedicated.buffer=null;dedicated.image=@ptrFromInt(15);try compare(try allocate_memory(7,11,4096,3,.{.flags=3,.device_mask=1},.{.image=15,.buffer=0}),21,&info);
+    try std.testing.expectError(error.Invalid,allocate_memory(0,11,4096,3,null,null));
+    try std.testing.expectError(error.Invalid,allocate_memory(7,0,4096,3,null,null));
+    try std.testing.expectError(error.Invalid,allocate_memory(7,11,0,3,null,null));
+    try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,32,null,null));
+    try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,3,.{.flags=4,.device_mask=0},null));
+    try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,3,.{.flags=1,.device_mask=0},null));
+    try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,3,null,.{.image=0,.buffer=0}));
+    try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,3,null,.{.image=13,.buffer=15}));
 }
