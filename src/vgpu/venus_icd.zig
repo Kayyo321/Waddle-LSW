@@ -9,6 +9,8 @@ const properties_wire = @import("venus_properties_wire.zig");
 const extensions_wire = @import("venus_extensions_wire.zig");
 const wsi = @import("venus_wsi.zig");
 const extra_wire = @import("venus_extra_objects_wire.zig");
+const template_native = @import("venus_descriptor_template_native.zig");
+const pipeline_helpers = @import("venus_pipeline_wire_helpers.zig");
 const mixed_wire = @import("venus_sampler_descriptor_wire.zig");
 const dynamic_graphics = @import("venus_graphics_dynamic_wire.zig");
 const image_transfer = @import("venus_image_transfer_wire.zig");
@@ -188,6 +190,7 @@ const resource_state_t = struct {
     profile_index: u8 = 0,
     pipeline_bind_point: u32 = 0,
     command_profile_index: u8 = 0,
+    descriptor_uses: [8]u64 = [_]u64{0} ** 8,
     index_buffer: u64 = 0,
     index_offset: u64 = 0,
     index_size: u64 = 0,
@@ -339,6 +342,7 @@ fn clear() void {
     caches = [_]instance_cache_t{.{}} ** MaxInstances;
     instance_advertisements = [_]instance_advertisement_t{.{}} ** MaxInstances;
     device_caches = [_]device_cache_t{.{}} ** 16;
+    template_owners = [_]template_owner_t{.{}} ** 32;
     ring_slots = [_]bool{false} ** 64;
     gpu_fences = [_]u64{0} ** 64;
     profile_registry = .{};
@@ -1194,6 +1198,7 @@ fn destroy_device(
     const callback_context = wsi_callback_context_t{ .device = entry.handle };
     const backend = wsi_backend(&callback_context);
     wsi.destroy_device(&wsi_state, &backend, entry.handle);
+    retire_device_templates(record.id);
     for (slots) |child| {
         if (child.id != 0 and child.parent_id == record.id and child.kind != c.VK_OBJECT_TYPE_QUEUE)
             return;
@@ -2601,8 +2606,9 @@ fn descriptor_resource_valid(parent: *const c.venus_object_t, value: *const prof
     }
     if (value.descriptor_type > 10) return false;
     if (value.descriptor_type <= 1 and value.sampler != 0 and child_object(value.sampler,c.VK_OBJECT_TYPE_SAMPLER,parent.id) == null) return false;
-    if (value.descriptor_type == 0) return value.sampler != 0 or null_descriptor_enabled(parent);
-    if (value.image_view == 0) return null_descriptor_enabled(parent);
+    if (value.descriptor_type == 0) return value.sampler != 0;
+    if (value.descriptor_type == 1 and value.sampler == 0) return false;
+    if (value.image_view == 0) return value.descriptor_type != 10 and null_descriptor_enabled(parent);
     const view = child_object(value.image_view,c.VK_OBJECT_TYPE_IMAGE_VIEW,parent.id) orelse return false;
     const image = child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_IMAGE,parent.id) orelse return false;
     const usage: u32 = switch (value.descriptor_type) { 1,2 => c.VK_IMAGE_USAGE_SAMPLED_BIT, 3=>c.VK_IMAGE_USAGE_STORAGE_BIT, 10=>c.VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT, else=>return false };
@@ -2623,14 +2629,18 @@ fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]cons
     if (!ensure_descriptor_limits(parent)) return;
     for (profile_registry.sets,&descriptor_update_snapshots) |entry,*snapshot| snapshot.* = entry.profile;
     var touched = [_]bool{false} ** 128;
+    var ordinary = [_]bool{false} ** 128;
     var encoded_writes: [64]sampler_descriptors.write_t = undefined;
     var encoded_copies: [64]descriptor_wire.copy_t = undefined;
     if (write_count != 0) for (writes[0..write_count],0..) |write,index| {
         if (write.sType != c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET or write.pNext != null or write.descriptorType > 10 or write.descriptorCount == 0 or write.descriptorCount > 128 or write.dstArrayElement > std.math.maxInt(u32)-write.descriptorCount) return;
         const record = descriptor_set_for(write.dstSet,parent.id) orelse return;
-        if (!descriptor_set_idle(record)) return;
         const slot = resource_state(record).profile_index-1;
         const snapshot = &descriptor_update_snapshots[slot];
+        const flags = descriptor_binding_flags(snapshot,write.dstBinding) orelse return;
+        const mutable = flags & (c.VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | c.VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT) != 0;
+        if (!descriptor_set_idle(record) and !mutable) return;
+        ordinary[slot] = ordinary[slot] or !mutable;
         var encoded = sampler_descriptors.write_t{ .set=record.id,.binding=write.dstBinding,.element=write.dstArrayElement,.descriptor_type=write.descriptorType };
         const image_family = write.descriptorType <= 3 or write.descriptorType == 10;
         const texel_family = write.descriptorType == 4 or write.descriptorType == 5;
@@ -2641,9 +2651,9 @@ fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]cons
             var value = profiles.descriptor_t{ .binding=target.binding,.array_element=target.array_element,.descriptor_type=target.descriptor_type };
             if (image_family) {
                 const input = write.pImageInfo[element];
-                value.sampler=if(input.sampler)|handle| @intFromPtr(handle) else 0;
-                value.image_view=if(input.imageView)|handle| @intFromPtr(handle) else 0;
-                value.image_layout=input.imageLayout;
+                value.sampler=if(write.descriptorType<=1 and input.sampler!=null) @intFromPtr(input.sampler.?) else 0;
+                value.image_view=if(write.descriptorType!=0 and input.imageView!=null) @intFromPtr(input.imageView.?) else 0;
+                value.image_layout=if(write.descriptorType!=0) input.imageLayout else 0;
                 for (snapshot.layout.bindings[0..snapshot.layout.binding_count]) |binding| if (binding.binding == write.dstBinding and binding.immutable_count != 0) {
                     if (value.array_element >= binding.immutable_count) return;
                     value.sampler=snapshot.layout.immutable_samplers[@as(usize,binding.immutable_offset)+value.array_element];
@@ -2667,7 +2677,11 @@ fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]cons
     if(copy_count!=0) for(copies[0..copy_count],0..) |copy,index| {
         if(copy.sType!=c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET or copy.pNext!=null or copy.descriptorCount==0 or copy.descriptorCount>128 or copy.srcArrayElement>std.math.maxInt(u32)-copy.descriptorCount or copy.dstArrayElement>std.math.maxInt(u32)-copy.descriptorCount) return;
         const source=descriptor_set_for(copy.srcSet,parent.id) orelse return; const destination=descriptor_set_for(copy.dstSet,parent.id) orelse return;
-        if(!descriptor_set_idle(destination)) return;
+        const destination_profile = &descriptor_update_snapshots[resource_state(destination).profile_index-1];
+        const flags = descriptor_binding_flags(destination_profile,copy.dstBinding) orelse return;
+        const mutable = flags & (c.VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT | c.VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT) != 0;
+        if(!descriptor_set_idle(destination) and !mutable) return;
+        ordinary[resource_state(destination).profile_index-1] = ordinary[resource_state(destination).profile_index-1] or !mutable;
         if(source.id==destination.id and copy.srcBinding==copy.dstBinding and @as(u64,copy.srcArrayElement)<@as(u64,copy.dstArrayElement)+copy.descriptorCount and @as(u64,copy.dstArrayElement)<@as(u64,copy.srcArrayElement)+copy.descriptorCount) return;
         const src=&descriptor_update_snapshots[resource_state(source).profile_index-1]; const dst=&descriptor_update_snapshots[resource_state(destination).profile_index-1];
         for(0..copy.descriptorCount) |element| {
@@ -2686,6 +2700,12 @@ fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]cons
     if(reply.len<4 or std.mem.readInt(u32,reply[0..4],.little)!=79) { _=failure(c.RingCorrupt); return; }
     for (touched, 0..) |modified, index| if (modified) {
         profile_registry.sets[index].profile = descriptor_update_snapshots[index];
+        if (!ordinary[index]) {
+            for (&slots) |*slot| if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET and resource_state(slot).profile_index == index + 1) {
+                retain_pending_descriptor_update(parent,slot,&profile_registry.sets[index].profile);
+            };
+            continue;
+        }
         for (slots, 0..) |slot, resource_slot| if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET and resource_states[resource_slot].profile_index == index + 1) {
             const bit = @as(u64, 1) << @as(u6, @intCast(resource_slot % 64));
             for (&resource_states) |*recording| if ((recording.command_state == .Recording or recording.command_state == .Executable) and recording.buffer_references[resource_slot / 64] & bit != 0) {
@@ -3238,6 +3258,7 @@ fn command_pool_for(record: *const c.venus_object_t) ?*c.venus_object_t {
 }
 // Successful reset retains the live command reservation, only scrubbing its binding definitions.
 fn reset_command_profile(state: *resource_state_t) void {
+    state.descriptor_uses = [_]u64{0} ** 8;
     state.index_buffer = 0; state.index_offset = 0; state.index_size = 0; state.index_type = 0;
     if (state.command_profile_index != 0) {
         profiles.get_profile(&command_registry.commands, state.command_profile_index).?.* = .{};
@@ -4574,6 +4595,7 @@ fn queue_submit(
     for (slots, 0..) |child, index| {
         const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
         if (staged.references[index / 64] & bit == 0 or child.kind != c.VK_OBJECT_TYPE_COMMAND_BUFFER) continue;
+        if (!refresh_command_descriptors(@constCast(&slots[index]))) return c.VK_ERROR_INITIALIZATION_FAILED;
         for (&staged.references, resource_states[index].buffer_references) |*word, references| word.* |= references;
     }
     for (slots, 0..) |child, index| {
@@ -4676,6 +4698,12 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkDeviceWaitIdle", &device_wait_idle },
         .{ "vkQueueWaitIdle", &queue_wait_idle },
         .{ "vkQueueSubmit", &queue_submit },
+        .{ "vkCreateDescriptorUpdateTemplate", &create_descriptor_update_template },
+        .{ "vkCreateDescriptorUpdateTemplateKHR", &create_descriptor_update_template },
+        .{ "vkDestroyDescriptorUpdateTemplate", &destroy_descriptor_update_template },
+        .{ "vkDestroyDescriptorUpdateTemplateKHR", &destroy_descriptor_update_template },
+        .{ "vkUpdateDescriptorSetWithTemplate", &update_descriptor_set_with_template },
+        .{ "vkUpdateDescriptorSetWithTemplateKHR", &update_descriptor_set_with_template },
         .{ "vkGetDeviceQueue2", &get_device_queue2 },
         .{ "vkCmdSetEvent2", &cmd_set_event2 },
         .{ "vkCmdSetEvent2KHR", &cmd_set_event2 },
@@ -7912,6 +7940,7 @@ fn queue_submit2(
     for (slots, 0..) |child, index| {
         const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
         if (staged.references[index / 64] & bit == 0 or child.kind != c.VK_OBJECT_TYPE_COMMAND_BUFFER) continue;
+        if (!refresh_command_descriptors(@constCast(&slots[index]))) return c.VK_ERROR_INITIALIZATION_FAILED;
         for (&staged.references, resource_states[index].buffer_references) |*word, references| word.* |= references;
     }
     for (slots, 0..) |child, index| {
@@ -8193,7 +8222,7 @@ fn create_graphics_pipelines(
     return first_error;
 }
 fn create_general_graphics_pipeline(device: c.VkDevice, parent: *c.venus_object_t, cache_id: u64, info: *const c.VkGraphicsPipelineCreateInfo, output: [*c]c.VkPipeline) c_int {
-    if (info.sType != c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO or info.stageCount == 0 or info.stageCount > 5 or info.pStages == null or info.layout == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.sType != c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO or info.stageCount > 5 or (info.stageCount != 0 and info.pStages == null) or info.layout == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     inline for (.{ "pVertexInputState", "pInputAssemblyState", "pTessellationState", "pViewportState", "pRasterizationState", "pMultisampleState", "pDepthStencilState", "pColorBlendState", "pDynamicState" }) |field| {
         const pointer = @field(info.*, field);
         if (pointer != null and @intFromPtr(pointer) % @alignOf(@TypeOf(pointer.*)) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -8208,12 +8237,16 @@ fn create_general_graphics_pipeline(device: c.VkDevice, parent: *c.venus_object_
     const layout = child_object(@intFromPtr(info.layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const pass = if (info.renderPass) |handle| child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_RENDER_PASS, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED else null;
     const format = general_pipeline_first_format(info, pass) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    var chain: pipeline_chain_inputs_t = .{};
+    const library_count = resolve_pipeline_chain(parent.id,info.pNext,&chain) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    if(info.stageCount==0 and library_count==0) return c.VK_ERROR_INITIALIZATION_FAILED;
     var stages: pipeline_stage_inputs_t = .{};
     defer release_pipeline_stages(device, &stages);
-    const stage_result = resolve_pipeline_stages(device, parent.id, info.pStages, info.stageCount, &stages);
+    const stage_result = if(info.stageCount!=0) resolve_pipeline_stages(device, parent.id, info.pStages, info.stageCount, &stages) else c.VK_SUCCESS;
     if (stage_result != c.VK_SUCCESS) return stage_result;
     var normalized = info.*;
-    normalized.pStages = &stages.stages;
+    normalized.pStages = if(info.stageCount==0) null else &stages.stages;
+    normalized.pNext = chain.first;
     var writer = general_graphics.create_graphics_pipeline_cached(parent.id, cache_id, @ptrCast(&normalized), stages.ids[0..stages.count], layout.id, if (pass) |record| record.id else 0, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
     const profile = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(layout).profile_index).?.*;
     const profile_index = profiles.reserve_slot(&profile_registry.pipelines, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -8406,20 +8439,13 @@ fn retain_draw_descriptors(parent_id: u64,state: *resource_state_t,metadata: *co
         if(!visible) continue;
         const set=descriptor_set_for(@ptrFromInt(tokens[set_index]),parent_id).?;
         command_reference(state,set);
+        const set_index_private = resource_index(set);
+        state.descriptor_uses[set_index_private/64] |= @as(u64,1)<<@as(u6,@intCast(set_index_private%64));
         const profile=profiles.get_profile(&profile_registry.sets,resource_state(set).profile_index).?;
         for(profile.descriptors[0..profile.descriptor_count]) |descriptor| {
             var used=false; for(definition.bindings[0..definition.binding_count]) |binding| if(binding.binding == descriptor.binding and binding.stage_flags & stages != 0) {used=true;break;};
             if(!used) continue;
-            if(descriptor.sampler != 0) command_reference(state,child_object(descriptor.sampler,c.VK_OBJECT_TYPE_SAMPLER,parent_id).?);
-            if(descriptor.image_view != 0) {
-                const view=child_object(descriptor.image_view,c.VK_OBJECT_TYPE_IMAGE_VIEW,parent_id).?;
-                const image=child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_IMAGE,parent_id).?;
-                command_reference(state,view); command_reference(state,image);
-                command_reference(state,child_object(resource_state(image).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent_id).?);
-            }
-            var buffer_token=descriptor.buffer;
-            if(descriptor.texel_view != 0) {const view=child_object(descriptor.texel_view,c.VK_OBJECT_TYPE_BUFFER_VIEW,parent_id).?;command_reference(state,view);buffer_token=resource_state(view).view_image;}
-            if(buffer_token != 0) {const buffer=child_object(buffer_token,c.VK_OBJECT_TYPE_BUFFER,parent_id).?;command_reference(state,buffer);command_reference(state,child_object(resource_state(buffer).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent_id).?);}
+            retain_descriptor(parent_id,state,&descriptor);
         }
     }
 }
@@ -9567,4 +9593,235 @@ fn update_after_bind_supported(parent: *const c.venus_object_t, kind: u32) bool 
         7 => descriptor_feature(parent,"descriptorBindingStorageBufferUpdateAfterBind"),
         else => false,
     };
+}
+
+// Owner imports template_native = @import("venus_descriptor_template_native.zig");
+// Guest-only registry nodes must not be sent to renderer destruction. Invoke
+// retire_device_templates(parent_id) before device registry retirement; scrub ledger
+// on receiver-retired abandonment/reset alongside objects registry. All calls lock ICD.
+const template_owner_t = struct {
+    id: u64 = 0,
+    parent_id: u64 = 0,
+    definition: template_native.snapshot_t = .{},
+    layout: profiles.descriptor_layout_t = .{},
+};
+var template_owners: [32]template_owner_t = [_]template_owner_t{.{}} ** 32;
+fn template_owner(id: u64) ?*template_owner_t {
+    for (&template_owners) |*entry| if (entry.id == id and id != 0) return entry;
+    return null;
+}
+/// Copy and own a descriptor-set template; pNext unsupported, allocator unused.
+/// Output null on failure; synchronous owned entries and layout snapshot remain until destroy.
+/// Guest-only object identity has no renderer counterpart or GPU lifetime.
+fn create_descriptor_update_template(device: c.VkDevice, info: [*c]const c.VkDescriptorUpdateTemplateCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorUpdateTemplate) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (info.*.descriptorSetLayout == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const layout_record = child_object(@intFromPtr(info.*.descriptorSetLayout.?), c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const definition = template_native.snapshot(@ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    const layout = profiles.get_profile(&profile_registry.descriptor_layouts, resource_state(layout_record).profile_index) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    for (definition.entries[0..definition.entry_count]) |native_entry| {
+        var compatible = false;
+        for (layout.bindings[0..layout.binding_count]) |binding| if (binding.binding == native_entry.dstBinding) {
+            compatible = binding.descriptor_type == native_entry.descriptorType and native_entry.dstArrayElement <= binding.descriptor_count and native_entry.descriptorCount <= binding.descriptor_count - native_entry.dstArrayElement;
+            break;
+        };
+        if (!compatible) return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
+    var available: ?*template_owner_t = null;
+    for (&template_owners) |*entry| if (entry.id == 0) {
+        available = entry;
+        break;
+    };
+    const entry = available orelse return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, parent.id, 0, &record) != c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    entry.* = .{ .id = record.*.id, .parent_id = parent.id, .definition = definition, .layout = layout.* };
+    output.* = @ptrFromInt(record.*.handle);
+    return c.VK_SUCCESS;
+}
+/// Retire guest-only template storage synchronously; no pending GPU use exists because
+/// updates expand/copy all entries before returning. Invalid tokens are ignored.
+fn destroy_descriptor_update_template(device: c.VkDevice, handle: c.VkDescriptorUpdateTemplate, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (device == null or handle == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, parent.id) orelse return;
+    const entry = template_owner(record.id) orelse return;
+    std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, 0) == c.RingOk);
+    entry.* = .{};
+}
+/// Expand exact caller offsets/strides into owned local writes and delegate real host updates.
+/// Data borrowed only for synchronous call; output arrays do not retain pData or template.
+/// Owner implements mixed updater nullDescriptor/immutable sampler/usage/retention policy.
+fn update_descriptor_set_with_template(device: c.VkDevice, set: c.VkDescriptorSet, handle: c.VkDescriptorUpdateTemplate, data: ?*const anyopaque) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (lost != c.RingOk or device == null or handle == null) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, parent.id) orelse return;
+    const entry = template_owner(record.id) orelse return;
+    const target = descriptor_set_for(set, parent.id) orelse return;
+    const profile = profiles.get_profile(&profile_registry.sets, resource_state(target).profile_index) orelse return;
+    if (!std.meta.eql(entry.layout, profile.layout)) return;
+    var expanded: template_native.expanded_t = .{};
+    template_native.expand(&entry.definition, @ptrCast(set), data, &expanded) catch return;
+    update_descriptor_sets(device, @intCast(expanded.write_count), @ptrCast(&expanded.writes), 0, null);
+}
+fn retire_device_templates(parent_id: u64) void {
+    for (&template_owners) |*entry| if (entry.id != 0 and entry.parent_id == parent_id) {
+        var record: [*c]c.venus_object_t = null;
+        if (c.venus_objects_lookup_id(&objects, entry.id, c.VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, &record) == c.RingOk)
+            std.debug.assert(c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, 0) == c.RingOk);
+        entry.* = .{};
+    };
+}
+
+/// Bounded owned native pipeline chain with private library tokens translated to host IDs.
+const pipeline_chain_inputs_t = struct {
+    rendering: c.VkPipelineRenderingCreateInfo = undefined,
+    flags: c.VkPipelineCreateFlags2CreateInfoKHR = undefined,
+    library: c.VkPipelineLibraryCreateInfoKHR = undefined,
+    libraries: [64]c.VkPipeline = undefined,
+    first: ?*const anyopaque = null,
+};
+/// Copy the recognized chain in original order, retaining no caller addresses after return.
+/// Library resources remain mutex-protected through synchronous native creation.
+fn resolve_pipeline_chain(parent_id: u64, next: ?*const anyopaque, output: *pipeline_chain_inputs_t) !u32 {
+    const chain = try pipeline_helpers.collect_chain(next,true);
+    var headers: [3]*c.VkBaseOutStructure = undefined;
+    for (chain.tags[0..chain.count],chain.addresses[0..chain.count],0..) |tag,address,index| {
+        switch(tag) {
+            c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO => {
+                output.rendering = @as(*const c.VkPipelineRenderingCreateInfo,@ptrFromInt(address)).*;
+                headers[index] = @ptrCast(&output.rendering);
+            },
+            c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO => {
+                output.flags = @as(*const c.VkPipelineCreateFlags2CreateInfoKHR,@ptrFromInt(address)).*;
+                headers[index] = @ptrCast(&output.flags);
+            },
+            c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR => {
+                output.library = @as(*const c.VkPipelineLibraryCreateInfoKHR,@ptrFromInt(address)).*;
+                if(output.library.libraryCount!=0) for(output.library.pLibraries[0..output.library.libraryCount],0..) |handle,element| {
+                    const library = child_object(@intFromPtr(handle.?),c.VK_OBJECT_TYPE_PIPELINE,parent_id) orelse return error.Invalid;
+                    if(resource_state(library).pipeline_bind_point!=0) return error.Invalid;
+                    output.libraries[element] = @ptrFromInt(library.id);
+                };
+                output.library.pLibraries = if(output.library.libraryCount==0) null else &output.libraries;
+                headers[index] = @ptrCast(&output.library);
+            },
+            else => unreachable,
+        }
+    }
+    for(headers[0..chain.count],0..) |header,index| header.pNext=if(index+1<chain.count) headers[index+1] else null;
+    output.first=if(chain.count==0) null else headers[0];
+    return chain.library_count;
+}
+
+/// Retain one validated descriptor's actual resources and allocation owners.
+fn retain_descriptor(parent_id: u64,state: *resource_state_t,value: *const profiles.descriptor_t) void {
+    if(value.sampler!=0) command_reference(state,child_object(value.sampler,c.VK_OBJECT_TYPE_SAMPLER,parent_id).?);
+    if(value.image_view!=0) {
+        const view=child_object(value.image_view,c.VK_OBJECT_TYPE_IMAGE_VIEW,parent_id).?;
+        const image=child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_IMAGE,parent_id).?;
+        command_reference(state,view);command_reference(state,image);
+        command_reference(state,child_object(resource_state(image).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent_id).?);
+    }
+    var buffer_token=value.buffer;
+    if(value.texel_view!=0) {const view=child_object(value.texel_view,c.VK_OBJECT_TYPE_BUFFER_VIEW,parent_id).?;command_reference(state,view);buffer_token=resource_state(view).view_image;}
+    if(buffer_token!=0) {const buffer=child_object(buffer_token,c.VK_OBJECT_TYPE_BUFFER,parent_id).?;command_reference(state,buffer);command_reference(state,child_object(resource_state(buffer).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent_id).?);}
+}
+/// Validate then retain newly updated descriptors from sets consumed by recorded
+/// draws/dispatches. Old resource references remain retained; no premature release.
+fn refresh_command_descriptors(record: *c.venus_object_t) bool {
+    const pool=command_pool_for(record) orelse return false;
+    const parent=device_by_id(pool.parent_id) orelse return false;
+    const state=resource_state(record);
+    for(slots,0..) |slot,index| {
+        if(state.descriptor_uses[index/64] & (@as(u64,1)<<@as(u6,@intCast(index%64)))==0) continue;
+        const set=descriptor_set_for(@ptrFromInt(slot.handle),parent.id) orelse return false;
+        const profile=profiles.get_profile(&profile_registry.sets,resource_state(set).profile_index) orelse return false;
+        for(profile.descriptors[0..profile.descriptor_count]) |value| if(!descriptor_resource_valid(parent,&value)) return false;
+    }
+    for(slots,0..) |slot,index| {
+        if(state.descriptor_uses[index/64] & (@as(u64,1)<<@as(u6,@intCast(index%64)))==0) continue;
+        const set=descriptor_set_for(@ptrFromInt(slot.handle),parent.id).?;
+        const profile=profiles.get_profile(&profile_registry.sets,resource_state(set).profile_index).?;
+        for(profile.descriptors[0..profile.descriptor_count]) |value| retain_descriptor(parent.id,state,&value);
+    }
+    return true;
+}
+/// Find declared binding flags in immutable set ownership; absent binding invalid.
+fn descriptor_binding_flags(profile: *const profiles.descriptor_set_t,binding: u32) ?u32 {
+    for(profile.layout.bindings[0..profile.layout.binding_count]) |definition| if(definition.binding==binding) return definition.binding_flags;
+    return null;
+}
+
+/// Attach resources introduced by an acknowledged mutable descriptor update to
+/// every already-pending submission using that set. Old references stay owned.
+/// No GPU completion is inferred; exact ticket retirement releases each new use.
+fn retain_pending_descriptor_update(parent: *const c.venus_object_t,set: *const c.venus_object_t,profile: *const profiles.descriptor_set_t) void {
+    var references: resource_state_t = .{};
+    for(profile.descriptors[0..profile.descriptor_count]) |value| {
+        if(descriptor_resource_valid(parent,&value)) retain_descriptor(parent.id,&references,&value);
+    }
+    const set_slot=resource_index(set);
+    const set_bit=@as(u64,1)<<@as(u6,@intCast(set_slot%64));
+    for(&submission_tickets) |*ticket| {
+        if(ticket.queue==0 or ticket.references[set_slot/64] & set_bit==0) continue;
+        for(&slots,0..) |*record,index| {
+            const bit=@as(u64,1)<<@as(u6,@intCast(index%64));
+            if(references.buffer_references[index/64] & bit==0) continue;
+            if(!include_reference(ticket,record)) resource_states[index].inflight_count+=1;
+        }
+    }
+}
+
+test "mutable pending descriptors retain new allocation owners exactly until ticket completion" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int { return c.RingInvalid; }
+    };
+    var sentinel: u8 = 0;
+    try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(fixture_t.exchange,&sentinel));
+    defer venus_icd_abandon();
+    var instance: [*c]c.venus_object_t = null;
+    var physical: [*c]c.venus_object_t = null;
+    var pool: [*c]c.venus_object_t = null;
+    var device: [*c]c.venus_object_t = null;
+    var queue: [*c]c.venus_object_t = null;
+    var set: [*c]c.venus_object_t = null;
+    var buffer: [*c]c.venus_object_t = null;
+    var allocation: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_INSTANCE,0,1,&instance));
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_PHYSICAL_DEVICE,instance.*.id,1,&physical));
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_DEVICE,physical.*.id,1,&device));
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_QUEUE,device.*.id,1,&queue));
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_DESCRIPTOR_POOL,device.*.id,0,&pool));
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_DESCRIPTOR_SET,pool.*.id,0,&set));
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_BUFFER,device.*.id,0,&buffer));
+    try std.testing.expectEqual(@as(c_int,c.RingOk),c.venus_objects_reserve(&objects,c.VK_OBJECT_TYPE_DEVICE_MEMORY,device.*.id,0,&allocation));
+    device_caches[0] = .{ .handle=device.*.handle,.descriptor_limits_ready=true,.descriptor_alignments=.{1,1},.descriptor_ranges=.{512,512} };
+    resource_state(buffer).* = .{ .id=buffer.*.id,.bound_memory=allocation.*.handle,.buffer_usage=c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,.buffer_size=512 };
+    var profile = profiles.descriptor_set_t{ .descriptor_count=1 };
+    profile.descriptors[0] = .{ .descriptor_type=7,.buffer=buffer.*.handle,.range=128 };
+    const ticket = &submission_tickets[0]; ticket.* = .{ .queue=queue.*.handle };
+    _ = include_reference(ticket,set); resource_state(set).inflight_count=1;
+    retain_pending_descriptor_update(device,set,&profile);
+    retain_pending_descriptor_update(device,set,&profile);
+    try std.testing.expectEqual(@as(u32,1),resource_state(buffer).inflight_count);
+    try std.testing.expectEqual(@as(u32,1),resource_state(allocation).inflight_count);
+    destroy_buffer(@ptrFromInt(device.*.handle),@ptrFromInt(buffer.*.handle),null);
+    try std.testing.expect(child_object(buffer.*.handle,c.VK_OBJECT_TYPE_BUFFER,device.*.id)!=null);
+    retire_ticket(ticket);
+    try std.testing.expectEqual(@as(u32,0),resource_state(buffer).inflight_count);
+    try std.testing.expectEqual(@as(u32,0),resource_state(allocation).inflight_count);
+    try std.testing.expectEqual(@as(u64,0),ticket.queue);
 }
