@@ -223,6 +223,12 @@ fn compare(writer: writer_t, kind: u32, count: usize, regions: *const anyopaque,
     try std.testing.expectEqual(used, writer.used);
     try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
 }
+const fixture_t = struct {
+    fn function(comptime target: anytype) *const @TypeOf(target) {
+        var pointer: *const @TypeOf(target) = target;
+        return @as(*volatile @TypeOf(pointer), &pointer).*;
+    }
+};
 test "all seven transfer commands match independent pinned encoder at maximum count" {
     const layers = c.VkImageSubresourceLayers{ .aspectMask = 1, .mipLevel = 3, .baseArrayLayer = 4, .layerCount = 2 };
     const extent = c.VkExtent3D{ .width = 16, .height = 32, .depth = 1 };
@@ -236,39 +242,99 @@ test "all seven transfer commands match independent pinned encoder at maximum co
     const color = [4]u32{ 0x7fc01234, 0xffffffff, 0x3f800000, 0x80000000 };
     const depth = c.VkClearDepthStencilValue{ .depth = 0.75, .stencil = 0xffffffff };
     for ([_]usize{ 1, 2, MaxRegions }) |count| {
-        try compare(try copy_image(8, 42, 1, 43, 7, copies[0..count]), 0, count, &copies, &color);
-        try compare(try blit_image(8, 42, 1, 43, 7, blits[0..count], 1), 1, count, &blits, &color);
-        try compare(try copy_buffer_to_image(8, 42, 43, 7, uploads[0..count]), 2, count, &uploads, &color);
-        try compare(try copy_image_to_buffer(8, 42, 43, 1, uploads[0..count]), 6, count, &uploads, &color);
-        try compare(try clear_color(8, 42, 7, color, color_ranges[0..count]), 3, count, &color_ranges, &color);
-        try compare(try clear_depth_stencil(8, 42, 7, depth, depth_ranges[0..count]), 4, count, &depth_ranges, &depth);
-        try compare(try resolve_image(8, 42, 1, 43, 7, resolves[0..count]), 5, count, &resolves, &color);
+        try compare(try fixture_t.function(copy_image)(8, 42, 1, 43, 7, copies[0..count]), 0, count, &copies, &color);
+        try compare(try fixture_t.function(blit_image)(8, 42, 1, 43, 7, blits[0..count], 1), 1, count, &blits, &color);
+        try compare(try fixture_t.function(copy_buffer_to_image)(8, 42, 43, 7, uploads[0..count]), 2, count, &uploads, &color);
+        try compare(try fixture_t.function(copy_image_to_buffer)(8, 42, 43, 1, uploads[0..count]), 6, count, &uploads, &color);
+        try compare(try fixture_t.function(clear_color)(8, 42, 7, color, color_ranges[0..count]), 3, count, &color_ranges, &color);
+        try compare(try fixture_t.function(clear_depth_stencil)(8, 42, 7, depth, depth_ranges[0..count]), 4, count, &depth_ranges, &depth);
+        try compare(try fixture_t.function(resolve_image)(8, 42, 1, 43, 7, resolves[0..count]), 5, count, &resolves, &color);
     }
 }
 test "invalid transfer shape rejected before serialization" {
     const layers = c.VkImageSubresourceLayers{ .aspectMask = 1, .layerCount = 1 };
     const copy = c.VkImageCopy{ .srcSubresource = layers, .dstSubresource = layers, .extent = .{ .width = 1, .height = 1, .depth = 1 } };
-    try std.testing.expectError(error.Invalid, copy_image(0, 42, 1, 43, 7, &.{copy}));
-    try std.testing.expectError(error.Invalid, copy_image(8, 42, 7, 43, 7, &.{copy}));
-    try std.testing.expectError(error.Invalid, copy_image(8, 42, 1, 43, 7, &.{}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(0, 42, 1, 43, 7, &.{copy}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 7, 43, 7, &.{copy}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 1, 43, 7, &.{}));
     const too_many = [_]c.VkImageCopy{copy} ** (MaxRegions + 1);
-    try std.testing.expectError(error.Invalid, copy_image(8, 42, 1, 43, 7, &too_many));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 1, 43, 7, &too_many));
     var invalid = copy;
     invalid.srcSubresource.layerCount = 0;
-    try std.testing.expectError(error.Invalid, copy_image(8, 42, 1, 43, 7, &.{invalid}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 1, 43, 7, &.{invalid}));
     invalid = copy;
     invalid.dstSubresource.aspectMask = 2;
-    try std.testing.expectError(error.Invalid, copy_image(8, 42, 1, 43, 7, &.{invalid}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 1, 43, 7, &.{invalid}));
     invalid = copy;
     invalid.dstOffset.x = -1;
-    try std.testing.expectError(error.Invalid, copy_image(8, 42, 1, 43, 7, &.{invalid}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 1, 43, 7, &.{invalid}));
     invalid = copy;
     invalid.extent.depth = 0;
-    try std.testing.expectError(error.Invalid, copy_image(8, 42, 1, 43, 7, &.{invalid}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 1, 43, 7, &.{invalid}));
     const range = c.VkImageSubresourceRange{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 };
-    try std.testing.expectError(error.Invalid, clear_color(8, 42, 6, .{ 0, 0, 0, 0 }, &.{range}));
-    try std.testing.expectError(error.Invalid, clear_depth_stencil(8, 42, 7, .{ .depth = 0.5 }, &.{range}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_color)(8, 42, 6, .{ 0, 0, 0, 0 }, &.{range}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_depth_stencil)(8, 42, 7, .{ .depth = 0.5 }, &.{range}));
     const depth_range = c.VkImageSubresourceRange{ .aspectMask = 2, .levelCount = 1, .layerCount = 1 };
-    try std.testing.expectError(error.Invalid, clear_depth_stencil(8, 42, 7, .{ .depth = std.math.nan(f32) }, &.{depth_range}));
-    try std.testing.expectError(error.Invalid, clear_depth_stencil(8, 42, 7, .{ .depth = 1.1 }, &.{depth_range}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_depth_stencil)(8, 42, 7, .{ .depth = std.math.nan(f32) }, &.{depth_range}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_depth_stencil)(8, 42, 7, .{ .depth = 1.1 }, &.{depth_range}));
+}
+
+test "image copy subresource mismatch offsets and clear depth upper bound reject" {
+    const layers: c.VkImageSubresourceLayers = .{ .aspectMask = 1, .layerCount = 1 };
+    const initial: c.VkImageCopy = .{ .srcSubresource = layers, .dstSubresource = layers, .extent = .{ .width = 1, .height = 1, .depth = 1 } };
+    var region = initial;
+    region.dstSubresource.layerCount = 0;
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(7, 42, 6, 43, 7, &.{region}));
+    region = initial;
+    region.dstSubresource.aspectMask = 2;
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(7, 42, 6, 43, 7, &.{region}));
+    region = initial;
+    region.dstSubresource.layerCount = 2;
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(7, 42, 6, 43, 7, &.{region}));
+    region = initial;
+    region.dstOffset.z = -1;
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(7, 42, 6, 43, 7, &.{region}));
+    const range: c.VkImageSubresourceRange = .{ .aspectMask = 2, .levelCount = 1, .layerCount = 1 };
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_depth_stencil)(7, 42, 7, .{ .depth = 2, .stencil = 0 }, &.{range}));
+    var invalid_range = range;
+    invalid_range.layerCount = 0;
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_depth_stencil)(7, 42, 7, .{ .depth = 1, .stencil = 0 }, &.{invalid_range}));
+    const resolve: c.VkImageResolve = .{ .srcSubresource = layers, .dstSubresource = .{ .aspectMask = 2, .layerCount = 1 }, .extent = initial.extent };
+    try std.testing.expectError(error.Invalid, fixture_t.function(resolve_image)(7, 42, 6, 43, 7, &.{resolve}));
+}
+
+test "all transfer entrypoints reject missing owners layouts quotas and negative y offsets" {
+    const layers: c.VkImageSubresourceLayers = .{ .aspectMask = 1, .layerCount = 1 };
+    const offset: c.VkOffset3D = .{ .x = 0, .y = 0, .z = 0 };
+    const extent: c.VkExtent3D = .{ .width = 1, .height = 1, .depth = 1 };
+    const blit: c.VkImageBlit = .{ .srcSubresource = layers, .dstSubresource = layers, .srcOffsets = .{ offset, .{ .x = 1, .y = 1, .z = 1 } }, .dstOffsets = .{ offset, .{ .x = 1, .y = 1, .z = 1 } } };
+    const upload: c.VkBufferImageCopy = .{ .imageSubresource = layers, .imageExtent = extent };
+    const resolve: c.VkImageResolve = .{ .srcSubresource = layers, .dstSubresource = layers, .extent = extent };
+    const color_range: c.VkImageSubresourceRange = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 };
+    const depth_range: c.VkImageSubresourceRange = .{ .aspectMask = 2, .levelCount = 1, .layerCount = 1 };
+    for ([_][3]u64{ .{ 0, 42, 43 }, .{ 8, 0, 43 }, .{ 8, 42, 0 } }) |ids| {
+        try std.testing.expectError(error.Invalid, fixture_t.function(blit_image)(ids[0], ids[1], 6, ids[2], 7, &.{blit}, 0));
+        try std.testing.expectError(error.Invalid, fixture_t.function(copy_buffer_to_image)(ids[0], ids[1], ids[2], 7, &.{upload}));
+        try std.testing.expectError(error.Invalid, fixture_t.function(copy_image_to_buffer)(ids[0], ids[1], ids[2], 6, &.{upload}));
+        try std.testing.expectError(error.Invalid, fixture_t.function(resolve_image)(ids[0], ids[1], 6, ids[2], 7, &.{resolve}));
+    }
+    try std.testing.expectError(error.Invalid, fixture_t.function(blit_image)(8, 42, 7, 43, 7, &.{blit}, 0));
+    try std.testing.expectError(error.Invalid, fixture_t.function(blit_image)(8, 42, 6, 43, 6, &.{blit}, 0));
+    try std.testing.expectError(error.Invalid, fixture_t.function(resolve_image)(8, 42, 7, 43, 7, &.{resolve}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(resolve_image)(8, 42, 6, 43, 6, &.{resolve}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_buffer_to_image)(8, 42, 43, 6, &.{upload}));
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image_to_buffer)(8, 42, 43, 7, &.{upload}));
+    for ([_][2]u64{ .{ 0, 42 }, .{ 8, 0 } }) |ids| {
+        try std.testing.expectError(error.Invalid, fixture_t.function(clear_color)(ids[0], ids[1], 7, .{ 0, 0, 0, 0 }, &.{color_range}));
+        try std.testing.expectError(error.Invalid, fixture_t.function(clear_depth_stencil)(ids[0], ids[1], 7, .{ .depth = 0.5 }, &.{depth_range}));
+    }
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_color)(8, 42, 7, .{ 0, 0, 0, 0 }, &.{}));
+    const too_many = [_]c.VkImageSubresourceRange{color_range} ** 65;
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_color)(8, 42, 7, .{ 0, 0, 0, 0 }, &too_many));
+    try std.testing.expectError(error.Invalid, fixture_t.function(clear_depth_stencil)(8, 42, 6, .{ .depth = 0.5 }, &.{depth_range}));
+    var copy: c.VkImageCopy = .{ .srcSubresource = layers, .dstSubresource = layers, .extent = extent, .srcOffset = .{ .x = 0, .y = -1, .z = 0 } };
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 6, 43, 7, &.{copy}));
+    copy.srcOffset.y = 0;
+    copy.srcOffset.z = -1;
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 6, 43, 7, &.{copy}));
 }
