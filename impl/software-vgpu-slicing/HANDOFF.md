@@ -1,52 +1,113 @@
-# TODO #3 continuation handoff — 2026-10-06
+# TODO #3 continuation handoff — 2026-10-07
 
-## Objective and operating rules
+## Objective and rules
 
-Continue the existing TODO #3 guide to genuinely verified100%: guest WDDM render-only/userland adapter and standalone Vulkan ICD, including real modern DXVK2.x Windows device/swapchain acceptance. Read README.md, PROJECT.md, CONTRIBUTING.md and AGENTS.md first. Read the complete implementation description and tracker, plus the original guide at `/home/dev/.codex/attachments/7dbe1ccb-ee0f-4398-b1e0-bdb47ba308a2/Pasted text.txt`. README is read-only unless directly requested. User explicitly requires the same three parallel agents, clean code, atomic frequent commits, meaningful coverage≥90% for protocol/memory, and zero leaks. C default; Zig for memory-sensitive/untrusted parsing; C++ only compatibility. Follow naming/documentation rules. Do not claim completion from mocks, codecs, compilation or loader discovery alone. Existing physical-hypervisor/full KMD validation is delegated to the user; actual ICD/GPU/DXVK acceptance is still required.
+Continue TODO#3 through verified100%, including real Windows GPU execution and
+pinned DXVK2.7.1 device/swapchain acceptance. Read README.md, CONTRIBUTING.md,
+PROJECT.md and AGENTS.md, then this file, IMPL_DESC.md, TRACKER.md and the original
+guide at `/home/dev/.codex/attachments/7dbe1ccb-ee0f-4398-b1e0-bdb47ba308a2/Pasted text.txt`.
+README stays untouched. Preserve every commit, dirty file, VM and test artifact;
+atomic detailed commits,≥90% protocol/memory coverage and zero prescribed-checker
+leaks remain required. Compress documentation without rewriting Git history.
 
-Workspace `/home/dev/Waddle-LSW`, current branch `feature/software-vgpu-slicing`; do not reset, discard or overwrite uncommitted work. Public remote https://github.com/Kayyo321/Waddle-LSW.git. Origin feature branch currently40f1061; inspect local git log for newer commits. Approvals never, danger-full-access; do not supply sandbox_permissions. No requested new branch or merge. Entire feature includes TODO#5 OpenCL still0%, outside current TODO#3 scope; do not merge or claim entire feature100% when TODO#3 finishes.
+Branch `feature/software-vgpu-slicing`; target `origin`. TODO#3=55%, overall68.75%,
+#10=100%, #11=60%. TODO#5 OpenCL remains outside this request. Original milestone
+accounting forbids duplicate standalone-adapter credit. Do not merge the feature
+while its other tasks remain incomplete. Public ICD still Vulkan1.0, empty
+extensions/all optional feature flags false; codecs/mocks do not justify lifting
+that ceiling. DXVK requires faithful modern API/feature/query/runtime/WSI work.
 
-Maintain TRACKER.md percentages from verified milestones and record exact commit attribution. Current TODO#3=55%, total feature68.75%, #10=50%, #11=60%. These may lag recent validated graphics work: audit acceptance criteria before granting additional progress. Audit every newer commit against tracker, including documentation and tests. User requests compact commit-history wording: preferably one concise table row per commit with hash, meaning/change, task percentage delta and necessary validation reference. Preserve every commit, all task/overall deltas, meaningful ownership/limitations and evidence; compress prose, NEVER squash/rewrite Git history or silently discard attribution. Keep current-entry subject self-hash convention or resolve it in the next commit. Keep detailed rationale/contracts in IMPL_DESC.md and link them rather than repeat them.
+## Roles and durable checkpoints
 
-## Agent restart and ownership
+Resume or recreate exactly `icd_memory`, `image_pipeline`, `wddm_dxvk`. Existing
+agents can be absent from list_agents yet still resumable with followup_task.
+All share this checkout and Git index. Hold `/tmp/waddle_git_index.lock` across
+staging AND commit, require initially empty index and exact owned staged paths.
+Do not stage other roles' changes. `/tmp` vanished during the latest interruption;
+use durable ignored build checkpoints. Root helper:
+`build/root_todo3_continuation/commit_owned.py`.
 
-Reopen agents named `icd_memory`, `image_pipeline`, `wddm_dxvk` if available; otherwise recreate the same roles. Prior agent identities do not necessarily survive across chats. Inspect `/tmp/waddle_handoff_icd_memory.txt`, `/tmp/waddle_handoff_image_pipeline.txt`, `/tmp/waddle_handoff_wddm_dxvk.txt` for their latest checkpoints. Share file ownership explicitly; agents share this workspace and must not concurrently rebuild shared artifacts.
+- Root: docs/tracker/workflow/GNU and standalone device/extension gates;
+  `build/root_todo3_continuation/checkpoint.md`.
+- icd_memory: pending public ICD/C fixture integration, native/device codecs and
+  narrowly negotiated coverage/make wiring; `build/device_integration_checkpoint.md`.
+  Pending source hashes7f78e3ce.../16cafa22..., worker fixturea68383c9... unchanged.
+- image_pipeline: exact owned access/seam/physical helpers and safety makefile;
+  `build/image_pipeline_checkpoint/HANDOFF.md` and recovery_freeze.json. Pending
+  physical helper/make changes, candidate5927068b...; exact14 embedded+6 linked
+  sources. Root GNU/vgpu.mk frozen after331c68b.
+- wddm_dxvk: TCP/Windows bootstrap, TCP contracts/tests and pending
+  `tests/vgpu/tcp_gpu_windows.c`. Private supervisors remain in
+  `build/windows11_vm/tcp_gpu_actual.py` and tcp_gpu_owned_session.py; prepared
+  normal/safety snapshots tcp_gpu_39c4c740/c9f3939f have checkpoint.json.
+  Narrow future tracked acceptance/session helper lease granted after real gates.
 
-- `icd_memory`: owns scripts/mesa_cpu_cache.mk, tests/vgpu/mesa_cpu_cache.c, narrowly .github/workflows/software_vgpu.yml; finish dual RADV/Lavapipe allocator repair, exact unload evidence and CI. Root just committed upstream Lavapipe export closure contract b5ca62a; agent may checkpoint its separate patch commit after this document was written. When Mesa is complete, assign real Features2 query integration only with an explicit root ICD-source lease.
-- `image_pipeline`: latest completed3e9244d, scripts/icd_owned_sanitizers.py and scripts/vgpu_icd_owned_safety.mk; genuine all-owned-ICD Zig ASan gate complete. Root GNU integration pending. Give it a new isolated TODO#3 subtask after reading contracts; no independent changes to root ICD/core/build ownership.
-- `wddm_dxvk`: owns venus_tcp.h, new TCP client/server/controller source, TCP tests/make/contracts; continue real authenticated Windows→Linux receiver bootstrap and native Windows/DXVK acceptance. Draft client/server strict Linux/Windows compile passed, real tests/controller pending. Read-only existing worker executable execution lease granted, using isolated copied executable to avoid root rebuild races. No shared ICD/worker rebuild lease.
-- Root owns src/vgpu/venus_icd.zig, include/waddle/venus_icd.h, ICD map/DEF, tests/vgpu/icd.c, tests/vgpu/worker_presented.c, scripts/vgpu.mk, tests/av/coverage.py, GNUmakefile, IMPL_DESC.md and TRACKER.md. Preserve other agent files when staging.
+## Verified checkpoint and immediate sequence
 
-## Exact current work and next steps
+Device request integration validates before reservation, encodes only owned
+values and publishes enabled state only after exact ACK.117 Debug units/native
+128 cycles/mapping/loader fixtures pass; production branch90.03%2095/2327 and
+line98.98%2433/2458. Actual Windows117/static128/DLL/medium pinned-loader8lifetimes
+plus128dispatch all exit0, exact6deployedSHA:
+`build/windows11_vm/device_integration_8289e5d9`. These use a mock frontend.
+Four normal and four C-ASan/LSan/UBSan direct/shared triangle/compute RTX5080 paths
+pass. Their ICD/codecs are ReleaseSafe; full owned instrumentation is separate.
+Frozen29source/runtime originals and copies:
+`build/device_integration_runtime_checkpoint/provenance.json`.
 
-Root has uncommitted additive capability binding in eight files: include/waddle/venus_icd.h; scripts/vgpu.mk; src/vgpu/venus_icd.def,map,zig; tests/av/coverage.py; tests/vgpu/icd.c; tests/vgpu/worker_presented.c. Contract ba0983c precedes code. New exported venus_icd_bind_capabilities(exchange, context, capabilities) validates/deep-copies negotiated160-byte profile under binding mutex; ready Boolean adds1B. Legacy bind remains compatible. Failed binds preserve state; unbind/abandon scrub; live-object refusal preserves snapshot. Physical worker fixture hands actual guest capabilities to this additive binding. No API/extension advertisement raised.
+Complete20 native/test seam passes with414/416linked definitions,
+6617/7605original guards and4672/4680actual final accesses;117ICD+25nested allocator
+units and6native codec suites are clean. Unique immutable completion receipts
+under build/icd_complete_seam_safety_20; historical18 artifacts retained.
+Interrupted physical run032548774271Z-1989791 reached its first positive case
+but records ZERO accepted cases. It is incomplete, never aggregate acceptance.
+All353 retained inputs still match after recovery. Image owns an exclusive
+GPU/source/header/runtime/make/helper freeze while a fresh same-make20seam plus
+full15physical matrix runs:9positive cases/144lifetimes and6actual shared-only
+postflush failures,6real process-owner tests, exact session/reap/hash proof.
 
-Already passed current working tree: native/shared fixture128 cycles; Linux native loader actual additive ABI; Windows object/static library/DLL and PE test compile;75 Zig tests; ICD branch90.21%(2064/2288), line99.09%(2395/2417). Logs build/icd_capability_binding_native.log and build/icd_capability_binding_coverage.log. Genuine owned-ASan gate also passed current source: build/icd_owned_safety_gate.log and build/icd_owned_safety/{native,test}_sanitized.json;161 production names all accounted, native173 definitions/1130 guards, Zig174 definitions/1537 guards, whole-module reverse equality true, no omitted functions, native128/28 case groups plus75 Zig tests zero ASan/LSan diagnostics. C frontend UBSan only; imported/separate modules retain independent gates.
+Next: image finishes that whole gate and commits its physical helper/make;
+icd_memory commits the exact ICD/C fixture integration after release. All such
+commits remain+0 until required guide milestones are audited. GPU then goes to
+wddm for actual authenticated Windows→Linux triangle/compute and failure paths,
+using copied coherent artifacts and natural whole-owned-session retirement.
+Root must not mutate current sources/runtime until those copy/freeze boundaries.
+Current-head complete CI remains required: prior clean Linux/Windows run37557528193
+passed atc2faa4c; newer local commits are not covered by it. Linux parent budget60min;
+180s proof children/256MiB text,300s physical case and1s fence deadlines unchanged.
 
-NEXT: freeze root source and run real capability-binding handoff in four existing physical triangle paths: direct/shared normal and direct/shared sanitizers. Keep all8 manifests in build/mesa_cpu_cache_all_icds, same-version repaired RADV replacement only; set VK_DRIVER_FILES to sorted absolute colon-separated JSON paths. Run make vgpu-triangle-worker-test and vgpu-triangle-worker-sanitizers. Then atomic capability-binding commit, update tracker/161B ownership ledger with measured evidence. Freshly build build/venus_icd_oracle.o before coverage after C fixture edits; stale oracle previously underreported coverage. Actual Windows additive binding loader execution still pending after source commit/isolated snapshot.
+## VM and real Windows acceptance
 
-Separate atomic integrations: include scripts/vgpu_tcp.mk in GNUmakefile (agent commit38179b8 independent gates already passed); include scripts/vgpu_icd_owned_safety.mk and add vgpu-icd-sanitizers dependency on vgpu-icd-owned-sanitizers (full tool already passed). Avoid bundling these with capability source commit. Audit all newer contracts/TCP/tests/graphics commits into tracker. Push a verified clean checkpoint and run complete Linux/Windows CI after dual-driver repair; do not grant #10 completion from local compile.
+Existing Windows11Pro10.0.26300.9457 VM:80G qcow2, persistent UEFI vars.fd and TPM,
+KVM4CPU8G. Interruption stopped qemu/swtpm; restart EXISTING disk/firmware/TPM only.
+Never run provision.py: it resets firmware/disk and boots unattended media.
+Reuse QMP qmp.sock/VNC19 and WinRM127.0.0.1:55985; artifact HTTP55986 serves only
+repair_media. Credentials JSON600/private directories700; tokens only encrypted
+WinRM/stdin or private owner-DACL storage, never argv/public HTTP/logs/commits.
+Keyboard/QMP and GPU leases are explicit; preserve guest settings/drivers.
 
-After this, real modern Features2 query/cache/device-feature validation, properties2, modern feature/extension support and WSI remain. Read `/tmp/waddle_modern_features_plan.md`. Native bounded feature-chain adapter and transactional core55 publication are already implemented (399e7e9,2e7833a,303f0cb; contracts6da5c26,b649a99).28 Debug/ReleaseSafe/C-oracle sanitizer tests;98.51% branch; actual Win11 VM28 units pass. API publish_features2 takes nullable untyped output address, validates integer alignment before cast, result field is `.core`55, not core_flags. Not yet connected to physical raw query147/cache. Unknown native chain payloads untouched; validate entire batch/overlaps/Boolean fields before writing. Do not advertise Vulkan1.3 or feature bits before truthful backend-supported implementation.
+Supervisor must prove exact authenticated session, observed worker PID/group,
+controller wait/reap and entire dedicated owned SID empty before retirement
+receipt. Use exact starttime/pidfds and subreaper ownership. Positive acceptance
+requires natural whole-graph exit and actual GPU byte/pixel comparisons. Finite
+owned-only TERM/KILL cancellation is failure evidence, never success/leak credit.
+Lost proof retains callbacks/modules. Released bootstrap/loader/ICD must be absent.
+Physical hypervisor/full KMD tests remain delegated as previously documented;
+real userland ICD/GPU/DXVK acceptance is still required.
 
-## Real graphics evidence already complete
+## Next bounded reply prerequisite
 
-Before additive capability-binding changes: acknowledged render pass133/13540f1061, draw106267474e, image→buffer116daaa2ed, actual workload gates264962a. All four triangle normal/sanitized direct/shared paths passed16 actual RTX5080 lifetimes each: poison/flush, real renderpass/draw/image copy, fence/queue idle, noncoherent invalidation, red-center/blue-corner pixels. Expected post-map failure cleanup is intentionally consumed exit1 and full make exits0. Logs build/graphics_triangle_physical_normal.log and build/graphics_triangle_physical_sanitized.log. Re-run specifically for new binding; do not treat existing evidence as new binding coverage. Resource tracking handles seven graphics owners, pending references, stale handles, copy bounds/aliasing and ACK-only state mutation. Full Vulkan/DXVK graphics breadth remains incomplete: currently fixed vertexless pipeline subset, not full D3D11 shader/state support.
-
-## Mesa / CI blocker
-
-Pinned pristine Mesa25.0.7 SHA742a20f48c59e8649533c84c4d49dd95b403f5da. Existing CPU-topology patch replaces leaked128-byte L3 reallocations with bounded static affinity storage (131072BSS), no heap suppression/driver retention. Latest actual CI37544979923: Windows success, Linux first production sanitized lifetime128B leak; same-PID LD_DEBUG/disassembly conclusively attributes SYSTEM Lavapipe CPU topology, not repaired RADV. Logs build/ci_37544979923_diagnostics/presented_worker_loader.log and build/ci_37544979923_failure.log. Keep all installed drivers; repair both same-version RADV and Lvp.
-
-Agent completed ignored dual build build/vendor/mesa_cpu_cache_dual (978 targets; LLVM19.1.7 shared, SPIRV-Tools2025.1.1, bison/flex). Lvp incidental5 GNU-unique exports initially prevented actual unload. New contract b5ca62a reuses EXACT pinned Mesa vulkan_icd_link_args and vulkan_icd_link_depends in Lavapipe target; no custom map/guessed whitelist or -fno-gnu-unique. Prototype exact same3 Vulkan ICD exports,0 exported UNIQUE,3 actual unloads, no Lvp NODELETE. Matched CPU-unpatched/same-visibility baseline leaks384B/3 allocations and repaired baseline zero; CPU/L3 memberships identical000000ff. Evidence build/mesa_lavapipe_{baseline_regression,repaired_regression,baseline_native,visibility_unload}.log. Agent tracked atomic visibility patch/dual build/CI integration may be newly checkpointed; inspect git/log/checkpoint. CI budget45min contract45911a5; per-fixture deadlines unchanged. #10 remains50 until full clean CI.
-
-## Windows VM and DXVK
-
-User supplied ISO /home/dev/Downloads/Windows11_Client_x64_en-us_26300_9457.iso. Already installed actual Win11Pro10.0.26300.9457 IMAGE_STATE_COMPLETE in build/windows11_vm, KVM4CPU8GB,80GB sparse qcow, UEFI/TPM, waddle_test desktop. Preserve VM: NEVER rerun provisioning. WinRM NTLM127.0.0.1:55985→5985; private local artifact HTTP127.0.0.1:55986; QMP qmp.sock; VNC127.0.0.1:19. Credentials JSON600 inside VMdir700: never print or commit. Inspect existing scripts/checkpoints for safe deployment. No physical GPU exposed to guest: actual Venus TCP host receiver is needed.
-
-Pinned offline Vulkan loader Windows build1584200: build/vendor/vulkan_loader_win64/loader/vulkan-1.dll. Actual VM unmodified native loader discovery already passed8 instance/device/queue/fence cycles+128 dispatch with mock binding, same-process medium-integrity test fixture because elevated loader ignores VK_DRIVER_FILES. Six deployed artifact SHA match, log build/windows11_vm/windows_loader_discovery.log and deployment.json. #11=60 only; actual host bootstrap/GPU still pending. Native Win32 TCP32 lifecycle cases and CNG128 cleanup cases pass exact baseline handle counts; no fabricated padding. BCrypt explicit open/generate/close avoids implicit system RNG cached WaitCompletionPacket. Features28 units actual Windows pass features_native_units.log.
-
-DXVK submodule2.7.1 SHA c3dd74be6baec53786d4e064a572185b70347a17 plus4 immutable nestedpins/license audit, verify_dxvk.sh. Offline MinGW DXGI/D3D11 DLL build complete. tests/vgpu/dxvk_integration.c black-box requires real native loader/manifest/DXVK, creates FL11_0 device+swapchain, RTVclear/eventquery/present success, no device removal and deterministic teardown. It HAS NOT passed real DXVK. DXVK2.7.1 requires Vulkan1.3, robust2 nullDescriptor, maintenance5, pipeline library, swapchain and other prerequisites; current ICD API1.0/empty extensions is insufficient. Implement support faithfully; do not bypass checks, return fake success or count mock discovery as DXVK acceptance.
-
-TCP_BOOTSTRAP.md defines private256-bit token auth, exactnonce/session, bounded envelopes, one outstanding nonwrapping sequence, deadlines/EOF, no native addresses/FDs over TCP, actual guest_exchange_timeout remaining budget (18f5035). Native Present excluded until genuine WSI contract. On clean close wait real host-worker retirement then exact session retirement ACK before ICD abandon; terminal broken transport requires supervisor confirmation. Agent's client/server drafts compile but real peer/controller tests and actual receiver handshake are pending.
-
-Continue until TODO#3 is fully implemented and verified. Report genuine environmental blockers and preserve honest progress rather than declaring100%. Do not end after planning or a partial milestone. User wants same objective, tests/leak rigor and three-agent parallel work as the preceding chat.
+Contracts57dedad/34da0be specify cooperative4KiB byte-range reads of ONE completed
+reply under unchanged TCPv1, not record pagination. Future CommandReading=4 and
+owned cursor preserve partial-data privacy/retries/sticky loss. Measured x64 owner
+would be80/8 (old72):cursor48/fence56/ID64/state68/lost72; earlier88assumption was
+rejected by independent C assertions. Root's9unit `/tmp` prototype passed before
+interruption but was lost; reconstruct/reverify durably before integration.
+Root has only the future narrow ICD unbind Reading guard lease after source
+commit+image15+Windowscopiedfreeze; all header/library consumers must rebuild.
+274460-byte extension reply requires68chunks. Current service allocation65536 is
+NOT reported in capset160. Explicit trusted actual524288 allocation/mapping proof
+is a separate prerequisite. Current1000poll/sleep loop is an iteration bound,
+not a whole elapsed deadline; future large-query integration must first specify
+monotonic deadline and remaining callback budget. No large query or advertisement
+is currently implemented.
