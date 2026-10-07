@@ -57,7 +57,7 @@ vgpu-tcp-transport-windows: build/vgpu_tcp_windows_random_test.exe
 
 # Peer units own their codec outputs; no shared ICD/worker/dependency rebuild lease.
 VgpuTcpPeerObjects = build/tcp_peer_request.o build/tcp_peer_capabilities.o build/venus_tcp_wire.o
-VgpuTcpPeerWrapFlags = -Wl,--wrap=send,--wrap=clock_gettime,--wrap=getrandom,--wrap=shutdown
+VgpuTcpPeerWrapFlags = -Wl,--wrap=send,--wrap=clock_gettime,--wrap=getrandom,--wrap=shutdown,--wrap=recv
 VgpuTcpPeerSources = tests/vgpu/tcp_receiver.c tests/vgpu/tcp_wire_oracle.c src/vgpu/venus_tcp_client.c src/vgpu/venus_tcp_socket.c
 
 build/tcp_peer_request.o: src/vgpu/venus_request.zig src/vgpu/venus_receiver_bounds.zig | build

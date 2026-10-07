@@ -5372,7 +5372,10 @@ Common validation order preserves alias guards before response clearing, local
 argument/payload limits, sticky loss, initialized/session/configured-cap checks.
 For absolute calls, zero deadline is local Invalid before sequence/serialization
 or private staging/I/O. Sequence exhaustion and request/expected-capacity checks
-retain their existing precedence. Absolute nonzero cancellation closes socket/
+retain their existing precedence. Encode/validate the private request header before
+any cancellation/clock sample; invalid flags/status/resource fields preserve the
+whole owner even with cancelled, expired or failed-clock inputs. This private
+header is not publication or client staging. Absolute nonzero cancellation closes socket/
 poisons Cancelled before clock/temporal checks. Sample native clock once; zero
 or configured-cap addition overflow poisons Closed. Effective deadline is
 min(caller_absolute,now+configured_cap); already expired poisons Timeout before
@@ -5400,6 +5403,20 @@ actual Windows CPU execution,>=90% unchanged-denominator production coverage,
 C-ASan/LSan/UBSan zero findings required. Native Windows CPU work coordinates
 with wddm; no GPU/profile changes or large-query/public ICD claims.
 
+
+TCP implementation acceptance: root client/header/test and two required recv-wrap
+wiring lines are one bounded API increment. Sourcef61a18b6..., strictLinux peers
+and C-ASan/LSan/UBSan exit0; unmodified coverageengine100%156/156 lines and
+93.48%215/230 branches. Realpeers exercise every oldcase8cycles, nine absolute
+normal/partial-I/O/deadline/reuse/cancel cases, six final/initial native faults,
+seven response statuses under absolutecalls and malformed encoded fields with
+cancel/expiry/clockfault proving no temporal/I/O calls and unchanged wholeowner.
+ActualWin11 tcp_until_final_6946c293 native0/exact before/after4f5a381b...SHA and
+compiled resourcebaseline assertion passes. Durable finalfreeze/coverage/receipt
+under build/absolute_tcp_client_checkpoint/local_preflight_frozen and
+verified_receipt.json. Earlier freeze5e40 was unexecuted/preserved, corrected local
+preflight adopted before finalnative gates; no superseded proof claimed. This is
+CPU transport acceptance only; current runtime/largequery/WindowsGPU/DXVK remain open.
 
 ### Exact capped absolute RPC prerequisite
 

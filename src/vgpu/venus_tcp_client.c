@@ -91,9 +91,10 @@ cleanup:
     venus_tcp_scrub(bytes,sizeof bytes);
     return status;
 }
-venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
+static venus_ring_status_t exchange_common(venus_tcp_client_t *client,
     const venus_request_t *request,const void *input,size_t length,
-    venus_request_t *response,void *output,size_t capacity,const _Atomic uint32_t *cancel)
+    venus_request_t *response,void *output,size_t capacity,uint64_t deadline_ms,
+    int absolute,const _Atomic uint32_t *cancel)
 {
     if (!response) return RingInvalid;
     if ((client && (overlaps(response,sizeof *response,client,sizeof *client) ||
@@ -107,6 +108,7 @@ venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
         length>VenusTcpMaxCommandBytes || capacity>VenusTcpMaxReplyBytes) return RingInvalid;
     if (client->lost!=RingOk) return client->lost;
     if (!client->socket.initialized || !client->session || !client->timeout_ms) return RingInvalid;
+    if (absolute && !deadline_ms) return RingInvalid;
     if (!client->next_sequence || client->next_sequence==UINT64_MAX) return poison(client,RingLimit);
     if (request->sequence || request->payload_bytes!=length || venus_tcp_request_limit(request)!=RingOk) return RingInvalid;
     size_t expected=(request->kind==RequestReply || request->kind==RequestRead) ? (size_t)request->argument_one : 0;
@@ -114,10 +116,23 @@ venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
     venus_request_t framed=*request,decoded={0}; framed.sequence=client->next_sequence;
     uint8_t header[VenusRequestHeaderBytes];
     if (venus_request_encode(&framed,header,sizeof header)!=RingOk) return RingInvalid;
+    uint64_t deadline=0,started=0;
+    venus_ring_status_t status=RingOk;
+    if (absolute) {
+        if (cancel && atomic_load_explicit(cancel,memory_order_acquire))
+            return poison(client,RingCancelled);
+        started=venus_tcp_now_ms();
+        if (!started || started>UINT64_MAX-client->timeout_ms)
+            return poison(client,RingClosed);
+        deadline=started+client->timeout_ms;
+        if (deadline_ms<deadline) deadline=deadline_ms;
+        if (started>=deadline) return poison(client,RingTimeout);
+    }
     if (length) memcpy(client->tx,input,length);
-    uint64_t deadline=0;
-    venus_ring_status_t status=deadline_after(client->timeout_ms,&deadline);
-    if (status!=RingOk) return poison(client,status);
+    if (!absolute) {
+        status=deadline_after(client->timeout_ms,&deadline);
+        if (status!=RingOk) return poison(client,status);
+    }
     status=venus_tcp_socket_send(&client->socket,header,sizeof header,deadline,cancel);
     if (status!=RingOk) return poison(client,status);
     status=venus_tcp_socket_send(&client->socket,client->tx,length,deadline,cancel);
@@ -130,13 +145,40 @@ venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
     if (decoded.payload_bytes>capacity) return poison(client,RingCorrupt);
     status=receive_exact(&client->socket,client->rx,decoded.payload_bytes,deadline,cancel);
     if (status!=RingOk) return poison(client,status);
-    ++client->next_sequence;
     status=operation_status(decoded.status);
+    if (absolute && status!=RingCorrupt && status!=RingClosed &&
+        status!=RingCancelled && status!=RingTimeout) {
+        if (cancel && atomic_load_explicit(cancel,memory_order_acquire))
+            return poison(client,RingCancelled);
+        const uint64_t completed=venus_tcp_now_ms();
+        if (!completed || completed<started) return poison(client,RingClosed);
+        if (completed>=deadline) return poison(client,RingTimeout);
+    }
+    ++client->next_sequence;
     if (status==RingCorrupt || status==RingClosed || status==RingCancelled || status==RingTimeout)
         return poison(client,status);
     if (decoded.payload_bytes) memcpy(output,client->rx,decoded.payload_bytes);
     *response=decoded;
     return status;
+}
+venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
+    const venus_request_t *request,const void *input,size_t length,
+    venus_request_t *response,void *output,size_t capacity,const _Atomic uint32_t *cancel)
+{
+    return exchange_common(client,request,input,length,response,output,capacity,0,0,cancel);
+}
+venus_ring_status_t venus_tcp_client_exchange_until_cancel(venus_tcp_client_t *client,
+    const venus_request_t *request,const void *input,size_t length,
+    venus_request_t *response,void *output,size_t capacity,uint64_t deadline_ms,
+    const _Atomic uint32_t *cancel)
+{
+    return exchange_common(client,request,input,length,response,output,capacity,deadline_ms,1,cancel);
+}
+venus_ring_status_t venus_tcp_client_exchange_until(void *context,
+    const venus_request_t *request,const void *input,size_t length,
+    venus_request_t *response,void *output,size_t capacity,uint64_t deadline_ms)
+{
+    return venus_tcp_client_exchange_until_cancel(context,request,input,length,response,output,capacity,deadline_ms,NULL);
 }
 venus_ring_status_t venus_tcp_client_exchange(void *context,const venus_request_t *request,
     const void *input,size_t length,venus_request_t *response,void *output,size_t capacity)

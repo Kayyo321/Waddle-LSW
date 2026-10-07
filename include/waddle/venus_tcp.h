@@ -272,6 +272,50 @@ venus_ring_status_t venus_tcp_client_exchange(void *context, const venus_request
 venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
     const venus_request_t *request, const void *input, size_t length,
     venus_request_t *response, void *output, size_t capacity, const _Atomic uint32_t *cancel);
+/** @brief Exchange with one absolute local deadline and the immutable per-call cap.
+ * @param[in,out] context Nonnull initialized exclusive client, borrowed for call.
+ * @param[in] request Nonnull immutable sequence-zero admitted request.
+ * @param[in] input Nullable only for length zero, borrowed private input[length].
+ * @param[in] length Exact payload extent, at most8192.
+ * @param[out] response Nonnull disjoint private record, zero after alias validation
+ * until a complete validated ordinary response arrives before the deadline.
+ * @param[out] output Nullable only for capacity zero; unchanged on error or late
+ * completion, otherwise complete private output[capacity]; may alias input.
+ * @param[in] capacity Exact successful reply extent, at most4096; zero otherwise.
+ * @param[in] deadline_ms Nonzero absolute value from venus_tcp_now_ms; local only,
+ * never transmitted or retained. Effective deadline is min(value,now+client cap).
+ * @return Ordinary receiver status; zero deadline/local input errors are Invalid
+ * before I/O; terminal cancellation/clock/expiry/wire/network failures are sticky.
+ * @note Sole owner thread, no reentry, pointer retention, heap or owner transfer.
+ * Same fixed deadline covers every partial operation. A final clock check rejects
+ * zero/backward/expired time before result/sequence publication, including empty
+ * replies. No argument overlaps owner/request/response. Closure does not prove
+ * host retirement; caller retains receiver ownership until verified retirement.
+ */
+venus_ring_status_t venus_tcp_client_exchange_until(void *context,
+    const venus_request_t *request,const void *input,size_t length,
+    venus_request_t *response,void *output,size_t capacity,uint64_t deadline_ms);
+/** @brief Absolute exchange with active-call cancellation, without budget renewal.
+ * @param[in,out] client Nonnull initialized exclusive client, borrowed for call.
+ * @param[in] request Nonnull immutable sequence-zero admitted request.
+ * @param[in] input Nullable only for length zero, borrowed private input[length].
+ * @param[in] length Exact payload extent, at most8192.
+ * @param[out] response Nonnull disjoint private record, zero after alias validation
+ * until a complete validated ordinary response before deadline/cancellation.
+ * @param[out] output Nullable only for capacity zero, private output[capacity],
+ * unchanged on errors; may alias input but never owner/request/response.
+ * @param[in] capacity Exact successful reply extent, at most4096; zero otherwise.
+ * @param[in] deadline_ms Nonzero local absolute venus_tcp_now_ms value, not retained.
+ * @param[in] cancel Nullable acquire-read/release-set atomic flag, borrowed for call.
+ * @return Same absolute exchange status; cancellation after local validation beats
+ * clock/expiry checks and is checked again before ordinary result publication.
+ * @note Sole owner thread; no heap, reentry, retained pointers or implicit host
+ * cancellation. Client cap remains immutable; receiver retirement is separate.
+ */
+venus_ring_status_t venus_tcp_client_exchange_until_cancel(venus_tcp_client_t *client,
+    const venus_request_t *request,const void *input,size_t length,
+    venus_request_t *response,void *output,size_t capacity,uint64_t deadline_ms,
+    const _Atomic uint32_t *cancel);
 /** @brief Await actual host retirement after successful quiescent ICD unbind.
  * @param[in,out] client Nonnull live exclusive owner, application callbacks stopped.
  * @param[in] cancel Nullable release-set atomic flag borrowed through call.

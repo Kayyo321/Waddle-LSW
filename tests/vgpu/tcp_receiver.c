@@ -22,11 +22,30 @@ typedef enum peer_mode_t { PeerNormal,PeerHelloPartial,PeerHelloBad,PeerNonceBad
     PeerResponseCorrupt,PeerResponseClosed,PeerResponseCancelled,PeerResponseTimeout,
     PeerRetireBad,PeerRetireMismatch,PeerRetirePartial,PeerRead,PeerWriteAlias,
     PeerMaxSequence,PeerCancel,PeerDeadline,PeerClose,PeerLocalInvalid,
-    PeerSendFailure,PeerPayloadFailure,PeerRetireFailure,PeerClockExchange,PeerClockRetire } peer_mode_t;
+    PeerSendFailure,PeerPayloadFailure,PeerRetireFailure,PeerClockExchange,PeerClockRetire,
+    PeerUntilNormal,PeerUntilRead,PeerUntilDeadline,PeerUntilCap,PeerUntilExpired,
+    PeerUntilPartialHeader,PeerUntilPartialPayload,PeerUntilReuse,PeerUntilCancel,
+    PeerUntilClock,PeerUntilOverflow,PeerUntilPostClock,PeerUntilPostCancel,PeerUntilPostLate,PeerUntilPostBackwards } peer_mode_t;
 typedef struct peer_t { venus_tcp_socket_t listener; peer_mode_t mode; uint32_t port; } peer_t;
 #ifdef TcpPeerFaultTests
 /* Per-thread one-shot native errors: peer OS operations never consume client faults. */
 static _Thread_local unsigned send_failure,send_count,clock_failure,random_failure,shutdown_failure;
+static _Thread_local unsigned completion_fault,completion_bytes;
+static _Thread_local _Atomic uint32_t *completion_cancel;
+static _Thread_local uint64_t completion_deadline,clock_override;
+ssize_t __real_recv(int fd,void *bytes,size_t length,int flags);
+ssize_t __wrap_recv(int fd,void *bytes,size_t length,int flags)
+{
+    ssize_t count=__real_recv(fd,bytes,length,flags);
+    if (count>0 && completion_bytes) {
+        assert((size_t)count<=completion_bytes);
+        completion_bytes-=(unsigned)count;
+        if (!completion_bytes) {
+            if (completion_fault==2) atomic_store_explicit(completion_cancel,1,memory_order_release);
+        }
+    }
+    return count;
+}
 ssize_t __real_send(int fd,const void *bytes,size_t length,int flags);
 ssize_t __wrap_send(int fd,const void *bytes,size_t length,int flags)
 {
@@ -44,6 +63,20 @@ int __real_clock_gettime(clockid_t id,struct timespec *now);
 int __wrap_clock_gettime(clockid_t id,struct timespec *now)
 {
     if (clock_failure) { clock_failure=0; errno=EIO; return -1; }
+    if (clock_override) {
+        uint64_t value=clock_override;clock_override=0;
+        now->tv_sec=(time_t)(value/1000);now->tv_nsec=(long)(value%1000)*1000000;
+        return 0;
+    }
+    if (completion_fault && !completion_bytes) {
+        unsigned fault=completion_fault;completion_fault=0;
+        if (fault==1) {errno=EIO;return -1;}
+        if (fault==3 || fault==4) {
+            uint64_t value=fault==3 ? completion_deadline : 1;
+            now->tv_sec=(time_t)(value/1000);now->tv_nsec=(long)(value%1000)*1000000;
+            return 0;
+        }
+    }
     return __real_clock_gettime(id,now);
 }
 int __real_shutdown(int fd,int direction);
@@ -102,7 +135,15 @@ static void *peer_run(void *argument)
     if (peer->mode==PeerAckBad) bytes[24]=1;
     send_bytes(&socket,bytes,peer->mode==PeerAckPartial ? 4 : 32);
     if (peer->mode>=PeerAckPartial && peer->mode<=PeerAckMismatch) goto cleanup;
-    if (peer->mode==PeerCancel || peer->mode==PeerDeadline || peer->mode>=PeerSendFailure) { sleep_ms(100); goto cleanup; }
+    if (peer->mode==PeerCancel || peer->mode==PeerDeadline || (peer->mode>=PeerSendFailure && peer->mode<=PeerClockRetire) ||
+        peer->mode==PeerUntilDeadline || peer->mode==PeerUntilCap) { sleep_ms(100); goto cleanup; }
+    if (peer->mode==PeerUntilExpired || peer->mode==PeerUntilCancel ||
+        peer->mode==PeerUntilClock || peer->mode==PeerUntilOverflow) {
+        size_t received=0;
+        assert(venus_tcp_socket_receive(&socket,bytes,64,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed &&
+            !received && socket.received_eof);
+        goto cleanup;
+    }
     if (peer->mode==PeerClose || peer->mode==PeerLocalInvalid) goto retire;
     receive_bytes(&socket,bytes,64); venus_request_t request;
     assert(venus_request_decode(&request,bytes,64)==RingOk);
@@ -120,15 +161,31 @@ static void *peer_run(void *argument)
     if (peer->mode==PeerResponseTooLong) response.payload_bytes=9;
     assert(venus_request_encode(&response,bytes,64)==RingOk);
     if (peer->mode==PeerResponseBad) bytes[56]=1;
+    if (peer->mode==PeerUntilPartialHeader) {
+        send_bytes(&socket,bytes,8);sleep_ms(200);goto cleanup;
+    }
+    if (peer->mode==PeerUntilReuse) sleep_ms(40);
     send_bytes(&socket,bytes,peer->mode==PeerResponsePartial ? 3 : 64);
     if (peer->mode==PeerResponsePayloadPartial) { send_bytes(&socket,payload,3); goto cleanup; }
+    if (peer->mode==PeerUntilPartialPayload) {
+        send_bytes(&socket,(const uint8_t[]){11,12,13},3);sleep_ms(200);goto cleanup;
+    }
     if (response.payload_bytes && peer->mode!=PeerResponseTooLong) {
         for (size_t index=0;index<response.payload_bytes;++index) payload[index]=(uint8_t)(index+11);
         send_bytes(&socket,payload,response.payload_bytes);
     }
     if (peer->mode>=PeerResponsePartial && peer->mode<=PeerResponseTooLong) goto cleanup;
     if (peer->mode>=PeerResponseCorrupt && peer->mode<=PeerResponseTimeout) goto cleanup;
-    if (peer->mode==PeerMaxSequence) goto cleanup;
+    if (peer->mode==PeerMaxSequence || peer->mode>=PeerUntilPostClock) goto cleanup;
+    if (peer->mode==PeerUntilReuse) {
+        receive_bytes(&socket,bytes,64);
+        assert(venus_request_decode(&request,bytes,64)==RingOk && request.sequence==2 && !request.payload_bytes);
+        response=(venus_request_t){.kind=request.kind,.sequence=2,.direction=1};
+        assert(venus_request_encode(&response,bytes,64)==RingOk);
+        sleep_ms(100);
+        venus_ring_status_t sent=venus_tcp_socket_send(&socket,bytes,64,venus_tcp_now_ms()+1000,NULL);
+        assert(sent==RingOk || sent==RingClosed);goto cleanup;
+    }
 retire:
     { size_t received=0; assert(venus_tcp_socket_receive(&socket,bytes,64,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed && !received); }
     assert(venus_tcp_ack_encode(hello.session+(peer->mode==PeerRetireMismatch),bytes,32)==RingOk);
@@ -144,7 +201,7 @@ cleanup:
 }
 static void zero_owner(const venus_tcp_client_t *client)
 { const uint8_t *bytes=(const void *)client; for (size_t index=0;index<sizeof *client;++index) assert(!bytes[index]); }
-static void cycle(peer_mode_t mode)
+static void cycle(peer_mode_t mode,int timed)
 {
 #ifdef TcpPeerFaultTests
     send_count=0;
@@ -165,6 +222,35 @@ static void cycle(peer_mode_t mode)
     assert(client.capabilities.wire_format_version==1 && client.capabilities.vk_xml_version==VenusPinnedXmlVersion);
     venus_request_t request={.kind=RequestPoll},response={0}; uint8_t output[8]; memset(output,0xa5,8);
     if (mode==PeerLocalInvalid) {
+        const venus_tcp_client_t before=client;
+        assert(venus_tcp_client_exchange_until(&client,&request,NULL,0,&response,NULL,0,0)==RingInvalid);
+        assert(!memcmp(&client,&before,sizeof client));
+        _Atomic uint32_t cancelled=1;
+        assert(venus_tcp_client_exchange_until_cancel(&client,&request,NULL,0,&response,NULL,0,0,&cancelled)==RingInvalid);
+        assert(!memcmp(&client,&before,sizeof client));
+        assert(venus_tcp_client_exchange_until(&client,&request,NULL,0,&request,NULL,0,1)==RingInvalid);
+        assert(!memcmp(&client,&before,sizeof client));
+        /* Invalid encoded fields beat cancellation/expired time without touching
+         * the native clock, socket, staging or sequence; the peer still retires. */
+        for (unsigned field=0;field<3;++field) {
+            venus_request_t malformed=request;
+            if (!field) malformed.flags=1;
+            else if (field==1) malformed.status=RequestAgain;
+            else malformed.resource_id=1;
+            memset(&response,0xa5,sizeof response);
+#ifdef TcpPeerFaultTests
+            clock_failure=1;
+            unsigned sent=send_count;
+#endif
+            assert(venus_tcp_client_exchange_until_cancel(&client,&malformed,NULL,0,
+                &response,NULL,0,1,&cancelled)==RingInvalid);
+            assert(!memcmp(&client,&before,sizeof client));
+            const venus_request_t Zero={0};assert(!memcmp(&response,&Zero,sizeof Zero));
+#ifdef TcpPeerFaultTests
+            assert(clock_failure==1 && send_count==sent);
+            clock_failure=0;
+#endif
+        }
         assert(venus_tcp_client_exchange(NULL,&request,NULL,0,&response,NULL,0)==RingInvalid);
         assert(venus_tcp_client_exchange(&client,NULL,NULL,0,&response,NULL,0)==RingInvalid);
         assert(venus_tcp_client_exchange(&client,&request,NULL,0,NULL,NULL,0)==RingInvalid);
@@ -197,28 +283,62 @@ static void cycle(peer_mode_t mode)
         assert(client.next_sequence==1 && client.lost==RingOk); goto retirement;
     }
     if (mode==PeerClose) { venus_tcp_client_free(&client); goto cleanup; }
-    if (mode==PeerRead || mode==PeerResponsePayloadPartial || mode==PeerResponseTooLong) request=(venus_request_t){.kind=RequestRead,.resource_id=2,.argument_one=8};
+    if (mode==PeerRead || mode==PeerResponsePayloadPartial || mode==PeerResponseTooLong || mode==PeerUntilRead || mode==PeerUntilPartialPayload) request=(venus_request_t){.kind=RequestRead,.resource_id=2,.argument_one=8};
     if (mode==PeerWriteAlias || mode==PeerPayloadFailure) request=(venus_request_t){.kind=RequestWrite,.resource_id=2,.argument_one=8,.payload_bytes=8};
     if (mode==PeerMaxSequence) client.next_sequence=UINT64_MAX-1;
-    if (mode==PeerDeadline) client.timeout_ms=20;
+    if (mode==PeerDeadline || mode==PeerUntilCap) client.timeout_ms=20;
 #ifdef TcpPeerFaultTests
     if (mode==PeerSendFailure) send_failure=send_count+1;
     if (mode==PeerPayloadFailure) send_failure=send_count+2;
     if (mode==PeerClockExchange) clock_failure=1;
     if (mode==PeerRetireFailure || mode==PeerClockRetire) goto retirement;
 #endif
-    _Atomic uint32_t cancel=mode==PeerCancel;
+    _Atomic uint32_t cancel=mode==PeerCancel || mode==PeerUntilCancel;
     uint8_t input[8]={1,2,3,4,5,6,7,8};
-    status=venus_tcp_client_exchange_cancel(&client,&request,request.payload_bytes ? input : NULL,request.payload_bytes,&response,
-        request.kind==RequestRead ? output : NULL,request.kind==RequestRead ? 8 : 0,&cancel);
+    uint64_t until=venus_tcp_now_ms()+1000;
+    if (mode==PeerUntilDeadline) until=venus_tcp_now_ms()+20;
+    if (mode==PeerUntilPartialHeader || mode==PeerUntilPartialPayload || mode==PeerUntilReuse) until=venus_tcp_now_ms()+100;
+    if (mode==PeerUntilExpired) until=venus_tcp_now_ms()-1;
+#ifdef TcpPeerFaultTests
+    if (mode==PeerUntilClock) clock_failure=1;
+    if (mode==PeerUntilOverflow) clock_override=UINT64_MAX;
+    if (mode>=PeerUntilPostClock) {
+        completion_fault=(unsigned)(mode-PeerUntilPostClock)+1;
+        completion_bytes=64;completion_cancel=&cancel;completion_deadline=until;
+    }
+#endif
+    status=mode==PeerUntilNormal ? venus_tcp_client_exchange_until(&client,&request,NULL,0,&response,NULL,0,until) :
+        mode>=PeerUntilNormal || timed ? venus_tcp_client_exchange_until_cancel(&client,&request,NULL,0,&response,
+            request.kind==RequestRead ? output : NULL,request.kind==RequestRead ? 8 : 0,until,&cancel) :
+        venus_tcp_client_exchange_cancel(&client,&request,request.payload_bytes ? input : NULL,request.payload_bytes,&response,
+            request.kind==RequestRead ? output : NULL,request.kind==RequestRead ? 8 : 0,&cancel);
+    if (mode==PeerUntilReuse) {
+        assert(status==RingOk && client.next_sequence==2 && client.timeout_ms==1000);
+        status=venus_tcp_client_exchange_until(&client,&request,NULL,0,&response,NULL,0,until);
+    }
+#ifdef TcpPeerFaultTests
+    if (mode==PeerUntilPostCancel) completion_fault=0;
+    if (mode==PeerUntilClock) assert(!clock_failure);
+    if (mode==PeerUntilOverflow) assert(!clock_override);
+    if (mode>=PeerUntilPostClock) assert(!completion_bytes && !completion_fault);
+#endif
     static const venus_ring_status_t Statuses[]={RingAgain,RingInvalid,RingLimit,RingCorrupt,RingClosed,RingCancelled,RingTimeout};
-    venus_ring_status_t expected=mode>=PeerSendFailure ? RingClosed : mode==PeerCancel ? RingCancelled : mode==PeerDeadline ? RingTimeout :
+    venus_ring_status_t expected=mode==PeerUntilPostClock || mode==PeerUntilPostBackwards ||
+        mode==PeerUntilClock || mode==PeerUntilOverflow ? RingClosed :
+        mode==PeerUntilPostCancel || mode==PeerUntilCancel ? RingCancelled : mode==PeerUntilPostLate ? RingTimeout :
+        mode==PeerUntilNormal || mode==PeerUntilRead ? RingOk : mode>=PeerUntilDeadline ? RingTimeout :
+        mode>=PeerSendFailure ? RingClosed : mode==PeerCancel ? RingCancelled : mode==PeerDeadline ? RingTimeout :
         mode>=PeerResponsePartial && mode<=PeerResponseTooLong ? RingCorrupt :
         mode>=PeerResponseAgain && mode<=PeerResponseTimeout ? Statuses[mode-PeerResponseAgain] : RingOk;
     assert(status==expected);
-    if (mode==PeerRead) for (size_t index=0;index<8;++index) assert(output[index]==index+11);
+    if (mode==PeerRead || mode==PeerUntilRead) for (size_t index=0;index<8;++index) assert(output[index]==index+11);
     else for (size_t index=0;index<8;++index) assert(output[index]==0xa5);
     if (expected==RingCorrupt || expected==RingClosed || expected==RingCancelled || expected==RingTimeout) {
+        if (mode>=PeerUntilNormal) {
+            assert(client.next_sequence==(mode==PeerUntilReuse ? 2u : 1u));
+            const venus_request_t Zero={0};assert(!memcmp(&response,&Zero,sizeof Zero));
+            assert(client.timeout_ms==(mode==PeerUntilCap ? 20u : 1000u));
+        }
         assert(!client.socket.initialized && client.lost==expected);
         assert(venus_tcp_client_exchange(&client,&request,NULL,0,&response,NULL,0)==expected);
         assert(venus_tcp_client_retire(&client,NULL)==expected); goto cleanup;
@@ -230,9 +350,13 @@ retirement:
     if (mode==PeerClockRetire) clock_failure=1;
 #endif
     status=venus_tcp_client_retire(&client,NULL);
-    assert(status==(mode>=PeerRetireFailure ? RingClosed : mode>=PeerRetireBad && mode<=PeerRetirePartial ? RingCorrupt : RingOk));
+    assert(status==(mode>=PeerRetireFailure && mode<=PeerClockRetire ? RingClosed : mode>=PeerRetireBad && mode<=PeerRetirePartial ? RingCorrupt : RingOk));
     assert(!client.socket.initialized && client.session);
 cleanup:
+#ifdef TcpPeerFaultTests
+    completion_cancel=NULL;completion_deadline=0;
+    assert(!completion_fault && !completion_bytes && !clock_override);
+#endif
     venus_tcp_client_free(&client); venus_tcp_client_free(&client); zero_owner(&client);
 #ifdef _WIN32
     assert(WaitForSingleObject(thread,5000)==WAIT_OBJECT_0); assert(CloseHandle(thread));
@@ -266,11 +390,14 @@ static void invalid(void)
 /** @brief Run synthetic-peer ownership/framing regressions; zero return means units pass only. */
 int main(void)
 {
-    invalid(); cycle(PeerNormal); sleep_ms(1000); unsigned baseline=resource_count();
+    invalid(); cycle(PeerNormal,0); sleep_ms(1000); unsigned baseline=resource_count();
     for (unsigned iteration=0;iteration<8;++iteration) {
-        for (peer_mode_t mode=PeerNormal;mode<=PeerLocalInvalid;++mode) cycle(mode);
+        for (peer_mode_t mode=PeerNormal;mode<=PeerLocalInvalid;++mode) cycle(mode,0);
+        for (peer_mode_t mode=PeerUntilNormal;mode<=PeerUntilCancel;++mode) cycle(mode,0);
+        for (peer_mode_t mode=PeerResponseAgain;mode<=PeerResponseTimeout;++mode) cycle(mode,1);
 #ifdef TcpPeerFaultTests
-        for (peer_mode_t mode=PeerSendFailure;mode<=PeerClockRetire;++mode) cycle(mode);
+        for (peer_mode_t mode=PeerSendFailure;mode<=PeerClockRetire;++mode) cycle(mode,0);
+        for (peer_mode_t mode=PeerUntilClock;mode<=PeerUntilPostBackwards;++mode) cycle(mode,0);
 #endif
         uint64_t deadline=venus_tcp_now_ms()+1000;
         while (resource_count()!=baseline && venus_tcp_now_ms()<deadline) sleep_ms(1);
