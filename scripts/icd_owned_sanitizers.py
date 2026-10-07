@@ -11,6 +11,7 @@ All original compiler guards, lifetime hints, panic paths and initializers survi
 No suppression, fault injection, source rewrite or intentionally failing variant.
 """
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -24,6 +25,8 @@ if not __debug__:
 MaxIrBytes = 256 * 1024 * 1024
 # Immutable recursion ceiling; every source stays borrowed within one synchronous gate.
 MaxSourceModules = 16
+# Exact current ICD recursive import contract; ordinary codec inventories remain generic.
+IcdEmbeddedSourceNames = ('venus_compute_state.zig', 'venus_compute_wire.zig', 'venus_descriptor_wire.zig', 'venus_device_native.zig', 'venus_device_wire.zig', 'venus_features_native.zig', 'venus_features_wire.zig', 'venus_graphics_command_wire.zig', 'venus_graphics_pipeline_wire.zig', 'venus_graphics_state.zig', 'venus_graphics_wire.zig', 'venus_icd.zig', 'venus_icd_profiles.zig', 'venus_render_wire.zig')
 # Exact non-C helper; only an absent native definition can be reported unreachable.
 NativeBatchSource = Path("src/vgpu/venus_features_native.zig").resolve()
 NativeBatchSignature = "pub fn publish_batch(chain: *const chain_t, nodes: []const node_t) !void {"
@@ -89,13 +92,29 @@ def source_inventory(source):
         inventories[current] = {'functions': functions, 'excluded': excluded, 'test_lines': test_lines,
                                 'source_sha256': hashlib.sha256(code.encode()).hexdigest(),
                                 'fixture_boundary': len(production.splitlines()) + 1, 'lazy_native_declarations': lazy_native}
-        for name in re.findall(r'@import\("([^"\n]+)"\)', code):
+        imports = re.findall(r'@import\("([^"\n]+)"\)', code)
+        assert len(imports) == code.count('@import('), 'unsupported source import grammar'
+        for name in imports:
             if name in ('std', 'builtin'):
                 continue
             assert re.fullmatch(r'venus_\w+\.zig', name), 'unsupported source import: ' + name
             imported = (current.parent / name).resolve()
             assert imported.parent == source.parent
             pending.append(imported)
+    return inventories
+
+
+def icd_source_inventory(source):
+    """[in] Borrow exact ICD root; [out] own fourteen-module immutable inventory.
+
+    Generic inventory preserves all original source/function/guard ownership rules.
+    Require exact canonical sibling names; no minimum/count-only admission, extra
+    import or new native lazy exception. Read-only synchronous descriptor lifetime.
+    """
+    assert source.resolve().name == 'venus_icd.zig'
+    inventories = source_inventory(source)
+    assert {path.name for path in inventories} == set(IcdEmbeddedSourceNames)
+    assert len(inventories) == len(IcdEmbeddedSourceNames) == 14
     return inventories
 
 
@@ -251,16 +270,19 @@ def main():
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path)
     arguments = parser.parse_args()
-    source, output = arguments.source, arguments.output.resolve()
+    source, artifact_root = arguments.source, arguments.output.resolve()
     assert source.name == 'venus_icd.zig', 'additional module integration requires its own dependency contract'
-    output.mkdir(parents=True, exist_ok=True)
-    inventories = source_inventory(source)
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    output = artifact_root / ('run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
+    output.mkdir()
+    inventories = icd_source_inventory(source)
     warnings = ['-Wall', '-Wextra', '-Wpedantic', '-Werror']
     includes = ['-Iinclude', '-Itests/vgpu/encoder', '-Ibuild/venus_protocol',
                 '-Isubmodules/venus_protocol/tests', '-Isubmodules/venus_protocol/include']
     dependencies = ['build/venus_capabilities.o', 'build/venus_command.o', 'build/venus_objects.o', 'build/venus_instance_wire.o',
                     'build/venus_query_wire.o', 'build/venus_values.o', 'build/venus_values_oracle.o',
-                    'build/venus_features_query_oracle.o', 'build/venus_features_reply_oracle.o']
+                    'build/venus_features_query_oracle.o', 'build/venus_features_reply_oracle.o',
+                    'build/venus_device_wire_oracle.o']
     oracles = ['build/venus_render_wire_oracle.o', 'build/venus_descriptor_wire_oracle.o',
                'build/venus_compute_wire_oracle.o', 'build/venus_graphics_wire_oracle.o',
                'build/venus_graphics_pipeline_wire_oracle.o', 'build/venus_graphics_command_wire_oracle.o']
