@@ -37,3 +37,8 @@ vgpu-query_wire-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/i
 .PHONY: vgpu-values-owned-sanitizers
 vgpu-values-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_values.zig tests/vgpu/values.c include/waddle/venus_values.h
 	python3 scripts/icd_dependency_sanitizers.py values build/icd_dependency_safety/values
+
+# Each phony gate owns a distinct private output directory; generated headers
+# are required by read-only discovery and are never make prerequisites here.
+.PHONY: vgpu-icd-dependency-sanitizers
+vgpu-icd-dependency-sanitizers: vgpu-capabilities-owned-sanitizers vgpu-command-owned-sanitizers vgpu-objects-owned-sanitizers vgpu-instance_wire-owned-sanitizers vgpu-query_wire-owned-sanitizers vgpu-values-owned-sanitizers
