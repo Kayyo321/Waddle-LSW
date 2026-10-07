@@ -346,6 +346,10 @@ typedef struct venus_tcp_server_t {
     uint32_t eof; /**< One for clean pre-header EOF, socket retained for actual retirement Ack. */
     venus_ring_status_t lost; /**< Sticky terminal result, RingOk while usable. */
     uint8_t nonce[16]; /**< Copied client nonce echoed once; no borrowed pointer. */
+    venus_request_t last_request; /**< Copied last fully validated forwarded envelope; no payload or pointers. Zero before first request; sole server thread writes. */
+    uint64_t forwarded_requests; /**< Attempt count bounded by the nonwrapping outer sequence; no effect on protocol behavior. */
+    uint64_t forwarded_reads; /**< Attempted RequestRead count, bounded by forwarded_requests; diagnostics only, no ownership. */
+    uint32_t last_opcode; /**< Most recent command opcode parsed from a complete178 reply-prefix packet; zero before one. No payload retained. */
     uint8_t tx[VenusTcpMaxCommandBytes]; /**< Private acquired receiver-command staging. */
     uint8_t rx[VenusTcpMaxReplyBytes]; /**< Private actual receiver-response staging. */
 } venus_tcp_server_t;

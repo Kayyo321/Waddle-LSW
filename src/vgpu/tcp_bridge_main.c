@@ -86,6 +86,18 @@ static _Noreturn void retain_lost_reaping_proof(void)
     fputs("TCP controller retains views after lost worker reaping proof\n",stderr);
     for (;;) { struct timespec pause={.tv_sec=1}; (void)nanosleep(&pause,NULL); }
 }
+/* Borrow scalar-only diagnostics before owner scrubbing; no tokens/payload bytes. */
+static void report_forwarding(const venus_tcp_server_t *server,uint64_t started,const char *reason)
+{
+    uint64_t now=venus_tcp_now_ms();
+    const venus_request_t *request=&server->last_request;
+    fprintf(stderr,"TCP forwarding %s elapsed_ms=%" PRIu64 " requests=%" PRIu64
+        " reads=%" PRIu64 " opcode=%u kind=%u flags=%u resource=%u"
+        " offset=%" PRIu64 " extent=%" PRIu64 " payload=%u\n",
+        reason,now>=started ? now-started : 0,server->forwarded_requests,
+        server->forwarded_reads,server->last_opcode,request->kind,request->flags,
+        request->resource_id,request->argument_zero,request->argument_one,request->payload_bytes);
+}
 static int retire_worker(venus_worker_t *worker,venus_session_t *session,
     venus_channel_t *channel,int orderly,int *exit_status)
 {
@@ -184,7 +196,18 @@ int main(int argc,char **argv)
     status=venus_tcp_server_negotiate(&server,&guest,capabilities,&controller_cancel); if (status!=RingOk) goto cleanup;
     status=timer_until(process_deadline); if (status!=RingOk) goto cleanup;
     stage="actual forwarding";
-    while ((status=venus_tcp_server_step(&server,&guest,&controller_cancel))==RingOk) {}
+    const char *diagnostic_option=getenv("WADDLE_TCP_DIAGNOSTICS");
+    int diagnostics=diagnostic_option && strcmp(diagnostic_option,"1")==0;
+    uint64_t last_report=venus_tcp_now_ms();
+    while ((status=venus_tcp_server_step(&server,&guest,&controller_cancel))==RingOk) {
+        if (diagnostics) {
+            uint64_t now=venus_tcp_now_ms();
+            if (now>=last_report && now-last_report>=1000) {
+                report_forwarding(&server,started,"progress"); last_report=now;
+            }
+        }
+    }
+    if (diagnostics || status!=RingClosed) report_forwarding(&server,started,"finished");
     orderly=status==RingClosed && server.eof && server.socket.received_eof;
     if (orderly) status=RingOk;
 cleanup:

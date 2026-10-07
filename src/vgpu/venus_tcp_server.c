@@ -127,6 +127,13 @@ venus_ring_status_t venus_tcp_server_step(venus_tcp_server_t *server,
     uint64_t now=venus_tcp_now_ms();
     if (!now) return poison(server,RingClosed);
     if (now>=deadline) return poison(server,RingTimeout);
+    server->last_request=request;
+    ++server->forwarded_requests;
+    if (request.kind==RequestRead) ++server->forwarded_reads;
+    if (request.kind==RequestSubmit && request.payload_bytes>=44 &&
+        server->tx[0]==178 && server->tx[1]==0 && server->tx[2]==0 && server->tx[3]==0)
+        server->last_opcode=(uint32_t)server->tx[36] | (uint32_t)server->tx[37]<<8 |
+            (uint32_t)server->tx[38]<<16 | (uint32_t)server->tx[39]<<24;
     uint64_t outer_sequence=request.sequence; request.sequence=0;
     size_t capacity=(request.kind==RequestReply || request.kind==RequestRead) ? (size_t)request.argument_one : 0;
     status=venus_guest_exchange_timeout(guest,&request,server->tx,request.payload_bytes,

@@ -18,7 +18,7 @@
 int venus_tcp_wire_oracle(unsigned kind,uint8_t *output,size_t capacity);
 typedef enum server_mode_t { Normal,TokenBad,HelloBad,HelloPartial,ProfileBad,ProfilePartial,
     CapsBad,CapsUnsupported,CapsMismatch,HeaderPartial,HeaderBad,SequenceBad,SequenceMax,
-    CommandTooLong,PayloadPartial,ReadFull,WriteFull,ReplyAgain,ReplyInvalid,ReplyLimit,
+    CommandTooLong,PayloadPartial,ReadFull,WriteFull,CommandOpcode,ReplyAgain,ReplyInvalid,ReplyLimit,
     ReplyCorrupt,ReplyClosed,ReplyCancelled,ReplyTimeout,GuestNoResponse,GuestFalseSuccess,
     GuestBadResponse,GuestStatusMismatch,GuestNoDirection,GuestNoSequence,GuestOversized,StepCancel,StepTimeout,LocalInvalid,
     MaxLast,AuthRandomFail,AuthClockFail,HelloSendFail,AckSendFail,HeaderSendFail,
@@ -89,6 +89,7 @@ venus_ring_status_t venus_guest_exchange_timeout(venus_guest_t *guest,const venu
     if (mode==GuestNoDirection) { response->direction=0; return RingOk; }
     if (mode==GuestNoSequence) { response->sequence=0; return RingOk; }
     if (mode==GuestOversized) { response->payload_bytes=4097; return RingOk; }
+    if (request->kind==RequestSubmit) { assert(length==44 && ((const uint8_t *)input)[0]==178 && ((const uint8_t *)input)[36]==173); response->argument_zero=99; }
     if (request->kind==RequestWrite) { assert(length==4096); for (size_t index=0;index<length;++index) assert(((const uint8_t *)input)[index]==(uint8_t)(index*13+7)); }
     if (request->kind==RequestRead) { assert(capacity==4096); response->payload_bytes=4096; for (size_t index=0;index<capacity;++index) ((uint8_t *)output)[index]=(uint8_t)(index*17+9); }
     return RingOk;
@@ -164,6 +165,10 @@ static void *server_run(void *argument)
     assert(status==expected);
     if (expected!=RingOk) { if (server.socket.initialized || server.lost!=expected) { fprintf(stderr,"Unexpected retained mode%d live%u lost%d eof%u\n",mode,server.socket.initialized,server.lost,server.eof); fflush(stderr); } assert(!server.socket.initialized && server.lost==expected); assert(venus_tcp_server_step(&server,&guest,NULL)==expected); goto cleanup; }
     assert(server.next_sequence==(mode==MaxLast ? UINT64_MAX : 2));
+    assert(server.forwarded_requests==1 && server.last_request.sequence==(mode==MaxLast ? UINT64_MAX-1 : 1));
+    assert(server.forwarded_reads==(mode==ReadFull ? 1u : 0u));
+    assert(server.last_opcode==(mode==CommandOpcode ? 173u : 0u));
+    assert(server.last_request.kind==(mode==ReadFull ? RequestRead : mode==WriteFull ? RequestWrite : mode==CommandOpcode ? RequestSubmit : RequestPoll));
 orderly:
     assert(venus_tcp_server_step(&server,&guest,NULL)==RingClosed && server.eof && server.socket.initialized);
     /* Standalone units acquired no receiver worker; clear all synthetic borrows before framing-only Ack. */
@@ -212,6 +217,7 @@ static void cycle(server_mode_t mode)
     venus_request_t request={.kind=RequestPoll,.sequence=mode==MaxLast ? UINT64_MAX-1 : 1};
     if (mode==ReadFull || mode==PayloadSendFail) request=(venus_request_t){.kind=RequestRead,.sequence=1,.resource_id=2,.argument_one=4096};
     if (mode==WriteFull || mode==PayloadPartial) request=(venus_request_t){.kind=RequestWrite,.sequence=1,.resource_id=2,.argument_one=4096,.payload_bytes=4096};
+    if (mode==CommandOpcode) request=(venus_request_t){.kind=RequestSubmit,.sequence=1,.payload_bytes=44};
     if (mode==CommandTooLong) request=(venus_request_t){.kind=RequestSubmit,.sequence=1,.payload_bytes=VenusTcpMaxCommandBytes+4};
     if (mode==SequenceBad) request.sequence=2;
     if (mode==SequenceMax) request.sequence=UINT64_MAX;
@@ -219,7 +225,7 @@ static void cycle(server_mode_t mode)
     if (mode==HeaderBad) bytes[63]=1;
     send_bytes(&socket,bytes,mode==HeaderPartial ? 5 : 64);
     if (mode>=HeaderPartial && mode<=CommandTooLong) goto cleanup;
-    if (request.payload_bytes) { for (size_t index=0;index<request.payload_bytes;++index) bytes[index]=(uint8_t)(index*13+7); send_bytes(&socket,bytes,mode==PayloadPartial ? 15 : request.payload_bytes); }
+    if (request.payload_bytes) { for (size_t index=0;index<request.payload_bytes;++index) bytes[index]=(uint8_t)(index*13+7); if (mode==CommandOpcode) { memset(bytes,0,44); bytes[0]=178; bytes[36]=173; } send_bytes(&socket,bytes,mode==PayloadPartial ? 15 : request.payload_bytes); }
     if (mode==PayloadPartial || (mode>=GuestNoResponse && mode<=GuestOversized) || mode==HeaderSendFail || mode==BeforeRpcClockFail || mode==BeforeRpcTimeout) goto cleanup;
     receive_bytes(&socket,bytes,64); venus_request_t response; assert(venus_request_decode(&response,bytes,64)==RingOk && response.sequence==request.sequence && response.kind==request.kind);
     assert(response.status==(mode>=ReplyAgain && mode<=ReplyTimeout ? WireStatuses[mode-ReplyAgain] : RequestSuccess));

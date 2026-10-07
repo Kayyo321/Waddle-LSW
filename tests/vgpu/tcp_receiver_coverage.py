@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Gate every production TCP peer owner line and branch at 90%, without exclusions."""
+from datetime import datetime, timezone
+import os
 import gzip
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
@@ -11,10 +12,10 @@ root = Path.cwd()
 owner = sys.argv[1] if len(sys.argv) > 1 else "client"
 assert owner in ("client", "server")
 module = "venus_tcp_" + owner
-output = root / ("build/coverage/vgpu/" + module)
-if output.exists():
-    shutil.rmtree(output)
-output.mkdir(parents=True)
+output = root / ("build/coverage/vgpu/" + module) / (
+    "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "-" + str(os.getpid()))
+output.mkdir(parents=True, exist_ok=False)
+print("preserved TCP peer coverage: " + str(output), flush=True)
 source = root / ("src/vgpu/" + module + ".c")
 strict = ["-D_GNU_SOURCE", "-Iinclude", "-std=c11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-O0", "-g"]
 for name in ("venus_request", "venus_capabilities", "venus_tcp_wire"):
