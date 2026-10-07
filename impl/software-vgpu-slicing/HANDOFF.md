@@ -314,3 +314,38 @@ real device removal and external UMDH audit. Reuse valid unchanged receipts, fix
 failures and rerun affected gates. TODO#3 now80% (implementation/basic acceptance),
 overall75%; final20% remains open and Time Ended TBD. Preserve original branch,
 old native PIDs, all snapshots/artifacts, untracked files and shared-index lease.
+
+
+### 2026-10-07 qualification continues at85%; preserve all state
+
+Resume current production7d26011 on feature/software-vgpu-slicing. da50fb7 makes
+lost-device command reset local-only: reset guest recording definitions while
+retaining native identities, tickets, hidden fences, uncertain in-flight refs and
+mapped exports until trusted retirement. Healthy reset still requires GPU proof
+and native ACK; submissions remain DEVICE_LOST after loss. Real875d512b verifies
+actual device/Present reset followed by full COM/DLL/bootstrap teardown. Record
+intentional controller SIGTERM15/forced_cleanup=true honestly; native expected1
+and worker0/SID empty are fault acceptance, not a substitute for normal teardown.
+All6 input SHAs/alias unchanged. Full48 d884604d native/host/worker0, eight lifetimes
+and exact original pixel/handle/GDI/USER checks pass with no forced cleanup.
+
+Core/image/root own separate private coverage fixtures; source/index leases stay.
+Whole-core gate83.39%branch/95.89%line is still failing90%; next combined batch is
+running. Root's extra Properties2 draft was copied during an unfinished append;
+corrected public-binding fixture passes D/RS, owner replaces only the stale block
+before rerun. Do not rerun passing unchanged pure gates. Current core final
+sanitizer qualification follows integrated tests/production fixes.
+
+WDDM retains sole VM/GPU access. Current snapshot a5d80f69 at7d has all8 builds0
+and immutable renderer reuse; prepare final current12 GPU matrix/normal+sanitized
+DXVK/native heap lifetimes. Windows11SDK UMDH bug produced no allocation proof;
+per-image registry was restored exactly, old tools/audits preserved, signed
+Windows10SDK workaround prepared. Coordinate source freeze with core: image
+identified legal robust2 nullDescriptor NULL vertex-buffer/offset0 rejection,
+which requires a short genuine production correction before final deployment.
+
+Root owns documentation/tracker and final bridge SAN receipt b4a5d845 (51cases0).
+Valid unchanged stress/pure receipts remain reusable. TODO#3 is85%, overall76.25%,
+final15% pending all gates; no100% or Time Ended until genuine final acceptance.
+Preserve old native PIDs4296/1404, VM/disks/TPM, all snapshots and failed artifacts,
+known untracked files and README. Do not squash/reset/restart completed work.

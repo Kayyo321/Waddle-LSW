@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 80% | Implemented; real pinned Windows/DXVK FL11 device,4096 exact GPU pixels,64 compute words,4096 presented pixels and normal COM/DLL/host retirement pass at e970799. Final whole-core90% coverage, leaks/sanitizers/stress, repeated native lifetimes, real device loss and native DLL heap audit in progress |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 85% | Basic real Windows/DXVK rendering,compute,presentation and normal teardown pass; genuine device-reset/Present-reset and owned teardown verified at da50fb7; full48-frame/eight-lifetime WSI passes. Whole-core coverage83.39%, current final sanitizer/GPU matrix/native heap gates pending; robust2 null vertex binding correction in progress |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -22,7 +22,7 @@
 | #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned offline x64 loader build and actual ISO-VM medium-integrity discovery verified; real receiver bootstrap and GPU/DXVK remain pending |
 
-**Total Feature Completion**: `75.0%`
+**Total Feature Completion**: `76.25%`
 
 ## Commit History & Progress Log
 
@@ -947,3 +947,37 @@ Core owns the required integrated make gates; image owns changed extra-object
 serializer qualification; root owns final fresh-worker/bridge sanitizers and
 progress coordination; WDDM exclusively owns VM/GPU acceptance. Historical failed
 runs and retained native processes remain intact. No100% or final acceptance claim.
+
+
+### Final qualification: real device loss and repeated presentation
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `9b566e2` | docs(vgpu): record integrated basic acceptance and open final qualification | #3 +0%; overall +0% (80% milestone attributed to e970799). | Ordinary81a46cb2 native/host/worker0, exact4096 GPU/64 compute/4096 client results and normal teardown. |
+| `a1a9583` | test(dxvk): release context bindings while healthy before deliberate loss | #3 +0%; overall +0%. | Preserves actual Clear/Flush/fault/status/Present/COM/DLL checks; removes a fresh ClearState after verified device reset. |
+| `23b6409` | test(vgpu): qualify current honest physical feature projection | #3 +0%; overall +0%. | Current API1.0..1.3 and normalized booleans; selected NVIDIA mandatory FL11 support; NULL device feature input still enables no features. Exact WSI acceptance unchanged. |
+| `fa05f47` | fix(vgpu): normalize compatible block sizes and volume/slice copy footprints | #3 +0%; overall +0%. | Native9/wire32 D/RS pass; native95.43%branch/100%line,wire92.86%branch/98.33%line; existing ASan/LSan/UBSan runners pass. |
+| `49ff70d` | test(vgpu): reject core feature advertisement outside the implemented allowlist | #3 +0%; overall +0%. | All55 fields checked against22 implemented flags; no weakening of pixel/lifetime checks. |
+| `da50fb7` | fix(vgpu): reset local command definitions after device loss | #3 +5%; overall +1.25% for verified final device-loss milestone. | All296 D/RS/native128/loader/Windows checks pass. Actual875d512b at immutable859e788a passes4096 GPU pixels,64 compute words,4096 client pixels before real reset; actual device and Present return RESET, then full owned native teardown marker. Native expected1, worker0/SID empty; deliberate host cancellation records SIGTERM15/forced_cleanup=true, distinct from normal acceptance. All6 native SHA checks and unique alias unchanged. |
+| `2f26b7b` | fix(vgpu): integrate native image copy block and slice geometry | #3 +0%; overall +0%. |298 D/RS/native128/Windows pass; original source-unit native packet with per-image normalized texel footprints and explicit owner retention. |
+| `3c34030` | test(vgpu): exercise modern wrapper boundaries and ownership | #3 +0%; overall +0%. |325 D/RS/native128 pass; unchanged whole-core gate reaches83.39%branch4010/4809 and95.89%line4547/4742, still fails90%branch threshold. |
+| `7d26011` | fix(vgpu): apply same-type remaining-layer and1D depth constraints | #3 +0%; overall +0%. | Changed geometry96.41%branch/100%line and existing20-function sanitizer gate pass; current Windows qualification passes. |
+
+Full48-frame/eight-lifetime native WSI d884604d at859e788a passes native/host/worker0,
+exact GPU/client pixels and original handle/GDI/USER assertions. All4 input SHAs
+are unchanged, no forced cleanup/signals. Final native TCPv2 50317b8a naturally
+passes32 cases after its separate private observer timeout; that failed observer
+receipt stays preserved. Bootstrap5dcace34 passes24 exact111-handle lifetimes and
+DLL unload. Ordinary ccadbf0d and sanitized e9a2bd0b pass pinned DXVK at69cbd277;
+current-code affected final GPU/DXVK runs remain separate and pending.
+
+Fresh final bridge ASan/LSan/UBSan passes all51 lifecycle/fault/controller cases,
+including rebuilt sanitized worker, in tcp_controller_sanitizers_b4a5d845. Reuse
+unchanged runtime/ring stress and pure codec receipts; changed copy/extra-object
+receipts replace only their superseded source results. Whole-core90%, current
+core sanitizer checks, required GPU matrix and external native heap audit remain
+open. Windows11SDK UMDH failed with Microsoft's documented tool bug; original
+per-image registry state was restored and failed capture retained. Signed
+Windows10SDK tools are prepared for a fresh current-code capture; no heap credit
+yet. A robust2 null vertex-binding correctness gap is being fixed before final
+source freeze. TODO#3 is85%, Time Ended remains TBD; no completion claim.

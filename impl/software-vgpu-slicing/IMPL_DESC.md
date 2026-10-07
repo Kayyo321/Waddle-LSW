@@ -5807,3 +5807,35 @@ allocation count, including zero, while fixed bindings retain their declared
 counts. Original layout maxima remain copied for pipeline compatibility. Refund
 and registry publication occur only after the existing exact free/reset/destroy
 ACK; transport loss retains uncertain set/pool ownership.
+
+
+### Current final-qualification contracts: command loss and image copies
+
+These contracts supersede older conservative reset/copy restrictions above.
+After sticky receiver/device loss, valid command-buffer/pool reset changes only
+the local guest recording definition. It must not send further host commands or
+clear submission tickets, uncertain in-flight counts, hidden native fences,
+mapped export owners or native object identities. Those resources remain owned
+until trusted receiver retirement and explicit abandonment. New submissions
+still fail DEVICE_LOST. Healthy reset continues to require native GPU completion
+proof and acknowledged reset. This follows Vulkan's legal child-handle and
+pending-use rules after device loss; reset commands do not permit DEVICE_LOST as
+a native runtime error in the pinned protocol.
+
+Image copy normalization preserves the original source-unit VkImageCopy extent
+in the host packet. It independently computes bounded source/destination texel
+footprints using block-byte compatibility, compressed block rounding and image
+bounds, and translates3D depth to2D array slices. Remaining-layer equality is
+required only for identical image types;1D depth remains1. Native pointer arrays
+are borrowed only through validation/encoding, with no retained caller storage.
+The command retains both image/allocation owners only after the exact native ACK;
+malformed/transport failures keep existing uncertainty rules.
+
+Final qualification requires the unchanged whole-production90% coverage gate,
+zero ASan/LSan/UBSan and testing-allocator leaks, valid stress receipts, actual
+native Windows GPU/DXVK rendering/compute/presentation and normal/fault teardown,
+and external native DLL allocation-stack audit. Historical failed runs stay
+available; observer expiration, synthetic ACK fixtures or failed UMDH capture do
+not count as completed acceptance. The documented Windows11SDK UMDH bug requires
+signed Windows10SDK UMDH for this audit; per-image UST state must be restored to
+its exact pre-audit state in all paths.
