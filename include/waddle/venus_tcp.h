@@ -19,6 +19,8 @@
 #define VenusTcpMaxReplyBytes 4096u
 /** @brief Maximum private JSON configuration file bytes. */
 #define VenusTcpMaxConfigBytes 4096u
+/** @brief Maximum absolute Windows filename extent, including its final NUL. */
+#define VenusTcpMaxWindowsPathBytes 1024u
 /** @brief Caller-owned decoded configuration; contains secret token, explicitly scrub after teardown.
  * No retained input pointers or heap; fields are immutable while initialized owners borrow it.
  * Decoding is thread-safe on disjoint records and zeros this entire output on failure.
@@ -29,7 +31,7 @@ typedef struct venus_tcp_config_t {
     uint32_t exchange_timeout_ms; /**< Whole exchange deadline1..60000ms. */
     char host[16]; /**< Owned NUL-terminated127.0.0.1 or10.0.2.2 literal. */
     uint8_t token[32]; /**< Owned secret capability bytes; never log. */
-    char icd_path[1024]; /**< Owned NUL-terminated absolute ASCII Windows path. */
+    char icd_path[VenusTcpMaxWindowsPathBytes]; /**< Owned NUL-terminated absolute ASCII Windows path. */
 } venus_tcp_config_t;
 /** @brief Private decoded client hello; secret token and nonce copied, never logged.
  * Caller owns/scrubs all bytes; no pointers, allocations or native wire casts.
@@ -54,6 +56,15 @@ typedef struct venus_tcp_server_hello_t {
  * @note Thread-safe on disjoint inputs/outputs; fixed64KiB parser scratch, no heap or retention.
  */
 venus_ring_status_t venus_tcp_config_decode(venus_tcp_config_t *config, const void *bytes, size_t length);
+/** @brief Validate one exact bounded absolute ASCII Windows filename.
+ * @param[in] bytes Nonnull immutable accessible private array[length], borrowed for call.
+ * @param[in] length Actual1..1024 bytes including its final NUL; no earlier NUL.
+ * @return Ok; Invalid null/zero extent; Limit oversized extent; Corrupt missing/interior
+ * terminator, empty/non-ASCII filename or relative/malformed drive/UNC path.
+ * @note Allocation-free/thread-safe for immutable storage; no mutation, ownership or retention.
+ * Reuses the strict config filename grammar; native file admission remains bootstrap-owned.
+ */
+venus_ring_status_t venus_tcp_windows_path_validate(const void *bytes, size_t length);
 /** @brief Encode a copied client hello into exactly128 bytes.
  * @param[in] hello Nonnull immutable private record, borrowed for call.
  * @param[out] bytes Nonnull disjoint caller-owned buffer[length], unchanged on error.

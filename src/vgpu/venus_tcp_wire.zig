@@ -61,6 +61,15 @@ fn hex(byte: u8) ?u8 {
         else => null,
     };
 }
+/// Exact bounded filename ABI; header specifies byte extent, errors and borrowed lifetime.
+export fn venus_tcp_windows_path_validate(input: ?[*]const u8, length: usize) c_int {
+    const source = input orelse return c.RingInvalid;
+    if (length == 0) return c.RingInvalid;
+    if (length > c.VenusTcpMaxWindowsPathBytes) return c.RingLimit;
+    const bytes = source[0 .. length - 1];
+    if (source[length - 1] != 0 or bytes.len == 0 or !ascii(bytes) or !absolute_path(bytes)) return c.RingCorrupt;
+    return c.RingOk;
+}
 /// Strict bounded config ABI; header specifies copied outputs, errors and ownership.
 export fn venus_tcp_config_decode(config: ?*c.venus_tcp_config_t, input: ?[*]const u8, length: usize) c_int {
     const output = config orelse return c.RingInvalid;
@@ -532,4 +541,30 @@ test "response pairing error payload and exact read ceilings" {
         try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_response_limit, .{ &request, &response }));
         response.payload_bytes = 4096;
     }
+}
+
+test "exact filename array is bounded immutable and shares strict config grammar" {
+    const Valid = [_][:0]const u8{ "C:\\config.json", "c:\\x", "\\\\server\\share\\config.json" };
+    for (Valid) |path| try std.testing.expectEqual(@as(c_int, c.RingOk), @call(.never_inline, venus_tcp_windows_path_validate, .{ path.ptr, path.len + 1 }));
+    try std.testing.expectEqual(@as(c_int, c.RingInvalid), @call(.never_inline, venus_tcp_windows_path_validate, .{ null, 10 }));
+    try std.testing.expectEqual(@as(c_int, c.RingInvalid), @call(.never_inline, venus_tcp_windows_path_validate, .{ Valid[0].ptr, 0 }));
+    try std.testing.expectEqual(@as(c_int, c.RingLimit), @call(.never_inline, venus_tcp_windows_path_validate, .{ Valid[0].ptr, 1025 }));
+    const Invalid = [_][:0]const u8{ "", "relative.json", "C:relative", "C:/file", "\\\\server", "\\\\server\\", "\\\\server\\\\share" };
+    for (Invalid) |path| try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_windows_path_validate, .{ path.ptr, path.len + 1 }));
+    var bytes = [_]u8{0xa5} ** 1026;
+    bytes[1] = 'C';
+    bytes[2] = ':';
+    bytes[3] = '\\';
+    for (4..1024) |index| bytes[index] = 'x';
+    bytes[1024] = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), @call(.never_inline, venus_tcp_windows_path_validate, .{ bytes[1..].ptr, 1024 }));
+    try std.testing.expectEqual(@as(u8, 0xa5), bytes[0]);
+    try std.testing.expectEqual(@as(u8, 0xa5), bytes[1025]);
+    const saved = bytes;
+    for (1..1024) |length| try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_windows_path_validate, .{ bytes[1..].ptr, length }));
+    try std.testing.expectEqualSlices(u8, &saved, &bytes);
+    bytes[4] = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_windows_path_validate, .{ bytes[1..].ptr, 1024 }));
+    bytes[4] = 255;
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_windows_path_validate, .{ bytes[1..].ptr, 1024 }));
 }

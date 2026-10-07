@@ -61,6 +61,23 @@ static void config_tests(void)
     }
     assert(venus_tcp_config_decode(NULL, Config, sizeof Config-1)==RingInvalid);
 }
+static void path_tests(void)
+{
+    const char *Valid[]={"C:\\config.json","c:\\x","\\\\server\\share\\config.json"};
+    const char *Invalid[]={"","relative","C:relative","C:/file","\\\\server","\\\\server\\","\\\\server\\\\share"};
+    for (size_t index=0;index<sizeof Valid/sizeof *Valid;index++) assert(venus_tcp_windows_path_validate(Valid[index],strlen(Valid[index])+1)==RingOk);
+    for (size_t index=0;index<sizeof Invalid/sizeof *Invalid;index++) assert(venus_tcp_windows_path_validate(Invalid[index],strlen(Invalid[index])+1)==RingCorrupt);
+    assert(venus_tcp_windows_path_validate(NULL,1)==RingInvalid);
+    assert(venus_tcp_windows_path_validate(Valid[0],0)==RingInvalid);
+    assert(venus_tcp_windows_path_validate(Valid[0],1025)==RingLimit);
+    uint8_t bytes[1026];memset(bytes,0xa5,sizeof bytes);bytes[1]='C';bytes[2]=':';bytes[3]='\\';
+    memset(bytes+4,'x',1020);bytes[1024]=0;
+    assert(venus_tcp_windows_path_validate(bytes+1,1024)==RingOk);
+    for (size_t extent=1;extent<1024;extent++) assert(venus_tcp_windows_path_validate(bytes+1,extent)==RingCorrupt);
+    assert(bytes[0]==0xa5 && bytes[1025]==0xa5);
+    bytes[4]=0;assert(venus_tcp_windows_path_validate(bytes+1,1024)==RingCorrupt);
+    bytes[4]=255;assert(venus_tcp_windows_path_validate(bytes+1,1024)==RingCorrupt);
+}
 static void envelope_tests(void)
 {
     venus_request_t request={.kind=RequestReply,.sequence=1,.argument_one=4096};
@@ -78,7 +95,7 @@ static void envelope_tests(void)
 /** @brief Execute all native ABI regressions; no heap or retained resources. @return Zero success. */
 int main(void)
 {
-    for (unsigned iteration=0; iteration<32; ++iteration) { packet_tests(); config_tests(); envelope_tests(); }
+    for (unsigned iteration=0; iteration<32; ++iteration) { packet_tests(); config_tests(); envelope_tests(); path_tests(); }
     puts("TCP literal packets, strict config and native bounds: PASS (32 cycles)");
     return 0;
 }
