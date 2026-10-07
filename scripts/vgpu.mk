@@ -1116,3 +1116,9 @@ vgpu-icd-units: $(VgpuIcdUnitCodecs) $(VgpuIcdUnitOracles)
 vgpu-transfer2-native-test:
 	$(ZIG) test src/vgpu/venus_transfer2_native.zig $(VgpuInstanceWireIncludes) -lc
 	$(ZIG) test src/vgpu/venus_transfer2_native.zig $(VgpuInstanceWireIncludes) -lc -O ReleaseSafe
+
+# Reuse the established90% protocol coverage gate after integrated implementation.
+VgpuModernCoverageModules = venus_modern_sync_wire venus_extra_objects_wire venus_requirements2_wire venus_image_transfer_wire venus_dynamic_rendering_wire venus_graphics_general_wire venus_graphics_dynamic_wire venus_sampler_descriptor_wire venus_transfer2_native venus_wsi
+.PHONY: vgpu-modern-coverage
+vgpu-modern-coverage: $(VgpuIcdUnitOracles)
+	@set -e; for module in $(VgpuModernCoverageModules); do python3 tests/av/coverage.py $$module; done
