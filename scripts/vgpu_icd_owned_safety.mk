@@ -29,3 +29,7 @@ vgpu-objects-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_
 .PHONY: vgpu-instance_wire-owned-sanitizers
 vgpu-instance_wire-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_instance_wire.zig tests/vgpu/instance_wire.c include/waddle/venus_instance_wire.h
 	python3 scripts/icd_dependency_sanitizers.py instance_wire build/icd_dependency_safety/instance_wire
+
+.PHONY: vgpu-query_wire-owned-sanitizers
+vgpu-query_wire-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_query_wire.zig tests/vgpu/query_wire.c include/waddle/venus_query_wire.h
+	python3 scripts/icd_dependency_sanitizers.py query_wire build/icd_dependency_safety/query_wire
