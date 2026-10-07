@@ -47,6 +47,9 @@ const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
 const MaxMappedBytes: u64 = 268435456;
 const MappingChunkBytes: usize = 4096;
+// Trusted timed frontend requires negotiated TCP v2 resource-read profile.
+// Legacy callback, writes, and command replies retain their4KiB ceilings.
+const MappingReadChunkBytes: usize = 65536;
 var mapping_slots = [_]bool{false} ** 64;
 const c = @cImport({
     @cInclude("waddle/venus_icd.h");
@@ -227,6 +230,7 @@ comptime {
         @compileError("Immutable device enablement cache ABI changed");
 }
 const command_state_t = enum { Initial, Recording, Executable, Invalid, Pending };
+const mapping_span_t = struct { start: u64 = 0, end: u64 = 0 };
 const resource_state_t = struct {
     id: u64 = 0,
     profile_index: u8 = 0,
@@ -251,6 +255,9 @@ const resource_state_t = struct {
     mapped_baseline: ?[]u8 = null,
     mapped_offset: u64 = 0,
     mapped_size: u64 = 0,
+    gpu_spans: [16]mapping_span_t = [_]mapping_span_t{.{}} ** 16,
+    gpu_span_count: usize = 0,
+    address_exposed: bool = false,
     bound_memory: u64 = 0,
     memory_offset: u64 = 0,
     buffer_size: u64 = 0,
@@ -3083,24 +3090,77 @@ fn merge_mapping(bytes: []u8, baseline: []u8, incoming: []const u8) void {
         previous.* = value;
     }
 }
+/// Retain conservative potentially GPU-written extents in the allocation owner.
+/// No resource lifetime is extended; intervals survive buffer/image destruction.
+/// Sorted union is bounded16; excess fragmentation collapses to the full allocation.
+/// Caller holds the ICD mutex. Missing or invalid geometry also falls back to full.
+fn retain_gpu_span(state: *resource_state_t, first: u64, count: u64) void {
+    if (state.allocation_size == 0) return;
+    if (count == 0 or first > state.allocation_size or count > state.allocation_size - first) {
+        state.gpu_spans[0] = .{ .end = state.allocation_size };
+        state.gpu_span_count = 1;
+        return;
+    }
+    var span = mapping_span_t{ .start = first, .end = first + count };
+    var index: usize = 0;
+    while (index < state.gpu_span_count) {
+        const prior = state.gpu_spans[index];
+        if (prior.end < span.start or prior.start > span.end) { index += 1; continue; }
+        span.start = @min(span.start, prior.start);
+        span.end = @max(span.end, prior.end);
+        state.gpu_span_count -= 1;
+        for (index..state.gpu_span_count) |next| state.gpu_spans[next] = state.gpu_spans[next + 1];
+    }
+    if (state.gpu_span_count == state.gpu_spans.len) {
+        state.gpu_spans[0] = .{ .end = state.allocation_size };
+        state.gpu_span_count = 1;
+        return;
+    }
+    index = 0;
+    while (index < state.gpu_span_count and state.gpu_spans[index].start < span.start) index += 1;
+    var last = state.gpu_span_count;
+    while (last > index) : (last -= 1) state.gpu_spans[last] = state.gpu_spans[last - 1];
+    state.gpu_spans[index] = span;
+    state.gpu_span_count += 1;
+}
+/// Snapshot all submitted bound resource ranges, conservatively treating reads
+/// as writes. Address-exposed buffers are included even without native handles
+/// in the submitted command references. No timeline result clears this ledger.
+fn retain_submission_mapping_spans(parent_id: u64, references: [8]u64) void {
+    for (&slots, &resource_states, 0..) |*record, *state, index| {
+        if (record.id == 0 or record.parent_id != parent_id or
+            (record.kind != c.VK_OBJECT_TYPE_BUFFER and record.kind != c.VK_OBJECT_TYPE_IMAGE)) continue;
+        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+        if (references[index / 64] & bit == 0 and !state.address_exposed) continue;
+        const allocation = child_object(state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent_id) orelse continue;
+        retain_gpu_span(resource_state(allocation), state.memory_offset,
+            if (record.kind == c.VK_OBJECT_TYPE_BUFFER) state.buffer_size else state.requirements.size);
+    }
+}
+
 fn synchronize_mapping(state: *resource_state_t, writing: bool) c_int {
     const bytes = state.mapped_bytes orelse return c.RingOk;
     const baseline = state.mapped_baseline orelse return c.RingCorrupt;
     const start: usize = @intCast(state.mapped_offset);
     if (!writing) {
-        var offset: usize = 0;
-        var incoming: [MappingChunkBytes]u8 = undefined;
-        while (offset < baseline.len) {
-            const count = @min(incoming.len, baseline.len - offset);
-            var request = std.mem.zeroes(c.venus_request_t);
-            request.kind = c.RequestRead;
-            request.resource_id = state.mapping_resource;
-            request.argument_zero = start + offset;
-            request.argument_one = count;
-            const status = mapping_exchange(&request, null, 0, &incoming, count);
-            if (status != c.RingOk) return status;
-            merge_mapping(bytes[start + offset ..][0..count], baseline[offset..][0..count], incoming[0..count]);
-            offset += count;
+        var incoming: [MappingReadChunkBytes]u8 = undefined;
+        const mapped_end = state.mapped_offset + state.mapped_size;
+        for (state.gpu_spans[0..state.gpu_span_count]) |span| {
+            var absolute = @max(span.start, state.mapped_offset);
+            const end = @min(span.end, mapped_end);
+            while (absolute < end) {
+                const count: usize = @intCast(@min(if (reply_profile_ready) MappingReadChunkBytes else MappingChunkBytes, end - absolute));
+                var request = std.mem.zeroes(c.venus_request_t);
+                request.kind = c.RequestRead;
+                request.resource_id = state.mapping_resource;
+                request.argument_zero = absolute;
+                request.argument_one = count;
+                const status = mapping_exchange(&request, null, 0, &incoming, count);
+                if (status != c.RingOk) return status;
+                const offset: usize = @intCast(absolute - state.mapped_offset);
+                merge_mapping(bytes[start + offset ..][0..count], baseline[offset..][0..count], incoming[0..count]);
+                absolute += count;
+            }
         }
         return c.RingOk;
     }
@@ -3156,7 +3216,7 @@ fn copy_mapping(state: *resource_state_t, offset: u64, size: u64, writing: bool)
     var cursor: u64 = offset;
     var remaining = size;
     while (remaining != 0) {
-        const count: usize = @intCast(@min(remaining, MappingChunkBytes));
+        const count: usize = @intCast(@min(remaining, if (!writing and reply_profile_ready) MappingReadChunkBytes else MappingChunkBytes));
         var request = std.mem.zeroes(c.venus_request_t);
         request.kind = if (writing) c.RequestWrite else c.RequestRead;
         request.resource_id = state.mapping_resource;
@@ -4934,6 +4994,7 @@ fn queue_submit(
         submission_sequence += 1;
         staged.sequence = submission_sequence;
         target.* = staged;
+        retain_submission_mapping_spans(parent.id, staged.references);
         for (&resource_states, 0..) |*state, index| {
             const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
             if (staged.references[index / 64] & bit == 0) continue;
@@ -6326,6 +6387,7 @@ fn queue_submit2(
         submission_sequence += 1;
         staged.sequence = submission_sequence;
         target.* = staged;
+        retain_submission_mapping_spans(parent.id, staged.references);
         for (&resource_states, 0..) |*state, index| {
             const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
             if (staged.references[index / 64] & bit == 0) continue;
@@ -6486,10 +6548,12 @@ fn get_buffer_device_address(device: c.VkDevice, info: [*c]const c.VkBufferDevic
     if (resource_state(allocation).allocation_flags & c.VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT == 0) return 0;
     const writer = modern_sync.buffer_device_address(parent.id, record.id) catch return 0;
     const reply = transact(writer.bytes[0..writer.used]) orelse return 0;
-    return modern_sync.decode_value(reply, 175) catch {
+    const value = modern_sync.decode_value(reply, 175) catch {
         _ = failure(c.RingCorrupt);
         return 0;
     };
+    if (value != 0) state.address_exposed = true;
+    return value;
 }
 
 /// Read one immutable requested feature word under the ICD mutex; absent means disabled.
@@ -8168,6 +8232,7 @@ fn retain_pending_descriptor_update(parent: *const c.venus_object_t,set: *const 
             if(references.buffer_references[index/64] & bit==0) continue;
             if(!include_reference(ticket,record)) resource_states[index].inflight_count+=1;
         }
+        retain_submission_mapping_spans(parent.id,ticket.references);
     }
 }
 
@@ -10687,4 +10752,142 @@ test "image ownership public WSI preserves foreign chains and failed acquire ind
         try std.testing.expectEqual(if (transport_loss == 0) @as(usize, 2) else 4, objects.live_count);
         try std.testing.expectEqual(if (transport_loss == 0) @as(usize, 2) else 0, fixture.submissions);
     }
+}
+
+test "GPU mapping span union conservatively survives overlap fragmentation and resource retirement" {
+    var state = resource_state_t{ .allocation_size = 4096 };
+    retain_gpu_span(&state, 100, 20);
+    retain_gpu_span(&state, 50, 10);
+    retain_gpu_span(&state, 60, 40);
+    try std.testing.expectEqual(@as(usize, 1), state.gpu_span_count);
+    try std.testing.expectEqual(mapping_span_t{ .start = 50, .end = 120 }, state.gpu_spans[0]);
+    retain_gpu_span(&state, 4090, 7);
+    try std.testing.expectEqual(mapping_span_t{ .end = 4096 }, state.gpu_spans[0]);
+    state = .{ .allocation_size = 4096 };
+    for (0..17) |index| retain_gpu_span(&state, index * 100, 10);
+    try std.testing.expectEqual(@as(usize, 1), state.gpu_span_count);
+    try std.testing.expectEqual(mapping_span_t{ .end = 4096 }, state.gpu_spans[0]);
+    state = .{ .allocation_size = 0 };
+    retain_gpu_span(&state, 0, 0);
+    try std.testing.expectEqual(@as(usize, 0), state.gpu_span_count);
+}
+
+test "coherent completion reads only retained GPU extents while preserving later CPU writes" {
+    const fixture_t = struct {
+        reads: usize = 0,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            if (request.*.kind != c.RequestRead or request.*.argument_zero != 64 or request.*.argument_one != 64 or capacity != 64) return c.RingCorrupt;
+            fixture.reads += 1;
+            @memset(@as([*]u8, @ptrCast(output.?))[0..capacity], 0xaa);
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            response.*.payload_bytes = @intCast(capacity);
+            return c.RingOk;
+        }
+    };
+    var fixture = fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const bytes = try std.testing.allocator.alignedAlloc(u8, 4096, 4096);
+    defer std.testing.allocator.free(bytes);
+    const baseline = try std.testing.allocator.alloc(u8, 256);
+    defer std.testing.allocator.free(baseline);
+    @memset(bytes, 0);
+    @memset(baseline, 0);
+    var state = resource_state_t{ .allocation_size = 4096, .mapped_bytes = bytes, .mapped_baseline = baseline, .mapped_offset = 0, .mapped_size = baseline.len, .mapping_resource = 2 };
+    try std.testing.expectEqual(@as(c_int, c.RingOk), synchronize_mapping(&state, false));
+    try std.testing.expectEqual(@as(usize, 0), fixture.reads);
+    retain_gpu_span(&state, 64, 64);
+    retain_gpu_span(&state, 1024, 64);
+    bytes[70] = 0xbb;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), synchronize_mapping(&state, false));
+    try std.testing.expectEqual(@as(usize, 1), fixture.reads);
+    try std.testing.expectEqual(@as(u8, 0xbb), bytes[70]);
+    try std.testing.expectEqual(@as(u8, 0xaa), baseline[70]);
+    try std.testing.expectEqual(@as(u8, 0xaa), bytes[64]);
+    try std.testing.expectEqual(@as(u8, 0), bytes[0]);
+    try std.testing.expectEqual(@as(u8, 0), bytes[128]);
+    try std.testing.expectEqual(@as(usize, 2), state.gpu_span_count);
+}
+
+test "trusted resource reads use64KiB while legacy callbacks and writes stay4KiB" {
+    const fixture_t = struct {
+        reads: usize = 0,
+        writes: usize = 0,
+        maximum: usize,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            const read = request.*.kind == c.RequestRead;
+            if (!read and request.*.kind != c.RequestWrite) return c.RingCorrupt;
+            if (request.*.argument_one != (if (read) capacity else length) or request.*.argument_one > (if (read) fixture.maximum else MappingChunkBytes)) return c.RingCorrupt;
+            if (read) {
+                fixture.reads += 1;
+                @memset(@as([*]u8, @ptrCast(output.?))[0..capacity], 0xa6);
+            } else {
+                if (input == null or length == 0) return c.RingCorrupt;
+                fixture.writes += 1;
+            }
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            response.*.payload_bytes = @intCast(capacity);
+            return c.RingOk;
+        }
+    };
+    const bytes = try std.testing.allocator.alignedAlloc(u8, 4096, MappingReadChunkBytes * 2 + 7);
+    defer std.testing.allocator.free(bytes);
+    @memset(bytes, 0);
+    for ([_]bool{ false, true }) |modern| {
+        var fixture = fixture_t{ .maximum = if (modern) MappingReadChunkBytes else MappingChunkBytes };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        reply_profile_ready = modern;
+        var state = resource_state_t{ .allocation_size = bytes.len, .mapped_bytes = bytes, .mapping_resource = 2 };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), copy_mapping(&state, 0, bytes.len, false));
+        try std.testing.expectEqual(@as(usize, if (modern) 3 else 33), fixture.reads);
+        try std.testing.expectEqual(@as(u8, 0xa6), bytes[bytes.len - 1]);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), copy_mapping(&state, 0, bytes.len, true));
+        try std.testing.expectEqual(@as(usize, 33), fixture.writes);
+    }
+}
+
+test "submitted bound resource ranges remain allocation owned after guest resource retirement" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int { return c.RingInvalid; }
+    };
+    var sentinel: u8 = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &sentinel));
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var memory_record: [*c]c.venus_object_t = null;
+    var buffer: [*c]c.venus_object_t = null;
+    var image: [*c]c.venus_object_t = null;
+    var addressed_buffer: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.*.id, 0, &memory_record));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &buffer));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_IMAGE, device.*.id, 0, &image));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, device.*.id, 0, &addressed_buffer));
+    const allocation = resource_state(memory_record);
+    allocation.* = .{ .id = memory_record.*.id, .allocation_size = 8192 };
+    resource_state(buffer).* = .{ .id = buffer.*.id, .bound_memory = memory_record.*.handle, .memory_offset = 128, .buffer_size = 256 };
+    resource_state(image).* = .{ .id = image.*.id, .bound_memory = memory_record.*.handle, .memory_offset = 1024, .requirements = .{ .size = 512 } };
+    var ticket: submission_ticket_t = .{};
+    _ = include_reference(&ticket, buffer);
+    retain_submission_mapping_spans(device.*.id, ticket.references);
+    try std.testing.expectEqual(@as(usize, 1), allocation.gpu_span_count);
+    try std.testing.expectEqual(mapping_span_t{ .start = 128, .end = 384 }, allocation.gpu_spans[0]);
+    _ = include_reference(&ticket, image);
+    retain_submission_mapping_spans(device.*.id, ticket.references);
+    try std.testing.expectEqual(@as(usize, 2), allocation.gpu_span_count);
+    try std.testing.expectEqual(mapping_span_t{ .start = 1024, .end = 1536 }, allocation.gpu_spans[1]);
+    resource_state(addressed_buffer).* = .{ .id = addressed_buffer.*.id, .bound_memory = memory_record.*.handle, .memory_offset = 2048, .buffer_size = 128, .address_exposed = true };
+    retain_submission_mapping_spans(device.*.id, [_]u64{0} ** 8);
+    try std.testing.expectEqual(@as(usize, 3), allocation.gpu_span_count);
+    try std.testing.expectEqual(mapping_span_t{ .start = 2048, .end = 2176 }, allocation.gpu_spans[2]);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, buffer.*.handle, c.VK_OBJECT_TYPE_BUFFER, 0));
+    try std.testing.expectEqual(@as(usize, 3), allocation.gpu_span_count);
+    try std.testing.expectEqual(mapping_span_t{ .start = 128, .end = 384 }, allocation.gpu_spans[0]);
 }
