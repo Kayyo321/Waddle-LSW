@@ -7113,6 +7113,15 @@ fn create_descriptor_pool(device: c.VkDevice, info: [*c]const c.VkDescriptorPool
 /// and explicit actual variablecounts. [in] nativearraysborrowed throughcall; [out]
 /// null-onfailure tokens. Nativefailure rollsbackall reservedmetadata; loss retains
 /// uncertainowners until trustedretirement. Poolbudgets charge/refundactualcounts.
+/// Opt-in scalar descriptor-allocation record for a validated bounded request.
+/// All inputs borrowed under ICD mutex; no pointer/payload exposure, allocation,
+/// state mutation or retained input. At most64 set records and11 pool budgets.
+fn descriptor_allocation_diagnostic(pool_id: u64, owner: *const resource_state_t, layouts: []const u64, ids: []const u64, snapshots: []const profiles.descriptor_set_t, needed: [11]u32) void {
+    if (!std.process.hasEnvVarConstant("WADDLE_ICD_DIAGNOSTICS")) return;
+    std.debug.print("Waddle ICD vkAllocateDescriptorSets: pool={d}, sets={d}, max={d}, live={d}\n", .{pool_id,ids.len,owner.descriptor_max_sets,owner.descriptor_live_sets});
+    for (ids,layouts,snapshots,0..) |id,layout,snapshot,index| std.debug.print("Waddle ICD descriptor allocation[{d}]: layout={d}, id={d}, variable={d}, binding={d}, count={d}\n", .{index,layout,id,@intFromBool(snapshot.has_variable_count),snapshot.variable_binding,snapshot.variable_count});
+    for (needed,owner.descriptor_used,owner.descriptor_capacity,0..) |count,used,capacity,kind| if(count!=0) std.debug.print("Waddle ICD descriptor budget[{d}]: need={d}, used={d}, capacity={d}\n", .{kind,count,used,capacity});
+}
 fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSetAllocateInfo, output: [*c]c.VkDescriptorSet) callconv(.C) c_int {
     lock_icd();
     defer unlock_icd();
@@ -7182,6 +7191,7 @@ fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSe
         ids[reserved] = record.*.id;
     }
     const writer = mixed_wire.allocate_sets(parent.id, pool.id, @ptrCast(info), layouts[0..count], ids[0..count]) catch unreachable;
+    descriptor_allocation_diagnostic(pool.id, owner, layouts[0..count], ids[0..count], snapshots[0..count], needed);
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = descriptor_sets_reply(reply, ids[0..count]) catch return failure(c.RingCorrupt);
     if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
@@ -12768,5 +12778,269 @@ test "hidden native fence constructor and uncertain destruction preserve exact o
             try std.testing.expectEqual(@as(u32,3),objects.live_count);
             try std.testing.expectEqual(@as(usize,1),fixture.destroys);
         }
+    }
+}
+
+const root_memory_fixture_t = struct {
+    base: root_extra_lifecycle_fixture_t = .{},
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        const status = root_extra_lifecycle_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (status == c.RingOk and request.*.kind == c.RequestReply and fixture.base.opcode == 21) {
+            const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+            std.mem.writeInt(u64, bytes[8..16], 1, .little);
+            std.mem.writeInt(u64, bytes[16..24], fixture.base.id, .little);
+        }
+        return status;
+    }
+};
+test "root allocation flags dedicated ownership and native acknowledgments retain exact memory owners" {
+    inline for ([_]bool{ false, true }) |image| for ([_]bool{ false, true }) |reverse| for ([_]i32{ c.VK_SUCCESS, c.VK_ERROR_OUT_OF_DEVICE_MEMORY, c.VK_ERROR_DEVICE_LOST, 1 }) |status| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = root_memory_fixture_t{ .base = .{ .result = status, .corrupt = corrupt } };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_memory_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const backing = try root_sync_fixture_t.reserve(if (image) c.VK_OBJECT_TYPE_IMAGE else c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+        device_caches[0] = .{ .handle = parent.handle };
+        const enabled = &device_caches[0].enabled_state.features;
+        enabled.count = 1; enabled.nodes[0].type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES; enabled.nodes[0].flag_count = 47;
+        const AddressIndex = (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "bufferDeviceAddress") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4;
+        enabled.nodes[0].flags[AddressIndex] = 1;
+        var flags = c.VkMemoryAllocateFlagsInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, .flags = c.VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT | c.VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT, .deviceMask = 1 };
+        var dedicated = c.VkMemoryDedicatedAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO };
+        @field(dedicated, if (image) "image" else "buffer") = @ptrFromInt(backing.handle);
+        if (reverse) dedicated.pNext = &flags else flags.pNext = &dedicated;
+        const info = c.VkMemoryAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = if (reverse) @ptrCast(&dedicated) else @ptrCast(&flags), .allocationSize = 4096, .memoryTypeIndex = 2 };
+        var output: c.VkDeviceMemory = @ptrFromInt(8);
+        const expected: c_int = if (corrupt or status > 0) c.VK_ERROR_DEVICE_LOST else status;
+        try std.testing.expectEqual(expected, root_runtime_fn(allocate_memory)(@ptrFromInt(parent.handle), &info, null, &output));
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.calls);
+        if (expected == c.VK_SUCCESS) {
+            const record = child_object(@intFromPtr(output.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id).?;
+            try std.testing.expectEqual(@as(u64, 4096), resource_state(record).allocation_size);
+            try std.testing.expectEqual(@as(u32, 3), resource_state(record).allocation_flags);
+            try std.testing.expectEqual(@as(u32, 2), resource_state(record).type_index);
+            try std.testing.expectEqual(record.id, resource_state(record).id);
+            root_runtime_fn(free_memory)(@ptrFromInt(parent.handle), output, null);
+            try std.testing.expectEqual(@as(usize, 2), objects.live_count);
+        } else {
+            try std.testing.expect(output == null);
+            try std.testing.expectEqual(@as(usize, if (expected == c.VK_ERROR_DEVICE_LOST) 3 else 2), objects.live_count);
+            if (expected == c.VK_ERROR_DEVICE_LOST) try std.testing.expect(lost != c.RingOk);
+        }
+    };
+}
+test "root allocation malformed chains and foreign dedicated resources roll back before native submission" {
+    var fixture = root_memory_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_memory_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+    const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const buffer = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+    const image = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, parent.id, 0);
+    const foreign_buffer = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, foreign.id, 0);
+    const foreign_image = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, foreign.id, 0);
+    const device: c.VkDevice = @ptrFromInt(parent.handle);
+    const Original = c.VkMemoryAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = 4096 };
+    var info = Original;
+    var output: c.VkDeviceMemory = @ptrFromInt(8);
+    const invoke = root_runtime_fn(allocate_memory);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(device, &info, null, null));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(null, &info, null, &output)); try std.testing.expect(output == null);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(@ptrFromInt(1), &info, null, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(device, null, null, &output));
+    info.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(device, &info, null, &output)); info = Original;
+    info.allocationSize = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(device, &info, null, &output)); info = Original;
+    info.memoryTypeIndex = 32; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(device, &info, null, &output)); info = Original;
+    var flags = c.VkMemoryAllocateFlagsInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO };
+    var second_flags = flags;
+    var dedicated = c.VkMemoryDedicatedAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO, .buffer = @ptrFromInt(buffer.handle) };
+    var second_dedicated = dedicated;
+    var unknown = c.VkBaseInStructure{ .sType = 0 };
+    for (0..12) |mode| {
+        info = Original; flags.pNext = null; flags.flags = 0; flags.deviceMask = 0;
+        dedicated.pNext = null; dedicated.buffer = @ptrFromInt(buffer.handle); dedicated.image = null;
+        switch (mode) {
+            0 => info.pNext = @ptrFromInt(1),
+            1 => info.pNext = &unknown,
+            2 => { info.pNext = &flags; flags.pNext = &flags; },
+            3 => { info.pNext = &flags; flags.pNext = &second_flags; },
+            4 => { info.pNext = &dedicated; dedicated.pNext = &second_dedicated; },
+            5 => { info.pNext = &flags; flags.flags = 4; },
+            6 => { info.pNext = &flags; flags.flags = c.VK_MEMORY_ALLOCATE_DEVICE_MASK_BIT; flags.deviceMask = 2; },
+            7 => { info.pNext = &dedicated; dedicated.buffer = null; },
+            8 => { info.pNext = &dedicated; dedicated.image = @ptrFromInt(image.handle); },
+            9 => { info.pNext = &dedicated; dedicated.buffer = @ptrFromInt(foreign_buffer.handle); },
+            10 => { info.pNext = &dedicated; dedicated.buffer = null; dedicated.image = @ptrFromInt(foreign_image.handle); },
+            11 => { info.pNext = &flags; flags.flags = c.VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT; },
+            else => unreachable,
+        }
+        try std.testing.expectEqual(@as(c_int, if (mode == 11) c.VK_ERROR_FEATURE_NOT_PRESENT else c.VK_ERROR_INITIALIZATION_FAILED), invoke(device, &info, null, &output));
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(usize, 6), objects.live_count);
+    }
+    try std.testing.expectEqual(@as(usize, 0), fixture.base.calls);
+    lost = c.RingClosed;
+    info = Original; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), invoke(device, &info, null, &output));
+    try std.testing.expectEqual(@as(usize, 6), objects.live_count);
+}
+
+// Append-only portable core WSI ownership fixtures; no GPU/presentation credit.
+const wsi_status_fixture_t = struct {
+    base: image_ownership_fixture_t = .{},
+    mode: u8 = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        if (request.*.kind == c.RequestGpuFence or request.*.kind == c.RequestGpuPoll) {
+            response.* = .{ .kind = request.*.kind, .direction = 1, .argument_zero = if (request.*.kind == c.RequestGpuFence) 1 else 0 };
+            return c.RingOk;
+        }
+        const status = image_ownership_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (status != c.RingOk or request.*.kind != c.RequestReply) return status;
+        if (fixture.base.command_id == 50 or fixture.base.command_id == 54) {
+            const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+            std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_DEVICE_MEMORY, .little);
+            std.mem.writeInt(u64, bytes[8..16], 1, .little);
+            std.mem.writeInt(u64, bytes[16..24], 0, .little);
+        }
+        return status;
+    }
+};
+const wsi_status_graph_t = struct {
+    instance: *c.venus_object_t,
+    physical: *c.venus_object_t,
+    device: *c.venus_object_t,
+    queue: *c.venus_object_t,
+    semaphore: *c.venus_object_t,
+    image: *c.venus_object_t,
+    allocation: *c.venus_object_t,
+    fn init() !@This() {
+        const instance = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_INSTANCE, 0, 1);
+        const physical = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.id, 1);
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, physical.id, 1);
+        const queue = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_QUEUE, device.id, 1);
+        const semaphore = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_SEMAPHORE, device.id, 0);
+        resource_state(queue).* = .{ .id = queue.id, .queue_family = 0 };
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        resource_state(image).* = .{ .id = image.id, .bound_memory = allocation.handle, .image_extent = .{ 64, 64, 1 }, .image_format = 44, .image_usage = c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .image_levels = 1, .image_layers = 1, .image_samples = 1 };
+        device_caches[0] = .{ .handle = device.handle, .family_count = 1, .graphics_queue_ready = true, .graphics_queue_count = 1 };
+        device_caches[0].families[0] = 0;
+        device_caches[0].counts[0] = 1;
+        device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
+        device_caches[0].queues[0] = queue.handle;
+        device_caches[0].ready[0] = true;
+        wsi_state.surfaces[0] = .{ .id = 100, .instance = instance.id, .hwnd = 1 };
+        wsi_state.swapchains[0] = .{ .id = 101, .device = device.handle, .surface = 100, .width = 64, .height = 64, .format = 44, .count = 1 };
+        wsi_state.swapchains[0].images[0] = .{ .image = image.handle, .memory = allocation.handle };
+        return .{ .instance = instance, .physical = physical, .device = device, .queue = queue, .semaphore = semaphore, .image = image, .allocation = allocation };
+    }
+};
+
+test "WSI status native acquire publishes index only after real signal ACK" {
+    for (0..3) |mode| {
+        var fixture = wsi_status_fixture_t{ .base = .{ .mode = @intCast(mode) } };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        var index: u32 = 0xfeed;
+        const result = acquire_next_image(@ptrFromInt(graph.device.handle), @ptrFromInt(101), 0, @ptrFromInt(graph.semaphore.handle), null, &index);
+        try std.testing.expectEqual(if (mode == 0) @as(c_int, c.VK_SUCCESS) else @as(c_int, c.VK_ERROR_DEVICE_LOST), result);
+        try std.testing.expectEqual(if (mode == 0) @as(u32, 0) else 0xfeed, index);
+        try std.testing.expectEqual(mode == 0, wsi_state.swapchains[0].images[0].acquired);
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.submissions);
+        if (mode == 0) {
+            index = 0xfeed;
+            try std.testing.expectEqual(@as(c_int, c.VK_NOT_READY), acquire_next_image(@ptrFromInt(graph.device.handle), @ptrFromInt(101), 0, @ptrFromInt(graph.semaphore.handle), null, &index));
+            try std.testing.expectEqual(@as(c_int, c.VK_TIMEOUT), acquire_next_image(@ptrFromInt(graph.device.handle), @ptrFromInt(101), 1, @ptrFromInt(graph.semaphore.handle), null, &index));
+            try std.testing.expectEqual(@as(u32, 0xfeed), index);
+            try std.testing.expectEqual(@as(usize, 1), fixture.base.submissions);
+        }
+    }
+}
+
+test "WSI status present errors preserve acquired image and publish each native result" {
+    for (0..5) |case| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        wsi_state.swapchains[0].images[0].acquired = true;
+        var chain: c.VkSwapchainKHR = @ptrFromInt(101);
+        var index: u32 = 0;
+        if (case == 0) chain = null;
+        if (case == 1) index = 1;
+        if (case == 2) wsi_state.surfaces[0] = .{};
+        if (case == 3) wsi_state.swapchains[0].width = 32;
+        var result: c.VkResult = c.VK_NOT_READY;
+        var info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .swapchainCount = 1, .pSwapchains = &chain, .pImageIndices = &index, .pResults = &result };
+        const expected: c_int = if (case <= 1) c.VK_ERROR_INITIALIZATION_FAILED else if (case == 2) c.VK_ERROR_SURFACE_LOST_KHR else if (case == 3) c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        try std.testing.expectEqual(expected, queue_present(@ptrFromInt(graph.queue.handle), &info));
+        try std.testing.expectEqual(expected, result);
+        try std.testing.expect(wsi_state.swapchains[0].images[0].acquired);
+        try std.testing.expectEqual(if (case == 4) @as(usize, 1) else 0, fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+    }
+}
+
+test "WSI status replacement failure preserves old chain generation and owners" {
+    for (0..3) |case| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        var info = c.VkSwapchainCreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = @ptrFromInt(100), .minImageCount = 2, .imageFormat = c.VK_FORMAT_B8G8R8A8_UNORM, .imageExtent = .{ .width = 64, .height = 64 }, .imageArrayLayers = 1, .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .preTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = c.VK_PRESENT_MODE_FIFO_KHR, .oldSwapchain = @ptrFromInt(101) };
+        if (case == 1) info.imageUsage = c.VK_IMAGE_USAGE_STORAGE_BIT;
+        if (case == 2) info.oldSwapchain = @ptrFromInt(999);
+        var output: c.VkSwapchainKHR = @ptrFromInt(8);
+        try std.testing.expectEqual(if (case == 0) @as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY) else @as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_swapchain(@ptrFromInt(graph.device.handle), &info, null, &output));
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(u64, 101), wsi_state.swapchains[0].id);
+        try std.testing.expect(!wsi_state.swapchains[0].retired);
+        for (wsi_state.swapchains[1..]) |chain| try std.testing.expectEqual(@as(u64, 0), chain.id);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+        try std.testing.expectEqual(if (case == 0) @as(usize, 1) else 0, fixture.base.submissions);
+    }
+}
+
+test "WSI status surface query outputs follow ownership and bounded enumeration" {
+    var fixture = wsi_status_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const graph = try wsi_status_graph_t.init();
+    var count: u32 = 1;
+    var mode: c.VkPresentModeKHR = c.VK_PRESENT_MODE_MAILBOX_KHR;
+    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), surface_modes(@ptrFromInt(graph.physical.handle), @ptrFromInt(100), &count, &mode));
+    try std.testing.expectEqual(@as(u32, 1), count);
+    try std.testing.expectEqual(@as(u32, c.VK_PRESENT_MODE_FIFO_KHR), mode);
+    count = 0;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_modes(@ptrFromInt(graph.physical.handle), @ptrFromInt(100), &count, null));
+    try std.testing.expectEqual(@as(u32, 2), count);
+    var caps = std.mem.zeroes(c.VkSurfaceCapabilitiesKHR);
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_capabilities(@ptrFromInt(graph.physical.handle), @ptrFromInt(100), &caps));
+    const before = caps;
+    graph.physical.parent_id = 999;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_SURFACE_LOST_KHR), surface_capabilities(@ptrFromInt(graph.physical.handle), @ptrFromInt(100), &caps));
+    try std.testing.expectEqualDeep(before, caps);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_SURFACE_LOST_KHR), surface_modes(@ptrFromInt(graph.physical.handle), @ptrFromInt(100), &count, &mode));
+    try std.testing.expectEqual(@as(u32, 2), count);
+    try std.testing.expectEqual(@as(usize, 0), fixture.base.submissions);
+}
+
+test "WSI status shared present waits are consumed once and failure leaves results unpublished" {
+    for (0..3) |case| {
+        var fixture = wsi_status_fixture_t{ .base = .{ .mode = if (case == 2) 1 else 0 } };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        if (case == 1) graph.semaphore.parent_id = 999;
+        const semaphore: c.VkSemaphore = @ptrFromInt(graph.semaphore.handle);
+        const chains = [_]c.VkSwapchainKHR{ null, null };
+        const indices = [_]u32{ 0, 0 };
+        var results = [_]c.VkResult{ c.VK_NOT_READY, c.VK_NOT_READY };
+        var info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .waitSemaphoreCount = 1, .pWaitSemaphores = &semaphore, .swapchainCount = 2, .pSwapchains = &chains, .pImageIndices = &indices, .pResults = &results };
+        try std.testing.expectEqual(if (case == 2) @as(c_int, c.VK_ERROR_DEVICE_LOST) else @as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), queue_present(@ptrFromInt(graph.queue.handle), &info));
+        try std.testing.expectEqual(if (case == 0) [_]c.VkResult{ c.VK_ERROR_INITIALIZATION_FAILED, c.VK_ERROR_INITIALIZATION_FAILED } else [_]c.VkResult{ c.VK_NOT_READY, c.VK_NOT_READY }, results);
+        try std.testing.expectEqual(if (case == 1) @as(usize, 0) else 1, fixture.base.submissions);
+        if (case == 0) try std.testing.expectEqual(@as(u32, 0), resource_state(graph.semaphore).inflight_count);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
     }
 }
