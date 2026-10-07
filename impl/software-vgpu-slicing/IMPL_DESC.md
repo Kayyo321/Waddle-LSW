@@ -5729,3 +5729,15 @@ and overlap rejection; malformed later spans preserve all bytes; disjoint interv
 GPU bytes remain unchanged; ordinary dispatch response/status behavior; existing
 contiguous writes and resource teardown remain functional. Final sanitizer and
 integrated Windows/DXVK coherent-mapping qualification are separate pending gates.
+
+### Final fixed-object/query packet capacity qualification
+
+Fixed extra-object requests prove their maximum4176-byte extent against the
+existing8192-byte writer before encoding. Requirements2 and format2 queries have
+exact64/76 and40/52-byte extents. No public packet quota changes, allocations, or
+borrowed ownership changes occur. Layout-support conversion retains the original
+bounded normalized body and returns Invalid for malformed framing. Invalid native
+fields and configured quota failures remain explicit; internal scalar appends use
+the shared checked writer after the whole-record proof. Independent pinned C
+oracles, native negative cases, and the existing90% line/branch gate qualify these
+serializers; this does not establish real DXVK or overall TODO#3 acceptance.

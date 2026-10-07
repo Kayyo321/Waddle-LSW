@@ -29,12 +29,15 @@ pub const memory_result_t=struct {
 /// dedicated requests actual dedicated node. [out] Owned exact query or Invalid
 /// zero IDs/Limit capacity. No allocation/retention; caller owns resource lifetime.
 pub fn memory_requirements2(device:u64,resource:u64,image:bool,dedicated:bool) !writer_t {
-    if(resource==0)return error.Invalid;
-    var writer:writer_t=.{};try writer.header(if(image) 144 else 145,device);
-    try writer.put(u64,1);try writer.put(u32,if(image)c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 else c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2);try writer.put(u64,0);try writer.put(u64,resource);
-    try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2);
-    try writer.put(u64,if(dedicated) 1 else 0);
-    if(dedicated){try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS);try writer.put(u64,0);}
+    if(device==0 or resource==0)return error.Invalid;
+    var writer:writer_t=.{};
+    // Exact bounded packet extent64/76 is proven before any append.
+    writer.require_capacity(if(dedicated) 76 else 64) catch unreachable;
+    writer.header(if(image) 144 else 145,device) catch unreachable;
+    writer.put_proven(u64,1);writer.put_proven(u32,if(image)c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 else c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2);writer.put_proven(u64,0);writer.put_proven(u64,resource);
+    writer.put_proven(u64,1);writer.put_proven(u32,c.VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2);
+    writer.put_proven(u64,if(dedicated) 1 else 0);
+    if(dedicated){writer.put_proven(u32,c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS);writer.put_proven(u64,0);}
     return writer;
 }
 /// [in] completed immutable host reply, matching image/dedicated request shape.
@@ -60,8 +63,12 @@ pub const format_result_t=struct {
 /// extended requests actual VkFormatProperties3. [out] Exact149 query packet or
 /// Invalid identity/Limit capacity. No synthesized flags, allocation or retention.
 pub fn format_properties2(physical:u64,format:u32,extended:bool) !writer_t {
-    var writer:writer_t=.{};try writer.header(149,physical);try writer.put(u32,format);try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2);try writer.put(u64,if(extended)1 else 0);
-    if(extended){try writer.put(u32,c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3);try writer.put(u64,0);}
+    if(physical==0)return error.Invalid;
+    var writer:writer_t=.{};
+    // Base40 plus optional12 bytes; fixed before any append.
+    writer.require_capacity(if(extended) 52 else 40) catch unreachable;
+    writer.header(149,physical) catch unreachable;writer.put_proven(u32,format);writer.put_proven(u64,1);writer.put_proven(u32,c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2);writer.put_proven(u64,if(extended)1 else 0);
+    if(extended){writer.put_proven(u32,c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3);writer.put_proven(u64,0);}
     return writer;
 }
 /// [in] immutable complete149 reply and matching extended flag. [out] Actual
@@ -106,4 +113,18 @@ test "format2 and format3 preserve actual high64-bit flags and reject every trun
         for(0..bytes) |length| try std.testing.expectError(error.Corrupt,decode_format(expected[0..length],extended));
         try std.testing.expectError(error.Corrupt,decode_format(expected[0..bytes],!extended));
     }
+}
+
+test "actual requirements reject zero sizes alignments masks and noncanonical dedicated flags" {
+    var bytes = [_]u8{0} ** 4096;
+    const size = venus_requirements2_test_reply(145, 1, &bytes);
+    const original = bytes;
+    const offsets = [_]usize{ 36, 40, 44, 52, 60 };
+    for (offsets) |offset| {
+        bytes = original;
+        const value: u64 = if (offset == 36 or offset == 40) 2 else 0;
+        if (offset == 44 or offset == 52) std.mem.writeInt(u64, bytes[offset..][0..8], value, .little) else std.mem.writeInt(u32, bytes[offset..][0..4], @intCast(value), .little);
+        try std.testing.expectError(error.Corrupt, decode_memory(bytes[0..size], false, true));
+    }
+    try std.testing.expectError(error.Invalid, format_properties2(0, 37, false));
 }

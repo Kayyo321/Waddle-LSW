@@ -30,22 +30,34 @@ pub fn allocate_memory(device:u64,id:u64,size:u64,index:u32,flags:?allocation_fl
     if(device==0 or id==0 or size==0 or index>=32)return error.Invalid;
     if(flags) |node| if(node.flags & ~@as(u32,3)!=0 or (node.flags & 1!=0 and node.device_mask!=1))return error.Invalid;
     if(dedicated) |node| if((node.image==0)==(node.buffer==0))return error.Invalid;
-    var writer:writer_t=.{};try writer.header(21,device);
-    try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
-    if(flags!=null) {try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO);}
-    if(dedicated!=null) {try writer.put(u64,1);try writer.put(u32,c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO);}
-    try writer.put(u64,0);
-    if(dedicated) |node| {try writer.put(u64,node.image);try writer.put(u64,node.buffer);}
-    if(flags) |node| {try writer.put(u32,node.flags);try writer.put(u32,node.device_mask);}
-    try writer.put(u64,size);try writer.put(u32,index);try finish(&writer,id);return writer;
+    var writer=try start_packet(21,device);
+    writer.put_proven(u64,1);writer.put_proven(u32,c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+    if(flags!=null) {writer.put_proven(u64,1);writer.put_proven(u32,c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO);}
+    if(dedicated!=null) {writer.put_proven(u64,1);writer.put_proven(u32,c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO);}
+    writer.put_proven(u64,0);
+    if(dedicated) |node| {writer.put_proven(u64,node.image);writer.put_proven(u64,node.buffer);}
+    if(flags) |node| {writer.put_proven(u32,node.flags);writer.put_proven(u32,node.device_mask);}
+    writer.put_proven(u64,size);writer.put_proven(u32,index);try finish(&writer,id);return writer;
+}
+// Largest fixed constructor: pipeline cache36+20+4096 data+24tail=4176.
+// Merge64 caches<=548; all other scalar/array packets<=188. Layout support
+// separately checks its normalized packet <=8192 and removes4 bytes net.
+const MaxFixedPacketBytes: usize = 4176;
+comptime { if (MaxFixedPacketBytes > render.MaxBytes) @compileError("Fixed object packet exceeds writer capacity"); }
+fn start_packet(opcode:u32,device:u64) !writer_t {
+    if(device==0)return error.Invalid;
+    var writer:writer_t=.{};
+    writer.require_capacity(MaxFixedPacketBytes) catch unreachable;
+    writer.header(opcode,device) catch unreachable;
+    return writer;
 }
 fn create_header(writer:*writer_t,opcode:u32,device:u64,tag:u32) !void {
-    try writer.header(opcode,device);
-    try writer.put(u64,1);try writer.put(u32,tag);try writer.put(u64,0);
+    writer.*=try start_packet(opcode,device);
+    writer.put_proven(u64,1);writer.put_proven(u32,tag);writer.put_proven(u64,0);
 }
 fn finish(writer:*writer_t,id:u64) !void {
     if(id==0)return error.Invalid;
-    try writer.put(u64,0);try writer.put(u64,1);try writer.put(u64,id);
+    writer.put_proven(u64,0);writer.put_proven(u64,1);writer.put_proven(u64,id);
 }
 fn valid_header(info:anytype,tag:u32) bool {return info.sType==tag and info.pNext==null;}
 fn scalars(writer:*writer_t,info:anytype) !void {
@@ -56,8 +68,8 @@ fn scalars(writer:*writer_t,info:anytype) !void {
                 if(comptime !std.mem.eql(u8,field.name,"maxAnisotropy")) {
                     if(!std.math.isFinite(value))return error.Invalid;
                 } else if(info.anisotropyEnable!=0 and !std.math.isFinite(value))return error.Invalid;
-                try writer.put(u32,@bitCast(value));
-            } else try writer.put(u32,@field(info,field.name));
+                writer.put_proven(u32,@bitCast(value));
+            } else writer.put_proven(u32,@field(info,field.name));
         }
     }
 }
@@ -65,7 +77,7 @@ fn scalars(writer:*writer_t,info:anytype) !void {
 /// Invalid zero identity; ownership remains caller, no heap or retained pointers.
 pub fn render_granularity(device:u64,pass:u64) !writer_t {
     if(pass==0)return error.Invalid;
-    var writer:writer_t=.{};try writer.header(84,device);try writer.put(u64,pass);try writer.put(u64,1);return writer;
+    var writer=try start_packet(84,device);writer.put_proven(u64,pass);writer.put_proven(u64,1);return writer;
 }
 /// [in] canonical maintenance5 area description, <=8 accessible formats; caller
 /// checks enabled multiview/format limits. [out] Exact280 hostquery; Invalid shape,
@@ -74,9 +86,9 @@ pub fn rendering_granularity(device:u64,info:*const c.VkRenderingAreaInfoKHR) !w
     if(info.sType!=c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR or info.pNext!=null or (info.colorAttachmentCount!=0 and info.pColorAttachmentFormats==null))return error.Invalid;
     if(info.colorAttachmentCount>8)return error.Limit;
     var writer:writer_t=.{};try create_header(&writer,280,device,c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR);
-    try writer.put(u32,info.viewMask);try writer.put(u32,info.colorAttachmentCount);try writer.put(u64,info.colorAttachmentCount);
-    if(info.colorAttachmentCount!=0)for(info.pColorAttachmentFormats[0..info.colorAttachmentCount]) |format|try writer.put(u32,format);
-    try writer.put(u32,info.depthAttachmentFormat);try writer.put(u32,info.stencilAttachmentFormat);try writer.put(u64,1);return writer;
+    writer.put_proven(u32,info.viewMask);writer.put_proven(u32,info.colorAttachmentCount);writer.put_proven(u64,info.colorAttachmentCount);
+    if(info.colorAttachmentCount!=0)for(info.pColorAttachmentFormats[0..info.colorAttachmentCount]) |format|writer.put_proven(u32,format);
+    writer.put_proven(u32,info.depthAttachmentFormat);writer.put_proven(u32,info.stencilAttachmentFormat);writer.put_proven(u64,1);return writer;
 }
 /// [in] completed84/280 immutable reply, matchingopcode. [out] Exact nonzero actual
 /// host extent or Corrupt identity/presence/truncation/empty extent. No retention.
@@ -90,8 +102,8 @@ pub fn decode_granularity(reply:[]const u8,opcode:u32) !c.VkExtent2D {
 /// [out] Exact56 owned packet or Invalid identity/aspect. No retention/allocation.
 pub fn subresource_layout(device:u64,image:u64,info:*const c.VkImageSubresource) !writer_t {
     if(image==0 or info.aspectMask==0 or info.aspectMask & (info.aspectMask-1)!=0)return error.Invalid;
-    var writer:writer_t=.{};try writer.header(56,device);try writer.put(u64,image);try writer.put(u64,1);
-    try writer.put(u32,info.aspectMask);try writer.put(u32,info.mipLevel);try writer.put(u32,info.arrayLayer);try writer.put(u64,1);return writer;
+    var writer=try start_packet(56,device);writer.put_proven(u64,image);writer.put_proven(u64,1);
+    writer.put_proven(u32,info.aspectMask);writer.put_proven(u32,info.mipLevel);writer.put_proven(u32,info.arrayLayer);writer.put_proven(u64,1);return writer;
 }
 /// [in] completed immutable56 reply. [out] Exact actual host offsets/pitches/size
 /// or Corrupt opcode/presence/truncation/overflow. Zero pitches are preserved when
@@ -123,7 +135,7 @@ pub fn create_sampler(device:u64,id:u64,info:*const c.VkSamplerCreateInfo) !writ
 pub fn create_buffer_view(device:u64,id:u64,buffer_id:u64,info:*const c.VkBufferViewCreateInfo) !writer_t {
     if(!valid_header(info.*,c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO) or info.flags!=0 or buffer_id==0 or info.format==0 or info.range==0)return error.Invalid;
     var writer:writer_t=.{};try create_header(&writer,52,device,c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO);
-    try writer.put(u32,info.flags);try writer.put(u64,buffer_id);try writer.put(u32,info.format);try writer.put(u64,info.offset);try writer.put(u64,info.range);try finish(&writer,id);return writer;
+    writer.put_proven(u32,info.flags);writer.put_proven(u64,buffer_id);writer.put_proven(u32,info.format);writer.put_proven(u64,info.offset);writer.put_proven(u64,info.range);try finish(&writer,id);return writer;
 }
 /// [in] info core query type0..2/count1..4096 with known pipeline-statistics bits;
 /// caller validates enabled occlusion/statistics/timestamp functionality.
@@ -142,9 +154,9 @@ pub fn create_pipeline_cache(device:u64,id:u64,info:*const c.VkPipelineCacheCrea
     if(!valid_header(info.*,c.VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO) or info.flags & ~@as(u32,c.VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT)!=0 or (info.initialDataSize!=0 and info.pInitialData==null))return error.Invalid;
     if(info.initialDataSize>4096)return error.Limit;
     var writer:writer_t=.{};try create_header(&writer,61,device,c.VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO);
-    try writer.put(u32,info.flags);try writer.put(u64,info.initialDataSize);try writer.put(u64,info.initialDataSize);
-    if(info.pInitialData) |pointer| for(@as([*]const u8,@ptrCast(pointer))[0..info.initialDataSize]) |byte| try writer.put(u8,byte);
-    while(writer.used%4!=0)try writer.put(u8,0);
+    writer.put_proven(u32,info.flags);writer.put_proven(u64,info.initialDataSize);writer.put_proven(u64,info.initialDataSize);
+    if(info.pInitialData) |pointer| for(@as([*]const u8,@ptrCast(pointer))[0..info.initialDataSize]) |byte| writer.put_proven(u8,byte);
+    while(writer.used%4!=0)writer.put_proven(u8,0);
     try finish(&writer,id);return writer;
 }
 /// [in] info core event flags0 or DEVICE_ONLY, live resolved device/new ID.
@@ -152,21 +164,21 @@ pub fn create_pipeline_cache(device:u64,id:u64,info:*const c.VkPipelineCacheCrea
 /// sync2 for device-only events. No allocation/retention; distinct calls safe.
 pub fn create_event(device:u64,id:u64,info:*const c.VkEventCreateInfo) !writer_t {
     if(!valid_header(info.*,c.VK_STRUCTURE_TYPE_EVENT_CREATE_INFO) or info.flags & ~@as(u32,c.VK_EVENT_CREATE_DEVICE_ONLY_BIT)!=0)return error.Invalid;
-    var writer:writer_t=.{};try create_header(&writer,42,device,c.VK_STRUCTURE_TYPE_EVENT_CREATE_INFO);try writer.put(u32,info.flags);try finish(&writer,id);return writer;
+    var writer:writer_t=.{};try create_header(&writer,42,device,c.VK_STRUCTURE_TYPE_EVENT_CREATE_INFO);writer.put_proven(u32,info.flags);try finish(&writer,id);return writer;
 }
 /// [in] device/id resolved live owners and opcode43event/48query/53view/62cache/71sampler.
 /// [out] Exact destroy packet; Invalid zero ID/opcode. Caller retains ownership
 /// until exact native completion ACK. No allocation or retained memory.
 pub fn destroy(device:u64,id:u64,opcode:u32) !writer_t {
     if(id==0 or (opcode!=43 and opcode!=48 and opcode!=53 and opcode!=62 and opcode!=71))return error.Invalid;
-    var writer:writer_t=.{};try writer.header(opcode,device);try writer.put(u64,id);try writer.put(u64,0);return writer;
+    var writer=try start_packet(opcode,device);writer.put_proven(u64,id);writer.put_proven(u64,0);return writer;
 }
 /// [in] device/event resolved owners; opcode44status/45set/46reset. [out] Exact
 /// synchronous event packet or Invalid IDs/opcode. Caller checks DEVICE_ONLY
 /// restriction and GPU lifetime. No allocation/retention, disjoint calls safe.
 pub fn event_operation(device:u64,event:u64,opcode:u32) !writer_t {
     if(event==0 or opcode<44 or opcode>46)return error.Invalid;
-    var writer:writer_t=.{};try writer.header(opcode,device);try writer.put(u64,event);return writer;
+    var writer=try start_packet(opcode,device);writer.put_proven(u64,event);return writer;
 }
 /// [in] command/query resolved owners, first/count validated within actual pool;
 /// flags core query control, stage64 for timestamp205. [out] Owned127begin,
@@ -174,12 +186,12 @@ pub fn event_operation(device:u64,event:u64,opcode:u32) !writer_t {
 /// Caller validates executable GPU scope; no allocation, retention or locks.
 pub fn query_command(command:u64,pool:u64,opcode:u32,first:u32,query_count:u32,flags:u32,stage:u64) !writer_t {
     if(pool==0 or (opcode!=127 and opcode!=128 and opcode!=129 and opcode!=130 and opcode!=205) or query_count>std.math.maxInt(u32)-first or flags & ~@as(u32,c.VK_QUERY_CONTROL_PRECISE_BIT)!=0)return error.Invalid;
-    var writer:writer_t=.{};try writer.header(opcode,command);
-    if(opcode==205)try writer.put(u64,stage);
-    if(opcode==130){if(stage>std.math.maxInt(u32))return error.Invalid;try writer.put(u32,@intCast(stage));}
-    try writer.put(u64,pool);try writer.put(u32,first);
-    if(opcode==127)try writer.put(u32,flags);
-    if(opcode==129)try writer.put(u32,query_count);
+    var writer=try start_packet(opcode,command);
+    if(opcode==205)writer.put_proven(u64,stage);
+    if(opcode==130){if(stage>std.math.maxInt(u32))return error.Invalid;writer.put_proven(u32,@intCast(stage));}
+    writer.put_proven(u64,pool);writer.put_proven(u32,first);
+    if(opcode==127)writer.put_proven(u32,flags);
+    if(opcode==129)writer.put_proven(u32,query_count);
     return writer;
 }
 /// [in] device/query resolved owners, first/count within actual pool; data_size
@@ -189,7 +201,7 @@ pub fn query_command(command:u64,pool:u64,opcode:u32,first:u32,query_count:u32,f
 pub fn query_results(device:u64,pool:u64,first:u32,query_count:u32,data_size:usize,stride:u64,flags:u32) !writer_t {
     if(pool==0 or query_count>std.math.maxInt(u32)-first or flags & ~@as(u32,0x1f)!=0)return error.Invalid;
     if(data_size>4096)return error.Limit;
-    var writer:writer_t=.{};try writer.header(49,device);try writer.put(u64,pool);try writer.put(u32,first);try writer.put(u32,query_count);try writer.put(u64,data_size);try writer.put(u64,data_size);try writer.put(u64,stride);try writer.put(u32,flags);return writer;
+    var writer=try start_packet(49,device);writer.put_proven(u64,pool);writer.put_proven(u32,first);writer.put_proven(u32,query_count);writer.put_proven(u64,data_size);writer.put_proven(u64,data_size);writer.put_proven(u64,stride);writer.put_proven(u32,flags);return writer;
 }
 /// [in] reply completed immutable command49 bytes, output exclusive actual data
 /// extent0..4096. [out] Native VkResult; Corrupt invalid prefix/array/payload/positive
@@ -209,7 +221,7 @@ pub fn decode_query_results(reply:[]const u8,output:[]u8) !i32 {
 pub fn cache_data(device:u64,cache:u64,capacity:usize,fill:bool) !writer_t {
     if(cache==0)return error.Invalid;
     if(capacity>4096)return error.Limit;
-    var writer:writer_t=.{};try writer.header(63,device);try writer.put(u64,cache);try writer.put(u64,1);try writer.put(u64,capacity);try writer.put(u64,if(fill) capacity else 0);return writer;
+    var writer=try start_packet(63,device);writer.put_proven(u64,cache);writer.put_proven(u64,1);writer.put_proven(u64,capacity);writer.put_proven(u64,if(fill) capacity else 0);return writer;
 }
 /// [in] device/destination resolved IDs and sources borrowed resolved1..64 unique
 /// host cache identities. [out] Owned64 packet, Invalid identity/duplicate/self,
@@ -217,8 +229,8 @@ pub fn cache_data(device:u64,cache:u64,capacity:usize,fill:bool) !writer_t {
 pub fn merge_caches(device:u64,destination:u64,sources:[]const u64) !writer_t {
     if(destination==0 or sources.len==0)return error.Invalid;
     if(sources.len>64)return error.Limit;
-    var writer:writer_t=.{};try writer.header(64,device);try writer.put(u64,destination);try writer.put(u32,@intCast(sources.len));try writer.put(u64,sources.len);
-    for(sources,0..) |source,index| {if(source==0 or source==destination)return error.Invalid;for(sources[0..index]) |prior| if(prior==source)return error.Invalid;try writer.put(u64,source);}
+    var writer=try start_packet(64,device);writer.put_proven(u64,destination);writer.put_proven(u32,@intCast(sources.len));writer.put_proven(u64,sources.len);
+    for(sources,0..) |source,index| {if(source==0 or source==destination)return error.Invalid;for(sources[0..index]) |prior| if(prior==source)return error.Invalid;writer.put_proven(u64,source);}
     return writer;
 }
 /// Returned cache query metadata; owns scalar values, no pointers or allocation.
@@ -263,14 +275,13 @@ pub fn descriptor_layout_support(device: u64, create_packet: []const u8) !writer
         std.mem.readInt(u64, create_packet[tail..][0..8], .little) != 0 or
         std.mem.readInt(u64, create_packet[tail + 8..][0..8], .little) != 1 or
         std.mem.readInt(u64, create_packet[tail + 16..][0..8], .little) == 0) return error.Invalid;
-    var writer: writer_t = .{};
-    try writer.header(164, device);
+    var writer=try start_packet(164, device);
     const body = create_packet[16..tail];
     @memcpy(writer.bytes[writer.used..][0..body.len], body);
     writer.used += body.len;
-    try writer.put(u64, 1);
-    try writer.put(u32, c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT);
-    try writer.put(u64, 0);
+    writer.put_proven(u64, 1);
+    writer.put_proven(u32, c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT);
+    writer.put_proven(u64, 0);
     return writer;
 }
 /// Decode actual no-chain layout support reply. [in] immutable borrowed exact28
@@ -416,4 +427,120 @@ test "actual layout support reuses normalized create body and rejects malformed 
         try std.testing.expectError(error.Corrupt, decode_descriptor_layout_support(reply[0..28]));
         reply[offset] = saved;
     }
+}
+
+test "sampler native enum boolean topology and finite scalar failures preserve bounded ownership" {
+    const valid = c.VkSamplerCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .maxLod = 4, .maxAnisotropy = 2 };
+    inline for (.{ "flags", "magFilter", "minFilter", "mipmapMode", "addressModeU", "addressModeV", "addressModeW", "anisotropyEnable", "compareEnable", "unnormalizedCoordinates", "compareOp", "borderColor" }) |field| {
+        var info = valid;
+        @field(info, field) = 99;
+        try std.testing.expectError(error.Invalid, create_sampler(7, 11, &info));
+    }
+    var info = valid;
+    info.sType = 0; try std.testing.expectError(error.Invalid, create_sampler(7, 11, &info));
+    info = valid; info.pNext = @ptrFromInt(8); try std.testing.expectError(error.Invalid, create_sampler(7, 11, &info));
+    info = valid; info.anisotropyEnable = 1; info.maxAnisotropy = 0.5; try std.testing.expectError(error.Invalid, create_sampler(7, 11, &info));
+    info.maxAnisotropy = std.math.nan(f32); try std.testing.expectError(error.Invalid, create_sampler(7, 11, &info));
+    info.maxAnisotropy = 2; _ = try create_sampler(7, 11, &info);
+    info = valid; info.minLod = 5; try std.testing.expectError(error.Invalid, create_sampler(7, 11, &info));
+    inline for (.{ "mipLodBias", "minLod", "maxLod" }) |field| {
+        info = valid; @field(info, field) = std.math.nan(f32);
+        try std.testing.expectError(error.Invalid, create_sampler(7, 11, &info));
+    }
+    try std.testing.expectError(error.Invalid, create_sampler(0, 11, &valid));
+    try std.testing.expectError(error.Invalid, create_sampler(7, 0, &valid));
+    // Disabled anisotropy ignores the native maximum, including nonfinite data.
+    info = valid; info.maxAnisotropy = std.math.nan(f32); _ = try create_sampler(7, 11, &info);
+}
+
+test "extra native object validation rejects every quota topology and ownership boundary" {
+    var query = c.VkQueryPoolCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryCount = 1 };
+    inline for (.{ "sType", "flags", "queryType", "queryCount", "pipelineStatistics" }) |field| {
+        var invalid = query; @field(invalid, field) = if (comptime std.mem.eql(u8, field, "sType")) 0 else 99999;
+        try std.testing.expectError(error.Invalid, create_query_pool(7, 11, &invalid));
+    }
+    query.queryCount = 0; try std.testing.expectError(error.Invalid, create_query_pool(7, 11, &query));
+    query.queryCount = 1; query.pipelineStatistics = 1; try std.testing.expectError(error.Invalid, create_query_pool(7, 11, &query));
+    query.queryType = c.VK_QUERY_TYPE_PIPELINE_STATISTICS; _ = try create_query_pool(7, 11, &query);
+    try std.testing.expectError(error.Invalid, create_query_pool(0, 11, &query));
+    var event = c.VkEventCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_EVENT_CREATE_INFO };
+    event.flags = 2; try std.testing.expectError(error.Invalid, create_event(7, 11, &event));
+    event.flags = 0; event.sType = 0; try std.testing.expectError(error.Invalid, create_event(7, 11, &event));
+    event.sType = c.VK_STRUCTURE_TYPE_EVENT_CREATE_INFO; try std.testing.expectError(error.Invalid, create_event(0, 11, &event));
+    var view = c.VkBufferViewCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, .format = 37, .range = 4 };
+    try std.testing.expectError(error.Invalid, create_buffer_view(0, 11, 13, &view));
+    var cache = c.VkPipelineCacheCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+    _ = try create_pipeline_cache(7, 11, &cache);
+    cache.flags = 2; try std.testing.expectError(error.Invalid, create_pipeline_cache(7, 11, &cache));
+    cache.flags = 0; cache.sType = 0; try std.testing.expectError(error.Invalid, create_pipeline_cache(7, 11, &cache));
+    cache.sType = c.VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO; cache.initialDataSize = 1;
+    try std.testing.expectError(error.Invalid, create_pipeline_cache(7, 11, &cache));
+    const bytes = [_]u8{0x19} ** 4096; cache.pInitialData = &bytes;
+    _ = try create_pipeline_cache(7, 11, &cache);
+    cache.initialDataSize = bytes.len; _ = try create_pipeline_cache(7, 11, &cache);
+    try std.testing.expectError(error.Invalid, create_pipeline_cache(0, 11, &cache));
+    cache.initialDataSize += 1; try std.testing.expectError(error.Limit, create_pipeline_cache(7, 11, &cache));
+    try std.testing.expectError(error.Invalid, event_operation(7, 0, 44));
+    try std.testing.expectError(error.Invalid, query_command(7, 0, 127, 0, 1, 0, 0));
+    try std.testing.expectError(error.Invalid, query_command(7, 11, 0, 0, 1, 0, 0));
+    try std.testing.expectError(error.Invalid, query_command(7, 11, 127, std.math.maxInt(u32), 1, 0, 0));
+    try std.testing.expectError(error.Invalid, query_command(7, 11, 127, 0, 1, 2, 0));
+    try std.testing.expectError(error.Invalid, merge_caches(7, 11, &.{}));
+    try std.testing.expectError(error.Invalid, merge_caches(7, 11, &.{0}));
+    try std.testing.expectError(error.Invalid, merge_caches(7, 11, &.{11}));
+    const sources = [_]u64{13} ** 65; try std.testing.expectError(error.Limit, merge_caches(7, 11, &sources));
+    const sub = c.VkImageSubresource{ .aspectMask = 0 }; try std.testing.expectError(error.Invalid, subresource_layout(7, 11, &sub));
+    var area = c.VkRenderingAreaInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR };
+    area.sType = 0; try std.testing.expectError(error.Invalid, rendering_granularity(7, &area));
+    area.sType = c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR; area.pNext = @ptrFromInt(8); try std.testing.expectError(error.Invalid, rendering_granularity(7, &area));
+    area.pNext = null; area.colorAttachmentCount = 1; try std.testing.expectError(error.Invalid, rendering_granularity(7, &area));
+    area.colorAttachmentCount = 0; try std.testing.expectError(error.Invalid, rendering_granularity(0, &area));
+}
+
+test "cache and query malformed native replies never mutate caller output" {
+    var reply = [_]u8{0} ** 64;
+    var target = [_]u8{0xaa} ** 32;
+    std.mem.writeInt(u32, reply[0..4], 49, .little); std.mem.writeInt(u64, reply[8..16], 32, .little);
+    std.mem.writeInt(i32, reply[4..8], 2, .little); try std.testing.expectError(error.Corrupt, decode_query_results(&reply, &target));
+    @memset(&reply, 0); std.mem.writeInt(u32, reply[0..4], 63, .little); std.mem.writeInt(u64, reply[8..16], 1, .little);
+    std.mem.writeInt(i32, reply[4..8], -4, .little); _ = try decode_cache_data(&reply, &target);
+    std.mem.writeInt(i32, reply[4..8], 1, .little); try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, &target));
+    std.mem.writeInt(i32, reply[4..8], 0, .little); std.mem.writeInt(u64, reply[24..32], 1, .little);
+    try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, null));
+    try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, &target));
+    std.mem.writeInt(u64, reply[24..32], 0, .little); std.mem.writeInt(u64, reply[16..24], 33, .little);
+    try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, &target));
+    std.mem.writeInt(u64, reply[16..24], 0, .little); std.mem.writeInt(u64, reply[8..16], 2, .little);
+    try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, &target));
+    std.mem.writeInt(u64, reply[8..16], 1, .little); reply[0] = 64;
+    try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, &target));
+    try std.testing.expectEqualSlices(u8, &([_]u8{0xaa} ** 32), &target);
+}
+
+
+test "remaining object identity and native output boundary paths" {
+    const view = c.VkBufferViewCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, .format = 37, .range = 4 };
+    try std.testing.expectError(error.Invalid, create_buffer_view(7, 0, 13, &view));
+    inline for (.{ "sType", "flags", "format", "range" }) |field| {
+        var invalid = view;
+        @field(invalid, field) = if (comptime std.mem.eql(u8, field, "flags")) 1 else 0;
+        try std.testing.expectError(error.Invalid, create_buffer_view(7, 11, 13, &invalid));
+    }
+    try std.testing.expectError(error.Invalid, create_buffer_view(7, 11, 0, &view));
+    const query = c.VkQueryPoolCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, .queryCount = 1 };
+    try std.testing.expectError(error.Invalid, create_query_pool(7, 0, &query));
+    const event = c.VkEventCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_EVENT_CREATE_INFO };
+    try std.testing.expectError(error.Invalid, create_event(7, 0, &event));
+    const cache = c.VkPipelineCacheCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO };
+    try std.testing.expectError(error.Invalid, create_pipeline_cache(7, 0, &cache));
+    try std.testing.expectError(error.Invalid, merge_caches(7, 0, &.{13}));
+    var reply = [_]u8{0} ** 64;
+    var target = [_]u8{0xaa} ** 32;
+    std.mem.writeInt(u32, reply[0..4], 63, .little); std.mem.writeInt(u64, reply[8..16], 1, .little);
+    std.mem.writeInt(u64, reply[16..24], 32, .little); std.mem.writeInt(u64, reply[24..32], 32, .little);
+    std.mem.writeInt(i32, reply[4..8], -4, .little); _ = try decode_cache_data(&reply, &target);
+    try std.testing.expectEqualSlices(u8, &([_]u8{0xaa} ** 32), &target);
+    var oversized = [_]u8{0} ** 4097;
+    try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, &oversized));
+    reply[0] = 49; try std.testing.expectError(error.Corrupt, decode_query_results(&reply, &oversized));
 }
