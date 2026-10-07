@@ -7687,7 +7687,20 @@ fn bind_vertex_buffers_impl(command_buffer: c.VkCommandBuffer, first: u32, count
     }
     var ids: [32]u64 = undefined;
     var refs: [64]*c.venus_object_t = undefined;
+    var reference_count: usize = 0;
     for (buffers[0..count], 0..) |handle, index| {
+        // Robustness2 null descriptors represent zero-filled vertex input. Only
+        // real buffers contribute lifetime references; null binding offsets must
+        // be zero, while optional sizes have no backing-buffer bounds to check.
+        if (handle == null) {
+            const parent = device_by_id(pool.parent_id) orelse { state.command_state = .Invalid; return; };
+            if (!null_descriptor_enabled(parent) or offsets[index] != 0) {
+                state.command_state = .Invalid;
+                return;
+            }
+            ids[index] = 0;
+            continue;
+        }
         const buffer = if (handle) |token| child_object(@intFromPtr(token), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) else null;
         if (buffer == null) {
             state.command_state = .Invalid;
@@ -7703,15 +7716,16 @@ fn bind_vertex_buffers_impl(command_buffer: c.VkCommandBuffer, first: u32, count
             return;
         }
         ids[index] = buffer.?.id;
-        refs[index * 2] = buffer.?;
-        refs[index * 2 + 1] = allocation;
+        refs[reference_count] = buffer.?;
+        refs[reference_count + 1] = allocation;
+        reference_count += 2;
     }
     const writer = dynamic_graphics.bind_vertex_buffers(record.id, first, ids[0..count], offsets[0..count], if (sizes != null) sizes[0..count] else null, if (strides != null) strides[0..count] else null, v2) catch {
         state.command_state = .Invalid;
         return;
     };
     if (!command_acknowledged(&writer, if (v2) 220 else 105)) return;
-    for (refs[0 .. count * 2]) |reference| command_reference(state, reference);
+    for (refs[0..reference_count]) |reference| command_reference(state, reference);
 }
 fn bind_index_buffer(command_buffer: c.VkCommandBuffer, buffer: c.VkBuffer, offset: c.VkDeviceSize, index_type: c.VkIndexType) callconv(.C) void {
     bind_index_buffer_impl(command_buffer, buffer, offset, null, index_type);
@@ -15969,4 +15983,52 @@ test "coverage descriptor copy topology and payload-family mismatch preserve cop
         try std.testing.expectEqual(@as(usize,5),objects.live_count);try std.testing.expectEqual(@as(usize,0),fixture.base.submissions);
         _=saved;
     }
+}
+const null_vertex_binding_fixture_t=struct {
+    base:image_ownership_fixture_t=. {},
+    ids:[3]u64=.{0xffff} ** 3,
+    fn exchange(context:?*anyopaque,request:[*c]const c.venus_request_t,input:?*const anyopaque,length:usize,response:[*c]c.venus_request_t,output:?*anyopaque,capacity:usize) callconv(.C) c_int {
+        const fixture:*@This()=@ptrCast(@alignCast(context.?));
+        if(request.*.kind==c.RequestSubmit) {
+            const bytes=@as([*]const u8,@ptrCast(input.?))[0..length];
+            if(length<92 or std.mem.readInt(u64,bytes[60..68],.little)!=3)return c.RingCorrupt;
+            for(&fixture.ids,0..) |*id,index|id.*=std.mem.readInt(u64,bytes[68+index*8..][0..8],.little);
+        }
+        return image_ownership_fixture_t.exchange(&fixture.base,request,input,length,response,output,capacity);
+    }
+};
+test "enabled null vertex binding sends native zero IDs and retains only real mixed-buffer backing after ACK" {
+    for([_]bool{false,true}) |v2| for([_]bool{false,true}) |mixed| for(0..3) |mode| for(0..3) |size_case| {
+        if(!v2 and size_case!=0)continue;
+        var fixture=null_vertex_binding_fixture_t{.base=.{.mode=@intCast(mode)}};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(null_vertex_binding_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const graph=try graphics_ownership_graph_t.init();
+        const enabled=&device_caches[0].enabled_state.features;enabled.count=1;enabled.nodes[0].type_tag=c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;enabled.nodes[0].flag_count=3;enabled.nodes[0].flags[2]=1;
+        const buffers=[_]c.VkBuffer{null,if(mixed)@ptrFromInt(graph.buffer.handle)else null,null};
+        const offsets=[_]u64{0,if(mixed)8 else 0,0};
+        const sizes=[_]u64{switch(size_case){0=>0,1=>c.VK_WHOLE_SIZE,else=>4096},c.VK_WHOLE_SIZE,0};
+        const cmd:c.VkCommandBuffer=@ptrFromInt(graph.recording.handle);
+        if(v2)bind_vertex_buffers2(cmd,0,buffers.len,&buffers,&offsets,&sizes,null) else bind_vertex_buffers(cmd,0,buffers.len,&buffers,&offsets);
+        try std.testing.expectEqual(@as(usize,1),fixture.base.submissions);
+        try std.testing.expectEqual([_]u64{0,if(mixed)graph.buffer.id else 0,0},fixture.ids);
+        try std.testing.expectEqual(mode==0 and mixed,image_ownership_fixture_t.retained(graph.recording,graph.buffer));
+        try std.testing.expectEqual(mode==0 and mixed,image_ownership_fixture_t.retained(graph.recording,graph.memory));
+        if(!mixed or mode!=0)try std.testing.expectEqual([_]u64{0} ** 8,resource_state(graph.recording).buffer_references);
+        try std.testing.expectEqual(@as(usize,6),objects.live_count);
+    };
+}
+test "disabled or nonzero-offset null vertex binding fails before native command or resource publication" {
+    for([_]bool{false,true}) |v2| for([_]bool{false,true}) |enabled_value| {
+        var fixture=null_vertex_binding_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(null_vertex_binding_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const graph=try graphics_ownership_graph_t.init();
+        const enabled=&device_caches[0].enabled_state.features;enabled.count=1;enabled.nodes[0].type_tag=c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;enabled.nodes[0].flag_count=3;enabled.nodes[0].flags[2]=@intFromBool(enabled_value);
+        const buffer:c.VkBuffer=null;const offset:u64=if(enabled_value)1 else 0;
+        const cmd:c.VkCommandBuffer=@ptrFromInt(graph.recording.handle);
+        if(v2)bind_vertex_buffers2(cmd,0,1,&buffer,&offset,null,null) else bind_vertex_buffers(cmd,0,1,&buffer,&offset);
+        try std.testing.expectEqual(command_state_t.Invalid,resource_state(graph.recording).command_state);
+        try std.testing.expectEqual(@as(usize,0),fixture.base.submissions);
+        try std.testing.expectEqual([_]u64{0} ** 8,resource_state(graph.recording).buffer_references);
+        try std.testing.expectEqual(@as(usize,6),objects.live_count);
+    };
 }
