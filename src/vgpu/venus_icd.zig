@@ -16443,3 +16443,31 @@ test "sampled framebuffer render pass retains five exact owners only after nativ
         try std.testing.expectEqual(@as(usize,11),objects.live_count);
     }
 }
+test "immutable sampler remains owned through layout and copied descriptor set retirement acknowledgements" {
+    var fixture=descriptor_ownership_fixture_t{};
+    try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(descriptor_ownership_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+    const graph=try descriptor_ownership_graph_t.init();
+    const sampler=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_SAMPLER,graph.device.id,0);
+    const definition=profiles.get_profile(&profile_registry.descriptor_layouts,resource_state(graph.layout).profile_index).?;
+    definition.immutable_count=1;definition.immutable_samplers[0]=sampler.handle;
+    definition.bindings[0]=.{.binding=0,.descriptor_type=0,.descriptor_count=1,.stage_flags=32,.immutable_count=1};
+    resource_state(graph.pool).descriptor_capacity[0]=1;
+    const device:c.VkDevice=@ptrFromInt(graph.device.handle);const sampler_handle:c.VkSampler=@ptrFromInt(sampler.handle);
+    const layout:c.VkDescriptorSetLayout=@ptrFromInt(graph.layout.handle);
+    const info=c.VkDescriptorSetAllocateInfo{.sType=c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.descriptorPool=@ptrFromInt(graph.pool.handle),.descriptorSetCount=1,.pSetLayouts=&layout};
+    var set:c.VkDescriptorSet=null;
+    try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),root_runtime_fn(allocate_descriptor_sets)(device,&info,&set));
+    const calls=fixture.base.submissions;
+    root_runtime_fn(destroy_sampler)(device,sampler_handle,null);
+    try std.testing.expectEqual(calls,fixture.base.submissions);try std.testing.expectEqual(@as(usize,5),objects.live_count);
+    root_runtime_fn(destroy_descriptor_layout)(device,layout,null);
+    try std.testing.expectEqual(calls+1,fixture.base.submissions);try std.testing.expectEqual(@as(usize,4),objects.live_count);
+    root_runtime_fn(destroy_sampler)(device,sampler_handle,null);
+    try std.testing.expectEqual(calls+1,fixture.base.submissions);try std.testing.expectEqual(@as(usize,4),objects.live_count);
+    try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),root_runtime_fn(free_descriptor_sets)(device,@ptrFromInt(graph.pool.handle),1,&set));
+    try std.testing.expectEqual(@as(u32,0),resource_state(graph.pool).descriptor_used[0]);
+    try std.testing.expectEqual(@as(usize,3),objects.live_count);
+    root_runtime_fn(destroy_sampler)(device,sampler_handle,null);
+    try std.testing.expectEqual(calls+3,fixture.base.submissions);try std.testing.expectEqual(@as(usize,2),objects.live_count);
+    try std.testing.expectEqual(@as(c_int,c.RingOk),lost);
+}
