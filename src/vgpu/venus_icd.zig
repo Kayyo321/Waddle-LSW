@@ -8204,7 +8204,10 @@ fn retire_descriptor_set(record: *c.venus_object_t, pool: *c.venus_object_t) voi
     const state = resource_state(record);
     const profile = profiles.get_profile(&profile_registry.sets, state.profile_index).?;
     const owner = resource_state(pool);
-    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| owner.descriptor_used[binding.descriptor_type] -= binding.descriptor_count;
+    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| {
+        const count = if (profile.has_variable_count and binding.binding == profile.variable_binding) profile.variable_count else binding.descriptor_count;
+        owner.descriptor_used[binding.descriptor_type] -= count;
+    }
     owner.descriptor_live_sets -= 1;
     const index = resource_index(record);
     const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
@@ -13544,4 +13547,47 @@ test "retired WSI images reject previously recorded attachment references before
     try std.testing.expectEqual(@as(usize,0),fixture.submissions);
     try std.testing.expectEqual(command_state_t.Executable,resource_state(recording).command_state);
     try std.testing.expectEqual(@as(u32,0),resource_state(graph.image).inflight_count);
+}
+
+// Append-only regression for actual variable-count pool accounting.
+test "variable descriptor retirement refunds actual count after native ACK" {
+    for ([_]u32{0,2,4}) |actual| for (0..3) |operation| for (0..2) |loss| {
+        var fixture=descriptor_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(descriptor_ownership_fixture_t.exchange,&fixture));
+        defer venus_icd_abandon();
+        const graph=try descriptor_ownership_graph_t.init();
+        var definition=profiles.descriptor_layout_t{.binding_count=2};
+        definition.bindings[0]=.{.binding=0,.descriptor_type=c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,.descriptor_count=1,.stage_flags=c.VK_SHADER_STAGE_COMPUTE_BIT};
+        definition.bindings[1]=.{.binding=4,.descriptor_type=c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.descriptor_count=4,.stage_flags=c.VK_SHADER_STAGE_COMPUTE_BIT,.binding_flags=c.VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT};
+        const original_index=resource_state(graph.layout).profile_index;
+        try std.testing.expect(profiles.release_slot(&profile_registry.descriptor_layouts,original_index));
+        resource_state(graph.layout).profile_index=try profiles.reserve_slot(&profile_registry.descriptor_layouts,definition);
+        resource_state(graph.pool).descriptor_capacity[c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER]=8;
+        resource_state(graph.pool).descriptor_capacity[c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER]=2;
+        var counts=actual;
+        var variable=c.VkDescriptorSetVariableDescriptorCountAllocateInfo{.sType=c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,.descriptorSetCount=1,.pDescriptorCounts=&counts};
+        const layout:c.VkDescriptorSetLayout=@ptrFromInt(graph.layout.handle);
+        const info=c.VkDescriptorSetAllocateInfo{.sType=c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,.pNext=&variable,.descriptorPool=@ptrFromInt(graph.pool.handle),.descriptorSetCount=1,.pSetLayouts=&layout};
+        var output:c.VkDescriptorSet=null;
+        try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),allocate_descriptor_sets(@ptrFromInt(graph.device.handle),&info,&output));
+        const set_handle=@intFromPtr(output.?);
+        try std.testing.expectEqual(actual,resource_state(graph.pool).descriptor_used[c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER]);
+        try std.testing.expectEqual(@as(u32,1),resource_state(graph.pool).descriptor_used[c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER]);
+        const snapshot=profiles.get_profile(&profile_registry.sets,resource_state(child_object(set_handle,c.VK_OBJECT_TYPE_DESCRIPTOR_SET,graph.pool.id).?).profile_index).?;
+        try std.testing.expectEqual(@as(u32,4),snapshot.layout.bindings[1].descriptor_count);
+        try std.testing.expectEqual(actual,snapshot.variable_count);
+        counts=4; // Retirement uses copied effective ownership, never borrowed pNext.
+        fixture.base.mode=@intCast(loss);
+        if(operation==0) {
+            try std.testing.expectEqual(if(loss==0) @as(c_int,c.VK_SUCCESS) else c.VK_ERROR_DEVICE_LOST,free_descriptor_sets(@ptrFromInt(graph.device.handle),@ptrFromInt(graph.pool.handle),1,&output));
+        } else if(operation==1) {
+            try std.testing.expectEqual(if(loss==0) @as(c_int,c.VK_SUCCESS) else c.VK_ERROR_DEVICE_LOST,reset_descriptor_pool(@ptrFromInt(graph.device.handle),@ptrFromInt(graph.pool.handle),0));
+        } else destroy_descriptor_pool(@ptrFromInt(graph.device.handle),@ptrFromInt(graph.pool.handle),null);
+        try std.testing.expectEqual(loss!=0,child_object(set_handle,c.VK_OBJECT_TYPE_DESCRIPTOR_SET,graph.pool.id)!=null);
+        if(operation!=2 or loss!=0) {
+            try std.testing.expectEqual(if(loss==0) @as(u32,0) else actual,resource_state(graph.pool).descriptor_used[c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER]);
+            try std.testing.expectEqual(if(loss==0) @as(u32,0) else 1,resource_state(graph.pool).descriptor_used[c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER]);
+            try std.testing.expectEqual(if(loss==0) @as(u32,0) else 1,resource_state(graph.pool).descriptor_live_sets);
+        } else try std.testing.expect(child_object(graph.pool.handle,c.VK_OBJECT_TYPE_DESCRIPTOR_POOL,graph.device.id)==null);
+    };
 }
