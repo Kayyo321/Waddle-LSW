@@ -80,10 +80,10 @@ int __wrap_ftruncate(int fd,off_t size)
 { if (fail("truncate")) { errno=EIO; return -1; } return __real_ftruncate(fd,size); }
 void *__real_mmap(void *,size_t,int,int,int,off_t);
 void *__wrap_mmap(void *address,size_t size,int protections,int flags,int fd,off_t offset)
-{ if (fail("map")) { errno=ENOMEM; return MAP_FAILED; } return __real_mmap(address,size,protections,flags,fd,offset); }
+{ assert(size==262144); if (fail("map")) { errno=ENOMEM; return MAP_FAILED; } return __real_mmap(address,size,protections,flags,fd,offset); }
 int __real_munmap(void *,size_t);
 int __wrap_munmap(void *address,size_t size)
-{ int result=__real_munmap(address,size); if (fail("unmap")) { errno=EIO; return -1; } return result; }
+{ assert(size==262144); int result=__real_munmap(address,size); if (fail("unmap")) { errno=EIO; return -1; } return result; }
 int __real_socketpair(int,int,int,int[2]);
 int __wrap_socketpair(int domain,int type,int protocol,int pair[2])
 { if (fail("socketpair")) { errno=EIO; return -1; } return __real_socketpair(domain,type,protocol,pair); }
@@ -93,7 +93,13 @@ uint64_t __wrap_venus_tcp_now_ms(void)
 #define StatusWrapper(name,parameters,arguments) \
 venus_ring_status_t __real_##name parameters; \
 venus_ring_status_t __wrap_##name parameters { if (fail(#name)) return RingCorrupt; return __real_##name arguments; }
-StatusWrapper(venus_region_init,(void *mapping,size_t bytes,uint32_t capacity),(mapping,bytes,capacity))
+venus_ring_status_t __real_venus_region_init(void *,size_t,uint32_t);
+venus_ring_status_t __wrap_venus_region_init(void *mapping,size_t bytes,uint32_t capacity)
+{
+    assert(bytes==262144 && capacity==65536);
+    if (fail("venus_region_init")) return RingCorrupt;
+    return __real_venus_region_init(mapping,bytes,capacity);
+}
 StatusWrapper(venus_session_init,(venus_session_t *session,venus_session_role_t role,void *mapping,size_t bytes,uint32_t flag),(session,role,mapping,bytes,flag))
 StatusWrapper(venus_channel_init,(venus_channel_t *channel,venus_session_t *session,int fd,const _Atomic uint32_t *cancel),(channel,session,fd,cancel))
 venus_ring_status_t __real_venus_worker_create(venus_worker_t *,const char *,int,int);
@@ -245,6 +251,10 @@ int main(int argc,char **argv)
             137,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0};
         static const uint8_t Reply[16]={137,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0};
         for (unsigned iteration=0;iteration<8 && status==RingOk;iteration++) {
+            if (iteration==1 && getenv("WADDLE_TCP_TEST_PROGRESS")) {
+                struct timespec pause={.tv_sec=1,.tv_nsec=100000000};
+                assert(nanosleep(&pause,NULL)==0);
+            }
             venus_request_t request={.kind=RequestSubmit,.payload_bytes=sizeof Command},response={0};
             status=venus_tcp_client_exchange(&client,&request,Command,sizeof Command,&response,NULL,0);
             if (status!=RingOk || !response.argument_zero) { status=RingCorrupt; break; }
@@ -265,7 +275,7 @@ int main(int argc,char **argv)
     }
     fault_name=getenv("WADDLE_TCP_TEST_FAULT");
     const char *call=getenv("WADDLE_TCP_TEST_CALL");if (call) fault_call=(unsigned)strtoul(call,NULL,10);
-    if (argc==2 && !strcmp(argv[1],"--helpers")) { helper_tests(); return 0; }
+    if (argc==2 && !strcmp(argv[1],"--helpers")) { helper_tests(); venus_tcp_server_t report={0}; report_forwarding(&report,UINT64_MAX,"future clock"); return 0; }
     unsigned baseline=descriptors();
     int result=controller_main(argc,argv);
     assert(descriptors()==baseline);

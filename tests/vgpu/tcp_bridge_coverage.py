@@ -93,6 +93,10 @@ for index, (fault, call) in enumerate(faults):
     if fault == "existing_ready":
         (directory / "ready").write_text("existing\n")
     host_env = dict(env)
+    host_env["WADDLE_TCP_DIAGNOSTICS"] = "0" if index % 2 else "1"
+    client_env = dict(env)
+    if fault is None:
+        client_env["WADDLE_TCP_TEST_PROGRESS"] = "1"
     if fault:
         host_env["WADDLE_TCP_TEST_FAULT"] = fault
         host_env["WADDLE_TCP_TEST_CALL"] = str(call)
@@ -103,7 +107,7 @@ for index, (fault, call) in enumerate(faults):
             while host.poll() is None and not (directory / "ready").exists() and time.monotonic() < deadline:
                 time.sleep(.01)
             if (directory / "ready").exists() and host.poll() is None:
-                client = subprocess.run([str(output / "runner"), "--client", str(path)], env=env, capture_output=True, timeout=20)
+                client = subprocess.run([str(output / "runner"), "--client", str(path)], env=client_env, capture_output=True, timeout=20)
                 (directory / "client.log").write_bytes(client.stdout + client.stderr)
             if fault in ("lost_reaping_proof", "lost_reaping_destroy"):
                 assert host.poll() is None

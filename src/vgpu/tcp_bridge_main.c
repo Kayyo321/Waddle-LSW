@@ -18,6 +18,15 @@
 #include <time.h>
 #include <unistd.h>
 _Static_assert(ATOMIC_INT_LOCK_FREE==2,"Signal cancellation requires a lock-free integer");
+/** @brief Owned power-of-two region extent containing two complete RPC-sized rings.
+ * @note Host initializes before worker launch and unmaps only after worker retirement.
+ */
+#define BridgeMappingBytes 262144u
+/** @brief Each SPSC payload ring holds a complete maximum resource read.
+ * @note Control/command and read wire bounds remain independently validated.
+ */
+#define BridgeRingCapacity 65536u
+_Static_assert(BridgeMappingBytes >= VenusRegionHeaderBytes + 2u * (sizeof(venus_ring_header_t) + BridgeRingCapacity), "Bridge rings fit owned mapping");
 static _Atomic uint32_t controller_cancel;
 static void cancel_controller(int signal_number)
 { (void)signal_number; atomic_store_explicit(&controller_cancel,1,memory_order_release); }
@@ -166,12 +175,12 @@ int main(int argc,char **argv)
     status=timer_until(server.handshake_deadline); if (status!=RingOk) goto cleanup;
     stage="actual worker";
     mapping_fd=memfd_create("tcp-venus-receiver",MFD_CLOEXEC);
-    if (mapping_fd<0 || ftruncate(mapping_fd,4096)) { status=RingClosed; goto cleanup; }
-    mapping=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_SHARED,mapping_fd,0);
+    if (mapping_fd<0 || ftruncate(mapping_fd,BridgeMappingBytes)) { status=RingClosed; goto cleanup; }
+    mapping=mmap(NULL,BridgeMappingBytes,PROT_READ|PROT_WRITE,MAP_SHARED,mapping_fd,0);
     if (mapping==MAP_FAILED) { status=RingClosed; goto cleanup; }
-    status=venus_region_init(mapping,4096,64); if (status!=RingOk) goto cleanup;
+    status=venus_region_init(mapping,BridgeMappingBytes,BridgeRingCapacity); if (status!=RingOk) goto cleanup;
     if (socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0,streams)) { status=RingClosed; goto cleanup; }
-    status=venus_session_init(&session,SessionGuest,mapping,4096,0); if (status!=RingOk) goto cleanup;
+    status=venus_session_init(&session,SessionGuest,mapping,BridgeMappingBytes,0); if (status!=RingOk) goto cleanup;
     status=venus_channel_init(&channel,&session,streams[0],&controller_cancel); if (status!=RingOk) goto cleanup;
     status=venus_worker_create(&worker,executable,mapping_fd,streams[1]); if (status!=RingOk) goto cleanup;
     initial_pid=worker.process_id; retired=0;
@@ -214,7 +223,7 @@ cleanup:
     if (retire_worker(&worker,&session,&channel,orderly,&exit_status)) { result=1; if (status==RingOk) status=RingCorrupt; }
     retired=1;
     venus_guest_free(&guest); venus_rpc_free(&rpc); venus_channel_free(&channel); venus_region_detach(&session.region);
-    if (mapping!=MAP_FAILED && munmap(mapping,4096)) { status=RingClosed; }
+    if (mapping!=MAP_FAILED && munmap(mapping,BridgeMappingBytes)) { status=RingClosed; }
     if (release_fd(&streams[0])) status=RingClosed;
     if (release_fd(&streams[1])) status=RingClosed;
     if (release_fd(&mapping_fd)) status=RingClosed;
