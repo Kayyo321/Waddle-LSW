@@ -113,6 +113,10 @@ if mode == 'venus_icd':
     link_objects += ['build/venus_' + name + '_oracle.o' for name in ModernOracleNames]
 if mode in ModernModeOracles:
     link_objects += ['build/venus_' + name + '_oracle.o' for name in ModernModeOracles[mode]]
+# Modern standalone attempts compile a fresh render oracle in their private
+# directory. Keep that object once instead of also linking its public equivalent.
+if str(output / 'properties_render_oracle.o') in link_objects:
+    link_objects = [path for path in link_objects if path != 'build/venus_render_wire_oracle.o']
 extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle or mode in ModernModeOracles or mode in ('venus_transfer2_native', 'venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else []
 test_source = 'src/vgpu/venus_graphics_general_wire.zig' if mode == 'venus_pipeline_wire_helpers' else source
 subprocess.run(['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
