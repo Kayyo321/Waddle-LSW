@@ -37,11 +37,11 @@ if mode == 'av_video':
     sys.exit(0)
 source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native') else 'src/av/')+mode+'.zig'
 root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native') else 'av')/mode
-if mode == 'venus_device_native':
-    # Every parser attempt retains its own complete coverage/fixture artifacts.
+if mode in ('venus_device_native', 'venus_device_wire'):
+    # Every device parser/codec attempt retains its complete coverage artifacts.
     output = output / ('run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
     output.mkdir(parents=True, exist_ok=False)
-    print('preserved native-device coverage: ' + str(output), flush=True)
+    print('preserved ' + mode + ' coverage: ' + str(output), flush=True)
 else:
     if output.exists(): shutil.rmtree(output)
     output.mkdir(parents=True)
