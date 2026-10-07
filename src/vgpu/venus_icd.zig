@@ -2164,7 +2164,7 @@ fn destroy_buffer(
         child.parent_id == parent.id and resource_state(child).view_image == record.handle) return;
     const index = resource_index(record);
     const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
-    for (resource_states) |state| if (state.buffer_references[index / 64] & bit != 0 and
+    for (&resource_states) |*state| if (state.buffer_references[index / 64] & bit != 0 and
         state.command_state == .Pending) return;
     var writer = writer_t{};
     writer.header(51, parent.id);
@@ -2457,7 +2457,7 @@ fn destroy_render_resource(device: c.VkDevice, handle: u64, kind: u32, command_i
     const index = resource_index(record);
     const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
     if (resource_state(record).inflight_count != 0) return;
-    for (resource_states) |state| {
+    for (&resource_states) |*state| {
         if (kind == c.VK_OBJECT_TYPE_IMAGE and state.view_image == handle) return;
         if (state.command_state == .Pending and state.buffer_references[index / 64] & bit != 0) return;
     }
@@ -2915,7 +2915,8 @@ fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]cons
     if (device == null or lost != c.RingOk or write_count > 64 or copy_count > 64 or (write_count != 0 and writes == null) or (copy_count != 0 and copies == null) or (write_count == 0 and copy_count == 0)) return;
     const parent = object(@intFromPtr(device.?),c.VK_OBJECT_TYPE_DEVICE) orelse return;
     if (!ensure_descriptor_limits(parent)) return;
-    for (profile_registry.sets,&descriptor_update_snapshots) |entry,*snapshot| snapshot.* = entry.profile;
+    // Borrow registry slots under the mutex; copying the entire set array would exceed native CS thread stacks.
+    for (&profile_registry.sets,&descriptor_update_snapshots) |*entry,*snapshot| snapshot.* = entry.profile;
     var touched = [_]bool{false} ** 128;
     var ordinary = [_]bool{false} ** 128;
     var encoded_writes: [64]sampler_descriptors.write_t = undefined;
@@ -3109,7 +3110,7 @@ fn free_memory(
         c.VK_OBJECT_TYPE_DEVICE_MEMORY,
         parent.id,
     ) orelse return;
-    for (resource_states) |state| if (state.bound_memory == record.handle) return;
+    for (&resource_states) |*state| if (state.bound_memory == record.handle) return;
     const state = resource_state(record);
     if (state.mapping_resource != 0) {
         var request = std.mem.zeroes(c.venus_request_t);
@@ -5890,10 +5891,10 @@ fn destroy_sampler(device: c.VkDevice, value: c.VkSampler, allocator: [*c]const 
     defer unlock_icd();
     if (value) |pointer| {
         const token = @intFromPtr(pointer);
-        for (profile_registry.descriptor_layouts) |entry| if (entry.occupied) {
+        for (&profile_registry.descriptor_layouts) |*entry| if (entry.occupied) {
             if (std.mem.indexOfScalar(u64,entry.profile.immutable_samplers[0..entry.profile.immutable_count],token) != null) return;
         };
-        for (profile_registry.sets) |entry| if (entry.occupied) {
+        for (&profile_registry.sets) |*entry| if (entry.occupied) {
             if (std.mem.indexOfScalar(u64,entry.profile.layout.immutable_samplers[0..entry.profile.layout.immutable_count],token) != null) return;
         };
     }
