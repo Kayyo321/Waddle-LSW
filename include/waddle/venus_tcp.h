@@ -319,7 +319,8 @@ venus_ring_status_t venus_tcp_server_negotiate(venus_tcp_server_t *server,
 /** @brief Forward at most one exact framed request to the actual borrowed guest.
  * @param[in,out] server Nonnull ready exclusive owner. @param[in,out] guest
  * Nonnull live negotiated actual frontend; configured timeout must cover server maximum.
- * @param[in] cancel Nullable borrowed atomic flag, alive through call only.
+ * @param[in] cancel Nullable borrowed atomic flag, alive through call only;
+ * when nonnull must match the actual guest RPC channel cancellation owner.
  * @return Ok for completed framed ordinary result; Closed/eof1 with retained socket
  * for clean pre-header EOF; otherwise sticky terminal status and closed socket.
  * Entire acquisition, guest remaining RPC budget and response use one deadline.
