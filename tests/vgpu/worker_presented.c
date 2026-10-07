@@ -91,6 +91,8 @@ static int loader_initialize(void) {
         loader_symbol(loader_library, "vkGetInstanceProcAddr", &icd_lookup, sizeof(icd_lookup));
 }
 #endif
+/** @brief Sole fixture thread counts real core/Features2 submissions, no retained bytes. */
+static uint32_t feature_query_commands;
 static unsigned descriptors(void) {
     DIR *directory = opendir("/proc/self/fd");
     if (!directory)
@@ -106,6 +108,12 @@ static venus_ring_status_t command_exchange(void *context, const venus_request_t
                                             const void *input, size_t length,
                                             venus_request_t *response, void *output,
                                             size_t capacity) {
+    if (request->kind == RequestSubmit && input && length >= 40) {
+        const unsigned char *bytes = input;
+        uint32_t command = (uint32_t)bytes[36] | ((uint32_t)bytes[37] << 8) |
+            ((uint32_t)bytes[38] << 16) | ((uint32_t)bytes[39] << 24);
+        if (command == 3 || command == 147) feature_query_commands++;
+    }
     return venus_guest_exchange(context, request, input, length, response, output, capacity);
 }
 static int query_version(venus_guest_t *guest) {
@@ -755,15 +763,64 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         PFN_vkGetPhysicalDeviceMemoryProperties memory =
             (PFN_vkGetPhysicalDeviceMemoryProperties)icd_lookup(
                 instance, "vkGetPhysicalDeviceMemoryProperties");
-        if (!properties || !features || !memory)
-            goto fail;
+        if (!properties || !features || !memory) goto fail;
+#ifndef VgpuIcdLoader
+        PFN_vkGetPhysicalDeviceFeatures2 features2 =
+            (PFN_vkGetPhysicalDeviceFeatures2)icd_lookup(instance, "vkGetPhysicalDeviceFeatures2");
+        PFN_vkGetPhysicalDeviceFeatures2 features2_alias =
+            (PFN_vkGetPhysicalDeviceFeatures2)icd_lookup(instance, "vkGetPhysicalDeviceFeatures2KHR");
+        if (!features2 || features2_alias != features2) goto fail;
+#else
+        /* The legal loader API remains 1.0 with no enabled instance extension.
+         * KHR lookup must remain hidden; the core1.1 entry is never called here. */
+        if (icd_lookup(instance, "vkGetPhysicalDeviceFeatures2KHR")) goto fail;
+#endif
         for (uint32_t index = 0; index < count; index++) {
             VkPhysicalDeviceProperties property_value = {0};
             VkPhysicalDeviceFeatures feature_value = {0};
             VkPhysicalDeviceMemoryProperties memory_value = {0};
             properties(devices[index], &property_value);
+            uint32_t before_features = feature_query_commands;
             features(devices[index], &feature_value);
+            if (feature_query_commands != before_features + 1) goto fail;
+            VkPhysicalDeviceFeatures repeated;
+            memset(&repeated, 0xa5, sizeof(repeated));
+            features(devices[index], &repeated);
+            VkPhysicalDeviceFeatures zero_core = {0};
+            if (feature_query_commands != before_features + 1 ||
+                memcmp(&feature_value, &zero_core, sizeof(zero_core)) ||
+                memcmp(&repeated, &feature_value, sizeof(repeated))) goto fail;
             memory(devices[index], &memory_value);
+#ifndef VgpuIcdLoader
+            /* A real negotiated raw query is already cached by the core getter. Both
+             * public aliases must publish the same proven intersection without
+             * overwriting unknown payloads, caller headers, links or canaries. */
+            struct unknown_t { VkStructureType sType; void *pNext; uint64_t sentinel; } unknown;
+            memset(&unknown, 0xa5, sizeof(unknown));
+            unknown.sType = (VkStructureType)999999; unknown.pNext = NULL;
+            VkPhysicalDeviceShaderDrawParametersFeatures draw = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+                .pNext = &unknown, .shaderDrawParameters = VK_TRUE};
+            VkPhysicalDeviceRobustness2FeaturesEXT robust = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+                .pNext = &draw, .robustBufferAccess2 = VK_TRUE,
+                .robustImageAccess2 = VK_TRUE, .nullDescriptor = VK_TRUE};
+            VkPhysicalDeviceFeatures2 complete = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &robust};
+            memset(&complete.features, 0xa5, sizeof(complete.features));
+            features2(devices[index], &complete);
+            features2_alias(devices[index], &complete);
+            if (feature_query_commands != before_features + 1 ||
+                memcmp(&feature_value, &zero_core, sizeof(zero_core)) ||
+                memcmp(&complete.features, &feature_value, sizeof(feature_value)) ||
+                complete.sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 || complete.pNext != &robust ||
+                robust.sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT || robust.pNext != &draw ||
+                robust.robustBufferAccess2 || robust.robustImageAccess2 || robust.nullDescriptor ||
+                draw.sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES || draw.pNext != &unknown ||
+                draw.shaderDrawParameters || unknown.sType != (VkStructureType)999999 || unknown.pNext ||
+                unknown.sentinel != UINT64_C(0xa5a5a5a5a5a5a5a5))
+                goto fail;
+#endif
             if (property_value.apiVersion < VK_API_VERSION_1_0 || !property_value.deviceName[0] ||
                 !memory_value.memoryTypeCount || !memory_value.memoryHeapCount)
                 goto fail;
