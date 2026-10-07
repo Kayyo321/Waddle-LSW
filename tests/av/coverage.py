@@ -69,7 +69,20 @@ def scope_name(index):
         if not parent: return ''
         index=int(parent[1])
     return ''
-source_text = Path(source).read_text().split('// Test-only fixtures.', 1)[0]
+source_text = Path(source).read_text()
+# Legacy modules predate the fixture delimiter. Their exact boundaries keep
+# callback/encoder fixture branches out while retaining every runtime helper.
+legacy_fixture_boundaries = {
+    'venus_capabilities': 'fn fixture_value() venus_capabilities_t {',
+    'venus_command': 'const fixture_t = struct {',
+}
+if mode in legacy_fixture_boundaries:
+    boundary = legacy_fixture_boundaries[mode]
+    assert '// Test-only fixtures.' not in source_text, 'conflicting legacy fixture boundary'
+    assert source_text.count(boundary) == 1, 'missing or ambiguous legacy fixture boundary'
+    source_text = source_text.split(boundary, 1)[0]
+else:
+    source_text = source_text.split('// Test-only fixtures.', 1)[0]
 codecs=set(re.findall(r'(?:export )?fn (\w+)\(', source_text))
 line_sites={}
 records=[];instrumented=[];traps=0
