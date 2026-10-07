@@ -48,3 +48,9 @@ vgpu-icd-dependency-sanitizers: vgpu-capabilities-owned-sanitizers vgpu-command-
 .PHONY: vgpu-icd-complete-seam-sanitizers
 vgpu-icd-complete-seam-sanitizers: scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
 	python3 scripts/icd_seam_sanitizers.py build/icd_complete_seam_safety
+
+# Serial isolated GPU matrix; every invocation retains a unique artifact receipt.
+# Frozen production runtime and all eight driver manifests remain read-only.
+.PHONY: vgpu-icd-physical-owned-sanitizers
+vgpu-icd-physical-owned-sanitizers: scripts/icd_physical_sanitizers.py scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
+	python3 scripts/icd_physical_sanitizers.py build/icd_physical_owned_safety --expected-device "NVIDIA GeForce RTX 5080"
