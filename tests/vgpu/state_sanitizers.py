@@ -51,6 +51,20 @@ pattern = r'^(define [^\n]+?) !dbg !(\d+) \{$'
 instrumented = re.sub(pattern, owned_definition, ir, flags=re.M)
 count = instrumented.count(' sanitize_address ') - ir.count(' sanitize_address ')
 assert count > 0, 'no emitted owned function instrumented'
+# Zig0.13 emits explicit guard reloads plus llvm.stackprotector. LLVM19 ASan
+# relocates stack slots but does not preserve that intrinsic's explicit store;
+# the retained reload then reads an uninitialized guard-slot pointer. Reuse the
+# existing owned-sanitizer compatibility lowering: store the identical guard
+# value in the identical slot, keeping every reload/check/failure edge intact.
+guard_pattern = re.compile(r'call void @llvm\.stackprotector\(ptr (%[\w.]+), ptr (%[\w.]+)\)')
+guard_stores = 0
+def preserve_guard(match):
+    global guard_stores
+    guard_stores += 1
+    return 'store volatile ptr ' + match[1] + ', ptr ' + match[2] + ', align 8'
+instrumented = guard_pattern.sub(preserve_guard, instrumented)
+assert instrumented.count('call void @__stack_chk_fail(') == ir.count('call void @__stack_chk_fail(')
+print('preserved explicit stack guard stores: ' + str(guard_stores), flush=True)
 (output / 'sanitized.ll').write_text(instrumented)
 subprocess.run(['clang-19', '-Wno-override-module', '-fsanitize=address,leak,undefined',
                 '-g', '-c', str(output / 'sanitized.ll'), '-o', str(output / 'test.o')], check=True)
