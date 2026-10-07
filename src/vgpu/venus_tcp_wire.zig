@@ -5,25 +5,16 @@ const c = @cImport({
 });
 const Magic = "WDTCP001";
 const ConfigScratchBytes = 65536;
-const strict_integer_t = struct {
-    value: u32,
-    // Foreign std.json custom-parser entry point; upstream spelling is required.
-    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !strict_integer_t {
-        _ = allocator;
-        _ = options;
-        const token = try source.next();
-        const bytes = switch (token) {
-            .number => |bytes| bytes,
-            else => return error.UnexpectedToken,
-        };
-        for (bytes) |byte| if (byte < '0' or byte > '9') return error.InvalidNumber;
-        return .{ .value = std.fmt.parseUnsigned(u32, bytes, 10) catch return error.InvalidNumber };
-    }
-};
+fn strict_integer(value: std.json.Value) ?u32 {
+    return switch (value) {
+        .integer => |integer| if (integer > 0 and integer <= std.math.maxInt(u32)) @intCast(integer) else null,
+        else => null,
+    };
+}
 const config_json_t = struct {
-    version: strict_integer_t,
-    port: strict_integer_t,
-    exchange_timeout_ms: strict_integer_t,
+    version: std.json.Value,
+    port: std.json.Value,
+    exchange_timeout_ms: std.json.Value,
     host: []const u8,
     token: []const u8,
     icd_path: []const u8,
@@ -91,8 +82,10 @@ export fn venus_tcp_config_decode(config: ?*c.venus_tcp_config_t, input: ?[*]con
     }) catch |err| return if (err == error.OutOfMemory) c.RingLimit else c.RingCorrupt;
     defer parsed.deinit();
     const value = parsed.value;
-    if (value.version.value != 1 or value.port.value == 0 or value.port.value > 65535 or
-        value.exchange_timeout_ms.value == 0 or value.exchange_timeout_ms.value > 60000 or
+    const version = strict_integer(value.version) orelse return c.RingCorrupt;
+    const port = strict_integer(value.port) orelse return c.RingCorrupt;
+    const timeout = strict_integer(value.exchange_timeout_ms) orelse return c.RingCorrupt;
+    if (version != 1 or port > 65535 or timeout > 60000 or
         !(std.mem.eql(u8, value.host, "10.0.2.2") or std.mem.eql(u8, value.host, "127.0.0.1")) or
         value.token.len != 64 or value.icd_path.len >= output.icd_path.len or
         !ascii(value.icd_path) or !absolute_path(value.icd_path)) return c.RingCorrupt;
@@ -102,9 +95,9 @@ export fn venus_tcp_config_decode(config: ?*c.venus_tcp_config_t, input: ?[*]con
         const low = hex(value.token[index * 2 + 1]) orelse return c.RingCorrupt;
         staged.token[index] = high * 16 + low;
     }
-    staged.version = value.version.value;
-    staged.port = value.port.value;
-    staged.exchange_timeout_ms = value.exchange_timeout_ms.value;
+    staged.version = version;
+    staged.port = port;
+    staged.exchange_timeout_ms = timeout;
     @memcpy(staged.host[0..value.host.len], value.host);
     @memcpy(staged.icd_path[0..value.icd_path.len], value.icd_path);
     output.* = staged;
@@ -567,4 +560,20 @@ test "exact filename array is bounded immutable and shares strict config grammar
     try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_windows_path_validate, .{ bytes[1..].ptr, 1024 }));
     bytes[4] = 255;
     try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_windows_path_validate, .{ bytes[1..].ptr, 1024 }));
+}
+
+test "all config integer fields reject float exponent overflow and nonnumeric nodes" {
+    const Invalid = [_][]const u8{ "0", "-0", "-1", "4294967295", "4294967296", "9223372036854775808", "18446744073709551616", "1.0", "1e0", "100e-2", "1E+0", "1e999", "true", "false", "null", "[]", "{}", "\"1\"", "[1]", "{\"value\":1}" };
+    const Targets = [_][]const u8{ "\"version\":1", "\"port\":55987", "\"exchange_timeout_ms\":60000" };
+    for (Targets) |target| {
+        const colon = std.mem.indexOfScalar(u8, target, ':').?;
+        for (Invalid) |number| {
+            var replacement: [128]u8 = undefined;
+            const replaced = try std.fmt.bufPrint(&replacement, "{s}{s}", .{ target[0 .. colon + 1], number });
+            try config_replace(target, replaced, false);
+        }
+    }
+    try config_replace("55987", "1", true);
+    try config_replace("55987", "65535", true);
+    try config_replace("60000", "1", true);
 }

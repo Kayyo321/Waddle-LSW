@@ -61,6 +61,23 @@ static void config_tests(void)
     }
     assert(venus_tcp_config_decode(NULL, Config, sizeof Config-1)==RingInvalid);
 }
+static void numeric_tests(void)
+{
+    const char *Targets[]={"\"version\":1","\"port\":1","\"exchange_timeout_ms\":1"};
+    const char *Invalid[]={"0","-0","-1","4294967295","4294967296","9223372036854775808","18446744073709551616","1.0","1e0","100e-2","1E+0","1e999","true","false","null","[]","{}","\"1\"","[1]","{\"value\":1}"};
+    for(size_t field=0;field<sizeof Targets/sizeof *Targets;field++) {
+        const char *target=strstr(Config,Targets[field]);assert(target);const char *colon=strchr(Targets[field],':');assert(colon);
+        for(size_t value=0;value<sizeof Invalid/sizeof *Invalid;value++) {
+            char bytes[1026];memset(bytes,0xa5,sizeof bytes);
+            int length=snprintf(bytes+1,sizeof bytes-2,"%.*s%.*s%s%s",(int)(target-Config),Config,(int)(colon-Targets[field]+1),Targets[field],Invalid[value],target+strlen(Targets[field]));
+            assert(length>0 && (size_t)length<sizeof bytes-2);char before[sizeof bytes];memcpy(before,bytes,sizeof before);
+            venus_tcp_config_t output;memset(&output,0xa5,sizeof output);
+            assert(venus_tcp_config_decode(&output,bytes+1,(size_t)length)==RingCorrupt);
+            for(size_t index=0;index<sizeof output;index++)assert(((const uint8_t *)&output)[index]==0);
+            assert(!memcmp(bytes,before,sizeof bytes));
+        }
+    }
+}
 static void path_tests(void)
 {
     const char *Valid[]={"C:\\config.json","c:\\x","\\\\server\\share\\config.json"};
@@ -95,7 +112,7 @@ static void envelope_tests(void)
 /** @brief Execute all native ABI regressions; no heap or retained resources. @return Zero success. */
 int main(void)
 {
-    for (unsigned iteration=0; iteration<32; ++iteration) { packet_tests(); config_tests(); envelope_tests(); path_tests(); }
+    for (unsigned iteration=0; iteration<32; ++iteration) { packet_tests(); config_tests(); numeric_tests(); envelope_tests(); path_tests(); }
     puts("TCP literal packets, strict config and native bounds: PASS (32 cycles)");
     return 0;
 }
