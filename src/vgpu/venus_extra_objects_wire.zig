@@ -61,6 +61,24 @@ fn scalars(writer:*writer_t,info:anytype) !void {
         }
     }
 }
+/// [in] device/image resolved live host IDs and borrowed single-aspect native
+/// subresource. Caller validates linear tiling, mip/layer range and image owner.
+/// [out] Exact56 owned packet or Invalid identity/aspect. No retention/allocation.
+pub fn subresource_layout(device:u64,image:u64,info:*const c.VkImageSubresource) !writer_t {
+    if(image==0 or info.aspectMask==0 or info.aspectMask & (info.aspectMask-1)!=0)return error.Invalid;
+    var writer:writer_t=.{};try writer.header(56,device);try writer.put(u64,image);try writer.put(u64,1);
+    try writer.put(u32,info.aspectMask);try writer.put(u32,info.mipLevel);try writer.put(u32,info.arrayLayer);try writer.put(u64,1);return writer;
+}
+/// [in] completed immutable56 reply. [out] Exact actual host offsets/pitches/size
+/// or Corrupt opcode/presence/truncation/overflow. Zero pitches are preserved when
+/// Vulkan leaves them undefined. No allocation/retention or shared mutation.
+pub fn decode_subresource(reply:[]const u8) !c.VkSubresourceLayout {
+    if(reply.len<52 or std.mem.readInt(u32,reply[0..4],.little)!=56 or std.mem.readInt(u64,reply[4..12],.little)!=1)return error.Corrupt;
+    var value=std.mem.zeroes(c.VkSubresourceLayout);var offset:usize=12;
+    inline for(@typeInfo(c.VkSubresourceLayout).Struct.fields) |field| { @field(value,field.name)=std.mem.readInt(u64,reply[offset..][0..8],.little);offset+=8; }
+    if(value.offset>std.math.maxInt(u64)-value.size)return error.Corrupt;
+    return value;
+}
 /// [in] info canonical core sampler, device/id resolved nonzero owners; native
 /// allocator unsupported, no extension chain. Caller validates host limits and
 /// enabled anisotropy/mirrorClamp features. [out] Exact create70 owned packet or
@@ -276,4 +294,16 @@ test "device-address and dedicated allocation chains match pinned encoder withou
     try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,3,.{.flags=1,.device_mask=0},null));
     try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,3,null,.{.image=0,.buffer=0}));
     try std.testing.expectError(error.Invalid,allocate_memory(7,11,4096,3,null,.{.image=13,.buffer=15}));
+}
+
+test "actual subresource layout request and host reply retain exact offset and pitches" {
+    const info=c.VkImageSubresource{.aspectMask=1,.mipLevel=3,.arrayLayer=4};
+    try compare(try subresource_layout(7,11,&info),56,&info);
+    try std.testing.expectError(error.Invalid,subresource_layout(7,0,&info));
+    var invalid=info;invalid.aspectMask=3;try std.testing.expectError(error.Invalid,subresource_layout(7,11,&invalid));
+    var reply=[_]u8{0} ** 52;std.mem.writeInt(u32,reply[0..4],56,.little);std.mem.writeInt(u64,reply[4..12],1,.little);
+    const words=[_]u64{256,4096,128,8192,16384};for(words,0..) |word,index|std.mem.writeInt(u64,reply[12+index*8..][0..8],word,.little);
+    const value=try decode_subresource(&reply);try std.testing.expectEqual(@as(u64,256),value.offset);try std.testing.expectEqual(@as(u64,16384),value.depthPitch);
+    for(0..reply.len) |length|try std.testing.expectError(error.Corrupt,decode_subresource(reply[0..length]));
+    std.mem.writeInt(u64,reply[12..20],std.math.maxInt(u64),.little);try std.testing.expectError(error.Corrupt,decode_subresource(&reply));
 }
