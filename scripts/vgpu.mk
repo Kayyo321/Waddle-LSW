@@ -800,7 +800,7 @@ build/libwaddle_vulkan_experimental.so: src/vgpu/venus_icd.map $(VgpuIcdObjects)
 	$(CC) -shared $(VgpuIcdObjects) -pthread -Wl,--version-script=src/vgpu/venus_icd.map -o $@
 
 build/waddle_vulkan_experimental.json: build/libwaddle_vulkan_experimental.so
-	python3 -c 'import json,pathlib; pathlib.Path("$@").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("$<").resolve()),"api_version":"1.0.0"}},indent=2)+"\n")'
+	python3 -c 'import json,pathlib; pathlib.Path("$@").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("$<").resolve()),"api_version":"1.3.0"}},indent=2)+"\n")'
 
 build/waddle_vulkan_experimental.dll: src/vgpu/venus_icd.def build/venus_icd_windows.obj $(VgpuIcdWindowsLibraries)
 	$(ZIG) cc -target x86_64-windows-gnu -shared src/vgpu/venus_icd.def build/venus_icd_windows.obj $(filter-out build/venus_icd_windows.lib,$(VgpuIcdWindowsLibraries)) -luser32 -lgdi32 -ldwmapi -o $@
@@ -841,7 +841,7 @@ vgpu-native-loader-test: vgpu-native-loader build/vgpu_icd_loader_test
 	WADDLE_TEST_VULKAN_LOADER="$(CURDIR)/build/vendor/vulkan_loader/loader/libvulkan.so.1" ./build/vgpu_icd_loader_test
 
 build/waddle_vulkan_experimental_windows.json: build/waddle_vulkan_experimental.dll
-	python3 -c 'import json,pathlib; pathlib.Path("$@").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("$<").resolve()),"api_version":"1.0.0"}},indent=2)+"\n")'
+	python3 -c 'import json,pathlib; pathlib.Path("$@").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("$<").resolve()),"api_version":"1.3.0"}},indent=2)+"\n")'
 
 build/vgpu_icd_loader_test.exe: tests/vgpu/icd.c tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj build/features_native_features_query_windows.obj build/features_native_features_reply_windows.obj build/device_wire/device_oracle_windows.obj $(VgpuModernQueryWindowsOracles) build/waddle_vulkan_experimental_windows.json
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader $(VgpuInstanceOracleIncludes) $< $(VgpuIcdWindowsLibraries) build/venus_values_oracle_windows.obj build/features_native_features_query_windows.obj build/features_native_features_reply_windows.obj build/device_wire/device_oracle_windows.obj $(VgpuModernQueryWindowsOracles) -luser32 -lgdi32 -ldwmapi -ladvapi32 -o $@

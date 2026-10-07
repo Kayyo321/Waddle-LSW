@@ -744,3 +744,53 @@ This milestone also fixes the existing coverage runner's module-oracle registry
 initialization order: modes without an oracle previously referenced the registry
 before its definition. No threshold, production scope, or acceptance assertion
 is changed. Task Impact: TODO #3 +0%; overall +0%.
+
+
+### Coherent mapping and DXVK admission implementation milestone
+
+- **Commit `998c89b`**: `test(vgpu): keep modern qualification runner usable across pure modules`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `f47d184`**: `feat(vgpu): validate owned cube and mutable image view metadata`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `83e5ebe`**: `feat(vgpu): transport bounded coherent mapping dirty spans`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `11b8338`**: `feat(vgpu): integrate descriptor templates and mutable descriptor ownership`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `dcee971`**: `test(vgpu): reuse sanitizer and coverage runners for integrated Vulkan modules`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `2d935ea`**: `test(vgpu): qualify integrated ICD through current sanitizer target`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `189ef2c`**: `test(vgpu): require exact DXVK client presentation pixels`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `c839945`**: `feat(vgpu): synchronize coherent mappings and validate mutable cube views`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `274af56`**: `feat(vgpu): encode instance requests through Vulkan 1.3`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `93bed1d`**: `fix(test): select honest coherent GPU readback memory`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `c6d3a89`**: `feat(vgpu): preserve image view usage chains for DXVK`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+
+Commit `c839945` implements owned mapped-range baselines, initial actual host reads,
+ACK-controlled bounded scatter uploads, and GPU incoming-byte merging that
+preserves newer CPU writes. The allocation ceiling is256MiB and actual coherent
+host types retain their coherent advertisement. Cube/mutable view metadata and
+resolved native ranges are integrated. Debug/ReleaseSafe189 tests, native128
+lifetimes, and Windows static compilation pass; these are targeted implementation
+checks, not final sanitizer or real DXVK qualification.
+
+Actual corrected snapshot `93bed1d` passed `build/windows11_vm/tcp_gpu_6eb88ac4`:
+seven query families in each of eight lifetimes, eight exact RTX5080 triangles,
+actual coherent host-visible type2, unchanged native handle baseline160,
+native/controller/worker exit0, owned session empty, no recorded signals, and
+four critical deployed file hashes unchanged. The earlier `tcp_gpu_b5a68377`
+failed at noncoherent-only fixture selection; its failure remains preserved without
+credit. Commit `93bed1d` corrects selection while retaining poison, flush/invalidate,
+exact output and ownership checks.
+
+The same corrected coherent source passed functional WSI smoke
+`tcp_gpu_fd643e37`: two complete lifetimes and four FIFO/IMMEDIATE frames,
+all4096 client RGB pixels equal independent GPU staging readback, GDI7/USER5/native197
+unchanged after each teardown, native/controller/worker exit0, no signals or
+observer errors, and owned session empty. Final deployed hash verification is
+pending at this recording. Full48-frame WSI qualification remains pending.
+
+Instance serializer `274af56` accepts Vulkan1.3 with existing variant/major/minor
+validation. `c6d3a89` forwards bounded actual image-view usage chains required by
+DXVK. Guarded core API/feature/device admission is undergoing targeted checks;
+generated regular/sanitized manifests now record the implementation ceiling1.3.0.
+Actual physical support remains intersected with host data; private legacy bindings
+retain their lower API policy. Existing deployed manifests and snapshots are unchanged.
+
+Final leak/sanitizer,90% coverage, stress, standalone timed bootstrap and real
+pinned DXVK rendering/compute/presentation/teardown remain pending. TODO #3
+remains55%; overall68.75%.

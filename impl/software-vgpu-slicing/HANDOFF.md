@@ -149,3 +149,41 @@ pidfd ownership journal, coherent nested finite budgets and owned cancellation
 checks. Native shared-read FileStream must dispose and fail on read errors.
 Independent system DXGI reproduces persistent OS handles but does not establish
 exact actual GPU attribution or justify baseline inflation. Existing assertion stays.
+
+
+## Implementation-first continuation: coherent mapping integrated
+
+Preserve branch/history/VM/deployed snapshots and all prior artifacts. The user's
+workflow override defers final sanitizer/coverage/stress until completed implementation
+and basic integration. Root owns scatter protocol/build/qualification infrastructure;
+`icd_memory` owns ICD/native fixtures/profiles/state; `image_pipeline` owns pure
+rendering/image helpers; `wddm_dxvk` owns Windows fixtures and exclusive VM/GPU.
+Hold `/tmp/waddle_git_index.lock` across the complete stage/commit operation.
+
+Key commits: `83e5ebe` scatter backend, `11b8338` templates/library/mutable
+ownership, `c839945` coherent mappings and cube views, `274af56` instance1.3,
+`c6d3a89` required DXVK image-view usage. Guarded actual host-intersected API/feature
+admission is currently undergoing owner checks. Root isolated draft resides under
+`build/root_todo3_continuation/admission_compile`; never overwrite active core
+from that snapshot. Regular/sanitized manifest ceilings1.3.0 preserve actual host policy.
+
+Actual corrected coherent source93bed1d passed eight query/triangle lifetimes
+`tcp_gpu_6eb88ac4` (native handles160 unchanged; allfour deployed hashes unchanged)
+and four functional WSI frames/two lifetimes `tcp_gpu_fd643e37` (GDI7/USER5/native197
+unchanged; final hashes pending). Controller/worker/native0, owned sessions empty,
+no signals/observer errors. Failed noncoherent-only fixture `tcp_gpu_b5a68377`
+remains preserved. Wddm reports GPU idle after WSI; recheck before any launch.
+
+Native Windows TCP32-cycle `native_tcp_1a883c14` naturally exited0 after retained
+initial observer timeout; no replacement/termination. DXVK fixture189ef2c now
+requires exact4096 staged/client RGB pixels after Present plus64 HLSL compute words,
+real device creation and teardown. Actual pinned DXVK2.7.1 remains pending; next
+archive needs committed admission and matching backend/bootstrap/fixtures.
+
+After basic integrated execution, run required final test/sanitizer/leak/coverage/
+stress and real Windows/DXVK qualification. `vgpu-icd-sanitizers` reuses the current
+integrated Debug/ASan hook runner with native C/fault checks, without the historical
+fixed20-source117-unit LLVM reverse-proof audit. Old targets/artifacts remain.
+New hook runner does not claim instrumentation of external link objects. No90%
+coverage gate or ownership/acceptance assertion was weakened. Do not mark TODO #3
+100% before final full48-frame WSI, timed-bootstrap leak and DXVK qualification pass.
