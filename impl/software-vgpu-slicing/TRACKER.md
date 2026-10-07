@@ -676,3 +676,34 @@ modules participate in rebuild dependencies, and `vgpu-icd-units` provides actua
 Debug/ReleaseSafe checks during implementation without running final instrumentation.
 Task Impact: TODO #3 +0%; overall +0%. Final sanitizer/coverage/stress and real
 Windows/DXVK2.7.1 rendering/compute/presentation/teardown remain required.
+
+### Modern query functional integration milestone
+
+- **Commit `da566f6`**: `test(vgpu): exercise modern physical queries in native triangle lifetimes`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `b37ef00`**: `feat(vgpu): query actual image subresource layouts`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `2bc6773`**: `test(vgpu): cover all native KHR physical query entrypoints`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `669d66f`**: `fix(test): compare sparse query results against their actual legacy source`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `4d57146`**: `feat(vgpu): expose legal guest instance extensions and complete modern query aliases`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `2985268`**: `test(vgpu): include modern Vulkan modules in existing coverage runner`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `0b93dce`**: `feat(vgpu): query host render area granularity`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `41fd3c0`**: `feat(vgpu): encode synchronization2 event commands`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `46ff5c9`**: `feat(vgpu): forward maintenance5 pipeline flags and compute specialization`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `d4f8d34`**: `feat(vgpu): integrate modern synchronization and memory query lifecycles`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+
+Actual copied commit `4d57146` passed the normal Windows query-and-triangle
+workload at `build/windows11_vm/tcp_gpu_e93b307b`: all seven KHR query families,
+eight typed query markers, eight exact RTX5080 triangles, handle baseline159
+unchanged per lifetime, medium integrity8192, native exit0, owned project DLLs
+absent after stop, and exact before/after hashes of four critical guest artifacts.
+Controller and worker exited0; the owned session emptied. The renderer adopted
+child records wait status9, so this is not represented as signal-free renderer
+teardown. This evidence covers that copied functional query snapshot, not the
+later sync/descriptor/graphics integration or final leak/coverage/stress/DXVK gates.
+The mistaken-argument deployment `tcp_gpu_6cfc9bd8` was never launched and remains
+preserved without credit. TODO #3 remains55%; overall68.75%.
+
+Full-size shader implementation (this commit, resolve by subject): actual host
+shader packets accept bounded SPIR-V up to65536 bytes instead of the legacy8KiB
+packet ceiling. Debug/ReleaseSafe tests compare ordinary, >8KiB and exact-maximum
+packets with the independent pinned C encoder. Native/Windows oracle builds pass.
+Task Impact: TODO #3 +0%; overall +0%; core integration and final acceptance pending.
