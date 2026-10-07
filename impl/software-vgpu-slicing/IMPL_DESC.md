@@ -5741,3 +5741,18 @@ fields and configured quota failures remain explicit; internal scalar appends us
 the shared checked writer after the whole-record proof. Independent pinned C
 oracles, native negative cases, and the existing90% line/branch gate qualify these
 serializers; this does not establish real DXVK or overall TODO#3 acceptance.
+
+### Bounded bulk resource reads for coherent Windows mappings
+
+TCP hello wire version2 rejects version1 peers before receiver binding. JSON
+configuration version and actual Venus capability/profile records are unchanged.
+Version2 admits RequestRead extents up to65536 bytes into fixed caller/server-owned
+65536-byte response staging. RequestReply and Write/scatter remain4096 bytes;
+submission remains65620 bytes. Native resource-copy range validation and actual
+allocation extent checks still precede any copy. Exact response pairing, total
+extent, sequence, deadline, and error-payload validation precede caller output
+publication; truncated/oversized replies preserve caller data and close the owner.
+No response synthesis, skipped initial mapping bytes, new dynamic buffers, or
+acceptance timeout increases occur. Existing128KiB host RPC scratch covers the
+maximum resource response plus its envelope. Legacy non-profile ICD bindings
+retain4KiB reads; current authenticated bindings may use64KiB read chunks.

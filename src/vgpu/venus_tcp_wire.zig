@@ -106,11 +106,11 @@ export fn venus_tcp_config_decode(config: ?*c.venus_tcp_config_t, input: ?[*]con
 fn prefix(bytes: []u8) void {
     @memset(bytes, 0);
     @memcpy(bytes[0..8], Magic);
-    std.mem.writeInt(u32, bytes[8..12], 1, .little);
+    std.mem.writeInt(u32, bytes[8..12], c.VenusTcpWireVersion, .little);
     std.mem.writeInt(u32, bytes[12..16], @intCast(bytes.len), .little);
 }
 fn valid_prefix(bytes: []const u8) bool {
-    return std.mem.eql(u8, bytes[0..8], Magic) and std.mem.readInt(u32, bytes[8..12], .little) == 1 and
+    return std.mem.eql(u8, bytes[0..8], Magic) and std.mem.readInt(u32, bytes[8..12], .little) == c.VenusTcpWireVersion and
         std.mem.readInt(u32, bytes[12..16], .little) == bytes.len;
 }
 fn zero(bytes: []const u8) bool {
@@ -204,7 +204,8 @@ export fn venus_tcp_request_limit(request: ?*const c.venus_request_t) c_int {
     const value = request orelse return c.RingInvalid;
     if (value.direction != 0 or value.kind < 2 or value.kind > 10) return c.RingInvalid;
     if (value.payload_bytes > 65620) return c.RingLimit;
-    if ((value.kind == 3 or value.kind == 6 or value.kind == 7) and value.argument_one > 4096) return c.RingLimit;
+    if ((value.kind == 3 or value.kind == 7) and value.argument_one > c.VenusTcpMaxCommandReplyBytes) return c.RingLimit;
+    if (value.kind == 6 and value.argument_one > c.VenusTcpMaxReplyBytes) return c.RingLimit;
     if (value.kind == 7 and value.payload_bytes > 4096) return c.RingLimit;
     return c.RingOk;
 }
@@ -213,7 +214,7 @@ export fn venus_tcp_response_limit(request: ?*const c.venus_request_t, response:
     const wanted = request orelse return c.RingInvalid;
     const value = response orelse return c.RingInvalid;
     if (value.direction != 1 or value.kind != wanted.kind or value.sequence != wanted.sequence or value.status > 7) return c.RingCorrupt;
-    if (value.payload_bytes > 4096) return c.RingLimit;
+    if (value.payload_bytes > (if (wanted.kind == 6) c.VenusTcpMaxReplyBytes else c.VenusTcpMaxCommandReplyBytes)) return c.RingLimit;
     if (value.status != 0 and value.payload_bytes != 0) return c.RingCorrupt;
     if (value.status == 0 and (wanted.kind == 3 or wanted.kind == 6) and value.payload_bytes != wanted.argument_one) return c.RingCorrupt;
     return c.RingOk;
@@ -486,7 +487,7 @@ test "bounded admitted requests exclude handshake and presentation operations" {
     request.payload_bytes = 0;
     for ([_]u32{ 3, 6, 7 }) |kind| {
         request.kind = kind;
-        request.argument_one = 4096;
+        request.argument_one = if (kind == 6) c.VenusTcpMaxReplyBytes else c.VenusTcpMaxCommandReplyBytes;
         try std.testing.expectEqual(@as(c_int, c.RingOk), @call(.never_inline, venus_tcp_request_limit, .{&request}));
         request.argument_one += 1;
         try std.testing.expectEqual(@as(c_int, c.RingLimit), @call(.never_inline, venus_tcp_request_limit, .{&request}));
@@ -576,4 +577,27 @@ test "all config integer fields reject float exponent overflow and nonnumeric no
     try config_replace("55987", "1", true);
     try config_replace("55987", "65535", true);
     try config_replace("60000", "1", true);
+}
+
+
+test "v2 resource bulk reads preserve command reply limits and reject legacy hello version" {
+    var request = std.mem.zeroes(c.venus_request_t);
+    request.kind = 6; request.sequence = 42; request.resource_id = 2;
+    request.argument_one = c.VenusTcpMaxReplyBytes;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), @call(.never_inline, venus_tcp_request_limit, .{&request}));
+    var response = std.mem.zeroes(c.venus_request_t);
+    response.kind = 6; response.sequence = 42; response.direction = 1; response.payload_bytes = c.VenusTcpMaxReplyBytes;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), @call(.never_inline, venus_tcp_response_limit, .{&request, &response}));
+    response.payload_bytes -= 1;
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), @call(.never_inline, venus_tcp_response_limit, .{&request, &response}));
+    response.payload_bytes = c.VenusTcpMaxReplyBytes + 1;
+    try std.testing.expectEqual(@as(c_int, c.RingLimit), @call(.never_inline, venus_tcp_response_limit, .{&request, &response}));
+    request.kind = 3; response.kind = 3; response.payload_bytes = c.VenusTcpMaxCommandReplyBytes + 1;
+    try std.testing.expectEqual(@as(c_int, c.RingLimit), @call(.never_inline, venus_tcp_request_limit, .{&request}));
+    try std.testing.expectEqual(@as(c_int, c.RingLimit), @call(.never_inline, venus_tcp_response_limit, .{&request, &response}));
+    var hello = std.mem.zeroes(c.venus_tcp_client_hello_t);
+    var bytes: [128]u8 = undefined;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_tcp_client_hello_encode(&hello, &bytes, bytes.len));
+    std.mem.writeInt(u32, bytes[8..12], 1, .little);
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), venus_tcp_client_hello_decode(&hello, &bytes, bytes.len));
 }

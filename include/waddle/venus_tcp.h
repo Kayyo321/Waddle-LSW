@@ -15,8 +15,12 @@
 #define VenusTcpAckBytes 32u
 /** @brief Maximum accepted command bytes in one TCP operation. */
 #define VenusTcpMaxCommandBytes 65620u
-/** @brief Maximum reply and synchronized mapped-copy bytes. */
-#define VenusTcpMaxReplyBytes 4096u
+/** @brief Strict hello version2 admits64KiB resource reads; v1 peers are rejected. Immutable, no storage/ownership. */
+#define VenusTcpWireVersion 2u
+/** @brief Maximum RequestRead response bytes; fixed owned staging, no allocation. */
+#define VenusTcpMaxReplyBytes 65536u
+/** @brief Maximum RequestReply response/write/scatter bytes; existing command budget unchanged. */
+#define VenusTcpMaxCommandReplyBytes 4096u
 /** @brief Maximum private JSON configuration file bytes. */
 #define VenusTcpMaxConfigBytes 4096u
 /** @brief Maximum absolute Windows filename extent, including its final NUL. */
@@ -256,7 +260,7 @@ venus_ring_status_t venus_tcp_client_init(venus_tcp_client_t *client,
  * @param[in] length Exact payload extent. @param[out] response Nonnull disjoint
  * private record, zeroed on failure after alias validation. @param[out] output
  * Nullable only for capacity zero; unchanged until complete valid successful response.
- * @param[in] capacity Exact successful read/reply capacity, at most4096; zero otherwise.
+ * @param[in] capacity Exact successful capacity: RequestRead at most65536, RequestReply at most4096; zero otherwise.
  * @return Actual receiver Ring status; local Invalid before publication; terminal
  * network/protocol loss is sticky. Sole thread; no input retention/heap/reentrancy.
  * Input/output may alias each other; no argument overlaps owner/request/response.
@@ -281,7 +285,7 @@ venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,
  * until a complete validated ordinary response arrives before the deadline.
  * @param[out] output Nullable only for capacity zero; unchanged on error or late
  * completion, otherwise complete private output[capacity]; may alias input.
- * @param[in] capacity Exact successful reply extent, at most4096; zero otherwise.
+ * @param[in] capacity Exact successful capacity: RequestRead at most65536, RequestReply at most4096; zero otherwise.
  * @param[in] deadline_ms Nonzero absolute value from venus_tcp_now_ms; local only,
  * never transmitted or retained. Effective deadline is min(value,now+client cap).
  * @return Ordinary receiver status; zero deadline/local input errors are Invalid
@@ -304,7 +308,7 @@ venus_ring_status_t venus_tcp_client_exchange_until(void *context,
  * until a complete validated ordinary response before deadline/cancellation.
  * @param[out] output Nullable only for capacity zero, private output[capacity],
  * unchanged on errors; may alias input but never owner/request/response.
- * @param[in] capacity Exact successful reply extent, at most4096; zero otherwise.
+ * @param[in] capacity Exact successful capacity: RequestRead at most65536, RequestReply at most4096; zero otherwise.
  * @param[in] deadline_ms Nonzero local absolute venus_tcp_now_ms value, not retained.
  * @param[in] cancel Nullable acquire-read/release-set atomic flag, borrowed for call.
  * @return Same absolute exchange status; cancellation after local validation beats

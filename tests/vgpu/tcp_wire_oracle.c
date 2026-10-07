@@ -10,7 +10,7 @@
  */
 int venus_tcp_wire_oracle(unsigned kind, uint8_t *output, size_t capacity)
 {
-    static const uint8_t header[16] = {'W','D','T','C','P','0','0','1',1,0,0,0,0,0,0,0};
+    static const uint8_t header[16] = {'W','D','T','C','P','0','0','1',2,0,0,0,0,0,0,0};
     static const uint8_t identity[8] = {0x88,0x77,0x66,0x55,0x44,0x33,0x22,0x11};
     size_t length = kind == 1 ? 128 : kind == 2 ? 224 : kind == 3 ? 32 : kind == 4 ? 160 : 0;
     if (!output || !length || capacity != length) return 0;
