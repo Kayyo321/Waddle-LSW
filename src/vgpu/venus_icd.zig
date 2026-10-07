@@ -88,7 +88,7 @@ fn boolean_mask(comptime native_t: type, comptime first: []const u8, comptime co
 /// These policy bits require actual backend support before becoming public.
 const CoreFeatureAllowlist = boolean_mask(c.VkPhysicalDeviceFeatures, "robustBufferAccess", 55, .{
     "depthBiasClamp",            "depthClamp",         "dualSrcBlend",                           "fillModeNonSolid",     "fullDrawIndexUint32",
-    "geometryShader",            "imageCubeArray",     "independentBlend",                       "multiDrawIndirect",    "multiViewport",
+    "geometryShader", "tessellationShader", "fragmentStoresAndAtomics", "drawIndirectFirstInstance", "imageCubeArray",     "independentBlend",                       "multiDrawIndirect",    "multiViewport",
     "occlusionQueryPrecise",     "robustBufferAccess", "sampleRateShading",                      "shaderClipDistance",   "shaderCullDistance",
     "shaderImageGatherExtended", "shaderInt64",        "shaderSampledImageArrayDynamicIndexing", "textureCompressionBC",
 });
@@ -1639,6 +1639,11 @@ fn properties2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callco
 }
 // All physical property entrypoints use the same guest implementation limits.
 fn project_properties(staged: *c.VkPhysicalDeviceProperties) void {
+    staged.limits.maxBoundDescriptorSets = @min(staged.limits.maxBoundDescriptorSets, profiles.MaxSets);
+    staged.limits.maxVertexInputBindings = @min(staged.limits.maxVertexInputBindings, 32);
+    staged.limits.maxVertexInputAttributes = @min(staged.limits.maxVertexInputAttributes, 32);
+    staged.limits.maxViewports = @min(staged.limits.maxViewports, 16);
+    staged.limits.maxColorAttachments = @min(staged.limits.maxColorAttachments, 8);
     staged.limits.maxPushConstantsSize = @min(staged.limits.maxPushConstantsSize, profiles.MaxPushBytes);
     staged.apiVersion = if (reply_profile_ready) @min(staged.apiVersion, ImplementedApiVersion) else c.VK_API_VERSION_1_0;
     staged.limits.nonCoherentAtomSize = 1;
@@ -5092,6 +5097,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkDestroyPipeline", &destroy_pipeline },
         .{ "vkCreateShaderModule", &create_shader_module },
         .{ "vkDestroyShaderModule", &destroy_shader_module },
+        .{ "vkGetDescriptorSetLayoutSupport", &descriptor_layout_support },
+        .{ "vkGetDescriptorSetLayoutSupportKHR", &descriptor_layout_support },
         .{ "vkCreateDescriptorSetLayout", &create_descriptor_layout },
         .{ "vkDestroyDescriptorSetLayout", &destroy_descriptor_layout },
         .{ "vkCreatePipelineLayout", &create_pipeline_layout },
@@ -5176,6 +5183,10 @@ fn physical_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkGetPhysicalDeviceSparseImageFormatProperties2", &sparse_properties2 },
         .{ "vkGetPhysicalDeviceSparseImageFormatProperties2KHR", &sparse_properties2 },
 
+        .{ "vkGetPhysicalDeviceExternalBufferProperties", &external_buffer_properties },
+        .{ "vkGetPhysicalDeviceExternalFenceProperties", &external_fence_properties },
+        .{ "vkGetPhysicalDeviceExternalSemaphoreProperties", &external_semaphore_properties },
+        .{ "vkGetPhysicalDeviceToolProperties", &tool_properties },
         .{ "vkGetPhysicalDeviceProperties", &properties },
         .{ "vkGetPhysicalDeviceFeatures", &features },
         .{ "vkGetPhysicalDeviceMemoryProperties", &memory },
@@ -8748,6 +8759,56 @@ fn retain_draw_descriptors(parent_id: u64,state: *resource_state_t,metadata: *co
     }
 }
 
+const descriptor_layout_preflight_t = struct { profile: profiles.descriptor_layout_t, writer: mixed_wire.writer_t };
+// Validates the same owned shape/features as creation without host or registry mutation.
+fn preflight_descriptor_layout(parent: *const c.venus_object_t, info: [*c]const c.VkDescriptorSetLayoutCreateInfo) !descriptor_layout_preflight_t {
+    if (info == null or info.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO or info.*.bindingCount > profiles.MaxBindings or (info.*.bindingCount != 0 and (info.*.pBindings == null or @intFromPtr(info.*.pBindings) % @alignOf(c.VkDescriptorSetLayoutBinding) != 0))) return error.Invalid;
+    var flags: ?*const c.VkDescriptorSetLayoutBindingFlagsCreateInfo = null;
+    if (info.*.pNext) |pointer| {
+        if (@intFromPtr(pointer) % @alignOf(c.VkDescriptorSetLayoutBindingFlagsCreateInfo) != 0) return error.Invalid;
+        flags = @ptrCast(@alignCast(pointer));
+        const value = flags.?;
+        if (value.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO or value.pNext != null or (value.bindingCount != 0 and (value.bindingCount != info.*.bindingCount or value.pBindingFlags == null or @intFromPtr(value.pBindingFlags) % @alignOf(u32) != 0))) return error.Invalid;
+    }
+    var profile = profiles.descriptor_layout_t{ .binding_count = info.*.bindingCount };
+    var immutable = [_]mixed_wire.immutable_samplers_t{.{}} ** profiles.MaxBindings;
+    var sampler_ids: [128]u64 = undefined;
+    var native_bindings: [profiles.MaxBindings]c.VkDescriptorSetLayoutBinding = undefined;
+    if (info.*.bindingCount != 0) for (info.*.pBindings[0..info.*.bindingCount], 0..) |binding, index| {
+        native_bindings[index] = binding;
+        var definition = profiles.binding_t{ .binding = binding.binding, .descriptor_type = binding.descriptorType, .descriptor_count = binding.descriptorCount, .stage_flags = binding.stageFlags, .binding_flags = if (flags != null and flags.?.bindingCount != 0) flags.?.pBindingFlags[index] else 0, .immutable_offset = @intCast(profile.immutable_count) };
+        if (binding.descriptorCount == 0) native_bindings[index].pImmutableSamplers = null;
+        if (binding.descriptorCount != 0 and binding.pImmutableSamplers != null) {
+            if (binding.descriptorType > 1 or @intFromPtr(binding.pImmutableSamplers) % @alignOf(c.VkSampler) != 0) return error.Invalid;
+            if (binding.descriptorCount > 128 - profile.immutable_count) return error.Limit;
+            const first = profile.immutable_count;
+            for (binding.pImmutableSamplers[0..binding.descriptorCount]) |handle| {
+                if (handle == null) return error.Invalid;
+                const sampler = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_SAMPLER, parent.id) orelse return error.Invalid;
+                sampler_ids[profile.immutable_count] = sampler.id;
+                profile.immutable_samplers[profile.immutable_count] = sampler.handle;
+                profile.immutable_count += 1;
+            }
+            definition.immutable_count = @intCast(binding.descriptorCount);
+            immutable[index].ids = sampler_ids[first..profile.immutable_count];
+        }
+        var destination = index;
+        while (destination > 0 and profile.bindings[destination - 1].binding > definition.binding) : (destination -= 1) profile.bindings[destination] = profile.bindings[destination - 1];
+        if (destination > 0 and profile.bindings[destination - 1].binding == definition.binding) return error.Invalid;
+        profile.bindings[destination] = definition;
+    };
+    _ = profiles.create_sparse_set_profile(&profile) catch return error.Invalid;
+    var normalized = info.*;
+    normalized.pBindings = if (info.*.bindingCount == 0) null else @ptrCast(&native_bindings);
+    const writer = mixed_wire.create_layout(parent.id, 1, @ptrCast(&normalized), immutable[0..info.*.bindingCount]) catch |err| return if (err == error.Limit) error.Limit else error.Invalid;
+    for (profile.bindings[0..profile.binding_count]) |binding| {
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT != 0 and !update_after_bind_supported(parent,binding.descriptor_type)) return error.FeatureNotPresent;
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT != 0 and !descriptor_feature(parent,"descriptorBindingUpdateUnusedWhilePending")) return error.FeatureNotPresent;
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT != 0 and !descriptor_feature(parent,"descriptorBindingPartiallyBound")) return error.FeatureNotPresent;
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT != 0 and !descriptor_feature(parent,"descriptorBindingVariableDescriptorCount")) return error.FeatureNotPresent;
+    }
+    return .{ .profile = profile, .writer = writer };
+}
 /// Create owned sorted mixed descriptor metadata. [in] borrowed live device/native
 /// input; flags chain and immutable samplers copied. [out] ownedlayout or null.
 /// Caller immutable feature policy required; serialized no caller pointers retained.
@@ -8760,50 +8821,13 @@ fn create_descriptor_layout(device: c.VkDevice, info: [*c]const c.VkDescriptorSe
     if (device == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO or info.*.bindingCount > profiles.MaxBindings or (info.*.bindingCount != 0 and (info.*.pBindings == null or @intFromPtr(info.*.pBindings) % @alignOf(c.VkDescriptorSetLayoutBinding) != 0))) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var flags: ?*const c.VkDescriptorSetLayoutBindingFlagsCreateInfo = null;
-    if (info.*.pNext) |pointer| {
-        if (@intFromPtr(pointer) % @alignOf(c.VkDescriptorSetLayoutBindingFlagsCreateInfo) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
-        flags = @ptrCast(@alignCast(pointer));
-        const value = flags.?;
-        if (value.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO or value.pNext != null or (value.bindingCount != 0 and (value.bindingCount != info.*.bindingCount or value.pBindingFlags == null or @intFromPtr(value.pBindingFlags) % @alignOf(u32) != 0))) return c.VK_ERROR_INITIALIZATION_FAILED;
-    }
-    var profile = profiles.descriptor_layout_t{ .binding_count = info.*.bindingCount };
-    var immutable = [_]mixed_wire.immutable_samplers_t{.{}} ** profiles.MaxBindings;
-    var sampler_ids: [128]u64 = undefined;
-    var native_bindings: [profiles.MaxBindings]c.VkDescriptorSetLayoutBinding = undefined;
-    if (info.*.bindingCount != 0) for (info.*.pBindings[0..info.*.bindingCount], 0..) |binding, index| {
-        native_bindings[index] = binding;
-        var definition = profiles.binding_t{ .binding = binding.binding, .descriptor_type = binding.descriptorType, .descriptor_count = binding.descriptorCount, .stage_flags = binding.stageFlags, .binding_flags = if (flags != null and flags.?.bindingCount != 0) flags.?.pBindingFlags[index] else 0, .immutable_offset = @intCast(profile.immutable_count) };
-        if (binding.descriptorCount == 0) native_bindings[index].pImmutableSamplers = null;
-        if (binding.descriptorCount != 0 and binding.pImmutableSamplers != null) {
-            if (binding.descriptorType > 1 or @intFromPtr(binding.pImmutableSamplers) % @alignOf(c.VkSampler) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
-            if (binding.descriptorCount > 128 - profile.immutable_count) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-            const first = profile.immutable_count;
-            for (binding.pImmutableSamplers[0..binding.descriptorCount]) |handle| {
-                if (handle == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-                const sampler = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_SAMPLER, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-                sampler_ids[profile.immutable_count] = sampler.id;
-                profile.immutable_samplers[profile.immutable_count] = sampler.handle;
-                profile.immutable_count += 1;
-            }
-            definition.immutable_count = @intCast(binding.descriptorCount);
-            immutable[index].ids = sampler_ids[first..profile.immutable_count];
-        }
-        var destination = index;
-        while (destination > 0 and profile.bindings[destination - 1].binding > definition.binding) : (destination -= 1) profile.bindings[destination] = profile.bindings[destination - 1];
-        if (destination > 0 and profile.bindings[destination - 1].binding == definition.binding) return c.VK_ERROR_INITIALIZATION_FAILED;
-        profile.bindings[destination] = definition;
+    const prepared = preflight_descriptor_layout(parent, info) catch |err| return switch (err) {
+        error.FeatureNotPresent => c.VK_ERROR_FEATURE_NOT_PRESENT,
+        error.Limit => c.VK_ERROR_OUT_OF_HOST_MEMORY,
+        else => c.VK_ERROR_INITIALIZATION_FAILED,
     };
-    _ = profiles.create_sparse_set_profile(&profile) catch return c.VK_ERROR_INITIALIZATION_FAILED;
-    var normalized = info.*;
-    normalized.pBindings = if (info.*.bindingCount == 0) null else @ptrCast(&native_bindings);
-    var writer = mixed_wire.create_layout(parent.id, 1, @ptrCast(&normalized), immutable[0..info.*.bindingCount]) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
-    for (profile.bindings[0..profile.binding_count]) |binding| {
-        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT != 0 and !update_after_bind_supported(parent,binding.descriptor_type)) return c.VK_ERROR_FEATURE_NOT_PRESENT;
-        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT != 0 and !descriptor_feature(parent,"descriptorBindingUpdateUnusedWhilePending")) return c.VK_ERROR_FEATURE_NOT_PRESENT;
-        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT != 0 and !descriptor_feature(parent,"descriptorBindingPartiallyBound")) return c.VK_ERROR_FEATURE_NOT_PRESENT;
-        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT != 0 and !descriptor_feature(parent,"descriptorBindingVariableDescriptorCount")) return c.VK_ERROR_FEATURE_NOT_PRESENT;
-    }
+    const profile = prepared.profile;
+    var writer = prepared.writer;
     const index = profiles.reserve_slot(&profile_registry.descriptor_layouts, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
     var handle: u64 = 0;
     const result = create_render_resource(parent, c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, &writer, &handle);
@@ -10148,7 +10172,7 @@ test "modern admission intersects backend flags and publishes only owned request
     const core = project_core(&raw.core);
     var core_count: usize = 0;
     for (core) |flag| core_count += flag;
-    try std.testing.expectEqual(@as(usize, 19), core_count);
+    try std.testing.expectEqual(@as(usize, 22), core_count);
     raw.core[@offsetOf(c.VkPhysicalDeviceFeatures, "geometryShader") / 4] = 0;
     try std.testing.expectEqual(@as(u32, 0), project_core(&raw.core)[@offsetOf(c.VkPhysicalDeviceFeatures, "geometryShader") / 4]);
     const projected = project_device_feature_nodes(&raw, &DeviceExtensionNames);
@@ -10175,4 +10199,130 @@ test "modern admission intersects backend flags and publishes only owned request
     try std.testing.expectEqual(@as(u32, 5), state.extension_mask);
     try std.testing.expectEqualDeep([_]u32{0} ** 55, state.features.core);
     try std.testing.expectEqualDeep([_]u32{0} ** 47, state.features.nodes[1].flags);
+}
+
+/// [in] live borrowed physical and immutable core external buffer query.
+/// [out] caller-owned initialized output; headers/unknown chain bytes preserved.
+/// No external allocation import/export path is implemented, so all support bits
+/// are zero. Invalid input preserves output; serialized, no allocation/retention.
+fn external_buffer_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalBufferInfo, output: [*c]c.VkExternalBufferProperties) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalBufferProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES) return;
+    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    output.*.externalMemoryProperties = std.mem.zeroes(c.VkExternalMemoryProperties);
+}
+/// [in] live borrowed physical/core fence query; [out] initialized caller storage.
+/// Unsupported external fence capabilities are zero; headers/unknown nodes stay
+/// intact. Invalid input preserves output. Serialized, no heap or retained pointer.
+fn external_fence_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalFenceInfo, output: [*c]c.VkExternalFenceProperties) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalFenceProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_FENCE_PROPERTIES) return;
+    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    output.*.exportFromImportedHandleTypes = 0;
+    output.*.compatibleHandleTypes = 0;
+    output.*.externalFenceFeatures = 0;
+}
+/// [in] live borrowed physical/core semaphore query; [out] initialized storage.
+/// No external semaphore handles supported: zero features/import/export bits.
+/// Headers/unknown nodes preserved. Serialized, no allocation/retained pointer.
+fn external_semaphore_properties(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceExternalSemaphoreInfo, output: [*c]c.VkExternalSemaphoreProperties) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or info == null or output == null or @intFromPtr(info) % @alignOf(@TypeOf(info.*)) != 0 or @intFromPtr(output) % @alignOf(c.VkExternalSemaphoreProperties) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO or output.*.sType != c.VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES) return;
+    _ = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    output.*.exportFromImportedHandleTypes = 0;
+    output.*.compatibleHandleTypes = 0;
+    output.*.externalSemaphoreFeatures = 0;
+}
+/// [in] live borrowed physical; [in,out] count/optional array caller owned.
+/// No installed guest ICD tools: count zero, success, array bytes untouched.
+/// Invalid arguments return INITIALIZATION_FAILED. Serialized, no allocation.
+fn tool_properties(physical: c.VkPhysicalDevice, count: [*c]u32, output: [*c]c.VkPhysicalDeviceToolProperties) callconv(.C) c_int {
+    _ = output;
+    lock_icd(); defer unlock_icd();
+    if (physical == null or count == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    count.* = 0;
+    return c.VK_SUCCESS;
+}
+
+test "unsupported external and tool queries preserve output headers and unknown payloads" {
+    const transport_t = struct {
+        request_count: u32 = 0,
+        fn exchange(context: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
+            const state: *@This() = @ptrCast(@alignCast(context.?));
+            state.request_count += 1;
+            return c.RingInvalid;
+        }
+    };
+    var transport = transport_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(transport_t.exchange, &transport));
+    defer venus_icd_abandon();
+    var instance: [*c]c.venus_object_t = null;
+    var physical: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.*.id, 1, &physical));
+    const handle: c.VkPhysicalDevice = @ptrFromInt(physical.*.handle);
+    var unknown = extern struct { type_tag: u32, next: ?*anyopaque, payload: u64 }{ .type_tag = 0x7ffffff0, .next = null, .payload = 0x123456789abcdef0 };
+    var buffer = c.VkExternalBufferProperties{ .sType = c.VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES, .pNext = &unknown, .externalMemoryProperties = .{ .externalMemoryFeatures = 7, .exportFromImportedHandleTypes = 7, .compatibleHandleTypes = 7 } };
+    const input = c.VkPhysicalDeviceExternalBufferInfo{ .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO, .usage = c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, .handleType = c.VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT };
+    external_buffer_properties(handle, &input, &buffer);
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.VkExternalMemoryProperties), buffer.externalMemoryProperties);
+    try std.testing.expectEqual(@as(?*anyopaque, &unknown), buffer.pNext);
+    try std.testing.expectEqual(@as(u64, 0x123456789abcdef0), unknown.payload);
+    unknown.next = &unknown;
+    buffer.externalMemoryProperties.externalMemoryFeatures = 7;
+    external_buffer_properties(handle, &input, &buffer);
+    try std.testing.expectEqual(@as(u32, 7), buffer.externalMemoryProperties.externalMemoryFeatures);
+    unknown.next = null;
+    var fence = c.VkExternalFenceProperties{ .sType = c.VK_STRUCTURE_TYPE_EXTERNAL_FENCE_PROPERTIES, .pNext = &unknown, .externalFenceFeatures = 7, .exportFromImportedHandleTypes = 7, .compatibleHandleTypes = 7 };
+    const fence_input = c.VkPhysicalDeviceExternalFenceInfo{ .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_FENCE_INFO, .handleType = c.VK_EXTERNAL_FENCE_HANDLE_TYPE_OPAQUE_FD_BIT };
+    external_fence_properties(handle, &fence_input, &fence);
+    try std.testing.expectEqual(@as(u32, 0), fence.externalFenceFeatures | fence.exportFromImportedHandleTypes | fence.compatibleHandleTypes);
+    var semaphore = c.VkExternalSemaphoreProperties{ .sType = c.VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES, .pNext = &unknown, .externalSemaphoreFeatures = 7, .exportFromImportedHandleTypes = 7, .compatibleHandleTypes = 7 };
+    const semaphore_input = c.VkPhysicalDeviceExternalSemaphoreInfo{ .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO, .handleType = c.VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT };
+    external_semaphore_properties(handle, &semaphore_input, &semaphore);
+    try std.testing.expectEqual(@as(u32, 0), semaphore.externalSemaphoreFeatures | semaphore.exportFromImportedHandleTypes | semaphore.compatibleHandleTypes);
+    var count: u32 = 42;
+    var tool = std.mem.zeroes(c.VkPhysicalDeviceToolProperties);
+    tool.purposes = 15;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), tool_properties(handle, &count, &tool));
+    try std.testing.expectEqual(@as(u32, 0), count);
+    try std.testing.expectEqual(@as(u32, 15), tool.purposes);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), tool_properties(null, &count, null));
+    try std.testing.expectEqual(@as(u32, 0), transport.request_count);
+}
+
+/// [in] live borrowed device/native layout definition; [out] initialized caller
+/// support storage and optional variable-count node. Shares creation preflight,
+/// then queries actual host support. Unsupported local quotas/features yield false;
+/// headers/unknown nodes preserved. Host failure preserves output and poisons binding.
+/// Serialized; no allocations or retained pointers.
+fn descriptor_layout_support(device: c.VkDevice, info: [*c]const c.VkDescriptorSetLayoutCreateInfo, output: [*c]c.VkDescriptorSetLayoutSupport) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (device == null or info == null or output == null or @intFromPtr(output) % @alignOf(c.VkDescriptorSetLayoutSupport) != 0 or output.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    _ = query2_chain(output.*.pNext) catch return;
+    var variable: ?*c.VkDescriptorSetVariableDescriptorCountLayoutSupport = null;
+    var current = output.*.pNext;
+    while (current) |pointer| {
+        const header: *c.VkBaseOutStructure = @ptrCast(@alignCast(pointer));
+        if (header.sType == c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT) {
+            if (variable != null or @intFromPtr(pointer) % @alignOf(c.VkDescriptorSetVariableDescriptorCountLayoutSupport) != 0) return;
+            variable = @ptrCast(@alignCast(pointer));
+        }
+        current = @ptrCast(header.pNext);
+    }
+    const prepared = preflight_descriptor_layout(parent, info) catch {
+        output.*.supported = 0;
+        if (variable) |value| value.maxVariableDescriptorCount = 0;
+        return;
+    };
+    const packet = extra_wire.descriptor_layout_support(parent.id, prepared.writer.bytes[0..prepared.writer.used]) catch return;
+    const reply = transact(packet.bytes[0..packet.used]) orelse return;
+    const supported = extra_wire.decode_descriptor_layout_support(reply) catch { _ = failure(c.RingCorrupt); return; };
+    output.*.supported = @intFromBool(supported);
+    // Variable descriptor count is not advertised or admitted by implemented policy.
+    if (variable) |value| value.maxVariableDescriptorCount = 0;
 }
