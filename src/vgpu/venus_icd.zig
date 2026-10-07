@@ -2886,8 +2886,11 @@ fn descriptor_resource_valid(parent: *const c.venus_object_t, value: *const prof
     if (value.descriptor_type == 4 or value.descriptor_type == 5) {
         if (value.texel_view == 0) return null_descriptor_enabled(parent);
         const view = child_object(value.texel_view,c.VK_OBJECT_TYPE_BUFFER_VIEW,parent.id) orelse return false;
-        const buffer = child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_BUFFER,parent.id) orelse return false;
-        return resource_state(buffer).bound_memory != 0;
+        const state = resource_state(view);
+        const buffer = child_object(state.view_image,c.VK_OBJECT_TYPE_BUFFER,parent.id) orelse return false;
+        const usage: u64 = if (value.descriptor_type == 4) c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT else c.VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT;
+        return state.buffer_usage & usage != 0 and resource_state(buffer).buffer_usage & usage != 0 and
+            child_object(resource_state(buffer).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent.id) != null;
     }
     if (value.descriptor_type > 10) return false;
     if (value.descriptor_type <= 1 and value.sampler != 0 and child_object(value.sampler,c.VK_OBJECT_TYPE_SAMPLER,parent.id) == null) return false;
@@ -3003,7 +3006,7 @@ fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]cons
 
 /// Allocate private device memory with exact host identity validation.
 /// @param[in] device Nonnull private live parent, borrowed for call.
-/// @param[in] info Nonnull canonical allocation info, borrowed; no pNext supported.
+/// @param[in] info Nonnull canonical allocation info, borrowed; bounded flags/dedicated chains remain caller-owned until return.
 /// @param[in] allocator Nullable unused callbacks, no pointer retained.
 /// @param[out] output Nonnull borrowed token storage; NULL on failure.
 /// @return Host result, local initialization/exhaustion or sticky device loss.
@@ -5837,7 +5840,8 @@ fn create_event(device: c.VkDevice, info: [*c]const c.VkEventCreateInfo, allocat
     return result;
 }
 
-/// Create buffer view. [in] device/info borrowed, callbacks nullable unused.
+/// Create buffer view. [in] device/info and optional maintenance5 Flags2 node borrowed; callbacks nullable unused.
+/// Effective texel usage is copied; the complete backing allocation remains device-owned.
 /// [out] output NULL on failure, otherwise owned device token retaining backing buffer.
 /// Return native/local invalid/OOM/loss; fixed metadata and packet, mutex serialized.
 fn create_buffer_view(device: c.VkDevice, info: [*c]const c.VkBufferViewCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkBufferView) callconv(.C) c_int {
@@ -5851,13 +5855,27 @@ fn create_buffer_view(device: c.VkDevice, info: [*c]const c.VkBufferViewCreateIn
     const buffer = child_object(@intFromPtr(info.*.buffer.?), c.VK_OBJECT_TYPE_BUFFER, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const state = resource_state(buffer);
-    if (state.buffer_usage & (c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT) == 0 or
+    var usage = state.buffer_usage & @as(u64,c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT);
+    if (info.*.pNext) |pointer| {
+        if (@intFromPtr(pointer) % @alignOf(c.VkBufferUsageFlags2CreateInfoKHR) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        const node: *const c.VkBufferUsageFlags2CreateInfoKHR = @ptrCast(@alignCast(pointer));
+        if (node.sType != c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR or node.pNext != null or
+            node.usage & ~@as(u64,12) != 0 or node.usage & ~state.buffer_usage != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (!device_feature(parent,c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,0)) return c.VK_ERROR_FEATURE_NOT_PRESENT;
+        usage = node.usage;
+    }
+    const allocation = child_object(state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const allocation_state = resource_state(allocation);
+    if (state.buffer_usage & 12 == 0 or state.memory_offset > allocation_state.allocation_size or
+        state.buffer_size > allocation_state.allocation_size - state.memory_offset or
         info.*.offset >= state.buffer_size or (info.*.range != c.VK_WHOLE_SIZE and (info.*.range == 0 or info.*.range > state.buffer_size - info.*.offset))) return c.VK_ERROR_INITIALIZATION_FAILED;
     var packet = extra_wire.create_buffer_view(parent.id, 1, buffer.id, @ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
     var handle: u64 = 0;
     const result = create_render_resource(parent, c.VK_OBJECT_TYPE_BUFFER_VIEW, &packet, &handle);
     if (result == c.VK_SUCCESS) {
-        resource_state(child_object(handle, c.VK_OBJECT_TYPE_BUFFER_VIEW, parent.id).?).view_image = buffer.handle;
+        const view = resource_state(child_object(handle, c.VK_OBJECT_TYPE_BUFFER_VIEW, parent.id).?);
+        view.view_image = buffer.handle;
+        view.buffer_usage = @intCast(usage);
         output.* = @ptrFromInt(handle);
     }
     return result;
@@ -11676,6 +11694,12 @@ test "root extra child creation acknowledges exact metadata and retains uncertai
         const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
         const backing = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
         resource_state(backing).* = .{ .id = backing.id, .buffer_size = 256, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT };
+        const base_count: usize = if (operation == 3) 4 else 3;
+        if (operation == 3) {
+            const allocation = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+            resource_state(allocation).allocation_size = 4096;
+            resource_state(backing).bound_memory = allocation.handle;
+        }
         const device: c.VkDevice = @ptrFromInt(parent.handle);
         const info_t = switch (operation) { 0 => c.VkEventCreateInfo, 1 => c.VkQueryPoolCreateInfo, 2 => c.VkPipelineCacheCreateInfo, 3 => c.VkBufferViewCreateInfo, 4 => c.VkSamplerCreateInfo, else => unreachable };
         const handle_t = switch (operation) { 0 => c.VkEvent, 1 => c.VkQueryPool, 2 => c.VkPipelineCache, 3 => c.VkBufferView, 4 => c.VkSampler, else => unreachable };
@@ -11692,7 +11716,7 @@ test "root extra child creation acknowledges exact metadata and retains uncertai
         try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(@ptrFromInt(1), &info, null, &output));
         try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, null, null, &output));
         const tag = info.sType; info.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.sType = tag;
-        info.pNext = @ptrFromInt(8); try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.pNext = null;
+        var bad_header = c.VkBaseInStructure{ .sType = 0 }; info.pNext = &bad_header; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.pNext = null;
         if (operation == 3) {
             resource_state(backing).buffer_usage = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); resource_state(backing).buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
             info.offset = 256; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.offset = 0;
@@ -11710,10 +11734,10 @@ test "root extra child creation acknowledges exact metadata and retains uncertai
             resource_state(record).inflight_count = 1; destroy_fn(device, output, null); resource_state(record).inflight_count = 0;
             try std.testing.expectEqual(before, fixture.calls);
             destroy_fn(device, output, null); try std.testing.expect(child_object(@intFromPtr(output.?), ObjectKind, parent.id) == null);
-            try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+            try std.testing.expectEqual(base_count, objects.live_count);
         } else {
             try std.testing.expect(output == null);
-            try std.testing.expectEqual(@as(usize, if (expected == c.VK_ERROR_DEVICE_LOST) 4 else 3), objects.live_count);
+            try std.testing.expectEqual(base_count + @as(usize, if (expected == c.VK_ERROR_DEVICE_LOST) 1 else 0), objects.live_count);
             if (expected == c.VK_ERROR_DEVICE_LOST) try std.testing.expect(lost != c.RingOk);
         }
     };
@@ -12291,7 +12315,7 @@ test "descriptor ownership mixed sampler image and texel writes publish atomical
         const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, graph.device.id, 0);
         resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = allocation.handle, .buffer_size = 64, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT };
         const texel = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER_VIEW, graph.device.id, 0);
-        resource_state(texel).* = .{ .id = texel.id, .view_image = buffer.handle };
+        resource_state(texel).* = .{ .id = texel.id, .view_image = buffer.handle, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT };
         var sampler_info = c.VkDescriptorImageInfo{ .sampler = @ptrFromInt(sampler.handle) };
         var image_info = c.VkDescriptorImageInfo{ .imageView = @ptrFromInt(image_view.handle), .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
         const texel_handle: c.VkBufferView = @ptrFromInt(texel.handle);
@@ -13185,4 +13209,97 @@ test "root map preflight null foreign bounds duplicate and unsupported flags pre
     root_runtime_fn(unmap_memory)(null, memory_handle); root_runtime_fn(unmap_memory)(device, null); root_runtime_fn(unmap_memory)(@ptrFromInt(1), memory_handle); root_runtime_fn(unmap_memory)(@ptrFromInt(foreign.handle), memory_handle);
     try std.testing.expectEqual(@as(usize, 0), fixture.base.base.calls);
     lost = c.RingClosed; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), invoke(device, memory_handle, 0, 16, 0, &output));
+}
+
+
+test "maintenance5 native buffer view flags2 preserve restricted usage and constructor ownership" {
+    for ([_]i32{c.VK_SUCCESS,c.VK_ERROR_OUT_OF_DEVICE_MEMORY,c.VK_ERROR_DEVICE_LOST}) |status| {
+        var fixture = root_extra_lifecycle_fixture_t{.result=status};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(root_extra_lifecycle_fixture_t.exchange,&fixture));
+        defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const allocation = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent.id,0);
+        const buffer = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER,parent.id,0);
+        resource_state(allocation).allocation_size=4096;
+        resource_state(buffer).* = .{.id=buffer.id,.buffer_usage=12,.buffer_size=256,.bound_memory=allocation.handle};
+        device_caches[0].handle = parent.handle;
+        device_caches[0].enabled_state.features.count=1;
+        device_caches[0].enabled_state.features.nodes[0]=.{.type_tag=c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,.flag_count=1};
+        device_caches[0].enabled_state.features.nodes[0].flags[0]=1;
+        var flags=c.VkBufferUsageFlags2CreateInfoKHR{.sType=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR,.usage=c.VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT};
+        const info=c.VkBufferViewCreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,.pNext=&flags,.buffer=@ptrFromInt(buffer.handle),.format=c.VK_FORMAT_R32_UINT,.range=256};
+        var output:c.VkBufferView=null;
+        try std.testing.expectEqual(status,root_runtime_fn(create_buffer_view)(@ptrFromInt(parent.handle),&info,null,&output));
+        try std.testing.expectEqual(@as(usize,1),fixture.calls);
+        if(status==c.VK_SUCCESS) {
+            const view=child_object(@intFromPtr(output.?),c.VK_OBJECT_TYPE_BUFFER_VIEW,parent.id).?;
+            try std.testing.expectEqual(@as(u64,8),resource_state(view).buffer_usage);
+            const descriptor=profiles.descriptor_t{.descriptor_type=5,.texel_view=view.handle};
+            try std.testing.expect(descriptor_resource_valid(parent,&descriptor));
+            var uniform=descriptor;uniform.descriptor_type=4;
+            try std.testing.expect(!descriptor_resource_valid(parent,&uniform));
+            resource_state(buffer).bound_memory=0;
+            try std.testing.expect(!descriptor_resource_valid(parent,&descriptor));
+            resource_state(buffer).bound_memory=allocation.handle;
+            root_runtime_fn(destroy_buffer_view)(@ptrFromInt(parent.handle),output,null);
+            try std.testing.expectEqual(@as(u32,3),objects.live_count);
+        } else {
+            try std.testing.expect(output==null);
+            try std.testing.expectEqual(@as(u32,if(status==c.VK_ERROR_DEVICE_LOST)4 else 3),objects.live_count);
+        }
+    }
+}
+test "buffer view flags2 malformed feature and subset guards perform no host work" {
+    var fixture=root_extra_lifecycle_fixture_t{};
+    try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(root_extra_lifecycle_fixture_t.exchange,&fixture));
+    defer venus_icd_abandon();
+    const parent=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+    const allocation=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent.id,0);
+    resource_state(allocation).allocation_size=4096;
+    const buffer=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER,parent.id,0);
+    resource_state(buffer).* = .{.id=buffer.id,.buffer_usage=4,.buffer_size=256,.bound_memory=allocation.handle};
+    device_caches[0].handle=parent.handle;
+    var flags=c.VkBufferUsageFlags2CreateInfoKHR{.sType=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR,.usage=4};
+    var info=c.VkBufferViewCreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,.pNext=&flags,.buffer=@ptrFromInt(buffer.handle),.format=c.VK_FORMAT_R32_UINT,.range=256};
+    var output:c.VkBufferView=null;
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_FEATURE_NOT_PRESENT),root_runtime_fn(create_buffer_view)(@ptrFromInt(parent.handle),&info,null,&output));
+    for([_]u64{8,12,@as(u64,1)<<40}) |usage| {
+        flags.usage=usage;
+        try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(create_buffer_view)(@ptrFromInt(parent.handle),&info,null,&output));
+    }
+    flags.usage=4;flags.pNext=&flags;
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(create_buffer_view)(@ptrFromInt(parent.handle),&info,null,&output));
+    flags.pNext=null;flags.sType=0;
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(create_buffer_view)(@ptrFromInt(parent.handle),&info,null,&output));
+    info.pNext=@ptrFromInt(root_unaligned_address());
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(create_buffer_view)(@ptrFromInt(parent.handle),&info,null,&output));
+    try std.testing.expectEqual(@as(usize,0),fixture.calls);
+    try std.testing.expectEqual(@as(u32,3),objects.live_count);
+}
+
+test "maintenance5 zero view usage preserves native construction without descriptor eligibility" {
+    var fixture=root_extra_lifecycle_fixture_t{};
+    try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(root_extra_lifecycle_fixture_t.exchange,&fixture));
+    defer venus_icd_abandon();
+    const parent=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+    const allocation=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent.id,0);
+    const buffer=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER,parent.id,0);
+    resource_state(allocation).allocation_size=4096;
+    resource_state(buffer).* = .{.id=buffer.id,.buffer_usage=12,.buffer_size=256,.bound_memory=allocation.handle};
+    device_caches[0].handle=parent.handle;
+    device_caches[0].enabled_state.features.count=1;
+    device_caches[0].enabled_state.features.nodes[0]=.{.type_tag=c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,.flag_count=1};
+    device_caches[0].enabled_state.features.nodes[0].flags[0]=1;
+    const flags=c.VkBufferUsageFlags2CreateInfoKHR{.sType=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO_KHR,.usage=0};
+    const info=c.VkBufferViewCreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,.pNext=&flags,.buffer=@ptrFromInt(buffer.handle),.format=c.VK_FORMAT_R32_UINT,.range=256};
+    var output:c.VkBufferView=null;
+    try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),root_runtime_fn(create_buffer_view)(@ptrFromInt(parent.handle),&info,null,&output));
+    const view=child_object(@intFromPtr(output.?),c.VK_OBJECT_TYPE_BUFFER_VIEW,parent.id).?;
+    try std.testing.expectEqual(@as(u32,0),resource_state(view).buffer_usage);
+    for([_]u32{4,5}) |kind| {
+        const descriptor=profiles.descriptor_t{.descriptor_type=kind,.texel_view=view.handle};
+        try std.testing.expect(!descriptor_resource_valid(parent,&descriptor));
+    }
+    root_runtime_fn(destroy_buffer_view)(@ptrFromInt(parent.handle),output,null);
+    try std.testing.expectEqual(@as(u32,3),objects.live_count);
 }
