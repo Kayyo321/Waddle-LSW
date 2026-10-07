@@ -475,3 +475,86 @@ test "complete bounded graphics staging rejects public packet overflow without p
     fixture.info.pStages = &stages;
     try std.testing.expectError(error.Limit, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
 }
+
+test "pipeline helper borrowed topology validation and every encoded prefix capacity" {
+    var formats = [_]c.VkFormat{37};
+    var rendering: c.VkPipelineRenderingCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = 1, .pColorAttachmentFormats = &formats };
+    var native_libraries = [_]c.VkPipeline{ @ptrFromInt(52), @ptrFromInt(53) };
+    var library: c.VkPipelineLibraryCreateInfoKHR = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR, .pNext = &rendering, .libraryCount = 2, .pLibraries = &native_libraries };
+    var flags: c.VkPipelineCreateFlags2CreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO, .pNext = &library, .flags = 1 };
+    const initial = try pipeline_helpers.collect_chain(&flags, true);
+    var writer: render.writer_t = .{};
+    try pipeline_helpers.encode_chain(&writer, &initial);
+    const encoded_bytes = writer.used;
+    for (0..encoded_bytes) |available| {
+        writer = .{ .used = render.MaxBytes - available };
+        try std.testing.expectError(error.Limit, pipeline_helpers.encode_chain(&writer, &initial));
+        try std.testing.expect(writer.used <= render.MaxBytes);
+    }
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(&rendering, false));
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(&library, false));
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(@ptrFromInt(3), true));
+    var duplicate: c.VkPipelineCreateFlags2CreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO };
+    flags.pNext = &duplicate;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(&flags, true));
+    flags.pNext = &library;
+    rendering.colorAttachmentCount = 9;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(&flags, true));
+    rendering.colorAttachmentCount = 1;
+    rendering.pColorAttachmentFormats = null;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(&flags, true));
+    rendering.pColorAttachmentFormats = &formats;
+    library.libraryCount = 65;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(&flags, true));
+    library.libraryCount = 2;
+    native_libraries[1] = null;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.collect_chain(&flags, true));
+    writer = .{};
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &initial));
+    native_libraries[1] = @ptrFromInt(53);
+    var changed = initial;
+    changed.count = 4;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &changed));
+    changed = initial;
+    changed.addresses[0] = 0;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &changed));
+    changed.addresses[0] = 3;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &changed));
+    flags.sType = 0;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &initial));
+    changed = .{ .count = 1 };
+    changed.addresses[0] = @intFromPtr(&flags);
+    changed.tags[0] = 0;
+    flags.pNext = null;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &changed));
+    flags.sType = c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &initial));
+    flags.pNext = &library;
+    library.libraryCount = 1;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &initial));
+    library.libraryCount = 65;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &initial));
+    library.libraryCount = 2;
+    rendering.colorAttachmentCount = 9;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_chain(&writer, &initial));
+}
+
+test "specialization helper arbitrary writer prefixes data quota and map bounds" {
+    const data = [_]u8{ 0, 1, 2, 3, 4 };
+    var entries = [_]c.VkSpecializationMapEntry{ .{ .constantID = 0, .offset = 0, .size = 4 }, .{ .constantID = 1, .offset = 4, .size = 1 } };
+    var info: c.VkSpecializationInfo = .{ .mapEntryCount = 2, .pMapEntries = &entries, .dataSize = 5, .pData = &data };
+    var writer: render.writer_t = .{};
+    try pipeline_helpers.encode_specialization(&writer, &info);
+    const encoded_bytes = writer.used;
+    for (0..encoded_bytes) |available| {
+        writer = .{ .used = render.MaxBytes - available };
+        try std.testing.expectError(error.Limit, pipeline_helpers.encode_specialization(&writer, &info));
+        try std.testing.expect(writer.used <= render.MaxBytes);
+    }
+    writer = .{};
+    info.dataSize = pipeline_helpers.MaxSpecializationData + 1;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_specialization(&writer, &info));
+    info.dataSize = 5;
+    entries[0].offset = 6;
+    try std.testing.expectError(error.Invalid, pipeline_helpers.encode_specialization(&writer, &info));
+}
