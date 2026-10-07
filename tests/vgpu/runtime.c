@@ -19,6 +19,23 @@ static venus_ring_status_t health_status;
 static uint64_t fence_value;
 static unsigned char host_capabilities[160];
 static int receiver_cookie;
+static uint64_t clock_values[2], installed_deadline;
+static unsigned clock_samples, absolute_calls;
+static _Atomic uint32_t absolute_cancel;
+static int completion_fault;
+
+uint64_t venus_channel_time_ms(void) {
+    assert(clock_samples < 2);
+    return clock_values[clock_samples++];
+}
+venus_ring_status_t venus_channel_deadline_until(venus_channel_t *borrowed, uint64_t deadline) {
+    assert(borrowed == &channel && deadline);
+    absolute_calls++;
+    installed_deadline = deadline;
+    if (deadline_error == RingOk)
+        borrowed->deadline_ms = deadline;
+    return deadline_error;
+}
 
 static venus_ring_t *incoming_ring(void) {
     return session.role == SessionHost ? &session.region.commands : &session.region.replies;
@@ -53,6 +70,12 @@ venus_ring_status_t venus_channel_wait(void *context) {
         if (length) {
             assert(venus_ring_write(ring, peer_input + incoming_position, length) == RingOk);
             incoming_position += length;
+            if (incoming_position == incoming_bytes) {
+                if (completion_fault == 1)
+                    atomic_store(&absolute_cancel, 1);
+                if (completion_fault == 3)
+                    channel.received = 1;
+            }
         }
         return RingOk;
     }
@@ -144,6 +167,11 @@ static void reset_buffer(venus_session_role_t role, void *buffer, uint32_t bytes
     memset(scratch, 0x5a, sizeof(scratch));
     incoming_bytes = incoming_position = outgoing_bytes = 0;
     wait_error = deadline_error = receiver_status = RingOk;
+    clock_values[0] = 100;
+    clock_values[1] = 101;
+    installed_deadline = clock_samples = absolute_calls = 0;
+    completion_fault = 0;
+    atomic_store(&absolute_cancel, 0);
     eof = calls = health_calls = health_after = 0;
     health_status = RingOk;
     fence_value = 1;
@@ -668,6 +696,177 @@ static void negotiation(void) {
     assert(!rpc.negotiated);
 }
 
+static void absolute_reset(void) {
+    reset(SessionGuest);
+    channel.cancel = &absolute_cancel;
+    channel.deadline_ms = 77;
+}
+static void assert_zero_response(const venus_request_t *response) {
+    const venus_request_t Empty = {0};
+    assert(!memcmp(response, &Empty, sizeof(*response)));
+}
+static void absolute_local_and_initial_failures(void) {
+    venus_request_t request = request_for(RequestReply), response;
+    unsigned char output[4];
+    for (unsigned temporal = 0; temporal < 3; temporal++) {
+        for (unsigned field = 0; field < 6; field++) {
+            absolute_reset();
+            if (temporal == 0)
+                atomic_store(&absolute_cancel, 1);
+            if (temporal == 2)
+                clock_values[0] = 0;
+            venus_request_t invalid = request;
+            if (field == 0) invalid.flags = 1;
+            if (field == 1) invalid.status = RequestAgain;
+            if (field == 2) invalid.resource_id = 1;
+            if (field == 3) invalid.argument_one = 0;
+            if (field == 4) invalid.argument_zero = UINT64_MAX;
+            if (field == 5) invalid.kind = 99;
+            unsigned char saved_rpc[sizeof(rpc)], saved_channel[sizeof(channel)];
+            memcpy(saved_rpc, &rpc, sizeof(rpc));
+            memcpy(saved_channel, &channel, sizeof(channel));
+            memset(output, 0xa5, sizeof(output));
+            assert(venus_rpc_exchange_until(&rpc, &invalid, NULL, 0, &response,
+                output, 4, temporal == 1 ? 1 : UINT64_MAX, 100) == RingInvalid);
+            assert_zero_response(&response);
+            assert(!memcmp(saved_rpc, &rpc, sizeof(rpc)));
+            assert(!memcmp(saved_channel, &channel, sizeof(channel)));
+            assert(!clock_samples && !absolute_calls && !incoming_position && !outgoing_bytes);
+            assert(!atomic_load(&session.region.commands.header->tail));
+            assert(output[0] == 0xa5 && output[3] == 0xa5);
+        }
+    }
+    for (unsigned mode = 0; mode < 8; mode++) {
+        absolute_reset();
+        memset(output, 0xa5, sizeof(output));
+        memset(&response, 0xa5, sizeof(response));
+        venus_request_t offered = request;
+        uint64_t deadline = mode == 0 ? 0 : UINT64_MAX;
+        uint32_t cap = mode == 1 ? 0 : mode == 2 ? 60001 : 100;
+        if (mode == 3)
+            session.role = SessionHost;
+        if (mode == 4)
+            offered.payload_bytes = 1;
+        if (mode == 5)
+            offered.kind = 99;
+        if (mode == 6)
+            offered.sequence = 1;
+        assert(venus_rpc_exchange_until(&rpc, &offered, NULL, 0, &response,
+                                       output, mode == 7 ? 3 : 4, deadline, cap) == RingInvalid);
+        assert_zero_response(&response);
+        assert(!clock_samples && !absolute_calls && !outgoing_bytes && !incoming_position);
+        assert(rpc.next_sequence == 1 && channel.deadline_ms == 77);
+        for (size_t index = 0; index < sizeof(output); index++)
+            assert(output[index] == 0xa5);
+    }
+    for (unsigned mode = 0; mode < 8; mode++) {
+        absolute_reset();
+        memset(output, 0xa5, sizeof(output));
+        if (mode == 0)
+            clock_values[0] = 0;
+        if (mode == 1)
+            clock_values[0] = UINT64_MAX - 50;
+        if (mode == 2)
+            atomic_store(&absolute_cancel, 1);
+        if (mode == 3)
+            channel.received = 1;
+        if (mode == 4)
+            rpc.next_sequence = UINT64_MAX;
+        if (mode == 5)
+            venus_session_close(&session, StopDisconnect);
+        if (mode == 7)
+            channel.cancel = NULL;
+        venus_ring_status_t expected = mode == 2 ? RingCancelled :
+            (mode == 3 || mode == 4) ? RingCorrupt : (mode == 6 || mode == 7) ? RingTimeout : RingClosed;
+        assert_terminal(venus_rpc_exchange_until(&rpc, &request, NULL, 0, &response,
+                                                output, 4, 100, 100), expected);
+        assert_zero_response(&response);
+        assert(!absolute_calls && !outgoing_bytes && !incoming_position && channel.deadline_ms == 77);
+        assert(clock_samples == (mode == 0 || mode == 1 || mode == 6 || mode == 7));
+        for (size_t index = 0; index < sizeof(output); index++)
+            assert(output[index] == 0xa5);
+    }
+    const venus_ring_status_t Errors[] = {RingInvalid, RingClosed, RingCancelled, RingTimeout};
+    for (size_t index = 0; index < sizeof(Errors) / sizeof(Errors[0]); index++) {
+        absolute_reset();
+        deadline_error = Errors[index];
+        venus_ring_status_t status = venus_rpc_exchange_until(&rpc, &request, NULL, 0,
+            &response, output, 4, UINT64_MAX, 100);
+        assert(status == Errors[index] && clock_samples == 1 && absolute_calls == 1);
+        assert(!outgoing_bytes && !incoming_position && channel.deadline_ms == 77);
+        assert_zero_response(&response);
+        if (index)
+            assert_terminal(status, Errors[index]);
+        else
+            assert(rpc.next_sequence == 1 && venus_session_ready(&session));
+    }
+}
+static void absolute_completion_and_caps(void) {
+    for (unsigned mode = 0; mode < 8; mode++) {
+        absolute_reset();
+        venus_request_t request = request_for(RequestReply), response;
+        venus_request_t reply = {.kind = RequestReply, .sequence = 1, .direction = 1,
+                                  .payload_bytes = 4};
+        unsigned char output[4];
+        memset(output, 0xa5, sizeof(output));
+        prepare(reply);
+        if (mode == 0)
+            clock_values[1] = 110; /* Exact cap expiration after private receipt. */
+        if (mode == 1)
+            clock_values[1] = 0;
+        if (mode == 2)
+            clock_values[1] = 99;
+        if (mode == 3)
+            completion_fault = 1;
+        if (mode == 4)
+            completion_fault = 3; /* Valid independently fragmented control input. */
+        if (mode == 6)
+            channel.cancel = NULL;
+        uint64_t deadline = mode == 5 ? 105 : UINT64_MAX;
+        uint32_t cap = mode == 7 ? 60000 : 10;
+        venus_ring_status_t expected = mode == 0 ? RingTimeout :
+            (mode == 1 || mode == 2) ? RingClosed : mode == 3 ? RingCancelled : RingOk;
+        venus_ring_status_t status = venus_rpc_exchange_until(&rpc, &request, NULL, 0,
+            &response, output, sizeof(output), deadline, cap);
+        assert(status == expected && absolute_calls == 1);
+        assert(clock_samples == (mode == 3 ? 1u : 2u));
+        assert(installed_deadline == (mode == 5 ? 105u : mode == 7 ? 60100u : 110u));
+        assert(channel.deadline_ms == installed_deadline && incoming_position == incoming_bytes);
+        assert(outgoing_bytes == VenusRequestHeaderBytes);
+        if (expected != RingOk) {
+            assert_terminal(status, expected);
+            assert_zero_response(&response);
+            for (size_t index = 0; index < sizeof(output); index++)
+                assert(output[index] == 0xa5);
+        } else {
+            assert(response.payload_bytes == 4 && rpc.next_sequence == 2);
+            for (size_t index = 0; index < sizeof(output); index++)
+                assert(output[index] == 0x42);
+            assert(channel.received == (mode == 4));
+        }
+    }
+    absolute_reset();
+    rpc.negotiated = 0;
+    venus_request_t request = {.kind = RequestNegotiate, .payload_bytes = 160}, response;
+    venus_request_t reply = {.kind = RequestNegotiate, .direction = 1, .sequence = 1};
+    prepare(reply);
+    clock_values[1] = 110;
+    assert_terminal(venus_rpc_exchange_until(&rpc, &request, host_capabilities, 160,
+        &response, NULL, 0, UINT64_MAX, 10), RingTimeout);
+    assert_zero_response(&response);
+    assert(!rpc.negotiated);
+    absolute_reset();
+    request = request_for(RequestReply);
+    reply = (venus_request_t){.kind = RequestReply, .direction = 1, .sequence = 1,
+                              .status = RequestAgain};
+    prepare(reply);
+    unsigned char output[4] = {0xa5, 0xa5, 0xa5, 0xa5};
+    assert(venus_rpc_exchange_until(&rpc, &request, NULL, 0, &response,
+                                  output, 4, 110, 100) == RingOk);
+    assert(response.status == RequestAgain && rpc.next_sequence == 2);
+    assert(output[0] == 0xa5 && output[3] == 0xa5);
+}
+
 int main(void) {
     negotiation();
     host_operations();
@@ -678,6 +877,8 @@ int main(void) {
     guest_operations();
     guest_failures();
     local_errors();
+    absolute_local_and_initial_failures();
+    absolute_completion_and_caps();
     puts("Sequential bounded runtime operations and failure paths passed");
     return 0;
 }

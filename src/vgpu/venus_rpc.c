@@ -99,9 +99,47 @@ static size_t response_bytes(const venus_request_t *request) {
     return 0;
 }
 
-venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *request,
+static venus_ring_status_t begin_until(venus_rpc_t *rpc, uint64_t deadline_ms,
+                                       uint32_t timeout_ms, uint64_t *first_now) {
+    if (rpc->channel->session->role != SessionGuest || !deadline_ms || !timeout_ms ||
+        timeout_ms > 60000)
+        return RingInvalid;
+    if (!rpc->next_sequence || !venus_session_ready(rpc->channel->session))
+        return venus_rpc_fail(rpc, RingClosed);
+    if (rpc->next_sequence == UINT64_MAX || rpc->channel->received)
+        return venus_rpc_fail(rpc, RingCorrupt);
+    if (rpc->channel->cancel && atomic_load_explicit(rpc->channel->cancel, memory_order_acquire))
+        return venus_rpc_fail(rpc, RingCancelled);
+    uint64_t now = venus_channel_time_ms();
+    if (!now || now > UINT64_MAX - timeout_ms)
+        return venus_rpc_fail(rpc, RingClosed);
+    if (now >= deadline_ms)
+        return venus_rpc_fail(rpc, RingTimeout);
+    uint64_t cap_deadline = now + timeout_ms;
+    if (cap_deadline < deadline_ms)
+        deadline_ms = cap_deadline;
+    *first_now = now;
+    venus_ring_status_t result = venus_channel_deadline_until(rpc->channel, deadline_ms);
+    return result == RingOk || result == RingInvalid ? result : venus_rpc_fail(rpc, result);
+}
+
+static venus_ring_status_t check_completion(venus_rpc_t *rpc, uint64_t first_now) {
+    if (!venus_session_ready(rpc->channel->session))
+        return venus_rpc_fail(rpc, RingClosed);
+    if (rpc->channel->cancel && atomic_load_explicit(rpc->channel->cancel, memory_order_acquire))
+        return venus_rpc_fail(rpc, RingCancelled);
+    uint64_t now = venus_channel_time_ms();
+    if (!now || now < first_now)
+        return venus_rpc_fail(rpc, RingClosed);
+    if (now >= rpc->channel->deadline_ms)
+        return venus_rpc_fail(rpc, RingTimeout);
+    return RingOk;
+}
+
+static venus_ring_status_t exchange_once(venus_rpc_t *rpc, const venus_request_t *request,
                                        const void *input, size_t length, venus_request_t *response,
-                                       void *output, size_t capacity, uint32_t timeout_ms) {
+                                       void *output, size_t capacity, uint64_t deadline_ms,
+                                       uint32_t timeout_ms, int absolute) {
     if (!response)
         return RingInvalid;
     memset(response, 0, sizeof(*response));
@@ -116,7 +154,9 @@ venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *
     size_t expected = response_bytes(request);
     if (expected > rpc->buffer_bytes || expected > capacity || (expected && !output))
         return RingInvalid;
-    venus_ring_status_t result = venus_rpc_begin(rpc, SessionGuest, timeout_ms);
+    uint64_t first_now = 0;
+    venus_ring_status_t result = absolute ? begin_until(rpc, deadline_ms, timeout_ms, &first_now)
+                                         : venus_rpc_begin(rpc, SessionGuest, timeout_ms);
     if (result != RingOk)
         return result;
     if (length)
@@ -137,6 +177,11 @@ venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *
     result = venus_rpc_transfer(rpc, rpc->buffer, received.payload_bytes, 0, 1);
     if (result != RingOk)
         return result;
+    if (absolute) {
+        result = check_completion(rpc, first_now);
+        if (result != RingOk)
+            return result;
+    }
     if (received.payload_bytes)
         memcpy(output, rpc->buffer, received.payload_bytes);
     if (received.kind == RequestNegotiate && received.status == RequestSuccess)
@@ -144,4 +189,17 @@ venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *
     *response = received;
     rpc->next_sequence++;
     return RingOk;
+}
+
+venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *request,
+                                       const void *input, size_t length, venus_request_t *response,
+                                       void *output, size_t capacity, uint32_t timeout_ms) {
+    return exchange_once(rpc, request, input, length, response, output, capacity, 0, timeout_ms, 0);
+}
+
+venus_ring_status_t venus_rpc_exchange_until(venus_rpc_t *rpc, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity,
+    uint64_t deadline_ms, uint32_t timeout_ms) {
+    return exchange_once(rpc, request, input, length, response, output, capacity,
+                         deadline_ms, timeout_ms, 1);
 }

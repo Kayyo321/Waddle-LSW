@@ -57,4 +57,26 @@ void venus_rpc_free(venus_rpc_t *rpc);
 venus_ring_status_t venus_rpc_exchange(venus_rpc_t *rpc, const venus_request_t *request,
                                        const void *input, size_t length, venus_request_t *response,
                                        void *output, size_t capacity, uint32_t timeout_ms);
+/** @brief Exchange under a caller absolute deadline and immutable local cap.
+ * @param[in,out] rpc Nonnull live guest record; exclusively owned session thread.
+ * @param[in] request Nonnull immutable sequence-zero host-value request.
+ * @param[in] input Nullable only for zero length; borrowed private input[length].
+ * @param[in] length Exact request payload extent, bounded by RPC scratch.
+ * @param[out] response Nonnull disjoint private record, zeroed on failure.
+ * @param[out] output Nullable for no expected payload; private output[capacity],
+ * unchanged on failure. Input/output may alias each other, never scratch/records/mapping.
+ * @param[in] capacity Actual accessible output extent, enough for expected reply.
+ * @param[in] deadline_ms Nonzero absolute native venus_channel_time_ms timestamp.
+ * @param[in] timeout_ms Immutable configured cap 1..60000ms for this exchange.
+ * @return Legacy exchange statuses; local arguments precede cancellation/clock.
+ * Clock failure, cap-addition overflow or final backwards clock closes the session;
+ * expiry/cancellation are terminal before successful result publication.
+ * @note No allocation/retained payload or configuration change. Compute the earlier
+ * of caller deadline and first clock+cap once; partial transfers never refresh it.
+ * Final ready/cancel/clock/expiry check precedes payload/result/sequence publication.
+ * Borrowed storage outlives the call; existing exchange bounds/ownership apply.
+ */
+venus_ring_status_t venus_rpc_exchange_until(venus_rpc_t *rpc, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity,
+    uint64_t deadline_ms, uint32_t timeout_ms);
 #endif
