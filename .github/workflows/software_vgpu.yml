@@ -87,6 +87,12 @@ jobs:
         run: make vgpu-query-wire-test vgpu-query-wire-sanitizers vgpu-query-wire-coverage
       - name: Verify bounded native Vulkan query replies
         run: make vgpu-values-test vgpu-values-sanitizers vgpu-values-coverage
+      - name: Verify bounded device wire serialization and owned access
+        run: make vgpu-device-wire-test vgpu-device-wire-sanitizers vgpu-device-wire-coverage
+      - name: Verify complete native device preflight and owned access
+        run: make vgpu-device-native-test vgpu-device-native-sanitizers vgpu-device-native-coverage
+      - name: Verify actual extension count and fill codecs and owned access
+        run: make vgpu-extensions-wire-test vgpu-extensions-wire-sanitizers vgpu-extensions-wire-coverage
       - name: Verify experimental ICD loader and instance dispatch
         run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
       - name: Verify pinned native loader instance device and fence discovery
