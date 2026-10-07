@@ -995,8 +995,9 @@ vgpu-icd-test: vgpu-graphics-state-test
 vgpu-icd-sanitizers: vgpu-graphics-state-sanitizers
 vgpu-icd-coverage: vgpu-graphics-state-coverage
 
-# Genuine complete ICD/import and separately linked codec access instrumentation.
-vgpu-icd-sanitizers: vgpu-icd-complete-seam-sanitizers
+# Current integrated ownership/allocator checks. Historical fixed-inventory
+# proof targets remain available explicitly for their preserved source snapshots.
+vgpu-icd-sanitizers: vgpu-icd-integrated-sanitizers
 
 # Modern Properties2 and full device-extension query independent test encoders.
 build/venus_properties_query_oracle.o: tests/vgpu/properties_query_oracle.c tests/vgpu/properties_oracle.h | vgpu-protocol
