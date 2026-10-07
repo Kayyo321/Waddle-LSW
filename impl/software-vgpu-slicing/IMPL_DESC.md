@@ -5492,3 +5492,21 @@ cross-build and actual CPU-only execution via explicit wddm lease.
 Commit header, RPC source, runtime mock changes and directly necessary real fixture
 only as one coherent absolute RPC change, separate from channel/guest. Full flock,
 initially empty/exact-owned staged index; retain all old and failed artifacts.
+
+
+#### Properties2 oracle/link proof correction
+
+A full render import also imports its actual runtime unit specifications, whose
+independent externs require the existing render C oracle. The earlier exactly-TWO
+oracle rule cannot establish all render definitions/hooks without that dependency.
+Use exactly THREE fresh private C oracle objects: properties_query_oracle.c,
+properties_reply_oracle.c and read-only existing render_wire_oracle.c, once each.
+Run all actual imported render units with the Properties/native suites; capture
+and report their names/counts independently. No fourth/unrelated oracle, public
+runtime/backend or GPU is introduced. Properties-focused filtering may supplement
+standalone tests but never counts as full render access/guard/coverage proof.
+All three owned Zig sources and production instantiations still require exact
+final hooks/reverse proof and original guards, with no new missing-body exception.
+This paragraph supersedes only the incompatible two-oracle/exclusion statements
+in the preceding pure Properties2 contract; all topology/serialization/ownership/
+transaction/testing semantics stay exact. No acceptance credit from this correction.

@@ -511,7 +511,9 @@ Open-gate aliases (exact expansions): RuntimeOpen = runtime/native gates open.; 
 
 | 28da632 | docs(vgpu): compact repeated open-gate history without loss; Four exact-expansion aliases preserve every row and literal percentage sequence. | #3 +0%; overall +0%. | @B/root_todo3_continuation/tracker_open_aliases_proof.json roundtrips all482 table rows byte-exact; historicalnotes unchanged. NativeWin cleanCI37631620496/job112827071496 passes01d910c117/9/22/33/6units; rawlog/receipt retained, Linuxfulljob pending. No new GPU/DXVK/progress credit. |
 
-| current (resolve by subject) | docs(vgpu): define capped absolute RPC publication boundary; Validate payload before sampling, clip originaldeadline once by immutablecap and reject late/backward/cancelled completion before publication. | #3 +0%; overall +0%. | Exact channel-origin clock/API declaration/legacy precedence adopted; RPC realpartial-I/O/nativeWindows/coverage/zeroCSan3 implementation gates pending. Channel nativeWindows CPU run authorized after failed diagnostic forcedcleanup; no GPU/leak credit fromcleanup. |
+| 0d6a58b | docs(vgpu): define capped absolute RPC publication boundary; Validate payload before sampling, clip originaldeadline once by immutablecap and reject late/backward/cancelled completion before publication. | #3 +0%; overall +0%. | Exact channel-origin clock/API declaration/legacy precedence adopted; RPC realpartial-I/O/nativeWindows/coverage/zeroCSan3 implementation gates pending. Channel nativeWindows CPU run authorized after failed diagnostic forcedcleanup; no GPU/leak credit fromcleanup. |
+
+| current (resolve by subject) | docs(vgpu): account for required render oracle in Properties2 proof; Correct impossible two-oracle full-import linkage with exact three fresh named Cobjects/actualrender units. | #3 +0%; overall +0%. | Read-only imported extern/test audit; no missing-body/lazy exception or filtered-fullproof. Property query/reply remain independent; render oracle read-only/fresh/once; actual allsource hooks/guards/nativeWindows/coverage/zeroSan3 gates pending. |
 
 ## Historical acceptance notes
 
