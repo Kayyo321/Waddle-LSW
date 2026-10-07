@@ -3,32 +3,54 @@
 
 Input: required supported module name; no credentials. Output: ignored build
 artifacts/diagnostics. No source mutation. Nonzero exits propagate tool/test errors.
-LLVM instrumentation covers owned functions; Zig ReleaseSafe guards remain enabled.
+LLVM instrumentation covers emitted owned source functions and imports; Zig Debug guards remain enabled.
 The Zig test runner stays uninstrumented because compiler-version changes to its
 stack-protected inline assembly are not a supported cross-compiler boundary.
-ASan/LSan allocator interposition remains active process-wide. Parallel distinct
-modules are independent; concurrent invocations for the same module are forbidden.
+ASan/LSan allocator interposition remains active process-wide. Each invocation
+retains a unique artifact directory. Linked objects must be supplied by the caller;
+this helper does not claim access instrumentation of external objects.
 """
+import argparse
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
 
-Modes = ('venus_graphics_state',)
-mode = sys.argv[1]
-assert mode in Modes
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('mode', help='owned src/vgpu/venus_*.zig test root')
+parser.add_argument('--link', nargs='*', default=[], help='existing native objects required by the test root')
+args = parser.parse_args()
+mode = args.mode
+assert re.fullmatch(r'venus_[a-z0-9_]+', mode), 'invalid owned module'
 source = Path('src/vgpu') / (mode + '.zig')
-output = Path('build/sanitizers/vgpu') / mode
-output.mkdir(parents=True, exist_ok=True)
-subprocess.run(['zig', 'test', str(source), '-lc', '-O', 'ReleaseSafe',
-                '--test-no-exec', '-femit-llvm-ir=' + str(output / 'test.ll'),
+assert source.is_file(), 'missing owned test root'
+output = Path('build/sanitizers/vgpu') / mode / (
+    'run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
+output.mkdir(parents=True, exist_ok=False)
+print('preserved sanitizer artifacts: ' + str(output), flush=True)
+includes = ['-Iinclude', '-Isubmodules/venus_protocol/include']
+subprocess.run(['zig', 'test', str(source), *includes, '-lc', '-O', 'Debug',
+                *args.link, '--test-no-exec', '-femit-llvm-ir=' + str(output / 'test.ll'),
                 '-femit-bin=' + str(output / 'test')], check=True)
-owned_functions = set(re.findall(r'fn (\w+)\(', source.read_text().split('// Test-only fixtures.', 1)[0]))
+# Reuse the established hook injection, selecting emitted owned definitions by
+# their compiler debug source. Imported owned modules participate automatically;
+# compiler/std/test-runner definitions are outside this native source scope.
 ir = (output / 'test.ll').read_text()
-pattern = r'^(define .*?@' + re.escape(mode) + r'\.(' + '|'.join(sorted(owned_functions)) + r')\(.*?)( #\d+)( !dbg !\d+)? \{$'
-instrumented, count = re.subn(pattern, r'\1 sanitize_address\3\4 {', ir, flags=re.M)
-assert count > 0, 'no owned production function instrumented'
+metadata = {int(match[1]): match[2] for match in
+            re.finditer(r'^!(\d+) = (.+)$', ir, re.M)}
+def owned_definition(match):
+    entry = metadata.get(int(match[2]), '')
+    file_id = re.search(r'file: !(\d+)', entry)
+    file = metadata.get(int(file_id[1]), '') if file_id else ''
+    if not re.search(r'filename: "venus_[a-z0-9_]+\.zig"', file):
+        return match[0]
+    return match[1] + ' sanitize_address !dbg !' + match[2] + ' {'
+pattern = r'^(define [^\n]+?) !dbg !(\d+) \{$'
+instrumented = re.sub(pattern, owned_definition, ir, flags=re.M)
+count = instrumented.count(' sanitize_address ') - ir.count(' sanitize_address ')
+assert count > 0, 'no emitted owned function instrumented'
 (output / 'sanitized.ll').write_text(instrumented)
 subprocess.run(['clang-19', '-Wno-override-module', '-fsanitize=address,leak,undefined',
                 '-g', '-c', str(output / 'sanitized.ll'), '-o', str(output / 'test.o')], check=True)
@@ -42,7 +64,7 @@ for runtime in ('libasan.so', 'libubsan.so'):
         runtime_paths.append(path.parent)
 subprocess.run(['zig', 'cc', str(output / 'test.o'),
                 *['-L' + str(path) for path in runtime_paths], '-lasan', '-lubsan',
-                '-pthread', '-ldl', '-lm', '-o', str(output / 'runner')], check=True)
+                *args.link, '-pthread', '-ldl', '-lm', '-o', str(output / 'runner')], check=True)
 env = os.environ.copy()
 env['ASAN_OPTIONS'] = 'detect_leaks=1:abort_on_error=1:halt_on_error=1'
 subprocess.run([str(output / 'runner')], env=env, check=True)
