@@ -4939,9 +4939,9 @@ fails CI; parent timeout grants no acceptance or retry override. Windows remains
 
 ### Full extension reply prerequisite: bounded byte transfer, unchanged TCP profile
 
-This is a specified future increment, not accepted runtime behavior. Current
-command rx=4096, service reply allocation=65536 and TCP operation reply limit=4096
-remain the running checkpoint. The pure extension codec permits1024 native entries
+The allocation-free byte-transfer owner is implemented and independently gated.
+Current ICD rx=4096, service reply allocation=65536 and TCP operation reply
+limit=4096 remain unchanged; no large ICD query is enabled. The pure extension codec permits1024 native entries
 and274460 reply bytes; command14 enumeration has no record-offset argument, so
 repeating smaller fills cannot enumerate later records. The already implemented
 RequestReply envelope instead has a byte offset (argument_zero) and length
@@ -4950,9 +4950,13 @@ check against the actual mapped allocation. TCP retains offsets and limits each
 length to4096. Therefore future assembly reads one completed immutable reply in
 successive byte ranges, never paginates extension records or changes TCPv1.
 
-Extend the existing allocation-free command owner rather than duplicate its
-submission/fence/response machinery. Add an owned size_t reply_offset and explicit
-CommandReading phase without renumbering existing enum values. Initialization
+The existing command owner retains its submission/fence/response machinery,
+adding an owned size_t reply_offset and CommandReading=4; earlier enum values
+remain0..3. Its measured x64 native ABI is80 bytes/alignment8, cursor48,
+CPU fence56, command ID64, phase68 and sticky status72. Every native consumer
+must rebuild together; no owner structure is a wire/shared-memory record.
+ICD unbind refuses Submitted/Reading/Ready even when no Vulkan objects remain;
+regressions require exact command, profile and namespace preservation. Initialization
 requires the whole zero record and sets offset0. Start publishes the existing
 reply-stream prefix with that owner's entire rx extent and accepts one nonzero
 CPU fence; only Idle may start. Poll in Submitted performs the existing CPU poll;
@@ -5005,3 +5009,23 @@ and retain borrowed storage until retirement. This integration and per-physical
 cache allocation/lifecycle need a separate specification before coding. Public
 extensions and optional features remain empty/false until the guest runtime
 allowlist, actual host list and enabled device state all support their semantics.
+
+
+Bounded-byte owner verification:9 Debug/ReleaseSafe units exercise4/4096/4100/
+8192/274460/16MiB extents, every byte/canary, first/middle/final Again,6 terminal
+statuses and8 malformed fields per position, final wrong identity, sticky retention
+and hidden partial views. Strict native C independently checks80-byte ABI and an
+8200-byte three-range reply with a middle retry; Debug/ReleaseSafe native gates
+pass. Command coverage93.59%branches73/78,100%lines90/90;22 compiler guards
+reported separately. Genuine final native/test access instrumentation accounts
+for all9 command definitions,79 access hooks each and901/1054 guards, with zero
+C-ASan/LSan/UBSan or allocator findings. Actual Windows9D/9RS/native gates0,
+all3 artifact hashes exact before/after at windows11_vm/command_chunks_479502b2.
+ICD117-unit/native128/shared-loader gates pass and coverage90.03%2095/2327,
+98.98%2433/2458;853 compiler guards separate. Fresh complete20-source native/test
+seam at run-20261007T134222497263Z-120724 passes117 ICD+28 named codec units,
+414/416 definitions and4686/4694 final accesses; all147 retained hashes exact.
+These gates do not prove larger receiver allocation, elapsed query deadlines,
+current-head CI or new physical/WindowsGPU/DXVK acceptance. Failed first real
+Windows triangle97→157 native handles is preserved, receives no success credit,
+and is being diagnosed; its exact pixels/natural host retirement alone do not pass.

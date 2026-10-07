@@ -24,10 +24,14 @@ typedef enum venus_command_state_t {
     CommandIdle = 0,      /**< No outstanding submission; start permitted. */
     CommandSubmitted = 1, /**< CPU submission accepted; poll permitted. */
     CommandReady = 2,     /**< Private reply available; take permitted once. */
-    CommandLost = 3       /**< Sticky failure; abandon old receiver session. */
+    CommandLost = 3,      /**< Sticky failure; abandon old receiver session. */
+    CommandReading = 4    /**< Completed CPU reply, assembling bounded byte ranges. */
 } venus_command_state_t;
 /** @brief Caller-owned sole-thread owner, never copy or mutate live fields.
  * @note Allocation-free; all pointers borrowed until free. No GPU completion.
+ * Rebuild every consumer together: this native owner ABI adds a byte cursor;
+ * no owner record is serialized or shared with another process. Reading owns
+ * the accepted CPU fence and private partial reply until take/abandonment.
  */
 typedef struct venus_command_t {
     venus_command_exchange_t exchange; /**< Nonnull initialized frontend callback. */
@@ -36,6 +40,7 @@ typedef struct venus_command_t {
     unsigned char *rx;                 /**< Borrowed exclusive private reply staging. */
     size_t tx_bytes;                   /**< Actual accessible tx extent. */
     size_t rx_bytes;                   /**< Actual accessible rx/host reply extent. */
+    size_t reply_offset;               /**< Validated byte prefix,0..rx_bytes; reset by take. */
     uint64_t cpu_fence;                /**< Accepted nonzero CPU submission identity. */
     uint32_t command_id;               /**< Pinned command reply identity. */
     uint32_t state;                    /**< One of venus_command_state_t. */
@@ -65,11 +70,18 @@ venus_ring_status_t venus_command_init(venus_command_t *owner, venus_command_exc
  * @note No other Venus submission/reply-stream mutation until take or abandonment.
  */
 venus_ring_status_t venus_command_start(venus_command_t *owner, const void *bytes, size_t length);
-/** @brief Poll CPU completion and acquire identity-validated private reply.
- * @param[in,out] owner Nonnull Submitted owner, sole thread.
- * @return RingOk when Ready; Again retains submission without republication;
- * Invalid for local state; transport/protocol failure becomes sticky Lost.
- * @note Caller bounds retries with an overall timer. CPU completion is not GPU completion.
+/** @brief Poll CPU completion and assemble one bounded private reply byte range.
+ * @param[in,out] owner Nonnull live Submitted/Reading owner, sole thread; no
+ * external mutation of its cursor, buffers, fence or phase is permitted.
+ * @return RingOk only when every expected byte and command identity validate;
+ * RingAgain while CPU/reply pending or after a successful nonfinal range;
+ * RingInvalid for local state; transport/protocol failure becomes sticky Lost.
+ * @note Each call performs at most one successful reply read, at most4096 bytes
+ * at reply_offset, after CPU completion. Only a shape-validated successful read
+ * advances the cursor. Callback RingAgain may have written staging but retains
+ * the same range for retry. No partial reply is published; Reading never polls
+ * or submits the CPU command again. Caller enforces an overall elapsed deadline
+ * including callback time. CPU completion is not GPU completion. No allocation.
  */
 venus_ring_status_t venus_command_poll(venus_command_t *owner);
 /** @brief Consume one ready reply view and allow another submission.
@@ -77,7 +89,7 @@ venus_ring_status_t venus_command_poll(venus_command_t *owner);
  * @param[out] bytes Nonnull disjoint pointer output, NULL on failure; borrowed
  * private reply view valid until next successful start or free.
  * @param[out] length Nonnull disjoint extent output, zero on failure.
- * @return RingOk once for Ready; Again while Submitted; Invalid when Idle;
+ * @return RingOk once for Ready; Again while Submitted/Reading (no partial view); Invalid when Idle;
  * sticky terminal status when Lost. No allocation; command-specific decoding required.
  */
 venus_ring_status_t venus_command_take(venus_command_t *owner, const void **bytes, size_t *length);

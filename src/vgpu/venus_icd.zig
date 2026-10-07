@@ -273,7 +273,7 @@ export fn venus_icd_unbind() c_int {
     mutex.lock();
     defer mutex.unlock();
     if (objects.live_count != 0 or command.state == c.CommandSubmitted or
-        command.state == c.CommandReady) return c.RingAgain;
+        command.state == c.CommandReading or command.state == c.CommandReady) return c.RingAgain;
     clear();
     return c.RingOk;
 }
@@ -5674,6 +5674,23 @@ test "negotiated binding owns the entire profile and rejected calls preserve the
     try std.testing.expect(negotiated_capabilities_ready);
     try std.testing.expectEqualDeep(expected, negotiated_capabilities);
     try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, instance.*.handle, c.VK_OBJECT_TYPE_INSTANCE, 1));
+    // An accepted CPU command owns the binding even with no live Vulkan object.
+    for ([_]u32{ c.CommandSubmitted, c.CommandReading, c.CommandReady }) |phase| {
+        command.state = phase;
+        command.reply_offset = if (phase == c.CommandReady) command.rx_bytes else 0;
+        command.cpu_fence = 7;
+        command.command_id = 137;
+        const expected_command = command;
+        try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+        try std.testing.expectEqualDeep(expected_command, command);
+        try std.testing.expectEqual(bound_namespace, namespace_id);
+        try std.testing.expect(negotiated_capabilities_ready);
+        try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    }
+    command.state = c.CommandIdle;
+    command.reply_offset = 0;
+    command.cpu_fence = 0;
+    command.command_id = 0;
     try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_unbind());
     try std.testing.expect(!negotiated_capabilities_ready);
     try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);

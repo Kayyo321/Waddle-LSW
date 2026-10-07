@@ -5,6 +5,7 @@ const c = @cImport({
 });
 const PrefixBytes: usize = 36;
 const MaxBytes: usize = 16777216;
+const MaxChunkBytes: usize = 4096;
 const exchange_t = *const fn (
     ?*anyopaque,
     [*c]const c.venus_request_t,
@@ -31,12 +32,14 @@ fn fail(owner: *c.venus_command_t, status: c_int) c_int {
 fn request(
     owner: *c.venus_command_t,
     kind: u32,
+    offset: usize,
     input: ?[]const u8,
     output: ?[]u8,
     fence: ?*u64,
 ) c_int {
     var offered = std.mem.zeroes(c.venus_request_t);
     offered.kind = kind;
+    offered.argument_zero = offset;
     offered.payload_bytes = if (input) |bytes| @intCast(bytes.len) else 0;
     if (output) |bytes| offered.argument_one = bytes.len;
     var response = std.mem.zeroes(c.venus_request_t);
@@ -114,13 +117,14 @@ export fn venus_command_start(
     std.mem.writeInt(u64, tx[28..36], owner.rx_bytes, .little);
     @memcpy(tx[PrefixBytes..][0..length], bytes[0..length]);
     var fence: u64 = 0;
-    const status = request(owner, c.RequestSubmit, tx[0 .. PrefixBytes + length], null, &fence);
+    const status = request(owner, c.RequestSubmit, 0, tx[0 .. PrefixBytes + length], null, &fence);
     if (status != c.RingOk) {
         if (status == c.RingAgain or status == c.RingInvalid or status == c.RingLimit)
             return status;
         return fail(owner, status);
     }
     if (fence == 0) return fail(owner, c.RingCorrupt);
+    owner.reply_offset = 0;
     owner.cpu_fence = fence;
     owner.command_id = std.mem.readInt(u32, bytes[0..4], .little);
     owner.state = c.CommandSubmitted;
@@ -132,13 +136,20 @@ export fn venus_command_poll(optional_owner: ?*c.venus_command_t) c_int {
     const owner = optional_owner orelse return c.RingInvalid;
     if (!live(owner)) return c.RingInvalid;
     if (owner.state == c.CommandLost) return owner.lost;
-    if (owner.state != c.CommandSubmitted) return c.RingInvalid;
-    var status = request(owner, c.RequestPoll, null, null, null);
+    if (owner.state == c.CommandSubmitted) {
+        const status = request(owner, c.RequestPoll, 0, null, null, null);
+        if (status == c.RingAgain) return status;
+        if (status != c.RingOk) return fail(owner, status);
+        owner.state = c.CommandReading;
+    } else if (owner.state != c.CommandReading) return c.RingInvalid;
+    // Sole-owner transitions keep Reading's cursor strictly below the extent.
+    std.debug.assert(owner.reply_offset < owner.rx_bytes);
+    const length = @min(MaxChunkBytes, owner.rx_bytes - owner.reply_offset);
+    const status = request(owner, c.RequestReply, owner.reply_offset, null, owner.rx[owner.reply_offset..][0..length], null);
     if (status == c.RingAgain) return status;
     if (status != c.RingOk) return fail(owner, status);
-    status = request(owner, c.RequestReply, null, owner.rx[0..owner.rx_bytes], null);
-    if (status == c.RingAgain) return status;
-    if (status != c.RingOk) return fail(owner, status);
+    owner.reply_offset += length;
+    if (owner.reply_offset < owner.rx_bytes) return c.RingAgain;
     if (std.mem.readInt(u32, owner.rx[0..4], .little) != owner.command_id)
         return fail(owner, c.RingCorrupt);
     owner.state = c.CommandReady;
@@ -158,11 +169,12 @@ export fn venus_command_take(
     const owner = optional_owner orelse return c.RingInvalid;
     if (!live(owner)) return c.RingInvalid;
     if (owner.state == c.CommandLost) return owner.lost;
-    if (owner.state == c.CommandSubmitted) return c.RingAgain;
+    if (owner.state == c.CommandSubmitted or owner.state == c.CommandReading) return c.RingAgain;
     if (owner.state != c.CommandReady) return c.RingInvalid;
     bytes.?.* = owner.rx;
     length.?.* = owner.rx_bytes;
     owner.state = c.CommandIdle;
+    owner.reply_offset = 0;
     owner.cpu_fence = 0;
     owner.command_id = 0;
     return c.RingOk;
@@ -412,11 +424,11 @@ test "submission retry, terminal statuses, zero fence and malformed reply shapes
     var rx: [32]u8 = undefined;
     var owner = std.mem.zeroes(c.venus_command_t);
     var fixture = fixture_t{};
-    const statuses = [_]c_int{
+    const Statuses = [_]c_int{
         c.RingAgain,  c.RingInvalid,   c.RingLimit,   c.RingCorrupt,
         c.RingClosed, c.RingCancelled, c.RingTimeout,
     };
-    for (statuses) |status| {
+    for (Statuses) |status| {
         @call(.never_inline, venus_command_free, .{&owner});
         try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_init, .{
             &owner, fixture_t.exchange, &fixture, &tx, tx.len, &rx, rx.len,
@@ -482,11 +494,11 @@ test "reply retries retain accepted CPU fence and every reply failure is sticky"
     var rx: [32]u8 = undefined;
     var owner = std.mem.zeroes(c.venus_command_t);
     var fixture = fixture_t{ .fault_kind = c.RequestReply };
-    const statuses = [_]c_int{
+    const Statuses = [_]c_int{
         c.RingAgain,  c.RingInvalid,   c.RingLimit,   c.RingCorrupt,
         c.RingClosed, c.RingCancelled, c.RingTimeout,
     };
-    for (statuses) |status| {
+    for (Statuses) |status| {
         @call(.never_inline, venus_command_free, .{&owner});
         try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_init, .{
             &owner, fixture_t.exchange, &fixture, &tx, tx.len, &rx, rx.len,
@@ -503,7 +515,7 @@ test "reply retries retain accepted CPU fence and every reply failure is sticky"
         try std.testing.expectEqual(@as(u32, c.RequestReply), fixture.kind);
         try std.testing.expectEqual(@as(u64, 1), owner.cpu_fence);
         if (status == c.RingAgain) {
-            try std.testing.expectEqual(@as(u32, c.CommandSubmitted), owner.state);
+            try std.testing.expectEqual(@as(u32, c.CommandReading), owner.state);
             fixture.status = 0;
             try std.testing.expectEqual(
                 c.RingOk,
@@ -547,4 +559,163 @@ test "callback without its borrowed context rejects before owner or transport mu
     try std.testing.expectEqual(@as(usize, 0), length);
     @call(.never_inline, venus_command_free, .{&owner});
     try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_command_t), owner);
+}
+
+const chunk_fixture_t = struct {
+    extent: usize,
+    accepted: usize = 0,
+    polls: usize = 0,
+    attempts: usize = 0,
+    pause_offset: ?usize = null,
+    pause_pending: bool = true,
+    fault_offset: ?usize = null,
+    fault_status: c_int = c.RingOk,
+    corrupt: u8 = 0,
+    wrong_identity: bool = false,
+
+    fn byte_at(index: usize) u8 {
+        return if (index < 4) (if (index == 0) 137 else 0) else @truncate(index * 7 + 3);
+    }
+    fn exchange(context: ?*anyopaque, offered: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const self: *chunk_fixture_t = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = offered.*.kind;
+        response.*.direction = 1;
+        if (offered.*.kind == c.RequestSubmit) {
+            std.debug.assert(length == 52 and output == null and capacity == 0);
+            const bytes: [*]const u8 = @ptrCast(input.?);
+            std.debug.assert(std.mem.readInt(u64, bytes[28..36], .little) == self.extent);
+            response.*.argument_zero = 7;
+            return c.RingOk;
+        }
+        std.debug.assert(input == null and length == 0);
+        if (offered.*.kind == c.RequestPoll) {
+            self.polls += 1;
+            std.debug.assert(output == null and capacity == 0 and offered.*.argument_zero == 0);
+            return c.RingOk;
+        }
+        std.debug.assert(offered.*.kind == c.RequestReply and output != null and
+            offered.*.argument_zero == self.accepted and offered.*.argument_one == capacity and
+            capacity == @min(@as(usize, 4096), self.extent - self.accepted));
+        self.attempts += 1;
+        const bytes: [*]u8 = @ptrCast(output.?);
+        if (self.pause_offset == self.accepted and self.pause_pending) {
+            self.pause_pending = false;
+            @memset(bytes[0..capacity], 0xa5);
+            return c.RingAgain;
+        }
+        if (self.fault_offset == self.accepted and self.fault_status != c.RingOk) {
+            @memset(bytes[0..capacity], 0xa5);
+            return self.fault_status;
+        }
+        for (bytes[0..capacity], self.accepted..) |*byte, index| byte.* = byte_at(index);
+        if (self.wrong_identity and self.accepted == 0) bytes[0] = 99;
+        response.*.payload_bytes = @intCast(capacity);
+        switch (if (self.fault_offset == self.accepted) self.corrupt else 0) {
+            1 => response.*.kind += 1,
+            2 => response.*.direction = 0,
+            3 => response.*.status = 1,
+            4 => response.*.resource_id = 2,
+            5 => response.*.flags = 1,
+            6 => response.*.argument_one = 1,
+            7 => response.*.payload_bytes += 1,
+            8 => response.*.argument_zero = 999,
+            else => {},
+        }
+        self.accepted += capacity;
+        return c.RingOk;
+    }
+};
+
+test "full reply byte ranges cover exact small and maximum extents without adjacent writes" {
+    for ([_]usize{ 4, 4096, 4100, 8192, 274460, MaxBytes }) |extent| {
+        const storage = try std.testing.allocator.alloc(u8, extent + 16);
+        defer std.testing.allocator.free(storage);
+        @memset(storage, 0xcc);
+        var tx: [128]u8 = undefined;
+        var owner = std.mem.zeroes(c.venus_command_t);
+        var fixture = chunk_fixture_t{ .extent = extent };
+        try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_init, .{ &owner, chunk_fixture_t.exchange, &fixture, &tx, tx.len, storage.ptr + 8, extent }));
+        defer @call(.never_inline, venus_command_free, .{&owner});
+        try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_start, .{ &owner, &VersionCommand, VersionCommand.len }));
+        const reads = (extent + 4095) / 4096;
+        for (0..reads) |index| {
+            try std.testing.expectEqual(if (index + 1 == reads) c.RingOk else c.RingAgain, @call(.never_inline, venus_command_poll, .{&owner}));
+            try std.testing.expectEqual(@min((index + 1) * 4096, extent), owner.reply_offset);
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.polls);
+        try std.testing.expectEqual(reads, fixture.attempts);
+        for (storage[8..][0..extent], 0..) |byte, index|
+            try std.testing.expectEqual(chunk_fixture_t.byte_at(index), byte);
+        try std.testing.expectEqualSlices(u8, &([_]u8{0xcc} ** 8), storage[0..8]);
+        try std.testing.expectEqualSlices(u8, &([_]u8{0xcc} ** 8), storage[extent + 8 ..]);
+        var view: ?*const anyopaque = null;
+        var length: usize = 0;
+        try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_take, .{ &owner, &view, &length }));
+        try std.testing.expectEqual(@intFromPtr(storage.ptr + 8), @intFromPtr(view.?));
+        try std.testing.expectEqual(extent, length);
+        try std.testing.expectEqual(@as(usize, 0), owner.reply_offset);
+    }
+}
+
+test "Again at first middle last byte chunks retains cursor and hides partial staging" {
+    for ([_]usize{ 0, 4096, 8192 }) |offset| {
+        var tx: [128]u8 = undefined;
+        var rx: [8200]u8 = undefined;
+        var owner = std.mem.zeroes(c.venus_command_t);
+        var fixture = chunk_fixture_t{ .extent = rx.len, .pause_offset = offset };
+        try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_init, .{ &owner, chunk_fixture_t.exchange, &fixture, &tx, tx.len, &rx, rx.len }));
+        defer @call(.never_inline, venus_command_free, .{&owner});
+        try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_start, .{ &owner, &VersionCommand, VersionCommand.len }));
+        for (0..offset / 4096) |_| try std.testing.expectEqual(c.RingAgain, @call(.never_inline, venus_command_poll, .{&owner}));
+        try std.testing.expectEqual(c.RingAgain, @call(.never_inline, venus_command_poll, .{&owner}));
+        try std.testing.expectEqual(@as(u32, c.CommandReading), owner.state);
+        try std.testing.expectEqual(offset, owner.reply_offset);
+        try std.testing.expectEqual(@as(u64, 7), owner.cpu_fence);
+        const attempts = fixture.attempts;
+        try std.testing.expectEqual(c.RingAgain, @call(.never_inline, venus_command_start, .{ &owner, &VersionCommand, VersionCommand.len }));
+        var view: ?*const anyopaque = &VersionCommand;
+        var length: usize = VersionCommand.len;
+        try std.testing.expectEqual(c.RingAgain, @call(.never_inline, venus_command_take, .{ &owner, &view, &length }));
+        try std.testing.expect(view == null and length == 0);
+        try std.testing.expectEqual(attempts, fixture.attempts);
+        const remaining = (rx.len - offset + 4095) / 4096;
+        for (0..remaining) |index| try std.testing.expectEqual(if (index + 1 == remaining) c.RingOk else c.RingAgain, @call(.never_inline, venus_command_poll, .{&owner}));
+        try std.testing.expectEqual(@as(usize, 1), fixture.polls);
+        try std.testing.expectEqual(@as(usize, 4), fixture.attempts);
+        for (rx, 0..) |byte, index| try std.testing.expectEqual(chunk_fixture_t.byte_at(index), byte);
+        try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_take, .{ &owner, &view, &length }));
+    }
+}
+
+test "malformed and terminal first middle last chunks retain sticky ownership" {
+    for ([_]usize{ 0, 4096, 8192 }) |offset| {
+        for (0..@as(usize, if (offset == 0) 15 else 14)) |fault| {
+            var tx: [128]u8 = undefined;
+            var rx: [8200]u8 = undefined;
+            var owner = std.mem.zeroes(c.venus_command_t);
+            const Statuses = [_]c_int{ c.RingInvalid, c.RingLimit, c.RingCorrupt, c.RingClosed, c.RingCancelled, c.RingTimeout };
+            const status: c_int = if (fault < 6) Statuses[fault] else c.RingCorrupt;
+            var fixture = chunk_fixture_t{ .extent = rx.len, .fault_offset = offset, .fault_status = if (fault < 6) status else c.RingOk, .corrupt = if (fault >= 6 and fault < 14) @intCast(fault - 5) else 0, .wrong_identity = fault == 14 };
+            try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_init, .{ &owner, chunk_fixture_t.exchange, &fixture, &tx, tx.len, &rx, rx.len }));
+            defer @call(.never_inline, venus_command_free, .{&owner});
+            try std.testing.expectEqual(c.RingOk, @call(.never_inline, venus_command_start, .{ &owner, &VersionCommand, VersionCommand.len }));
+            var observed: c_int = c.RingAgain;
+            for (0..3) |_| {
+                observed = @call(.never_inline, venus_command_poll, .{&owner});
+                if (observed != c.RingAgain) break;
+            }
+            try std.testing.expectEqual(status, observed);
+            try std.testing.expectEqual(@as(u32, c.CommandLost), owner.state);
+            try std.testing.expectEqual(if (fault == 14) rx.len else offset, owner.reply_offset);
+            const attempts = fixture.attempts;
+            try std.testing.expectEqual(status, @call(.never_inline, venus_command_poll, .{&owner}));
+            try std.testing.expectEqual(status, @call(.never_inline, venus_command_start, .{ &owner, &VersionCommand, VersionCommand.len }));
+            var view: ?*const anyopaque = &VersionCommand;
+            var length: usize = VersionCommand.len;
+            try std.testing.expectEqual(status, @call(.never_inline, venus_command_take, .{ &owner, &view, &length }));
+            try std.testing.expect(view == null and length == 0);
+            try std.testing.expectEqual(attempts, fixture.attempts);
+        }
+    }
 }
