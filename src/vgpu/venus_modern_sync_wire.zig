@@ -77,6 +77,39 @@ pub fn pipeline_barrier2(command_id: u64, info: *const c.VkDependencyInfo) !writ
     }
     return writer;
 }
+fn append(writer:*writer_t,bytes:[]const u8) !void {
+    if(writer.used>writer.bytes.len or bytes.len>writer.bytes.len-writer.used)return error.Limit;
+    @memcpy(writer.bytes[writer.used..][0..bytes.len],bytes);writer.used+=bytes.len;
+}
+/// [in] resolved recording command/event owners and borrowed translated dependency.
+/// [out] Exact201 packet; Invalid identities/topology, Limit records/packet. Caller
+/// validates event ownership, enabledsync2 and recording-state/resource scopes.
+/// No heap/native pointer retention; independent owned packet writers are safe.
+pub fn set_event2(command_id:u64,event_id:u64,info:*const c.VkDependencyInfo) !writer_t {
+    if(event_id==0)return error.Invalid;
+    const dependency=try pipeline_barrier2(command_id,info);
+    var writer:writer_t=.{};try writer.header(201,command_id);try writer.put(u64,event_id);try append(&writer,dependency.bytes[16..dependency.used]);return writer;
+}
+/// [in] resolved command/event and full64-bit stage mask; caller checks enabled
+/// sync2/stage support and recording state. [out] Exact202 packet or Invalid IDs.
+/// No heap/retained pointers or shared mutation.
+pub fn reset_event2(command_id:u64,event_id:u64,stage:u64) !writer_t {
+    if(event_id==0)return error.Invalid;
+    var writer:writer_t=.{};try writer.header(202,command_id);try writer.put(u64,event_id);try writer.put(u64,stage);return writer;
+}
+/// [in] matched1..64 resolved event IDs and translated dependency records, borrowed.
+/// [out] Exact203 packet or Invalid zero/unequal owner arrays/topology, Limit counts
+/// or total packet bytes. Caller owns event/resource lifetimes and recording state;
+/// no heap/retention and failed partial writers never escape to the peer.
+pub fn wait_events2(command_id:u64,events:[]const u64,infos:[]const c.VkDependencyInfo) !writer_t {
+    if(events.len==0 or events.len!=infos.len)return error.Invalid;
+    if(events.len>MaxRecords)return error.Limit;
+    var writer:writer_t=.{};try writer.header(203,command_id);try count(&writer,events.len);
+    for(events) |event| {if(event==0)return error.Invalid;try writer.put(u64,event);}
+    try writer.put(u64,infos.len);
+    for(infos) |*info| {const dependency=try pipeline_barrier2(command_id,info);try append(&writer,dependency.bytes[24..dependency.used]);}
+    return writer;
+}
 fn semaphore_submit(writer: *writer_t, values: []const c.VkSemaphoreSubmitInfo) !void {
     try count(writer, values.len);
     for (values) |value| {
@@ -335,4 +368,15 @@ test "typed semaphore creation and exact counter status match pinned native owne
     const result=try decode_counter(&reply);try std.testing.expectEqual(@as(i32,-1),result.result);
     try std.testing.expectError(error.Corrupt,decode_counter(reply[0..23]));
     std.mem.writeInt(i32,reply[4..8],1,.little);try std.testing.expectError(error.Corrupt,decode_counter(&reply));
+}
+
+test "synchronization2 event operations match pinned encoder and retain full stages" {
+    const memory=c.VkMemoryBarrier2{.sType=c.VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,.srcStageMask=1<<40,.srcAccessMask=1<<41,.dstStageMask=1<<42,.dstAccessMask=1<<43};
+    const info=c.VkDependencyInfo{.sType=c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO,.memoryBarrierCount=1,.pMemoryBarriers=&memory};
+    try compare(try set_event2(9,11,&info),201,&info,0);
+    const stage:u64=1<<40;try compare(try reset_event2(9,11,stage),202,&stage,0);
+    const infos=[_]c.VkDependencyInfo{info,info};try compare(try wait_events2(9,&.{11,13},&infos),203,&infos,2);
+    try std.testing.expectError(error.Invalid,set_event2(9,0,&info));try std.testing.expectError(error.Invalid,reset_event2(9,0,stage));
+    try std.testing.expectError(error.Invalid,wait_events2(9,&.{},&.{}));try std.testing.expectError(error.Invalid,wait_events2(9,&.{11},&infos));try std.testing.expectError(error.Invalid,wait_events2(9,&.{11,0},&infos));
+    const many=[_]c.VkDependencyInfo{info} ** 65;const events=[_]u64{11} ** 65;try std.testing.expectError(error.Limit,wait_events2(9,&events,&many));
 }

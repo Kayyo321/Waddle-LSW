@@ -46,6 +46,9 @@ size_t venus_modern_sync_test_encode(uint32_t opcode, const void *info, uint32_t
     case 175:
         vn_encode_vkGetBufferDeviceAddress(&encoder, 1, device, info);
         break;
+    case 201: vn_encode_vkCmdSetEvent2(&encoder,1,command,(VkEvent)(uintptr_t)11,info);break;
+    case 202: vn_encode_vkCmdResetEvent2(&encoder,1,command,(VkEvent)(uintptr_t)11,*(const uint64_t *)info);break;
+    case 203: {VkEvent events[2]={(VkEvent)(uintptr_t)11,(VkEvent)(uintptr_t)13};assert(count==2);vn_encode_vkCmdWaitEvents2(&encoder,1,command,count,events,info);break;}
     case 204:
         vn_encode_vkCmdPipelineBarrier2(&encoder, 1, command, info);
         break;
