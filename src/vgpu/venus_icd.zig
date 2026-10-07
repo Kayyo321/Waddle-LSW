@@ -11400,3 +11400,972 @@ test "modern hidden submit fences independently prove reuse and retain uncertain
         }
     }
 }
+
+fn root_unaligned_address() usize { var address: usize = 1; return @as(*volatile usize, &address).*; }
+extern fn venus_requirements2_test_reply(u32, u32, [*]u8) usize;
+const root_query2_fixture_t = struct {
+    opcode: u32 = 0,
+    extended: bool = false,
+    corrupt: bool = false,
+    calls: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t); response.*.kind = request.*.kind; response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                if (length < 44 or input == null) return c.RingCorrupt;
+                fixture.opcode = std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little);
+                fixture.calls += 1; response.*.argument_zero = 1;
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                if (capacity < 128 or output == null) return c.RingCorrupt;
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity]; @memset(bytes, 0);
+                _ = venus_requirements2_test_reply(fixture.opcode, @intFromBool(fixture.extended), bytes.ptr); response.*.payload_bytes = @intCast(capacity);
+                if (fixture.corrupt) bytes[0] ^= 1;
+            },
+            else => return c.RingCorrupt,
+        }
+        return c.RingOk;
+    }
+};
+test "root requirements2 wrappers publish actual dedicated values only for acknowledged owned resource" {
+    inline for ([_]bool{ false, true }) |image| for ([_]bool{ false, true }) |extended| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = root_query2_fixture_t{ .extended = extended, .corrupt = corrupt };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_query2_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const resource = try root_sync_fixture_t.reserve(if (image) c.VK_OBJECT_TYPE_IMAGE else c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+        const device: c.VkDevice = @ptrFromInt(parent.handle);
+        var dedicated = c.VkMemoryDedicatedRequirements{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS, .prefersDedicatedAllocation = 7, .requiresDedicatedAllocation = 7 };
+        var output = c.VkMemoryRequirements2{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, .pNext = if (extended) &dedicated else null, .memoryRequirements = .{ .size = 99, .alignment = 8, .memoryTypeBits = 7 } };
+        const original = output.memoryRequirements;
+        const input_t = if (image) c.VkImageMemoryRequirementsInfo2 else c.VkBufferMemoryRequirementsInfo2;
+        var info = std.mem.zeroes(input_t); info.sType = if (image) c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 else c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2;
+        @field(info, if (image) "image" else "buffer") = @ptrFromInt(resource.handle);
+        const invoke_query = root_runtime_fn(if (image) image_requirements2 else buffer_requirements2);
+        invoke_query(null, &info, &output); invoke_query(@ptrFromInt(foreign.handle), &info, &output);
+        invoke_query(device, null, &output);
+        const tag = info.sType; info.sType = 0; invoke_query(device, &info, &output); info.sType = tag;
+        info.pNext = @ptrFromInt(8); invoke_query(device, &info, &output); info.pNext = null;
+        const handle = @field(info, if (image) "image" else "buffer"); @field(info, if (image) "image" else "buffer") = null; invoke_query(device, &info, &output); @field(info, if (image) "image" else "buffer") = handle;
+        invoke_query(device, &info, null);
+        output.sType = 0; invoke_query(device, &info, &output); output.sType = c.VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+        output.pNext = @ptrFromInt(root_unaligned_address()); invoke_query(device, &info, &output);
+        dedicated.pNext = &dedicated; output.pNext = &dedicated; invoke_query(device, &info, &output); dedicated.pNext = null;
+        var second = dedicated; dedicated.pNext = &second; invoke_query(device, &info, &output); dedicated.pNext = null;
+        output.pNext = if (extended) &dedicated else null;
+        try std.testing.expectEqual(@as(usize, 0), fixture.calls); try std.testing.expectEqualDeep(original, output.memoryRequirements);
+        invoke_query(device, &info, &output);
+        try std.testing.expectEqual(@as(usize, 1), fixture.calls);
+        if (corrupt) {
+            try std.testing.expectEqualDeep(original, output.memoryRequirements); try std.testing.expectEqual(@as(u64, 0), resource_state(resource).requirements.size); try std.testing.expect(lost != c.RingOk);
+        } else {
+            try std.testing.expectEqual(@as(u64, 4096), output.memoryRequirements.size); try std.testing.expectEqual(@as(u64, 256), output.memoryRequirements.alignment); try std.testing.expectEqual(@as(u32, 31), output.memoryRequirements.memoryTypeBits);
+            try std.testing.expectEqualDeep(output.memoryRequirements, resource_state(resource).requirements);
+            if (extended) try std.testing.expectEqual(@as(u32, 1), dedicated.requiresDedicatedAllocation);
+        }
+    };
+}
+test "root format2 wrapper preserves unknown chains and complete high feature bits with failed reply atomicity" {
+    for ([_]bool{ false, true }) |extended| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = root_query2_fixture_t{ .extended = extended, .corrupt = corrupt };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_query2_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const physical = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, 0, 1);
+        const handle: c.VkPhysicalDevice = @ptrFromInt(physical.handle);
+        var unknown = c.VkBaseOutStructure{ .sType = 0x7ffffff0 };
+        var properties3 = c.VkFormatProperties3{ .sType = c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3, .linearTilingFeatures = 99, .optimalTilingFeatures = 99, .bufferFeatures = 99 };
+        var output = c.VkFormatProperties2{ .sType = c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &unknown, .formatProperties = .{ .linearTilingFeatures = 99, .optimalTilingFeatures = 99, .bufferFeatures = 99 } };
+        const invoke_query = root_runtime_fn(format_properties2);
+        invoke_query(null, 37, &output); invoke_query(@ptrFromInt(root_unaligned_address()), 37, &output); invoke_query(handle, 37, null);
+        output.sType = 0; invoke_query(handle, 37, &output); output.sType = c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2;
+        output.pNext = @ptrFromInt(root_unaligned_address()); invoke_query(handle, 37, &output); output.pNext = &unknown;
+        unknown.pNext = &unknown; invoke_query(handle, 37, &output); unknown.pNext = null;
+        var duplicate = properties3; properties3.pNext = &duplicate; unknown.pNext = @ptrCast(&properties3); invoke_query(handle, 37, &output); properties3.pNext = null;
+        unknown.pNext = if (extended) @ptrCast(&properties3) else null;
+        try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+        invoke_query(handle, 37, &output); try std.testing.expectEqual(@as(usize, 1), fixture.calls);
+        try std.testing.expectEqual(@as(u32, if (corrupt) 99 else 1), output.formatProperties.linearTilingFeatures);
+        try std.testing.expectEqual(@as(u64, if (corrupt or !extended) 99 else @as(u64, 1) << 40), properties3.linearTilingFeatures);
+        try std.testing.expectEqual(@as(u32, 0x7ffffff0), unknown.sType);
+    };
+}
+
+const root_physical2_fixture_t = struct {
+    opcode: u32 = 0,
+    calls: usize = 0,
+    fill: bool = true,
+    corrupt: bool = false,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t); response.*.kind = request.*.kind; response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                if (length < 44 or input == null) return c.RingCorrupt;
+                fixture.opcode = std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little);
+                fixture.calls += 1; response.*.argument_zero = 1;
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                if (capacity < 4096 or output == null) return c.RingCorrupt;
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity]; @memset(bytes, 0);
+                if (venus_values_test_encode(fixture.opcode, bytes.ptr, capacity) == 0) return c.RingCorrupt;
+                if (!fixture.fill and (fixture.opcode == 7 or fixture.opcode == 33)) std.mem.writeInt(u64, bytes[16..24], 0, .little);
+                if (fixture.corrupt) bytes[0] ^= 1;
+                response.*.payload_bytes = @intCast(capacity);
+            },
+            else => return c.RingCorrupt,
+        }
+        return c.RingOk;
+    }
+};
+test "root physical query wrappers preserve caller headers counts and payload on rejected topology and malformed replies" {
+    inline for (0..4) |operation| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = root_physical2_fixture_t{ .corrupt = corrupt };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_physical2_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const physical = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, 0, 1);
+        const handle: c.VkPhysicalDevice = @ptrFromInt(physical.handle);
+        var unknown = c.VkBaseOutStructure{ .sType = 0x7ffffff0 };
+        switch (operation) {
+            0 => {
+                const invoke_query = root_runtime_fn(memory2);
+                var output = c.VkPhysicalDeviceMemoryProperties2{ .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, .pNext = &unknown, .memoryProperties = .{ .memoryTypeCount = 99 } };
+                invoke_query(null, &output); invoke_query(@ptrFromInt(1), &output); invoke_query(handle, null);
+                output.sType = 0; invoke_query(handle, &output); output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+                unknown.pNext = &unknown; invoke_query(handle, &output); unknown.pNext = null;
+                try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+                invoke_query(handle, &output); try std.testing.expectEqual(@as(u32, if (corrupt) 99 else 1), output.memoryProperties.memoryTypeCount);
+                if (!corrupt) try std.testing.expectEqual(@as(u32, 0), output.memoryProperties.memoryTypes[0].propertyFlags);
+                try std.testing.expectEqual(@as(?*anyopaque, &unknown), output.pNext);
+            },
+            1 => {
+                const invoke_query = root_runtime_fn(image_properties2);
+                var info = c.VkPhysicalDeviceImageFormatInfo2{ .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2, .format = 37, .type = c.VK_IMAGE_TYPE_2D, .tiling = c.VK_IMAGE_TILING_OPTIMAL, .usage = 3 };
+                var output = c.VkImageFormatProperties2{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2, .pNext = &unknown, .imageFormatProperties = .{ .maxMipLevels = 99 } };
+                try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_query(handle, null, &output));
+                try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_query(handle, &info, null));
+                info.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_query(handle, &info, &output)); info.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2;
+                output.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_query(handle, &info, &output)); output.sType = c.VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+                unknown.pNext = &unknown; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_query(handle, &info, &output)); unknown.pNext = null;
+                info.pNext = &unknown; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FORMAT_NOT_SUPPORTED), invoke_query(handle, &info, &output)); info.pNext = null;
+                try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+                try std.testing.expectEqual(@as(c_int, if (corrupt) c.VK_ERROR_DEVICE_LOST else c.VK_SUCCESS), invoke_query(handle, &info, &output));
+                try std.testing.expectEqual(@as(u32, if (corrupt) 99 else 12), output.imageFormatProperties.maxMipLevels);
+            },
+            2, 3 => {
+                const output_t = if (operation == 2) c.VkQueueFamilyProperties2 else c.VkSparseImageFormatProperties2;
+                const OutputTag = if (operation == 2) c.VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 else c.VK_STRUCTURE_TYPE_SPARSE_IMAGE_FORMAT_PROPERTIES_2;
+                var output = std.mem.zeroes(output_t); output.sType = OutputTag; output.pNext = &unknown;
+                var count: u32 = 1;
+                var info = c.VkPhysicalDeviceSparseImageFormatInfo2{ .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2, .format = 37, .type = c.VK_IMAGE_TYPE_2D, .samples = 1, .usage = 3, .tiling = c.VK_IMAGE_TILING_OPTIMAL };
+                if (operation == 2) {
+                    const invoke_query = root_runtime_fn(queue_properties2);
+                    invoke_query(null, &count, &output); invoke_query(@ptrFromInt(1), &count, &output); invoke_query(handle, null, &output);
+                    output.sType = 0; invoke_query(handle, &count, &output); output.sType = OutputTag;
+                    unknown.pNext = &unknown; invoke_query(handle, &count, &output); unknown.pNext = null;
+                    count = 0; invoke_query(handle, &count, &output); count = 1;
+                    try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+                    invoke_query(handle, &count, &output);
+                    try std.testing.expectEqual(@as(u32, if (corrupt) 0 else 1), output.queueFamilyProperties.queueCount);
+                } else {
+                    const invoke_query = root_runtime_fn(sparse_properties2);
+                    invoke_query(null, &info, &count, &output); invoke_query(@ptrFromInt(1), &info, &count, &output); invoke_query(handle, &info, null, &output); invoke_query(handle, null, &count, &output);
+                    info.sType = 0; invoke_query(handle, &info, &count, &output); info.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2;
+                    info.pNext = &unknown; invoke_query(handle, &info, &count, &output); info.pNext = null;
+                    output.sType = 0; invoke_query(handle, &info, &count, &output); output.sType = OutputTag;
+                    unknown.pNext = &unknown; invoke_query(handle, &info, &count, &output); unknown.pNext = null;
+                    count = 0; invoke_query(handle, &info, &count, &output); count = 1;
+                    try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+                    invoke_query(handle, &info, &count, &output);
+                    try std.testing.expectEqual(@as(u32, if (corrupt) 0 else 64), output.properties.imageGranularity.width);
+                }
+                try std.testing.expectEqual(@as(u32, 1), count);
+            },
+            else => unreachable,
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.calls);
+        try std.testing.expectEqual(corrupt, lost != c.RingOk);
+    };
+    inline for (0..2) |operation| {
+        var fixture = root_physical2_fixture_t{ .fill = false };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_physical2_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const physical = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, 0, 1);
+        var count: u32 = 99;
+        if (operation == 0) root_runtime_fn(queue_properties2)(@ptrFromInt(physical.handle), &count, null) else {
+            const info = c.VkPhysicalDeviceSparseImageFormatInfo2{ .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2, .format = 37, .type = c.VK_IMAGE_TYPE_2D, .samples = 1 };
+            root_runtime_fn(sparse_properties2)(@ptrFromInt(physical.handle), &info, &count, null);
+        }
+        try std.testing.expectEqual(@as(u32, 1), count); try std.testing.expectEqual(@as(usize, 1), fixture.calls);
+    }
+}
+
+const root_extra_lifecycle_fixture_t = struct {
+    opcode: u32 = 0,
+    id: u64 = 0,
+    result: i32 = c.VK_SUCCESS,
+    corrupt: bool = false,
+    calls: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t); response.*.kind = request.*.kind; response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                if (length < 44 or input == null) return c.RingCorrupt;
+                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+                fixture.opcode = std.mem.readInt(u32, bytes[36..40], .little);
+                fixture.id = std.mem.readInt(u64, bytes[length-8..][0..8], .little);
+                fixture.calls += 1; response.*.argument_zero = 1;
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                if (capacity < 24 or output == null) return c.RingCorrupt;
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity]; @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], if (fixture.corrupt) fixture.opcode+1 else fixture.opcode, .little);
+                std.mem.writeInt(i32, bytes[4..8], fixture.result, .little);
+                if (fixture.opcode == 40 or fixture.opcode == 42 or fixture.opcode == 47 or fixture.opcode == 61 or fixture.opcode == 52 or fixture.opcode == 70) {
+                    std.mem.writeInt(u64, bytes[8..16], 1, .little); std.mem.writeInt(u64, bytes[16..24], fixture.id, .little);
+                }
+                response.*.payload_bytes = @intCast(capacity);
+            },
+            else => return c.RingCorrupt,
+        }
+        return c.RingOk;
+    }
+};
+test "root extra child creation acknowledges exact metadata and retains uncertain ownership until trusted abandon" {
+    inline for (0..5) |operation| for ([_]i32{ c.VK_SUCCESS, c.VK_ERROR_OUT_OF_DEVICE_MEMORY, c.VK_ERROR_DEVICE_LOST }) |status| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = root_extra_lifecycle_fixture_t{ .result = status, .corrupt = corrupt };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_extra_lifecycle_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const backing = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+        resource_state(backing).* = .{ .id = backing.id, .buffer_size = 256, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT };
+        const device: c.VkDevice = @ptrFromInt(parent.handle);
+        const info_t = switch (operation) { 0 => c.VkEventCreateInfo, 1 => c.VkQueryPoolCreateInfo, 2 => c.VkPipelineCacheCreateInfo, 3 => c.VkBufferViewCreateInfo, 4 => c.VkSamplerCreateInfo, else => unreachable };
+        const handle_t = switch (operation) { 0 => c.VkEvent, 1 => c.VkQueryPool, 2 => c.VkPipelineCache, 3 => c.VkBufferView, 4 => c.VkSampler, else => unreachable };
+        const ObjectKind = switch (operation) { 0 => c.VK_OBJECT_TYPE_EVENT, 1 => c.VK_OBJECT_TYPE_QUERY_POOL, 2 => c.VK_OBJECT_TYPE_PIPELINE_CACHE, 3 => c.VK_OBJECT_TYPE_BUFFER_VIEW, 4 => c.VK_OBJECT_TYPE_SAMPLER, else => unreachable };
+        const create_fn = root_runtime_fn(switch (operation) { 0 => create_event, 1 => create_query_pool, 2 => create_pipeline_cache, 3 => create_buffer_view, 4 => create_sampler, else => unreachable });
+        const destroy_fn = root_runtime_fn(switch (operation) { 0 => destroy_event, 1 => destroy_query_pool, 2 => destroy_pipeline_cache, 3 => destroy_buffer_view, 4 => destroy_sampler, else => unreachable });
+        var info = std.mem.zeroes(info_t);
+        info.sType = switch (operation) { 0 => c.VK_STRUCTURE_TYPE_EVENT_CREATE_INFO, 1 => c.VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, 2 => c.VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO, 3 => c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, 4 => c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, else => unreachable };
+        if (operation == 1) { info.queryType = c.VK_QUERY_TYPE_TIMESTAMP; info.queryCount = 4; }
+        if (operation == 3) { info.buffer = @ptrFromInt(backing.handle); info.format = c.VK_FORMAT_R32_UINT; info.range = c.VK_WHOLE_SIZE; }
+        var output: handle_t = @ptrFromInt(8);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, null));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(null, &info, null, &output)); try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(@ptrFromInt(1), &info, null, &output));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, null, null, &output));
+        const tag = info.sType; info.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.sType = tag;
+        info.pNext = @ptrFromInt(8); try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.pNext = null;
+        if (operation == 3) {
+            resource_state(backing).buffer_usage = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); resource_state(backing).buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT;
+            info.offset = 256; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.offset = 0;
+            info.range = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.range = 257; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_fn(device, &info, null, &output)); info.range = c.VK_WHOLE_SIZE;
+        }
+        try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+        const expected: c_int = if (corrupt) c.VK_ERROR_DEVICE_LOST else status;
+        try std.testing.expectEqual(expected, create_fn(device, &info, null, &output));
+        if (expected == c.VK_SUCCESS) {
+            try std.testing.expect(output != null); const record = child_object(@intFromPtr(output.?), ObjectKind, parent.id).?;
+            try std.testing.expectEqual(record.id, resource_state(record).id);
+            if (operation == 1) try std.testing.expectEqual(@as(u64, 4), resource_state(record).buffer_size);
+            if (operation == 3) try std.testing.expectEqual(backing.handle, resource_state(record).view_image);
+            const before = fixture.calls; destroy_fn(@ptrFromInt(foreign.handle), output, null); destroy_fn(device, null, null);
+            resource_state(record).inflight_count = 1; destroy_fn(device, output, null); resource_state(record).inflight_count = 0;
+            try std.testing.expectEqual(before, fixture.calls);
+            destroy_fn(device, output, null); try std.testing.expect(child_object(@intFromPtr(output.?), ObjectKind, parent.id) == null);
+            try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+        } else {
+            try std.testing.expect(output == null);
+            try std.testing.expectEqual(@as(usize, if (expected == c.VK_ERROR_DEVICE_LOST) 4 else 3), objects.live_count);
+            if (expected == c.VK_ERROR_DEVICE_LOST) try std.testing.expect(lost != c.RingOk);
+        }
+    };
+}
+
+test "root synchronization2 normalizes buffer image allocation ownership only after exact host acknowledgment" {
+    for (0..4) |operation| for (0..3) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, parent.id, 0);
+        const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        const memory_record = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+        const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, parent.id, 0);
+        const event = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_EVENT, parent.id, 0);
+        resource_state(recording).command_state = .Recording;
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = memory_record.handle, .buffer_size = 256 };
+        resource_state(image).* = .{ .id = image.id, .bound_memory = memory_record.handle, .image_format = 37, .image_layers = 1, .image_levels = 1 };
+        var buffer_barrier = c.VkBufferMemoryBarrier2{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2, .buffer = @ptrFromInt(buffer.handle), .size = c.VK_WHOLE_SIZE, .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED };
+        var image_barrier = c.VkImageMemoryBarrier2{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, .image = @ptrFromInt(image.handle), .newLayout = c.VK_IMAGE_LAYOUT_GENERAL, .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED, .subresourceRange = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 } };
+        const info = c.VkDependencyInfo{ .sType = c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .bufferMemoryBarrierCount = 1, .pBufferMemoryBarriers = &buffer_barrier, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &image_barrier };
+        const cmd: c.VkCommandBuffer = @ptrFromInt(recording.handle);
+        const event_handle: c.VkEvent = @ptrFromInt(event.handle);
+        const events = [_]c.VkEvent{event_handle};
+        switch (operation) {
+            0 => root_runtime_fn(pipeline_barrier2)(cmd, &info),
+            1 => root_runtime_fn(cmd_set_event2)(cmd, event_handle, &info),
+            2 => root_runtime_fn(cmd_wait_events2)(cmd, 1, &events, &info),
+            3 => root_runtime_fn(cmd_reset_event2)(cmd, event_handle, c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT),
+            else => unreachable,
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        const expected_resource = mode == 0 and operation != 3;
+        try std.testing.expectEqual(expected_resource, image_ownership_fixture_t.retained(recording, buffer));
+        try std.testing.expectEqual(expected_resource, image_ownership_fixture_t.retained(recording, image));
+        try std.testing.expectEqual(expected_resource, image_ownership_fixture_t.retained(recording, memory_record));
+        try std.testing.expectEqual(mode == 0 and operation != 0, image_ownership_fixture_t.retained(recording, event));
+        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
+    };
+}
+test "root synchronization2 rejects complete malformed dependency before host or retained reference mutation" {
+    var fixture = image_ownership_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+    const parent = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const foreign = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, parent.id, 0);
+    const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+    const memory_record = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+    const foreign_memory = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, foreign.id, 0);
+    const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+    const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, parent.id, 0);
+    device_caches[0].handle = parent.handle; device_caches[0].family_count = 1; device_caches[0].families[0] = 0;
+    for (0..29) |invalid| {
+        resource_state(recording).* = .{ .id = recording.id, .command_state = .Recording };
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = memory_record.handle, .buffer_size = 256 };
+        resource_state(image).* = .{ .id = image.id, .bound_memory = memory_record.handle, .image_format = 37, .image_layers = 1, .image_levels = 1 };
+        var buffer_barrier = c.VkBufferMemoryBarrier2{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2, .buffer = @ptrFromInt(buffer.handle), .size = c.VK_WHOLE_SIZE, .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED };
+        var image_barrier = c.VkImageMemoryBarrier2{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2, .image = @ptrFromInt(image.handle), .newLayout = c.VK_IMAGE_LAYOUT_GENERAL, .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED, .subresourceRange = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 } };
+        var info = c.VkDependencyInfo{ .sType = c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .bufferMemoryBarrierCount = 1, .pBufferMemoryBarriers = &buffer_barrier, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &image_barrier };
+        switch (invalid) {
+            0 => info.sType = 0,
+            1 => info.pNext = @ptrFromInt(8),
+            2 => info.dependencyFlags = 8,
+            3 => info.memoryBarrierCount = 65,
+            4 => info.bufferMemoryBarrierCount = 65,
+            5 => info.imageMemoryBarrierCount = 65,
+            6 => info.memoryBarrierCount = 1,
+            7 => info.pBufferMemoryBarriers = null,
+            8 => info.pImageMemoryBarriers = null,
+            9 => buffer_barrier.buffer = null,
+            10 => buffer_barrier.buffer = @ptrFromInt(foreign_memory.handle),
+            11 => buffer_barrier.srcQueueFamilyIndex = 0,
+            12 => { buffer_barrier.srcQueueFamilyIndex = 0; buffer_barrier.dstQueueFamilyIndex = 1; },
+            13 => resource_state(buffer).bound_memory = 0,
+            14 => resource_state(buffer).bound_memory = foreign_memory.handle,
+            15 => buffer_barrier.offset = 256,
+            16 => buffer_barrier.size = 0,
+            17 => buffer_barrier.size = 257,
+            18 => image_barrier.image = null,
+            19 => image_barrier.image = @ptrFromInt(foreign_memory.handle),
+            20 => image_barrier.srcQueueFamilyIndex = 0,
+            21 => resource_state(image).bound_memory = 0,
+            22 => resource_state(image).bound_memory = foreign_memory.handle,
+            23 => image_barrier.subresourceRange.baseMipLevel = 1,
+            24 => image_barrier.subresourceRange.baseArrayLayer = 1,
+            25 => image_barrier.subresourceRange.aspectMask = 2,
+            26 => image_barrier.newLayout = c.VK_IMAGE_LAYOUT_UNDEFINED,
+            27 => image_barrier.newLayout = c.VK_IMAGE_LAYOUT_PREINITIALIZED,
+            28 => buffer_barrier.sType = 0,
+            else => unreachable,
+        }
+        root_runtime_fn(pipeline_barrier2)(@ptrFromInt(recording.handle), &info);
+        try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+        try std.testing.expectEqualSlices(u64, &([_]u64{0} ** 8), &resource_state(recording).buffer_references);
+        try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+    }
+}
+
+const root_bind2_fixture_t = struct {
+    base: root_sync_fixture_t = .{},
+    fail_at: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        if (request.*.kind == c.RequestReply) fixture.base.result = if (fixture.fail_at != 0 and fixture.base.calls == fixture.fail_at) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_SUCCESS;
+        return root_sync_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+    }
+};
+test "root BindMemory2 preflight and partial native failures preserve only acknowledged bindings" {
+    inline for ([_]bool{ false, true }) |image| for (0..6) |mode| {
+        var fixture = root_bind2_fixture_t{ .fail_at = if (mode == 4) 1 else if (mode == 5) 2 else 0 };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_bind2_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const memory_record = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+        const foreign_memory = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, foreign.id, 0);
+        const first = try root_sync_fixture_t.reserve(if (image) c.VK_OBJECT_TYPE_IMAGE else c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+        const second = try root_sync_fixture_t.reserve(if (image) c.VK_OBJECT_TYPE_IMAGE else c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+        resource_state(memory_record).* = .{ .id = memory_record.id, .allocation_size = 4096 };
+        for ([_]*c.venus_object_t{ first, second }) |record| resource_state(record).* = .{ .id = record.id, .requirements = .{ .size = 1024, .alignment = 256, .memoryTypeBits = 1 } };
+        const info_t = if (image) c.VkBindImageMemoryInfo else c.VkBindBufferMemoryInfo;
+        const InputTag = if (image) c.VK_STRUCTURE_TYPE_BIND_IMAGE_MEMORY_INFO else c.VK_STRUCTURE_TYPE_BIND_BUFFER_MEMORY_INFO;
+        var infos = [_]info_t{ .{ .sType = InputTag, .memory = @ptrFromInt(memory_record.handle), .memoryOffset = 256 }, .{ .sType = InputTag, .memory = @ptrFromInt(memory_record.handle), .memoryOffset = 512 } };
+        @field(infos[0], if (image) "image" else "buffer") = @ptrFromInt(first.handle);
+        @field(infos[1], if (image) "image" else "buffer") = @ptrFromInt(second.handle);
+        const invoke_bind = root_runtime_fn(if (image) bind_image_memory2 else bind_buffer_memory2);
+        const device: c.VkDevice = @ptrFromInt(parent.handle);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_bind(null, 0, null));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_bind(device, 65, &infos));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_bind(device, 1, null));
+        try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), invoke_bind(device, 0, null));
+        infos[0].pNext = @ptrFromInt(8); try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_bind(device, 2, &infos)); infos[0].pNext = null;
+        try std.testing.expectEqual(@as(usize, 0), fixture.base.calls);
+        if (mode == 1) infos[1].sType = 0;
+        if (mode == 2) infos[0].memory = @ptrFromInt(foreign_memory.handle);
+        if (mode == 3) infos[1].memory = @ptrFromInt(foreign_memory.handle);
+        const expected: c_int = if (mode == 0) c.VK_SUCCESS else if (mode >= 4) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+        try std.testing.expectEqual(expected, invoke_bind(device, 2, &infos));
+        const first_bound = mode == 0 or mode == 3 or mode == 5;
+        try std.testing.expectEqual(@as(u64, if (first_bound) memory_record.handle else 0), resource_state(first).bound_memory);
+        try std.testing.expectEqual(@as(u64, if (mode == 0) memory_record.handle else 0), resource_state(second).bound_memory);
+        try std.testing.expectEqual(@as(u64, if (first_bound) 256 else 0), resource_state(first).memory_offset);
+        try std.testing.expectEqual(@as(usize, if (mode == 0 or mode == 5) 2 else if (mode == 3 or mode == 4) 1 else 0), fixture.base.calls);
+        try std.testing.expectEqual(@as(usize, 6), objects.live_count); try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    };
+}
+
+
+const root_maintenance_fixture_t = struct {
+    opcode: u32 = 0,
+    id: u64 = 0,
+    mode: usize = 0,
+    calls: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t); response.*.kind = request.*.kind; response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                if (length < 44 or input == null) return c.RingCorrupt;
+                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length]; fixture.opcode = std.mem.readInt(u32, bytes[36..40], .little);
+                fixture.id = std.mem.readInt(u64, bytes[length-8..][0..8], .little); fixture.calls += 1; response.*.argument_zero = 1;
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                if (capacity < 128 or output == null) return c.RingCorrupt;
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity]; @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], fixture.opcode, .little);
+                switch (fixture.opcode) {
+                    50, 54 => {
+                        std.mem.writeInt(i32, bytes[4..8], if (fixture.mode == 1) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_SUCCESS, .little);
+                        std.mem.writeInt(u64, bytes[8..16], 1, .little); std.mem.writeInt(u64, bytes[16..24], fixture.id, .little);
+                    },
+                    144, 145 => { _ = venus_requirements2_test_reply(fixture.opcode, 1, bytes.ptr); },
+                    56 => {
+                        std.mem.writeInt(u64, bytes[4..12], 1, .little);
+                        for ([_]u64{ 64, 1024, 64, 1024, 1024 }, 0..) |value, index| std.mem.writeInt(u64, bytes[12+index*8..][0..8], value, .little);
+                    },
+                    51, 55 => {},
+                    else => return c.RingCorrupt,
+                }
+                if ((fixture.mode == 2 and fixture.calls == 2) or (fixture.mode == 3 and fixture.calls == 3)) bytes[0] ^= 1;
+                response.*.payload_bytes = @intCast(capacity);
+            },
+            else => return c.RingCorrupt,
+        }
+        return c.RingOk;
+    }
+};
+test "root maintenance temporary resources query actual requirements layouts and release only acknowledged owners" {
+    inline for (0..3) |operation| for (0..4) |mode| {
+        var fixture = root_maintenance_fixture_t{ .mode = mode };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_maintenance_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const device: c.VkDevice = @ptrFromInt(parent.handle);
+        var buffer_create = c.VkBufferCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = 256, .usage = 3 };
+        var image_create = c.VkImageCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = c.VK_IMAGE_TYPE_2D, .format = 37, .extent = .{ .width = 16, .height = 16, .depth = 1 }, .mipLevels = 1, .arrayLayers = 1, .samples = 1, .usage = 3 };
+        var dedicated = c.VkMemoryDedicatedRequirements{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS, .requiresDedicatedAllocation = 99 };
+        var requirements_output = c.VkMemoryRequirements2{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, .pNext = &dedicated, .memoryRequirements = .{ .size = 99 } };
+        var layout_output = c.VkSubresourceLayout2KHR{ .sType = c.VK_STRUCTURE_TYPE_SUBRESOURCE_LAYOUT_2_KHR, .subresourceLayout = .{ .size = 99 } };
+        if (operation == 0) {
+            const invoke_query = root_runtime_fn(device_buffer_requirements);
+            var info = c.VkDeviceBufferMemoryRequirements{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS, .pCreateInfo = &buffer_create };
+            invoke_query(device, null, &requirements_output); info.sType = 0; invoke_query(device, &info, &requirements_output); info.sType = c.VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS;
+            info.pNext = @ptrFromInt(8); invoke_query(device, &info, &requirements_output); info.pNext = null;
+            info.pCreateInfo = null; invoke_query(device, &info, &requirements_output); info.pCreateInfo = &buffer_create;
+            try std.testing.expectEqual(@as(usize, 0), fixture.calls); invoke_query(device, &info, &requirements_output);
+        } else if (operation == 1) {
+            const invoke_query = root_runtime_fn(device_image_requirements);
+            var info = c.VkDeviceImageMemoryRequirements{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS, .pCreateInfo = &image_create };
+            invoke_query(device, null, &requirements_output); info.sType = 0; invoke_query(device, &info, &requirements_output); info.sType = c.VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS;
+            info.pNext = @ptrFromInt(8); invoke_query(device, &info, &requirements_output); info.pNext = null;
+            info.pCreateInfo = null; invoke_query(device, &info, &requirements_output); info.pCreateInfo = &image_create;
+            info.planeAspect = c.VK_IMAGE_ASPECT_PLANE_0_BIT; invoke_query(device, &info, &requirements_output); info.planeAspect = 0;
+            try std.testing.expectEqual(@as(usize, 0), fixture.calls); invoke_query(device, &info, &requirements_output);
+        } else {
+            const invoke_query = root_runtime_fn(device_image_subresource_layout);
+            var subresource = c.VkImageSubresource2KHR{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_SUBRESOURCE_2_KHR, .imageSubresource = .{ .aspectMask = 1 } };
+            var info = c.VkDeviceImageSubresourceInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_IMAGE_SUBRESOURCE_INFO_KHR, .pCreateInfo = &image_create, .pSubresource = &subresource };
+            invoke_query(device, null, &layout_output); invoke_query(device, &info, null);
+            info.sType = 0; invoke_query(device, &info, &layout_output); info.sType = c.VK_STRUCTURE_TYPE_DEVICE_IMAGE_SUBRESOURCE_INFO_KHR;
+            info.pNext = @ptrFromInt(8); invoke_query(device, &info, &layout_output); info.pNext = null;
+            info.pCreateInfo = null; invoke_query(device, &info, &layout_output); info.pCreateInfo = &image_create;
+            info.pSubresource = null; invoke_query(device, &info, &layout_output); info.pSubresource = &subresource;
+            try std.testing.expectEqual(@as(usize, 0), fixture.calls); invoke_query(device, &info, &layout_output);
+        }
+        try std.testing.expectEqual(@as(usize, if (mode == 1) 1 else if (mode == 2) 2 else 3), fixture.calls);
+        try std.testing.expectEqual(@as(usize, if (mode >= 2) 2 else 1), objects.live_count);
+        try std.testing.expectEqual(mode >= 2, lost != c.RingOk);
+        if (operation == 2) try std.testing.expectEqual(@as(u64, if (mode == 0 or mode == 3) 1024 else 99), layout_output.subresourceLayout.size) else {
+            try std.testing.expectEqual(@as(u64, if (mode == 0 or mode == 3) 4096 else 99), requirements_output.memoryRequirements.size);
+            try std.testing.expectEqual(@as(u32, if (mode == 0 or mode == 3) 1 else 99), dedicated.requiresDedicatedAllocation);
+        }
+    };
+}
+
+// Append-only fixture draft; depends on integrated image_ownership_fixture_t.
+const graphics_ownership_graph_t = struct {
+    device: *c.venus_object_t,
+    recording: *c.venus_object_t,
+    pipeline: *c.venus_object_t,
+    buffer: *c.venus_object_t,
+    memory: *c.venus_object_t,
+    fn init() !@This() {
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, device.id, 0);
+        const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        const pipeline = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_PIPELINE, device.id, 0);
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, device.id, 0);
+        device_caches[0] = .{ .handle = device.handle, .graphics_queue_ready = true, .graphics_queue_count = 1 };
+        device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
+        resource_state(recording).command_state = .Recording;
+        resource_state(recording).command_profile_index = try profiles.reserve_slot(&command_registry.commands, compute_state.command_profile_t{});
+        resource_state(pipeline).* = .{ .id = pipeline.id, .pipeline_bind_point = c.VK_PIPELINE_BIND_POINT_GRAPHICS, .render_format = 37, .profile_index = try profiles.reserve_slot(&profile_registry.pipelines, profiles.pipeline_layout_t{}) };
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = allocation.handle, .buffer_size = 256, .buffer_usage = c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT | c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT };
+        graphics_recording(resource_state(recording)).* = .{ .pipeline = pipeline.handle, .pipeline_format = 37, .active_format = 37 };
+        resource_state(recording).index_buffer = buffer.handle;
+        resource_state(recording).index_size = 256;
+        resource_state(recording).index_type = c.VK_INDEX_TYPE_UINT16;
+        return .{ .device = device, .recording = recording, .pipeline = pipeline, .buffer = buffer, .memory = allocation };
+    }
+};
+
+test "graphics ownership bind indexed and indirect wrappers publish only after ACK" {
+    for (0..8) |operation| for (0..3) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_ownership_graph_t.init();
+        const cmd: c.VkCommandBuffer = @ptrFromInt(graph.recording.handle);
+        const buffer: c.VkBuffer = @ptrFromInt(graph.buffer.handle);
+        const offset: u64 = 8;
+        const size: u64 = 128;
+        const stride: u64 = 16;
+        if (operation == 4) graphics_recording(resource_state(graph.recording)).* = .{};
+        switch (operation) {
+            0 => bind_vertex_buffers(cmd, 0, 1, &buffer, &offset),
+            1 => bind_vertex_buffers2(cmd, 0, 1, &buffer, &offset, &size, &stride),
+            2 => bind_index_buffer(cmd, buffer, offset, c.VK_INDEX_TYPE_UINT32),
+            3 => bind_index_buffer2(cmd, buffer, offset, size, c.VK_INDEX_TYPE_UINT32),
+            4 => bind_pipeline(cmd, c.VK_PIPELINE_BIND_POINT_GRAPHICS, @ptrFromInt(graph.pipeline.handle)),
+            5 => draw_indexed(cmd, 3, 1, 0, -1, 0),
+            6 => draw_indirect(cmd, buffer, 0, 2, 16),
+            7 => draw_indexed_indirect(cmd, buffer, 0, 2, 20),
+            else => unreachable,
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
+        if (operation != 4) try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(graph.recording, graph.buffer));
+        if (operation <= 3 or operation >= 6) try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(graph.recording, graph.memory));
+        if (operation >= 4) try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(graph.recording, graph.pipeline));
+        if (operation == 2 or operation == 3) {
+            try std.testing.expectEqual(if (mode == 0) offset else 0, resource_state(graph.recording).index_offset);
+            try std.testing.expectEqual(if (mode == 0) @as(u32, c.VK_INDEX_TYPE_UINT32) else c.VK_INDEX_TYPE_UINT16, resource_state(graph.recording).index_type);
+            try std.testing.expectEqual(if (mode == 0) (if (operation == 3) size else 248) else 256, resource_state(graph.recording).index_size);
+        }
+        if (operation == 4) try std.testing.expectEqual(if (mode == 0) graph.pipeline.handle else 0, graphics_recording(resource_state(graph.recording)).pipeline);
+        try std.testing.expectEqual(@as(usize, 6), objects.live_count);
+    };
+}
+
+test "graphics ownership rejects absent scope index overrun and indirect ranges locally" {
+    for (0..7) |case| {
+        var fixture = image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_ownership_graph_t.init();
+        const cmd: c.VkCommandBuffer = @ptrFromInt(graph.recording.handle);
+        const buffer: c.VkBuffer = @ptrFromInt(graph.buffer.handle);
+        var offset: u64 = 0;
+        const size: u64 = 257;
+        switch (case) {
+            0 => { graphics_recording(resource_state(graph.recording)).active_format = 0; draw_indexed(cmd, 1, 1, 0, 0, 0); },
+            1 => draw_indexed(cmd, 2, 1, 127, 0, 0),
+            2 => { resource_state(graph.recording).index_buffer = 0; draw_indexed_indirect(cmd, buffer, 0, 1, 20); },
+            3 => draw_indirect(cmd, buffer, 244, 1, 16),
+            4 => { resource_state(graph.buffer).buffer_usage = c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT; bind_vertex_buffers(cmd, 0, 1, &buffer, &offset); },
+            5 => bind_vertex_buffers2(cmd, 0, 1, &buffer, &offset, &size, null),
+            6 => { offset = 2; bind_index_buffer(cmd, buffer, offset, c.VK_INDEX_TYPE_UINT32); },
+            else => unreachable,
+        }
+        try std.testing.expectEqual(command_state_t.Invalid, resource_state(graph.recording).command_state);
+        try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        try std.testing.expectEqual([_]u64{0} ** 8, resource_state(graph.recording).buffer_references);
+    }
+}
+
+// Append-only extension; graphics_ownership_graph_t supplied by graphics draft.
+test "graphics ownership dynamic native state sequence respects ACK loss and recording lifecycle" {
+    for (0..4) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = if (mode == 3) 0 else @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_ownership_graph_t.init();
+        const cmd: c.VkCommandBuffer = @ptrFromInt(graph.recording.handle);
+        if (mode == 3) resource_state(graph.recording).command_state = .Executable;
+        const before = resource_state(graph.recording).*;
+        const graphics_before = graphics_recording(resource_state(graph.recording)).*;
+        var viewport = c.VkViewport{ .width = 8, .height = -8, .minDepth = 0, .maxDepth = 1 };
+        var scissor = c.VkRect2D{ .extent = .{ .width = 8, .height = 8 } };
+        const constants = [_]f32{ 0, 0.25, 0.5, 1 };
+        set_viewport(cmd, 0, 1, &viewport);
+        set_viewport_with_count(cmd, 1, &viewport);
+        set_scissor(cmd, 0, 1, &scissor);
+        set_scissor_with_count(cmd, 1, &scissor);
+        set_cull_mode(cmd, c.VK_CULL_MODE_BACK_BIT);
+        set_front_face(cmd, c.VK_FRONT_FACE_COUNTER_CLOCKWISE);
+        set_primitive_topology(cmd, c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        set_depth_test_enable(cmd, 1);
+        set_depth_write_enable(cmd, 1);
+        set_depth_compare_op(cmd, c.VK_COMPARE_OP_LESS_OR_EQUAL);
+        set_depth_bounds_test_enable(cmd, 0);
+        set_stencil_test_enable(cmd, 1);
+        set_rasterizer_discard_enable(cmd, 0);
+        set_depth_bias_enable(cmd, 1);
+        set_primitive_restart_enable(cmd, 0);
+        set_stencil_compare_mask(cmd, c.VK_STENCIL_FACE_FRONT_AND_BACK, 0xff);
+        set_stencil_write_mask(cmd, c.VK_STENCIL_FACE_FRONT_AND_BACK, 0xff);
+        set_stencil_reference(cmd, c.VK_STENCIL_FACE_FRONT_AND_BACK, 1);
+        set_depth_bias(cmd, 1, 0, 1);
+        set_depth_bounds(cmd, 0, 1);
+        set_blend_constants(cmd, &constants);
+        set_stencil_op(cmd, c.VK_STENCIL_FACE_FRONT_AND_BACK, c.VK_STENCIL_OP_KEEP, c.VK_STENCIL_OP_REPLACE, c.VK_STENCIL_OP_KEEP, c.VK_COMPARE_OP_ALWAYS);
+        try std.testing.expectEqual(if (mode == 0) @as(usize, 22) else if (mode == 3) @as(usize, 0) else @as(usize, 1), fixture.submissions);
+        // Dynamic state has no new host resource ownership or copied core binding.
+        try std.testing.expectEqualDeep(before, resource_state(graph.recording).*);
+        try std.testing.expectEqualDeep(graphics_before, graphics_recording(resource_state(graph.recording)).*);
+    }
+}
+
+test "graphics ownership malformed native dynamic arrays invalidate without transport" {
+    for (0..6) |case| {
+        var fixture = image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_ownership_graph_t.init();
+        const cmd: c.VkCommandBuffer = @ptrFromInt(graph.recording.handle);
+        var viewport = c.VkViewport{ .width = 8, .height = 8, .maxDepth = 1 };
+        var scissor = c.VkRect2D{ .extent = .{ .width = 8, .height = 8 } };
+        switch (case) {
+            0 => set_viewport(cmd, 0, 17, @ptrFromInt(8)),
+            1 => set_scissor_with_count(cmd, 1, null),
+            2 => set_viewport(cmd, 16, 1, &viewport),
+            3 => { scissor.offset.x = -1; set_scissor(cmd, 0, 1, &scissor); },
+            4 => set_blend_constants(cmd, null),
+            5 => set_depth_test_enable(cmd, 2),
+            else => unreachable,
+        }
+        try std.testing.expectEqual(command_state_t.Invalid, resource_state(graph.recording).command_state);
+        try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    }
+}
+
+// Append-only tests; depends on integrated image_ownership_fixture_t.
+const descriptor_ownership_fixture_t = struct {
+    base: image_ownership_fixture_t = .{},
+    negative: bool = false,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        const status = image_ownership_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (status != c.RingOk or request.*.kind != c.RequestReply or fixture.base.mode != 0) return status;
+        const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+        if (fixture.base.command_id == 77) {
+            std.mem.writeInt(i32, bytes[4..8], if (fixture.negative) c.VK_ERROR_OUT_OF_HOST_MEMORY else 0, .little);
+            std.mem.writeInt(u64, bytes[8..16], 1, .little);
+            var id: u64 = 0;
+            for (slots) |slot| if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET) { id = slot.id; break; };
+            std.mem.writeInt(u64, bytes[16..24], if (fixture.negative) 0 else id, .little);
+            response.*.payload_bytes = @intCast(capacity);
+        } else if (fixture.base.command_id == 164) {
+            std.mem.writeInt(u64, bytes[4..12], 1, .little);
+            std.mem.writeInt(u32, bytes[12..16], c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT, .little);
+            std.mem.writeInt(u64, bytes[16..24], 0, .little);
+            std.mem.writeInt(u32, bytes[24..28], @intFromBool(!fixture.negative), .little);
+            response.*.payload_bytes = 28;
+        }
+        return status;
+    }
+};
+const descriptor_ownership_graph_t = struct {
+    device: *c.venus_object_t,
+    pool: *c.venus_object_t,
+    layout: *c.venus_object_t,
+    definition: profiles.descriptor_layout_t,
+    fn init() !@This() {
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, device.id, 0);
+        const layout = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, device.id, 0);
+        var definition = profiles.descriptor_layout_t{ .binding_count = 1 };
+        definition.bindings[0] = .{ .binding = 0, .descriptor_type = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptor_count = 2, .stage_flags = c.VK_SHADER_STAGE_COMPUTE_BIT };
+        resource_state(layout).* = .{ .id = layout.id, .profile_index = try profiles.reserve_slot(&profile_registry.descriptor_layouts, definition) };
+        resource_state(pool).* = .{ .id = pool.id, .descriptor_max_sets = 2, .pool_flags = c.VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT };
+        resource_state(pool).descriptor_capacity[c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER] = 4;
+        device_caches[0] = .{ .handle = device.handle, .descriptor_limits_ready = true, .descriptor_alignments = .{ 4, 4 }, .descriptor_ranges = .{ 1024, 1024 } };
+        return .{ .device = device, .pool = pool, .layout = layout, .definition = definition };
+    }
+    fn reserve_set(graph: *@This()) !*c.venus_object_t {
+        const set_record = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DESCRIPTOR_SET, graph.pool.id, 0);
+        resource_state(set_record).* = .{ .id = set_record.id, .profile_index = try profiles.reserve_slot(&profile_registry.sets, try profiles.create_sparse_set_profile(&graph.definition)) };
+        return set_record;
+    }
+};
+
+test "descriptor ownership allocation host failure rolls back but uncertain transport retains owners" {
+    for (0..4) |mode| {
+        var fixture = descriptor_ownership_fixture_t{ .base = .{ .mode = if (mode == 3) 0 else @intCast(mode) }, .negative = mode == 3 };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(descriptor_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try descriptor_ownership_graph_t.init();
+        const layout: c.VkDescriptorSetLayout = @ptrFromInt(graph.layout.handle);
+        var info = c.VkDescriptorSetAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = @ptrFromInt(graph.pool.handle), .descriptorSetCount = 1, .pSetLayouts = &layout };
+        var output: c.VkDescriptorSet = @ptrFromInt(8);
+        const result = allocate_descriptor_sets(@ptrFromInt(graph.device.handle), &info, &output);
+        try std.testing.expectEqual(if (mode == 0) @as(c_int, c.VK_SUCCESS) else if (mode == 3) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_DEVICE_LOST, result);
+        try std.testing.expectEqual(mode == 0, output != null);
+        try std.testing.expectEqual(if (mode == 3) @as(usize, 3) else 4, objects.live_count);
+        try std.testing.expectEqual(if (mode == 0) @as(u32, 1) else 0, resource_state(graph.pool).descriptor_live_sets);
+        try std.testing.expectEqual(if (mode == 0) @as(u32, 2) else 0, resource_state(graph.pool).descriptor_used[c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER]);
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.submissions);
+    }
+}
+
+test "descriptor ownership direct and template writes publish copied data and invalidate only after ACK" {
+    for (0..2) |use_template| for (0..3) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var graph = try descriptor_ownership_graph_t.init();
+        const set_record = try graph.reserve_set();
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, graph.device.id, 0);
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, graph.device.id, 0);
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = allocation.handle, .buffer_usage = c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, .buffer_size = 64 };
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, graph.device.id, 0);
+        const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        resource_state(recording).command_state = .Executable;
+        command_reference(resource_state(recording), set_record);
+        var payload = c.VkDescriptorBufferInfo{ .buffer = @ptrFromInt(buffer.handle), .offset = 4, .range = 16 };
+        var update_template: c.VkDescriptorUpdateTemplate = null;
+        if (use_template != 0) {
+            var entry = c.VkDescriptorUpdateTemplateEntry{ .dstBinding = 0, .dstArrayElement = 1, .descriptorCount = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .offset = 0, .stride = @sizeOf(c.VkDescriptorBufferInfo) };
+            var info = c.VkDescriptorUpdateTemplateCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO, .descriptorUpdateEntryCount = 1, .pDescriptorUpdateEntries = &entry, .templateType = c.VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET, .descriptorSetLayout = @ptrFromInt(graph.layout.handle) };
+            try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_descriptor_update_template(@ptrFromInt(graph.device.handle), &info, null, &update_template));
+            // Caller entries may change after creation: the template owns its definition.
+            entry.dstBinding = 7;
+            update_descriptor_set_with_template(@ptrFromInt(graph.device.handle), @ptrFromInt(set_record.handle), update_template, &payload);
+        } else {
+            var write = c.VkWriteDescriptorSet{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set_record.handle), .dstBinding = 0, .dstArrayElement = 1, .descriptorCount = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &payload };
+            update_descriptor_sets(@ptrFromInt(graph.device.handle), 1, &write, 0, null);
+        }
+        payload.offset = 60;
+        const profile = profiles.get_profile(&profile_registry.sets, resource_state(set_record).profile_index).?;
+        try std.testing.expectEqual(if (mode == 0) @as(usize, 1) else 0, profile.descriptor_count);
+        if (mode == 0) {
+            try std.testing.expectEqual(buffer.handle, profile.descriptors[0].buffer);
+            try std.testing.expectEqual(@as(u64, 4), profile.descriptors[0].offset);
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
+        } else {
+            try std.testing.expectEqual(command_state_t.Executable, resource_state(recording).command_state);
+            try std.testing.expect(image_ownership_fixture_t.retained(recording, set_record));
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        if (use_template != 0) {
+            const live = objects.live_count;
+            destroy_descriptor_update_template(@ptrFromInt(graph.device.handle), update_template, null);
+            try std.testing.expectEqual(live - 1, objects.live_count);
+            try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        }
+    };
+}
+
+test "descriptor ownership layout support publishes only canonical host result" {
+    for (0..4) |mode| {
+        var fixture = descriptor_ownership_fixture_t{ .base = .{ .mode = if (mode == 3) 0 else @intCast(mode) }, .negative = mode == 3 };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(descriptor_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try descriptor_ownership_graph_t.init();
+        var binding = c.VkDescriptorSetLayoutBinding{ .binding = 0, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT };
+        var info = c.VkDescriptorSetLayoutCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &binding };
+        var output = c.VkDescriptorSetLayoutSupport{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT, .supported = 0xfeed };
+        descriptor_layout_support(@ptrFromInt(graph.device.handle), &info, &output);
+        try std.testing.expectEqual(if (mode == 0) @as(u32, 1) else if (mode == 3) @as(u32, 0) else @as(u32, 0xfeed), output.supported);
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+    }
+}
+
+test "descriptor ownership invalid and pending writes preserve copied set and transport" {
+    for (0..5) |case| {
+        var fixture = image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var graph = try descriptor_ownership_graph_t.init();
+        const set_record = try graph.reserve_set();
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, graph.device.id, 0);
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, graph.device.id, 0);
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = allocation.handle, .buffer_usage = c.VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, .buffer_size = 64 };
+        const before = profiles.get_profile(&profile_registry.sets, resource_state(set_record).profile_index).?.*;
+        var payload = c.VkDescriptorBufferInfo{ .buffer = @ptrFromInt(buffer.handle), .offset = 4, .range = 16 };
+        if (case == 0) resource_state(set_record).inflight_count = 1;
+        if (case == 1) resource_state(buffer).buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+        if (case == 2) payload.offset = 2;
+        if (case == 3) payload.range = 64;
+        if (case == 4) {
+            var copy = c.VkCopyDescriptorSet{ .sType = c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET, .srcSet = @ptrFromInt(set_record.handle), .dstSet = @ptrFromInt(set_record.handle), .srcBinding = 0, .dstBinding = 0, .descriptorCount = 1 };
+            update_descriptor_sets(@ptrFromInt(graph.device.handle), 0, null, 1, &copy);
+        } else {
+            var write = c.VkWriteDescriptorSet{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set_record.handle), .dstBinding = 0, .descriptorCount = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &payload };
+            update_descriptor_sets(@ptrFromInt(graph.device.handle), 1, &write, 0, null);
+        }
+        try std.testing.expectEqualDeep(before, profiles.get_profile(&profile_registry.sets, resource_state(set_record).profile_index).?.*);
+        try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    }
+}
+
+// Append-only extension; depends on descriptor_ownership_graph_t.
+test "descriptor ownership mixed sampler image and texel writes publish atomically" {
+    for (0..3) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var graph = try descriptor_ownership_graph_t.init();
+        graph.definition.binding_count = 3;
+        for ([_]u32{ 0, 2, 4 }, 0..) |kind, index| graph.definition.bindings[index] = .{ .binding = @intCast(index), .descriptor_type = kind, .descriptor_count = 1, .stage_flags = c.VK_SHADER_STAGE_FRAGMENT_BIT };
+        const set_record = try graph.reserve_set();
+        const sampler = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_SAMPLER, graph.device.id, 0);
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, graph.device.id, 0);
+        const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, graph.device.id, 0);
+        resource_state(image).* = .{ .id = image.id, .bound_memory = allocation.handle, .image_usage = c.VK_IMAGE_USAGE_SAMPLED_BIT };
+        const image_view = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE_VIEW, graph.device.id, 0);
+        resource_state(image_view).* = .{ .id = image_view.id, .view_image = image.handle, .image_usage = c.VK_IMAGE_USAGE_SAMPLED_BIT };
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, graph.device.id, 0);
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = allocation.handle, .buffer_size = 64, .buffer_usage = c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT };
+        const texel = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER_VIEW, graph.device.id, 0);
+        resource_state(texel).* = .{ .id = texel.id, .view_image = buffer.handle };
+        var sampler_info = c.VkDescriptorImageInfo{ .sampler = @ptrFromInt(sampler.handle) };
+        var image_info = c.VkDescriptorImageInfo{ .imageView = @ptrFromInt(image_view.handle), .imageLayout = c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        const texel_handle: c.VkBufferView = @ptrFromInt(texel.handle);
+        var writes = [_]c.VkWriteDescriptorSet{
+            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set_record.handle), .dstBinding = 0, .descriptorCount = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_SAMPLER, .pImageInfo = &sampler_info },
+            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set_record.handle), .dstBinding = 1, .descriptorCount = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .pImageInfo = &image_info },
+            .{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(set_record.handle), .dstBinding = 2, .descriptorCount = 1, .descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, .pTexelBufferView = &texel_handle },
+        };
+        update_descriptor_sets(@ptrFromInt(graph.device.handle), writes.len, &writes, 0, null);
+        sampler_info.sampler = null;
+        image_info.imageView = null;
+        const profile = profiles.get_profile(&profile_registry.sets, resource_state(set_record).profile_index).?;
+        try std.testing.expectEqual(if (mode == 0) @as(usize, 3) else 0, profile.descriptor_count);
+        if (mode == 0) {
+            try std.testing.expectEqual(sampler.handle, profile.descriptors[0].sampler);
+            try std.testing.expectEqual(image_view.handle, profile.descriptors[1].image_view);
+            try std.testing.expectEqual(texel.handle, profile.descriptors[2].texel_view);
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
+        try std.testing.expectEqual(@as(usize, 10), objects.live_count);
+    }
+}
+
+// Append-only extension; depends on descriptor_ownership_graph_t.
+test "descriptor ownership allocation quotas and malformed variable counts reject before reservations" {
+    for (0..5) |case| {
+        var fixture = image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try descriptor_ownership_graph_t.init();
+        const layout: c.VkDescriptorSetLayout = @ptrFromInt(graph.layout.handle);
+        var info = c.VkDescriptorSetAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = @ptrFromInt(graph.pool.handle), .descriptorSetCount = 1, .pSetLayouts = &layout };
+        var variable = c.VkDescriptorSetVariableDescriptorCountAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO, .descriptorSetCount = 1 };
+        const unexpected: u32 = 1;
+        if (case == 0) resource_state(graph.pool).descriptor_max_sets = 0;
+        if (case == 1) resource_state(graph.pool).descriptor_capacity[c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER] = 1;
+        if (case == 2) { variable.pDescriptorCounts = &unexpected; info.pNext = &variable; }
+        if (case == 3) info.pNext = @ptrFromInt(9);
+        if (case == 4) { info.descriptorSetCount = 65; info.pSetLayouts = @ptrFromInt(8); }
+        var output: c.VkDescriptorSet = @ptrFromInt(8);
+        const result = allocate_descriptor_sets(@ptrFromInt(graph.device.handle), &info, &output);
+        try std.testing.expectEqual(if (case <= 1 or case == 4) @as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY) else @as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), result);
+        try std.testing.expectEqual(if (case == 4) @as(usize, 8) else 0, if (output) |value| @intFromPtr(value) else 0);
+        try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+        try std.testing.expectEqual(@as(u32, 0), resource_state(graph.pool).descriptor_live_sets);
+        try std.testing.expectEqual([_]u32{0} ** 11, resource_state(graph.pool).descriptor_used);
+        try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+        for (profile_registry.sets) |slot| try std.testing.expect(!slot.occupied);
+    }
+}
+
+test "root timeline semaphore creation requires enabled feature and owns initial value only after host acknowledgment" {
+    for ([_]i32{ c.VK_SUCCESS, c.VK_ERROR_OUT_OF_DEVICE_MEMORY, c.VK_ERROR_DEVICE_LOST }) |status| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = root_extra_lifecycle_fixture_t{ .result = status, .corrupt = corrupt };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_extra_lifecycle_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const device: c.VkDevice = @ptrFromInt(parent.handle);
+        var node = c.VkSemaphoreTypeCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, .semaphoreType = c.VK_SEMAPHORE_TYPE_TIMELINE, .initialValue = 17 };
+        var info = c.VkSemaphoreCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &node };
+        var output: c.VkSemaphore = @ptrFromInt(8);
+        const invoke_create = root_runtime_fn(create_semaphore);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), invoke_create(device, &info, null, &output)); try std.testing.expect(output == null);
+        device_caches[0].handle = parent.handle;
+        const TimelineFlagIndex = (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "timelineSemaphore") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4;
+        device_caches[0].enabled_state.features.count = 1;
+        device_caches[0].enabled_state.features.nodes[0] = .{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, .flag_count = 47 };
+        device_caches[0].enabled_state.features.nodes[0].flags[TimelineFlagIndex] = 1;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, &info, null, null));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(null, &info, null, &output));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(@ptrFromInt(1), &info, null, &output));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, null, null, &output));
+        info.flags = 1; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, &info, null, &output)); info.flags = 0;
+        info.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, &info, null, &output)); info.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        node.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, &info, null, &output)); node.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+        node.pNext = &node; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, &info, null, &output)); node.pNext = null;
+        node.semaphoreType = 2; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, &info, null, &output));
+        node.semaphoreType = c.VK_SEMAPHORE_TYPE_BINARY; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke_create(device, &info, null, &output)); node.semaphoreType = c.VK_SEMAPHORE_TYPE_TIMELINE;
+        try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+        const expected: c_int = if (corrupt) c.VK_ERROR_DEVICE_LOST else status;
+        try std.testing.expectEqual(expected, invoke_create(device, &info, null, &output));
+        if (expected == c.VK_SUCCESS) {
+            const record = child_object(@intFromPtr(output.?), c.VK_OBJECT_TYPE_SEMAPHORE, parent.id).?;
+            try std.testing.expectEqual(@as(u32, 1), resource_state(record).buffer_usage); try std.testing.expectEqual(@as(u64, 17), resource_state(record).allocation_size);
+            const before = fixture.calls; root_runtime_fn(destroy_semaphore)(@ptrFromInt(foreign.handle), output, null);
+            resource_state(record).inflight_count = 1; root_runtime_fn(destroy_semaphore)(device, output, null); resource_state(record).inflight_count = 0;
+            try std.testing.expectEqual(before, fixture.calls); root_runtime_fn(destroy_semaphore)(device, output, null);
+            try std.testing.expectEqual(@as(usize, 2), objects.live_count);
+        } else {
+            try std.testing.expect(output == null); try std.testing.expectEqual(@as(usize, if (expected == c.VK_ERROR_DEVICE_LOST) 3 else 2), objects.live_count);
+        }
+    };
+}
+test "root GetDeviceQueue2 preserves existing borrowed queue and rejects unimplemented protected topology" {
+    var fixture = root_sync_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_sync_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+    const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const queue = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_QUEUE, parent.id, 1);
+    device_caches[0].handle = parent.handle; device_caches[0].family_count = 1; device_caches[0].families[0] = 2; device_caches[0].counts[0] = 1; device_caches[0].queues[0] = queue.handle; device_caches[0].ready[0] = true;
+    var info = c.VkDeviceQueueInfo2{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2, .queueFamilyIndex = 2 };
+    var output: c.VkQueue = @ptrFromInt(8);
+    const invoke_query = root_runtime_fn(get_device_queue2); const device: c.VkDevice = @ptrFromInt(parent.handle);
+    invoke_query(device, &info, null); invoke_query(device, null, &output); try std.testing.expect(output == null);
+    invoke_query(null, &info, &output); try std.testing.expect(output == null);
+    info.sType = 0; invoke_query(device, &info, &output); try std.testing.expect(output == null); info.sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2;
+    info.pNext = @ptrFromInt(8); invoke_query(device, &info, &output); try std.testing.expect(output == null); info.pNext = null;
+    info.flags = c.VK_DEVICE_QUEUE_CREATE_PROTECTED_BIT; invoke_query(device, &info, &output); try std.testing.expect(output == null); info.flags = 0;
+    info.queueFamilyIndex = 0; invoke_query(device, &info, &output); try std.testing.expect(output == null); info.queueFamilyIndex = 2;
+    info.queueIndex = 1; invoke_query(device, &info, &output); try std.testing.expect(output == null); info.queueIndex = 0;
+    invoke_query(device, &info, &output); try std.testing.expectEqual(queue.handle, @intFromPtr(output.?)); try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+    try std.testing.expectEqual(@as(usize, 2), objects.live_count);
+}
