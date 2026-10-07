@@ -131,7 +131,7 @@ pub fn create_sampler(device:u64,id:u64,info:*const c.VkSamplerCreateInfo) !writ
 /// [in] info borrowed view with at most one aligned, terminated buffer-usage-flags2
 /// node; buffer_id resolves its host owner. Caller checks enabled maintenance5,
 /// usage subset of the buffer, native format features, alignment and range.
-/// [out] Exact create52 packet preserving optional nonzero texel usage bits4/8,
+/// [out] Exact create52 packet preserving optional texel usage bits4/8 (including an empty subset),
 /// or Invalid tag/chain/flags/identity/format/zero range. No allocation or retained
 /// pointers; owned initialized prefix, distinct owners safe concurrently.
 pub fn create_buffer_view(device:u64,id:u64,buffer_id:u64,info:*const c.VkBufferViewCreateInfo) !writer_t {
@@ -140,7 +140,7 @@ pub fn create_buffer_view(device:u64,id:u64,buffer_id:u64,info:*const c.VkBuffer
     if(info.pNext) |pointer| {
         if(@intFromPtr(pointer)%@alignOf(c.VkBufferUsageFlags2CreateInfo)!=0)return error.Invalid;
         const node:*const c.VkBufferUsageFlags2CreateInfo=@ptrCast(@alignCast(pointer));
-        if(node.sType!=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO or node.pNext!=null or node.usage==0 or node.usage & ~@as(u64,12)!=0)return error.Invalid;
+        if(node.sType!=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO or node.pNext!=null or node.usage & ~@as(u64,12)!=0)return error.Invalid;
         usage=node.usage;
     }
     var writer=try start_packet(52,device);
@@ -562,12 +562,12 @@ test "remaining object identity and native output boundary paths" {
 test "maintenance5 buffer view usage matches pinned native encoder and rejects invalid chains" {
     var node=c.VkBufferUsageFlags2CreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO,.usage=8};
     var info=c.VkBufferViewCreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,.pNext=&node,.buffer=@ptrFromInt(13),.format=c.VK_FORMAT_R32_UINT,.offset=0,.range=256};
-    for([_]u64{4,8,12}) |usage| {
+    for([_]u64{0,4,8,12}) |usage| {
         node.usage=usage;
         try compare(try create_buffer_view(7,11,13,&info),52,&info);
         try std.testing.expectEqual(usage,node.usage);
     }
-    for([_]u64{0,1,16,@as(u64,1)<<40}) |usage| {
+    for([_]u64{1,16,@as(u64,1)<<40}) |usage| {
         node.usage=usage;
         try std.testing.expectError(error.Invalid,create_buffer_view(7,11,13,&info));
     }
