@@ -6,6 +6,9 @@
  * workloads retain no extensions. Physical acceptance requires independent host proof.
  */
 #define COBJMACROS
+#define VK_USE_PLATFORM_WIN32_KHR
+#include <windows.h>
+#include <dwmapi.h>
 #define VgpuIcdLoader
 #include "waddle/venus_tcp.h"
 #include "waddle/venus_icd.h"
@@ -658,6 +661,8 @@ cleanup:
     return result;
 }
 
+#include "tcp_gpu_present_windows.inc"
+
 /** @brief Query actual modern physical wire paths without enabling unimplemented features.
  * @param[in] physical Live borrowed device, lookup Live borrowed instance dispatcher,
  * instance Parent lifetime, legacy Actual projected legacy features/properties.
@@ -733,9 +738,10 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
  */
 int main(int argc,char **argv)
 {
-    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries")))return 2;
+    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries") && strcmp(argv[6],"triangle_present")))return 2;
     int modern_queries=!strcmp(argv[6],"triangle_queries");
-    int graphics_workload=!strcmp(argv[6],"triangle") || modern_queries;
+    int presentation=!strcmp(argv[6],"triangle_present");
+    int graphics_workload=!strcmp(argv[6],"triangle") || modern_queries || presentation;
     if(!medium_integrity()){fputs("Native GPU fixture requires medium integrity\n",stderr);return 2;}
     if(GetFileAttributesA(argv[5])!=INVALID_FILE_ATTRIBUTES){fputs("Retirement receipt must be fresh\n",stderr);return 2;}
     HMODULE bootstrap_module=NULL,loader_module=NULL,system_dxgi_module=NULL;
@@ -763,13 +769,15 @@ int main(int argc,char **argv)
         symbol(loader_module,"vkDestroyDevice",&owned_destroy_device,sizeof owned_destroy_device))goto cleanup;
     stage="independent process-lifetime Windows graphics initialization";
     if(initialize_system_graphics(&system_dxgi_module))goto cleanup;
+    if(presentation && initialize_presentation_windows())goto cleanup;
     DWORD baseline=native_handles();if(!baseline)goto cleanup;
     printf("Native repeated application handle baseline=%lu\n",(unsigned long)baseline);fflush(stdout);
     for(unsigned iteration=0;iteration<8;iteration++) {
         stage="Vulkan1.0 instance creation";
         VkApplicationInfo application={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.apiVersion=VK_API_VERSION_1_0};
         const char *query_extension=VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
-        VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.pApplicationInfo=&application,.enabledExtensionCount=modern_queries ? 1u : 0u,.ppEnabledExtensionNames=modern_queries ? &query_extension : NULL};
+        const char *present_extensions[]={VK_KHR_SURFACE_EXTENSION_NAME,VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+        VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.pApplicationInfo=&application,.enabledExtensionCount=presentation ? 2u : (modern_queries ? 1u : 0u),.ppEnabledExtensionNames=presentation ? present_extensions : (modern_queries ? &query_extension : NULL)};
         if(create_instance(&info,NULL,&instance)!=VK_SUCCESS || !instance)goto cleanup;
         destroy_instance=owned_destroy_instance;
         PFN_vkEnumeratePhysicalDevices enumerate=(PFN_vkEnumeratePhysicalDevices)lookup(instance,"vkEnumeratePhysicalDevices");
@@ -795,7 +803,8 @@ int main(int argc,char **argv)
         uint32_t family=0;while(family<family_count && (!families[family].queueCount || !(families[family].queueFlags&required)))family++;
         if(family==family_count)goto cleanup;
         float priority=0.5f;VkDeviceQueueCreateInfo queue_info={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};
-        VkDeviceCreateInfo device_info={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.queueCreateInfoCount=1,.pQueueCreateInfos=&queue_info};
+        const char *swapchain_extension=VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+        VkDeviceCreateInfo device_info={.sType=VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,.queueCreateInfoCount=1,.pQueueCreateInfos=&queue_info,.enabledExtensionCount=presentation ? 1u : 0u,.ppEnabledExtensionNames=presentation ? &swapchain_extension : NULL};
         destroy_device=owned_destroy_device;
         stage="actual device and queue creation";if(create_device(selected,&device_info,NULL,&device)!=VK_SUCCESS || !device)goto cleanup;
         if(!device_proc(device,"vkDestroyDevice"))goto cleanup;
@@ -804,7 +813,8 @@ int main(int argc,char **argv)
         if(!destroy_device || !get_queue || !device_idle)goto cleanup;
         VkQueue queue=NULL,repeated=NULL;get_queue(device,family,0,&queue);get_queue(device,family,0,&repeated);if(!queue || repeated!=queue)goto cleanup;
         stage="exact hardware workload output";
-        if(graphics_workload){if(triangle_probe(device,queue,family,&supported_memory,device_proc))goto cleanup;}
+        if(presentation){if(native_swapchain_probe(instance,selected,device,queue,family,&supported_memory,lookup,device_proc))goto cleanup;}
+        else if(graphics_workload){if(triangle_probe(device,queue,family,&supported_memory,device_proc))goto cleanup;}
         else if(compute_probe(device,queue,family,&supported_memory,device_proc,!strcmp(argv[6],"compute_push"),37+iteration*19))goto cleanup;
         stage="application teardown before matching actual retirement Ack";
         if(device_idle(device)!=VK_SUCCESS)goto cleanup;

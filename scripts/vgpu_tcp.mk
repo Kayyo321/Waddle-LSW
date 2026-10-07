@@ -153,5 +153,5 @@ vgpu-tcp-bootstrap-sanitizers:
 	python3 tests/vgpu/tcp_bootstrap_sdk_coverage.py sanitizers
 
 # Native real-GPU fixture is separate from synthetic TCP/bootstrap acceptance.
-build/vgpu_tcp_gpu_windows_draft.exe: tests/vgpu/tcp_gpu_windows.c $(VgpuIcdHeaders) tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/compute_push_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h | build
-	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include $< -luser32 -ldxguid -ladvapi32 -o $@
+build/vgpu_tcp_gpu_windows_draft.exe: tests/vgpu/tcp_gpu_windows.c tests/vgpu/tcp_gpu_present_windows.inc $(VgpuIcdHeaders) tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/compute_push_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include $< -luser32 -lgdi32 -ldwmapi -ldxguid -ladvapi32 -o $@
