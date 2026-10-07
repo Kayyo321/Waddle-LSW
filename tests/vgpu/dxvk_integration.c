@@ -72,22 +72,41 @@ static HRESULT verify_pixels(ID3D11Device *device,ID3D11DeviceContext *context,I
     return status;
 }
 
-/** @brief Verify the actual presented client area after compositor completion.
+/** @brief Await and verify the actual presented client area.
  * @param[in] window Live borrowed 64 by 64 client HWND.
  * @return S_OK for every exact presented RGB pixel; failure otherwise.
- * @note Sole caller thread. Owns its acquired DC until unconditional ReleaseDC.
+ * @note Sole caller thread. DXVK Present queues asynchronous presentation.
+ * Repeats DwmFlush and every exact pixel comparison for at most ten seconds;
+ * owns each acquired DC until unconditional ReleaseDC. No pixel tolerance.
  */
 static HRESULT verify_presented_pixels(HWND window) {
-    if(DwmFlush()!=S_OK)return E_FAIL;
     RECT client={0};
     if(!GetClientRect(window,&client) || client.right!=64 || client.bottom!=64)return E_FAIL;
-    HDC dc=GetDC(window);if(!dc)return E_FAIL;
-    HRESULT status=S_OK;
-    for(int row=0;row<64;row++)for(int column=0;column<64;column++)
-        if(GetPixel(dc,column,row)!=RGB(32,64,128))status=E_FAIL;
-    if(!ReleaseDC(window,dc))status=E_FAIL;
-    if(SUCCEEDED(status))puts("DXVK presented 4096 exact client RGB pixels.");
-    return status;
+    ULONGLONG started=GetTickCount64();int first=1;
+    for(;;){
+        if(DwmFlush()!=S_OK)return E_FAIL;
+        HDC dc=GetDC(window);if(!dc)return E_FAIL;
+        UINT mismatches=0;int first_row=0,first_column=0;COLORREF first_pixel=0;
+        for(int row=0;row<64;row++)for(int column=0;column<64;column++){
+            COLORREF pixel=GetPixel(dc,column,row);
+            if(!row && !column)first_pixel=pixel;
+            if(pixel!=RGB(32,64,128)){
+                if(!mismatches){first_row=row;first_column=column;first_pixel=pixel;}
+                ++mismatches;
+            }
+        }
+        if(!ReleaseDC(window,dc))return E_FAIL;
+        ULONGLONG elapsed=GetTickCount64()-started;
+        if(!mismatches && elapsed<=10000){puts("DXVK presented 4096 exact client RGB pixels.");return S_OK;}
+        if((first && mismatches) || elapsed>=10000){
+            fprintf(stderr,"DXVK presented pixels %s: count=%u first=(%d,%d) RGB=%u,%u,%u raw=0x%08lx expected=32,64,128 elapsed_ms=%llu\n",
+                elapsed>=10000 ? "timed out" : "pending",(unsigned)mismatches,first_row,first_column,
+                (unsigned)GetRValue(first_pixel),(unsigned)GetGValue(first_pixel),(unsigned)GetBValue(first_pixel),
+                (unsigned long)first_pixel,(unsigned long long)elapsed);fflush(stderr);
+        }
+        if(elapsed>=10000)return E_FAIL;
+        first=0;Sleep(1);
+    }
 }
 
 /** @brief Execute real DXVK compute and verify all 64 storage-buffer words.
