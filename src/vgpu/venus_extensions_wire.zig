@@ -271,3 +271,46 @@ test "maximum reply exact quota long names last duplicate and oversized buffers"
     try std.testing.expectEqual(@as(u8, 0), output[0].name[255]);
     try std.testing.expectEqual(@as(u32, 0), output[0].version);
 }
+
+test "seeded repeated count fill and malformed reply stress preserves ownership" {
+    var generator = std.Random.DefaultPrng.init(0x9a18_d6c3_77e2_510b);
+    const random = generator.random();
+    const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+    var properties: [8]c.VkExtensionProperties = undefined;
+    var bytes: [28 + 8 * 268]u8 = undefined;
+    var output: [8]extension_t = undefined;
+    for (0..256) |iteration| {
+        const count: u32 = @intCast(iteration % 9);
+        for (&properties, 0..) |*property, index| {
+            @memset(property.extensionName[0..], 0xff);
+            @memcpy(property.extensionName[0..3], "VK_");
+            property.extensionName[3] = '0' + @as(u8, @intCast(index));
+            const length = 4 + random.uintLessThan(usize, 252);
+            for (property.extensionName[4..length]) |*value| value.* = alphabet[random.uintLessThan(usize, alphabet.len)];
+            property.extensionName[length] = 0;
+            property.specVersion = random.int(u32);
+        }
+        @memset(std.mem.asBytes(&output), 0xa5);
+        const untouched = output;
+        _ = venus_extensions_test_reply(0, count, null, &bytes, bytes.len);
+        try std.testing.expectEqual(count, try @call(.never_inline, decode_count, .{&bytes}));
+        const result: i32 = if (iteration % 2 == 0) 0 else 5;
+        const used = venus_extensions_test_reply(result, count, &properties, &bytes, bytes.len);
+        const filled = try @call(.never_inline, decode_fill, .{ bytes[0..used], &output });
+        try std.testing.expectEqual(count, filled.count);
+        try std.testing.expectEqual(result == 5, filled.incomplete);
+        for (output[0..count], 0..) |record, index| {
+            const length = std.mem.indexOfScalar(u8, properties[index].extensionName[0..], 0).?;
+            try std.testing.expectEqual(properties[index].specVersion, record.version);
+            try std.testing.expectEqualSlices(u8, properties[index].extensionName[0..length], record.name[0..length]);
+            try std.testing.expect(std.mem.allEqual(u8, record.name[length..], 0));
+        }
+        try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(untouched[count..]), std.mem.sliceAsBytes(output[count..]));
+        if (count != 0) {
+            const before = output;
+            bytes[28 + (@as(usize, count) - 1) * 268] ^= 1;
+            try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_fill, .{ bytes[0..used], &output }));
+            try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&output));
+        }
+    }
+}
