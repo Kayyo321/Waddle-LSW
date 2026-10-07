@@ -10483,3 +10483,208 @@ test "device child result queries preserve ownership and publish only validated 
     try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), reset_event(native_device, native_event));
     try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
 }
+// Append-only integration draft for the exclusive ICD owner. No host or GPU dependency.
+const image_ownership_fixture_t = struct {
+    mode: u8 = 0,
+    command_id: u32 = 0,
+    submissions: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = request.*.kind;
+        response.*.direction = 1;
+        if (request.*.kind == c.RequestSubmit) {
+            const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+            fixture.command_id = std.mem.readInt(u32, bytes[36..40], .little);
+            fixture.submissions += 1;
+            if (fixture.mode == 1) return c.RingClosed;
+            response.*.argument_zero = fixture.submissions;
+        } else if (request.*.kind == c.RequestReply) {
+            const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+            @memset(bytes, 0);
+            std.mem.writeInt(u32, bytes[0..4], fixture.command_id + @as(u32, if (fixture.mode == 2) 1 else 0), .little);
+            response.*.payload_bytes = @intCast(capacity);
+        } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+        return c.RingOk;
+    }
+    fn reserve(kind: u32, parent: u64, dispatchable: u32) !*c.venus_object_t {
+        var result: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, kind, parent, dispatchable, &result));
+        return result;
+    }
+    fn retained(recording: *c.venus_object_t, target: *c.venus_object_t) bool {
+        const index = resource_index(target);
+        return resource_state(recording).buffer_references[index / 64] & (@as(u64, 1) << @as(u6, @intCast(index % 64))) != 0;
+    }
+};
+
+test "image ownership transfer ACK publishes resources and allocations atomically" {
+    // Every operation owns real memory records; failed ACKs cannot publish any refs.
+    for (0..5) |operation| for (0..3) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, device.id, 0);
+        const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        const source_memory = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const target_memory = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const source = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        const target = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, device.id, 0);
+        resource_state(recording).command_state = .Recording;
+        for ([_]*c.venus_object_t{ source, target }) |image| resource_state(image).* = .{ .id = image.id, .bound_memory = if (image == source) source_memory.handle else target_memory.handle, .image_usage = 3, .image_type = c.VK_IMAGE_TYPE_2D, .image_extent = .{ 8, 8, 1 }, .image_levels = 1, .image_layers = 1, .image_format = c.VK_FORMAT_R8G8B8A8_UNORM, .image_samples = 1, .requirements = .{ .size = 256 } };
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = target_memory.handle, .buffer_size = 256, .buffer_usage = 3 };
+        const cmd: c.VkCommandBuffer = @ptrFromInt(recording.handle);
+        const source_handle: c.VkImage = @ptrFromInt(source.handle);
+        const target_handle: c.VkImage = @ptrFromInt(target.handle);
+        var copy = std.mem.zeroes(c.VkImageCopy);
+        copy.srcSubresource = .{ .aspectMask = 1, .layerCount = 1 };
+        copy.dstSubresource = copy.srcSubresource;
+        copy.extent = .{ .width = 8, .height = 8, .depth = 1 };
+        var buffer_copy = std.mem.zeroes(c.VkBufferImageCopy);
+        buffer_copy.imageSubresource = copy.srcSubresource;
+        buffer_copy.imageExtent = copy.extent;
+        var range = c.VkImageSubresourceRange{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 };
+        var clear_value = std.mem.zeroes(c.VkClearColorValue);
+        switch (operation) {
+            0 => copy_image(cmd, source_handle, c.VK_IMAGE_LAYOUT_GENERAL, target_handle, c.VK_IMAGE_LAYOUT_GENERAL, 1, &copy),
+            1 => copy_buffer_to_image(cmd, @ptrFromInt(buffer.handle), source_handle, c.VK_IMAGE_LAYOUT_GENERAL, 1, &buffer_copy),
+            2 => copy_image_to_buffer(cmd, source_handle, c.VK_IMAGE_LAYOUT_GENERAL, @ptrFromInt(buffer.handle), 1, &buffer_copy),
+            3 => clear_color_image(cmd, source_handle, c.VK_IMAGE_LAYOUT_GENERAL, &clear_value, 1, &range),
+            4 => {
+                resource_state(source).image_samples = 4;
+                var resolve = c.VkImageResolve{ .srcSubresource = copy.srcSubresource, .dstSubresource = copy.dstSubresource, .extent = copy.extent };
+                cmd_resolve_image(cmd, source_handle, c.VK_IMAGE_LAYOUT_GENERAL, target_handle, c.VK_IMAGE_LAYOUT_GENERAL, 1, &resolve);
+            },
+            else => unreachable,
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, source));
+        try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, source_memory));
+        if (operation != 3) {
+            try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, target_memory));
+            try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, if (operation == 1 or operation == 2) buffer else target));
+        }
+        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
+        // Connection failure keeps all private objects owned until explicit abandon.
+        try std.testing.expectEqual(@as(usize, 8), objects.live_count);
+    };
+}
+
+test "image ownership invalid geometry and foreign allocation never reach transport" {
+    for (0..6) |case| {
+        var fixture = image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const other_device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, device.id, 0);
+        const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, if (case == 0) other_device.id else device.id, 0);
+        const buffer_allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, device.id, 0);
+        resource_state(recording).command_state = .Recording;
+        resource_state(image).* = .{ .id = image.id, .bound_memory = allocation.handle, .image_usage = 3, .image_type = c.VK_IMAGE_TYPE_2D, .image_extent = .{ 8, 8, 1 }, .image_levels = 1, .image_layers = 1, .image_format = c.VK_FORMAT_R8G8B8A8_UNORM, .image_samples = 1, .requirements = .{ .size = 256 } };
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = buffer_allocation.handle, .buffer_size = 256, .buffer_usage = 3 };
+        var regions = [_]c.VkBufferImageCopy{std.mem.zeroes(c.VkBufferImageCopy)} ** 2;
+        regions[0].imageSubresource = .{ .aspectMask = 1, .layerCount = 1 };
+        regions[0].imageExtent = .{ .width = 8, .height = 8, .depth = 1 };
+        regions[1] = regions[0];
+        switch (case) {
+            0 => {}, // Live allocation belongs to another device.
+            1 => resource_state(image).bound_memory = 0,
+            2 => regions[0].imageOffset.x = 1, // Exact extent overflows the mip.
+            3 => regions[0].bufferOffset = 4, // Full image exceeds destination buffer.
+            4 => resource_state(image).image_samples = 4,
+            5 => {}, // Two writes overlap in destination storage.
+            else => unreachable,
+        }
+        copy_image_to_buffer(@ptrFromInt(recording.handle), @ptrFromInt(image.handle), c.VK_IMAGE_LAYOUT_GENERAL, @ptrFromInt(buffer.handle), if (case == 5) 2 else 1, &regions);
+        try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+        try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        try std.testing.expectEqual([_]u64{0} ** 8, resource_state(recording).buffer_references);
+    }
+}
+
+test "image ownership dynamic rendering scope and attachment refs publish only after ACK" {
+    for (0..3) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, device.id, 0);
+        const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        const view = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE_VIEW, device.id, 0);
+        device_caches[0] = .{ .handle = device.handle, .graphics_queue_ready = true, .graphics_queue_count = 1 };
+        device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
+        resource_state(recording).command_state = .Recording;
+        resource_state(recording).command_profile_index = try profiles.reserve_slot(&command_registry.commands, compute_state.command_profile_t{});
+        resource_state(image).* = .{ .id = image.id, .bound_memory = allocation.handle, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .image_type = c.VK_IMAGE_TYPE_2D, .image_extent = .{ 8, 8, 1 }, .image_levels = 1, .image_layers = 1, .image_format = c.VK_FORMAT_R8G8B8A8_UNORM, .image_samples = 1 };
+        resource_state(view).* = .{ .id = view.id, .view_image = image.handle, .view_type = c.VK_IMAGE_VIEW_TYPE_2D, .view_range = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 }, .image_format = c.VK_FORMAT_R8G8B8A8_UNORM, .image_usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT };
+        var attachment = c.VkRenderingAttachmentInfo{ .sType = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = @ptrFromInt(view.handle), .imageLayout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, .loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE };
+        var info = c.VkRenderingInfo{ .sType = c.VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = .{ .extent = .{ .width = 8, .height = 8 } }, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &attachment };
+        const cmd: c.VkCommandBuffer = @ptrFromInt(recording.handle);
+        begin_rendering(cmd, &info);
+        try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        try std.testing.expectEqual(if (mode == 0) @as(u32, c.VK_FORMAT_R8G8B8A8_UNORM) else 0, graphics_recording(resource_state(recording)).active_format);
+        for ([_]*c.venus_object_t{ allocation, image, view }) |target| try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, target));
+        if (mode == 0) {
+            end_rendering(cmd);
+            try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
+            try std.testing.expectEqual(@as(u32, 0), graphics_recording(resource_state(recording)).active_format);
+            // Ending the scope does not release resources still captured by the command.
+            for ([_]*c.venus_object_t{ allocation, image, view }) |target| try std.testing.expect(image_ownership_fixture_t.retained(recording, target));
+            end_rendering(cmd);
+            try std.testing.expectEqual(command_state_t.Invalid, resource_state(recording).command_state);
+            try std.testing.expectEqual(@as(usize, 2), fixture.submissions);
+        }
+    }
+}
+
+test "image ownership public WSI preserves foreign chains and failed acquire indices" {
+    for (0..2) |transport_loss| {
+        var fixture = image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const foreign = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        resource_state(image).* = .{ .id = image.id, .bound_memory = allocation.handle };
+        device_caches[0] = .{ .handle = device.handle };
+        device_caches[1] = .{ .handle = foreign.handle };
+        // Registry publication models a completed constructor; all image/memory
+        // handles below are real core owners, retired via the actual callbacks.
+        wsi_state.swapchains[0] = .{ .id = 500, .device = device.handle, .count = 1 };
+        wsi_state.swapchains[0].images[0] = .{ .image = image.handle, .memory = allocation.handle };
+        const chain: c.VkSwapchainKHR = @ptrFromInt(500);
+        var count: u32 = 7;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_DATE_KHR), swapchain_images(@ptrFromInt(foreign.handle), chain, &count, null));
+        try std.testing.expectEqual(@as(u32, 7), count);
+        try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), swapchain_images(@ptrFromInt(device.handle), chain, &count, null));
+        try std.testing.expectEqual(@as(u32, 1), count);
+        var native_image: c.VkImage = null;
+        try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), swapchain_images(@ptrFromInt(device.handle), chain, &count, &native_image));
+        try std.testing.expectEqual(image.handle, @intFromPtr(native_image.?));
+        var index: u32 = 0xfeed;
+        // No enabled queue: signaling fails; acquisition must roll back locally.
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), acquire_next_image(@ptrFromInt(device.handle), chain, 0, null, null, &index));
+        try std.testing.expectEqual(@as(u32, 0xfeed), index);
+        try std.testing.expect(!wsi_state.swapchains[0].images[0].acquired);
+        destroy_swapchain(@ptrFromInt(foreign.handle), chain, null);
+        try std.testing.expectEqual(@as(u64, 500), wsi_state.swapchains[0].id);
+        try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+        if (transport_loss != 0) _ = failure(c.RingClosed);
+        destroy_swapchain(@ptrFromInt(device.handle), chain, null);
+        try std.testing.expectEqual(@as(u64, 0), wsi_state.swapchains[0].id);
+        // Failed transport transfers unresolved host ownership to core's retained
+        // records. Successful destruction retires image before its allocation.
+        try std.testing.expectEqual(if (transport_loss == 0) @as(usize, 2) else 4, objects.live_count);
+        try std.testing.expectEqual(if (transport_loss == 0) @as(usize, 2) else 0, fixture.submissions);
+    }
+}
