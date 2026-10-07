@@ -1,9 +1,13 @@
-//! Copied single-color pipeline/pass compatibility; caller owns native lifetimes.
+//! Copied first-color pipeline/pass compatibility; caller validates complete attachment
+//! signatures and owns native lifetimes. NoColor explicitly represents a zero-color scope.
 const std = @import("std");
 /// Immutable core RGBA8_UNORM format37; static lifetime, no owner or synchronization.
 pub const Rgba8Unorm: u32 = 37;
 /// Immutable core BGRA8_UNORM format44; static lifetime, no owner or synchronization.
 pub const Bgra8Unorm: u32 = 44;
+/// Explicit no-color compatibility key; never a wire VkFormat or active-scope absence.
+/// Immutable scalar owned by no resource, safe for concurrent readers.
+pub const NoColor: u32 = 0xffffffff;
 /// Owned scalar recording state; no heap/native pointers. Caller serializes mutations.
 /// Pipeline token/format survive pass end; zero active_format means outside a pass.
 pub const recording_t = struct {
@@ -15,7 +19,7 @@ pub const recording_t = struct {
     active_format: u32 = 0,
 };
 fn valid_format(format: u32) bool {
-    return format == Rgba8Unorm or format == Bgra8Unorm;
+    return (format > 0 and format <= 184) or format == NoColor;
 }
 /// [in,out] state nonnull owned metadata; [in] pipeline nonzero guest identity,
 /// format copied canonical attachment format. No native pointer retained/allocation.
@@ -93,7 +97,7 @@ test "invalid ordering and scalar errors preserve every field" {
     var state = recording_t{};
     try std.testing.expectError(error.Invalid, end_fixture(&state));
     try finish_fixture(&state);
-    for ([_]u32{ 0, 1, 0xffffffff }) |format| {
+    for ([_]u32{ 0, 185, 0xfffffffe }) |format| {
         const before = state;
         try std.testing.expectError(error.Invalid, begin_fixture(&state, format));
         try std.testing.expectEqualDeep(before, state);
@@ -122,4 +126,15 @@ test "invalid ordering and scalar errors preserve every field" {
     @call(.never_inline, reset, .{&state});
     try std.testing.expectEqualDeep(recording_t{}, state);
     try finish_fixture(&state);
+}
+
+test "first color compatibility supports srgb compressed formats and no color scopes" {
+    for ([_]u32{ 1, 43, 50, 131, 146, 184, NoColor }) |format| {
+        var state = recording_t{};
+        try bind_pipeline(&state, 17, format);
+        try begin_pass(&state, format);
+        try std.testing.expectEqual(@as(u64, 17), try draw_pipeline(&state));
+        try end_pass(&state);
+        try finish(&state);
+    }
 }
