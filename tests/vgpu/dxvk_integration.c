@@ -288,12 +288,12 @@ int wmain(int argc, wchar_t **argv) {
                                             &finished, sizeof(finished), 0);
         if (FAILED(status))
             goto cleanup;
-        if (status == S_OK && finished)
-            break;
         if (GetTickCount64() - started >= 10000) {
             status = HRESULT_FROM_WIN32(WAIT_TIMEOUT);
             goto cleanup;
         }
+        if (status == S_OK && finished)
+            break;
         Sleep(1);
     } while (1);
     stage="exact GPU staging pixels";status=verify_pixels(device,context,backbuffer);if(FAILED(status))goto cleanup;
