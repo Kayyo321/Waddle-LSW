@@ -128,6 +128,30 @@ pub fn copy_buffer_to_image(command: u64, source: u64, target: u64, layout: u32,
     }
     return writer;
 }
+/// Encode image readback to buffer; IDs nonzero and regions borrowed 1..64 records.
+/// Caller validates texel/block alignment, row strides, buffer spans and image bounds.
+/// Returns complete owned packet or Invalid, no allocation/retention, thread-safe.
+pub fn copy_image_to_buffer(command: u64, source: u64, target: u64, layout: u32, regions: []const c.VkBufferImageCopy) !writer_t {
+    if (command == 0 or source == 0 or target == 0 or !source_layout(layout) or regions.len == 0 or regions.len > MaxRegions) return error.Invalid;
+    for (regions) |region| if (!layers_valid(region.imageSubresource) or !offset_valid(region.imageOffset) or !extent_valid(region.imageExtent) or
+        (region.bufferRowLength != 0 and region.bufferRowLength < region.imageExtent.width) or
+        (region.bufferImageHeight != 0 and region.bufferImageHeight < region.imageExtent.height)) return error.Invalid;
+    var writer = header(116, command);
+    put(&writer, u64, source);
+    put(&writer, u32, layout);
+    put(&writer, u64, target);
+    put(&writer, u32, @intCast(regions.len));
+    put(&writer, u64, regions.len);
+    for (regions) |region| {
+        put(&writer, u64, region.bufferOffset);
+        put(&writer, u32, region.bufferRowLength);
+        put(&writer, u32, region.bufferImageHeight);
+        encode_layers(&writer, region.imageSubresource);
+        encode_offset(&writer, region.imageOffset);
+        encode_extent(&writer, region.imageExtent);
+    }
+    return writer;
+}
 fn ranges_valid(ranges: []const c.VkImageSubresourceRange, aspects: u32) bool {
     if (ranges.len == 0 or ranges.len > MaxRegions) return false;
     for (ranges) |range| if (range.aspectMask == 0 or range.aspectMask & ~aspects != 0 or range.levelCount == 0 or range.layerCount == 0) return false;
@@ -199,7 +223,7 @@ fn compare(writer: writer_t, kind: u32, count: usize, regions: *const anyopaque,
     try std.testing.expectEqual(used, writer.used);
     try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
 }
-test "all six transfer commands match independent pinned encoder at maximum count" {
+test "all seven transfer commands match independent pinned encoder at maximum count" {
     const layers = c.VkImageSubresourceLayers{ .aspectMask = 1, .mipLevel = 3, .baseArrayLayer = 4, .layerCount = 2 };
     const extent = c.VkExtent3D{ .width = 16, .height = 32, .depth = 1 };
     const offset = c.VkOffset3D{ .x = 2, .y = 3, .z = 0 };
@@ -215,6 +239,7 @@ test "all six transfer commands match independent pinned encoder at maximum coun
         try compare(try copy_image(8, 42, 1, 43, 7, copies[0..count]), 0, count, &copies, &color);
         try compare(try blit_image(8, 42, 1, 43, 7, blits[0..count], 1), 1, count, &blits, &color);
         try compare(try copy_buffer_to_image(8, 42, 43, 7, uploads[0..count]), 2, count, &uploads, &color);
+        try compare(try copy_image_to_buffer(8, 42, 43, 1, uploads[0..count]), 6, count, &uploads, &color);
         try compare(try clear_color(8, 42, 7, color, color_ranges[0..count]), 3, count, &color_ranges, &color);
         try compare(try clear_depth_stencil(8, 42, 7, depth, depth_ranges[0..count]), 4, count, &depth_ranges, &depth);
         try compare(try resolve_image(8, 42, 1, 43, 7, resolves[0..count]), 5, count, &resolves, &color);
