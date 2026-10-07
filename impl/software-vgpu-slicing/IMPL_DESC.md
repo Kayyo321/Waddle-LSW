@@ -5773,3 +5773,20 @@ values without a tolerance or skipped assertion. Microsoft FLOAT-to-UNORM rules:
 https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm
 (section3.2.3.6). Compute64 words, actual Present, real device removal, native DLL
 heap audit and zero-leak teardown remain separate unchanged acceptance criteria.
+
+
+### Maintenance5 view ownership and asynchronous presentation
+
+A buffer view accepts one aligned, terminated VkBufferUsageFlags2CreateInfoKHR
+node only when maintenance5 is enabled. Its full64-bit wire value is preserved;
+frontend-supported usage is limited to uniform/storage texel bits and must be a
+subset of the backing buffer usage. Zero usage is legal for construction, but
+cannot satisfy a texel descriptor. Creation and descriptor publication require a
+fully bound live allocation. Existing ACK staging determines publication and
+uncertain owners remain retained until trusted receiver retirement. Mutex-owned
+registry iteration borrows arrays to avoid native thread-stack copies.
+
+DXVK Present may enqueue native presentation on a background thread. Acceptance
+repeats DwmFlush and every exact64x64 client RGB comparison for at most10s, releases
+each acquired DC unconditionally, and rejects a late result. It records the first
+mismatch and count without tolerance, masks or skipped pixels.

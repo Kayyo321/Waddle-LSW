@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; GetData, staging Map and4096 exact GPU pixels pass in actual Windows/DXVK; compute descriptor-allocation timeout under investigation; presentation, whole-core coverage and final leak qualification pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; GetData, staging Map and4096 exact GPU pixels pass in actual Windows/DXVK; maintenance5 buffer-view usage and native stack overflow fixed; all64 exact compute words pass; presentation, whole-core coverage and final leak qualification pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -886,10 +886,44 @@ all historical flat reports. TODO#3 remains55%; overall68.75% pending final gate
 
 Actual pinned DXVK2.7.1 run `182afac7` creates FL11 device/swapchain, passes
 GetData deadline, maps staging storage and verifies all4096 exact BGRA pixels.
-Compute initialization then times out at descriptor allocation77; compute results,
-Present/client pixels and teardown are not accepted. Controller status-5 means
+The last successful host operation was descriptor allocation77; shared live logs
+later proved local maintenance5 buffer-view rejection caused the command thread
+to exit and the idle host to time out. That run accepts no compute, Present/client
+pixels or teardown results. Controller status-5 means
 RingTimeout, not RingCorrupt. Host worker retired with raw exit256 and empty owned
 session; native PID4296 remains preserved. Non-invasive signed Microsoft CDB
 capture identifies DXVK synchronization waiting after its command thread exits.
 A separate native trace may proceed only because the old host/GPU owner retired.
 TODO#3 remains55%, overall68.75%; all final gates remain required.
+
+
+### Native compute integration milestone: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `409c0d7` | test(vgpu): trace descriptor reply validation and map owner failures | #3 +0%; overall +0% (final acceptance pending). | Both actual descriptor replies match; public mapping ownership and injected failures pass. |
+| `7c3f17e` | fix(vgpu): preserve maintenance5 buffer view usage | #3 +0%; overall +0% (final acceptance pending). | Pinned native encoder agrees with single bounded usage-flags2 chain. |
+| `5f34681` | fix(acceptance): read live Windows logs with shared writers | #3 +0%; overall +0% (final acceptance pending). | Actual shared log reads expose buffer-view rejection; old empty artifacts preserved. |
+| `3acd2cd` | fix(vgpu): admit empty buffer view usage subsets | #3 +0%; overall +0% (final acceptance pending). | All38 Debug/ReleaseSafe tests pass; affected final serializer coverage/sanitizers pending. |
+| `86caaf6` | fix(vgpu): preserve maintenance5 buffer view usage and ownership | #3 +0%; overall +0% (final acceptance pending). | Effective view usage must be a supported subset of a fully bound live backing allocation; descriptor checks use view and backing ownership. |
+| `79ac292` | fix(vgpu): borrow descriptor and resource registries within native stack limits | #3 +0%; overall +0% (final acceptance pending). | Native stack overflow fixed without raising thread stack; all282 Debug/ReleaseSafe/native128 and Windows static checks pass. |
+| `971e58a` | test(dxvk): await exact asynchronous client presentation | #3 +0%; overall +0% (final acceptance pending). | Polls all4096 unchanged exact RGB assertions within original10s bound; fresh Windows execution pending. |
+
+Actual immutable `dxvk_gpu_db079fbb` at79ac292 creates the pinned DXVK2.7.1
+FL11 device/swapchain and passes4096 exact GPU BGRA pixels plus64 exact compute
+storage words. Present returns S_OK but the immediate client pixel check fails.
+No presentation acceptance is credited. Shared DXVK logs show no Present-path
+error. The fresh971e58a verifier waits for asynchronous presentation while retaining
+all exact comparisons and the existing10s limit. Failed teardown uses the existing
+trusted cancellation/worker-retirement receipt; this is not normal-teardown credit.
+
+The previous descriptor-allocation hypothesis is superseded by shared live logs:
+maintenance5 buffer-view usage was rejected locally after a successful allocation.
+After that fix,400473f7 demonstrated STATUS_STACK_OVERFLOW in the ICD; borrowing
+mutex-owned registries reduces descriptor-update stack from1,427,480 to45,080 bytes
+and sampler destruction from1,478,552 to72 bytes. No stack-limit bypass was added.
+Old native PIDs4296/1404 and all failed snapshots remain preserved.
+
+Whole-core90% coverage, final leaks/sanitizers/stress, complete Windows presentation
+and normal teardown, controlled device removal and external native DLL heap audit
+remain required. TODO#3 remains55%, overall68.75%; Time Ended remains TBD.

@@ -262,3 +262,31 @@ unique upstream logs and existing scalar ICD/TCP diagnostics. Root/image/core ke
 compilation and targeted functional tests moving. Whole-core90% and final expensive
 sanitizer/stress/Windows/native heap acceptance stay deferred until basic compute,
 presentation and teardown work. Do not mark TODO#3 complete prematurely.
+
+
+### 2026-10-07 real DXVK compute and bounded presentation verification
+
+Resume at971e58a on the existing branch. The last-opcode77 timeout was not an
+allocation failure: shared live DXVK logs prove successful allocations followed
+by unsupported VkBufferUsageFlags2CreateInfoKHR on a buffer view. 7c3f17e/3acd2cd
+encode the bounded chain;86caaf6 validates effective texel usage against the fully
+bound allocation and descriptor ownership. A subsequent actual Windows run found
+a native stack overflow.79ac292 borrows existing mutex-owned registries rather
+than copying them on the default DXVK thread stack. All282 D/RS/native128 and
+Windows static checks pass; no new stack size or weakened ownership.
+
+Actual db079fbb now passes4096 exact GPU pixels and64 exact compute words.
+Present returned S_OK, but immediate client readback failed; shared DXVK logs
+show no Present-path error.971e58a polls all4096 unchanged exact RGB comparisons
+for at most the original10s to allow asynchronous DXVK presentation. WDDM owns
+the fresh immutable actual run, all VM/GPU access and retained host receipts.
+Image owner reviewed the readback/format/GDI path without a concrete defect.
+Core owner prepares targeted private tests; expensive final gates remain held
+until basic real presentation and teardown succeed. Root owns final bridge
+sanitation, documentation and integrated gate coordination. Extra-object final
+qualification must rerun for its changed production serializer.
+
+Preserve old native PIDs4296/1404, VM/snapshots/artifacts and untracked files.
+TODO#3 remains55%, overall68.75%; full90% core coverage, zero leaks, stress,
+actual normal/sanitized DXVK, full WSI, device loss and native DLL heap audit
+remain mandatory. Exclusive source ownership and shared-index locking unchanged.
