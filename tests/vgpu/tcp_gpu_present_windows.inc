@@ -107,20 +107,28 @@ static int swapchain_triangle_render(VkDevice device, VkQueue queue, uint32_t fa
         .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = VK_FORMAT_B8G8R8A8_UNORM,
         .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1}};
     if (create_image_view(device, &view_info, NULL, &view) != VK_SUCCESS || !view) goto cleanup;
-    stage = "noncoherent readback buffer acquisition";
+    stage = "host-visible readback buffer acquisition";
     const VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 16384, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
     if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto cleanup;
     VkMemoryRequirements buffer_requirements = {0};
     get_buffer_memory_requirements(device, buffer, &buffer_requirements);
     uint32_t buffer_type = VK_MAX_MEMORY_TYPES;
-    for (uint32_t index = 0; index < supported_memory->memoryTypeCount; index++) {
-        const VkMemoryPropertyFlags flags = supported_memory->memoryTypes[index].propertyFlags;
-        if ((buffer_requirements.memoryTypeBits & (UINT32_C(1) << index)) &&
-            (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !(flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
-            buffer_type = index; break;
+    /* Prefer explicit noncoherent coverage when the physical device offers it;
+     * an honestly coherent-only device remains a valid readback target. */
+    for (uint32_t pass = 0; pass < 2 && buffer_type == VK_MAX_MEMORY_TYPES; pass++) {
+        for (uint32_t index = 0; index < supported_memory->memoryTypeCount; index++) {
+            const VkMemoryPropertyFlags flags = supported_memory->memoryTypes[index].propertyFlags;
+            if ((buffer_requirements.memoryTypeBits & (UINT32_C(1) << index)) &&
+                (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
+                (pass || !(flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))) {
+                buffer_type = index; break;
+            }
         }
     }
+    if(buffer_type != VK_MAX_MEMORY_TYPES)
+        printf("Native readback memory type=%u coherent=%u explicit flush/invalidate retained\n",
+            buffer_type, !!(supported_memory->memoryTypes[buffer_type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT));
     if (buffer_requirements.size < 16384 || buffer_type == VK_MAX_MEMORY_TYPES) goto cleanup;
     const VkMemoryAllocateInfo buffer_allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize = buffer_requirements.size, .memoryTypeIndex = buffer_type};
