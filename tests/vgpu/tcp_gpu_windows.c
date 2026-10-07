@@ -708,7 +708,18 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
     if(!memory.memoryProperties.memoryTypeCount || memory.memoryProperties.memoryTypeCount>VK_MAX_MEMORY_TYPES || !memory.memoryProperties.memoryHeapCount || memory.memoryProperties.memoryHeapCount>VK_MAX_MEMORY_HEAPS)return 1;
     for(uint32_t index=0;index<memory.memoryProperties.memoryTypeCount;index++)if(memory.memoryProperties.memoryTypes[index].heapIndex>=memory.memoryProperties.memoryHeapCount)return 1;
     VkPhysicalDeviceSparseImageFormatInfo2 sparse_info={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2,.format=VK_FORMAT_R8G8B8A8_UNORM,.type=VK_IMAGE_TYPE_2D,.samples=VK_SAMPLE_COUNT_1_BIT,.usage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL};
-    uint32_t sparse_count=0;get_sparse(physical,&sparse_info,&sparse_count,NULL);if(sparse_count)return 1; /* Sparse bindings are deliberately unadvertised. */
+    PFN_vkGetPhysicalDeviceSparseImageFormatProperties legacy_sparse=(PFN_vkGetPhysicalDeviceSparseImageFormatProperties)lookup(instance,"vkGetPhysicalDeviceSparseImageFormatProperties");
+    if(!legacy_sparse)return 1;
+    uint32_t sparse_count=0,legacy_count=0;get_sparse(physical,&sparse_info,&sparse_count,NULL);
+    legacy_sparse(physical,sparse_info.format,sparse_info.type,sparse_info.samples,sparse_info.usage,sparse_info.tiling,&legacy_count,NULL);
+    if(sparse_count!=legacy_count || sparse_count>64)return 1;
+    VkSparseImageFormatProperties2 sparse_properties[64]={0};VkSparseImageFormatProperties legacy_properties[64]={0};
+    for(uint32_t index=0;index<sparse_count;index++)sparse_properties[index].sType=VK_STRUCTURE_TYPE_SPARSE_IMAGE_FORMAT_PROPERTIES_2;
+    uint32_t sparse_capacity=sparse_count,legacy_capacity=legacy_count;
+    get_sparse(physical,&sparse_info,&sparse_capacity,sparse_properties);
+    legacy_sparse(physical,sparse_info.format,sparse_info.type,sparse_info.samples,sparse_info.usage,sparse_info.tiling,&legacy_capacity,legacy_properties);
+    if(sparse_capacity!=sparse_count || legacy_capacity!=legacy_count)return 1;
+    for(uint32_t index=0;index<sparse_count;index++)if(sparse_properties[index].sType!=VK_STRUCTURE_TYPE_SPARSE_IMAGE_FORMAT_PROPERTIES_2 || sparse_properties[index].pNext || memcmp(&sparse_properties[index].properties,&legacy_properties[index],sizeof legacy_properties[index]))return 1;
     printf("Native modern KHR physical queries PASS driver=%s max_buffer=%llu\n",properties12.driverName,(unsigned long long)properties13.maxBufferSize);fflush(stdout);return 0;
 }
 
