@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 mode=sys.argv[1]
-assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire')
+assert mode in ('av_audio','av_codec','av_layout','av_video','venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native')
 if mode == 'av_video':
     import gzip
     output=Path.cwd()/'build/coverage/av/video'
@@ -35,10 +35,10 @@ if mode == 'av_video':
         print(f'av_video production {kind} coverage: {percent:.2f}% ({covered}/{len(entries)})',flush=True)
         assert percent>=90
     sys.exit(0)
-source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire') else 'src/av/')+mode+'.zig'
-root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire') else 'av')/mode
-if mode in ('venus_device_native', 'venus_device_wire', 'venus_extensions_wire'):
-    # Every device parser/codec attempt retains its complete coverage artifacts.
+source=('src/vgpu/' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native') else 'src/av/')+mode+'.zig'
+root=Path.cwd(); output=root/'build/coverage'/('vgpu' if mode in ('venus_bounds','venus_control','venus_receiver_bounds','venus_request','venus_capabilities','venus_dmabuf','venus_frame','venus_command','venus_objects','venus_values','venus_instance_wire','venus_query_wire','venus_icd','venus_render_wire','venus_descriptor_wire','venus_icd_profiles','venus_graphics_wire','venus_compute_wire','venus_graphics_pipeline_wire','venus_compute_state','venus_graphics_command_wire','venus_features_wire','venus_features_native','venus_tcp_wire','venus_graphics_state','venus_device_wire','venus_device_native','venus_extensions_wire','venus_properties_wire','venus_properties_native') else 'av')/mode
+if mode in ('venus_device_native', 'venus_device_wire', 'venus_extensions_wire','venus_properties_wire','venus_properties_native'):
+    # Every device/property parser/codec attempt retains complete coverage artifacts.
     output = output / ('run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
     output.mkdir(parents=True, exist_ok=False)
     print('preserved ' + mode + ' coverage: ' + str(output), flush=True)
@@ -63,9 +63,24 @@ if mode == 'venus_extensions_wire':
                         *includes, '-c', 'tests/vgpu/extensions_' + name + '_oracle.c',
                         '-o', str(output / (name + '_oracle.o'))], check=True)
     oracle = str(output / 'wire_oracle.o')
+if mode in ('venus_properties_wire', 'venus_properties_native'):
+    # Compile exactly three independent named C oracles into this unique attempt;
+    # the full imported render unit suite remains linked and executed.
+    for name, frontend, directory in (
+            ('properties_query', 'properties_query_oracle.c', 'venus_protocol'),
+            ('properties_reply', 'properties_reply_oracle.c', 'venus_renderer_protocol'),
+            ('properties_render', 'render_wire_oracle.c', 'venus_protocol')):
+        subprocess.run(['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror', '-UNDEBUG',
+                        '-Iinclude', '-Itests/vgpu', '-Itests/vgpu/encoder', '-Ibuild/' + directory,
+                        '-Isubmodules/venus_protocol/tests', '-Isubmodules/venus_protocol/include',
+                        '-Isubmodules/venus_protocol/include/vulkan',
+                        '-c', 'tests/vgpu/' + frontend, '-o', str(output / (name + '_oracle.o'))], check=True)
+    oracle = str(output / 'properties_query_oracle.o')
 link_objects = [oracle] if oracle else []
 if mode == 'venus_extensions_wire':
     link_objects += [str(output / 'reply_oracle.o')]
+if mode in ('venus_properties_wire', 'venus_properties_native'):
+    link_objects += [str(output / 'properties_reply_oracle.o'), str(output / 'properties_render_oracle.o')]
 if mode in ('venus_device_native', 'venus_device_wire', 'venus_descriptor_wire', 'venus_graphics_wire', 'venus_compute_wire', 'venus_graphics_pipeline_wire', 'venus_graphics_command_wire'):
     link_objects += [str(output / 'render_oracle.o') if mode == 'venus_device_native' else 'build/venus_render_wire_oracle.o']
 if mode in ('venus_features_wire', 'venus_features_native'):
