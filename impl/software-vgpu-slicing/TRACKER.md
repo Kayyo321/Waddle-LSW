@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; complete API/command/mapping/DXVK gates pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; final rendering/compute/present, whole-core coverage, leaks/stress pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -794,3 +794,53 @@ retain their lower API policy. Existing deployed manifests and snapshots are unc
 Final leak/sanitizer,90% coverage, stress, standalone timed bootstrap and real
 pinned DXVK rendering/compute/presentation/teardown remain pending. TODO #3
 remains55%; overall68.75%.
+
+
+## Integrated implementation and serializer qualification milestone (2026-10-07)
+
+All rows below are TODO#3 implementation or scoped qualification increments;
+none awards overall acceptance credit. The remaining guide gates include all
+production ICD functions, final resource/leak/stress checks, full48-frame Windows
+presentation, standalone24-cycle bootstrap, and real pinned DXVK results/teardown.
+The device path now genuinely creates the feature-level11 D3D11 device and
+swapchain. Exact Windows module-base diagnostics localized the subsequent panic
+to a dispatchability error in timeline waiting, corrected by516cf61. Previous
+failed runs remain preserved; the fresh corrected real DXVK run is pending.
+
+| Commit | Coherent change | Task / overall impact | Qualification scope |
+|:--|:--|:--|:--|
+| `db67c2e` | feat(vgpu): admit implemented Vulkan 1.3 features and host extensions | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `20eddc9` | test(vgpu): qualify modern copy rejection boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `96332da` | fix(test): link each modern coverage render oracle once | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `919f9b7` | test(vgpu): qualify image view format and shape boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `6c83dac` | test(vgpu): qualify WSI failure ownership and namespace quotas | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `272d2b8` | feat(vgpu): query actual native descriptor layout support | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `b45ed38` | fix(test): preserve Zig explicit stack guards during ASan lowering | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `be659e6` | test(vgpu): qualify transfer geometry and dynamic graphics boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `b911184` | feat(vgpu): complete feature level 11 policy and legal core support queries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `04ada00` | test(vgpu): qualify all image transfer rejection paths | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `40d8f7d` | refactor(vgpu): share checked packet capacity helpers | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `b3cf01e` | test(vgpu): identify actual DXVK device and failure stages | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `9d83afe` | refactor(vgpu): admit complete descriptor packet capacity before encoding | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `5624006` | refactor(vgpu): bound complete graphics staging before packet publication | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `962b156` | refactor(vgpu): prove fixed query and object packet capacities | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `516cf61` | fix(vgpu): retain timeline wait owners through nondispatchable lookup | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `e482815` | refactor(vgpu): preflight complete synchronization packet extents | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `7f1418c` | test(vgpu): qualify owned descriptor template failure boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `7f87d1d` | test(vgpu): qualify pipeline helper topology and append capacity | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+
+Current existing90% gates pass without lowering thresholds: request96.84%/98.55%,
+receiver bounds92.86%/100%, receiver C94.90%/97.97%, requirements queries100%/100%,
+extra objects92.49%/99.22%, synchronization94.12%/100% (branches/lines).
+Image-owner receipts in `build/image_pipeline_checkpoint/final_coverage_20261007.json`
+record nine rendering/image gates above90%; helper/template/shader follow-up gates
+also pass. All source functions in sampler are now before its test-only boundary;
+whole ICD production reorganization and qualification remain in progress.
+
+Final existing ASan/LSan/UBSan runner checks pass for root synchronization, extra
+objects, and requirements query modules, including their render/view imports.
+Receiver C/bounds sanitizers pass. Logs and unique attempt artifacts are retained
+under `build/root_todo3_continuation/` and `build/sanitizers/vgpu/`. These results
+cover their tested ownership paths, not completed full ICD/Windows/DXVK acceptance.
+Coverage runners now retain unique attempts for older modes as well, preserving
+all historical flat reports. TODO#3 remains55%; overall68.75% pending final gates.

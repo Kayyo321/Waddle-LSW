@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Gate every production C transport line and conditional edge at 90 percent."""
+from datetime import datetime, timezone
+import os
 import gzip
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
@@ -11,10 +12,10 @@ mode = sys.argv[1] if len(sys.argv) > 1 else 'ring'
 if mode not in ('ring', 'region', 'mapping', 'wait', 'session', 'receiver', 'worker', 'service', 'context', 'guest', 'present', 'wddm', 'frame_linux', 'surface', 'export'):
     raise ValueError(mode)
 root = Path.cwd()
-output = root / 'build/coverage/vgpu' / mode
-if output.exists():
-    shutil.rmtree(output)
-output.mkdir(parents=True)
+output = root / 'build/coverage/vgpu' / mode / (
+    'run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
+output.mkdir(parents=True, exist_ok=False)
+print('preserved ' + mode + ' coverage: ' + str(output), flush=True)
 subprocess.run([
     'cc', '-D_GNU_SOURCE', '-std=c11', '-Iinclude', '-Isrc/vgpu', '-O0', '-g', '--coverage',
     '-fprofile-abs-path',

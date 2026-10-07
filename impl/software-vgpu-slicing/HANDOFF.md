@@ -187,3 +187,19 @@ fixed20-source117-unit LLVM reverse-proof audit. Old targets/artifacts remain.
 New hook runner does not claim instrumentation of external link objects. No90%
 coverage gate or ownership/acceptance assertion was weakened. Do not mark TODO #3
 100% before final full48-frame WSI, timed-bootstrap leak and DXVK qualification pass.
+
+
+### 2026-10-07 current qualification continuation
+
+Same three owner agents remain active.516cf61 fixes actual DXVK timeline wait
+panic with saved device namespace and nondispatchable semaphore lookup. Fresh
+real pinned DXVK rerun is owned exclusively by wddm_dxvk. Runtime owner reorganizes
+production declarations before the existing coverage test boundary so all new
+APIs participate honestly in the unchanged90% core gate. Root scatter request,
+bounds, receiver C coverage and sanitizer checks pass; root modern synchronization,
+extra-object and requirements serializers coverage/sanitizers also pass. Root
+logs are `build/root_todo3_continuation/*final*` and `*runtime*coverage.log`.
+Image owner completes remaining helper/template/shader and render/instance gates,
+then pure-module final sanitizers. No TODO#3 final acceptance or100% claim yet.
+All Zig/C vGPU coverage attempts now have unique directories; historical flat
+reports remain untouched. Shared-index lock and exclusive VM/GPU owner unchanged.
