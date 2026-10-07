@@ -1,5 +1,5 @@
 # Cross-compilation is distinct from native execution/compatibility acceptance.
-build/vgpu_dxvk_integration.exe: tests/vgpu/dxvk_integration.c | build
+build/vgpu_dxvk_integration.exe: tests/vgpu/dxvk_integration.c tests/vgpu/dxvk_heap_audit_windows.inc | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< -municode -luser32 -lgdi32 -ldwmapi -ldxguid -o $@
 
 .PHONY: vgpu-dxvk-build

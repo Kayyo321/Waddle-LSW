@@ -175,7 +175,7 @@ static int absolute_file(const wchar_t *path, const wchar_t *basename) {
  * @note Single main thread; SDK/DXVK may own internal threads. No fixture heap.
  * Modules outlive COM objects; partial acquisition uses the same cleanup path.
  */
-int wmain(int argc, wchar_t **argv) {
+static int run_dxvk_cycle(int argc, wchar_t **argv) {
     if (argc != 8 || !absolute_file(argv[1], L"vulkan-1.dll") ||
         !absolute_file(argv[2], L"dxgi.dll") || !absolute_file(argv[3], L"d3d11.dll") ||
         !absolute_file(argv[4], NULL) || wcschr(argv[4], L';') ||
@@ -343,4 +343,30 @@ cleanup:
     if (!result)
         puts("DXVK real device, exact pixels/compute, swapchain Present and teardown succeeded on the selected ICD.");
     return result;
+}
+
+#include "dxvk_heap_audit_windows.inc"
+/** @brief Run the ordinary fixture or supervisor-controlled heap capture cycles.
+ * @param[in] argc/argv Borrowed immutable native fixture arguments.
+ * @return Zero only after every original GPU assertion and optional audit gate.
+ * @note Sole main thread. Auditing requires a fresh directory and independent
+ * authenticated controller/config for each cycle; no synthetic GPU result.
+ */
+int wmain(int argc,wchar_t **argv)
+{
+    wchar_t directory[512];int enabled=audit_directory(directory,512);
+    if(enabled<0)return 2;
+    if(!enabled)return run_dxvk_cycle(argc,argv);
+    wchar_t cycles_text[16];DWORD length=GetEnvironmentVariableW(L"WADDLE_DXVK_HEAP_CYCLES",cycles_text,16);
+    unsigned cycles=1;
+    if(length){wchar_t *end=NULL;unsigned long parsed=wcstoul(cycles_text,&end,10);
+        if(length>=16 || !parsed || parsed>8 || !end || *end)return 2;
+        cycles=(unsigned)parsed;}
+    if(audit_stage(directory,"baseline"))return 1;
+    for(unsigned cycle=0;cycle<cycles;cycle++){
+        if(run_dxvk_cycle(argc,argv))return 1;
+        char stage[64];int count=snprintf(stage,sizeof stage,"unloaded_%u",cycle+1);
+        if(count<=0 || (size_t)count>=sizeof stage || audit_stage(directory,stage))return 1;
+    }
+    return 0;
 }
