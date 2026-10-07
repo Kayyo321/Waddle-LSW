@@ -245,6 +245,46 @@ pub fn decode_cache_data(reply:[]const u8,output:?[]u8) !cache_result_t {
     return .{.result=result,.size=size};
 }
 
+/// Query actual host layout support using a caller-owned previously normalized
+/// create72 packet. [in] device nonzero and packet borrowed only for call; create
+/// body must originate from validated native layout preflight with resolved IDs.
+/// [out] Owned164 request, no layout creation/allocation or retained pointer.
+/// Invalid framing/device/null-create marker/tail, Limit for oversized packet.
+/// Thread-safe on independent values; caller retains native sampler ownership.
+pub fn descriptor_layout_support(device: u64, create_packet: []const u8) !writer_t {
+    if (create_packet.len > render.MaxBytes) return error.Limit;
+    if (device == 0 or create_packet.len < 76) return error.Invalid;
+    const tail = create_packet.len - 24;
+    if (std.mem.readInt(u32, create_packet[0..4], .little) != 72 or
+        std.mem.readInt(u32, create_packet[4..8], .little) != 1 or
+        std.mem.readInt(u64, create_packet[8..16], .little) != device or
+        std.mem.readInt(u64, create_packet[16..24], .little) != 1 or
+        std.mem.readInt(u32, create_packet[24..28], .little) != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO or
+        std.mem.readInt(u64, create_packet[tail..][0..8], .little) != 0 or
+        std.mem.readInt(u64, create_packet[tail + 8..][0..8], .little) != 1 or
+        std.mem.readInt(u64, create_packet[tail + 16..][0..8], .little) == 0) return error.Invalid;
+    var writer: writer_t = .{};
+    try writer.header(164, device);
+    const body = create_packet[16..tail];
+    @memcpy(writer.bytes[writer.used..][0..body.len], body);
+    writer.used += body.len;
+    try writer.put(u64, 1);
+    try writer.put(u32, c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT);
+    try writer.put(u64, 0);
+    return writer;
+}
+/// Decode actual no-chain layout support reply. [in] immutable borrowed exact28
+/// bytes; [out] canonical supported Boolean, Corrupt for malformed framing/tag/
+/// chain/value/truncation. No allocation/shared state or native pointer retention.
+pub fn decode_descriptor_layout_support(reply: []const u8) !bool {
+    if (reply.len != 28 or std.mem.readInt(u32, reply[0..4], .little) != 164 or
+        std.mem.readInt(u64, reply[4..12], .little) != 1 or
+        std.mem.readInt(u32, reply[12..16], .little) != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT or
+        std.mem.readInt(u64, reply[16..24], .little) != 0 or
+        std.mem.readInt(u32, reply[24..28], .little) > 1) return error.Corrupt;
+    return std.mem.readInt(u32, reply[24..28], .little) == 1;
+}
+
 // Test-only fixtures.
 extern fn venus_extra_objects_test_encode(u32,?*const anyopaque,[*]u8) usize;
 fn compare(writer:writer_t,opcode:u32,info:?*const anyopaque) !void {
@@ -343,4 +383,37 @@ test "actual render-pass and maintenance5 area granularity packets preserve form
     const extent=try decode_granularity(&reply,280);try std.testing.expectEqual(@as(u32,8),extent.width);try std.testing.expectEqual(@as(u32,16),extent.height);
     for(0..20) |length|try std.testing.expectError(error.Corrupt,decode_granularity(reply[0..length],280));
     try std.testing.expectError(error.Corrupt,decode_granularity(&reply,84));std.mem.writeInt(u32,reply[12..16],0,.little);try std.testing.expectError(error.Corrupt,decode_granularity(&reply,280));
+}
+
+test "actual layout support reuses normalized create body and rejects malformed framing" {
+    const binding: c.VkDescriptorSetLayoutBinding = .{ .binding = 3, .descriptorType = c.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = c.VK_SHADER_STAGE_COMPUTE_BIT };
+    const info: c.VkDescriptorSetLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &binding };
+    var packet = try render.create_descriptor_layout(&info, 7, 42);
+    try compare(try descriptor_layout_support(7, packet.bytes[0..packet.used]), 164, &info);
+    try std.testing.expectError(error.Invalid, descriptor_layout_support(0, packet.bytes[0..packet.used]));
+    try std.testing.expectError(error.Invalid, descriptor_layout_support(8, packet.bytes[0..packet.used]));
+    for (0..76) |length| try std.testing.expectError(error.Invalid, descriptor_layout_support(7, packet.bytes[0..length]));
+    const offsets = [_]usize{ 0, 4, 8, 16, 24, packet.used - 24, packet.used - 16, packet.used - 8 };
+    for (offsets) |offset| {
+        const saved = packet.bytes[offset];
+        packet.bytes[offset] = if (offset == packet.used - 8) 0 else saved ^ 1;
+        try std.testing.expectError(error.Invalid, descriptor_layout_support(7, packet.bytes[0..packet.used]));
+        packet.bytes[offset] = saved;
+    }
+    var huge = [_]u8{0} ** (render.MaxBytes + 1);
+    try std.testing.expectError(error.Limit, descriptor_layout_support(7, &huge));
+    var reply = [_]u8{0} ** 29;
+    std.mem.writeInt(u32, reply[0..4], 164, .little);
+    std.mem.writeInt(u64, reply[4..12], 1, .little);
+    std.mem.writeInt(u32, reply[12..16], c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT, .little);
+    try std.testing.expect(!(try decode_descriptor_layout_support(reply[0..28])));
+    std.mem.writeInt(u32, reply[24..28], 1, .little);
+    try std.testing.expect(try decode_descriptor_layout_support(reply[0..28]));
+    for (0..28) |length| try std.testing.expectError(error.Corrupt, decode_descriptor_layout_support(reply[0..length]));
+    try std.testing.expectError(error.Corrupt, decode_descriptor_layout_support(&reply));
+    for ([_]usize{ 0, 4, 12, 16, 24 }) |offset| {
+        const saved = reply[offset]; reply[offset] = saved ^ 2;
+        try std.testing.expectError(error.Corrupt, decode_descriptor_layout_support(reply[0..28]));
+        reply[offset] = saved;
+    }
 }

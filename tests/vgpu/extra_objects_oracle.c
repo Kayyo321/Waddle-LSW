@@ -6,6 +6,7 @@
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #pragma GCC diagnostic ignored "-Wpointer-arith"
 #include "vn_protocol_driver_device_memory.h"
+#include "vn_protocol_driver_descriptor_set_layout.h"
 #include "vn_protocol_driver_image.h"
 #include "vn_protocol_driver_render_pass.h"
 #include "vn_protocol_driver_sampler.h"
@@ -28,6 +29,7 @@ size_t venus_extra_objects_test_encode(uint32_t opcode, const void *info, unsign
     VkEvent event=(VkEvent)(uintptr_t)11;
     VkPipelineCache cache=(VkPipelineCache)(uintptr_t)11;
     switch(opcode) {
+    case 164: {VkDescriptorSetLayoutSupport support={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT};vn_encode_vkGetDescriptorSetLayoutSupport(&encoder,1,device,info,&support);break;}
     case 21: {VkDeviceMemory memory=(VkDeviceMemory)(uintptr_t)11;vn_encode_vkAllocateMemory(&encoder,1,device,info,NULL,&memory);break;}
     case 84: {VkExtent2D extent;vn_encode_vkGetRenderAreaGranularity(&encoder,1,device,(VkRenderPass)(uintptr_t)11,&extent);break;}
     case 280: {VkExtent2D extent;vn_encode_vkGetRenderingAreaGranularity(&encoder,1,device,info,&extent);break;}
