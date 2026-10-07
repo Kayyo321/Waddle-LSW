@@ -47,10 +47,23 @@ static HRESULT verify_pixels(ID3D11Device *device,ID3D11DeviceContext *context,I
     puts("DXVK stage: map GPU staging pixels.");fflush(stdout);
     D3D11_MAPPED_SUBRESOURCE mapping={0};status=ID3D11DeviceContext_Map(context,(ID3D11Resource *)staging,0,D3D11_MAP_READ,0,&mapping);
     if(SUCCEEDED(status)) {
-        if(!mapping.pData || mapping.RowPitch<256)status=E_FAIL;
-        else for(UINT row=0;row<64;row++)for(UINT column=0;column<64;column++) {
-            const unsigned char *pixel=(const unsigned char *)mapping.pData+(size_t)row*mapping.RowPitch+column*4;
-            if(pixel[0]!=128 || pixel[1]!=64 || pixel[2]!=32 || pixel[3]!=255)status=E_FAIL;
+        if(!mapping.pData || mapping.RowPitch<256){
+            fprintf(stderr,"DXVK staging mapping invalid: present=%d row_pitch=%u depth_pitch=%u\n",
+                mapping.pData!=NULL,(unsigned)mapping.RowPitch,(unsigned)mapping.DepthPitch);status=E_FAIL;
+        }else{
+            UINT mismatches=0,first_row=0,first_column=0;unsigned char first_pixel[4]={0};
+            for(UINT row=0;row<64;row++)for(UINT column=0;column<64;column++) {
+                const unsigned char *pixel=(const unsigned char *)mapping.pData+(size_t)row*mapping.RowPitch+column*4;
+                if(pixel[0]!=128 || pixel[1]!=64 || pixel[2]!=32 || pixel[3]!=255){
+                    if(!mismatches){first_row=row;first_column=column;memcpy(first_pixel,pixel,sizeof first_pixel);}
+                    ++mismatches;
+                }
+            }
+            if(mismatches){
+                fprintf(stderr,"DXVK staging pixels mismatch: count=%u row_pitch=%u first=(%u,%u) BGRA=%u,%u,%u,%u expected=128,64,32,255\n",
+                    (unsigned)mismatches,(unsigned)mapping.RowPitch,(unsigned)first_row,(unsigned)first_column,
+                    (unsigned)first_pixel[0],(unsigned)first_pixel[1],(unsigned)first_pixel[2],(unsigned)first_pixel[3]);status=E_FAIL;
+            }
         }
         ID3D11DeviceContext_Unmap(context,(ID3D11Resource *)staging,0);
     }
