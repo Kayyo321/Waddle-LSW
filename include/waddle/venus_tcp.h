@@ -355,4 +355,42 @@ venus_ring_status_t venus_tcp_server_ack_retired(venus_tcp_server_t *server,
 void venus_tcp_server_free(venus_tcp_server_t *server);
 _Static_assert(sizeof(venus_tcp_client_hello_t) == 48, "TCP private hello ABI");
 _Static_assert(sizeof(venus_tcp_server_hello_t) == 184, "TCP private server ABI");
+/** @brief Start one explicitly controlled Windows TCP-to-ICD binding before Vulkan discovery.
+ * @param[in] path Nonnull immutable private filename array[bytes], borrowed for call only.
+ * @param[in] bytes Exact1..1024 extent including final NUL; bounded absolute ASCII grammar.
+ * @return Ok bound; Again existing owned phase; Invalid local filename/privacy/binding;
+ * Closed native acquisition/release; existing parser/socket/handshake/retirement statuses.
+ * @note Windows x64 only. Owns fixed callback/socket and one exact loaded ICD reference;
+ * resolves additive capability binding only. Caller serializes lifecycle, starts before
+ * application calls and keeps bootstrap DLL loaded until stop/abandon succeeds. No DllMain I/O.
+ * Native file/token/security-descriptor release failures retain SDK owners for stop retry.
+ * Failure after admitted session can retain ownership: inspect session and complete stop or
+ * trusted abandonment; no native path/config/token pointer is retained or logged.
+ */
+venus_ring_status_t venus_tcp_bootstrap_start(const char *path, size_t bytes);
+/** @brief Unbind a quiescent Windows session and release only after exact retirement Ack.
+ * @return Ok empty/released; Again live ICD objects; existing unbind/transport/retirement
+ * status retaining session/module; Closed failed owned module release, retryable after retirement.
+ * @note No arguments/allocation. Caller stops new Vulkan calls and waits callbacks first,
+ * serializes lifecycle and retains bootstrap DLL. Successful unbind precedes TCP half-close;
+ * failed Ack or FreeLibrary never discards session accounting or module ownership.
+ */
+venus_ring_status_t venus_tcp_bootstrap_stop(void);
+/** @brief Return copied authenticated Windows session identity, zero while no session is owned.
+ * @return Nonzero stable accounting identity until release; zero with no admitted session,
+ * including SDK-only failed-start phases. Zero never proves every native owner was released.
+ * @note No allocation, mutation or ownership transfer. Caller serializes lifecycle/getter;
+ * this value does not itself prove actual host receiver retirement.
+ */
+uint64_t venus_tcp_bootstrap_session(void);
+/** @brief Abandon only after trusted supervision proves exact host receiver retirement.
+ * @param[in] retired_session Nonzero identity matching this owner's copied authenticated session.
+ * @return Ok released; Invalid zero/mismatch/empty before mutation; Closed module release
+ * failure retaining already retired module/session for retry. No wire-based retirement inference.
+ * @note Caller must independently prove exact worker/group reap, stop all application/callback
+ * use, discard virtual Vulkan handles, serialize lifecycle and retain bootstrap DLL. Invokes
+ * resolved ICD abandon only for this owner's still-bound phase, then scrubs transport/releases
+ * exact HMODULE. Unbound failed-start state never abandons an incumbent binding.
+ */
+venus_ring_status_t venus_tcp_bootstrap_abandon(uint64_t retired_session);
 #endif
