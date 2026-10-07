@@ -31,6 +31,43 @@ venus_ring_status_t venus_icd_bind(venus_command_exchange_t exchange, void *cont
 venus_ring_status_t venus_icd_bind_capabilities(venus_command_exchange_t exchange,
                                               void *context,
                                               const venus_capabilities_t *capabilities);
+/** @brief Borrowed sequential exchange using the frontend local absolute deadline.
+ * @param[in,out] context Nonnull exclusive negotiated frontend, retained until release.
+ * @param[in] request Nonnull decoded request, borrowed for this call.
+ * @param[in] input Nullable only when length is zero; borrowed input[length].
+ * @param[in] length Exact input byte extent.
+ * @param[out] response Nonnull disjoint response, zero on transport failure.
+ * @param[out] output Nullable only for no payload, borrowed output[capacity].
+ * @param[in] capacity Actual accessible output extent.
+ * @param[in] deadline_ms Nonzero frontend monotonic absolute deadline; never renewed.
+ * @return RingOk or ordinary/terminal ring status; failed payload remains unchanged.
+ * @note ICD mutex thread only; no reentry or retained request/output pointers.
+ */
+typedef venus_ring_status_t (*venus_icd_exchange_until_t)(
+    void *context, const venus_request_t *request, const void *input, size_t length,
+    venus_request_t *response, void *output, size_t capacity, uint64_t deadline_ms);
+/** @brief Read the same local monotonic millisecond clock used by timed exchange.
+ * @param[in,out] context Nonnull borrowed live exclusive frontend.
+ * @return Nonzero monotonic milliseconds, zero on clock failure.
+ * @note ICD mutex thread only; no allocation, reentry or ownership transfer.
+ */
+typedef uint64_t (*venus_icd_clock_t)(void *context);
+/** @brief Bind a timed frontend for complete bounded native capability queries.
+ * @param[in] exchange_until Nonnull borrowed absolute-deadline callback.
+ * @param[in] clock_ms Nonnull borrowed matching frontend clock.
+ * @param[in,out] context Nonnull exclusive negotiated frontend, live until release.
+ * @param[in] capabilities Nonnull compatible immutable snapshot, copied on success.
+ * @param[in] reply_bytes Trusted actual receiver reply extent, exactly524288 bytes.
+ * @return RingOk; Invalid incompatible profile/extent/occupied binding;
+ * Limit namespace exhaustion; transport status on failed allocation proof.
+ * @note Mutex serialized. Before publication, a single5000ms deadline covers
+ * successful last-byte and rejected first-outside-byte receiver range probes.
+ * Rejection preserves any incumbent binding. Frontend/session ownership stays
+ * with caller; uncertain transport requires receiver retirement before release.
+ */
+venus_ring_status_t venus_icd_bind_timed(venus_icd_exchange_until_t exchange_until,
+    venus_icd_clock_t clock_ms, void *context, const venus_capabilities_t *capabilities,
+    uint32_t reply_bytes);
 /** @brief Release a quiescent binding after all Vulkan objects are destroyed.
  * @return RingOk, including already-unbound; Again while objects/submission remain.
  * @note No frontend teardown/storage free; mutex serialized, borrowed pointers expire.

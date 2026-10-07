@@ -47,6 +47,10 @@ int main(int argc, char **argv) {
         return 2;
     venus_service_config_t config;
     (void)venus_service_config_init(&config);
+    /* Complete bounded device-extension replies use up to274460 bytes.
+     * This trusted executable requests the exact power-of-two mapping;
+     * timed ICD binding independently checks its last/outside byte ranges. */
+    config.reply_bytes = 524288;
     venus_ring_status_t status = venus_service_run_presented(
         &config, VenusWorkerMappingFd, VenusWorkerStreamFd, presented ? VenusWorkerFrameFd : -1,
         (int32_t)controller, context, &worker_cancel);

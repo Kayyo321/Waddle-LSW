@@ -619,3 +619,17 @@ a8b639e unintentionally included nine root-owned capability files during a simul
 ### Native negotiated-binding acceptance
 
 The frozen a8b639e/325422a capability checkpoint now passes actual Win11 static128-cycle dispatch, DLL discovery and medium-integrity pinned-loader8lifecycle/128dispatch fixtures. All five deployed file hashes match the isolated host snapshot; windows11_vm/icd_capability_binding_{native_units,windows_loader}.log and deployment.json retain native exits and provenance. The first PowerShell capture attempt produced no persisted exit and remains preserved; only the subsequent raw-CMD capture supplies exit0 acceptance. The copied profile and exported ABI are verified; authenticated real cross-VM GPU and modern DXVK acceptance remain pending, so #3 stays55%/#11 stays60%. Full CI37556752590 and37556749246 are running at9111799; no CI credit yet.
+
+### Implementation-first milestones — acceptance pending
+
+TODO #3 remains55% pending integrated Windows/DXVK and final qualification.
+
+| Commit | Implemented milestone | Verification / remaining gate | Task impact |
+|:--|:--|:--|:--|
+| `93424cb` | Timed Windows bootstrap with bind-starting allocation probes | Targeted SDK-owner matrix and Windows crosslinks; real new runtime pending | #3 +0%; overall +0% |
+| `66dd212` | Owned real-image WSI registry and synchronous readback callbacks | Debug/ReleaseSafe targeted lifecycle tests; core integration pending | #3 +0%; overall +0% |
+| `988c3e9` | Actual authenticated DXVK pixel/compute/swapchain fixture | Strict crosslink; integrated runtime acceptance pending | #3 +0%; overall +0% |
+| `97a3d0b` | Native BGRA HWND sink with paced FIFO | Actual medium Windows128 exact-pixel cycles, stable GDI/USER owners at native_present_89e12fd3 | #3 +0%; overall +0% |
+| `e797037` | Six bounded image transfer commands and pinned C oracle | Debug/ReleaseSafe19 units; ICD integration pending | #3 +0%; overall +0% |
+| `e0e5928` | Native handle ownership regression with attributed system initialization | Original cold97→157 failure retained; strict crosslink; real corrected lifetime gate pending | #3 +0%; overall +0% |
+| current (resolve by subject) | Timed ICD ABI/export/build and trusted524288-byte worker mapping | Native fixture/Windows DLL/worker compile; full native queries and GPU/DXVK pending | #3 +0%; overall +0% |

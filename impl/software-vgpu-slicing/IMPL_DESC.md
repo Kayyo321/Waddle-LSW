@@ -5682,3 +5682,25 @@ build/extensions_status_checkpoint. Initial missingNUL Cencoder fixture failed
 its boundedstrlen assertion; corrected, retained and all gates rerun. This is
 status-code acceptance only; publicraw cache/extent/timedbinding/modernruntime/
 realWindowsGPU/DXVK acceptance remain pending.
+
+### TODO #3 implementation-first continuation (2026-10-07)
+
+The current user instruction supersedes earlier exhaustive specification/proof and
+microscopic-commit requirements. Complete coherent functionality with compilation
+and targeted tests first; final integrated sanitizer/coverage/stress and actual
+Windows/DXVK2.7.1 acceptance follow. Historical snapshots and failures remain.
+
+Timed ICD binding borrows absolute-deadline exchange/clock/context until unbind or
+receiver-retired abandonment, copies capabilities, and requires the trusted worker
+524288-byte reply mapping. One5000ms deadline covers allocation range probes and
+one complete count/fill query sequence. Chunked replies retain original TCPv1
+4096-byte per-operation bounds. Malformed replies/loss cannot publish capability
+caches; uncertain receiver work retains its owner until actual retirement.
+
+Win32 compatibility presentation uses real host Vulkan images, completed GPU
+readback, and a synchronous opaque BGRA8 HWND sink. Windows owns HWND lifetime;
+the sink borrows pixels and releases its DC on every path. FIFO waits for the
+native compositor; IMMEDIATE displays synchronously. This compatibility path is
+not credited as zero-copy host presentation. Acceptance requires exact rendered
+readback/compute values, real swapchain Present, stable owned resources, project
+DLL absence, and naturally retired host controller/worker.
