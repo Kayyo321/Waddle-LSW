@@ -182,3 +182,50 @@ test "template limits overflow malformed snapshots and empty updates reject befo
     info.templateType = c.VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_PUSH_DESCRIPTORS;
     try std.testing.expectError(error.Invalid, snapshot(&info));
 }
+
+test "template snapshot headers native arrays aggregate descriptors and corrupt expansion limits" {
+    const entry: c.VkDescriptorUpdateTemplateEntry = .{ .descriptorType = 6, .descriptorCount = 1, .offset = 0, .stride = 0 };
+    const initial = create_info(&.{entry});
+    var info = initial;
+    info.sType = 0;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info = initial;
+    info.pNext = &info;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info = initial;
+    info.flags = 1;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info = initial;
+    info.descriptorUpdateEntryCount = 65;
+    try std.testing.expectError(error.Limit, snapshot(&info));
+    info = initial;
+    info.pDescriptorUpdateEntries = null;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    var misaligned: usize = 3;
+    @memcpy(std.mem.asBytes(&info.pDescriptorUpdateEntries), std.mem.asBytes(&misaligned));
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    const many = [_]c.VkDescriptorUpdateTemplateEntry{
+        .{ .descriptorType = 6, .descriptorCount = 128, .offset = 0, .stride = 0 },
+        entry,
+    };
+    info = create_info(&many);
+    try std.testing.expectError(error.Limit, snapshot(&info));
+    info = initial;
+    const initial_definition = try snapshot(&info);
+    var definition = initial_definition;
+    var output: expanded_t = .{};
+    try std.testing.expectError(error.Invalid, expand(&definition, null, null, &output));
+    inline for (.{ "entry_count", "descriptor_count", "data_bytes" }) |field| {
+        definition = initial_definition;
+        @field(definition, field) = if (comptime std.mem.eql(u8, field, "entry_count")) MaxEntries + 1 else if (comptime std.mem.eql(u8, field, "descriptor_count")) MaxDescriptors + 1 else MaxDataBytes + 1;
+        try std.testing.expectError(error.Invalid, expand(&definition, @ptrFromInt(1), null, &output));
+    }
+    definition = initial_definition;
+    definition.entry_count = 2;
+    definition.entries[0] = many[0];
+    definition.entries[1] = entry;
+    try std.testing.expectError(error.Limit, expand(&definition, @ptrFromInt(1), null, &output));
+    definition = initial_definition;
+    try std.testing.expectError(error.Invalid, expand(&definition, @ptrFromInt(1), @ptrFromInt(std.math.maxInt(usize) - 8), &output));
+    try std.testing.expectEqual(@as(usize, 0), output.write_count);
+}
