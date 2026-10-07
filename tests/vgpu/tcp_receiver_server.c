@@ -23,7 +23,7 @@ typedef enum server_mode_t { Normal,TokenBad,HelloBad,HelloPartial,ProfileBad,Pr
     GuestBadResponse,GuestStatusMismatch,GuestNoDirection,GuestNoSequence,GuestOversized,StepCancel,StepTimeout,LocalInvalid,
     MaxLast,AuthRandomFail,AuthClockFail,HelloSendFail,AckSendFail,HeaderSendFail,
     PayloadSendFail,StepClockFail,RetireSendFail,RetireClockFail,BeforeRpcClockFail,
-    BeforeRpcTimeout,StepReceiveFail } server_mode_t;
+    BeforeRpcTimeout,StepReceiveFail,ReadTooLong,WriteTooLong,CommandReplyTooLong } server_mode_t;
 typedef struct fixture_t { venus_tcp_socket_t listener; uint32_t port; server_mode_t mode; unsigned calls; } fixture_t;
 static _Thread_local fixture_t *active_fixture;
 #ifdef TcpPeerFaultTests
@@ -91,7 +91,7 @@ venus_ring_status_t venus_guest_exchange_timeout(venus_guest_t *guest,const venu
     if (mode==GuestOversized) { response->payload_bytes=4097; return RingOk; }
     if (request->kind==RequestSubmit) { assert(length==44 && ((const uint8_t *)input)[0]==178 && ((const uint8_t *)input)[36]==173); response->argument_zero=99; }
     if (request->kind==RequestWrite) { assert(length==4096); for (size_t index=0;index<length;++index) assert(((const uint8_t *)input)[index]==(uint8_t)(index*13+7)); }
-    if (request->kind==RequestRead) { assert(capacity==4096); response->payload_bytes=4096; for (size_t index=0;index<capacity;++index) ((uint8_t *)output)[index]=(uint8_t)(index*17+9); }
+    if (request->kind==RequestRead) { assert(capacity==VenusTcpMaxReplyBytes); response->payload_bytes=VenusTcpMaxReplyBytes; for (size_t index=0;index<capacity;++index) ((uint8_t *)output)[index]=(uint8_t)(index*17+9); }
     return RingOk;
 }
 static void receive_bytes(venus_tcp_socket_t *socket,void *bytes,size_t length)
@@ -156,11 +156,12 @@ static void *server_run(void *argument)
     if (mode==LocalInvalid || mode==RetireSendFail || mode==RetireClockFail) goto orderly;
     status=venus_tcp_server_step(&server,&guest,&cancelled);
     venus_ring_status_t expected=RingOk;
-    if ((mode>=HeaderPartial && mode<=PayloadPartial) || (mode>=GuestFalseSuccess && mode<=GuestOversized)) expected=RingCorrupt;
+    if (mode==ReadTooLong || mode==WriteTooLong || mode==CommandReplyTooLong || (mode>=HeaderPartial && mode<=PayloadPartial) || (mode>=GuestFalseSuccess && mode<=GuestOversized)) expected=RingCorrupt;
     if (mode==GuestNoResponse || mode==StepTimeout || mode==BeforeRpcTimeout) expected=RingTimeout;
     if (mode==StepCancel) expected=RingCancelled;
     if (mode==HeaderSendFail || mode==PayloadSendFail || mode==StepClockFail || mode==BeforeRpcClockFail || mode==StepReceiveFail) expected=RingClosed;
     if (mode>=ReplyCorrupt && mode<=ReplyTimeout) expected=RingStatuses[mode-ReplyAgain];
+    if (mode==ReadTooLong || mode==WriteTooLong || mode==CommandReplyTooLong) assert(!fixture->calls);
     if (status!=expected) { fprintf(stderr,"Server mode%d actual%d expected%d\n",mode,status,expected); fflush(stderr); }
     assert(status==expected);
     if (expected!=RingOk) { if (server.socket.initialized || server.lost!=expected) { fprintf(stderr,"Unexpected retained mode%d live%u lost%d eof%u\n",mode,server.socket.initialized,server.lost,server.eof); fflush(stderr); } assert(!server.socket.initialized && server.lost==expected); assert(venus_tcp_server_step(&server,&guest,NULL)==expected); goto cleanup; }
@@ -215,22 +216,25 @@ static void cycle(server_mode_t mode)
     if (mode==LocalInvalid || mode==RetireSendFail || mode==RetireClockFail) goto retire;
     if (mode==StepCancel || mode==StepTimeout || mode==StepClockFail || mode==StepReceiveFail) { sleep_ms(50); goto cleanup; }
     venus_request_t request={.kind=RequestPoll,.sequence=mode==MaxLast ? UINT64_MAX-1 : 1};
-    if (mode==ReadFull || mode==PayloadSendFail) request=(venus_request_t){.kind=RequestRead,.sequence=1,.resource_id=2,.argument_one=4096};
+    if (mode==ReadFull || mode==PayloadSendFail) request=(venus_request_t){.kind=RequestRead,.sequence=1,.resource_id=2,.argument_one=VenusTcpMaxReplyBytes};
     if (mode==WriteFull || mode==PayloadPartial) request=(venus_request_t){.kind=RequestWrite,.sequence=1,.resource_id=2,.argument_one=4096,.payload_bytes=4096};
     if (mode==CommandOpcode) request=(venus_request_t){.kind=RequestSubmit,.sequence=1,.payload_bytes=44};
     if (mode==CommandTooLong) request=(venus_request_t){.kind=RequestSubmit,.sequence=1,.payload_bytes=VenusTcpMaxCommandBytes+4};
+    if (mode==ReadTooLong) request=(venus_request_t){.kind=RequestRead,.sequence=1,.resource_id=2,.argument_one=VenusTcpMaxReplyBytes+1};
+    if (mode==WriteTooLong) request=(venus_request_t){.kind=RequestWrite,.sequence=1,.resource_id=2,.argument_one=VenusTcpMaxCommandReplyBytes+1,.payload_bytes=VenusTcpMaxCommandReplyBytes+1};
+    if (mode==CommandReplyTooLong) request=(venus_request_t){.kind=RequestReply,.sequence=1,.argument_zero=1,.argument_one=VenusTcpMaxCommandReplyBytes+1};
     if (mode==SequenceBad) request.sequence=2;
     if (mode==SequenceMax) request.sequence=UINT64_MAX;
     assert(venus_request_encode(&request,bytes,64)==RingOk);
     if (mode==HeaderBad) bytes[63]=1;
     send_bytes(&socket,bytes,mode==HeaderPartial ? 5 : 64);
-    if (mode>=HeaderPartial && mode<=CommandTooLong) goto cleanup;
+    if (mode==ReadTooLong || mode==WriteTooLong || mode==CommandReplyTooLong || (mode>=HeaderPartial && mode<=CommandTooLong)) goto cleanup;
     if (request.payload_bytes) { for (size_t index=0;index<request.payload_bytes;++index) bytes[index]=(uint8_t)(index*13+7); if (mode==CommandOpcode) { memset(bytes,0,44); bytes[0]=178; bytes[36]=173; } send_bytes(&socket,bytes,mode==PayloadPartial ? 15 : request.payload_bytes); }
     if (mode==PayloadPartial || (mode>=GuestNoResponse && mode<=GuestOversized) || mode==HeaderSendFail || mode==BeforeRpcClockFail || mode==BeforeRpcTimeout) goto cleanup;
     receive_bytes(&socket,bytes,64); venus_request_t response; assert(venus_request_decode(&response,bytes,64)==RingOk && response.sequence==request.sequence && response.kind==request.kind);
     assert(response.status==(mode>=ReplyAgain && mode<=ReplyTimeout ? WireStatuses[mode-ReplyAgain] : RequestSuccess));
     if (mode==PayloadSendFail) goto cleanup;
-    if (mode==ReadFull) { receive_bytes(&socket,bytes,4096); for (size_t index=0;index<4096;++index) assert(bytes[index]==(uint8_t)(index*17+9)); }
+    if (mode==ReadFull) { assert(response.payload_bytes==VenusTcpMaxReplyBytes); receive_bytes(&socket,bytes,VenusTcpMaxReplyBytes); for (size_t index=0;index<VenusTcpMaxReplyBytes;++index) assert(bytes[index]==(uint8_t)(index*17+9)); }
     if (mode>=ReplyCorrupt && mode<=ReplyTimeout) goto cleanup;
 retire:
     assert(venus_tcp_socket_shutdown_write(&socket)==RingOk);
@@ -287,6 +291,7 @@ int main(void)
     invalid(); cycle(Normal); sleep_ms(1000); unsigned baseline=resource_count();
     for (unsigned iteration=0;iteration<8;++iteration) {
         for (server_mode_t mode=Normal;mode<=MaxLast;++mode) cycle(mode);
+        cycle(ReadTooLong); cycle(WriteTooLong); cycle(CommandReplyTooLong);
 #ifdef TcpPeerFaultTests
         for (server_mode_t mode=AuthRandomFail;mode<=StepReceiveFail;++mode) cycle(mode);
 #endif
