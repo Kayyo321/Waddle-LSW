@@ -275,22 +275,28 @@ cleanup:
  */
 static int initialize_presentation_windows(void)
 {
-    HWND window=CreateWindowExA(0,"STATIC","Waddle presentation initialization",WS_POPUP,100,100,64,64,NULL,NULL,GetModuleHandleA(NULL),NULL);
+    DWORD gdi_before=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS),user_before=GetGuiResources(GetCurrentProcess(),GR_USEROBJECTS);
+    HWND window=CreateWindowExA(0,"STATIC","Waddle presentation initialization",WS_POPUP|WS_VISIBLE,100,100,64,64,NULL,NULL,GetModuleHandleA(NULL),NULL);
     if(!window)return 1;
+    (void)ShowWindow(window,SW_SHOW);(void)UpdateWindow(window);
+    if(DwmFlush()!=S_OK){(void)DestroyWindow(window);return 1;}
     HDC dc=GetDC(window);int result=!dc;
+    if(dc)(void)GetPixel(dc,0,0);
     if(dc && !ReleaseDC(window,dc))result=1;
-    if(!DestroyWindow(window))result=1;return result;
+    if(!DestroyWindow(window))result=1;
+    printf("Independent visible Win32 initialization released HWND/DC: GDI=%lu->%lu USER=%lu->%lu\n",(unsigned long)gdi_before,(unsigned long)GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS),(unsigned long)user_before,(unsigned long)GetGuiResources(GetCurrentProcess(),GR_USEROBJECTS));fflush(stdout);return result;
 }
 /** @brief Execute actual native surface/swapchain/render/present/recreation lifecycle.
  * @param[in] instance/physical/device/queue/family/memory/dispatchers Live borrowed owners.
- * @return Zero after2swapchain modes, each3actual acquires/render/presents, every4096
+ * @param[in] smoke Nonzero selects one frame/mode; zero selects three frames/mode.
+ * @return Zero after2swapchain modes with actual acquires/render/presents, every4096
  * client RGB pixel equals independently invalidated GPU BGRA readback and teardown.
  * @note Sole desktop fixture thread. Function owns HWND/surface/chains/semaphores/DC.
  * Matching queue/device completion precedes resource release; caller preserves host
  * session on transport loss through existing trusted retirement receipt handling.
  */
 static int native_swapchain_probe(VkInstance instance,VkPhysicalDevice physical,VkDevice device,VkQueue queue,uint32_t family,
-    const VkPhysicalDeviceMemoryProperties *memory,PFN_vkGetInstanceProcAddr lookup,PFN_vkGetDeviceProcAddr device_proc)
+    const VkPhysicalDeviceMemoryProperties *memory,PFN_vkGetInstanceProcAddr lookup,PFN_vkGetDeviceProcAddr device_proc,int smoke)
 {
     PFN_vkCreateWin32SurfaceKHR create_surface=(PFN_vkCreateWin32SurfaceKHR)lookup(instance,"vkCreateWin32SurfaceKHR");
     PFN_vkDestroySurfaceKHR destroy_surface=(PFN_vkDestroySurfaceKHR)lookup(instance,"vkDestroySurfaceKHR");
@@ -328,7 +334,7 @@ static int native_swapchain_probe(VkInstance instance,VkPhysicalDevice physical,
         if(old_chain){destroy_swapchain(device,old_chain,NULL);old_chain=NULL;}
         uint32_t image_count=0;if(images(device,chain,&image_count,NULL)!=VK_SUCCESS || image_count!=2)goto cleanup;
         VkImage image_handles[3]={0};uint32_t capacity=3;if(images(device,chain,&capacity,image_handles)!=VK_SUCCESS || capacity!=image_count || !image_handles[0] || !image_handles[1] || image_handles[0]==image_handles[1])goto cleanup;
-        for(unsigned frame=0;frame<3;frame++) {
+        for(unsigned frame=0;frame<(smoke ? 1u : 3u);frame++) {
             uint32_t index=UINT32_MAX;stage="real acquire binary semaphore signal";
             if(acquire(device,chain,UINT64_C(1000000000),acquired,NULL,&index)!=VK_SUCCESS || index>=image_count)goto cleanup;
             stage="real GPU swapchain triangle and complete BGRA readback";
@@ -358,6 +364,7 @@ cleanup:
     if(acquired){destroy_semaphore(device,acquired,NULL);acquired=NULL;}
     if(surface){destroy_surface(instance,surface,NULL);surface=NULL;}
     if(window){if(!DestroyWindow(window))result=1;window=NULL;}
-    if(GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS)!=gdi || GetGuiResources(GetCurrentProcess(),GR_USEROBJECTS)!=user){fputs("Native Vulkan swapchain retained GDI/USER owner\n",stderr);result=1;}
+    DWORD gdi_after=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS),user_after=GetGuiResources(GetCurrentProcess(),GR_USEROBJECTS);
+    if(gdi_after!=gdi || user_after!=user){fprintf(stderr,"Native Vulkan swapchain retained GDI/USER owner: gdi=%lu->%lu user=%lu->%lu\n",(unsigned long)gdi,(unsigned long)gdi_after,(unsigned long)user,(unsigned long)user_after);result=1;}
     return result;
 }

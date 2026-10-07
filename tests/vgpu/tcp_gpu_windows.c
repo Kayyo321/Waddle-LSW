@@ -738,9 +738,10 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
  */
 int main(int argc,char **argv)
 {
-    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries") && strcmp(argv[6],"triangle_present")))return 2;
+    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries") && strcmp(argv[6],"triangle_present") && strcmp(argv[6],"triangle_present_smoke")))return 2;
     int modern_queries=!strcmp(argv[6],"triangle_queries");
-    int presentation=!strcmp(argv[6],"triangle_present");
+    int presentation_smoke=!strcmp(argv[6],"triangle_present_smoke");
+    int presentation=!strcmp(argv[6],"triangle_present") || presentation_smoke;
     int graphics_workload=!strcmp(argv[6],"triangle") || modern_queries || presentation;
     if(!medium_integrity()){fputs("Native GPU fixture requires medium integrity\n",stderr);return 2;}
     if(GetFileAttributesA(argv[5])!=INVALID_FILE_ATTRIBUTES){fputs("Retirement receipt must be fresh\n",stderr);return 2;}
@@ -748,6 +749,7 @@ int main(int argc,char **argv)
     bootstrap_start_t start=NULL;bootstrap_stop_t stop=NULL;bootstrap_session_t session=NULL;bootstrap_abandon_t abandon=NULL;
     PFN_vkGetInstanceProcAddr lookup=NULL;VkInstance instance=NULL;VkDevice device=NULL;
     PFN_vkDestroyInstance destroy_instance=NULL;PFN_vkDestroyDevice destroy_device=NULL;
+    PFN_vkDeviceWaitIdle cleanup_idle=NULL;
     const char *stage="bootstrap module acquisition";int result=1;uint64_t identity=0;
     bootstrap_module=LoadLibraryExA(argv[1],NULL,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     if(!bootstrap_module)goto cleanup;
@@ -772,7 +774,7 @@ int main(int argc,char **argv)
     if(presentation && initialize_presentation_windows())goto cleanup;
     DWORD baseline=native_handles();if(!baseline)goto cleanup;
     printf("Native repeated application handle baseline=%lu\n",(unsigned long)baseline);fflush(stdout);
-    for(unsigned iteration=0;iteration<8;iteration++) {
+    for(unsigned iteration=0;iteration<(presentation_smoke ? 2u : 8u);iteration++) {
         stage="Vulkan1.0 instance creation";
         VkApplicationInfo application={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.apiVersion=VK_API_VERSION_1_0};
         const char *query_extension=VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
@@ -811,14 +813,15 @@ int main(int argc,char **argv)
         PFN_vkGetDeviceQueue get_queue=(PFN_vkGetDeviceQueue)device_proc(device,"vkGetDeviceQueue");
         PFN_vkDeviceWaitIdle device_idle=(PFN_vkDeviceWaitIdle)device_proc(device,"vkDeviceWaitIdle");
         if(!destroy_device || !get_queue || !device_idle)goto cleanup;
+        cleanup_idle=device_idle;
         VkQueue queue=NULL,repeated=NULL;get_queue(device,family,0,&queue);get_queue(device,family,0,&repeated);if(!queue || repeated!=queue)goto cleanup;
         stage="exact hardware workload output";
-        if(presentation){if(native_swapchain_probe(instance,selected,device,queue,family,&supported_memory,lookup,device_proc))goto cleanup;}
+        if(presentation){if(native_swapchain_probe(instance,selected,device,queue,family,&supported_memory,lookup,device_proc,presentation_smoke))goto cleanup;}
         else if(graphics_workload){if(triangle_probe(device,queue,family,&supported_memory,device_proc))goto cleanup;}
         else if(compute_probe(device,queue,family,&supported_memory,device_proc,!strcmp(argv[6],"compute_push"),37+iteration*19))goto cleanup;
         stage="application teardown before matching actual retirement Ack";
         if(device_idle(device)!=VK_SUCCESS)goto cleanup;
-        destroy_device(device,NULL);device=NULL;destroy_device=NULL;destroy_instance(instance,NULL);instance=NULL;destroy_instance=NULL;
+        destroy_device(device,NULL);device=NULL;destroy_device=NULL;cleanup_idle=NULL;destroy_instance(instance,NULL);instance=NULL;destroy_instance=NULL;
         stage="exact native application handle retirement";if(handle_baseline(baseline))goto cleanup;
         printf("Native actual %s lifetime=%u device=%s exact-output PASS\n",argv[6],iteration+1,argv[7]);fflush(stdout);
     }
@@ -826,10 +829,21 @@ int main(int argc,char **argv)
     result=0;
 cleanup:
     if(result)fprintf(stderr,"Native actual GPU fixture failed: %s\n",stage);
+    /* A healthy validation failure can retire its ordinary application owners
+     * before Stop. Unknown GPU completion retains them until trusted host reap. */
+    if(device && destroy_device && cleanup_idle && cleanup_idle(device)==VK_SUCCESS){destroy_device(device,NULL);device=NULL;destroy_device=NULL;cleanup_idle=NULL;}
+    if(!device && instance && destroy_instance){destroy_instance(instance,NULL);instance=NULL;destroy_instance=NULL;}
     if(stop && session && abandon) {
         venus_ring_status_t status=stop();
         uint64_t retained=session();
-        if(status!=RingOk && retained){wait_retired(argv[5],retained);while(abandon(retained)!=RingOk)Sleep(10);}
+        if(status!=RingOk && retained){
+            wait_retired(argv[5],retained);
+            /* Loader CPU dispatch owners must be released while private ICD
+             * tokens still exist; trusted host retirement has ended GPU access. */
+            if(device && destroy_device){destroy_device(device,NULL);device=NULL;destroy_device=NULL;}
+            if(instance && destroy_instance){destroy_instance(instance,NULL);instance=NULL;destroy_instance=NULL;}
+            while(abandon(retained)!=RingOk)Sleep(10);
+        }
         else while(status!=RingOk){Sleep(10);status=stop();}
     }
     /* After ordinary Ack or trusted host reap, backend accesses have ended.
