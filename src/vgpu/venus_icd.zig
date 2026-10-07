@@ -11120,3 +11120,92 @@ test "buffer device address exposure requires enabled feature bound address allo
     try std.testing.expectEqual(@as(usize, 1), resource_state(allocation).gpu_span_count);
     try std.testing.expectEqual(mapping_span_t{ .start = 256, .end = 768 }, resource_state(allocation).gpu_spans[0]);
 }
+
+test "root Submit2 ACK retains complete owned resource graph and failure publishes no ticket" {
+    for ([_]i32{ c.VK_SUCCESS, c.VK_ERROR_OUT_OF_DEVICE_MEMORY }) |status| {
+        var fixture = root_sync_fixture_t{ .result = status };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_sync_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const queue = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_QUEUE, parent.id, 1);
+        const semaphore = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_SEMAPHORE, parent.id, 0);
+        const pool = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, parent.id, 0);
+        const command_record = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        const allocation = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+        const buffer = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+        for ([_]*c.venus_object_t{ parent, queue, semaphore, pool, command_record, allocation, buffer }) |record| resource_state(record).id = record.id;
+        resource_state(semaphore).buffer_usage = 1;
+        resource_state(command_record).command_state = .Executable;
+        resource_state(allocation).allocation_size = 4096;
+        resource_state(buffer).buffer_size = 4096;
+        resource_state(buffer).bound_memory = allocation.handle;
+        command_reference(resource_state(command_record), buffer);
+        command_reference(resource_state(command_record), allocation);
+        device_caches[0].handle = parent.handle;
+        var wait = c.VkSemaphoreSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .semaphore = @ptrFromInt(semaphore.handle), .value = 7, .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT };
+        const signal = c.VkSemaphoreSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, .semaphore = @ptrFromInt(semaphore.handle), .value = 9, .stageMask = c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT };
+        const command_info = c.VkCommandBufferSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = @ptrFromInt(command_record.handle) };
+        var submit = c.VkSubmitInfo2{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .waitSemaphoreInfoCount = 1, .pWaitSemaphoreInfos = &wait, .signalSemaphoreInfoCount = 1, .pSignalSemaphoreInfos = &signal, .commandBufferInfoCount = 1, .pCommandBufferInfos = &command_info };
+        try std.testing.expectEqual(status, root_runtime_fn(queue_submit2)(@ptrFromInt(queue.handle), 1, &submit, null));
+        try std.testing.expectEqual(@as(u32, if (status == c.VK_SUCCESS) 1 else 0), resource_state(command_record).inflight_count);
+        try std.testing.expectEqual(@as(u32, if (status == c.VK_SUCCESS) 1 else 0), resource_state(semaphore).inflight_count);
+        try std.testing.expectEqual(@as(u32, if (status == c.VK_SUCCESS) 1 else 0), resource_state(buffer).inflight_count);
+        try std.testing.expectEqual(@as(u32, if (status == c.VK_SUCCESS) 1 else 0), resource_state(allocation).inflight_count);
+        if (status == c.VK_SUCCESS) {
+            try std.testing.expectEqual(@as(usize, 1), resource_state(allocation).gpu_span_count);
+            try std.testing.expectEqual(@as(u64, 4096), resource_state(allocation).gpu_spans[0].end);
+            var counter: u64 = 0;
+            try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), root_runtime_fn(get_semaphore_counter_value)(@ptrFromInt(parent.handle), @ptrFromInt(semaphore.handle), &counter));
+            try std.testing.expectEqual(@as(u32, 1), resource_state(allocation).inflight_count);
+            // A timeline read proves visibility but leaves the submitted owner graph alive.
+            retire_ticket(&submission_tickets[0]);
+            try std.testing.expectEqual(@as(u32, 0), resource_state(allocation).inflight_count);
+            try std.testing.expectEqual(@as(usize, 1), resource_state(allocation).gpu_span_count);
+        } else try std.testing.expectEqual(@as(u64, 0), submission_tickets[0].queue);
+        // Invalid native wait fields are rejected before any additional peer call.
+        const before = fixture.calls;
+        wait.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(@ptrFromInt(queue.handle), 1, &submit, null));
+        wait.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO; wait.pNext = @ptrFromInt(8);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(@ptrFromInt(queue.handle), 1, &submit, null));
+        wait.pNext = null; wait.deviceIndex = 1;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(@ptrFromInt(queue.handle), 1, &submit, null));
+        wait.deviceIndex = 0; wait.semaphore = null;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(@ptrFromInt(queue.handle), 1, &submit, null));
+        try std.testing.expectEqual(before, fixture.calls);
+    }
+}
+
+test "root Submit2 preflight quotas idle lifetime native headers and ticket exhaustion are atomic" {
+    var fixture = root_sync_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_sync_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const queue = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_QUEUE, parent.id, 1);
+    const queue_handle: c.VkQueue = @ptrFromInt(queue.handle);
+    resource_state(parent).id = parent.id; resource_state(queue).id = queue.id; device_caches[0].handle = parent.handle;
+    var submit = c.VkSubmitInfo2{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(null, 0, null, null));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(queue_handle, 1, null, null));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), root_runtime_fn(queue_submit2)(queue_handle, 17, &submit, null));
+    submit.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+    submit.sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2; submit.pNext = @ptrFromInt(8);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+    submit.pNext = null; submit.flags = 1; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+    submit.flags = 0;
+    inline for (.{ "waitSemaphoreInfoCount", "signalSemaphoreInfoCount", "commandBufferInfoCount" }) |field| {
+        @field(submit, field) = 65; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+        @field(submit, field) = 1; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+        @field(submit, field) = 0;
+    }
+    resource_state(queue).idle_refs = 1; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+    resource_state(queue).idle_refs = 0; resource_state(parent).idle_refs = 1;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+    resource_state(parent).idle_refs = 0; submission_sequence = std.math.maxInt(u64);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+    submission_sequence = 0; for (&submission_tickets) |*ticket| ticket.queue = queue.handle;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), root_runtime_fn(queue_submit2)(queue_handle, 1, &submit, null));
+    submission_tickets = [_]submission_ticket_t{.{}} ** submission_tickets.len;
+    try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), root_runtime_fn(queue_submit2)(queue_handle, 0, null, null));
+    try std.testing.expectEqual(@as(u64, queue.handle), submission_tickets[0].queue);
+}
