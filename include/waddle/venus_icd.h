@@ -3,6 +3,7 @@
 /** @brief Include guard; no ownership or storage. */
 #define WaddleVenusIcdH
 #include "venus_command.h"
+#include "venus_capabilities.h"
 #include "venus_instance_wire.h"
 /** @brief Bind the experimental ICD to one exclusive already negotiated frontend.
  * @param[in] exchange Nonnull borrowed callback, retained until unbind/abandon;
@@ -17,6 +18,19 @@
  * discovery. Caller owns frontend, channel, mapping and worker teardown.
  */
 venus_ring_status_t venus_icd_bind(venus_command_exchange_t exchange, void *context);
+/** @brief Bind one exclusive frontend with its actual negotiated capability profile.
+ * @param[in] exchange Nonnull borrowed callback, retained with the existing bind contract.
+ * @param[in,out] context Nonnull exclusive callback owner, live until unbind/abandon.
+ * @param[in] capabilities Nonnull initialized immutable private160-byte snapshot,
+ * borrowed only until return; compatible integers are copied, no pointer retained.
+ * @return RingOk; RingInvalid for null/incompatible/occupied; RingLimit namespace exhaustion.
+ * @note Allocation-free, mutex serialized. Rejection preserves existing session and
+ * snapshot; successful unbind/receiver-retired abandon scrub the copy. Negotiation
+ * does not advertise implemented Vulkan API/extensions or actual hardware features.
+ */
+venus_ring_status_t venus_icd_bind_capabilities(venus_command_exchange_t exchange,
+                                              void *context,
+                                              const venus_capabilities_t *capabilities);
 /** @brief Release a quiescent binding after all Vulkan objects are destroyed.
  * @return RingOk, including already-unbound; Again while objects/submission remain.
  * @note No frontend teardown/storage free; mutex serialized, borrowed pointers expire.

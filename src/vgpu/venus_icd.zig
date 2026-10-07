@@ -165,6 +165,8 @@ var update_encoded: [MaxUpdateWireBytes]u8 = undefined;
 var tx: [CommandPrefixBytes + MaxUpdateWireBytes]u8 = undefined;
 var rx: [4096]u8 = undefined;
 var lost: c_int = c.RingOk;
+var negotiated_capabilities = std.mem.zeroes(c.venus_capabilities_t);
+var negotiated_capabilities_ready: bool = false;
 const exchange_t = *const fn (
     ?*anyopaque,
     [*c]const c.venus_request_t,
@@ -194,11 +196,32 @@ fn clear() void {
     submission_sequence = 0;
     @memset(&update_encoded, 0);
     lost = c.RingOk;
+    negotiated_capabilities = std.mem.zeroes(c.venus_capabilities_t);
+    negotiated_capabilities_ready = false;
 }
 /// Borrow one exclusive negotiated backend; public header defines ownership/deadlines/threads.
 export fn venus_icd_bind(exchange: ?exchange_t, context: ?*anyopaque) c_int {
     mutex.lock();
     defer mutex.unlock();
+    const status = bind_locked(exchange, context);
+    if (status != c.RingOk) return status;
+    negotiated_capabilities = std.mem.zeroes(c.venus_capabilities_t);
+    negotiated_capabilities_ready = false;
+    return c.RingOk;
+}
+/// Copy the actual negotiated profile; public header defines borrowed owners and failure preservation.
+export fn venus_icd_bind_capabilities(exchange: ?exchange_t, context: ?*anyopaque, capabilities: [*c]const c.venus_capabilities_t) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (capabilities == null or c.venus_capabilities_compatible(capabilities) != c.RingOk) return c.RingInvalid;
+    const status = bind_locked(exchange, context);
+    if (status != c.RingOk) return status;
+    negotiated_capabilities = capabilities.*;
+    negotiated_capabilities_ready = true;
+    return c.RingOk;
+}
+// Caller holds mutex; validated fixed buffers make object/command initialization infallible.
+fn bind_locked(exchange: ?exchange_t, context: ?*anyopaque) c_int {
     if (exchange == null or context == null or command.exchange != null) return c.RingInvalid;
     if (namespace_id == std.math.maxInt(u32)) return c.RingLimit;
     const status = c.venus_objects_init(&objects, &slots, slots.len, namespace_id, context);
@@ -5449,4 +5472,75 @@ test "graphics queue flags cache rejects malformed and impossible actual familie
         venus_icd_abandon();
         try std.testing.expectEqualDeep(device_cache_t{}, device_caches[0]);
     }
+}
+
+test "negotiated binding owns the entire profile and rejected calls preserve the live session" {
+    const fixture_t = struct {
+        fn exchange(_: ?*anyopaque, _: [*c]const c.venus_request_t, _: ?*const anyopaque, _: usize, _: [*c]c.venus_request_t, _: ?*anyopaque, _: usize) callconv(.C) c_int {
+            return c.RingInvalid; // Binding never contacts the receiver.
+        }
+    };
+    var context: u8 = 0;
+    var capabilities = std.mem.zeroes(c.venus_capabilities_t);
+    capabilities.wire_format_version = 1;
+    capabilities.vk_xml_version = c.VenusPinnedXmlVersion;
+    capabilities.vk_ext_command_serialization_spec_version = 1;
+    capabilities.vk_mesa_venus_protocol_spec_version = 3;
+    capabilities.supports_blob_id_0 = 1;
+    capabilities.supports_multiple_timelines = 1;
+    capabilities.vk_extension_mask1[0] = 1;
+    capabilities.vk_extension_mask1[12] = 3;
+    capabilities.vk_extension_mask1[31] = 0xa5a5a5a5;
+    const expected = capabilities;
+    for (0..8) |mode| {
+        var invalid = expected;
+        switch (mode) {
+            3 => invalid.wire_format_version = 0,
+            4 => invalid.allow_vk_wait_syncs = 2,
+            5 => invalid.supports_blob_id_0 = 0,
+            6 => invalid.vk_extension_mask1[0] = 0,
+            7 => invalid.vk_extension_mask1[12] = 1,
+            else => {},
+        }
+        const previous_namespace = namespace_id;
+        try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind_capabilities(if (mode == 0) null else fixture_t.exchange, if (mode == 1) null else &context, if (mode == 2) null else &invalid));
+        try std.testing.expectEqual(previous_namespace, namespace_id);
+        try std.testing.expect(command.exchange == null);
+        try std.testing.expect(!negotiated_capabilities_ready);
+        try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+    }
+    const previous_namespace = namespace_id;
+    namespace_id = std.math.maxInt(u32);
+    const exhausted = venus_icd_bind_capabilities(fixture_t.exchange, &context, &capabilities);
+    namespace_id = previous_namespace;
+    try std.testing.expectEqual(@as(c_int, c.RingLimit), exhausted);
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expect(command.exchange == null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(fixture_t.exchange, &context, &capabilities));
+    defer venus_icd_abandon();
+    @memset(std.mem.asBytes(&capabilities), 0);
+    try std.testing.expect(negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    const bound_namespace = namespace_id;
+    try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind_capabilities(fixture_t.exchange, &context, &expected));
+    try std.testing.expectEqual(@as(c_int, c.RingInvalid), venus_icd_bind(fixture_t.exchange, &context));
+    try std.testing.expectEqual(bound_namespace, namespace_id);
+    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    var instance: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
+    try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+    try std.testing.expect(negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(expected, negotiated_capabilities);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, instance.*.handle, c.VK_OBJECT_TYPE_INSTANCE, 1));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_unbind());
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &context));
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+    venus_icd_abandon();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(fixture_t.exchange, &context, &expected));
+    venus_icd_abandon();
+    try std.testing.expect(!negotiated_capabilities_ready);
+    try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
 }

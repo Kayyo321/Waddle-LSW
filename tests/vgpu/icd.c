@@ -5882,6 +5882,8 @@ static void failures(void) {
 #ifdef VgpuIcdLoader
 /** @brief Dynamic binding function borrows callback/context until unbind. */
 typedef venus_ring_status_t (*binding_t)(venus_command_exchange_t, void *);
+/** @brief Additive dynamic binding copies a borrowed profile and retains callback/context. */
+typedef venus_ring_status_t (*capability_binding_t)(venus_command_exchange_t, void *, const venus_capabilities_t *);
 /** @brief Dynamic unbinding function owns no storage. */
 typedef venus_ring_status_t (*unbinding_t)(void);
 #ifdef _WIN32
@@ -6013,7 +6015,10 @@ static void loader_fixture(void) {
     memcpy(&unbind, &address, sizeof(unbind));
     address = library_symbol(loader, "vkGetInstanceProcAddr");
     memcpy(&lookup, &address, sizeof(lookup));
-    assert(bind && unbind && lookup);
+    capability_binding_t bind_capabilities = NULL;
+    address = library_symbol(library, "venus_icd_bind_capabilities");
+    memcpy(&bind_capabilities, &address, sizeof(bind_capabilities));
+    assert(bind && bind_capabilities && unbind && lookup);
     char *saved = save_environment("VK_DRIVER_FILES");
     set_environment("VK_DRIVER_FILES", manifest_path);
     fixture_t fixture = fresh();
@@ -6170,6 +6175,27 @@ static void loader_fixture(void) {
         assert(destroy);
         destroy(instance, NULL);
     }
+    assert(unbind() == RingOk);
+    venus_capabilities_t capabilities = {
+        .wire_format_version = 1,
+        .vk_xml_version = VenusPinnedXmlVersion,
+        .vk_ext_command_serialization_spec_version = 1,
+        .vk_mesa_venus_protocol_spec_version = 3,
+        .supports_blob_id_0 = 1,
+        .vk_extension_mask1 = {[0] = 1, [12] = 3},
+        .supports_multiple_timelines = 1,
+    };
+    assert(bind_capabilities(NULL, &fixture, &capabilities) == RingInvalid);
+    assert(bind_capabilities(exchange, NULL, &capabilities) == RingInvalid);
+    assert(bind_capabilities(exchange, &fixture, NULL) == RingInvalid);
+    assert(bind_capabilities(exchange, &fixture, &capabilities) == RingOk);
+    memset(&capabilities, 0, sizeof(capabilities));
+    VkInstance copied_instance = NULL;
+    assert(create(&info, NULL, &copied_instance) == VK_SUCCESS && copied_instance);
+    PFN_vkDestroyInstance destroy_copied =
+        (PFN_vkDestroyInstance)lookup(copied_instance, "vkDestroyInstance");
+    assert(destroy_copied);
+    destroy_copied(copied_instance, NULL);
     assert(unbind() == RingOk);
     set_environment("VK_DRIVER_FILES", saved);
     free(saved);

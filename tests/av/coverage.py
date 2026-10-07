@@ -45,7 +45,7 @@ if mode in ('venus_descriptor_wire', 'venus_graphics_wire', 'venus_compute_wire'
 if mode in ('venus_features_wire', 'venus_features_native'):
     link_objects += ['build/venus_features_reply_oracle.o','build/venus_render_wire_oracle.o']
 if mode == 'venus_icd':
-    link_objects += ['build/venus_command.o','build/venus_objects.o','build/venus_instance_wire.o',
+    link_objects += ['build/venus_capabilities.o','build/venus_command.o','build/venus_objects.o','build/venus_instance_wire.o',
                      'build/venus_query_wire.o','build/venus_values.o','build/venus_values_oracle.o',
                      'build/venus_render_wire_oracle.o','build/venus_descriptor_wire_oracle.o',
                      'build/venus_compute_wire_oracle.o', 'build/venus_graphics_wire_oracle.o',

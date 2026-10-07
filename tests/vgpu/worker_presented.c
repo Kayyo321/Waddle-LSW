@@ -33,7 +33,7 @@ typedef enum fixture_workload_t {
     TriangleWorkload /**< Real graphics rendering and noncoherent RGBA readback. */
 } fixture_workload_t;
 static fixture_workload_t selected_workload = FullWorkload;
-static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *) = venus_icd_bind;
+static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *, const venus_capabilities_t *) = venus_icd_bind_capabilities;
 static venus_ring_status_t (*icd_unbind)(void) = venus_icd_unbind;
 static void (*icd_abandon)(void) = venus_icd_abandon;
 static PFN_vkGetInstanceProcAddr icd_lookup = venus_icd_get_instance_proc_addr;
@@ -64,7 +64,7 @@ static void loader_cleanup(void) {
         else unsetenv("VK_DRIVER_FILES");
     }
     driver_changed = 0;
-    icd_bind = venus_icd_bind; icd_unbind = venus_icd_unbind;
+    icd_bind = venus_icd_bind_capabilities; icd_unbind = venus_icd_unbind;
     icd_abandon = venus_icd_abandon; icd_lookup = venus_icd_get_instance_proc_addr;
     free(saved_driver_files);
     saved_driver_files = NULL;
@@ -85,7 +85,7 @@ static int loader_initialize(void) {
     icd_library = dlopen(library, RTLD_NOW | RTLD_LOCAL);
     loader_library = dlopen(loader, RTLD_NOW | RTLD_LOCAL);
     if (!icd_library || !loader_library) return 1;
-    return loader_symbol(icd_library, "venus_icd_bind", &icd_bind, sizeof(icd_bind)) ||
+    return loader_symbol(icd_library, "venus_icd_bind_capabilities", &icd_bind, sizeof(icd_bind)) ||
         loader_symbol(icd_library, "venus_icd_unbind", &icd_unbind, sizeof(icd_unbind)) ||
         loader_symbol(icd_library, "venus_icd_abandon", &icd_abandon, sizeof(icd_abandon)) ||
         loader_symbol(loader_library, "vkGetInstanceProcAddr", &icd_lookup, sizeof(icd_lookup));
@@ -720,7 +720,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
     /* Host receiver is already initialized with its original driver environment. */
     if (loader_initialize()) { loader_cleanup(); return 1; }
 #endif
-    if (icd_bind(command_exchange, guest) != RingOk)
+    if (icd_bind(command_exchange, guest, &guest->capabilities) != RingOk)
         return 1;
     PFN_vkCreateInstance create =
         (PFN_vkCreateInstance)icd_lookup(NULL, "vkCreateInstance");
