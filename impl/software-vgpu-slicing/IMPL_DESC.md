@@ -5573,3 +5573,92 @@ unmodified >=90% source coverage, genuine owned final ASan accesses/original
 Debug guard reverse proof with fresh C-ASan/LSan/UBSan oracles and zero leaks;
 strict Windows crossbuild and actual final CPU tests via wddm before sourcecommit.
 Preserve unique new evidence and old codec snapshots. No helper exemptions.
+
+### Exact absolute guest prerequisite
+
+
+Follows channel4064193 and the separately verified capped absolute RPC change
+under contract0d6a58b; no guest source change yet. Exact additive declaration:
+
+```c
+venus_ring_status_t venus_guest_exchange_until(venus_guest_t *guest,
+    const venus_request_t *request, const void *input, size_t length,
+    venus_request_t *response, void *output, size_t capacity,
+    uint64_t deadline_ms);
+```
+
+Parameter directions/lifetimes: guest[in,out] nonnull initialized caller-owned
+sole-submission-thread record, immutable configuration and borrowed live RPC until
+free. request[in] nonnull immutable sequence-zero decoded host-value record with
+no ownership transfer. input[in] nullable only for length0, accessible private
+input[length], no retention. length[in] exactly payload_bytes and within RPC scratch.
+response[out] nonnull private disjoint record, zeroed on failure before exchange;
+valid delivered wire terminal result is retained. output[out] nullable when no
+response payload is expected; otherwise accessible private output[capacity], never
+retained. capacity[in] actual output extent, at least expected successful reply.
+Input/output may alias each other, both disjoint from RPC scratch, all records and
+mapping. Payload output remains unchanged on every transport/local failure or
+ordinary wire error without payload. deadline_ms[in] nonzero local absolute
+venus_channel_time_ms-origin timestamp; never transported as a wire value. No new allocation, record ABI fields, capability advertisement
+or retained pointer; immutable guest timeout_ms remains configured at init.
+
+Precedence: null response Invalid; otherwise zero response first. Null guest/live
+RPC/request Invalid. Existing guest lost status returned before absolute deadline
+validation, preserving sticky status and avoiding access to an RPC already freed
+by prior loss. Zero deadline Invalid, no clock/cancel/transport. Forbidden
+Capabilities/Negotiate request Invalid before RPC. Delegate EVERY payload and
+wire-shape validation and all clock/cancel/clamping/publication handling to
+venus_rpc_exchange_until(...deadline_ms,guest->timeout_ms). Guest never samples
+clock or computes a new relative interval; configured shorter cap is passed as
+immutable scalar. This avoids changing malformed-payload versus deadline precedence.
+
+Map valid completed wire response status with existing operation_status. Corrupt,
+Closed, Cancelled and Timeout remain sticky and free the borrowed RPC record once
+using existing closure, preserving already decoded terminal wire response and
+caller payload rules. Invalid/Limit/Again are ordinary and retain live guest.
+The absolute RPC performs first native clock0/cap-addition overflow (Closed),
+expiration (Timeout), immutable min(caller_abs,first_now+configured_cap), exact
+channel installation, and final ready/cancel/clock0/backwards/expiration check
+before payload/response/sequence publication. Guest does not add another clock
+check that could fail after RPC already published payload. The future whole-query
+owner must independently check its monotonic deadline after each callback and
+before query-cache publication. This is cooperative validation, not a hard
+realtime scheduling guarantee or host cancellation/retirement claim. Legacy guest exchange/exchange_timeout/init/free
+retain existing semantics and configured timeout unchanged.
+
+Meaningful fixture records exact caller timestamp and configured cap independently,
+checks no extra clock/API calls, invalid/sticky precedence, every wire status and
+transport result, response/output preservation, one-time closure, 1/60000 cap
+boundaries and deadline UINT64_MAX forwarding (RPC clips). Native strict plus
+C-ASan/LSan/UBSan0, honest unchanged guest coverage engine>=90 lines/branches,
+strict Windows cross-build and actual CPU-only execution under explicit wddm lease.
+Only header/source/direct test changes form this separate atomic +0 commit.
+
+Implementation sharing: keep init/free byte-for-byte semantically unchanged and
+reuse one exchange implementation with a private absolute/relative selector.
+Legacy exchange_timeout keeps its existing local budget1..guest->timeout_ms and
+60000 validation before request-kind checks; legacy exchange forwards configured
+cap as before. Absolute mode validates caller deadline0 only at that same local
+budget-validation position, checks forbidden request kinds, then delegates to
+capped RPC with the immutable configured cap. Configured cap itself is validated
+by RPC after shared payload validation, no guest-side temporal preflight. No
+production fault mode or positive extension/feature policy is added.
+
+Exact verification inventory: invalid null response/guest/live RPC/request;
+zero deadline without calls; sticky terminal status before deadline0, repeated
+sticky calls no second closure; forbidden capabilities/negotiate without calls;
+exact UINT64_MAX/small caller timestamp forwarded with1/60000 configured caps;
+every ordinary/terminal transport and acknowledged wire outcome; valid wire
+terminal response retained, transport failure response zeroed, payload canaries;
+shared legacy100ms/shorter-timeout cases remain unchanged. Native tests and strict
+Windows fixtures are the same portable guest.c; runtime RPC and real stream
+proofs separately establish timing/clamping. The guest wrapper cannot manufacture
+success for a missed RPC deadline or change the configured frontend cap.
+
+Commit includes only include/waddle/venus_guest.h, src/vgpu/venus_guest.c and
+tests/vgpu/guest.c. Coverage engine copied with unique output literal only (no
+tracked script edits/exclusions), complete original default evidence unchanged.
+Atomic commit under full flock /tmp/waddle_git_index.lock, initially empty index,
+exact owned staged set, detailed gates/evidence and TODO #3 +0. Before source,
+root adopts this exact interface/precedence. GPU/QMP/profile/shared worker build
+remain unleased and untouched; Windows execution requires wddm CPU scheduling.
