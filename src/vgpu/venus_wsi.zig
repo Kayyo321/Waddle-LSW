@@ -11,8 +11,8 @@ pub const MaxSwapchains = 16;
 /// Per-swapchain owned host-image ceiling.
 pub const MaxImages = 3;
 /// Synchronous borrowed backend. All callbacks execute with the caller's ICD lock held.
-/// create transfers image/memory ownership only on success. destroy retires both owners,
-/// including abandoned host resources after transport loss. acquire signals real host sync.
+/// create transfers image/memory ownership only on success. destroy retires both owners on acknowledged host teardown. After transport loss,
+/// destroy transfers both owners to the ICD pending-abandon ledger until receiver retirement. acquire signals real host sync.
 /// readback consumes real wait semaphores and waits for GPU completion before writing pixels.
 /// No callback may retain pointers, reenter the ICD, or free caller pixel storage.
 pub const backend_t = struct {
@@ -184,7 +184,8 @@ pub fn create_swapchain(state: *state_t, backend: *const backend_t, device: u64,
     };
     return c.VK_ERROR_OUT_OF_HOST_MEMORY;
 }
-/// Destroy owned images and memory exactly once; stale IDs are ignored. No allocation.
+/// Release swapchain references exactly once; backend either destroys acknowledged host
+/// resources or retains their ownership in its pending-abandon ledger. Stale IDs ignored.
 pub fn destroy_swapchain(state: *state_t, backend: *const backend_t, device: u64, id: u64) void {
     const slot = swapchain(state, device, id) orelse return;
     for (slot.images[0..slot.count]) |owned| backend.destroy(backend.context, owned.image, owned.memory);
