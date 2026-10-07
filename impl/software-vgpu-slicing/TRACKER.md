@@ -632,4 +632,47 @@ TODO #3 remains55% pending integrated Windows/DXVK and final qualification.
 | `97a3d0b` | Native BGRA HWND sink with paced FIFO | Actual medium Windows128 exact-pixel cycles, stable GDI/USER owners at native_present_89e12fd3 | #3 +0%; overall +0% |
 | `e797037` | Six bounded image transfer commands and pinned C oracle | Debug/ReleaseSafe19 units; ICD integration pending | #3 +0%; overall +0% |
 | `e0e5928` | Native handle ownership regression with attributed system initialization | Original cold97→157 failure retained; strict crosslink; real corrected lifetime gate pending | #3 +0%; overall +0% |
-| current (resolve by subject) | Timed ICD ABI/export/build and trusted524288-byte worker mapping | Native fixture/Windows DLL/worker compile; full native queries and GPU/DXVK pending | #3 +0%; overall +0% |
+| `dc15eef` | Timed ICD ABI/export/build and trusted524288-byte worker mapping | Native fixture/Windows DLL/worker compile; full native queries and GPU/DXVK pending | #3 +0%; overall +0% |
+
+Integrated implementation milestones below carry **+0% verified progress** to
+TODO #3 and overall completion until final qualification passes. Targeted encoder
+and unit passes validate implementation paths; they are not Windows/DXVK acceptance.
+
+- **Commit `adb00a5`**: `feat(vgpu): integrate timed capability queries and immutable host extension cache`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `1e2ac02`**: `fix(vgpu): retain transport-lost swapchain backend owners`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `0d3674e`**: `feat(vgpu): encode real dynamic rendering attachment scopes`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c7d3cfc`**: `feat(vgpu): admit owned device requests against explicit supported capability policy`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `302b035`**: `feat(vgpu): serialize broad core graphics pipeline states`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `0ba4414`**: `feat(vgpu): encode modern synchronization and timeline operations`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `5abce9a`**: `feat(vgpu): encode dynamic graphics state and indexed draws`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c09f0ef`**: `fix(vgpu): preserve default single-device submit2 masks`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `721524f`**: `feat(vgpu): encode indexed image descriptors and immutable layouts`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c7917f1`**: `fix(vgpu): initialize attributed native graphics dependencies before handle audit`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c18fb26`**: `feat(vgpu): encode additional Vulkan object and query operations`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `f1eed65`**: `feat(vgpu): query actual dedicated memory and64-bit format requirements`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `7aeba1e`**: `feat(vgpu): integrate real-image Win32 swapchain presentation`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `3f5e406`**: `feat(vgpu): preserve mutable cube image format lists`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `ca02d7b`**: `feat(vgpu): forward actual graphics and compute pipeline caches`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `bb225ca`**: `feat(vgpu): integrate additional Vulkan object and query lifecycles`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `766efb8`**: `feat(vgpu): encode timeline semaphore creation and preserve counter errors`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `d005eaa`**: `feat(vgpu): encode dedicated and device-address memory allocations`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `5941f88`**: `feat(vgpu): normalize complete modern transfer command inputs`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `62f1eab`**: `feat(vgpu): track broad first-attachment compatibility keys`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `2e685c5`**: `fix(test): permit private bootstrap fixture cleanup by its owner`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+
+The actual Vulkan1.0 triangle run `build/windows11_vm/tcp_gpu_warm_7bd7c75a`
+passed exact pixels and eight lifetimes with a stable independently initialized
+system-dependency handle baseline, natural controller/worker exit and empty owned
+session. Its copied runtime predates the modern integration and qualifies only
+that functional snapshot. Original cold-baseline failures remain preserved.
+The new timed-bootstrap run `build/windows11_vm/timed_bootstrap_26265411`
+completed startup and exact allocation-boundary probes but failed its first cold
+handle assertion102→111. This remains unresolved qualification evidence; no leak
+or progress credit is assigned.
+
+Build integration milestone (this commit, resolve by subject): native/Windows
+oracle dependencies are declared before make prerequisites expand; all modern
+modules participate in rebuild dependencies, and `vgpu-icd-units` provides actual
+Debug/ReleaseSafe checks during implementation without running final instrumentation.
+Task Impact: TODO #3 +0%; overall +0%. Final sanitizer/coverage/stress and real
+Windows/DXVK2.7.1 rendering/compute/presentation/teardown remain required.
