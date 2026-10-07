@@ -236,3 +236,29 @@ pending. Final actual DXVK normal/sanitized, full48-frame WSI, controlled device
 removal, external native DLL heap audit, core coverage and final sanitizer/stress
 qualification remain open. TODO#3 remains55%; never substitute intermediate
 functional progress for final qualification. README remains untouched.
+
+### 2026-10-07 actual DXVK GPU readback milestone
+
+Current branch/history/VM and all old artifacts remain preserved. Core production
+at2e77d98 uses acknowledged native per-submission fences to retire GPU ownership,
+never timeline-counter inference. Native command reuse and staging Map work.
+Current821c0c7 includes276 D/RS/native128 passing ownership fixtures and optional
+scalar descriptor-allocation diagnostics;6cb8be4 prints optional worker service
+status. Shared-index lease and three exclusive source owners remain unchanged.
+
+Actual eb202e00 returns4096 BGRA127,64,32,255 pixels for fractional0.5 blue.
+Microsoft D3D11.3 section3.2.3.6 permits0.6 integer ULP, so127 and128 are both valid
+at that midpoint. b60fef3 changes only clear input to32/255,64/255,128/255,1;
+all4096 exact BGRA/RGB expectations, compute values, deadlines and cleanup stay.
+Actual182afac7 passes4096 exact GPU pixels, then compute descriptor allocation77
+ends in controller RingTimeout(-5), worker rawexit256. No compute/Present/teardown
+credit. NativePID4296 remains alive and preserved after original supervisor210s
+failure; signed Microsoft CDB non-invasive stacks show DXVK synchronization waiting
+after its command thread exited. Host receiver/session already retired, so a new
+isolated process can trace the next failure without resetting or killing oldstate.
+
+wddm_dxvk owns the next immutable actual trace, with perprocess VIRGL_LOG_LEVEL=info,
+unique upstream logs and existing scalar ICD/TCP diagnostics. Root/image/core keep
+compilation and targeted functional tests moving. Whole-core90% and final expensive
+sanitizer/stress/Windows/native heap acceptance stay deferred until basic compute,
+presentation and teardown work. Do not mark TODO#3 complete prematurely.

@@ -5756,3 +5756,20 @@ No response synthesis, skipped initial mapping bytes, new dynamic buffers, or
 acceptance timeout increases occur. Existing128KiB host RPC scratch covers the
 maximum resource response plus its envelope. Legacy non-profile ICD bindings
 retain4KiB reads; current authenticated bindings may use64KiB read chunks.
+
+### Native submission retirement and Windows clear acceptance
+
+Modern no-user-fence submissions own a hidden host fence. Its create ACK precedes
+native submit; GetFenceStatus success retires the proven same-queue ticket prefix,
+then acknowledged fence destruction releases its separate owner. Pending fences
+retain command/resource references. Unknown create/submit/destroy results retain
+uncertain owners until trusted receiver retirement. Hidden tokens are excluded
+from guest child lookup. Legacy bindings retain their established behavior.
+
+The native DXVK fixture clears with exact byte-center components32/255,64/255,
+128/255,1 and requires4096 exact BGRA128,64,32,255 readback pixels plus4096 exact
+client RGB32,64,128 pixels. This avoids unspecified rounding at half-integer UNORM
+values without a tolerance or skipped assertion. Microsoft FLOAT-to-UNORM rules:
+https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm
+(section3.2.3.6). Compute64 words, actual Present, real device removal, native DLL
+heap audit and zero-leak teardown remain separate unchanged acceptance criteria.

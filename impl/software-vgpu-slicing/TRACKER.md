@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; GetData completes, staging Map failure under investigation; whole-core coverage and final rendering/compute/present/leak qualification pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; GetData, staging Map and4096 exact GPU pixels pass in actual Windows/DXVK; compute descriptor-allocation timeout under investigation; presentation, whole-core coverage and final leak qualification pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -866,3 +866,30 @@ all historical flat reports. TODO#3 remains55%; overall68.75% pending final gate
 | `ed50df6` | fix(vgpu): transfer resource reads through complete bridge payload rings | #3 +0%; overall +0% (qualification pending). | Owned262144-byte region/two65536-byte rings remove per64-byte polling bottleneck. Strict build and actual CPU lifecycle cases pass,100% lines/91.45% branches; final sanitizer and Windows rerun pending. |
 | `799990c` | test(vgpu): qualify bootstrap lifetimes after independent GUI initialization | #3 +0%; overall +0% (qualification pending). | Independent system-only GUI initialization reproduces exact9 cached system handles; diagnostic24 bootstrap lifetimes stable, final fresh production qualification pending. |
 | `de3920c` | chore(vgpu): add opt-in command lifecycle rejection diagnostics | #3 +0%; overall +0% (qualification pending). | Opt-in bounded local command lifecycle diagnostics;237 Debug/ReleaseSafe tests/native128/Windowsstatic pass. No ownership behavior changed. |
+
+### Native GPU readback and remaining compute milestone: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `2ac2adf` | test(vgpu): verify bounded Submit2 graph preflight | #3 +0%; overall +0% (final acceptance pending). | Actual native packet/resource graph and no-mutation rejection tests pass. |
+| `83115f8` | test(vgpu): gate native heap snapshots around full DXVK lifetimes | #3 +0%; overall +0% (final acceptance pending). | Optional bounded external heap gates prepared; actual native heap qualification pending. |
+| `3a62683` | fix(vgpu): retire command ownership through native submission fences | #3 +0%; overall +0% (final acceptance pending). | Hidden native fence ACK/status retires proven GPU references; pending and uncertain owners remain retained. Actual DXVK command reuse and staging Map now work. |
+| `c292dac` | test(vgpu): retain DLL bases for native heap allocation attribution | #3 +0%; overall +0% (final acceptance pending). | Native unloaded DLL base attribution prepared; no leak-audit credit yet. |
+| `386683b` | fix(vgpu): request canonical descriptor layout support reply extent | #3 +0%; overall +0% (final acceptance pending). | Exact28-byte host response requested; canonical decoder preserved and regression verified. |
+| `6e85c92` | test(vgpu): exercise modern native API owner graphs and failures | #3 +0%; overall +0% (final acceptance pending). | 260 Debug/ReleaseSafe tests and native128 pass; final whole-core coverage remains pending. |
+| `2e77d98` | fix(vgpu): admit all supported graphics pipeline chain orders | #3 +0%; overall +0% (final acceptance pending). | Three supported chain nodes accepted in all six orders;266 Debug/ReleaseSafe/native128 and Windowsstatic pass. |
+| `b05bede` | test(vgpu): report bounded real DXVK staging mismatch details | #3 +0%; overall +0% (final acceptance pending). | Actual eb202e00 reports all4096 BGRA127,64,32,255 pixels and RowPitch256; failed exact assertion preserved. |
+| `b6af112` | test(vgpu): retain uncertain native constructor and fence owners | #3 +0%; overall +0% (final acceptance pending). | 269 Debug/ReleaseSafe/native128 pass; uncertain hidden-fence and shader constructors remain owned. |
+| `b60fef3` | test(dxvk): use unambiguous UNORM byte centers | #3 +0%; overall +0% (final acceptance pending). | Microsoft FLOAT-to-UNORM allows either127/128 at0.5. Byte-center input preserves unchanged exact4096 expectations. Actual182afac7 passes pixels, compute allocation times out. |
+| `6cb8be4` | chore(vgpu): expose opt-in receiver service termination status | #3 +0%; overall +0% (final acceptance pending). | Strict production worker build passes; scalar diagnostics only. |
+| `821c0c7` | test(vgpu): qualify allocation and presentation owner failures | #3 +0%; overall +0% (final acceptance pending). | 276 Debug/ReleaseSafe/native128 and Windowsstatic pass; bounded optional descriptor-allocation diagnostics prepared. |
+
+Actual pinned DXVK2.7.1 run `182afac7` creates FL11 device/swapchain, passes
+GetData deadline, maps staging storage and verifies all4096 exact BGRA pixels.
+Compute initialization then times out at descriptor allocation77; compute results,
+Present/client pixels and teardown are not accepted. Controller status-5 means
+RingTimeout, not RingCorrupt. Host worker retired with raw exit256 and empty owned
+session; native PID4296 remains preserved. Non-invasive signed Microsoft CDB
+capture identifies DXVK synchronization waiting after its command thread exits.
+A separate native trace may proceed only because the old host/GPU owner retired.
+TODO#3 remains55%, overall68.75%; all final gates remain required.
