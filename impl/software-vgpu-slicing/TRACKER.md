@@ -8,7 +8,6 @@
 - **Current Overall Status**: In Progress
 
 ## Tasks & Progress
-
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
@@ -28,7 +27,6 @@
 ## Commit History & Progress Log
 
 Each row preserves its atomic commit, task/overall delta and evidence. Historical pending statements describe that checkpoint, not present completion. Detailed interface contracts remain in [IMPL_DESC.md](IMPL_DESC.md).
-
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
 | `2cac52d` | docs(tracker): initialize implementation plan and tracker for software vGPU; Created initial IMPL_DESC.md and TRACKER.md for software vGPU slicing. | Scaffolding baseline (0% completion) |  |
@@ -356,7 +354,6 @@ Each row preserves its atomic commit, task/overall delta and evidence. Historica
 | `0784d2d` | docs(vgpu): require positive Lavapipe devices and dual unload proof; Specify exact option preflight, positive Lavapipe enumeration, balanced residency probe, strict three-cycle unload, isolated dual-build outputs and unchanged complete CI gate before fixture implementation. | +0% to TODO: #3 and prerequisite #10 (+0% overall). |  |
 | `89adb63` | docs(vgpu): account for imported ICD sanitizer source closure; Specify exact path/line runtime inventory of nine embedded imports, explicit compile-time/test exclusions, preserved compiler guards and whole-module reverse equality, independent per-module binary ASan hook proof, separate artifacts and zero-leak native/Zig execution. | +0% to TODO: #3 (+0% overall). |  |
 | `b8d2168` | docs(vgpu): compact atomic progress history without losing evidence; Convert all324 recorded entries into one row per commit, resolve historical self-hash placeholders, centralize repeated pending wording and preserve every original change, delta and verification record. | #3 +0%; overall +0%. | Preserved-entry and numeric/URL inventory verified against build/tracker_before_compaction.md; Git history unchanged. |
-
 | `0ddca3a` | Added default-window-icon.png; Independent application artwork addition. | #3 +0%; overall +0%. | No vGPU implementation credit. |
 | `1beb35c` | docs(tracker): update TODO 3 progress for queue idle concurrency; Synchronize queue-idle concurrency accounting; the +5% #3 delta is already attributed to d224846, with no duplicate award. | #3 +0%; overall +0%. | Existing native queue concurrency, sanitizer/coverage and Windows checks recorded under d224846. |
 | `34ca8f1` | docs(vgpu): audit physical compute proof and completed DXVK build prerequisite; Audit physical compute proof and completed zero-weight DXVK build prerequisite. | #3 +0%; overall +0%. | RTX5080 four compute paths; DXVK246-action offline build; native Windows37536533350 success; Linux128B leak unresolved at that checkpoint. |
@@ -389,10 +386,14 @@ Each row preserves its atomic commit, task/overall delta and evidence. Historica
 | `4cf7fa6` | fix(ci): repair both installed Mesa allocator owners without filtering ICDs; Integrate base LLVM/bison/flex and path-only same-version RADV/Lavapipe repair in CI while preserving every installed manifest. | #3/#10 +0%; overall +0%. | build/mesa_cpu_cache_ci_manifest_check.log; YAML/Python pass;8manifests,6byte-identical others; missing/invalidLvp fails before mutation; full CI pending. |
 | `46cd546` | feat(vgpu): implement authenticated sequential TCP client ownership; Implement and verify bounded authenticated TCP client with real peers, staging, alias/deadline/sequence/cancel and retirement checks. | #3/#11 +0%; overall +0%. | 31portable peer cases plus5Linux dependency faults,8cycles each;100%lines131/131,92.11%branches175/190; zero FD/native Win11 handle leaks; build/tcp_client_coverage.log, tcp_client_sanitizers.log, windows11_vm/tcp_client_peer_units_final.log; actual deployed SHA matches. |
 | `4768f82` | docs(vgpu): synchronize resumed prerequisite commit evidence; Attribute every previously omitted atomic commit and resumed agent increment without duplicating historical acceptance deltas. | #3/#10/#11 +0%; overall +0%. | Exact feature-history set audit from2cac52d through prior HEAD; TODO3 stays55%, #10 stays50%, #11 stays60%. |
-
 | `d6ca59f` | docs(vgpu): specify side-effect-free Features2 topology preflight; Extract exact whole-publication validation before hardware query/cache effects, preserving current native Boolean and overlap rules. | #3 +0%; overall +0%. | Pure native adapter contract; no query/advertisement acceptance. |
-
-| current (resolve by subject) | chore(vgpu): expose committed TCP gates through the main makefile; Include isolated TCP build/test targets in GNUmakefile. | #3/#11 +0%; overall +0%. | All eight wire/socket native, sanitizer, coverage and Windows crossbuild gates pass through main makefile; build/tcp_gnu_integration_gates.log. |
+| `bd3b105` | chore(vgpu): expose committed TCP gates through the main makefile; Include isolated TCP build/test targets in GNUmakefile. | #3/#11 +0%; overall +0%. | All eight wire/socket native, sanitizer, coverage and Windows crossbuild gates pass through main makefile; build/tcp_gnu_integration_gates.log. |
+| `1be24e0` | docs(vgpu): specify TCP server cancellation and status consistency; Specify cancellation, alias/error staging and consistency for the real TCP server. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; contract before server implementation. |
+| `2d0ca31` | chore(vgpu): isolate TCP client verification build outputs; Isolate four committed TCP client verification targets and their outputs. | #3/#11 +0%; overall +0%. | build/tcp_client_make_gates.log; native, ASan/LSan/UBSan, coverage and Windows compile pass. |
+| `2c60d75` | test(vgpu): instrument the complete embedded ICD source closure; Instrument the complete recursively embedded owned ICD source closure with exact per-function mapping and preserved compiler guards. | #3 +0%; overall +0%. | build/icd_closure_safety_gate.log and {native,test}_sanitized.json:217runtime names/10files,264/265definitions,1130/1537guards, whole-module reverse equality;128native cycles/28groups+75Zigtests, zero ASan/LSan/C-UBSan findings; independently linked codecs remain separate. |
+| `c753f02` | docs(vgpu): require native EOF provenance before TCP retirement; Require actual native recv-zero provenance before admitting clean TCP EOF retirement. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; clock/recv failure must never admit the clean retirement ACK. |
+| `9c1a229` | refactor(vgpu): preflight complete Features2 output without side effects; Extract pure native Features2 validation before publication or host queries. | #3 +0%; overall +0%. | build/features2_preflight_gates.log:29Debug/ReleaseSafe/C-oracle tests, zero sanitizer/allocator leaks;98.55%branches68/69,98.51%lines66/67; Windows compile; full A5 output unchanged after preflight. |
+| current (resolve by subject) | docs(vgpu): specify immutable per-physical feature query ownership; Adopt canonical actual-host query caching, pure caller preflight, API-aware node admission and explicit conservative feature projection. | #3 +0%; overall +0%. | 460800-byte fixed cache increment specified; no Vulkan API/extension or DXVK credit. |
 
 ## Historical acceptance notes
 
