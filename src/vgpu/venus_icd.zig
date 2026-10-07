@@ -3125,7 +3125,10 @@ fn retain_gpu_span(state: *resource_state_t, first: u64, count: u64) void {
 }
 /// Snapshot all submitted bound resource ranges, conservatively treating reads
 /// as writes. Address-exposed buffers are included even without native handles
-/// in the submitted command references. No timeline result clears this ledger.
+/// in the submitted command references. Valid VkDeviceAddress offsets stay inside
+/// the queried buffer create size (Khronos VUID-size-11364):
+/// https://docs.vulkan.org/refpages/latest/refpages/source/VkDeviceAddress.html
+/// No timeline result clears this ledger.
 fn retain_submission_mapping_spans(parent_id: u64, references: [8]u64) void {
     for (&slots, &resource_states, 0..) |*record, *state, index| {
         if (record.id == 0 or record.parent_id != parent_id or
@@ -11062,4 +11065,45 @@ test "image ownership CopyCommands2 translates handles without changing ACK owne
         // Connection failure keeps all private objects owned until explicit abandon.
         try std.testing.expectEqual(@as(usize, 8), objects.live_count);
     };
+}
+
+test "buffer device address exposure requires enabled feature bound address allocation and same device" {
+    var fixture = root_sync_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_sync_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const other = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const buffer = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, parent.id, 0);
+    const allocation = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+    const device: c.VkDevice = @ptrFromInt(parent.handle);
+    const native_buffer: c.VkBuffer = @ptrFromInt(buffer.handle);
+    var info = c.VkBufferDeviceAddressInfo{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = native_buffer };
+    device_caches[0] = .{ .handle = parent.handle };
+    resource_state(buffer).* = .{ .id = buffer.id, .buffer_size = 512, .memory_offset = 256, .buffer_usage = c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT };
+    resource_state(allocation).* = .{ .id = allocation.id, .allocation_size = 4096 };
+    try std.testing.expectEqual(@as(u64, 0), root_runtime_fn(get_buffer_device_address)(device, &info));
+    const enabled = &device_caches[0].enabled_state.features;
+    enabled.count = 1;
+    enabled.nodes[0].type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    enabled.nodes[0].flag_count = 47;
+    const address_index = (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "bufferDeviceAddress") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4;
+    enabled.nodes[0].flags[address_index] = 1;
+    try std.testing.expectEqual(@as(u64, 0), root_runtime_fn(get_buffer_device_address)(device, &info));
+    resource_state(buffer).bound_memory = allocation.handle;
+    try std.testing.expectEqual(@as(u64, 0), root_runtime_fn(get_buffer_device_address)(device, &info));
+    resource_state(allocation).allocation_flags = c.VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+    resource_state(buffer).buffer_usage = c.VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    try std.testing.expectEqual(@as(u64, 0), root_runtime_fn(get_buffer_device_address)(device, &info));
+    resource_state(buffer).buffer_usage = c.VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    try std.testing.expectEqual(@as(u64, 0), root_runtime_fn(get_buffer_device_address)(@ptrFromInt(other.handle), &info));
+    info.sType = 0;
+    try std.testing.expectEqual(@as(u64, 0), root_runtime_fn(get_buffer_device_address)(device, &info));
+    info.sType = c.VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+    try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+    try std.testing.expect(!resource_state(buffer).address_exposed);
+    try std.testing.expectEqual(@as(u64, 0x12345000), root_runtime_fn(get_buffer_device_address)(device, &info));
+    try std.testing.expect(resource_state(buffer).address_exposed);
+    retain_submission_mapping_spans(parent.id, [_]u64{0} ** 8);
+    try std.testing.expectEqual(@as(usize, 1), resource_state(allocation).gpu_span_count);
+    try std.testing.expectEqual(mapping_span_t{ .start = 256, .end = 768 }, resource_state(allocation).gpu_spans[0]);
 }
