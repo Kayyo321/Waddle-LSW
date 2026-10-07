@@ -7122,6 +7122,24 @@ fn descriptor_allocation_diagnostic(pool_id: u64, owner: *const resource_state_t
     for (ids,layouts,snapshots,0..) |id,layout,snapshot,index| std.debug.print("Waddle ICD descriptor allocation[{d}]: layout={d}, id={d}, variable={d}, binding={d}, count={d}\n", .{index,layout,id,@intFromBool(snapshot.has_variable_count),snapshot.variable_binding,snapshot.variable_count});
     for (needed,owner.descriptor_used,owner.descriptor_capacity,0..) |count,used,capacity,kind| if(count!=0) std.debug.print("Waddle ICD descriptor budget[{d}]: need={d}, used={d}, capacity={d}\n", .{kind,count,used,capacity});
 }
+/// Opt-in bounded scalar reply interpretation before strict native validation.
+/// [in] nullable borrowed transport bytes and1..64 expectedIDs, no ownership
+/// transfer/state changes/allocation. Malformed short spans are never read.
+fn descriptor_allocation_reply_diagnostic(reply: ?[]const u8, ids: []const u64) void {
+    if (!std.process.hasEnvVarConstant("WADDLE_ICD_DIAGNOSTICS")) return;
+    const bytes = reply orelse {
+        std.debug.print("Waddle ICD descriptor allocation reply missing: lost={d}\n", .{lost});
+        return;
+    };
+    std.debug.print("Waddle ICD descriptor allocation reply bytes={d}, lost={d}\n", .{bytes.len,lost});
+    if (bytes.len < 16) return;
+    std.debug.print("Waddle ICD descriptor allocation reply opcode={d}, result={d}, count={d}\n", .{std.mem.readInt(u32,bytes[0..4],.little),std.mem.readInt(i32,bytes[4..8],.little),std.mem.readInt(u64,bytes[8..16],.little)});
+    for (ids,0..) |id,index| {
+        const start = 16+index*8;
+        if(start+8 > bytes.len) return;
+        std.debug.print("Waddle ICD descriptor reply[{d}]: received={d}, expected={d}\n", .{index,std.mem.readInt(u64,bytes[start..][0..8],.little),id});
+    }
+}
 fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSetAllocateInfo, output: [*c]c.VkDescriptorSet) callconv(.C) c_int {
     lock_icd();
     defer unlock_icd();
@@ -7192,8 +7210,13 @@ fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSe
     }
     const writer = mixed_wire.allocate_sets(parent.id, pool.id, @ptrCast(info), layouts[0..count], ids[0..count]) catch unreachable;
     descriptor_allocation_diagnostic(pool.id, owner, layouts[0..count], ids[0..count], snapshots[0..count], needed);
-    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
-    const result = descriptor_sets_reply(reply, ids[0..count]) catch return failure(c.RingCorrupt);
+    const received = transact(writer.bytes[0..writer.used]);
+    descriptor_allocation_reply_diagnostic(received, ids[0..count]);
+    const reply = received orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = descriptor_sets_reply(reply, ids[0..count]) catch {
+        if (std.process.hasEnvVarConstant("WADDLE_ICD_DIAGNOSTICS")) std.debug.print("Waddle ICD descriptor allocation reply rejected by strict decoder\n", .{});
+        return failure(c.RingCorrupt);
+    };
     if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
     if (result != c.VK_SUCCESS) {
         rollback_descriptor_sets(records[0..count]);
@@ -13043,4 +13066,123 @@ test "WSI status shared present waits are consumed once and failure leaves resul
         if (case == 0) try std.testing.expectEqual(@as(u32, 0), resource_state(graph.semaphore).inflight_count);
         try std.testing.expectEqual(@as(usize, 7), objects.live_count);
     }
+}
+
+const root_mapping_fixture_t = struct {
+    base: root_memory_fixture_t = .{},
+    mode: usize,
+    creates: usize = 0,
+    reads: usize = 0,
+    writes: usize = 0,
+    frees: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        switch (request.*.kind) {
+            c.RequestCreate, c.RequestRead, c.RequestWrite, c.RequestFree => {
+                response.* = std.mem.zeroes(c.venus_request_t); response.*.kind = request.*.kind; response.*.direction = 1; response.*.payload_bytes = @intCast(capacity);
+                switch (request.*.kind) {
+                    c.RequestCreate => {
+                        fixture.creates += 1;
+                        if (request.*.flags != 1 or request.*.resource_id != 2 or request.*.argument_zero == 0 or request.*.argument_one != 4096) return c.RingCorrupt;
+                        if (fixture.mode == 5) return c.RingLimit;
+                        if (fixture.mode == 6) response.*.resource_id = 2;
+                    },
+                    c.RequestRead => {
+                        fixture.reads += 1;
+                        if (request.*.resource_id != 2 or request.*.argument_zero != 16 or request.*.argument_one != 4080 or output == null or capacity != 4080) return c.RingCorrupt;
+                        if (fixture.mode == 7) return c.RingLimit;
+                        @memset(@as([*]u8, @ptrCast(output.?))[0..capacity], 0xa5);
+                        if (fixture.mode == 8) response.*.direction = 0;
+                    },
+                    c.RequestWrite => {
+                        fixture.writes += 1;
+                        if (request.*.flags != 2 or input == null or length != 17) return c.RingCorrupt;
+                        const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+                        if (std.mem.readInt(u32, bytes[0..4], .little) != 1 or std.mem.readInt(u64, bytes[4..12], .little) != 16 or std.mem.readInt(u32, bytes[12..16], .little) != 1 or bytes[16] != 0xbb) return c.RingCorrupt;
+                    },
+                    c.RequestFree => { fixture.frees += 1; if (fixture.mode == 9) return c.RingLimit; },
+                    else => unreachable,
+                }
+                return c.RingOk;
+            },
+            else => {},
+        }
+        const status = root_memory_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (status == c.RingOk and request.*.kind == c.RequestReply and fixture.base.base.opcode == 8) {
+            const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+            if (venus_values_test_encode(8, bytes.ptr, capacity) == 0) return c.RingCorrupt;
+            // Independent pinned encoder puts the first memory_handle-type property word
+            // after opcode, output tag, type count and fixed32-entry array tag.
+            std.mem.writeInt(u32, bytes[24..28], if (fixture.mode == 2) c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT else c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, .little);
+            if (fixture.mode == 3) bytes[0] ^= 1;
+        }
+        if (fixture.mode == 10 and request.*.kind == c.RequestReply and fixture.base.base.opcode == 22) @as([*]u8, @ptrCast(output.?))[0] ^= 1;
+        return status;
+    }
+};
+test "root public mapping owns shadows exports and coherent dirty bytes across native failure paths" {
+    for (0..11) |mode| {
+        var fixture = root_mapping_fixture_t{ .mode = mode };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_mapping_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const physical = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, 0, 1);
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, physical.id, 1);
+        const allocation = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+        const device: c.VkDevice = @ptrFromInt(parent.handle);
+        const memory_handle: c.VkDeviceMemory = @ptrFromInt(allocation.handle);
+        resource_state(allocation).* = .{ .id = allocation.id, .allocation_size = 4096, .type_index = if (mode == 1) 1 else 0 };
+        if (mode == 4) @memset(&mapping_slots, true);
+        var output: ?*anyopaque = @ptrFromInt(8);
+        const expected: c_int = if (mode == 0 or mode >= 9) c.VK_SUCCESS else if (mode == 3 or mode == 6 or mode == 8) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_MEMORY_MAP_FAILED;
+        try std.testing.expectEqual(expected, root_runtime_fn(map_memory)(device, memory_handle, 16, c.VK_WHOLE_SIZE, 0, &output));
+        const state = resource_state(allocation);
+        if (expected == c.VK_SUCCESS) {
+            try std.testing.expect(output != null);
+            try std.testing.expectEqual(@as(u64, 16), state.mapped_offset); try std.testing.expectEqual(@as(u64, 4080), state.mapped_size);
+            const bytes = @as([*]u8, @ptrCast(output.?))[0..4080]; try std.testing.expectEqual(@as(u8, 0xa5), bytes[4079]); bytes[0] = 0xbb;
+            root_runtime_fn(unmap_memory)(device, memory_handle);
+            try std.testing.expectEqual(@as(usize, 1), fixture.writes);
+            try std.testing.expect(state.mapped_bytes == null and state.mapped_baseline == null);
+            try std.testing.expectEqual(@as(u32, 2), state.mapping_resource);
+            root_runtime_fn(free_memory)(device, memory_handle, null);
+            if (mode == 0) {
+                try std.testing.expectEqual(@as(usize, 2), objects.live_count); try std.testing.expect(!mapping_slots[0]);
+            } else {
+                try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+                try std.testing.expectEqual(@as(u32, if (mode == 9) 2 else 0), state.mapping_resource);
+                try std.testing.expectEqual(mode == 9, mapping_slots[0]);
+                if (mode == 10) try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+            }
+        } else {
+            try std.testing.expect(output == null and state.mapped_bytes == null and state.mapped_baseline == null);
+            try std.testing.expectEqual(@as(u32, if (mode == 7 or mode == 8) 2 else 0), state.mapping_resource);
+            try std.testing.expectEqual(@as(usize, 3), objects.live_count);
+            if (mode == 3 or mode == 6 or mode == 8) try std.testing.expect(lost != c.RingOk) else try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        }
+        try std.testing.expectEqual(@as(usize, if (mode == 0 or mode >= 5) 1 else 0), fixture.creates);
+        try std.testing.expectEqual(@as(usize, if (mode == 0 or mode >= 7) 1 else 0), fixture.reads);
+    }
+}
+test "root map preflight null foreign bounds duplicate and unsupported flags preserve allocations without RPC" {
+    var fixture = root_mapping_fixture_t{ .mode = 0 };
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_mapping_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+    const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const allocation = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id, 0);
+    resource_state(allocation).* = .{ .id = allocation.id, .allocation_size = 4096 };
+    const device: c.VkDevice = @ptrFromInt(parent.handle); const memory_handle: c.VkDeviceMemory = @ptrFromInt(allocation.handle);
+    const invoke = root_runtime_fn(map_memory); var output: ?*anyopaque = @ptrFromInt(8);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(device, memory_handle, 0, 16, 0, null));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(null, memory_handle, 0, 16, 0, &output)); try std.testing.expect(output == null);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(@ptrFromInt(1), memory_handle, 0, 16, 0, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(device, null, 0, 16, 0, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(@ptrFromInt(foreign.handle), memory_handle, 0, 16, 0, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(device, memory_handle, 0, 16, 1, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(device, memory_handle, 4096, 16, 0, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(device, memory_handle, 0, 0, 0, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(device, memory_handle, 4095, 2, 0, &output));
+    resource_state(allocation).allocation_size = MaxMappedBytes + 1;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_MEMORY_MAP_FAILED), invoke(device, memory_handle, 0, 16, 0, &output)); resource_state(allocation).allocation_size = 4096;
+    root_runtime_fn(unmap_memory)(null, memory_handle); root_runtime_fn(unmap_memory)(device, null); root_runtime_fn(unmap_memory)(@ptrFromInt(1), memory_handle); root_runtime_fn(unmap_memory)(@ptrFromInt(foreign.handle), memory_handle);
+    try std.testing.expectEqual(@as(usize, 0), fixture.base.base.calls);
+    lost = c.RingClosed; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), invoke(device, memory_handle, 0, 16, 0, &output));
 }
