@@ -5527,3 +5527,49 @@ final hooks/reverse proof and original guards, with no new missing-body exceptio
 This paragraph supersedes only the incompatible two-oracle/exclusion statements
 in the preceding pure Properties2 contract; all topology/serialization/ownership/
 transaction/testing semantics stay exact. No acceptance credit from this correction.
+
+### Validated extension status prerequisite
+
+
+Root narrow lease: src/vgpu/venus_extensions_wire.zig additive decode_status and
+same-file built-in tests; existing two C oracles/generated headers/helper/build
+recipes remain read-only. No public ICD/GPU/registry/cache change. +0 until runtime.
+
+Add pub fn decode_status(bytes: []const u8, capacity: ?usize) !i32. Null capacity
+means count-mode; nonnull means fill-mode requested native capacity1..1024.
+Nonzero out-of-range fill capacity is local Invalid before reading bytes; zero is
+also Invalid. Borrow accessible immutable private input through return; no heap,
+retained pointer, mutable output, thread state or native addressing. Return exact
+signed VkResult bits:0, fill-only5, any negativei32 (including minimum); other
+positive values are Corrupt. The caller separately handles DeviceLost/sticky and
+never accesses raw status bytes. Returned status alone never proves valid names
+or complete enumeration/cache/extension support.
+
+Share the existing metadata grammar rather than duplicate command/presence/count
+parsing. Metadata returns copied raw result only after command14, present1,
+minimum28/max274460, count-mode arraycount0 and quota<=1024, or fill count<=capacity,
+arraycount==count and fully initialized28+268*count prefix. Every fill record's
+name-array length must equal256 before status escapes, even for negative results.
+Ignore unused reply scratch within maximum; immutable bounded count permits
+safe stride iteration. Count>1024 remains Limit before backend status exactly as
+existing codec; malformed shape is Corrupt. Shape fields/declared arrays are
+validated before result policy. On negative results, names/spec versions are
+undefined Vulkan payload: do not impose successful-name/duplicate semantics.
+On nonnegative status this interface still supplies shape/status only; existing
+decode_fill validates all semantic names/duplicates and normalizes every entry
+transactionally before its caller can use results. Existing decode_count/fill
+retain Backend errors for negative results and all prior precedence/output rules.
+
+Meaningful tests use unmodified independent pinned renderer C oracle for count
+and fill across0,1,1024/max,0/5 and several exact negative codes (including -4 and
+minimumi32), malformed command/presence/count/array/payload extents and every
+truncation; per-record array lengths malformed at first/middle/last maximumlist
+under success/incomplete/negative statuses; semantic garbage under negative is
+shape-valid but never exposed. Invalid capacities win before untrusted byte reads,
+countquota retains precedence over negative, positive status misuse rejected,
+extra scratch ignored, no mutation of input. Existing six units continue intact.
+Require Debug/ReleaseSafe native plus strict independent C oracle/native fixture,
+unmodified >=90% source coverage, genuine owned final ASan accesses/original
+Debug guard reverse proof with fresh C-ASan/LSan/UBSan oracles and zero leaks;
+strict Windows crossbuild and actual final CPU tests via wddm before sourcecommit.
+Preserve unique new evidence and old codec snapshots. No helper exemptions.
