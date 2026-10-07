@@ -41,6 +41,13 @@ ModuleConfigs = {
         'includes': ['-Iinclude', '-Isubmodules/venus_protocol/include'],
         'oracle_macro': None,
     },
+    'instance_wire': {
+        'boundary': None,
+        'includes': ['-Itests/vgpu/encoder', '-Ibuild/venus_protocol',
+                     '-Isubmodules/venus_protocol/tests', '-Iinclude',
+                     '-Isubmodules/venus_protocol/include'],
+        'oracle_macro': 'VgpuInstanceOracle',
+    },
 }
 
 
