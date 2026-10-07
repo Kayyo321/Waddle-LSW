@@ -194,6 +194,78 @@ pub fn preflight(info_address: ?*const anyopaque) !owned_request_t {
     scratch.request.node_count = 0;
     return scratch.request;
 }
+/// Immutable intersection of actual hardware and implemented ICD support. Caller
+/// owns arrays/names through preflight_supported; no global storage or allocation.
+pub const support_policy_t = struct {
+    /// Supported legacy55 flags; each must be canonical0/1.
+    legacy: [55]u32 = [_]u32{0} ** 55,
+    /// Supported recognized feature nodes, unique tags and canonical flag extents.
+    nodes: []const wire.feature_node_t = &.{},
+    /// Canonical implemented extension names, at most32; index becomes owned ID.
+    extension_names: []const []const u8 = &.{},
+};
+/// Snapshot structurally valid native input and admit only the supplied actual
+/// hardware/implementation intersection. [in] info_address follows preflight's
+/// accessible immutable native contract; policy borrowed, canonical and immutable.
+/// [out] Independent owned queues/features/extension IDs with no borrowed input.
+/// Invalid malformed native/policy, LayerNotPresent, FeatureNotPresent for any
+/// unsupported requested true, ExtensionNotPresent for unavailable names.
+/// Supported all-false chains are retained faithfully. No allocation, transport,
+/// caller writes or retained pointers; thread-safe for disjoint owners.
+pub fn preflight_supported(info_address: ?*const anyopaque, policy: *const support_policy_t) !owned_request_t {
+    if (policy.nodes.len > wire.MaxNodes or policy.extension_names.len > wire.MaxExtensions) return error.Invalid;
+    for (policy.legacy) |flag| if (flag > 1) return error.Invalid;
+    for (policy.nodes, 0..) |supported, index| {
+        var expected: ?u8 = null;
+        for (Tags, Counts) |tag, extent| if (supported.type_tag == tag) { expected = extent; break; };
+        if (expected == null or expected.? != supported.flag_count) return error.Invalid;
+        for (supported.flags[0..supported.flag_count]) |flag| if (flag > 1) return error.Invalid;
+        for (policy.nodes[0..index]) |previous| if (previous.type_tag == supported.type_tag) return error.Invalid;
+    }
+    for (policy.extension_names, 0..) |name, index| {
+        if (name.len < 4 or name.len >= 256 or !std.mem.startsWith(u8, name, "VK_")) return error.Invalid;
+        for (name) |byte| if (!std.ascii.isAlphanumeric(byte) and byte != '_') return error.Invalid;
+        for (policy.extension_names[0..index]) |previous| if (std.mem.eql(u8, name, previous)) return error.Invalid;
+    }
+    const info = try native_pointer(c.VkDeviceCreateInfo, info_address);
+    if (info.sType != c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO or info.flags != 0) return error.Invalid;
+    if (info.enabledLayerCount != 0) return error.LayerNotPresent;
+    var scratch = preflight_scratch_t{};
+    try copy_queues(info, &scratch.request);
+    try validate_names(info);
+    try copy_chain(info.pNext, &scratch);
+    scratch.request.legacy_present = info.pEnabledFeatures != null;
+    if (scratch.request.legacy_present) {
+        if (scratch.request.features2_present) return error.Invalid;
+        const legacy = try native_pointer(c.VkPhysicalDeviceFeatures, @ptrCast(info.pEnabledFeatures));
+        try copy_flags(c.VkPhysicalDeviceFeatures, legacy, &scratch.request.legacy);
+    }
+    for (scratch.request.legacy, policy.legacy) |requested, supported| if (requested > supported) return error.FeatureNotPresent;
+    for (scratch.request.nodes[0..scratch.request.node_count]) |requested| {
+        if (requested.type_tag == c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) {
+            for (requested.flags[0..requested.flag_count], policy.legacy) |flag, supported| if (flag > supported) return error.FeatureNotPresent;
+            continue;
+        }
+        var matched: ?wire.feature_node_t = null;
+        for (policy.nodes) |supported| if (supported.type_tag == requested.type_tag) { matched = supported; break; };
+        for (requested.flags[0..requested.flag_count], 0..) |flag, index| {
+            const supported = if (matched) |value| value.flags[index] else 0;
+            if (flag > supported) return error.FeatureNotPresent;
+        }
+    }
+    if (info.enabledExtensionCount != 0) {
+        const first = try native_pointer([*c]const u8, @ptrCast(info.ppEnabledExtensionNames));
+        const names: [*]const [*c]const u8 = @ptrCast(first);
+        for (names[0..info.enabledExtensionCount], 0..) |pointer, index| {
+            const name = try bounded_name(pointer);
+            var matched: ?u8 = null;
+            for (policy.extension_names, 0..) |available, registry_index| if (std.mem.eql(u8, name, available)) { matched = @intCast(registry_index); break; };
+            scratch.request.extension_ids[index] = matched orelse return error.ExtensionNotPresent;
+        }
+        scratch.request.extension_count = @intCast(info.enabledExtensionCount);
+    }
+    return scratch.request;
+}
 comptime {
     if (@sizeOf(owned_request_t) != 2696 or @alignOf(owned_request_t) != 4 or
         @sizeOf(preflight_scratch_t) != 3216 or @alignOf(preflight_scratch_t) != 8)
@@ -552,4 +624,80 @@ test "native device extension bounded names duplicates and full structural prece
     try expect_invalid(&info);
     node.flags[0] = 1;
     try std.testing.expectError(error.FeatureNotPresent, preflight(&info));
+}
+
+test "supported device owns every admitted true feature and canonical extension ID without retaining native storage" {
+    const priorities=[_]f32{1};
+    var queues=[_]c.VkDeviceQueueCreateInfo{basic_queue(&priorities)};
+    var info=basic_info(&queues);
+    const names=[_] [*c]const u8{"VK_KHR_swapchain","VK_EXT_robustness2"};
+    info.enabledExtensionCount=2;info.ppEnabledExtensionNames=&names;
+    const registry=[_] []const u8{"VK_EXT_robustness2","VK_KHR_swapchain"};
+    var policy=support_policy_t{.legacy=[_]u32{1} ** 55,.extension_names=&registry};
+    for (Tags,Counts) |tag,extent| {
+        var native=native_node_t{.type_tag=tag};
+        info.pNext=&native;
+        var supported=wire.feature_node_t{.type_tag=tag,.flag_count=extent,.flags=[_]u32{1} ** 55};
+        policy.nodes=(@as([*]wire.feature_node_t,@ptrCast(&supported)))[0..1];
+        for (0..extent) |index| {
+            native.flags[index]=1;
+            const request=try preflight_supported(&info,&policy);
+            try std.testing.expectEqual(@as(u8,1),request.node_count);
+            try std.testing.expectEqual(@as(u8,2),request.extension_count);
+            try std.testing.expectEqualSlices(u8,&.{1,0},request.extension_ids[0..2]);
+            try std.testing.expectEqual(@as(u32,1),request.nodes[0].flags[index]);
+            const old=request;
+            native.flags[index]=0;
+            try std.testing.expectEqualDeep(old,request);
+            if (tag==c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) policy.legacy[index]=0 else supported.flags[index]=0;
+            native.flags[index]=1;
+            try std.testing.expectError(error.FeatureNotPresent,preflight_supported(&info,&policy));
+            native.flags[index]=0;
+            if (tag==c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) policy.legacy[index]=1 else supported.flags[index]=1;
+        }
+    }
+    info.pNext=null;
+    var legacy=c.VkPhysicalDeviceFeatures{};
+    legacy.robustBufferAccess=1;info.pEnabledFeatures=&legacy;
+    const request=try preflight_supported(&info,&policy);
+    try std.testing.expectEqual(@as(u32,1),request.legacy[0]);
+    policy.legacy[0]=0;
+    try std.testing.expectError(error.FeatureNotPresent,preflight_supported(&info,&policy));
+    policy.legacy[0]=1;policy.extension_names=&.{"VK_KHR_swapchain"};
+    try std.testing.expectError(error.ExtensionNotPresent,preflight_supported(&info,&policy));
+}
+test "supported policy rejects malformed policy and native structure before admission" {
+    const priorities=[_]f32{1};
+    var queues=[_]c.VkDeviceQueueCreateInfo{basic_queue(&priorities)};
+    var info=basic_info(&queues);
+    var policy=support_policy_t{};
+    try std.testing.expectError(error.Invalid,preflight_supported(null,&policy));
+    policy.legacy[0]=2;
+    try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    policy.legacy[0]=0;
+    var node=wire.feature_node_t{.type_tag=Tags[1],.flag_count=Counts[1]};
+    policy.nodes=(@as([*]wire.feature_node_t,@ptrCast(&node)))[0..1];
+    node.type_tag=0;try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    node.type_tag=Tags[1];node.flag_count=55;try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    node.flag_count=Counts[1];node.flags[0]=2;try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    node.flags[0]=0;const duplicate=[_]wire.feature_node_t{node,node};policy.nodes=&duplicate;
+    try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    const too_many=[_]wire.feature_node_t{node} ** 10;policy.nodes=&too_many;
+    try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    policy.nodes=&.{};
+    for ([_][]const []const u8{&.{"no"},&.{"VK_test!"},&.{"VK_test","VK_test"}}) |names| {
+        policy.extension_names=names;try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    }
+    const many_names=[_][]const u8{"VK_test"} ** 33;policy.extension_names=&many_names;
+    try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    policy.extension_names=&.{};
+    info.flags=1;try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+    info.flags=0;info.enabledLayerCount=1;try std.testing.expectError(error.LayerNotPresent,preflight_supported(&info,&policy));
+    info.enabledLayerCount=0;
+    var modern=native_node_t{.type_tag=Tags[1]};info.pNext=&modern;
+    const owned=try preflight_supported(&info,&policy);
+    try std.testing.expectEqual(@as(u8,1),owned.node_count);
+    modern.flags[0]=1;try std.testing.expectError(error.FeatureNotPresent,preflight_supported(&info,&policy));
+    modern.flags[0]=0;modern.type_tag=Tags[0];var legacy=c.VkPhysicalDeviceFeatures{};info.pEnabledFeatures=&legacy;
+    try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
 }
