@@ -16384,3 +16384,62 @@ test "draw descriptors retain visible variable and sparse elements only after ex
         try std.testing.expectEqual(@as(usize,8),objects.live_count);
     };
 }
+const renderpass_attachment_graph_t=struct {
+    graph:rendering_attachment_graph_t,
+    pass:*c.venus_object_t,
+    framebuffer:*c.venus_object_t,
+    fn init() !@This() {
+        const graph=try rendering_attachment_graph_t.init();
+        resource_state(graph.image).image_samples=1;
+        resource_state(graph.view).view_range.layerCount=1;
+        const pass=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_RENDER_PASS,graph.device.id,0);
+        const framebuffer=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_FRAMEBUFFER,graph.device.id,0);
+        resource_state(pass).render_format=37;
+        resource_state(framebuffer).render_format=37;resource_state(framebuffer).framebuffer_view=graph.view.handle;resource_state(framebuffer).framebuffer_extent=.{16,16};
+        return .{.graph=graph,.pass=pass,.framebuffer=framebuffer};
+    }
+    fn info(owned:*const @This(),clear_value:*const c.VkClearValue) c.VkRenderPassBeginInfo {
+        return .{.sType=c.VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,.renderPass=@ptrFromInt(owned.pass.handle),.framebuffer=@ptrFromInt(owned.framebuffer.handle),.renderArea=.{.extent=.{.width=16,.height=16}},.clearValueCount=1,.pClearValues=clear_value};
+    }
+};
+test "render pass rejects unavailable incompatible and unsampled framebuffer backing before native ownership" {
+    for(0..10) |scenario| {
+        var fixture=image_ownership_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const owned=try renderpass_attachment_graph_t.init();const graph=owned.graph;
+        const clear_value=c.VkClearValue{.color=.{.float32=.{0,0,0,1}}};var info=owned.info(&clear_value);
+        switch(scenario) {
+            0=>resource_state(owned.framebuffer).framebuffer_view=0xffff,
+            1=>resource_state(owned.framebuffer).render_format=44,
+            2=>resource_state(graph.view).view_components.r=c.VK_COMPONENT_SWIZZLE_ZERO,
+            3=>info.renderArea.offset.x=17,
+            4=>info.renderArea.offset.y=17,
+            5=>info.renderArea.extent.width=17,
+            6=>info.renderArea.extent.height=17,
+            7=>resource_state(owned.pass).render_final_layout=c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            8=>graphics_recording(resource_state(graph.recording)).active_format=37,
+            9=>resource_state(graph.image).bound_memory=0xffff,
+            else=>unreachable,
+        }
+        begin_render_pass(@ptrFromInt(graph.recording.handle),&info,0);
+        try std.testing.expectEqual(@as(usize,0),fixture.submissions);
+        try std.testing.expectEqual(@TypeOf(resource_state(graph.recording).command_state).Invalid,resource_state(graph.recording).command_state);
+        try std.testing.expectEqual([_]u64{0} ** 8,resource_state(graph.recording).buffer_references);
+        try std.testing.expectEqual(@as(usize,11),objects.live_count);
+    }
+}
+test "sampled framebuffer render pass retains five exact owners only after native ACK" {
+    for(0..3) |mode| {
+        var fixture=image_ownership_fixture_t{.mode=@intCast(mode)};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture));defer venus_icd_abandon();
+        const owned=try renderpass_attachment_graph_t.init();const graph=owned.graph;
+        resource_state(owned.pass).render_final_layout=c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        resource_state(graph.image).image_usage|=c.VK_IMAGE_USAGE_SAMPLED_BIT;
+        const clear_value=c.VkClearValue{.color=.{.float32=.{0,0,0,1}}};const info=owned.info(&clear_value);
+        begin_render_pass(@ptrFromInt(graph.recording.handle),&info,0);
+        try std.testing.expectEqual(@as(usize,1),fixture.submissions);
+        for([_]*c.venus_object_t{owned.pass,owned.framebuffer,graph.view,graph.image,graph.memory}) |target|try std.testing.expectEqual(mode==0,image_ownership_fixture_t.retained(graph.recording,target));
+        try std.testing.expectEqual(if(mode==0) @as(u32,37) else 0,graphics_recording(resource_state(graph.recording)).active_format);
+        try std.testing.expectEqual(@as(usize,11),objects.live_count);
+    }
+}
