@@ -19,6 +19,11 @@ pub const binding_t = struct {
     descriptor_count: u32 = 0,
     /// Core shader stage mask, no extension bits.
     stage_flags: u32 = 0,
+    /// Owned descriptor-indexing binding flags, validated by the caller feature policy.
+    binding_flags: u32 = 0,
+    /// Immutable sampler identities owned by the layout snapshot, no native pointers.
+    immutable_offset: u16 = 0,
+    immutable_count: u16 = 0,
 };
 /// Normalized immutable layout snapshot; original native tokens may retire independently.
 pub const descriptor_layout_t = struct {
@@ -26,6 +31,10 @@ pub const descriptor_layout_t = struct {
     binding_count: usize = 0,
     /// Owned sorted binding definitions; no retained native input or handles.
     bindings: [MaxBindings]binding_t = [_]binding_t{.{}} ** MaxBindings,
+    /// Bounded immutable sampler token prefix; the caller retains referenced samplers.
+    immutable_count: usize = 0,
+    /// Owned copied private sampler tokens, zero outside the initialized prefix.
+    immutable_samplers: [128]u64 = [_]u64{0} ** 128,
 };
 /// Owned push range definition, with no pointer or resource ownership.
 pub const push_range_t = struct {
@@ -61,6 +70,14 @@ pub const descriptor_t = struct {
     offset: u64 = 0,
     /// Positive byte extent or WHOLE_SIZE; checked against live buffer before use.
     range: u64 = 0,
+    /// Owned private image view token, revalidated before GPU use.
+    image_view: u64 = 0,
+    /// Owned private sampler token, zero for immutable or enabled null descriptors.
+    sampler: u64 = 0,
+    /// Named Vulkan descriptor image layout.
+    image_layout: u32 = 0,
+    /// Owned private texel buffer-view token, revalidated before GPU use.
+    texel_view: u64 = 0,
 };
 /// Owned allocated-set layout and mutable buffer element snapshot; at most64 elements.
 pub const descriptor_set_t = struct {
@@ -69,7 +86,9 @@ pub const descriptor_set_t = struct {
     /// Initialized element prefix0..64.
     descriptor_count: usize = 0,
     /// Owned element records; buffer tokens impose no artificial destruction retention.
-    descriptors: [64]descriptor_t = [_]descriptor_t{.{}} ** 64,
+    descriptors: [128]descriptor_t = [_]descriptor_t{.{}} ** 128,
+    /// Sparse profiles own only written elements of potentially large binding arrays.
+    sparse: bool = false,
 };
 fn slot_type(comptime profile_t: type) type {
     return struct {
@@ -139,7 +158,8 @@ pub fn normalize_pipeline(layouts: []const descriptor_layout_t, ranges: []const 
     var profile = pipeline_layout_t{ .set_count = layouts.len, .push_count = ranges.len };
     for (layouts, 0..) |layout, index| {
         if (layout.binding_count > MaxBindings) return error.Invalid;
-        profile.sets[index] = try normalize_bindings(layout.bindings[0..layout.binding_count]);
+        _ = try create_sparse_set_profile(&layout);
+        profile.sets[index] = layout;
     }
     for (ranges, 0..) |range, index| {
         if (range.stage_flags == 0 or range.stage_flags & ~@as(u32, 0x3f) != 0 or range.size == 0 or
@@ -290,4 +310,50 @@ test "push range profiles accept256 ceiling and reject all overflow directions" 
     _ = try fixture_t.pipeline(&.{}, &.{.{ .stage_flags = 32, .offset = 252, .size = 4 }});
     for ([_]push_range_t{ .{ .stage_flags = 32, .size = 260 }, .{ .stage_flags = 32, .offset = 256, .size = 4 }, .{ .stage_flags = 32, .offset = 252, .size = 8 }, .{ .stage_flags = 32, .offset = 0xfffffffc, .size = 4 } }) |range|
         try std.testing.expectError(error.Invalid, fixture_t.pipeline(&.{}, &.{range}));
+}
+
+/// [in] bounded normalized layout snapshot; [out] owned sparse metadata with no elements.
+/// Large descriptor capacities do not allocate proportional storage. Caller serializes;
+/// sampler tokens are copied and their lifetime remains the caller's responsibility.
+pub fn create_sparse_set_profile(layout: *const descriptor_layout_t) !descriptor_set_t {
+    if (layout.binding_count > MaxBindings or layout.immutable_count > 128) return error.Invalid;
+    for (layout.bindings[0..layout.binding_count], 0..) |binding, index| {
+        if (binding.descriptor_type > 10 or binding.descriptor_count == 0 or binding.descriptor_count > 65536 or
+            binding.stage_flags == 0 or binding.stage_flags & ~@as(u32, 0x3f) != 0 or
+            (index != 0 and layout.bindings[index-1].binding >= binding.binding) or
+            @as(usize,binding.immutable_offset) + binding.immutable_count > layout.immutable_count) return error.Invalid;
+    }
+    return .{ .layout = layout.*, .sparse = true };
+}
+/// [in,out] exclusively owned sparse set; [in] binding/element target.
+/// Returns an existing or newly owned element, Invalid for undeclared extent,
+/// Exhausted without mutation when the bounded written-element ledger is full.
+/// No heap or native pointers; caller validates resources before publication.
+pub fn sparse_element(profile: *descriptor_set_t, binding_number: u32, element: u32) !*descriptor_t {
+    if (!profile.sparse) return error.Invalid;
+    for (profile.descriptors[0..profile.descriptor_count]) |*descriptor| {
+        if (descriptor.binding == binding_number and descriptor.array_element == element) return descriptor;
+    }
+    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| {
+        if (binding.binding != binding_number) continue;
+        if (element >= binding.descriptor_count) return error.Invalid;
+        if (profile.descriptor_count == profile.descriptors.len) return error.Exhausted;
+        const destination = &profile.descriptors[profile.descriptor_count];
+        destination.* = .{ .binding = binding_number, .array_element = element, .descriptor_type = binding.descriptor_type };
+        profile.descriptor_count += 1;
+        return destination;
+    }
+    return error.Invalid;
+}
+test "sparse descriptor capacities retain only written identities and fail atomically" {
+    var layout = descriptor_layout_t{ .binding_count = 1 };
+    layout.bindings[0] = .{ .binding = 4, .descriptor_type = 2, .descriptor_count = 65536, .stage_flags = 17 };
+    var profile = try create_sparse_set_profile(&layout);
+    const last = try sparse_element(&profile, 4, 65535);
+    last.image_view = 99;
+    try std.testing.expectEqual(@as(u64,99), (try sparse_element(&profile,4,65535)).image_view);
+    try std.testing.expectError(error.Invalid, sparse_element(&profile,4,65536));
+    for (0..127) |index| _ = try sparse_element(&profile,4,@intCast(index));
+    try std.testing.expectError(error.Exhausted,sparse_element(&profile,4,999));
+    try std.testing.expectEqual(@as(usize,128), profile.descriptor_count);
 }

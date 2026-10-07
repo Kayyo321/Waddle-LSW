@@ -329,6 +329,6 @@ test "256 push initialization spans every bitmap word and clears definition chan
     try fixture_t.test_push_bytes(&state, &definition, 32, 0, 4);
     try std.testing.expectEqual([_]u64{ 15, 0, 0, 0 }, state.pushes[5].initialized);
     try std.testing.expectEqual(@as(usize, 424), @sizeOf(push_profile_t));
-    try std.testing.expectEqual(@as(usize, 19600), @sizeOf(command_profile_t));
-    try std.testing.expectEqual(@as(usize, 1254912), @sizeOf(registry_t));
+    try std.testing.expectEqual(@as(usize, 44304), @sizeOf(command_profile_t));
+    try std.testing.expectEqual(@as(usize, 2835968), @sizeOf(registry_t));
 }

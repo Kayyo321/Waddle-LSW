@@ -2411,7 +2411,7 @@ static void shader_contract(VkDevice device, PFN_vkGetDeviceProcAddr lookup, fix
     info.flags = 1;
     assert(create_shader(device, &info, NULL, &shader) == VK_ERROR_INITIALIZATION_FAILED && !shader);
     info.flags = 0;
-    info.codeSize = 8192;
+    info.codeSize = 65540;
     assert(create_shader(device, &info, NULL, &shader) == VK_ERROR_OUT_OF_HOST_MEMORY && !shader);
     info.codeSize = sizeof(ComputeShader);
     info.pCode = NULL;
@@ -3139,7 +3139,7 @@ static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr 
     assert(create_pipeline(device, (VkPipelineCache)(uintptr_t)1, 1, &info, NULL, &pipeline) ==
                VK_ERROR_INITIALIZATION_FAILED &&
            !pipeline);
-    assert(create_pipeline(device, NULL, 2, (void *)(uintptr_t)1, NULL, (void *)(uintptr_t)1) ==
+    assert(create_pipeline(device, NULL, 17, (void *)(uintptr_t)1, NULL, (void *)(uintptr_t)1) ==
            VK_ERROR_INITIALIZATION_FAILED);
     assert(create_pipeline((VkDevice)(uintptr_t)42, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
     info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
@@ -3169,12 +3169,12 @@ static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr 
     info.renderPass = (VkRenderPass)(uintptr_t)42;
     assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) == VK_ERROR_INITIALIZATION_FAILED && !pipeline);
     info.renderPass = pass;
-    info.flags = 1;
+    info.flags = 8;
     assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
                VK_ERROR_INITIALIZATION_FAILED &&
            !pipeline);
     info.flags = 0;
-    info.stageCount = 1;
+    info.stageCount = 6;
     assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
                VK_ERROR_INITIALIZATION_FAILED &&
            !pipeline);
@@ -3189,17 +3189,17 @@ static void graphics_pipeline_contract(VkDevice device, PFN_vkGetDeviceProcAddr 
                VK_ERROR_INITIALIZATION_FAILED &&
            !pipeline);
     info.pDynamicState = NULL;
-    assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
     assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
                VK_ERROR_INITIALIZATION_FAILED &&
            !pipeline);
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    raster.rasterizerDiscardEnable = VK_TRUE;
+    raster.rasterizerDiscardEnable = 2;
     assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
                VK_ERROR_INITIALIZATION_FAILED &&
            !pipeline);
     raster.rasterizerDiscardEnable = VK_FALSE;
-    blend_attachment.blendEnable = VK_TRUE;
+    blend_attachment.blendEnable = 2;
     assert(create_pipeline(device, NULL, 1, &info, NULL, &pipeline) ==
                VK_ERROR_INITIALIZATION_FAILED &&
            !pipeline);

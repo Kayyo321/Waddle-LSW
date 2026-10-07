@@ -17,6 +17,8 @@ pub const recording_t = struct {
     pipeline_format: u32 = 0,
     /// Copied active pass format; zero means outside any render pass.
     active_format: u32 = 0,
+    /// True only inside a dynamic-rendering scope, preventing classic/dynamic end mixing.
+    dynamic_rendering: bool = false,
 };
 fn valid_format(format: u32) bool {
     return (format > 0 and format <= 184) or format == NoColor;
@@ -36,6 +38,7 @@ pub fn bind_pipeline(state: *recording_t, pipeline: u64, format: u32) !void {
 pub fn begin_pass(state: *recording_t, format: u32) !void {
     if (state.active_format != 0 or !valid_format(format)) return error.Invalid;
     state.active_format = format;
+    state.dynamic_rendering = false;
 }
 /// [in] state nonnull call-lifetime metadata. Returns bound pipeline token only
 /// inside a compatible active pass; Invalid if outside/unbound/incompatible.
@@ -48,8 +51,22 @@ pub fn draw_pipeline(state: *const recording_t) !u64 {
 /// [in,out] state nonnull metadata. Returns Invalid preserving state outside a pass;
 /// otherwise exits while preserving pipeline. No allocation; caller serializes.
 pub fn end_pass(state: *recording_t) !void {
-    if (state.active_format == 0) return error.Invalid;
+    if (state.active_format == 0 or state.dynamic_rendering) return error.Invalid;
     state.active_format = 0;
+}
+/// Begin a dynamic-rendering scope with copied first-format or NoColor key.
+/// [in,out] state exclusive; Invalid preserves state on nesting/invalid key. No allocations,
+/// retained native pointers or shared state; caller validates full attachment signature.
+pub fn begin_dynamic(state: *recording_t, format: u32) !void {
+    try begin_pass(state, format);
+    state.dynamic_rendering = true;
+}
+/// End a dynamic-rendering scope, rejecting a classic pass and preserving state on error.
+/// [in,out] state exclusive; success preserves pipeline and clears scope/format. No allocations.
+pub fn end_dynamic(state: *recording_t) !void {
+    if (state.active_format == 0 or !state.dynamic_rendering) return error.Invalid;
+    state.active_format = 0;
+    state.dynamic_rendering = false;
 }
 /// [in] state nonnull call-lifetime metadata. Returns Invalid if a pass remains
 /// active, otherwise success; no mutation/allocation, safe with immutable metadata.
@@ -137,4 +154,18 @@ test "first color compatibility supports srgb compressed formats and no color sc
         try end_pass(&state);
         try finish(&state);
     }
+}
+
+test "classic and dynamic rendering endpoints cannot interchange" {
+    var state = recording_t{};
+    try begin_dynamic(&state, NoColor);
+    const active = state;
+    try std.testing.expectError(error.Invalid, end_pass(&state));
+    try std.testing.expectEqualDeep(active, state);
+    try end_dynamic(&state);
+    try begin_pass(&state, Rgba8Unorm);
+    const classic = state;
+    try std.testing.expectError(error.Invalid, end_dynamic(&state));
+    try std.testing.expectEqualDeep(classic, state);
+    try end_pass(&state);
 }

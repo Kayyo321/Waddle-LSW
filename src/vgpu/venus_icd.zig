@@ -9,6 +9,9 @@ const properties_wire = @import("venus_properties_wire.zig");
 const extensions_wire = @import("venus_extensions_wire.zig");
 const wsi = @import("venus_wsi.zig");
 const extra_wire = @import("venus_extra_objects_wire.zig");
+const shader_wire = @import("venus_shader_wire.zig");
+const general_graphics = @import("venus_graphics_general_wire.zig");
+const dynamic_rendering = @import("venus_dynamic_rendering_wire.zig");
 const modern_sync = @import("venus_modern_sync_wire.zig");
 const requirements2_wire = @import("venus_requirements2_wire.zig");
 var wsi_state = wsi.state_t{};
@@ -290,7 +293,7 @@ var objects = std.mem.zeroes(c.venus_objects_t);
 var slots: [512]c.venus_object_t = undefined;
 var caches = [_]instance_cache_t{.{}} ** MaxInstances;
 const MaxUpdateBytes: usize = 65536;
-const MaxUpdateWireBytes: usize = 48 + MaxUpdateBytes;
+const MaxUpdateWireBytes: usize = @max(48 + MaxUpdateBytes, shader_wire.MaxPacketBytes);
 const CommandPrefixBytes: usize = 36;
 var update_encoded: [MaxUpdateWireBytes]u8 = undefined;
 var tx: [CommandPrefixBytes + MaxUpdateWireBytes]u8 = undefined;
@@ -1025,7 +1028,9 @@ fn create_device(
         c.VK_OBJECT_TYPE_PHYSICAL_DEVICE,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    const request = device_native.preflight(info_address) catch |err| return switch (err) {
+    const guest_extensions: []const []const u8 = if (builtin.os.tag == .windows) &.{"VK_KHR_swapchain"} else &.{};
+    const support_policy = device_native.support_policy_t{ .legacy = [_]u32{0} ** 55, .nodes = &.{}, .extension_names = guest_extensions };
+    const request = (if (builtin.os.tag == .windows) device_native.preflight_supported(info_address, &support_policy) else device_native.preflight(info_address)) catch |err| return switch (err) {
         error.LayerNotPresent => c.VK_ERROR_LAYER_NOT_PRESENT,
         error.FeatureNotPresent => c.VK_ERROR_FEATURE_NOT_PRESENT,
         error.ExtensionNotPresent => c.VK_ERROR_EXTENSION_NOT_PRESENT,
@@ -1083,6 +1088,7 @@ fn create_device(
         return result;
     }
     staged.enabled_state = disabled_device_state();
+    if (request.extension_count != 0) staged.enabled_state.extension_mask = 1;
     entry.* = staged;
     resource_state(record).* = .{ .id = record.*.id };
     output.* = @ptrFromInt(entry.handle);
@@ -1261,6 +1267,17 @@ fn device_extensions(physical: c.VkPhysicalDevice, layer: [*c]const u8,
         error.Lost => c.VK_ERROR_DEVICE_LOST,
         else => c.VK_ERROR_INITIALIZATION_FAILED,
     };
+    if (builtin.os.tag == .windows) {
+        if (output == null) { count.* = 1; return c.VK_SUCCESS; }
+        const capacity = count.*;
+        count.* = @min(capacity, 1);
+        if (capacity == 0) return c.VK_INCOMPLETE;
+        output[0] = std.mem.zeroes(c.VkExtensionProperties);
+        const name = "VK_KHR_swapchain";
+        @memcpy(output[0].extensionName[0..name.len], name);
+        output[0].specVersion = 70;
+        return c.VK_SUCCESS;
+    }
     return enumerate_extensions(layer, count, output);
 }
 // Caller holds mutex; live physical namespace selects its parent-owned scalar cache only.
@@ -1924,7 +1941,7 @@ fn query_buffer_requirements(
 }
 /// Publish a reserved resource only after an exact successful host identity reply.
 /// Caller holds mutex; packet is owned scratch, final eight bytes are reserved output identity.
-fn create_render_resource(parent: *c.venus_object_t, kind: u32, writer: *render_wire.writer_t, output: *u64) c_int {
+fn create_render_resource(parent: *c.venus_object_t, kind: u32, writer: anytype, output: *u64) c_int {
     var record: [*c]c.venus_object_t = null;
     if (c.venus_objects_reserve(&objects, kind, parent.id, 0, &record) != c.RingOk)
         return c.VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -2189,14 +2206,20 @@ fn create_compute_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCach
     // Unsupported counts are rejected before accessing caller arrays or output extents.
     if (count != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
-    if (device == null or pipeline_cache != null or infos == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (device == null or infos == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const info = &infos[0];
-    if (info.stage.module == null or info.layout == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const shader = child_object(@intFromPtr(info.stage.module.?), c.VK_OBJECT_TYPE_SHADER_MODULE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.layout == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const cache_id = if (pipeline_cache) |handle| (child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_PIPELINE_CACHE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED).id else 0;
+    var stages: pipeline_stage_inputs_t = .{};
+    defer release_pipeline_stages(device, &stages);
+    const stage_result = resolve_pipeline_stages(device, parent.id, @ptrCast(&info.stage), 1, &stages);
+    if (stage_result != c.VK_SUCCESS) return stage_result;
+    var normalized = info.*;
+    normalized.stage = stages.stages[0];
     const layout = child_object(@intFromPtr(info.layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var writer = render_wire.create_compute_pipeline(@ptrCast(info), parent.id, shader.id, layout.id, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = render_wire.create_compute_pipeline_cached(@ptrCast(&normalized), parent.id, cache_id, stages.ids[0], layout.id, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
     const profile = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(layout).profile_index).?.*;
     const index = profiles.reserve_slot(&profile_registry.pipelines, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
     var handle: u64 = 0;
@@ -2215,39 +2238,6 @@ fn create_compute_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCach
 /// count must1 and cache null; allocator nullable unused. [out] output nonnull NULL on failure.
 /// Success owns guest identity and copied empty layout/pass definitions until retirement.
 /// Returns native/local invalid/OOM/loss; fixed shared64-pipeline quota, mutex serialized.
-fn create_graphics_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCache, count: u32, infos: [*c]const c.VkGraphicsPipelineCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkPipeline) callconv(.C) c_int {
-    _ = allocator;
-    lock_icd();
-    defer unlock_icd();
-    if (output == null or count != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
-    output.* = null;
-    if (device == null or pipeline_cache != null or infos == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const info = &infos[0];
-    if (info.sType != c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO or info.pNext != null or info.flags != 0 or info.stageCount != 2 or info.pStages == null or info.pStages[0].module == null or
-        info.pStages[1].module == null or info.layout == null or info.renderPass == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const vertex = child_object(@intFromPtr(info.pStages[0].module.?), c.VK_OBJECT_TYPE_SHADER_MODULE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const fragment = child_object(@intFromPtr(info.pStages[1].module.?), c.VK_OBJECT_TYPE_SHADER_MODULE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const layout = child_object(@intFromPtr(info.layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const pass = child_object(@intFromPtr(info.renderPass.?), c.VK_OBJECT_TYPE_RENDER_PASS, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const profile = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(layout).profile_index).?.*;
-    if (profile.set_count != 0 or profile.push_count != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var writer = graphics_pipeline_wire.create_graphics_pipeline(parent.id, @ptrCast(info), vertex.id, fragment.id, layout.id, pass.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
-    const index = profiles.reserve_slot(&profile_registry.pipelines, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    var handle: u64 = 0;
-    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_PIPELINE, &writer, &handle);
-    if (result != c.VK_SUCCESS) {
-        if (lost == c.RingOk) std.debug.assert(profiles.release_slot(&profile_registry.pipelines, index));
-        return result;
-    }
-    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_PIPELINE, parent.id).?);
-    state.profile_index = index;
-    state.pipeline_bind_point = 0;
-    state.render_format = resource_state(pass).render_format;
-    output.* = @ptrFromInt(handle);
-    return c.VK_SUCCESS;
-}
 
 /// Destroy a quiescent pipeline. [in] nullable private tokens/callbacks borrowed for call.
 /// Void; pending resources remain owned. Exact host acknowledgment retires metadata and identity.
@@ -2331,7 +2321,7 @@ fn create_shader_module(device: c.VkDevice, info: [*c]const c.VkShaderModuleCrea
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var writer = render_wire.create_shader_module(@ptrCast(info), parent.id, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = shader_wire.create_shader(@ptrCast(info), parent.id, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
     var handle: u64 = 0;
     const result = create_render_resource(parent, c.VK_OBJECT_TYPE_SHADER_MODULE, &writer, &handle);
     if (result == c.VK_SUCCESS) output.* = @ptrFromInt(handle);
@@ -4917,6 +4907,10 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkCreateSemaphore", &create_semaphore },
         .{ "vkDestroySemaphore", &destroy_semaphore },
         .{ "vkCmdBeginRenderPass", &begin_render_pass },
+        .{ "vkCmdBeginRendering", &begin_rendering },
+        .{ "vkCmdBeginRenderingKHR", &begin_rendering },
+        .{ "vkCmdEndRendering", &end_rendering },
+        .{ "vkCmdEndRenderingKHR", &end_rendering },
         .{ "vkCmdEndRenderPass", &end_render_pass },
         .{ "vkCmdDraw", &draw },
         .{ "vkCmdCopyImageToBuffer", &copy_image_to_buffer },
@@ -7209,6 +7203,7 @@ fn create_swapchain(device: c.VkDevice, info: [*c]const c.VkSwapchainCreateInfoK
     output.* = null;
     if (device == null or info == null or device_cache(@intFromPtr(device.?)) == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (builtin.os.tag == .windows and device_cache(@intFromPtr(device.?)).?.enabled_state.extension_mask & 1 == 0) return c.VK_ERROR_EXTENSION_NOT_PRESENT;
     const handle = @intFromPtr(device.?);
     const device_record = object(handle, c.VK_OBJECT_TYPE_DEVICE).?;
     var physical: c.VkPhysicalDevice = null;
@@ -8329,4 +8324,257 @@ fn device_address_enabled(parent: *const c.venus_object_t) bool {
 fn timeline_enabled(parent: *const c.venus_object_t) bool {
     const index = (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "timelineSemaphore") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4;
     return device_feature(parent, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, index);
+}
+
+// Owner imports const general_graphics = @import("venus_graphics_general_wire.zig");
+// pipeline_stage_inputs_t also used by compute pipeline wrapper for mandatory maintenance5
+// inline VkShaderModuleCreateInfo inputs. Temporary real modules release after pipeline ACK.
+const pipeline_stage_inputs_t = struct {
+    stages: [5]c.VkPipelineShaderStageCreateInfo = undefined,
+    ids: [5]u64 = undefined,
+    temporary: [5]c.VkShaderModule = [_]c.VkShaderModule{null} ** 5,
+    count: u32 = 0,
+};
+fn release_pipeline_stages(device: c.VkDevice, inputs: *pipeline_stage_inputs_t) void {
+    for (inputs.temporary[0..inputs.count]) |module| if (module != null) destroy_shader_module(device, module, null);
+    inputs.temporary = [_]c.VkShaderModule{null} ** 5;
+}
+fn resolve_pipeline_stages(device: c.VkDevice, parent_id: u64, stages: [*c]const c.VkPipelineShaderStageCreateInfo, count: u32, output: *pipeline_stage_inputs_t) c_int {
+    if (stages == null or count == 0 or count > 5) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.count = count;
+    for (stages[0..count], 0..) |stage, index| {
+        if (stage.sType != c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO) return c.VK_ERROR_INITIALIZATION_FAILED;
+        output.stages[index] = stage;
+        var module = stage.module;
+        if (stage.pNext) |pointer| {
+            if (module != null or @intFromPtr(pointer) % @alignOf(c.VkShaderModuleCreateInfo) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+            const inline_info: *const c.VkShaderModuleCreateInfo = @ptrCast(@alignCast(pointer));
+            if (inline_info.sType != c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO or inline_info.pNext != null) return c.VK_ERROR_INITIALIZATION_FAILED;
+            const result = create_shader_module(device, inline_info, null, &module);
+            if (result != c.VK_SUCCESS) return result;
+            output.temporary[index] = module;
+            output.stages[index].pNext = null;
+            output.stages[index].module = module;
+        }
+        if (module == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+        const shader = child_object(@intFromPtr(module.?), c.VK_OBJECT_TYPE_SHADER_MODULE, parent_id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+        output.ids[index] = shader.id;
+    }
+    return c.VK_SUCCESS;
+}
+fn general_pipeline_first_format(info: *const c.VkGraphicsPipelineCreateInfo, pass: ?*c.venus_object_t) ?u32 {
+    if (pass) |record| return resource_state(record).render_format;
+    var next = info.pNext;
+    var count: usize = 0;
+    while (next) |pointer| {
+        if (count == 2 or @intFromPtr(pointer) % @alignOf(c.VkBaseInStructure) != 0) return null;
+        count += 1;
+        const header: *const c.VkBaseInStructure = @ptrCast(@alignCast(pointer));
+        if (header.sType == c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO) {
+            const rendering: *const c.VkPipelineRenderingCreateInfo = @ptrCast(header);
+            if (rendering.colorAttachmentCount > 8 or (rendering.colorAttachmentCount != 0 and rendering.pColorAttachmentFormats == null)) return null;
+            if (rendering.colorAttachmentCount != 0) for (rendering.pColorAttachmentFormats[0..rendering.colorAttachmentCount]) |format| if (format != c.VK_FORMAT_UNDEFINED) return format;
+            return graphics_state.NoColor;
+        }
+        next = if (header.pNext) |value| @ptrCast(value) else null;
+    }
+    return null;
+}
+/// Create general graphics pipelines, preserving copied descriptor/push layout profiles.
+/// Native arrays borrowed synchronously; cache/layout/shaders resolve to same-device owners.
+/// Inline maintenance5 shaders become real temporary modules; every success/failure releases
+/// them after pipeline completion, except transport loss retains host owners for abandon.
+/// Output handles initialized NULL and successful earlier outputs survive later failure.
+/// Caller additionally validates enabled graphics features and full attachment signature.
+fn create_graphics_pipelines(
+    device: c.VkDevice,
+    pipeline_cache: c.VkPipelineCache,
+    count: u32,
+    infos: [*c]const c.VkGraphicsPipelineCreateInfo,
+    allocator: [*c]const c.VkAllocationCallbacks,
+    output: [*c]c.VkPipeline,
+) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null or count == 0 or count > 16) return c.VK_ERROR_INITIALIZATION_FAILED;
+    @memset(output[0..count], null);
+    if (device == null or infos == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const cache_id = if (pipeline_cache) |handle| (child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_PIPELINE_CACHE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED).id else 0;
+    var first_error: c_int = c.VK_SUCCESS;
+    for (infos[0..count], 0..) |*info, index| {
+        const result = create_general_graphics_pipeline(device, parent, cache_id, @ptrCast(info), &output[index]);
+        if (result != c.VK_SUCCESS and first_error == c.VK_SUCCESS) first_error = result;
+        if (lost != c.RingOk) break;
+    }
+    return first_error;
+}
+fn create_general_graphics_pipeline(device: c.VkDevice, parent: *c.venus_object_t, cache_id: u64, info: *const c.VkGraphicsPipelineCreateInfo, output: [*c]c.VkPipeline) c_int {
+    if (info.sType != c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO or info.stageCount == 0 or info.stageCount > 5 or info.pStages == null or info.layout == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    inline for (.{ "pVertexInputState", "pInputAssemblyState", "pTessellationState", "pViewportState", "pRasterizationState", "pMultisampleState", "pDepthStencilState", "pColorBlendState", "pDynamicState" }) |field| {
+        const pointer = @field(info.*, field);
+        if (pointer != null and @intFromPtr(pointer) % @alignOf(@TypeOf(pointer.*)) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (info.pInputAssemblyState != null and (info.pInputAssemblyState.*.topology > c.VK_PRIMITIVE_TOPOLOGY_PATCH_LIST or info.pInputAssemblyState.*.primitiveRestartEnable > 1)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.pRasterizationState != null and (info.pRasterizationState.*.rasterizerDiscardEnable > 1 or info.pRasterizationState.*.depthClampEnable > 1 or info.pRasterizationState.*.depthBiasEnable > 1)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.pColorBlendState != null) {
+        const blend = info.pColorBlendState.*;
+        if (blend.attachmentCount > 8 or (blend.attachmentCount != 0 and blend.pAttachments == null)) return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (blend.attachmentCount != 0) for (blend.pAttachments[0..blend.attachmentCount]) |attachment| if (attachment.blendEnable > 1) return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const layout = child_object(@intFromPtr(info.layout.?), c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const pass = if (info.renderPass) |handle| child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_RENDER_PASS, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED else null;
+    const format = general_pipeline_first_format(info, pass) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    var stages: pipeline_stage_inputs_t = .{};
+    defer release_pipeline_stages(device, &stages);
+    const stage_result = resolve_pipeline_stages(device, parent.id, info.pStages, info.stageCount, &stages);
+    if (stage_result != c.VK_SUCCESS) return stage_result;
+    var normalized = info.*;
+    normalized.pStages = &stages.stages;
+    var writer = general_graphics.create_graphics_pipeline_cached(parent.id, cache_id, @ptrCast(&normalized), stages.ids[0..stages.count], layout.id, if (pass) |record| record.id else 0, 1) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    const profile = profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(layout).profile_index).?.*;
+    const profile_index = profiles.reserve_slot(&profile_registry.pipelines, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_PIPELINE, &writer, &handle);
+    if (result != c.VK_SUCCESS) {
+        if (lost == c.RingOk) std.debug.assert(profiles.release_slot(&profile_registry.pipelines, profile_index));
+        return result;
+    }
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_PIPELINE, parent.id).?);
+    state.profile_index = profile_index;
+    state.pipeline_bind_point = c.VK_PIPELINE_BIND_POINT_GRAPHICS;
+    state.render_format = format;
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+
+// Main ICD owner imports const dynamic_rendering = @import("venus_dynamic_rendering_wire.zig");
+// graphics_state.NoColor is a copied compatibility key, never a transmitted VkFormat.
+fn resolve_rendering_attachment(
+    parent_id: u64,
+    info: *const c.VkRenderingAttachmentInfo,
+    area: c.VkRect2D,
+    layer_count: u32,
+    view_mask: u32,
+    aspect: u32,
+    references: *[60]*c.venus_object_t,
+    reference_count: *usize,
+    first_format: *u32,
+) ?dynamic_rendering.attachment_ids_t {
+    var ids = dynamic_rendering.attachment_ids_t{};
+    if (info.imageView == null) {
+        if (info.resolveImageView != null or info.resolveMode != 0) return null;
+        return ids;
+    }
+    const view = child_object(@intFromPtr(info.imageView.?), c.VK_OBJECT_TYPE_IMAGE_VIEW, parent_id) orelse return null;
+    const view_state = resource_state(view);
+    const image = child_object(view_state.view_image, c.VK_OBJECT_TYPE_IMAGE, parent_id) orelse return null;
+    const image_state = resource_state(image);
+    const memory_record = child_object(image_state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent_id) orelse return null;
+    if ((view_state.view_type != c.VK_IMAGE_VIEW_TYPE_2D and view_state.view_type != c.VK_IMAGE_VIEW_TYPE_2D_ARRAY) or
+        !image_range_valid(image_state, view_state.view_range) or view_state.view_range.aspectMask & aspect == 0 or
+        (view_state.view_range.levelCount != 1 and !(view_state.view_range.levelCount == std.math.maxInt(u32) and view_state.view_range.baseMipLevel + 1 == image_state.image_levels)) or
+        image_state.image_usage & (if (aspect == c.VK_IMAGE_ASPECT_COLOR_BIT) @as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) else c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0) return null;
+    const shift: u5 = @intCast(@min(view_state.view_range.baseMipLevel, 31));
+    const width = @max(@as(u32, 1), image_state.image_extent[0] >> shift);
+    const height = @max(@as(u32, 1), image_state.image_extent[1] >> shift);
+    const layers = if (view_state.view_range.layerCount == std.math.maxInt(u32)) image_state.image_layers - view_state.view_range.baseArrayLayer else view_state.view_range.layerCount;
+    const required_layers = if (view_mask == 0) layer_count else 32 - @clz(view_mask);
+    if (area.offset.x < 0 or area.offset.y < 0 or @as(u64, @intCast(area.offset.x)) + area.extent.width > width or
+        @as(u64, @intCast(area.offset.y)) + area.extent.height > height or required_layers > layers) return null;
+    if (aspect == c.VK_IMAGE_ASPECT_COLOR_BIT and first_format.* == graphics_state.NoColor) {
+        first_format.* = if (view_state.image_format != 0) view_state.image_format else image_state.image_format;
+    }
+    ids.view = view.id;
+    references[reference_count.*] = view;
+    references[reference_count.* + 1] = image;
+    references[reference_count.* + 2] = memory_record;
+    reference_count.* += 3;
+    if (info.resolveImageView) |handle| {
+        const resolve_view = child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_IMAGE_VIEW, parent_id) orelse return null;
+        const resolve_view_state = resource_state(resolve_view);
+        const resolve_image = child_object(resolve_view_state.view_image, c.VK_OBJECT_TYPE_IMAGE, parent_id) orelse return null;
+        const resolve_state = resource_state(resolve_image);
+        const resolve_memory = child_object(resolve_state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent_id) orelse return null;
+        if (image_state.image_samples <= 1 or resolve_state.image_samples != 1 or resolve_state.image_format != image_state.image_format or
+            resolve_state.image_usage & (if (aspect == c.VK_IMAGE_ASPECT_COLOR_BIT) @as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) else c.VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) == 0 or
+            !image_range_valid(resolve_state, resolve_view_state.view_range) or resolve_view_state.view_range.aspectMask & aspect == 0 or resolve_view_state.view_range.levelCount != 1) return null;
+        const resolve_shift: u5 = @intCast(@min(resolve_view_state.view_range.baseMipLevel, 31));
+        const resolve_layers = if (resolve_view_state.view_range.layerCount == std.math.maxInt(u32)) resolve_state.image_layers - resolve_view_state.view_range.baseArrayLayer else resolve_view_state.view_range.layerCount;
+        if (@as(u64, @intCast(area.offset.x)) + area.extent.width > @max(@as(u32, 1), resolve_state.image_extent[0] >> resolve_shift) or
+            @as(u64, @intCast(area.offset.y)) + area.extent.height > @max(@as(u32, 1), resolve_state.image_extent[1] >> resolve_shift) or required_layers > resolve_layers) return null;
+        ids.resolve = resolve_view.id;
+        references[reference_count.*] = resolve_view;
+        references[reference_count.* + 1] = resolve_image;
+        references[reference_count.* + 2] = resolve_memory;
+        reference_count.* += 3;
+    }
+    return ids;
+}
+/// Begin actual host dynamic rendering. Native inputs borrowed synchronously, no pointer
+/// retention/heap. Local invalid Recording calls invalidate; ownership refs publish after ACK.
+fn begin_rendering(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkRenderingInfo) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return;
+    const pool = command_pool_for(record) orelse return;
+    if (info == null or state.command_profile_index == 0 or graphics_recording(state).active_format != 0 or
+        info.*.sType != c.VK_STRUCTURE_TYPE_RENDERING_INFO or info.*.pNext != null or info.*.colorAttachmentCount > 8 or
+        (info.*.colorAttachmentCount != 0 and info.*.pColorAttachments == null) or !graphics_family_supported(pool))
+    {
+        if (lost == c.RingOk) state.command_state = .Invalid;
+        return;
+    }
+    var references: [60]*c.venus_object_t = undefined;
+    var reference_count: usize = 0;
+    var first_format: u32 = graphics_state.NoColor;
+    var colors: [8]dynamic_rendering.attachment_ids_t = undefined;
+    if (info.*.colorAttachmentCount != 0) for (info.*.pColorAttachments[0..info.*.colorAttachmentCount], 0..) |*attachment, index| {
+        colors[index] = resolve_rendering_attachment(pool.parent_id, @ptrCast(attachment), info.*.renderArea, info.*.layerCount, info.*.viewMask, c.VK_IMAGE_ASPECT_COLOR_BIT, &references, &reference_count, &first_format) orelse {
+            state.command_state = .Invalid;
+            return;
+        };
+    };
+    const depth = if (info.*.pDepthAttachment != null) resolve_rendering_attachment(pool.parent_id, @ptrCast(info.*.pDepthAttachment), info.*.renderArea, info.*.layerCount, info.*.viewMask, c.VK_IMAGE_ASPECT_DEPTH_BIT, &references, &reference_count, &first_format) orelse {
+        state.command_state = .Invalid;
+        return;
+    } else dynamic_rendering.attachment_ids_t{};
+    const stencil = if (info.*.pStencilAttachment != null) resolve_rendering_attachment(pool.parent_id, @ptrCast(info.*.pStencilAttachment), info.*.renderArea, info.*.layerCount, info.*.viewMask, c.VK_IMAGE_ASPECT_STENCIL_BIT, &references, &reference_count, &first_format) orelse {
+        state.command_state = .Invalid;
+        return;
+    } else dynamic_rendering.attachment_ids_t{};
+    var staged = graphics_recording(state).*;
+    graphics_state.begin_dynamic(&staged, first_format) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    const packet = dynamic_rendering.begin_rendering(record.id, @ptrCast(info), colors[0..info.*.colorAttachmentCount], depth, stencil) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&packet, 213)) return;
+    graphics_recording(state).* = staged;
+    for (references[0..reference_count]) |target| command_reference(state, target);
+}
+/// End actual dynamic rendering. Recording scope metadata changes only after host ACK;
+/// no heap/native pointer retention; invalid local ordering invalidates command.
+fn end_rendering(command_buffer: c.VkCommandBuffer) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording or state.command_profile_index == 0) return;
+    var staged = graphics_recording(state).*;
+    graphics_state.end_dynamic(&staged) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    const packet = dynamic_rendering.end_rendering(record.id) catch unreachable;
+    if (command_acknowledged(&packet, 214)) graphics_recording(state).* = staged;
 }
