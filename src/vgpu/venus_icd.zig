@@ -4,6 +4,9 @@ const device_native = @import("venus_device_native.zig");
 const device_wire = @import("venus_device_wire.zig");
 const features_native = @import("venus_features_native.zig");
 const features_wire = @import("venus_features_wire.zig");
+const properties_native = @import("venus_properties_native.zig");
+const properties_wire = @import("venus_properties_wire.zig");
+const extensions_wire = @import("venus_extensions_wire.zig");
 const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
 const compute_state = @import("venus_compute_state.zig");
@@ -52,6 +55,20 @@ const FeatureTags = [_]u32{
 const FeatureCounts = [_]u8{ 12, 47, 15, 1, 1, 2, 3, 1 };
 const CoreFeatureAllowlist = [_]u32{0} ** features_wire.CoreFlags;
 const NodeFeatureAllowlists = [_][features_wire.MaxNodeFlags]u32{[_]u32{0} ** features_wire.MaxNodeFlags} ** features_wire.MaxNodes;
+// Each raw extension array is owned by one physical namespace until acknowledged parent retirement.
+const extension_cache_t = struct {
+    handle: u64 = 0,
+    records: ?[]extensions_wire.extension_t = null,
+    ready: bool = false,
+};
+var extension_caches = [_]extension_cache_t{.{}} ** (MaxInstances * MaxDevices);
+var extension_backend_result: i32 = c.VK_SUCCESS;
+fn retire_extension_cache(handle: u64) void {
+    for (&extension_caches) |*entry| if (entry.handle == handle or handle == 0) {
+        if (entry.records) |records| MappingAllocator.free(records);
+        entry.* = .{};
+    };
+}
 const instance_cache_t = struct {
     handle: u64 = 0,
     ready: bool = false,
@@ -200,7 +217,13 @@ const MaxUpdateWireBytes: usize = 48 + MaxUpdateBytes;
 const CommandPrefixBytes: usize = 36;
 var update_encoded: [MaxUpdateWireBytes]u8 = undefined;
 var tx: [CommandPrefixBytes + MaxUpdateWireBytes]u8 = undefined;
-var rx: [4096]u8 = undefined;
+var rx: [extensions_wire.MaxReplyBytes]u8 = undefined;
+const TimedReplyBytes: usize = 524288;
+const TransactionMs: u64 = 5000;
+var timed_exchange: c.venus_icd_exchange_until_t = null;
+var timed_clock: c.venus_icd_clock_t = null;
+var transaction_deadline: u64 = 0;
+var reply_profile_ready: bool = false;
 var lost: c_int = c.RingOk;
 var negotiated_capabilities = std.mem.zeroes(c.venus_capabilities_t);
 var negotiated_capabilities_ready: bool = false;
@@ -214,6 +237,7 @@ const exchange_t = *const fn (
     usize,
 ) callconv(.C) c_int;
 fn clear() void {
+    retire_extension_cache(0);
     for (&resource_states) |*state| release_shadow(state);
     mapping_slots = [_]bool{false} ** 64;
     c.venus_command_free(&command);
@@ -235,6 +259,10 @@ fn clear() void {
     lost = c.RingOk;
     negotiated_capabilities = std.mem.zeroes(c.venus_capabilities_t);
     negotiated_capabilities_ready = false;
+    timed_exchange = null;
+    timed_clock = null;
+    transaction_deadline = 0;
+    reply_profile_ready = false;
 }
 /// Borrow one exclusive negotiated backend; public header defines ownership/deadlines/threads.
 export fn venus_icd_bind(exchange: ?exchange_t, context: ?*anyopaque) c_int {
@@ -264,9 +292,70 @@ fn bind_locked(exchange: ?exchange_t, context: ?*anyopaque) c_int {
     const status = c.venus_objects_init(&objects, &slots, slots.len, namespace_id, context);
     std.debug.assert(status == c.RingOk);
     namespace_id += 1;
-    const initialized = c.venus_command_init(&command, exchange, context, &tx, tx.len, &rx, rx.len);
+    const initialized = c.venus_command_init(&command, exchange, context, &tx, tx.len, &rx, 4096);
     std.debug.assert(initialized == c.RingOk);
     return c.RingOk;
+}
+/// Bind an absolute-deadline frontend after verifying the trusted actual reply allocation.
+/// Header defines borrowed callback lifetime and caller-owned receiver retirement on failure.
+export fn venus_icd_bind_timed(exchange_until: c.venus_icd_exchange_until_t, clock_ms: c.venus_icd_clock_t,
+    context: ?*anyopaque, capabilities: [*c]const c.venus_capabilities_t, reply_bytes: u32) c_int {
+    mutex.lock();
+    defer mutex.unlock();
+    if (exchange_until == null or clock_ms == null or context == null or capabilities == null or
+        command.exchange != null or reply_bytes != TimedReplyBytes or
+        c.venus_capabilities_compatible(capabilities) != c.RingOk) return c.RingInvalid;
+    if (namespace_id == std.math.maxInt(u32)) return c.RingLimit;
+    const now = clock_ms.?(context);
+    if (now == 0) return c.RingClosed;
+    const deadline = std.math.add(u64, now, TransactionMs) catch return c.RingLimit;
+    var byte: u8 = 0;
+    for ([_]usize{ TimedReplyBytes - 1, TimedReplyBytes }, 0..) |offset, index| {
+        const before = clock_ms.?(context);
+        if (before == 0) return c.RingClosed;
+        if (before >= deadline) return c.RingTimeout;
+        var offered = std.mem.zeroes(c.venus_request_t);
+        offered.kind = c.RequestReply;
+        offered.argument_zero = offset;
+        offered.argument_one = 1;
+        var response = std.mem.zeroes(c.venus_request_t);
+        const status = exchange_until.?(context, &offered, null, 0, &response, &byte, 1, deadline);
+        const after = clock_ms.?(context);
+        if (after == 0) return c.RingClosed;
+        if (after < before) return c.RingCorrupt;
+        if (after >= deadline) return c.RingTimeout;
+        if (index == 0) {
+            if (status != c.RingOk) return status;
+            if (response.kind != c.RequestReply or response.direction != 1 or response.status != c.RequestSuccess or
+                response.payload_bytes != 1 or response.argument_zero != 0 or response.argument_one != 0 or
+                response.resource_id != 0 or response.flags != 0) return c.RingCorrupt;
+        } else if (status != c.RingInvalid or response.kind != c.RequestReply or response.direction != 1 or
+            response.status != c.RequestInvalid or response.payload_bytes != 0 or response.argument_zero != 0 or
+            response.argument_one != 0 or response.resource_id != 0 or response.flags != 0) return c.RingCorrupt;
+    }
+    const status = bind_locked(timed_adapter, context);
+    if (status != c.RingOk) return status;
+    timed_exchange = exchange_until;
+    timed_clock = clock_ms;
+    reply_profile_ready = true;
+    negotiated_capabilities = capabilities.*;
+    negotiated_capabilities_ready = true;
+    return c.RingOk;
+}
+// Command calls retain one absolute deadline, including callbacks and every bounded read.
+fn timed_adapter(context: ?*anyopaque, offered: [*c]const c.venus_request_t, input: ?*const anyopaque,
+    length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+    const now = timed_clock.?(context);
+    if (now == 0) return c.RingClosed;
+    const deadline = if (transaction_deadline != 0) transaction_deadline else
+        std.math.add(u64, now, TransactionMs) catch return c.RingLimit;
+    if (now >= deadline) return c.RingTimeout;
+    const status = timed_exchange.?(context, offered, input, length, response, output, capacity, deadline);
+    const after = timed_clock.?(context);
+    if (after == 0) return c.RingClosed;
+    if (after < now) return c.RingCorrupt;
+    if (after >= deadline) return c.RingTimeout;
+    return status;
 }
 /// Release an empty binding; header specifies no frontend/resource teardown.
 export fn venus_icd_unbind() c_int {
@@ -305,13 +394,29 @@ fn failure(status: c_int) c_int {
     return c.VK_ERROR_DEVICE_LOST;
 }
 fn transact(bytes: []const u8) ?[]const u8 {
+    return transact_sized(bytes, 4096);
+}
+fn transact_sized(bytes: []const u8, reply_bytes: usize) ?[]const u8 {
     if (command.exchange == null or lost != c.RingOk) return null;
+    if (reply_bytes > 4096 and !reply_profile_ready) return null;
+    if (reply_bytes < 4 or reply_bytes > rx.len or reply_bytes % 4 != 0) return null;
+    command.rx_bytes = reply_bytes;
+    if (timed_clock) |clock| {
+        const now = clock(command.context);
+        if (now == 0) { _ = failure(c.RingClosed); return null; }
+        transaction_deadline = std.math.add(u64, now, TransactionMs) catch { _ = failure(c.RingLimit); return null; };
+    }
+    defer transaction_deadline = 0;
     const start = c.venus_command_start(&command, bytes.ptr, bytes.len);
     if (start != c.RingOk) {
         _ = failure(start);
         return null;
     }
-    for (0..1000) |_| {
+    for (0..@as(usize, if (timed_clock != null) 5000 else 1000)) |_| {
+        if (timed_clock) |clock| {
+            const now = clock(command.context);
+            if (now == 0 or now >= transaction_deadline) { _ = failure(if (now == 0) c.RingClosed else c.RingTimeout); return null; }
+        }
         const status = c.venus_command_poll(&command);
         if (status == c.RingOk) {
             var view: ?*const anyopaque = null;
@@ -431,6 +536,7 @@ fn destroy_instance(
     );
     _ = transact(encoded[0..written]) orelse return;
     for (entry.physical[0..entry.count]) |physical| {
+        retire_extension_cache(physical);
         if (c.venus_objects_release(
             &objects,
             physical,
@@ -1003,20 +1109,62 @@ fn destroy_device(
     };
     entry.* = .{};
 }
-/// Empty supported device extension list; no allocation; invalid handles/layers rejected.
-fn device_extensions(
-    physical: c.VkPhysicalDevice,
-    layer: [*c]const u8,
-    count: [*c]u32,
-    output: [*c]c.VkExtensionProperties,
-) callconv(.C) c_int {
+// Actual host count/fill query; heap ownership publishes only after complete duplicate/name validation.
+fn ensure_raw_extensions(physical: c.VkPhysicalDevice) !*const extension_cache_t {
+    if (!reply_profile_ready) return error.Unavailable;
+    const handle = if (physical) |value| @intFromPtr(value) else return error.Invalid;
+    const record = object(handle, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return error.Invalid;
+    var target: ?*extension_cache_t = null;
+    for (&extension_caches) |*entry| {
+        if (entry.handle == handle and entry.ready) return entry;
+        if (target == null and entry.handle == 0) target = entry;
+    }
+    const entry = target orelse return error.OutOfMemory;
+    const count_request = try extensions_wire.encode_count(record.id);
+    const count_reply = transact(count_request.bytes[0..count_request.used]) orelse return error.Lost;
+    const count_status = extensions_wire.decode_status(count_reply, null) catch {
+        _ = failure(c.RingCorrupt); return error.Lost;
+    };
+    if (count_status < 0) { extension_backend_result = count_status; return error.Backend; }
+    const count = extensions_wire.decode_count(count_reply) catch {
+        _ = failure(c.RingCorrupt); return error.Lost;
+    };
+    if (count == 0) {
+        entry.* = .{ .handle = handle, .ready = true };
+        return entry;
+    }
+    const records = try MappingAllocator.alloc(extensions_wire.extension_t, count);
+    errdefer MappingAllocator.free(records);
+    const fill_request = try extensions_wire.encode_fill(record.id, count);
+    const fill_reply = transact_sized(fill_request.bytes[0..fill_request.used], 28 + @as(usize, count) * 268) orelse return error.Lost;
+    const fill_status = extensions_wire.decode_status(fill_reply, count) catch {
+        _ = failure(c.RingCorrupt); return error.Lost;
+    };
+    if (fill_status < 0) { extension_backend_result = fill_status; return error.Backend; }
+    const filled = extensions_wire.decode_fill(fill_reply, records) catch {
+        _ = failure(c.RingCorrupt); return error.Lost;
+    };
+    if (filled.incomplete or filled.count != count) return error.Unavailable;
+    entry.* = .{ .handle = handle, .records = records, .ready = true };
+    return entry;
+}
+/// Enumerate the implemented intersection; raw backend names never grant unsupported behavior.
+/// Borrowed caller storage/count, mutex serialized. Raw heap cache belongs to physical namespace
+/// and is freed on acknowledged parent destruction or receiver-retired abandonment.
+fn device_extensions(physical: c.VkPhysicalDevice, layer: [*c]const u8,
+    count: [*c]u32, output: [*c]c.VkExtensionProperties) callconv(.C) c_int {
     mutex.lock();
     defer mutex.unlock();
-    if (physical == null or object(
-        @intFromPtr(physical.?),
-        c.VK_OBJECT_TYPE_PHYSICAL_DEVICE,
-    ) == null)
+    if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null)
         return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (count == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (layer != null) return c.VK_ERROR_LAYER_NOT_PRESENT;
+    if (reply_profile_ready) _ = ensure_raw_extensions(physical) catch |err| return switch (err) {
+        error.OutOfMemory => c.VK_ERROR_OUT_OF_HOST_MEMORY,
+        error.Backend => extension_backend_result,
+        error.Lost => c.VK_ERROR_DEVICE_LOST,
+        else => c.VK_ERROR_INITIALIZATION_FAILED,
+    };
     return enumerate_extensions(layer, count, output);
 }
 // Caller holds mutex; live physical namespace selects its parent-owned scalar cache only.
@@ -1142,6 +1290,45 @@ fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv
     }
     features_native.publish_features2(output_address, &chain, nodes[0..chain.count], &core) catch return;
 }
+/// Query modern typed physical properties; caller owns initialized exclusive root/chain storage.
+/// Invalid topology or malformed replies preserve all output bytes. No retained caller pointers;
+/// the process mutex serializes transport and publication. Unknown payloads remain untouched.
+fn properties2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (!negotiated_capabilities_ready or physical_features_cache(physical) == null) return;
+    const address = output_address orelse return;
+    if (@intFromPtr(address) % @alignOf(c.VkPhysicalDeviceProperties2) != 0) return;
+    const output: *c.VkPhysicalDeviceProperties2 = @ptrCast(@alignCast(address));
+    if (output.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2) return;
+    const chain = properties_native.collect_chain(output.pNext) catch return;
+    const record = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE).?;
+    const encoded = properties_wire.query(record.id, chain.tags[0..chain.count]) catch return;
+    const reply = transact(encoded.bytes[0..encoded.used]) orelse return;
+    var staged = properties_wire.decode(reply, chain.tags[0..chain.count]) catch {
+        _ = failure(c.RingCorrupt);
+        return;
+    };
+    const entry = physical_features_cache(physical).?;
+    if (staged.properties.apiVersion >> 29 != 0 or
+        ((staged.properties.apiVersion >> 22) & 0x7f) != 1 or
+        (entry.actual_api_ready and entry.actual_api_version != staged.properties.apiVersion)) {
+        _ = failure(c.RingCorrupt);
+        return;
+    }
+    const actual_api = staged.properties.apiVersion;
+    project_properties(@ptrCast(&staged.properties));
+    properties_native.publish_properties2(output_address, &chain, &staged) catch return;
+    entry.actual_api_version = actual_api;
+    entry.actual_api_ready = true;
+}
+// All physical property entrypoints use the same guest implementation limits.
+fn project_properties(staged: *c.VkPhysicalDeviceProperties) void {
+    staged.limits.maxPushConstantsSize = @min(staged.limits.maxPushConstantsSize, profiles.MaxPushBytes);
+    staged.apiVersion = c.VK_API_VERSION_1_0;
+    staged.limits.nonCoherentAtomSize = 1;
+    staged.limits.minMemoryMapAlignment = 4096;
+}
 /// Query actual host properties into caller storage only after bounded reply validation.
 /// Borrowed output, no allocations; errors preserve output and poison transport binding.
 fn properties(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceProperties) callconv(.C) void {
@@ -1149,10 +1336,7 @@ fn properties(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceProper
     defer mutex.unlock();
     if (output == null) return;
     var staged = raw_properties(physical) orelse return;
-    staged.limits.maxPushConstantsSize = @min(staged.limits.maxPushConstantsSize, profiles.MaxPushBytes);
-    staged.apiVersion = c.VK_API_VERSION_1_0;
-    staged.limits.nonCoherentAtomSize = 1;
-    staged.limits.minMemoryMapAlignment = 4096;
+    project_properties(&staged);
     output.* = staged;
 }
 /// Query raw host core features privately; publish the same implementation intersection as Features2.
@@ -4585,6 +4769,8 @@ fn bounded_name(name: [*c]const u8) ?[]const u8 {
 fn physical_proc(name: []const u8) c.PFN_vkVoidFunction {
     if (negotiated_capabilities_ready and (std.mem.eql(u8, name, "vkGetPhysicalDeviceFeatures2") or
         std.mem.eql(u8, name, "vkGetPhysicalDeviceFeatures2KHR"))) return @ptrCast(&features2);
+    if (negotiated_capabilities_ready and (std.mem.eql(u8, name, "vkGetPhysicalDeviceProperties2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceProperties2KHR"))) return @ptrCast(&properties2);
     const Entries = .{
         .{ "vkGetPhysicalDeviceProperties", &properties },
         .{ "vkGetPhysicalDeviceFeatures", &features },
@@ -5707,6 +5893,8 @@ test "negotiated binding owns the entire profile and rejected calls preserve the
 extern fn venus_features_test_query([*]const u32, usize, [*]u8) usize;
 extern fn venus_features_test_reply([*]const u32, usize, [*]u8) usize;
 extern fn venus_features_test_reply_one_hot([*]const u32, usize, usize, [*]u8) usize;
+extern fn venus_properties_test_fixture([*]const u32, usize, *c.VkPhysicalDeviceProperties, [*]properties_wire.data_t) void;
+extern fn venus_properties_test_encode([*]const u32, usize, *const c.VkPhysicalDeviceProperties, [*]const properties_wire.data_t, [*]u8) usize;
 extern fn venus_values_test_encode(u32, [*]u8, usize) usize;
 extern fn venus_values_test_properties(*const c.VkPhysicalDeviceProperties, [*]u8, usize) usize;
 const feature_fixture_t = struct {
@@ -5769,6 +5957,20 @@ const feature_fixture_t = struct {
                     12 => {
                         std.mem.writeInt(u32, self.reply[0..4], if (self.corrupt_destroy) 99 else 12, .little);
                         self.bytes = 4;
+                    },
+                    148 => {
+                        var tags: [properties_wire.MaxNodes]u32 = undefined;
+                        var count: usize = 0;
+                        var offset: usize = 28;
+                        while (std.mem.readInt(u64, wire[offset..][0..8], .little) != 0) : (offset += 12) {
+                            tags[count] = std.mem.readInt(u32, wire[offset + 8 ..][0..4], .little);
+                            count += 1;
+                        }
+                        var core: c.VkPhysicalDeviceProperties = undefined;
+                        var nodes: [5]properties_wire.data_t = undefined;
+                        venus_properties_test_fixture(&tags, count, &core, &nodes);
+                        core.apiVersion = self.api;
+                        self.bytes = venus_properties_test_encode(&tags, count, &core, &nodes, &self.reply);
                     },
                     147 => {
                         self.feature_commands += 1;
@@ -6357,4 +6559,143 @@ test "public malformed device destruction retains immutable state with exact out
     try std.testing.expectEqualDeep(retained, entry.*);
     venus_icd_abandon();
     try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+}
+
+const timed_fixture_t = struct {
+    now: u64 = 1,
+    deadline: u64 = 0,
+    command_id: u32 = 0,
+    submitted: u32 = 0,
+    reads: u32 = 0,
+    last_offset: usize = 0,
+    expire_reply: bool = false,
+    reply: [extensions_wire.MaxReplyBytes]u8 = [_]u8{0} ** extensions_wire.MaxReplyBytes,
+    fn clock(context: ?*anyopaque) callconv(.C) u64 {
+        const self: *@This() = @ptrCast(@alignCast(context.?));
+        return self.now;
+    }
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque,
+        length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize, deadline: u64) callconv(.C) c_int {
+        const self: *@This() = @ptrCast(@alignCast(context.?));
+        std.debug.assert(deadline > self.now);
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = request.*.kind;
+        response.*.direction = 1;
+        if (self.submitted == 0 and request.*.kind == c.RequestReply) {
+            std.debug.assert(capacity == 1);
+            if (request.*.argument_zero == TimedReplyBytes) {
+                response.*.status = c.RequestInvalid;
+                return c.RingInvalid;
+            }
+            std.debug.assert(request.*.argument_zero == TimedReplyBytes - 1);
+            @as(*u8, @ptrCast(output.?)).* = 0;
+            response.*.payload_bytes = 1;
+            return c.RingOk;
+        }
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                const wire = @as([*]const u8, @ptrCast(input.?))[36..length];
+                self.command_id = std.mem.readInt(u32, wire[0..4], .little);
+                std.debug.assert(self.command_id == 14);
+                self.submitted += 1;
+                self.deadline = deadline;
+                response.*.argument_zero = self.submitted;
+                @memset(&self.reply, 0);
+                std.mem.writeInt(u32, self.reply[0..4], 14, .little);
+                std.mem.writeInt(u64, self.reply[8..16], 1, .little);
+                std.mem.writeInt(u32, self.reply[16..20], 1024, .little);
+                const count = std.mem.readInt(u32, wire[32..36], .little);
+                std.mem.writeInt(u64, self.reply[20..28], count, .little);
+                for (0..count) |index| {
+                    const start = 28 + index * 268;
+                    std.mem.writeInt(u64, self.reply[start..][0..8], 256, .little);
+                    const name_bytes = std.fmt.bufPrint(self.reply[start + 8 ..][0..256], "VK_test_{d:0>4}", .{index}) catch unreachable;
+                    self.reply[start + 8 + name_bytes.len] = 0;
+                    std.mem.writeInt(u32, self.reply[start + 264 ..][0..4], 1, .little);
+                }
+                self.last_offset = 0;
+                self.reads = 0;
+            },
+            c.RequestPoll => std.debug.assert(deadline == self.deadline),
+            c.RequestReply => {
+                std.debug.assert(deadline == self.deadline and request.*.argument_zero == self.last_offset);
+                std.debug.assert(capacity <= 4096);
+                @memcpy(@as([*]u8, @ptrCast(output.?))[0..capacity], self.reply[self.last_offset..][0..capacity]);
+                self.last_offset += capacity;
+                self.reads += 1;
+                response.*.payload_bytes = @intCast(capacity);
+                if (self.expire_reply) self.now = deadline;
+            },
+            else => return c.RingInvalid,
+        }
+        return c.RingOk;
+    }
+};
+test "timed actual reply proof and1024 extension cache use68 bounded reads with one deadline" {
+    var fixture = timed_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_timed(timed_fixture_t.exchange,
+        timed_fixture_t.clock, &fixture, &capabilities, TimedReplyBytes));
+    defer venus_icd_abandon();
+    var instance: [*c]c.venus_object_t = null;
+    var physical: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.*.id, 1, &physical));
+    const handle: c.VkPhysicalDevice = @ptrFromInt(physical.*.handle);
+    const cached = try ensure_raw_extensions(handle);
+    try std.testing.expectEqual(@as(usize, 1024), cached.records.?.len);
+    try std.testing.expectEqual(@as(u32, 68), fixture.reads);
+    try std.testing.expectEqual(@as(usize, extensions_wire.MaxReplyBytes), fixture.last_offset);
+    try std.testing.expectEqual(@as(u32, 2), fixture.submitted);
+    try std.testing.expectEqualStrings("VK_test_1023", std.mem.sliceTo(&cached.records.?[1023].name, 0));
+    _ = try ensure_raw_extensions(handle);
+    try std.testing.expectEqual(@as(u32, 2), fixture.submitted);
+    fixture.now = 0;
+    const request = try extensions_wire.encode_count(physical.*.id);
+    try std.testing.expect(transact(&request.bytes) == null);
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+}
+
+test "public Properties2 preserves headers and shares legacy guest limit projection" {
+    var fixture = feature_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var node = std.mem.zeroes(c.VkPhysicalDeviceVulkan13Properties);
+    node.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES;
+    var output = std.mem.zeroes(c.VkPhysicalDeviceProperties2);
+    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+    output.pNext = &node;
+    properties2(physical, &output);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_0), output.properties.apiVersion);
+    try std.testing.expectEqual(@as(u64, 1), output.properties.limits.nonCoherentAtomSize);
+    try std.testing.expectEqual(@as(usize, 4096), output.properties.limits.minMemoryMapAlignment);
+    try std.testing.expectEqual(@as(u32, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES), node.sType);
+    try std.testing.expect(output.pNext == @as(?*anyopaque, @ptrCast(&node)));
+    try std.testing.expect(node.pNext == null);
+    try std.testing.expect(physical_proc("vkGetPhysicalDeviceProperties2") != null);
+    const before = output;
+    output.sType = 0;
+    const calls = fixture.commands;
+    properties2(physical, &output);
+    try std.testing.expectEqual(calls, fixture.commands);
+    output.sType = before.sType;
+    try std.testing.expectEqualDeep(before, output);
+}
+
+test "timed callback completion at whole deadline is sticky and never publishes its reply" {
+    var fixture = timed_fixture_t{ .expire_reply = true };
+    const capabilities = feature_test_capabilities();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_timed(timed_fixture_t.exchange,
+        timed_fixture_t.clock, &fixture, &capabilities, TimedReplyBytes));
+    defer venus_icd_abandon();
+    const request = try extensions_wire.encode_count(1);
+    try std.testing.expect(transact(&request.bytes) == null);
+    try std.testing.expectEqual(@as(c_int, c.RingTimeout), lost);
+    try std.testing.expectEqual(@as(u32, c.CommandLost), command.state);
+    var view: ?*const anyopaque = null;
+    var length: usize = 0;
+    try std.testing.expectEqual(@as(c_int, c.RingTimeout), c.venus_command_take(&command, &view, &length));
+    try std.testing.expect(view == null and length == 0);
 }
