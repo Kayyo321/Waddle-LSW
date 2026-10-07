@@ -381,3 +381,29 @@ original negative audits, tools and exact per-image registry restore receipts.
 
 TODO#3 is90%, overall77.5%; no100% until final qualification genuinely passes.
 Keep Time Ended TBD, all old native PIDs, branch/history/untracked files and README.
+
+
+### 2026-10-07 all current ICD and Vulkan GPU gates pass; DXVK heap open
+
+Current full required ICD test/SAN/Windows make exits0:375 D/RS/native128/loader8,
+1562 owned functions ASan/LSan/UBSan plus C native128. Whole core90.07%/98.50%
+receipts unchanged. Matrix a64647c8 all12 normal/SAN workloads and exact local
+postflush errors pass; final48/eight-life WSI e7b07008 passes all original checks.
+Every4-input after-SHA set verified. Production7e remains frozen.
+
+Tracked patch094c34c removes SetupAPI growth in actual15bcd4 three-life audit,
+but locale/TLS native growth remains. adccca8 joined compiler worker alone still
+fails heap in3ea6429 despite three complete functional lifetimes. e8961c5 loads
+compiler on worker and retains its module through all COM/device/DXVK thread
+teardown; all8 builds0 at immutable2ed4bda7. Fresh actual normal/SAN/fault and
+heap qualification for this fixture remain pending. No manual frees/suppressions.
+
+WDDM sole VM/GPU owner prepares bounded noninvasive CDB inspection of locale
+refcounts/global/FLS roots and actual Winsock partition contents/reachability.
+Matched Microsoft symbols and exact OS DLLs preserved; root/image supply scalar
+layout guidance only. Failed73a17 inspection command guard rejected thread
+enumeration before anyGPU/debugger; exact UST absent-key restore, failedbaseline
+and all prepared receivers retained. Correct/validate guard before fresh run;
+never alter a running frozen helper. Original60s audit handshake stays unchanged.
+TODO#3 remains90%, overall77.5%, Time Ended TBD. All history, VM, artifacts, old
+native PIDs4296/1404, known untracked files and README remain preserved.

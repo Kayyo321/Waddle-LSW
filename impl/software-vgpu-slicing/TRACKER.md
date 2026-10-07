@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Integrated implementation and real rendering/compute/presentation/loss teardown pass; whole-production coverage90.07%branch/98.50%line verified at37df8b4. NULL vertex behavior implemented. Approved repository-wide DXVK cleanup build passes at094c34c; current final sanitizers, GPU matrix and patched native heap acceptance pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Integrated implementation and real rendering/compute/presentation/loss teardown pass; whole-production coverage90.07%branch/98.50%line verified at37df8b4. NULL vertex behavior implemented. Approved repository-wide DXVK cleanup build passes at094c34c; current ICD sanitizers and12-case Windows GPU matrix/full48 WSI verified; final compiler-lifetime DXVK normal/SAN/fault and native heap acceptance pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -20,7 +20,7 @@
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
 | #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
-| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned offline x64 loader build and actual ISO-VM medium-integrity discovery verified; real receiver bootstrap and GPU/DXVK remain pending |
+| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned loader, medium-integrity bootstrap/receiver and real GPU/DXVK execution verified; final native heap teardown qualification pending |
 
 **Total Feature Completion**: `77.5%`
 
@@ -1016,3 +1016,37 @@ TODO#3 is90% and Time Ended remains TBD. Current required ICD sanitizer/Windows
 checks,12-case real GPU matrix/full repeated WSI and patched native zero-leak
 acceptance remain open. Historical pristine failures, DLLs and registry recovery
 receipts remain intact. README and VM state are preserved.
+
+
+### Current ICD and full Windows Vulkan qualification verified
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `b803ab1` | docs(vgpu): record whole-core coverage and approved tracked DXVK fix | #3 +0%; overall +0%. |90% milestone attributed to37df8b4; native heap gate remains open. |
+| `adccca8` | test(dxvk): retire compiler thread state before module unload | #3 +0%; overall +0% (heap qualification pending). |Strict Windows compilation and three real GPU/compute/presentation lifetimes pass; matched diff3ea6429b112fad64 still grows locale and compiler TLS allocations, so join alone does not establish release. |
+| `e8961c5` | test(dxvk): hold compiler code through device thread retirement | #3 +0%; overall +0% (affected actual acceptance pending). |Compiler loads on its owned worker; returned module remains owned through all device/COM/DXVK worker retirement. All8 Windows build targets pass at snapshot2ed4bda7. No manual free, locale API manipulation, result tolerance or skipped assertion. |
+
+Current required make vgpu-icd-test vgpu-icd-sanitizers vgpu-windows completes0
+at37df8b4:375 Debug/ReleaseSafe tests,128 native cycles,8 loader lifetimes and
+Windows builds. ASan/LSan/UBSan instruments1562 owned ICD functions without reports;
+C native ASan128 passes. Exact log: build/icd_final_current_test_san_windows.log.
+Whole-core coverage remains the verified90.07%branch/98.50%line result above.
+
+Actual final Vulkan matrix a64647c8 completes0: all12 normal/sanitized triangle,
+compute and push-compute positive/local-error cases pass. Local postflush failure
+requires its exact workload error, native1 and normal complete owner/module
+retirement; it is not transport/device loss. Real DXVK device/Present reset stays
+a separate required gate. Current48-frame/eight-lifetime WSI e7b07008 passes
+native/host/worker0, exact pixels and original handle/GDI/USER checks. All4 native
+input SHAs are unchanged for every case.
+
+Patched DXVK audit15bcd4b3481a360c passes three actual functional lifetimes and
+normal teardown; SetupAPI growth is gone, but compiler locale/TLS growth remains.
+Joined-compiler audit3ea6429b112fad64 also passes all three functional lifetimes
+but still fails heap qualification. Both restore exact absent per-image UST keys
+and preserve signed raw captures, diffs, all native inputs and host receipts.
+The next affected audit checks actual refcounts, globals and live TLS/socket-table
+owners with bounded read-only Microsoft debugger inspection. Capture observer
+fixes publish acknowledgements atomically; failed observer/callback attempts stay
+preserved and receive no acceptance credit. Native limits remain unchanged.
+TODO#3 stays90%; no100%, native heap pass or final completion claim.
