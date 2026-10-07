@@ -46,6 +46,34 @@ venus_ring_status_t venus_channel_deadline(venus_channel_t *channel, uint32_t ti
     return RingOk;
 }
 
+uint64_t venus_channel_time_ms(void) {
+    return venus_stream_time_ms();
+}
+
+venus_ring_status_t venus_channel_deadline_until(venus_channel_t *channel, uint64_t deadline_ms) {
+    if (!channel || !channel->initialized || !deadline_ms || channel->received)
+        return RingInvalid;
+    if (channel->session->state == SessionClosed)
+        return RingClosed;
+    if (channel->cancel && atomic_load_explicit(channel->cancel, memory_order_acquire)) {
+        venus_session_close(channel->session, StopCancel);
+        return RingCancelled;
+    }
+    uint64_t now = venus_stream_time_ms();
+    if (!now) {
+        venus_session_close(channel->session, StopDisconnect);
+        return RingClosed;
+    }
+    if (deadline_ms <= now) {
+        venus_session_close(channel->session, StopDeadline);
+        return RingTimeout;
+    }
+    if (deadline_ms - now > 60000)
+        return RingInvalid;
+    channel->deadline_ms = deadline_ms;
+    return RingOk;
+}
+
 static venus_ring_status_t io_failure(venus_channel_t *channel, venus_ring_status_t status,
                                       size_t received) {
     if (status == RingClosed && received) {

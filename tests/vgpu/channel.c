@@ -14,9 +14,18 @@
 #include <unistd.h>
 
 static int fault;
+static uint64_t clock_ms;
+static _Atomic unsigned clock_calls;
 /* Native syscall fault boundary; normal cases below use real sockets and clocks. */
 int __real_clock_gettime(clockid_t clock, struct timespec *time);
 int __wrap_clock_gettime(clockid_t clock, struct timespec *time) {
+    clock_calls++;
+    if (fault == 11) {
+        assert(clock == CLOCK_MONOTONIC && clock_ms);
+        time->tv_sec = (time_t)((clock_ms - 1) / 1000);
+        time->tv_nsec = (long)(((clock_ms - 1) % 1000) * 1000000);
+        return 0;
+    }
     if (fault == 1)
         return -1;
     if (fault == 2 || fault == 3) {
@@ -69,6 +78,8 @@ static int sockets[2];
 
 static void fresh(void) {
     fault = 0;
+    clock_ms = 0;
+    clock_calls = 0;
     atomic_store_explicit(&cancel, 0, memory_order_release);
     assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, sockets) == 0);
     assert(venus_region_init(mapping, sizeof(mapping), 64) == RingOk);
@@ -301,11 +312,135 @@ static void test_local_and_native_errors(void) {
     assert(venus_channel_handshake(&host_channel) == RingTimeout); /* Offer delivered, no Ack. */
     cleanup();
 }
+static void assert_closed(const venus_session_t *session, venus_stop_reason_t reason) {
+    assert(session->state == SessionClosed && session->reason == reason);
+    assert(atomic_load(&session->region.commands.header->flags) == VenusRingClosed);
+    assert(atomic_load(&session->region.replies.header->flags) == VenusRingClosed);
+}
+static void test_absolute_validation_and_precedence(void) {
+    fresh();
+    fault = 11;
+    clock_ms = 100;
+    assert(venus_channel_time_ms() == 100);
+    unsigned sampled = clock_calls;
+    uint64_t original = guest_channel.deadline_ms;
+    venus_channel_t empty = {0};
+    assert(venus_channel_deadline_until(NULL, 101) == RingInvalid);
+    assert(venus_channel_deadline_until(&empty, 101) == RingInvalid);
+    assert(venus_channel_deadline_until(&guest_channel, 0) == RingInvalid);
+    guest_channel.received = 1;
+    assert(venus_channel_deadline_until(&guest_channel, 101) == RingInvalid);
+    guest_channel.received = 0;
+    assert(clock_calls == sampled && guest_channel.deadline_ms == original);
+    assert(guest.state == SessionInitialized);
+    assert(venus_channel_deadline_until(&guest_channel, 60101) == RingInvalid);
+    assert(guest_channel.deadline_ms == original && guest.state == SessionInitialized);
+    assert(venus_channel_deadline_until(&guest_channel, 60100) == RingOk);
+    assert(guest_channel.deadline_ms == 60100);
+    clock_ms = UINT64_MAX - 2000;
+    assert(venus_channel_deadline_until(&guest_channel, UINT64_MAX) == RingOk);
+    assert(guest_channel.deadline_ms == UINT64_MAX);
+    original = guest_channel.deadline_ms;
+    assert(venus_channel_deadline_until(&guest_channel, clock_ms) == RingTimeout);
+    assert(guest_channel.deadline_ms == original);
+    assert_closed(&guest, StopDeadline);
+    sampled = clock_calls;
+    atomic_store(&cancel, 1);
+    fault = 1;
+    assert(venus_channel_deadline_until(&guest_channel, 1) == RingClosed);
+    assert(clock_calls == sampled && guest_channel.deadline_ms == original);
+    assert_closed(&guest, StopDeadline);
+    cleanup();
+    for (int stage = 1; stage <= 3; stage++) {
+        fresh();
+        original = host_channel.deadline_ms;
+        fault = stage;
+        assert(venus_channel_time_ms() == 0);
+        assert(venus_channel_deadline_until(&host_channel, 1) == RingClosed);
+        assert(host_channel.deadline_ms == original);
+        assert_closed(&host, StopDisconnect);
+        cleanup();
+    }
+    fresh();
+    original = host_channel.deadline_ms;
+    fault = 1;
+    sampled = clock_calls;
+    atomic_store(&cancel, 1);
+    assert(venus_channel_deadline_until(&host_channel, 1) == RingCancelled);
+    assert(clock_calls == sampled && host_channel.deadline_ms == original);
+    assert_closed(&host, StopCancel);
+    cleanup();
+    fresh();
+    original = host_channel.deadline_ms;
+    uint64_t now = venus_channel_time_ms();
+    assert(now > 1);
+    assert(venus_channel_deadline_until(&host_channel, now - 1) == RingTimeout);
+    assert(host_channel.deadline_ms == original);
+    assert(venus_channel_handshake(&host_channel) == RingInvalid);
+    uint8_t byte = 0xa5;
+    assert(recv(sockets[1], &byte, 1, MSG_DONTWAIT) == -1 && errno == EAGAIN);
+    assert(byte == 0xa5);
+    assert(atomic_load(&host.region.commands.header->tail) == 0);
+    assert(atomic_load(&host.region.replies.header->tail) == 0);
+    assert_closed(&host, StopDeadline);
+    cleanup();
+}
+static void test_absolute_partial_frame_and_ring_deadline(void) {
+    fresh();
+    ready_guest();
+    const uint8_t byte = 0x57;
+    uint64_t deadline = venus_channel_time_ms() + 20;
+    assert(venus_channel_deadline_until(&guest_channel, deadline) == RingOk);
+    assert(send(sockets[0], &byte, 1, MSG_NOSIGNAL) == 1);
+    assert(venus_channel_wait(&guest_channel) == RingOk);
+    assert(guest_channel.received == 1 && guest_channel.incoming[0] == byte);
+    assert(venus_channel_deadline_until(&guest_channel, deadline + 1000) == RingInvalid);
+    assert(guest_channel.deadline_ms == deadline && guest_channel.received == 1);
+    while (venus_channel_time_ms() < deadline) {
+        const struct timespec Pause = {0, 1000000};
+        nanosleep(&Pause, NULL);
+    }
+    assert(venus_channel_wait(&guest_channel) == RingTimeout);
+    assert(guest_channel.deadline_ms == deadline && guest_channel.received == 1);
+    assert(guest_channel.incoming[0] == byte);
+    assert_closed(&guest, StopDeadline);
+    cleanup();
+    for (int writing = 0; writing < 2; writing++) {
+        fresh();
+        handshake();
+        uint8_t bytes[64];
+        memset(bytes, 0xa5, sizeof(bytes));
+        if (writing)
+            assert(venus_ring_write(&guest.region.commands, bytes, sizeof(bytes)) == RingOk);
+        venus_channel_t *channel = writing ? &guest_channel : &host_channel;
+        deadline = venus_channel_time_ms() + 5;
+        assert(venus_channel_deadline_until(channel, deadline) == RingOk);
+        venus_ring_status_t status =
+            writing ? venus_ring_write_wait(&guest.region.commands, bytes, 1,
+                                             venus_channel_wait, channel)
+                    : venus_ring_read_wait(&host.region.commands, bytes, 1,
+                                            venus_channel_wait, channel);
+        assert(status == RingTimeout && channel->deadline_ms == deadline);
+        assert(atomic_load(&host.region.commands.header->head) == 0);
+        assert(atomic_load(&host.region.commands.header->tail) == (writing ? 64u : 0u));
+        for (size_t index = 0; index < sizeof(bytes); index++)
+            assert(bytes[index] == 0xa5);
+        assert_closed(channel->session, StopDeadline);
+        cleanup();
+    }
+    fresh();
+    assert(venus_channel_deadline_until(&host_channel, venus_channel_time_ms() + 1000) == RingOk);
+    assert(venus_channel_deadline_until(&guest_channel, host_channel.deadline_ms) == RingOk);
+    handshake();
+    cleanup();
+}
 int main(void) {
     test_handshake_backpressure_and_stop();
     test_partial_frames_and_eof();
     test_deadlines_cancellation_and_flags();
     test_local_and_native_errors();
+    test_absolute_validation_and_precedence();
+    test_absolute_partial_frame_and_ring_deadline();
     puts("Native Venus framing, handoff, backpressure, cancellation and EOF passed");
     return 0;
 }

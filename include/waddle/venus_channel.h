@@ -41,6 +41,26 @@ venus_ring_status_t venus_channel_init(venus_channel_t *channel, venus_session_t
  * Does not reset cancellation or reopen a terminal session.
  */
 venus_ring_status_t venus_channel_deadline(venus_channel_t *channel, uint32_t timeout_ms);
+/** @brief Read the native channel I/O monotonic millisecond clock.
+ * @return Nonzero platform-local milliseconds, zero on clock failure/overflow.
+ * @note Thread-safe; no allocation, borrowed state or side effects. Linux uses
+ * CLOCK_MONOTONIC+1, Windows GetTickCount64+1. Never transmit this local value.
+ */
+uint64_t venus_channel_time_ms(void);
+/** @brief Install one exact absolute deadline without refreshing its lifetime.
+ * @param[in,out] channel Nonnull initialized sole-thread borrowed record/session;
+ * no pending calls or partial control frame. All borrowed storage outlives call.
+ * @param[in] deadline_ms Nonzero absolute venus_channel_time_ms value, with
+ * remaining lifetime 1..60000ms at validation; never changed to a relative budget.
+ * @return RingInvalid for local arguments/partial frame/excess remaining lifetime;
+ * RingClosed for terminal session or clock failure; RingCancelled before clock
+ * checks; RingTimeout for an expired value; RingOk stores the exact deadline.
+ * @note All failures preserve the previous deadline. Local/terminal checks precede
+ * cancellation, clock, expiration and upper bound in that order. Cancellation,
+ * clock failure and expiration close both rings. No I/O/event allocation, no
+ * reopening a terminal session; owning session thread only.
+ */
+venus_ring_status_t venus_channel_deadline_until(venus_channel_t *channel, uint64_t deadline_ms);
 /** @brief Complete Offer/Ack/Ready delivery according to the local session role.
  * @param[in,out] channel Nonnull initialized record with a configured deadline.
  * @return RingOk only after complete readiness delivery; RingInvalid for local

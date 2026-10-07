@@ -2,6 +2,7 @@
 #include "waddle/venus_channel.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include <wchar.h>
 #include <windows.h>
 
@@ -151,9 +152,83 @@ static void test_deadline_cancel_and_validation(void) {
     assert(venus_channel_init(&empty, &host, (intptr_t)invalid, NULL) == RingInvalid);
     cleanup();
 }
+static void test_absolute_deadline_and_partial_progress(void) {
+    fresh();
+    uint64_t now = venus_channel_time_ms();
+    uint64_t original = host_channel.deadline_ms;
+    assert(now);
+    venus_channel_t empty = {0};
+    assert(venus_channel_deadline_until(NULL, now) == RingInvalid);
+    assert(venus_channel_deadline_until(&empty, now) == RingInvalid);
+    assert(venus_channel_deadline_until(&host_channel, 0) == RingInvalid);
+    assert(host_channel.deadline_ms == original && host.state == SessionInitialized);
+    assert(venus_channel_deadline_until(&host_channel, UINT64_MAX) == RingInvalid);
+    assert(host_channel.deadline_ms == original && host.state == SessionInitialized);
+    assert(venus_channel_deadline_until(&host_channel, now) == RingTimeout);
+    assert(host_channel.deadline_ms == original && host.reason == StopDeadline);
+    assert(venus_channel_handshake(&host_channel) == RingInvalid);
+    DWORD available = 0;
+    assert(PeekNamedPipe(client, NULL, 0, NULL, &available, NULL) && !available);
+    atomic_store(&cancel, 1);
+    assert(venus_channel_deadline_until(&host_channel, now + 1000) == RingClosed);
+    assert(host.reason == StopDeadline && host_channel.deadline_ms == original);
+    cleanup();
+    fresh();
+    original = host_channel.deadline_ms;
+    atomic_store(&cancel, 1);
+    assert(venus_channel_deadline_until(&host_channel, 1) == RingCancelled);
+    assert(host.reason == StopCancel && host_channel.deadline_ms == original);
+    cleanup();
+    fresh();
+    uint64_t deadline = venus_channel_time_ms() + 1000;
+    assert(venus_channel_deadline_until(&host_channel, deadline) == RingOk);
+    assert(venus_channel_deadline_until(&guest_channel, deadline) == RingOk);
+    handshake();
+    deadline = venus_channel_time_ms() + 40;
+    assert(venus_channel_deadline_until(&host_channel, deadline) == RingOk);
+    const uint8_t byte = 0x57;
+    write_peer(&byte, 1);
+    assert(venus_channel_wait(&host_channel) == RingOk);
+    assert(host_channel.received == 1 && host_channel.incoming[0] == byte);
+    assert(venus_channel_deadline_until(&host_channel, deadline + 1000) == RingInvalid);
+    while (venus_channel_time_ms() < deadline)
+        Sleep(1);
+    assert(venus_channel_wait(&host_channel) == RingTimeout);
+    assert(host_channel.deadline_ms == deadline && host_channel.received == 1);
+    assert(host_channel.incoming[0] == byte && host.reason == StopDeadline);
+    cleanup();
+    for (int writing = 0; writing < 2; writing++) {
+        fresh();
+        handshake();
+        uint8_t bytes[64];
+        memset(bytes, 0xa5, sizeof(bytes));
+        if (writing)
+            assert(venus_ring_write(&guest.region.commands, bytes, sizeof(bytes)) == RingOk);
+        venus_channel_t *channel = writing ? &guest_channel : &host_channel;
+        deadline = venus_channel_time_ms() + 10;
+        assert(venus_channel_deadline_until(channel, deadline) == RingOk);
+        venus_ring_status_t status =
+            writing ? venus_ring_write_wait(&guest.region.commands, bytes, 1,
+                                             venus_channel_wait, channel)
+                    : venus_ring_read_wait(&host.region.commands, bytes, 1,
+                                            venus_channel_wait, channel);
+        assert(status == RingTimeout && channel->deadline_ms == deadline);
+        assert(channel->session->reason == StopDeadline);
+        assert(atomic_load(&host.region.commands.header->head) == 0);
+        assert(atomic_load(&host.region.commands.header->tail) == (writing ? 64u : 0u));
+        for (size_t index = 0; index < sizeof(bytes); index++)
+            assert(bytes[index] == 0xa5);
+        cleanup();
+    }
+}
 int main(void) {
+    DWORD initial_handles, final_handles;
+    assert(GetProcessHandleCount(GetCurrentProcess(), &initial_handles));
     test_fragmentation_stop_and_eof();
     test_deadline_cancel_and_validation();
+    test_absolute_deadline_and_partial_progress();
+    assert(GetProcessHandleCount(GetCurrentProcess(), &final_handles));
+    assert(final_handles == initial_handles);
     puts("Native Windows overlapped handoff, framing, cancellation and EOF passed");
     return 0;
 }
