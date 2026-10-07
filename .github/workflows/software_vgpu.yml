@@ -352,6 +352,27 @@ jobs:
           zig test src/vgpu/venus_command.zig -Iinclude -lc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify native Windows device requests and extension codecs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/owned_native_oracles | Out-Null
+          $oracle_names = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply')
+          foreach ($oracle_name in $oracle_names) {
+            zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -c "tests/vgpu/${oracle_name}_oracle.c" -o "build/owned_native_oracles/${oracle_name}.obj"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          zig test src/vgpu/venus_device_wire.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/device_wire.obj build/owned_native_oracles/render_wire.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_device_native.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/device_wire.obj build/owned_native_oracles/render_wire.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_extensions_wire.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/extensions_wire.obj build/owned_native_oracles/extensions_reply.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=venus_icd_native_fixture -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -c tests/vgpu/icd.c -o build/owned_native_oracles/icd.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
+          zig test src/vgpu/venus_icd.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O Debug build/owned_native_oracles/icd.obj build/venus_values_oracle.obj @icd_oracles build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify native Windows experimental ICD dispatch and DLL exports
         shell: pwsh
         run: |
