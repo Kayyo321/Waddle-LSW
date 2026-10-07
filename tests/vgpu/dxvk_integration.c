@@ -119,10 +119,10 @@ static HRESULT verify_presented_pixels(HWND window) {
 
 /** @brief Joined compiler invocation; caller owns inputs, module and returned blobs.
  * The worker borrows this record until its thread is joined. Compiler-owned
- * CRT thread state is retired by normal thread exit while the DLL is loaded.
+ * CRT thread cleanup runs on normal thread exit while the DLL is loaded.
  */
 typedef struct compiler_call_t {
-    compile_shader_t compile;
+    HMODULE compiler;
     const char *source;
     SIZE_T source_bytes;
     HRESULT status;
@@ -133,31 +133,33 @@ typedef struct compiler_call_t {
 /** @brief Compile unchanged acceptance HLSL on a short-lived CRT thread.
  * @param[in,out] opaque Nonnull borrowed compiler_call_t; writes status/blobs.
  * @return Zero after compilation. Caller joins before reading or releasing.
- * @note Sole worker; no D3D context access. Thread exit retires CRT/FLS owners.
+ * @note Sole worker; no D3D context access. Normal exit invokes CRT/FLS cleanup.
  */
 static unsigned __stdcall compile_worker(void *opaque) {
     compiler_call_t *call=(compiler_call_t *)opaque;
-    call->status=call->compile(call->source,call->source_bytes,"acceptance_compute",NULL,NULL,
+    call->compiler=LoadLibraryExW(L"d3dcompiler_47.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!call->compiler)return 0;
+    FARPROC procedure=GetProcAddress(call->compiler,"D3DCompile");compile_shader_t compile=NULL;
+    _Static_assert(sizeof compile==sizeof procedure,"Windows function representation");memcpy(&compile,&procedure,sizeof compile);
+    if(!compile)return 0;
+    call->status=compile(call->source,call->source_bytes,"acceptance_compute",NULL,NULL,
         "main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&call->code,&call->errors);
     return 0;
 }
 
 /** @brief Execute real DXVK compute and verify all 64 storage-buffer words.
  * @param[in] device/context Live borrowed COM references, held by caller.
+ * @param[out] compiler_owner Nonnull initially-null module owner; caller releases
+ * after all DXVK device threads and modules have retired, including failures.
  * @return S_OK after exact results, failure HRESULT otherwise.
- * @note Single caller thread; local COM/module owners released at cleanup.
+ * @note Caller owns compiler module; local COM/blob owners released at cleanup.
  * Compiler blobs own bytecode only until CreateComputeShader copies it.
  */
-static HRESULT verify_compute(ID3D11Device *device,ID3D11DeviceContext *context) {
+static HRESULT verify_compute(ID3D11Device *device,ID3D11DeviceContext *context,HMODULE *compiler_owner) {
     static const char Shader[]="RWStructuredBuffer<uint> data : register(u0); [numthreads(8,1,1)] void main(uint3 id : SV_DispatchThreadID) { data[id.x]=id.x*3+7; }";
-    HMODULE compiler=LoadLibraryExW(L"d3dcompiler_47.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
     HRESULT status=E_FAIL;ID3DBlob *code=NULL,*errors=NULL;ID3D11ComputeShader *shader=NULL;
     ID3D11Buffer *output=NULL,*staging=NULL;ID3D11UnorderedAccessView *view=NULL;
-    if(!compiler)goto cleanup;
-    FARPROC procedure=GetProcAddress(compiler,"D3DCompile");compile_shader_t compile=NULL;
-    _Static_assert(sizeof compile==sizeof procedure,"Windows function representation");memcpy(&compile,&procedure,sizeof compile);
-    if(!compile)goto cleanup;
-    compiler_call_t call={.compile=compile,.source=Shader,.source_bytes=sizeof Shader-1,.status=E_FAIL};
+    compiler_call_t call={.source=Shader,.source_bytes=sizeof Shader-1,.status=E_FAIL};
     uintptr_t thread_value=_beginthreadex(NULL,0,compile_worker,&call,0,NULL);
     if(!thread_value)goto cleanup;
     HANDLE thread=(HANDLE)thread_value;
@@ -165,7 +167,7 @@ static HRESULT verify_compute(ID3D11Device *device,ID3D11DeviceContext *context)
      * Never release either owner until the kernel proves thread termination. */
     while(WaitForSingleObject(thread,INFINITE)!=WAIT_OBJECT_0)Sleep(1);
     int thread_closed=CloseHandle(thread)!=0;
-    code=call.code;errors=call.errors;status=thread_closed ? call.status : E_FAIL;
+    *compiler_owner=call.compiler;code=call.code;errors=call.errors;status=thread_closed ? call.status : E_FAIL;
     if(FAILED(status) || !code)goto cleanup;
     status=ID3D11Device_CreateComputeShader(device,ID3D10Blob_GetBufferPointer(code),ID3D10Blob_GetBufferSize(code),NULL,&shader);
     if(FAILED(status))goto cleanup;
@@ -195,7 +197,6 @@ cleanup:
     if(shader)ID3D11ComputeShader_Release(shader);
     if(errors)ID3D10Blob_Release(errors);
     if(code)ID3D10Blob_Release(code);
-    if(compiler && !FreeLibrary(compiler))status=E_FAIL;
     if(SUCCEEDED(status))puts("DXVK compute returned all 64 exact storage words.");
     return status;
 }
@@ -277,7 +278,7 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
     }
     int result = 1;
     int fault_verified=0;
-    HMODULE loader = NULL, dxgi = NULL, d3d11 = NULL, bootstrap=NULL;
+    HMODULE loader = NULL, dxgi = NULL, d3d11 = NULL, bootstrap=NULL, compiler=NULL;
     bootstrap_start_t start=NULL;bootstrap_stop_t stop=NULL;bootstrap_session_t session=NULL;bootstrap_abandon_t abandon=NULL;
     uint64_t identity=0;
     HWND window = NULL;
@@ -404,7 +405,7 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
         Sleep(1);
     } while (1);
     stage="exact GPU staging pixels";status=verify_pixels(device,context,backbuffer);if(FAILED(status))goto cleanup;
-    stage="exact compute storage words";status=verify_compute(device,context);if(FAILED(status))goto cleanup;
+    stage="exact compute storage words";status=verify_compute(device,context,&compiler);if(FAILED(status))goto cleanup;
     stage="actual swapchain presentation";
     status = IDXGISwapChain_Present(swapchain, 0, 0);
     if (status != S_OK)
@@ -452,6 +453,11 @@ cleanup:
     if (d3d11 && !FreeLibrary(d3d11))
         result = 1;
     if (dxgi && !FreeLibrary(dxgi))
+        result = 1;
+    /* DXVK pipeline workers can receive compiler TLS initializers while the
+     * module is loaded. Retire those device/module owners before unloading
+     * the compiler, so their thread-exit destructors still have live code. */
+    if (compiler && !FreeLibrary(compiler))
         result = 1;
     if (loader && !FreeLibrary(loader))
         result = 1;
