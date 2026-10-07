@@ -517,9 +517,33 @@ export fn venus_icd_unbind() c_int {
     lock_icd();
     defer unlock_icd();
     if (objects.live_count != 0 or command.state == c.CommandSubmitted or
-        command.state == c.CommandReading or command.state == c.CommandReady) return c.RingAgain;
+        command.state == c.CommandReading or command.state == c.CommandReady) {
+        unbind_retention_diagnostic();
+        return c.RingAgain;
+    }
     clear();
     return c.RingOk;
+}
+/// Opt-in bounded retirement diagnosis. Borrowed registry state is inspected only
+/// under the ICD mutex; no ownership changes, allocations, native pointers or
+/// payload bytes are printed. At most64 live owners and128 tickets are summarized.
+fn unbind_retention_diagnostic() void {
+    if (!std.process.hasEnvVarConstant("WADDLE_ICD_DIAGNOSTICS")) return;
+    std.debug.print("Waddle ICD unbind retained: live={d}, command={d}, lost={d}\n", .{objects.live_count,command.state,lost});
+    var shown: usize = 0;
+    for (&slots) |*entry| if(entry.id!=0) {
+        if(shown==64) break;
+        const state=resource_state(entry);
+        std.debug.print("Waddle ICD retained owner: kind={d}, id={d}, parent={d}, inflight={d}, idle={d}, internal_fence={d}, mapped={d}\n", .{entry.kind,entry.id,entry.parent_id,state.inflight_count,state.idle_refs,@intFromBool(state.internal_fence),state.mapping_resource});
+        shown+=1;
+    };
+    var tickets: usize = 0;
+    var owned_fences: usize = 0;
+    for (&submission_tickets) |*ticket| if(ticket.queue!=0) {
+        tickets+=1;
+        owned_fences+=@intFromBool(ticket.fence_owned);
+    };
+    std.debug.print("Waddle ICD retained submission summary: tickets={d}, owned_fences={d}, shown={d}\n", .{tickets,owned_fences,shown});
 }
 /// Reset only after the caller retires the old receiver; header defines cancellation boundary.
 export fn venus_icd_abandon() void {
@@ -13303,4 +13327,106 @@ test "maintenance5 zero view usage preserves native construction without descrip
     }
     root_runtime_fn(destroy_buffer_view)(@ptrFromInt(parent.handle),output,null);
     try std.testing.expectEqual(@as(u32,3),objects.live_count);
+}
+
+const icd_query_event_fixture_t = struct {
+    base: root_extra_lifecycle_fixture_t = .{},
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        const result = root_extra_lifecycle_fixture_t.exchange(&fixture.base,request,input,length,response,output,capacity);
+        if(result==c.RingOk and request.*.kind==c.RequestReply and fixture.base.opcode==49) {
+            const bytes=@as([*]u8,@ptrCast(output.?))[0..capacity];
+            std.mem.writeInt(u64,bytes[8..16],32,.little);
+            @memset(bytes[16..48],0xa7);
+        }
+        return result;
+    }
+};
+test "coverage native query results preserve data on errors and publish exact availability bytes" {
+    for([_]i32{c.VK_SUCCESS,c.VK_NOT_READY,c.VK_ERROR_OUT_OF_DEVICE_MEMORY,c.VK_ERROR_DEVICE_LOST}) |status| for([_]bool{false,true}) |corrupt| {
+        var fixture=icd_query_event_fixture_t{.base=.{.result=status,.corrupt=corrupt}};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(icd_query_event_fixture_t.exchange,&fixture)); defer venus_icd_abandon();
+        const parent=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const pool=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_QUERY_POOL,parent.id,0);
+        resource_state(pool).* = .{.id=pool.id,.buffer_size=4,.buffer_usage=c.VK_QUERY_TYPE_TIMESTAMP};
+        var bytes=[_]u8{0x5a} ** 32;
+        const expected:c_int=if(corrupt) c.VK_ERROR_DEVICE_LOST else status;
+        try std.testing.expectEqual(expected,root_runtime_fn(get_query_pool_results)(@ptrFromInt(parent.handle),@ptrFromInt(pool.handle),1,2,32,&bytes,16,c.VK_QUERY_RESULT_64_BIT|c.VK_QUERY_RESULT_WITH_AVAILABILITY_BIT));
+        for(bytes) |value| try std.testing.expectEqual(@as(u8,if(!corrupt and status>=0) 0xa7 else 0x5a),value);
+        try std.testing.expectEqual(@as(usize,1),fixture.base.calls);
+        try std.testing.expectEqual(@as(u32,2),objects.live_count);
+    };
+}
+test "coverage native host events accept only canonical status and retain live event owners" {
+    inline for(0..3) |operation| for([_]i32{c.VK_SUCCESS,c.VK_EVENT_SET,c.VK_EVENT_RESET,c.VK_ERROR_OUT_OF_DEVICE_MEMORY,c.VK_ERROR_DEVICE_LOST}) |status| {
+        var fixture=root_extra_lifecycle_fixture_t{.result=status};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(root_extra_lifecycle_fixture_t.exchange,&fixture)); defer venus_icd_abandon();
+        const parent=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const event=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_EVENT,parent.id,0);
+        const call=root_runtime_fn(switch(operation){0=>get_event_status,1=>set_event,2=>reset_event,else=>unreachable});
+        const expected:c_int=if(status>0 and operation!=0) c.VK_ERROR_DEVICE_LOST else status;
+        try std.testing.expectEqual(expected,call(@ptrFromInt(parent.handle),@ptrFromInt(event.handle)));
+        try std.testing.expectEqual(@as(usize,1),fixture.calls);
+        try std.testing.expectEqual(@as(u32,2),objects.live_count);
+    };
+}
+test "coverage query recording retains pool only after ACK and rejects malformed recording ranges" {
+    inline for(0..5) |operation| for(0..3) |mode| {
+        var fixture=image_ownership_fixture_t{.mode=@intCast(mode)};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture)); defer venus_icd_abandon();
+        const parent=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const command_pool=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL,parent.id,0);
+        const recording=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER,command_pool.id,1);
+        const pool=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_QUERY_POOL,parent.id,0);
+        resource_state(recording).command_state=.Recording;resource_state(pool).buffer_size=4;
+        const command_buffer:c.VkCommandBuffer=@ptrFromInt(recording.handle);const handle:c.VkQueryPool=@ptrFromInt(pool.handle);
+        switch(operation){
+            0=>root_runtime_fn(cmd_begin_query)(command_buffer,handle,1,0),
+            1=>root_runtime_fn(cmd_end_query)(command_buffer,handle,1),
+            2=>root_runtime_fn(cmd_reset_query_pool)(command_buffer,handle,1,2),
+            3=>root_runtime_fn(cmd_write_timestamp)(command_buffer,c.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,handle,1),
+            4=>root_runtime_fn(cmd_write_timestamp2)(command_buffer,c.VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,handle,1),
+            else=>unreachable,
+        }
+        try std.testing.expectEqual(@as(usize,1),fixture.submissions);
+        try std.testing.expectEqual(mode==0,image_ownership_fixture_t.retained(recording,pool));
+        if(mode==0){
+            root_runtime_fn(cmd_reset_query_pool)(command_buffer,handle,4,1);
+            try std.testing.expectEqual(command_state_t.Invalid,resource_state(recording).command_state);
+            try std.testing.expectEqual(@as(usize,1),fixture.submissions);
+        }
+    };
+}
+test "coverage query and event preflight preserve outputs and ownership without transport" {
+    var fixture=icd_query_event_fixture_t{};
+    try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(icd_query_event_fixture_t.exchange,&fixture)); defer venus_icd_abandon();
+    const parent=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+    const foreign=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+    const pool=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_QUERY_POOL,parent.id,0);
+    const event=try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_EVENT,parent.id,0);
+    resource_state(pool).* = .{.id=pool.id,.buffer_size=4,.buffer_usage=c.VK_QUERY_TYPE_PIPELINE_STATISTICS,.descriptor_max_sets=3};
+    const device:c.VkDevice=@ptrFromInt(parent.handle);const handle:c.VkQueryPool=@ptrFromInt(pool.handle);
+    var bytes=[_]u8{0x5a} ** 32;
+    for(0..13) |invalid| {
+        const result=root_runtime_fn(get_query_pool_results)(
+            if(invalid==0) null else if(invalid==1) @ptrFromInt(1) else if(invalid==2) @ptrFromInt(foreign.handle) else device,
+            if(invalid==3) null else handle,
+            if(invalid==4) 5 else if(invalid==5) 4 else 0,
+            if(invalid==6) 0 else if(invalid==7) 5 else 1,
+            if(invalid==8) 0 else if(invalid==9) 4097 else if(invalid==10) 7 else 32,
+            if(invalid==11) null else &bytes,
+            if(invalid==12) 7 else 8,0);
+        try std.testing.expectEqual(@as(c_int,if(invalid==9)c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED),result);
+        for(bytes) |value| try std.testing.expectEqual(@as(u8,0x5a),value);
+    }
+    const event_handle:c.VkEvent=@ptrFromInt(event.handle);
+    const call=root_runtime_fn(get_event_status);
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),call(null,event_handle));
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),call(device,null));
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),call(@ptrFromInt(1),event_handle));
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),call(@ptrFromInt(foreign.handle),event_handle));
+    resource_state(event).buffer_usage=c.VK_EVENT_CREATE_DEVICE_ONLY_BIT;
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),call(device,event_handle));
+    try std.testing.expectEqual(@as(usize,0),fixture.base.calls);
+    try std.testing.expectEqual(@as(u32,4),objects.live_count);
 }
