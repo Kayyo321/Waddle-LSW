@@ -35,7 +35,7 @@ static void private_config(const char *path,const char *module,uint32_t port,int
     _Alignas(TOKEN_USER) uint8_t bytes[1024];DWORD length=0;
     assert(GetTokenInformation(token,TokenUser,bytes,sizeof bytes,&length));TOKEN_USER user={0};memcpy(&user,bytes,sizeof user);
     char *sid=NULL;assert(ConvertSidToStringSidA(user.User.Sid,&sid));
-    char acl[1024];assert(snprintf(acl,sizeof acl,"O:%sD:P(A;;GRGW;;;%s)%s",sid,sid,public_acl ? "(A;;GR;;;WD)" : "")>0);
+    char acl[1024];assert(snprintf(acl,sizeof acl,"O:%sD:P(A;;FA;;;%s)%s",sid,sid,public_acl ? "(A;;GR;;;WD)" : "")>0);
     PSECURITY_DESCRIPTOR descriptor=NULL;assert(ConvertStringSecurityDescriptorToSecurityDescriptorA(acl,SDDL_REVISION_1,&descriptor,NULL));
     SECURITY_ATTRIBUTES attributes={.nLength=sizeof attributes,.lpSecurityDescriptor=descriptor};
     assert(DeleteFileA(path) || GetLastError()==ERROR_FILE_NOT_FOUND);
