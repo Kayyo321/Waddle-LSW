@@ -37,9 +37,19 @@ int main(void) {
                                      .pEngineName = "engine",
                                      .apiVersion = VK_API_VERSION_1_1};
     info.pApplicationInfo = &application;
-    assert(venus_instance_wire_create(&info, 42, bytes, sizeof(bytes), &written) == RingOk);
-    count = venus_instance_test_encode(&info, 42, expected, sizeof(expected));
-    assert(written == count && !memcmp(bytes, expected, count));
+    for (uint32_t minor = 0; minor <= 3; ++minor) {
+        application.apiVersion = VK_MAKE_API_VERSION(0, 1, minor, 4095);
+        assert(venus_instance_wire_create(&info, 42, bytes, sizeof(bytes), &written) == RingOk);
+        count = venus_instance_test_encode(&info, 42, expected, sizeof(expected));
+        assert(written == count && !memcmp(bytes, expected, count));
+    }
+    application.apiVersion = VK_MAKE_API_VERSION(0, 1, 4, 0);
+    memset(bytes, 0xa5, sizeof(bytes));
+    written = 99;
+    assert(venus_instance_wire_create(&info, 42, bytes, sizeof(bytes), &written) == RingInvalid);
+    assert(written == 99);
+    for (size_t index = 0; index < sizeof(bytes); ++index)
+        assert(bytes[index] == 0xa5);
     unsigned char reply[24] = {0};
     reply[8] = 1;
     reply[16] = 42;

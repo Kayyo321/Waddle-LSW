@@ -56,7 +56,7 @@ fn encode_info(writer: *writer_t, info: *const c.venus_vk_instance_info_t, host_
         const app = &info.pApplicationInfo[0];
         if (app.sType != 0 or app.pNext != null) return error.Invalid;
         const api = if (app.apiVersion == 0) @as(u32, 1 << 22) else app.apiVersion;
-        if (api >> 29 != 0 or api >> 22 != 1 or ((api >> 12) & 1023) > 1)
+        if (api >> 29 != 0 or api >> 22 != 1 or ((api >> 12) & 1023) > 3)
             return error.Invalid;
         writer.put(u64, 1);
         writer.put(u32, 0);
@@ -260,6 +260,29 @@ test "create packets match independent pinned guest serializer" {
         try std.testing.expectEqualSlices(u8, expected[0..count], bytes[0..written]);
     }
 }
+test "instance API versions through core1.3 preserve exact native version words" {
+    var bytes: [4096]u8 = undefined;
+    var expected: [4096]u8 = undefined;
+    var info_value = fixture_t.info();
+    var app = std.mem.zeroInit(c.VkApplicationInfo, .{});
+    info_value.pApplicationInfo = &app;
+    for (0..4) |minor| {
+        for ([_]u32{ 0, 1, 4095 }) |patch| {
+            app.apiVersion = (1 << 22) | (@as(u32, @intCast(minor)) << 12) | patch;
+            var written: usize = 0;
+            try std.testing.expectEqual(c.RingOk, fixture_t.create(
+                &info_value,
+                42,
+                &bytes,
+                bytes.len,
+                &written,
+            ));
+            const count = venus_instance_test_encode(&info_value, 42, &expected, expected.len);
+            try std.testing.expectEqual(count, written);
+            try std.testing.expectEqualSlices(u8, expected[0..count], bytes[0..written]);
+        }
+    }
+}
 test "create rejects unsupported native inputs and preserves failed output" {
     const bytes = try std.testing.allocator.alloc(u8, 4096);
     defer std.testing.allocator.free(bytes);
@@ -282,7 +305,7 @@ test "create rejects unsupported native inputs and preserves failed output" {
             6 => app.pNext = &info_value,
             7 => app.apiVersion = 0x20400000,
             8 => app.apiVersion = 2 << 22,
-            9 => app.apiVersion = (1 << 22) | (2 << 12),
+            9 => app.apiVersion = (1 << 22) | (4 << 12),
             10 => app.pApplicationName = "\xff",
             11 => {
                 app.pApplicationName = &bad_name;
