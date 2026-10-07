@@ -1,5 +1,6 @@
 //! Allocation-free core image wire encoding. Callers validate object ownership and GPU lifetimes.
 const std = @import("std");
+const pipeline_helpers = @import("venus_pipeline_wire_helpers.zig");
 const c = @cImport({
     @cInclude("vulkan/vulkan.h");
 });
@@ -704,11 +705,12 @@ pub fn create_compute_pipeline(info: *const c.VkComputePipelineCreateInfo, devic
 /// Caller retains cache ownership and validates its device ancestry before submission.
 pub fn create_compute_pipeline_cached(info: *const c.VkComputePipelineCreateInfo, device_id: u64, cache_id: u64, shader_id: u64, layout_id: u64, pipeline_id: u64) !writer_t {
     if (device_id == 0 or shader_id == 0 or layout_id == 0 or pipeline_id == 0 or
-        info.sType != c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO or info.pNext != null or
+        info.sType != c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO or
         info.flags != 0 or info.basePipelineHandle != null or info.basePipelineIndex < -1 or info.basePipelineIndex > 0 or
         info.stage.sType != c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO or info.stage.pNext != null or
         info.stage.flags != 0 or info.stage.stage != c.VK_SHADER_STAGE_COMPUTE_BIT or
-        info.stage.pSpecializationInfo != null or info.stage.pName == null) return error.Invalid;
+        info.stage.pName == null) return error.Invalid;
+    const chain = try pipeline_helpers.collect_chain(info.pNext, false);
     var length: usize = 0;
     while (length < 256 and info.stage.pName[length] != 0) : (length += 1) {}
     if (length == 256) return error.Limit;
@@ -716,13 +718,13 @@ pub fn create_compute_pipeline_cached(info: *const c.VkComputePipelineCreateInfo
     const padded = (length + 1 + 3) & ~@as(usize, 3);
     var writer = writer_t{};
     // At most396 bytes: bounded name includes its NUL and four-byte wire padding.
-    writer.require_capacity(140 + padded) catch unreachable;
+    writer.require_capacity(140 + padded + 32 + pipeline_helpers.MaxSpecializationBytes) catch unreachable;
     writer.header(66, device_id) catch unreachable;
     writer.put_proven(u64, cache_id);
     writer.put_proven(u32, 1);
     writer.put_proven(u64, 1);
     writer.put_proven(u32, c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
-    writer.put_proven(u64, 0);
+    try pipeline_helpers.encode_chain(&writer, &chain);
     writer.put_proven(u32, 0);
     writer.put_proven(u32, c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO);
     writer.put_proven(u64, 0);
@@ -733,14 +735,14 @@ pub fn create_compute_pipeline_cached(info: *const c.VkComputePipelineCreateInfo
     @memcpy(writer.bytes[writer.used..][0..length], info.stage.pName[0..length]);
     @memset(writer.bytes[writer.used + length ..][0 .. padded - length], 0);
     writer.used += padded;
-    writer.put_proven(u64, 0);
+    try pipeline_helpers.encode_specialization(&writer, info.stage.pSpecializationInfo);
     writer.put_proven(u64, layout_id);
     writer.put_proven(u64, 0);
     writer.put_proven(i32, info.basePipelineIndex);
     writer.put_proven(u64, 0);
     writer.put_proven(u64, 1);
     writer.put_proven(u64, pipeline_id);
-    std.debug.assert(writer.used == 140 + padded);
+    if (info.pNext == null and info.stage.pSpecializationInfo == null) std.debug.assert(writer.used == 140 + padded);
     return writer;
 }
 extern fn venus_render_test_compute(info: *const c.VkComputePipelineCreateInfo, output: [*]u8) usize;
@@ -766,6 +768,7 @@ test "compute pipeline packets match independent shader stage and array encoder"
     try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
     name[255] = 'x';
     try std.testing.expectError(error.Limit, create_compute_pipeline(&info, 7, 42, 43, 44));
+    var bad_specialization = c.VkSpecializationInfo{ .mapEntryCount = 1 };
     const Valid = blk: {
         info.stage.pName = "main";
         break :blk info;
@@ -785,7 +788,7 @@ test "compute pipeline packets match independent shader stage and array encoder"
             11 => info.stage.pNext = @ptrFromInt(1),
             12 => info.stage.flags = 1,
             13 => info.stage.stage = c.VK_SHADER_STAGE_VERTEX_BIT,
-            14 => info.stage.pSpecializationInfo = @ptrFromInt(@alignOf(c.VkSpecializationInfo)),
+            14 => info.stage.pSpecializationInfo = &bad_specialization,
             15 => info.stage.pName = null,
             16 => info.stage.pName = "",
             else => unreachable,
@@ -846,4 +849,18 @@ test "translated compute pipeline cache matches generated encoder" {
         const count = venus_render_test_compute_cached(&info, cache, &expected);
         try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
     }
+}
+
+test "maintenance5 compute flags and shader specialization match generated packets" {
+    var flags2 = c.VkPipelineCreateFlags2CreateInfo{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO, .flags = 0xfedcba9876543210 };
+    const entries = [_]c.VkSpecializationMapEntry{ .{ .constantID = 2, .offset = 0, .size = 4 }, .{ .constantID = 7, .offset = 4, .size = 1 } };
+    const data = [_]u8{ 1, 2, 3, 4, 5 };
+    const specialization = c.VkSpecializationInfo{ .mapEntryCount = 2, .pMapEntries = &entries, .dataSize = data.len, .pData = &data };
+    const info = c.VkComputePipelineCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .pNext = &flags2, .stage = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_COMPUTE_BIT, .pName = "main", .pSpecializationInfo = &specialization }, .basePipelineIndex = -1 };
+    var expected: [MaxBytes]u8 = undefined;
+    const writer = try create_compute_pipeline_cached(&info, 7, 52, 42, 43, 44);
+    const used = venus_render_test_compute_cached(&info, 52, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
+    flags2.pNext = &flags2;
+    try std.testing.expectError(error.Invalid, create_compute_pipeline_cached(&info, 7, 52, 42, 43, 44));
 }

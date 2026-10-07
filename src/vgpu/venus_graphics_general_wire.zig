@@ -1,6 +1,7 @@
 //! Bounded general graphics pipeline serialization for core states and dynamic rendering.
 const std = @import("std");
 const render = @import("venus_render_wire.zig");
+const pipeline_helpers = @import("venus_pipeline_wire_helpers.zig");
 const c = @cImport({
     @cInclude("vulkan/vulkan.h");
 });
@@ -45,40 +46,6 @@ fn blob(writer: *writer_t, bytes: []const u8) !void {
     var padding = (4 - bytes.len % 4) % 4;
     while (padding != 0) : (padding -= 1) try put(writer, u8, 0);
 }
-fn specialization(writer: *writer_t, pointer: [*c]const c.VkSpecializationInfo) !void {
-    try put(writer, u64, if (pointer != null) 1 else 0);
-    if (pointer == null) return;
-    const info = pointer[0];
-    const count = try count_array(writer, info.mapEntryCount, info.pMapEntries, 32, true);
-    if (info.dataSize > 1024 or (info.dataSize != 0 and info.pData == null)) return error.Invalid;
-    for (elements(info.pMapEntries, count), 0..) |entry, index| {
-        if (entry.offset > info.dataSize or entry.size > info.dataSize - entry.offset) return error.Invalid;
-        for (elements(info.pMapEntries, index)) |previous| if (previous.constantID == entry.constantID) return error.Invalid;
-        try put(writer, u32, entry.constantID);
-        try put(writer, u32, entry.offset);
-        try put(writer, u64, entry.size);
-    }
-    try put(writer, u64, info.dataSize);
-    try put(writer, u64, if (info.pData != null) info.dataSize else 0);
-    if (info.pData) |data| try blob(writer, @as([*]const u8, @ptrCast(data))[0..info.dataSize]);
-}
-fn rendering_chain(writer: *writer_t, pointer: ?*const anyopaque) !bool {
-    if (pointer == null) {
-        try put(writer, u64, 0);
-        return false;
-    }
-    const info: *const c.VkPipelineRenderingCreateInfo = @ptrCast(@alignCast(pointer.?));
-    if (info.sType != c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO or info.pNext != null) return error.Invalid;
-    try put(writer, u64, 1);
-    try put(writer, u32, info.sType);
-    try put(writer, u64, 0);
-    try put(writer, u32, info.viewMask);
-    const count = try count_array(writer, info.colorAttachmentCount, info.pColorAttachmentFormats, 8, true);
-    for (elements(info.pColorAttachmentFormats, count)) |format| try put(writer, u32, format);
-    try put(writer, u32, info.depthAttachmentFormat);
-    try put(writer, u32, info.stencilAttachmentFormat);
-    return true;
-}
 /// Encode one complete graphics pipeline using0..5 resolved host shader identities.
 /// [in] info and reachable native inputs accessible immutable for call, ids match stage
 /// order and actual live shader owners; layout/pass/output IDs resolved host identities.
@@ -106,7 +73,9 @@ pub fn create_graphics_pipeline_cached(device: u64, cache: u64, info: *const c.V
     try put(&writer, u32, 1);
     try put(&writer, u64, 1);
     try put(&writer, u32, info.sType);
-    const dynamic_rendering = try rendering_chain(&writer, info.pNext);
+    const chain = try pipeline_helpers.collect_chain(info.pNext, true);
+    try pipeline_helpers.encode_chain(&writer, &chain);
+    const dynamic_rendering = chain.rendering;
     if ((pass == 0 and !dynamic_rendering) or (pass != 0 and dynamic_rendering)) return error.Invalid;
     try put(&writer, u32, info.flags);
     try put(&writer, u32, info.stageCount);
@@ -127,7 +96,7 @@ pub fn create_graphics_pipeline_cached(device: u64, cache: u64, info: *const c.V
         if (length == 0 or length == 64) return error.Invalid;
         try put(&writer, u64, length + 1);
         try blob(&writer, stage.pName[0 .. length + 1]);
-        try specialization(&writer, stage.pSpecializationInfo);
+        try pipeline_helpers.encode_specialization(&writer, stage.pSpecializationInfo);
     }
     if (info.pVertexInputState == null) {
         try put(&writer, u64, 0);
@@ -335,4 +304,25 @@ test "translated graphics pipeline cache matches generated encoder" {
         const used = venus_graphics_general_test_cached(&fixture.info, cache, &expected);
         try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
     }
+}
+
+test "maintenance5 full width effective flags survive either dynamic rendering chain order" {
+    var fixture: fixture_t = .{};
+    fixture.link();
+    fixture.info.renderPass = null;
+    var flags2 = c.VkPipelineCreateFlags2CreateInfo{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO, .flags = 0xfedcba9876543210 };
+    var expected: [8192]u8 = undefined;
+    fixture.rendering.pNext = &flags2;
+    fixture.info.pNext = &fixture.rendering;
+    var writer = try create_graphics_pipeline_cached(8, 52, &fixture.info, &.{ 42, 43, 47 }, 44, 0, 46);
+    var used = venus_graphics_general_test_cached(&fixture.info, 52, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
+    fixture.rendering.pNext = null;
+    flags2.pNext = &fixture.rendering;
+    fixture.info.pNext = &flags2;
+    writer = try create_graphics_pipeline_cached(8, 52, &fixture.info, &.{ 42, 43, 47 }, 44, 0, 46);
+    used = venus_graphics_general_test_cached(&fixture.info, 52, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
+    fixture.rendering.pNext = &flags2;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline_cached(8, 52, &fixture.info, &.{ 42, 43, 47 }, 44, 0, 46));
 }
