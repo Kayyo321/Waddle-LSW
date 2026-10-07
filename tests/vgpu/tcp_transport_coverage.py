@@ -3,13 +3,11 @@
 import gzip
 import json
 from pathlib import Path
-import shutil
+import secrets
 import subprocess
 
 root = Path.cwd()
-output = root / "build/coverage/vgpu/venus_tcp_socket"
-if output.exists():
-    shutil.rmtree(output)
+output = root / "build/coverage/vgpu" / ("venus_tcp_socket_" + secrets.token_hex(8))
 output.mkdir(parents=True)
 wrapped = ["socket", "setsockopt", "fcntl", "bind", "listen", "getsockname", "connect", "getsockopt",
            "accept", "poll", "send", "recv", "getrandom", "clock_gettime", "shutdown"]
