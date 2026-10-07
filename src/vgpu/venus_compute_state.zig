@@ -24,6 +24,12 @@ pub const command_profile_t = struct {
     sets: [profiles.MaxSets]u64 = [_]u64{0} ** profiles.MaxSets,
     /// Per-stage owned push-range definitions and initialized bytes, core stage bit order.
     pushes: [6]push_profile_t = [_]push_profile_t{.{}} ** 6,
+    /// Independent graphics descriptor bind domain; compute binds never disturb it.
+    graphics_descriptor_layout_ready: bool = false,
+    /// Owned graphics compatibility snapshot, no caller pointers.
+    graphics_descriptor_layout: profiles.pipeline_layout_t = .{},
+    /// Private graphics set tokens, revalidated before drawing/submission.
+    graphics_sets: [profiles.MaxSets]u64 = [_]u64{0} ** profiles.MaxSets,
 };
 /// One fixed owner slot; callers use profiles.reserve_slot/get_profile/release_slot under their mutex.
 pub const slot_t = struct {
@@ -329,6 +335,33 @@ test "256 push initialization spans every bitmap word and clears definition chan
     try fixture_t.test_push_bytes(&state, &definition, 32, 0, 4);
     try std.testing.expectEqual([_]u64{ 15, 0, 0, 0 }, state.pushes[5].initialized);
     try std.testing.expectEqual(@as(usize, 424), @sizeOf(push_profile_t));
-    try std.testing.expectEqual(@as(usize, 44304), @sizeOf(command_profile_t));
-    try std.testing.expectEqual(@as(usize, 2835968), @sizeOf(registry_t));
+    try std.testing.expectEqual(@as(usize, 86048), @sizeOf(command_profile_t));
+    try std.testing.expectEqual(@as(usize, 5507584), @sizeOf(registry_t));
+}
+
+/// [in,out] exclusive command profile; [in] borrowed layout/tokens, copied.
+/// Apply Vulkan graphics compatibility disturbance independently of compute.
+/// No heap/native pointers; Invalid leaves the original profile unchanged.
+pub fn bind_graphics_sets(state: *command_profile_t, layout: *const profiles.pipeline_layout_t, first: usize, tokens: []const u64) !void {
+    var staged = command_profile_t{ .descriptor_layout_ready = state.graphics_descriptor_layout_ready, .descriptor_layout = state.graphics_descriptor_layout, .sets = state.graphics_sets };
+    try bind_sets(&staged, layout, first, tokens);
+    state.graphics_descriptor_layout_ready = staged.descriptor_layout_ready;
+    state.graphics_descriptor_layout = staged.descriptor_layout;
+    state.graphics_sets = staged.sets;
+}
+
+test "graphics descriptor binds preserve the independent compute and push domains" {
+    const compute_layout = try profiles.normalize_bindings(&.{.{ .binding=0,.descriptor_type=7,.descriptor_count=1,.stage_flags=32 }});
+    const graphics_layout = try profiles.normalize_bindings(&.{.{ .binding=0,.descriptor_type=2,.descriptor_count=1,.stage_flags=16 }});
+    const compute = try profiles.normalize_pipeline(&.{compute_layout},&.{});
+    const graphics = try profiles.normalize_pipeline(&.{graphics_layout},&.{});
+    var state: command_profile_t = .{};
+    try bind_sets(&state,&compute,0,&.{11});
+    try bind_graphics_sets(&state,&graphics,0,&.{22});
+    try std.testing.expectEqual(@as(u64,11),state.sets[0]);
+    try std.testing.expectEqual(@as(u64,22),state.graphics_sets[0]);
+    try std.testing.expect(std.meta.eql(compute,state.descriptor_layout));
+    try std.testing.expect(std.meta.eql(graphics,state.graphics_descriptor_layout));
+    try bind_sets(&state,&compute,0,&.{33});
+    try std.testing.expectEqual(@as(u64,22),state.graphics_sets[0]);
 }

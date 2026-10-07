@@ -2193,7 +2193,7 @@ static void compute_recording_contract(VkDevice device, PFN_vkGetDeviceProcAddr 
         if(invalid==7)push(command,layout,32,1,4,(void*)(uintptr_t)1);
         if(invalid==8)push(command,layout,32,0,132,(void*)(uintptr_t)1);
         VkDescriptorSet stale_set=(VkDescriptorSet)(uintptr_t)1;
-        if(invalid==9)bind_sets(command,VK_PIPELINE_BIND_POINT_GRAPHICS,layout,0,1,&set,0,NULL);
+        if(invalid==9)bind_sets(command,VK_PIPELINE_BIND_POINT_MAX_ENUM,layout,0,1,&set,0,NULL);
         if(invalid==10)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,NULL,0,1,&set,0,NULL);
         if(invalid==11)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,(VkPipelineLayout)(uintptr_t)1,0,1,&set,0,NULL);
         if(invalid==12)bind_sets(command,VK_PIPELINE_BIND_POINT_COMPUTE,layout,1,1,&set,0,NULL);

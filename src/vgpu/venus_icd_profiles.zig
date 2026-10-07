@@ -15,7 +15,7 @@ pub const binding_t = struct {
     binding: u32 = 0,
     /// Core descriptor type0..10.
     descriptor_type: u32 = 0,
-    /// Positive array extent, at most1024.
+    /// Declared scalar array capacity; modern sparse layouts admit0..65536.
     descriptor_count: u32 = 0,
     /// Core shader stage mask, no extension bits.
     stage_flags: u32 = 0,
@@ -62,7 +62,7 @@ pub const descriptor_t = struct {
     binding: u32 = 0,
     /// Array element in the binding's declared extent.
     array_element: u32 = 0,
-    /// Core descriptor type; only buffer types6..9 are currently executable.
+    /// Core descriptor type0..10; payload fields depend on its family.
     descriptor_type: u32 = 0,
     /// Private buffer token, zero while unwritten; no pointer dereference.
     buffer: u64 = 0,
@@ -79,16 +79,22 @@ pub const descriptor_t = struct {
     /// Owned private texel buffer-view token, revalidated before GPU use.
     texel_view: u64 = 0,
 };
-/// Owned allocated-set layout and mutable buffer element snapshot; at most64 elements.
+/// Owned allocated-set layout and mutable mixed snapshot; at most128 written elements.
 pub const descriptor_set_t = struct {
     /// Copied normalized layout definition; original layout token may retire.
     layout: descriptor_layout_t = .{},
-    /// Initialized element prefix0..64.
+    /// Initialized written element prefix0..128.
     descriptor_count: usize = 0,
-    /// Owned element records; buffer tokens impose no artificial destruction retention.
+    /// Owned copied elements; tokens are revalidated before command execution.
     descriptors: [128]descriptor_t = [_]descriptor_t{.{}} ** 128,
     /// Sparse profiles own only written elements of potentially large binding arrays.
     sparse: bool = false,
+    /// Effective allocation extent of the variable-count binding, no array allocation.
+    variable_count: u32 = 0,
+    /// Declared binding number to which variable_count applies.
+    variable_binding: u32 = 0,
+    /// True only when allocation supplied an effective variable descriptor count.
+    has_variable_count: bool = false,
 };
 fn slot_type(comptime profile_t: type) type {
     return struct {
@@ -107,7 +113,7 @@ pub const registry_t = struct {
     pipeline_layouts: [32]slot_type(pipeline_layout_t) = [_]slot_type(pipeline_layout_t){.{}} ** 32,
     ///64 pipeline compatibility owners; independent of shader/layout token lifetime.
     pipelines: [64]slot_type(pipeline_layout_t) = [_]slot_type(pipeline_layout_t){.{}} ** 64,
-    ///128 allocated set metadata owners; each bounded by64 descriptor elements.
+    ///128 allocated set metadata owners; each bounded by128 written descriptor elements.
     sets: [128]slot_type(descriptor_set_t) = [_]slot_type(descriptor_set_t){.{}} ** 128,
 };
 /// [in,out] table nonnull exclusive fixed profile table; [in] profile copied by value, no retention.
@@ -299,7 +305,8 @@ test "sorted and equal-offset inputs preserve canonical order and bounded empty 
     try std.testing.expectEqual(@as(usize, 0), (try fixture_t.create_set(&empty)).descriptor_count);
 }
 test "malformed copied layout contents cannot enter pipeline or set ownership" {
-    const corrupted = descriptor_layout_t{ .binding_count = 1 };
+    var corrupted = descriptor_layout_t{ .binding_count = 1 };
+    corrupted.bindings[0].descriptor_type = 11;
     try std.testing.expectError(error.Invalid, fixture_t.pipeline(&.{corrupted}, &.{}));
     try std.testing.expectError(error.Invalid, fixture_t.create_set(&corrupted));
 }
@@ -318,8 +325,8 @@ test "push range profiles accept256 ceiling and reject all overflow directions" 
 pub fn create_sparse_set_profile(layout: *const descriptor_layout_t) !descriptor_set_t {
     if (layout.binding_count > MaxBindings or layout.immutable_count > 128) return error.Invalid;
     for (layout.bindings[0..layout.binding_count], 0..) |binding, index| {
-        if (binding.descriptor_type > 10 or binding.descriptor_count == 0 or binding.descriptor_count > 65536 or
-            binding.stage_flags == 0 or binding.stage_flags & ~@as(u32, 0x3f) != 0 or
+        if (binding.descriptor_type > 10 or binding.descriptor_count > 65536 or
+            (binding.descriptor_count != 0 and binding.stage_flags == 0) or binding.stage_flags & ~@as(u32, 0x3f) != 0 or
             (index != 0 and layout.bindings[index-1].binding >= binding.binding) or
             @as(usize,binding.immutable_offset) + binding.immutable_count > layout.immutable_count) return error.Invalid;
     }
@@ -336,7 +343,8 @@ pub fn sparse_element(profile: *descriptor_set_t, binding_number: u32, element: 
     }
     for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| {
         if (binding.binding != binding_number) continue;
-        if (element >= binding.descriptor_count) return error.Invalid;
+        const extent = if (profile.has_variable_count and binding.binding == profile.variable_binding) profile.variable_count else binding.descriptor_count;
+        if (element >= extent) return error.Invalid;
         if (profile.descriptor_count == profile.descriptors.len) return error.Exhausted;
         const destination = &profile.descriptors[profile.descriptor_count];
         destination.* = .{ .binding = binding_number, .array_element = element, .descriptor_type = binding.descriptor_type };

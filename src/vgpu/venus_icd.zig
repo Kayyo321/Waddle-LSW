@@ -9,6 +9,7 @@ const properties_wire = @import("venus_properties_wire.zig");
 const extensions_wire = @import("venus_extensions_wire.zig");
 const wsi = @import("venus_wsi.zig");
 const extra_wire = @import("venus_extra_objects_wire.zig");
+const sampler_descriptors = @import("venus_sampler_descriptor_wire.zig");
 const shader_wire = @import("venus_shader_wire.zig");
 const general_graphics = @import("venus_graphics_general_wire.zig");
 const dynamic_rendering = @import("venus_dynamic_rendering_wire.zig");
@@ -25,7 +26,9 @@ var profile_registry = profiles.registry_t{};
 var descriptor_allocation_snapshots = [_]profiles.descriptor_set_t{.{}} ** 64;
 // Mutex-owned460800/98304-byte transactional staging, scrubbed on every return/abandon.
 var descriptor_update_snapshots = [_]profiles.descriptor_set_t{.{}} ** 128;
-var descriptor_wire_buffers: [64][64]descriptor_wire.buffer_info_t = std.mem.zeroes([64][64]descriptor_wire.buffer_info_t);
+var descriptor_wire_buffers: [64][128]descriptor_wire.buffer_info_t = std.mem.zeroes([64][128]descriptor_wire.buffer_info_t);
+var descriptor_wire_images: [64][128]sampler_descriptors.image_info_t = std.mem.zeroes([64][128]sampler_descriptors.image_info_t);
+var descriptor_wire_texels: [64][128]u64 = std.mem.zeroes([64][128]u64);
 const render_wire = @import("venus_render_wire.zig");
 const graphics_wire = @import("venus_graphics_wire.zig");
 const graphics_state = @import("venus_graphics_state.zig");
@@ -2708,63 +2711,107 @@ fn descriptor_span(profile: *profiles.descriptor_set_t, binding: u32, first: u32
 /// Mutex serialized; fixed scrubbed staging owns no input pointers, metadata publishes after native prefix ack.
 /// Writes validate actual limits, resource usage/bounds/parent. Pending destinations reject; copy sources may be pending/undefined.
 /// Core destination updates invalidate referencing recording/executable commands after acknowledgment.
-fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]const c.VkWriteDescriptorSet, copy_count: u32, copies: [*c]const c.VkCopyDescriptorSet) callconv(.C) void {
-    lock_icd();
-    defer unlock_icd();
-    defer @memset(&descriptor_update_snapshots, .{});
-    defer @memset(std.mem.asBytes(&descriptor_wire_buffers), 0);
-    if (device == null or lost != c.RingOk or write_count > 64 or copy_count > 64 or (write_count != 0 and writes == null) or (copy_count != 0 and copies == null) or (write_count == 0 and copy_count == 0)) return;
-    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
-    if (!ensure_descriptor_limits(parent)) return;
-    var touched = [_]bool{false} ** 128;
-    for (profile_registry.sets, &descriptor_update_snapshots) |entry, *snapshot| snapshot.* = entry.profile;
-    var encoded_writes: [64]descriptor_wire.buffer_write_t = undefined;
-    var encoded_copies: [64]descriptor_wire.copy_t = undefined;
-    if (write_count != 0) for (writes[0..write_count], 0..) |write, index| {
-        if (write.sType != c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET or write.pNext != null or write.descriptorType < 6 or write.descriptorType > 9 or write.descriptorCount == 0 or write.descriptorCount > 64 or write.pBufferInfo == null) return;
-        const record = descriptor_set_for(write.dstSet, parent.id) orelse return;
-        if (!descriptor_set_idle(record)) return;
-        const slot = resource_state(record).profile_index - 1;
-        const destination = descriptor_span(&descriptor_update_snapshots[slot], write.dstBinding, write.dstArrayElement, write.descriptorCount) orelse return;
-        for (write.pBufferInfo[0..write.descriptorCount], destination, 0..) |buffer, *descriptor, element| {
-            if (descriptor.descriptor_type != write.descriptorType) return;
-            descriptor.buffer = if (buffer.buffer) |value| @intFromPtr(value) else 0;
-            descriptor.offset = buffer.offset;
-            descriptor.range = buffer.range;
-            if (!descriptor_buffer_valid(parent, descriptor)) return;
-            const buffer_record = child_object(descriptor.buffer, c.VK_OBJECT_TYPE_BUFFER, parent.id).?;
-            descriptor_wire_buffers[index][element] = .{ .buffer_id = buffer_record.id, .offset = buffer.offset, .range = buffer.range };
-        }
-        touched[slot] = true;
-        encoded_writes[index] = .{ .set_id = record.id, .binding = write.dstBinding, .array_element = write.dstArrayElement, .descriptor_type = write.descriptorType, .buffers = descriptor_wire_buffers[index][0..write.descriptorCount] };
-    };
-    if (copy_count != 0) for (copies[0..copy_count], 0..) |copy, index| {
-        if (copy.sType != c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET or copy.pNext != null or copy.descriptorCount == 0 or copy.descriptorCount > 64) return;
-        const source_record = descriptor_set_for(copy.srcSet, parent.id) orelse return;
-        const destination_record = descriptor_set_for(copy.dstSet, parent.id) orelse return;
-        if (!descriptor_set_idle(destination_record)) return;
-        const source_slot = resource_state(source_record).profile_index - 1;
-        const destination_slot = resource_state(destination_record).profile_index - 1;
-        const source = descriptor_span(&descriptor_update_snapshots[source_slot], copy.srcBinding, copy.srcArrayElement, copy.descriptorCount) orelse return;
-        const destination = descriptor_span(&descriptor_update_snapshots[destination_slot], copy.dstBinding, copy.dstArrayElement, copy.descriptorCount) orelse return;
-        if (source_slot == destination_slot and copy.srcBinding == copy.dstBinding and @as(u64, copy.srcArrayElement) < @as(u64, copy.dstArrayElement) + copy.descriptorCount and @as(u64, copy.dstArrayElement) < @as(u64, copy.srcArrayElement) + copy.descriptorCount) return;
-        for (source, destination) |descriptor, *target| {
-            if (target.descriptor_type != descriptor.descriptor_type) return;
-            // A copied reference does not use its resource. Undefined/destroyed sources legally yield undefined targets.
-            const defined = descriptor.buffer != 0 and child_object(descriptor.buffer, c.VK_OBJECT_TYPE_BUFFER, parent.id) != null;
-            target.buffer = if (defined) descriptor.buffer else 0;
-            target.offset = if (defined) descriptor.offset else 0;
-            target.range = if (defined) descriptor.range else 0;
-        }
-        touched[destination_slot] = true;
-        encoded_copies[index] = .{ .source_set = source_record.id, .source_binding = copy.srcBinding, .source_element = copy.srcArrayElement, .destination_set = destination_record.id, .destination_binding = copy.dstBinding, .destination_element = copy.dstArrayElement, .count = copy.descriptorCount };
-    };
-    var writer = descriptor_wire.update_sets(parent.id, encoded_writes[0..write_count], encoded_copies[0..copy_count]) catch return;
-    const reply = transact(writer.bytes[0..writer.used]) orelse return;
-    if (reply.len < 4 or std.mem.readInt(u32, reply[0..4], .little) != 79) {
-        _ = failure(c.RingCorrupt);
-        return;
+/// Resolve one bounded owned descriptor element; sparse growth stays in staging.
+fn descriptor_element(profile: *profiles.descriptor_set_t, binding: u32, element: u32) ?*profiles.descriptor_t {
+    if (profile.sparse) return profiles.sparse_element(profile,binding,element) catch null;
+    for (profile.descriptors[0..profile.descriptor_count]) |*value| if (value.binding == binding and value.array_element == element) return value;
+    return null;
+}
+fn null_descriptor_enabled(parent: *const c.venus_object_t) bool { return device_feature(parent,c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,2); }
+/// Validate mixed named identities without retaining or publishing resource state.
+fn descriptor_resource_valid(parent: *const c.venus_object_t, value: *const profiles.descriptor_t) bool {
+    if (value.descriptor_type >= 6 and value.descriptor_type <= 9) return if (value.buffer == 0) null_descriptor_enabled(parent) else descriptor_buffer_valid(parent,value);
+    if (value.descriptor_type == 4 or value.descriptor_type == 5) {
+        if (value.texel_view == 0) return null_descriptor_enabled(parent);
+        const view = child_object(value.texel_view,c.VK_OBJECT_TYPE_BUFFER_VIEW,parent.id) orelse return false;
+        const buffer = child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_BUFFER,parent.id) orelse return false;
+        return resource_state(buffer).bound_memory != 0;
     }
+    if (value.descriptor_type > 10) return false;
+    if (value.descriptor_type <= 1 and value.sampler != 0 and child_object(value.sampler,c.VK_OBJECT_TYPE_SAMPLER,parent.id) == null) return false;
+    if (value.descriptor_type == 0) return value.sampler != 0 or null_descriptor_enabled(parent);
+    if (value.image_view == 0) return null_descriptor_enabled(parent);
+    const view = child_object(value.image_view,c.VK_OBJECT_TYPE_IMAGE_VIEW,parent.id) orelse return false;
+    const image = child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_IMAGE,parent.id) orelse return false;
+    const usage: u32 = switch (value.descriptor_type) { 1,2 => c.VK_IMAGE_USAGE_SAMPLED_BIT, 3=>c.VK_IMAGE_USAGE_STORAGE_BIT, 10=>c.VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT, else=>return false };
+    return resource_state(image).bound_memory != 0 and resource_state(image).image_usage & usage != 0 and
+        (value.image_layout == c.VK_IMAGE_LAYOUT_GENERAL or (value.descriptor_type != 3 and (value.image_layout == c.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL or value.image_layout == c.VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL)));
+}
+/// Transactional mixed image/texel/buffer descriptor writes and copies. Caller
+/// arrays borrowed until return; fixed scrubbed staging owns copied values only.
+/// Native ACK publishes metadata. Invalid/local quota failures preserve all sets.
+fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]const c.VkWriteDescriptorSet, copy_count: u32, copies: [*c]const c.VkCopyDescriptorSet) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    defer @memset(&descriptor_update_snapshots,.{});
+    defer @memset(std.mem.asBytes(&descriptor_wire_buffers),0);
+    defer @memset(std.mem.asBytes(&descriptor_wire_images),0);
+    defer @memset(std.mem.asBytes(&descriptor_wire_texels),0);
+    if (device == null or lost != c.RingOk or write_count > 64 or copy_count > 64 or (write_count != 0 and writes == null) or (copy_count != 0 and copies == null) or (write_count == 0 and copy_count == 0)) return;
+    const parent = object(@intFromPtr(device.?),c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    if (!ensure_descriptor_limits(parent)) return;
+    for (profile_registry.sets,&descriptor_update_snapshots) |entry,*snapshot| snapshot.* = entry.profile;
+    var touched = [_]bool{false} ** 128;
+    var encoded_writes: [64]sampler_descriptors.write_t = undefined;
+    var encoded_copies: [64]descriptor_wire.copy_t = undefined;
+    if (write_count != 0) for (writes[0..write_count],0..) |write,index| {
+        if (write.sType != c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET or write.pNext != null or write.descriptorType > 10 or write.descriptorCount == 0 or write.descriptorCount > 128 or write.dstArrayElement > std.math.maxInt(u32)-write.descriptorCount) return;
+        const record = descriptor_set_for(write.dstSet,parent.id) orelse return;
+        if (!descriptor_set_idle(record)) return;
+        const slot = resource_state(record).profile_index-1;
+        const snapshot = &descriptor_update_snapshots[slot];
+        var encoded = sampler_descriptors.write_t{ .set=record.id,.binding=write.dstBinding,.element=write.dstArrayElement,.descriptor_type=write.descriptorType };
+        const image_family = write.descriptorType <= 3 or write.descriptorType == 10;
+        const texel_family = write.descriptorType == 4 or write.descriptorType == 5;
+        if ((image_family and write.pImageInfo == null) or (texel_family and write.pTexelBufferView == null) or (!image_family and !texel_family and write.pBufferInfo == null)) return;
+        for (0..write.descriptorCount) |element| {
+            const target = descriptor_element(snapshot,write.dstBinding,write.dstArrayElement+@as(u32,@intCast(element))) orelse return;
+            if (target.descriptor_type != write.descriptorType) return;
+            var value = profiles.descriptor_t{ .binding=target.binding,.array_element=target.array_element,.descriptor_type=target.descriptor_type };
+            if (image_family) {
+                const input = write.pImageInfo[element];
+                value.sampler=if(input.sampler)|handle| @intFromPtr(handle) else 0;
+                value.image_view=if(input.imageView)|handle| @intFromPtr(handle) else 0;
+                value.image_layout=input.imageLayout;
+                for (snapshot.layout.bindings[0..snapshot.layout.binding_count]) |binding| if (binding.binding == write.dstBinding and binding.immutable_count != 0) {
+                    if (value.array_element >= binding.immutable_count) return;
+                    value.sampler=snapshot.layout.immutable_samplers[@as(usize,binding.immutable_offset)+value.array_element];
+                };
+                if (!descriptor_resource_valid(parent,&value)) return;
+                descriptor_wire_images[index][element]=.{ .sampler=if(value.sampler!=0) (child_object(value.sampler,c.VK_OBJECT_TYPE_SAMPLER,parent.id) orelse return).id else 0,.view=if(value.image_view!=0) (child_object(value.image_view,c.VK_OBJECT_TYPE_IMAGE_VIEW,parent.id) orelse return).id else 0,.layout=value.image_layout };
+            } else if (texel_family) {
+                value.texel_view=if(write.pTexelBufferView[element])|handle| @intFromPtr(handle) else 0;
+                if (!descriptor_resource_valid(parent,&value)) return;
+                descriptor_wire_texels[index][element]=if(value.texel_view!=0) (child_object(value.texel_view,c.VK_OBJECT_TYPE_BUFFER_VIEW,parent.id) orelse return).id else 0;
+            } else {
+                const input=write.pBufferInfo[element]; value.buffer=if(input.buffer)|handle| @intFromPtr(handle) else 0; value.offset=input.offset; value.range=input.range;
+                if (!descriptor_resource_valid(parent,&value)) return;
+                descriptor_wire_buffers[index][element]=.{ .buffer_id=if(value.buffer!=0) child_object(value.buffer,c.VK_OBJECT_TYPE_BUFFER,parent.id).?.id else 0,.offset=value.offset,.range=value.range };
+            }
+            target.*=value;
+        }
+        if(image_family) encoded.images=descriptor_wire_images[index][0..write.descriptorCount] else if(texel_family) encoded.texels=descriptor_wire_texels[index][0..write.descriptorCount] else encoded.buffers=descriptor_wire_buffers[index][0..write.descriptorCount];
+        encoded_writes[index]=encoded; touched[slot]=true;
+    };
+    if(copy_count!=0) for(copies[0..copy_count],0..) |copy,index| {
+        if(copy.sType!=c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET or copy.pNext!=null or copy.descriptorCount==0 or copy.descriptorCount>128 or copy.srcArrayElement>std.math.maxInt(u32)-copy.descriptorCount or copy.dstArrayElement>std.math.maxInt(u32)-copy.descriptorCount) return;
+        const source=descriptor_set_for(copy.srcSet,parent.id) orelse return; const destination=descriptor_set_for(copy.dstSet,parent.id) orelse return;
+        if(!descriptor_set_idle(destination)) return;
+        if(source.id==destination.id and copy.srcBinding==copy.dstBinding and @as(u64,copy.srcArrayElement)<@as(u64,copy.dstArrayElement)+copy.descriptorCount and @as(u64,copy.dstArrayElement)<@as(u64,copy.srcArrayElement)+copy.descriptorCount) return;
+        const src=&descriptor_update_snapshots[resource_state(source).profile_index-1]; const dst=&descriptor_update_snapshots[resource_state(destination).profile_index-1];
+        for(0..copy.descriptorCount) |element| {
+            const value=(descriptor_element(src,copy.srcBinding,copy.srcArrayElement+@as(u32,@intCast(element))) orelse return).*;
+            const target=descriptor_element(dst,copy.dstBinding,copy.dstArrayElement+@as(u32,@intCast(element))) orelse return;
+            if(target.descriptor_type!=value.descriptor_type) return;
+            const binding=target.binding; const array_element=target.array_element;
+            target.*=if (descriptor_resource_valid(parent,&value)) value else .{ .descriptor_type = value.descriptor_type };
+            target.binding=binding; target.array_element=array_element;
+        }
+        touched[resource_state(destination).profile_index-1]=true;
+        encoded_copies[index]=.{.source_set=source.id,.source_binding=copy.srcBinding,.source_element=copy.srcArrayElement,.destination_set=destination.id,.destination_binding=copy.dstBinding,.destination_element=copy.dstArrayElement,.count=copy.descriptorCount};
+    };
+    const writer=sampler_descriptors.update_sets(parent.id,encoded_writes[0..write_count],encoded_copies[0..copy_count]) catch return;
+    const reply=transact(writer.bytes[0..writer.used]) orelse return;
+    if(reply.len<4 or std.mem.readInt(u32,reply[0..4],.little)!=79) { _=failure(c.RingCorrupt); return; }
     for (touched, 0..) |modified, index| if (modified) {
         profile_registry.sets[index].profile = descriptor_update_snapshots[index];
         for (slots, 0..) |slot, resource_slot| if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET and resource_states[resource_slot].profile_index == index + 1) {
@@ -3744,9 +3791,11 @@ fn draw(command_buffer: c.VkCommandBuffer, vertex_count: u32, instance_count: u3
         state.command_state = .Invalid;
         return;
     }
+    if (!validate_draw_descriptors(pool.parent_id,state,command_profile(record),0x1f)) { state.command_state=.Invalid; return; }
     const writer = graphics_command_wire.draw(record.id, .{ vertex_count, instance_count, first_vertex, first_instance }) catch unreachable;
     if (!command_acknowledged(&writer, 106)) return;
     command_reference(state, pipeline);
+    retain_draw_descriptors(pool.parent_id,state,command_profile(record),0x1f);
 }
 
 /// Copy bounded color image to bound transfer buffer. [in] nullable borrowed command/image/buffer;
@@ -3867,7 +3916,7 @@ fn bind_descriptor_sets(command_buffer: c.VkCommandBuffer, point: u32, layout: c
     const state = resource_state(record);
     if (state.command_state != .Recording) return;
     const pool = command_pool_for(record) orelse return;
-    if (point != 1 or first >= 16 or count == 0 or count > 16 - first or dynamic_count != 0 or (count != 0 and sets == null) or layout == null) {
+    if (point > 1 or first >= 16 or count == 0 or count > 16 - first or dynamic_count != 0 or (count != 0 and sets == null) or layout == null) {
         state.command_state = .Invalid;
         return;
     }
@@ -3893,17 +3942,13 @@ fn bind_descriptor_sets(command_buffer: c.VkCommandBuffer, point: u32, layout: c
             state.command_state = .Invalid;
             return;
         }
-        for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| if (binding.descriptor_type != 6 and binding.descriptor_type != 7) {
-            state.command_state = .Invalid;
-            return;
-        };
         targets[index] = target;
         ids[index] = target.id;
         tokens[index] = target.handle;
     };
     const writer = compute_wire.bind_descriptor_sets(record.id, layout_record.id, point, first, ids[0..count], &.{}) catch unreachable;
     if (!command_acknowledged(&writer, 103)) return;
-    compute_state.bind_sets(command_profile(record), definition, first, tokens[0..count]) catch unreachable;
+    if (point == 0) compute_state.bind_graphics_sets(command_profile(record), definition, first, tokens[0..count]) catch unreachable else compute_state.bind_sets(command_profile(record), definition, first, tokens[0..count]) catch unreachable;
     for (targets[0..count]) |target| command_reference(state, target);
 }
 /// Record push bytes covered by declared ranges, including before pipeline binding.
@@ -3962,63 +4007,14 @@ fn dispatch(command_buffer: c.VkCommandBuffer, x: u32, y: u32, z: u32) callconv(
         return;
     };
     const metadata = command_profile(record);
-    const pipeline = child_object(metadata.pipeline, c.VK_OBJECT_TYPE_PIPELINE, pool.parent_id) orelse {
+    _ = child_object(metadata.pipeline, c.VK_OBJECT_TYPE_PIPELINE, pool.parent_id) orelse {
         state.command_state = .Invalid;
         return;
     };
-    const expected = profiles.get_profile(&profile_registry.pipelines, resource_state(pipeline).profile_index).?;
-    for (expected.sets[0..expected.set_count], 0..) |definition, set_index| {
-        var required = false;
-        for (definition.bindings[0..definition.binding_count]) |binding| if (binding.stage_flags & 0x20 != 0) {
-            required = true;
-            break;
-        };
-        if (!required) continue;
-        if (!metadata.descriptor_layout_ready or !compute_state.layouts_compatible(&metadata.descriptor_layout, expected, set_index)) {
-            state.command_state = .Invalid;
-            return;
-        }
-        const set = descriptor_set_for(if (metadata.sets[set_index] != 0) @ptrFromInt(metadata.sets[set_index]) else null, pool.parent_id) orelse {
-            state.command_state = .Invalid;
-            return;
-        };
-        const profile = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
-        if (!std.meta.eql(definition, profile.layout)) {
-            state.command_state = .Invalid;
-            return;
-        }
-        for (profile.descriptors[0..profile.descriptor_count]) |descriptor| {
-            var visible = false;
-            for (definition.bindings[0..definition.binding_count]) |binding| if (binding.binding == descriptor.binding) {
-                visible = binding.stage_flags & 0x20 != 0;
-                break;
-            };
-            if (visible and !descriptor_buffer_valid(parent.?, &descriptor)) {
-                state.command_state = .Invalid;
-                return;
-            }
-        }
-    }
+    if (!validate_draw_descriptors(pool.parent_id,state,metadata,0x20)) { state.command_state=.Invalid; return; }
     const writer = compute_wire.dispatch(record.id, groups) catch unreachable;
     if (!command_acknowledged(&writer, 110)) return;
-    // Core descriptor updates invalidate this recorded command. Retain only buffers
-    // consumed by this dispatch, after acknowledgment, independently of later binds.
-    for (expected.sets[0..expected.set_count], 0..) |definition, set_index| {
-        var visible = false;
-        for (definition.bindings[0..definition.binding_count]) |binding| if (binding.stage_flags & 0x20 != 0) {
-            visible = true;
-            break;
-        };
-        if (!visible) continue;
-        const set = descriptor_set_for(@ptrFromInt(metadata.sets[set_index]), pool.parent_id).?;
-        const profile = profiles.get_profile(&profile_registry.sets, resource_state(set).profile_index).?;
-        for (profile.descriptors[0..profile.descriptor_count]) |descriptor| {
-            for (definition.bindings[0..definition.binding_count]) |binding| if (binding.binding == descriptor.binding and binding.stage_flags & 0x20 != 0) {
-                command_reference(state, child_object(descriptor.buffer, c.VK_OBJECT_TYPE_BUFFER, pool.parent_id).?);
-                break;
-            };
-        }
-    }
+    retain_draw_descriptors(pool.parent_id,state,metadata,0x20);
 }
 
 /// Record a bounded fill of a private device buffer; CPU acknowledgment only.
@@ -8577,4 +8573,68 @@ fn end_rendering(command_buffer: c.VkCommandBuffer) callconv(.C) void {
     };
     const packet = dynamic_rendering.end_rendering(record.id) catch unreachable;
     if (command_acknowledged(&packet, 214)) graphics_recording(state).* = staged;
+}
+
+/// Resolve device owner by private protocol identity under the process mutex.
+fn device_by_id(id: u64) ?*c.venus_object_t { for (&slots) |*slot| if(slot.id == id and slot.kind == c.VK_OBJECT_TYPE_DEVICE) return slot; return null; }
+/// Validate live mixed descriptors visible to a draw or dispatch. No reference mutation.
+fn validate_draw_descriptors(parent_id: u64, state: *resource_state_t, metadata: *compute_state.command_profile_t, stages: u32) bool {
+    const parent=device_by_id(parent_id) orelse return false;
+    const token=if(stages == 0x20) metadata.pipeline else graphics_recording(state).pipeline;
+    const pipeline=child_object(token,c.VK_OBJECT_TYPE_PIPELINE,parent_id) orelse return false;
+    const expected=profiles.get_profile(&profile_registry.pipelines,resource_state(pipeline).profile_index) orelse return false;
+    if (expected.set_count == 0) return true;
+    if (!ensure_descriptor_limits(parent)) return false;
+    const ready=if(stages == 0x20) metadata.descriptor_layout_ready else metadata.graphics_descriptor_layout_ready;
+    const layout=if(stages == 0x20) &metadata.descriptor_layout else &metadata.graphics_descriptor_layout;
+    const tokens=if(stages == 0x20) &metadata.sets else &metadata.graphics_sets;
+    for(expected.sets[0..expected.set_count],0..) |definition,set_index| {
+        var required=false;
+        for(definition.bindings[0..definition.binding_count]) |binding| if(binding.descriptor_count != 0 and binding.stage_flags & stages != 0) { required=true; break; };
+        if(!required) continue;
+        if(!ready or !compute_state.layouts_compatible(layout,expected,set_index)) return false;
+        const set=descriptor_set_for(if(tokens[set_index] != 0) @ptrFromInt(tokens[set_index]) else null,parent_id) orelse return false;
+        const profile=profiles.get_profile(&profile_registry.sets,resource_state(set).profile_index) orelse return false;
+        if(!std.meta.eql(definition,profile.layout)) return false;
+        for(definition.bindings[0..definition.binding_count]) |binding| {
+            if(binding.stage_flags & stages == 0) continue;
+            const count=if(profile.has_variable_count and binding.binding == profile.variable_binding) profile.variable_count else binding.descriptor_count;
+            var written: usize=0;
+            for(profile.descriptors[0..profile.descriptor_count]) |descriptor| if(descriptor.binding == binding.binding) {
+                if(descriptor.array_element >= count or !descriptor_resource_valid(parent,&descriptor)) return false;
+                written+=1;
+            };
+            if(binding.binding_flags & c.VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT == 0 and written<count) return false;
+        }
+    }
+    return true;
+}
+/// Retain every visible real descriptor owner after native command acknowledgment.
+/// Zero enabled null identities retain nothing. Caller validated all nonzero identities.
+fn retain_draw_descriptors(parent_id: u64,state: *resource_state_t,metadata: *compute_state.command_profile_t,stages:u32) void {
+    const token=if(stages == 0x20) metadata.pipeline else graphics_recording(state).pipeline;
+    const pipeline=child_object(token,c.VK_OBJECT_TYPE_PIPELINE,parent_id).?;
+    const expected=profiles.get_profile(&profile_registry.pipelines,resource_state(pipeline).profile_index).?;
+    const tokens=if(stages == 0x20) &metadata.sets else &metadata.graphics_sets;
+    for(expected.sets[0..expected.set_count],0..) |definition,set_index| {
+        var visible=false; for(definition.bindings[0..definition.binding_count]) |binding| if(binding.descriptor_count != 0 and binding.stage_flags & stages != 0) { visible=true; break; };
+        if(!visible) continue;
+        const set=descriptor_set_for(@ptrFromInt(tokens[set_index]),parent_id).?;
+        command_reference(state,set);
+        const profile=profiles.get_profile(&profile_registry.sets,resource_state(set).profile_index).?;
+        for(profile.descriptors[0..profile.descriptor_count]) |descriptor| {
+            var used=false; for(definition.bindings[0..definition.binding_count]) |binding| if(binding.binding == descriptor.binding and binding.stage_flags & stages != 0) {used=true;break;};
+            if(!used) continue;
+            if(descriptor.sampler != 0) command_reference(state,child_object(descriptor.sampler,c.VK_OBJECT_TYPE_SAMPLER,parent_id).?);
+            if(descriptor.image_view != 0) {
+                const view=child_object(descriptor.image_view,c.VK_OBJECT_TYPE_IMAGE_VIEW,parent_id).?;
+                const image=child_object(resource_state(view).view_image,c.VK_OBJECT_TYPE_IMAGE,parent_id).?;
+                command_reference(state,view); command_reference(state,image);
+                command_reference(state,child_object(resource_state(image).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent_id).?);
+            }
+            var buffer_token=descriptor.buffer;
+            if(descriptor.texel_view != 0) {const view=child_object(descriptor.texel_view,c.VK_OBJECT_TYPE_BUFFER_VIEW,parent_id).?;command_reference(state,view);buffer_token=resource_state(view).view_image;}
+            if(buffer_token != 0) {const buffer=child_object(buffer_token,c.VK_OBJECT_TYPE_BUFFER,parent_id).?;command_reference(state,buffer);command_reference(state,child_object(resource_state(buffer).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent_id).?);}
+        }
+    }
 }
