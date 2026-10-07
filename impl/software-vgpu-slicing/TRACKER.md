@@ -448,7 +448,9 @@ Each row preserves its atomic commit, task/overall delta and evidence. Historica
 
 | `fd6f017` | docs(vgpu): distinguish private manifest receipt hashes from originals; Correct frozen receipt semantics while requiring separate immutable original hashes and exact only-library_path repair. | #3 +0%; overall +0%. | Physical preflight failed before any GPU launch; build/icd_physical_owned_safety_gate.log/run-20261007T020101343661Z-1661075 preserved; all8 private receipt hashes match, unchanged6 byte-equal, repaired2 JSON policy unchanged. |
 
-| current (resolve by subject) | test(vgpu): gate production-only modern device wire coverage; Add mode and independent device/render oracle links with the unique runtime fixture boundary. | #3 +0%; overall +0%. | 22units,100%branches88/88,98.15%lines53/54;12compiler defenses separately reported; build/device_wire_oracle/coverage_integrated.log; prior report preserved under build/device_wire_production_coverage_checkpoint. |
+| `2b4471b` | test(vgpu): gate production-only modern device wire coverage; Add mode and independent device/render oracle links with the unique runtime fixture boundary. | #3 +0%; overall +0%. | 22units,100%branches88/88,98.15%lines53/54;12compiler defenses separately reported; build/device_wire_oracle/coverage_integrated.log; prior report preserved under build/device_wire_production_coverage_checkpoint. |
+
+| current (resolve by subject) | test(vgpu): preserve genuine device wire access and allocation gates; Add repeatable fresh-output two-source safety gate with complete input/link/executable provenance and final resolved hooks. | #3 +0%; overall +0%. | 22Debug units,19runtime functions/26definitions,1047guards/reverse equality, final49device+242render hooks; zero ASan/LSan/C-UBSan/allocator findings; build/device_wire_sanitizers/run-20261007T020326975579Z-1670597/report.json and execution.log; reusable_safety_gate.log. |
 
 ## Historical acceptance notes
 
