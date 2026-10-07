@@ -53,17 +53,22 @@ static int handle_baseline(DWORD baseline)
     fprintf(stderr,"Native GPU handle baseline=%lu actual=%lu\n",(unsigned long)baseline,(unsigned long)native_handles());return 1;
 }
 /** @brief Initialize independent Windows process-lifetime graphics dependencies.
- * @return Zero after native factory/adapter/module references are released.
+ * @param[out] retained_module Nonnull sole module owner, initialized to NULL.
+ * @return Zero after factory/adapter references release; caller owns the retained
+ * system DXGI reference through application lifetimes, then FreeLibrary closes it.
  * @details The pinned loader initializes system DXGI for device sorting, even
  * with a private ICD override. Preserved cold97->157 traces attribute the extra
  * objects to DXGI/COM/RPC and loader OutputDebugString DBWinMutex, with no Waddle
  * module creation frames. Initialize those same system paths before asserting
  * exact repeated application ownership. This owns no Vulkan device or transport
  * resource and never closes any process-lifetime system handle.
- * Single main thread; native COM references and LoadLibrary reference are local.
+ * Single main thread. Native COM references are local; the transferred module
+ * reference prevents unload/reload of module-owned Windows state before the
+ * loader takes its own process-lifetime system DXGI reference.
  */
-static int initialize_system_graphics(void)
+static int initialize_system_graphics(HMODULE *retained_module)
 {
+    if(!retained_module || *retained_module)return 1;
     DWORD cold=native_handles();if(!cold)return 1;
     HMODULE module=LoadLibraryExA("dxgi.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);if(!module)return 1;
     typedef HRESULT (WINAPI *create_factory_t)(REFIID,void **);
@@ -80,13 +85,23 @@ static int initialize_system_graphics(void)
     }
 cleanup:
     if(factory)IDXGIFactory6_Release(factory);
-    if(!FreeLibrary(module))result=1;
-    if(result)return 1;
+    if(result){while(!FreeLibrary(module))Sleep(10);return 1;}
+    *retained_module=module;
     /* OutputDebugString itself initializes a process-lifetime system mutex.
      * The pinned loader diagnostics use this same OS path. */
     OutputDebugStringA("Waddle acceptance initializes Windows debug output before exact owned-handle baseline.\n");
+    /* The loader's package-family query initializes a native StateRepository
+     * package index key. The reused trace diagnostic identified this precise
+     * remaining system object after independent DXGI/debug initialization. */
+    typedef LONG (WINAPI *package_family_t)(PCWSTR,UINT32 *,PWSTR *,UINT32 *,WCHAR *);
+    FARPROC package_proc=GetProcAddress(GetModuleHandleA("kernel32.dll"),"GetPackagesByPackageFamily");
+    package_family_t package_family=NULL;memcpy(&package_family,&package_proc,sizeof package_family);
+    if(!package_family)return 1;
+    UINT32 package_count=0,package_bytes=0;
+    LONG package_status=package_family(L"Microsoft.D3DMappingLayers_8wekyb3d8bbwe",&package_count,NULL,&package_bytes,NULL);
+    if(package_status!=ERROR_SUCCESS && package_status!=ERROR_INSUFFICIENT_BUFFER)return 1;
     Sleep(100);
-    printf("Independent Windows DXGI/COM/RPC/debug initialization handles cold=%lu initialized=%lu; native references released\n",(unsigned long)cold,(unsigned long)native_handles());fflush(stdout);
+    printf("Independent Windows DXGI/COM/RPC/debug initialization handles cold=%lu initialized=%lu; factory/adapter references released, caller retains module\n",(unsigned long)cold,(unsigned long)native_handles());fflush(stdout);
     return 0;
 }
 /** @brief Wait while retaining modules for trusted fixed exact-session receipt.
@@ -655,7 +670,7 @@ int main(int argc,char **argv)
     if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push")))return 2;
     if(!medium_integrity()){fputs("Native GPU fixture requires medium integrity\n",stderr);return 2;}
     if(GetFileAttributesA(argv[5])!=INVALID_FILE_ATTRIBUTES){fputs("Retirement receipt must be fresh\n",stderr);return 2;}
-    HMODULE bootstrap_module=NULL,loader_module=NULL;
+    HMODULE bootstrap_module=NULL,loader_module=NULL,system_dxgi_module=NULL;
     bootstrap_start_t start=NULL;bootstrap_stop_t stop=NULL;bootstrap_session_t session=NULL;bootstrap_abandon_t abandon=NULL;
     PFN_vkGetInstanceProcAddr lookup=NULL;VkInstance instance=NULL;VkDevice device=NULL;
     PFN_vkDestroyInstance destroy_instance=NULL;PFN_vkDestroyDevice destroy_device=NULL;
@@ -679,7 +694,7 @@ int main(int argc,char **argv)
     if(!create_instance || symbol(loader_module,"vkDestroyInstance",&owned_destroy_instance,sizeof owned_destroy_instance) ||
         symbol(loader_module,"vkDestroyDevice",&owned_destroy_device,sizeof owned_destroy_device))goto cleanup;
     stage="independent process-lifetime Windows graphics initialization";
-    if(initialize_system_graphics())goto cleanup;
+    if(initialize_system_graphics(&system_dxgi_module))goto cleanup;
     DWORD baseline=native_handles();if(!baseline)goto cleanup;
     printf("Native repeated application handle baseline=%lu\n",(unsigned long)baseline);fflush(stdout);
     for(unsigned iteration=0;iteration<8;iteration++) {
@@ -744,6 +759,7 @@ cleanup:
     if(instance && destroy_instance){destroy_instance(instance,NULL);instance=NULL;}
     if(loader_module){while(!FreeLibrary(loader_module))Sleep(10);loader_module=NULL;}
     if(bootstrap_module){while(!FreeLibrary(bootstrap_module))Sleep(10);bootstrap_module=NULL;}
+    if(system_dxgi_module){while(!FreeLibrary(system_dxgi_module))Sleep(10);system_dxgi_module=NULL;}
     if(GetModuleHandleA(argv[1]) || GetModuleHandleA(argv[2]) || GetModuleHandleA("waddle_vulkan_experimental.dll")) {
         fputs("Native fixture retained a released bootstrap/loader/ICD module\n",stderr);result=1;
     }
