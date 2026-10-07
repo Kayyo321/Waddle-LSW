@@ -4957,9 +4957,11 @@ requires the whole zero record and sets offset0. Start publishes the existing
 reply-stream prefix with that owner's entire rx extent and accepts one nonzero
 CPU fence; only Idle may start. Poll in Submitted performs the existing CPU poll;
 Again retains Submitted/offset0. A validated successful CPU poll enters Reading.
-Reading requests min(4096,rx_bytes-reply_offset) bytes at exactly reply_offset,
-into the exclusive rx suffix. A validated success alone advances the cursor by
-that length. Again keeps the cursor/phase and retries the same range; partial
+Each Reading poll requests at most one min(4096,rx_bytes-reply_offset) byte
+range at exactly reply_offset, into the exclusive rx suffix. A validated success
+alone advances the cursor by that length. If bytes remain, return Again in
+Reading with the advanced cursor, so the caller controls the next operation.
+Frontend Again retains the same cursor/phase and retries the same range; partial
 private bytes are never available through take. Every other failed read after
 accepted submission becomes existing sticky Lost, including Invalid/Limit; no
 new start, result publication or silent reset is permitted. After the last
@@ -4977,9 +4979,14 @@ while Reading. Test exact4/4096/4100/274460 and16MiB supported owner extents,
 check every byte and request offset/length, protect adjacent canaries, and prove
 no cursor advance on unsuccessful reads. Preserve≥90% production coverage,
 independent C ABI checks, genuine owned access hooks, zero allocator/leak gates
-and actual Windows execution. The original per-call frontend deadlines remain;
-the outer synchronous query also retains its existing whole-command deadline,
-so a sequence of chunks cannot reset that deadline indefinitely.
+and actual Windows execution. The original per-call frontend deadlines remain.
+The current ICD transact loop has1000 poll iterations separated by1ms sleeps;
+it is an iteration bound, not an elapsed-time whole-command deadline. A274460-byte
+reply requires68 successful reads (67*4096 plus28); a16MiB owner requires4096.
+Standalone callers must drive that many bounded polls. Future large ICD-query
+integration must specify a monotonic whole-query deadline and pass the remaining
+budget to a supported frontend mechanism before coding; per-operation deadlines
+alone cannot establish that guarantee. No large operation is added now.
 
 Capabilities160 does not report actual reply allocation. A larger guest owner
 must never infer allocation from a parser mask or unchanged capset. Before any
