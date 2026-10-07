@@ -65,8 +65,8 @@ fn encode_range(writer: *writer_t, range: c.VkImageSubresourceRange) void {
 /// Caller validates host-supported format, dimension limits and configured queue families before use.
 pub fn create_image(info: *const c.VkImageCreateInfo, device_id: u64, image_id: u64) !writer_t {
     if (device_id == 0 or image_id == 0) return error.Invalid;
-    if (info.sType != c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO or info.pNext != null or
-        info.flags != 0 or info.imageType > 2 or info.format <= 0 or info.format > 184 or
+    if (info.sType != c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO or
+        info.flags & ~@as(u32, c.VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | c.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0 or info.imageType > 2 or info.format <= 0 or info.format > 184 or
         info.extent.width == 0 or info.extent.height == 0 or info.extent.depth == 0 or
         info.mipLevels == 0 or info.arrayLayers == 0 or info.samples == 0 or
         info.samples > 64 or info.samples & (info.samples - 1) != 0 or info.tiling > 1 or
@@ -76,6 +76,17 @@ pub fn create_image(info: *const c.VkImageCreateInfo, device_id: u64, image_id: 
     if ((info.imageType == 0 and (info.extent.height != 1 or info.extent.depth != 1)) or
         (info.imageType == 1 and info.extent.depth != 1) or
         (info.imageType == 2 and info.arrayLayers != 1)) return error.Invalid;
+    if (info.flags & c.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT != 0 and
+        (info.imageType != c.VK_IMAGE_TYPE_2D or info.extent.width != info.extent.height or info.arrayLayers < 6 or info.samples != 1)) return error.Invalid;
+    var format_list: ?*const c.VkImageFormatListCreateInfo = null;
+    if (info.pNext) |pointer| {
+        if (@intFromPtr(pointer) % @alignOf(c.VkImageFormatListCreateInfo) != 0) return error.Invalid;
+        format_list = @ptrCast(@alignCast(pointer));
+        const list = format_list.?;
+        if (list.sType != c.VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO or list.pNext != null or list.viewFormatCount > 64 or
+            (list.viewFormatCount != 0 and list.pViewFormats == null)) return error.Invalid;
+        if (list.viewFormatCount != 0) for (list.pViewFormats[0..list.viewFormatCount]) |format| if (format == 0 or format > 184) return error.Invalid;
+    }
     var family_count: u32 = 0;
     if (info.sharingMode == c.VK_SHARING_MODE_CONCURRENT) {
         family_count = info.queueFamilyIndexCount;
@@ -86,11 +97,19 @@ pub fn create_image(info: *const c.VkImageCreateInfo, device_id: u64, image_id: 
     } else if (info.sharingMode != c.VK_SHARING_MODE_EXCLUSIVE) return error.Invalid;
     var writer = writer_t{};
     // Validated counts prove the complete owned packet fits before any append.
-    writer.require_capacity(124 + 4 * @as(usize, family_count)) catch unreachable;
+    const chain_bytes: usize = if (format_list) |list| 24 + 4 * @as(usize, list.viewFormatCount) else 0;
+    writer.require_capacity(124 + chain_bytes + 4 * @as(usize, family_count)) catch unreachable;
     writer.header(54, device_id) catch unreachable;
     writer.put_proven(u64, 1);
     writer.put_proven(u32, c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
-    writer.put_proven(u64, 0);
+    if (format_list) |list| {
+        writer.put_proven(u64, 1);
+        writer.put_proven(u32, list.sType);
+        writer.put_proven(u64, 0);
+        writer.put_proven(u32, list.viewFormatCount);
+        writer.put_proven(u64, list.viewFormatCount);
+        if (list.viewFormatCount != 0) for (list.pViewFormats[0..list.viewFormatCount]) |format| writer.put_proven(u32, format);
+    } else writer.put_proven(u64, 0);
     writer.put_proven(u32, info.flags);
     writer.put_proven(u32, info.imageType);
     writer.put_proven(u32, @intCast(info.format));
@@ -780,4 +799,34 @@ test "pipeline layout final push word matches independent generated encoder" {
     const count = venus_render_test_pipeline_layout(&info, &expected);
     const writer = try create_pipeline_layout(&info, &.{}, 7, 43);
     try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+}
+
+test "mutable cube and bounded format-list images match generated encoder" {
+    var info = image_fixture();
+    info.flags = c.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT | c.VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    info.arrayLayers = 12;
+    info.extent.height = info.extent.width;
+    var formats: [64]c.VkFormat = undefined;
+    for (&formats, 0..) |*format, index| format.* = @intCast(index + 1);
+    var list = c.VkImageFormatListCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, .viewFormatCount = 64, .pViewFormats = &formats };
+    info.pNext = &list;
+    var expected: [8192]u8 = undefined;
+    for ([_]u32{ 0, 2, 64 }) |count| {
+        list.viewFormatCount = count;
+        const writer = try create_image(&info, 7, 42);
+        const used = venus_render_test_image(&info, &expected);
+        try std.testing.expectEqual(used, writer.used);
+        try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
+    }
+    list.viewFormatCount = 65;
+    try std.testing.expectError(error.Invalid, create_image(&info, 7, 42));
+    list.viewFormatCount = 2;
+    formats[1] = 0;
+    try std.testing.expectError(error.Invalid, create_image(&info, 7, 42));
+    formats[1] = 2;
+    info.arrayLayers = 5;
+    try std.testing.expectError(error.Invalid, create_image(&info, 7, 42));
+    info.arrayLayers = 6;
+    info.extent.height = 1;
+    try std.testing.expectError(error.Invalid, create_image(&info, 7, 42));
 }
