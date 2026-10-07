@@ -20,7 +20,7 @@ static unsigned fault_call=1,fault_seen,allocations,module_releases,retirement_c
 static venus_ring_status_t bind_status=RingOk,unbind_status=RingOk,retire_status=RingOk,init_status=RingOk;
 static venus_command_exchange_t bound_callback;
 static void *bound_context;
-static unsigned abandoned;
+static unsigned abandoned,fail_module_release_once;
 static const char ConfigPath[]="C:\\private.json";
 static const char ModulePath[]="C:\\fixture.dll";
 static char native_path[256];
@@ -108,7 +108,7 @@ HMODULE LoadLibraryExA(const char *path,HANDLE file,DWORD flags)
     assert(!strcmp(path,ModulePath) && !file && flags==(LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32));
     return hit("load") ? NULL : acquire(1);
 }
-int FreeLibrary(HMODULE module) { assert(module);if(hit("free_module"))return 0;release(module);module_releases++;return 1; }
+int FreeLibrary(HMODULE module) { assert(module);if(fail_module_release_once){fail_module_release_once=0;return 0;}if(hit("free_module"))return 0;release(module);module_releases++;return 1; }
 static venus_ring_status_t bind_icd(venus_command_exchange_t callback_value,void *context,const venus_capabilities_t *capabilities)
 {
     assert(callback_value && context && capabilities->wire_format_version==42);
@@ -194,7 +194,7 @@ int main(void)
     assert(venus_tcp_bootstrap_abandon(0)==RingInvalid);assert(venus_tcp_bootstrap_abandon(124)==RingInvalid);assert(venus_tcp_bootstrap_abandon(123)==RingOk);reset();
     assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingOk);assert(venus_tcp_bootstrap_abandon(123)==RingOk);assert(abandoned==1);reset();
     assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingOk);select_fault("free_module",1);unsigned old=retirement_calls;assert(venus_tcp_bootstrap_stop()==RingClosed);assert(allocations==1 && bootstrap.retired && venus_tcp_bootstrap_session()==123);assert(retirement_calls==old+1);reset();assert(retirement_calls==old+1);
-    select_fault("full_zero",1);fault_call=1;/* Startup failure followed by native release failure is independently injected below. */
-    reset();assert(module_releases);assert(!unlink(native_path));assert(!rmdir(directory));assert(descriptors()==baseline);
+    select_fault("export",1);fail_module_release_once=1;assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingClosed);assert(!venus_tcp_bootstrap_session() && bootstrap.module && allocations==1);assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingAgain);reset();
+    assert(module_releases);assert(!unlink(native_path));assert(!rmdir(directory));assert(descriptors()==baseline);
     puts("TCP bootstrap SDK ownership: all actual descriptors/heap owners released; synthetic client/ICD admission only");return 0;
 }
