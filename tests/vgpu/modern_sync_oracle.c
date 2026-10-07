@@ -24,6 +24,11 @@ size_t venus_modern_sync_test_encode(uint32_t opcode, const void *info, uint32_t
     VkDevice device = (VkDevice)(uintptr_t)7;
     VkCommandBuffer command = (VkCommandBuffer)(uintptr_t)9;
     switch (opcode) {
+    case 40: {
+        VkSemaphore semaphore = (VkSemaphore)(uintptr_t)11;
+        vn_encode_vkCreateSemaphore(&encoder, 1, device, info, NULL, &semaphore);
+        break;
+    }
     case 171:
         vn_encode_vkResetQueryPool(&encoder, 1, device, (VkQueryPool)(uintptr_t)11, 3, 4);
         break;

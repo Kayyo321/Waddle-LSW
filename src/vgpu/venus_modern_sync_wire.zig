@@ -119,6 +119,27 @@ pub fn queue_submit2(queue_id: u64, submits: []const c.VkSubmitInfo2, fence_id: 
     try writer.put(u64, fence_id);
     return writer;
 }
+/// [in] device_id/new semaphore_id resolved owners, semaphore_type binary0 or
+/// timeline1 and initial exact timeline value (binary requires0). [out] Owned
+/// create40 packet with canonical type node, Invalid shape/ID or Limit capacity.
+/// Caller validates enabled timeline feature and host limits; no allocation,
+/// retained pointers or shared state; ownership publishes only after exact ACK.
+pub fn create_semaphore(device_id: u64, semaphore_id: u64, semaphore_type: u32, initial: u64) !writer_t {
+    if (semaphore_id == 0 or semaphore_type > 1 or (semaphore_type == 0 and initial != 0)) return error.Invalid;
+    var writer: writer_t = .{};
+    try writer.header(40, device_id);
+    try writer.put(u64, 1);
+    try writer.put(u32, c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO);
+    try writer.put(u64, 1);
+    try node(&writer, c.VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO);
+    try writer.put(u32, semaphore_type);
+    try writer.put(u64, initial);
+    try writer.put(u32, 0);
+    try writer.put(u64, 0);
+    try writer.put(u64, 1);
+    try writer.put(u64, semaphore_id);
+    return writer;
+}
 /// [in] device_id/semaphore_id resolved nonzero host identities. [out] Owned
 /// counter-value command172 request. Invalid zero IDs; no allocation/retention.
 /// Caller validates enabled timeline feature and semaphore ownership/type.
@@ -204,6 +225,25 @@ pub fn decode_value(reply: []const u8, opcode: u32) !u64 {
     return std.mem.readInt(u64, reply[16..24], .little);
 }
 
+/// Copied native timeline query result; no pointers or storage ownership.
+pub const result_value_t = struct {
+    /// Exact native VkResult; negative errors retain their original identity.
+    result: i32,
+    /// Actual timeline value; publish externally only when result is SUCCESS.
+    value: u64,
+};
+/// [in] completed immutable command172 reply. [out] Exact signed native status
+/// and copied value; Corrupt invalid prefix/shape/presence/positive result.
+/// Negative native errors do not expose undefined value to application storage.
+/// No allocations, pointer retention, shared state or output mutation.
+pub fn decode_counter(reply: []const u8) !result_value_t {
+    if (reply.len < 24 or std.mem.readInt(u32, reply[0..4], .little) != 172 or
+        std.mem.readInt(u64, reply[8..16], .little) != 1) return error.Corrupt;
+    const result = std.mem.readInt(i32, reply[4..8], .little);
+    if (result > 0) return error.Corrupt;
+    return .{ .result = result, .value = std.mem.readInt(u64, reply[16..24], .little) };
+}
+
 // Test-only fixtures.
 extern fn venus_modern_sync_test_encode(u32, ?*const anyopaque, u32, [*]u8) usize;
 fn compare(writer: writer_t, opcode: u32, info: ?*const anyopaque, length: u32) !void {
@@ -282,4 +322,17 @@ test "modern completed value decoder validates identity shape and signed native 
     try std.testing.expectEqual(@as(u64,1<<48),try decode_value(&reply,175));
     try std.testing.expectError(error.Corrupt,decode_value(reply[0..11],175));
     try std.testing.expectError(error.Corrupt,decode_value(&reply,172));
+}
+
+test "typed semaphore creation and exact counter status match pinned native ownership requests" {
+    const kind = c.VkSemaphoreTypeCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, .semaphoreType = 1, .initialValue = 99 };
+    const info = c.VkSemaphoreCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &kind };
+    try compare(try create_semaphore(7,11,1,99),40,&info,0);
+    try std.testing.expectError(error.Invalid,create_semaphore(7,11,0,99));
+    try std.testing.expectError(error.Invalid,create_semaphore(7,11,2,0));
+    var reply=[_]u8{0} ** 24;
+    std.mem.writeInt(u32,reply[0..4],172,.little);std.mem.writeInt(u64,reply[8..16],1,.little);std.mem.writeInt(i32,reply[4..8],-1,.little);
+    const result=try decode_counter(&reply);try std.testing.expectEqual(@as(i32,-1),result.result);
+    try std.testing.expectError(error.Corrupt,decode_counter(reply[0..23]));
+    std.mem.writeInt(i32,reply[4..8],1,.little);try std.testing.expectError(error.Corrupt,decode_counter(&reply));
 }
