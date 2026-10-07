@@ -112,3 +112,23 @@ build/vgpu_tcp_server_test.exe: $(VgpuTcpServerSources) include/waddle/venus_tcp
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $(VgpuTcpServerSources) build/tcp_peer_request_windows.lib build/tcp_peer_capabilities_windows.lib build/venus_tcp_wire_windows.lib -lws2_32 -lbcrypt -o $@
 
 vgpu-tcp-server-windows: build/vgpu_tcp_server_test.exe
+
+# Controller owns private codec outputs and snapshots an already-built actual worker.
+VgpuTcpBridgeSources = src/vgpu/tcp_bridge_main.c src/vgpu/venus_tcp_server.c src/vgpu/venus_tcp_socket.c src/vgpu/venus_guest.c src/vgpu/venus_rpc.c src/vgpu/venus_channel.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c src/vgpu/venus_stream_linux.c src/vgpu/venus_worker.c
+VgpuTcpBridgeObjects = build/tcp_bridge_bounds.o build/tcp_bridge_control.o $(VgpuTcpPeerObjects)
+
+build/tcp_bridge_bounds.o: src/vgpu/venus_bounds.zig include/waddle/venus_region.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/tcp_bridge_control.o: src/vgpu/venus_control.zig include/waddle/venus_session.h | build
+	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+
+build/waddle_vgpu_tcp_bridge: $(VgpuTcpBridgeSources) $(VgpuTcpBridgeObjects) include/waddle/venus_tcp.h include/waddle/venus_worker.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(VgpuTcpBridgeSources) $(VgpuTcpBridgeObjects) $(LDFLAGS) -o $@
+
+.PHONY: vgpu-tcp-bridge-test vgpu-tcp-bridge-coverage vgpu-tcp-bridge-sanitizers
+vgpu-tcp-bridge-test vgpu-tcp-bridge-coverage:
+	python3 tests/vgpu/tcp_bridge_coverage.py
+
+vgpu-tcp-bridge-sanitizers:
+	python3 tests/vgpu/tcp_bridge_coverage.py sanitizers
