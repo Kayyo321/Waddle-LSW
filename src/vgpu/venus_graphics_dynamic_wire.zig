@@ -242,3 +242,14 @@ test "dynamic malformed arrays floats and alignment reject without allocation" {
     try std.testing.expectError(error.Invalid, draw_indirect(8, 42, 2, 1, 0, false));
     try std.testing.expectError(error.Invalid, draw_indirect(8, 42, 0, 2, 16, true));
 }
+
+test "dynamic commands reject zero identity scissors overflow and mismatched optional bindings" {
+    try std.testing.expectError(error.Invalid, scissors(0, 0, &.{.{ .extent = .{ .width = 1, .height = 1 } }}, false));
+    try std.testing.expectError(error.Invalid, scissors(7, 0, &.{.{ .offset = .{ .x = 0, .y = 1 }, .extent = .{ .width = 1, .height = 0x7fffffff } }}, false));
+    const buffers = [_]u64{42};
+    const offsets = [_]u64{0};
+    try std.testing.expectError(error.Invalid, bind_vertex_buffers(7, 0, &buffers, &offsets, null, &offsets, false));
+    try std.testing.expectError(error.Invalid, bind_vertex_buffers(7, 0, &buffers, &offsets, &.{}, null, true));
+    try std.testing.expectError(error.Invalid, bind_vertex_buffers(7, 0, &buffers, &offsets, null, &.{}, true));
+    _ = try bind_vertex_buffers(7, 0, &buffers, &offsets, null, null, true);
+}

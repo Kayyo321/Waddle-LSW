@@ -177,3 +177,111 @@ test "blit numeric classes depth stencil and compression obey format conversion 
     try std.testing.expectError(error.Invalid, blit_compatible(124, 126, 2, 0));
     try std.testing.expectError(error.Invalid, blit_compatible(131, 131, 1, 0));
 }
+
+test "format aspects dimensions layer bounds and compressed row restrictions" {
+    try std.testing.expectError(error.Invalid, block(0, 1));
+    try std.testing.expectError(error.Invalid, block(37, 2));
+    try std.testing.expectError(error.Invalid, block(127, 2));
+    try std.testing.expectError(error.Invalid, block(126, 4));
+    for (1..185) |format| {
+        const aspect: u32 = if (format >= 124 and format <= 126) 2 else if (format >= 127 and format <= 130) 4 else 1;
+        _ = try block(@intCast(format), aspect);
+    }
+    var image = image_t{ .format = 37, .image_type = 1, .extent = .{ 16, 16, 4 }, .levels = 33, .layers = 4 };
+    const initial: c.VkBufferImageCopy = .{ .imageSubresource = .{ .aspectMask = 1, .layerCount = 1 }, .imageExtent = .{ .width = 4, .height = 4, .depth = 1 } };
+    inline for (.{ "mipLevel", "baseArrayLayer", "layerCount" }) |field| {
+        var copy = initial;
+        @field(copy.imageSubresource, field) = if (comptime std.mem.eql(u8, field, "layerCount")) 0 else 32;
+        try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    }
+    var copy = initial;
+    copy.imageSubresource.layerCount = 5;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    image.image_type = 3;
+    try std.testing.expectError(error.Invalid, buffer_span(image, initial));
+    image.image_type = 0;
+    try std.testing.expectError(error.Invalid, buffer_span(image, initial));
+    copy = initial;
+    copy.imageExtent.height = 1;
+    copy.imageOffset.y = 1;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.imageOffset.y = 0;
+    copy.imageOffset.z = 1;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.imageOffset.z = 0;
+    copy.imageExtent.depth = 2;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.imageExtent.depth = 1;
+    _ = try buffer_span(image, copy);
+    image.image_type = 1;
+    copy.imageOffset.z = 1;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.imageOffset.z = 0;
+    copy.imageExtent.depth = 2;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    image.image_type = 2;
+    copy.imageSubresource.baseArrayLayer = 1;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.imageSubresource.baseArrayLayer = 0;
+    copy.imageSubresource.layerCount = 2;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    image.image_type = 1;
+    image.format = 131;
+    copy = initial;
+    copy.bufferImageHeight = 3;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.bufferImageHeight = 5;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.bufferImageHeight = 0;
+    copy.bufferRowLength = 5;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.bufferRowLength = 0;
+    copy.imageOffset.y = 1;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.imageOffset.y = 0;
+    copy.imageExtent.height = 3;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    image.format = 23;
+    copy = initial;
+    copy.bufferOffset = 4;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    try std.testing.expectError(error.Invalid, blit_compatible(0, 37, 1, 0));
+    try std.testing.expectError(error.Invalid, blit_compatible(37, 0, 1, 0));
+    try std.testing.expectError(error.Invalid, blit_compatible(37, 37, 1, 2));
+}
+
+test "exact depth sizes compressed x alignment zero extent and enormous array strides" {
+    try std.testing.expectEqual(@as(u32, 2), (try block(124, 2)).bytes);
+    try std.testing.expectEqual(@as(u32, 4), (try block(125, 2)).bytes);
+    try std.testing.expectEqual(@as(u32, 1), (try block(127, 4)).bytes);
+    const image = image_t{ .format = 131, .image_type = 1, .extent = .{ 16, 16, 1 }, .levels = 1, .layers = 1 };
+    var copy: c.VkBufferImageCopy = .{ .imageSubresource = .{ .aspectMask = 1, .layerCount = 1 }, .imageExtent = .{ .width = 4, .height = 4, .depth = 1 } };
+    copy.imageOffset.x = 1;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    copy.imageOffset.x = 0;
+    copy.imageExtent.width = 0;
+    try std.testing.expectError(error.Invalid, buffer_span(image, copy));
+    const huge = image_t{ .format = 37, .image_type = 1, .extent = .{ 4, 4, 1 }, .levels = 1, .layers = 0xffffffff };
+    copy.imageExtent.width = 4;
+    copy.bufferRowLength = 0xffffffff;
+    copy.bufferImageHeight = 1;
+    copy.imageExtent.height = 1;
+    copy.imageSubresource.layerCount = 0xffffffff;
+    try std.testing.expectError(error.Invalid, buffer_span(huge, copy));
+    for (1..124) |format| try blit_compatible(@intCast(format), @intCast(format), 1, 0);
+}
+
+test "runtime depth stencil classification and full array span addition overflow" {
+    for (124..131) |format| {
+        for ([_]u32{ 2, 4 }) |aspect| {
+            if ((format == 127 and aspect == 2) or (format < 127 and aspect == 4)) {
+                try std.testing.expectError(error.Invalid, block(@intCast(format), aspect));
+            } else {
+                _ = try block(@intCast(format), aspect);
+            }
+        }
+    }
+    const huge = image_t{ .format = 1, .image_type = 1, .extent = .{ 0xffffffff, 0xffffffff, 1 }, .levels = 1, .layers = 2 };
+    const copy: c.VkBufferImageCopy = .{ .imageSubresource = .{ .aspectMask = 1, .layerCount = 2 }, .imageExtent = .{ .width = 0xffffffff, .height = 0xffffffff, .depth = 1 } };
+    try std.testing.expectError(error.Invalid, buffer_span(huge, copy));
+}

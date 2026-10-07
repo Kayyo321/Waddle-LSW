@@ -141,3 +141,83 @@ test "rendering structural errors preserve borrowed native input" {
     try std.testing.expectError(error.Invalid, begin_rendering(8, &invalid, &.{}, .{}, .{}));
     try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{ .view = 1 }, .{}));
 }
+
+test "rendering attachment topology resolve modes depth values and empty clear payloads" {
+    const initial: c.VkRenderingAttachmentInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = @ptrFromInt(42), .imageLayout = c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, .loadOp = c.VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = c.VK_ATTACHMENT_STORE_OP_STORE };
+    var attachment = initial;
+    const ids = [_]attachment_ids_t{.{ .view = 42 }};
+    const initial_info: c.VkRenderingInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = .{ .extent = .{ .width = 64, .height = 64 } }, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &attachment };
+    inline for (.{ "sType", "loadOp", "storeOp", "resolveMode", "imageLayout" }) |field| {
+        attachment = initial;
+        @field(attachment, field) = if (comptime std.mem.eql(u8, field, "sType")) 0 else if (comptime std.mem.eql(u8, field, "imageLayout")) c.VK_IMAGE_LAYOUT_PREINITIALIZED else if (comptime std.mem.eql(u8, field, "resolveMode")) 16 else 9;
+        try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &ids, .{}, .{}));
+    }
+    attachment = initial;
+    attachment.imageLayout = c.VK_IMAGE_LAYOUT_UNDEFINED;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &ids, .{}, .{}));
+    attachment = initial;
+    attachment.pNext = @ptrFromInt(1);
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &ids, .{}, .{}));
+    attachment = initial;
+    attachment.imageView = null;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &ids, .{}, .{}));
+    attachment = initial;
+    attachment.resolveImageView = @ptrFromInt(43);
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &ids, .{}, .{}));
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &.{.{ .view = 42, .resolve = 43 }}, .{}, .{}));
+    attachment.resolveMode = 3;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &.{.{ .view = 42, .resolve = 43 }}, .{}, .{}));
+    attachment.resolveImageView = null;
+    attachment.resolveMode = 1;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &initial_info, &ids, .{}, .{}));
+    attachment = initial;
+    attachment.storeOp = c.VK_ATTACHMENT_STORE_OP_NONE;
+    attachment.loadOp = c.VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachment.clearValue = undefined;
+    _ = try begin_rendering(8, &initial_info, &ids, .{}, .{});
+    var info = initial_info;
+    info.colorAttachmentCount = 0;
+    info.pColorAttachments = null;
+    info.pDepthAttachment = &attachment;
+    for ([_]f32{ -1, 2, std.math.nan(f32) }) |depth_value| {
+        attachment = initial;
+        attachment.clearValue.depthStencil = .{ .depth = depth_value, .stencil = 0 };
+        try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{ .view = 42 }, .{}));
+    }
+    attachment = initial;
+    attachment.sType = 0;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{ .view = 42 }, .{}));
+    info.pDepthAttachment = null;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{ .resolve = 43 }, .{}));
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{ .view = 42 }));
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{ .resolve = 43 }));
+    info.pStencilAttachment = &attachment;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{ .view = 42 }));
+}
+
+test "rendering scope offsets extents masks flags and missing color arrays" {
+    const initial: c.VkRenderingInfo = .{ .sType = c.VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = .{ .extent = .{ .width = 64, .height = 64 } }, .layerCount = 1 };
+    var info = initial;
+    info.pNext = @ptrFromInt(1);
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{}));
+    info = initial;
+    info.flags = 8;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{}));
+    info = initial;
+    info.colorAttachmentCount = 9;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{}));
+    info.colorAttachmentCount = 1;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{.{}}, .{}, .{}));
+    info = initial;
+    info.renderArea.offset.y = -1;
+    try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{}));
+    inline for (.{ "width", "height" }) |field| {
+        info = initial;
+        @field(info.renderArea.extent, field) = 0;
+        try std.testing.expectError(error.Invalid, begin_rendering(8, &info, &.{}, .{}, .{}));
+    }
+    info = initial;
+    info.layerCount = 0;
+    info.viewMask = 1;
+    _ = try begin_rendering(8, &info, &.{}, .{}, .{});
+}
