@@ -7,10 +7,38 @@ const c = @cImport({
 });
 /// Owned bounded packet; partial packets never escape an error return.
 pub const writer_t = render.writer_t;
-fn put(writer: *writer_t, comptime value_t: type, value: value_t) !void {
+// Bound every contribution before treating scalar appends as infallible: chain
+// includes three tags/presence words, terminal null, Flags2, libraries64, and8formats.
+// State terms are exact maxima for vertex32/32, assembly, tessellation, viewport16/16,
+// rasterization, sample masks2, depth/stencil, blend8, dynamic32, and final handles.
+const MaxPrivateBytes = 16384;
+const MaxChainBytes = 3 * 12 + 8 + 8 + 12 + pipeline_helpers.MaxPipelineLibraries * 8 + 24 + 8 * 4;
+const MaxStateBytes = (24 + 12 + 32 * 12 + 12 + 32 * 16) + 32 + 28 +
+    (24 + 12 + 16 * 24 + 12 + 16 * 16) + 64 + (24 + 12 + 8 + 2 * 4 + 8) +
+    (24 + 20 + 2 * 28 + 8) + (24 + 8 + 12 + 8 * 32 + 8 + 16) + (24 + 12 + 32 * 4);
+const MaxBoundedBytes = 40 + MaxChainBytes + 16 +
+    5 * (36 + 64 + pipeline_helpers.MaxSpecializationBytes) + MaxStateBytes + 56;
+comptime {
+    std.debug.assert(MaxBoundedBytes <= MaxPrivateBytes);
+}
+const packet_t = struct {
+    bytes: [MaxPrivateBytes]u8 = undefined,
+    used: usize = 0,
+    /// Borrow exclusive private staging; validated quotas prove each scalar fits.
+    /// No allocations/retention; invariant failure traps, helper-compatible success result.
+    pub fn put(self: *packet_t, comptime value_t: type, value: value_t) !void {
+        const count = @sizeOf(value_t);
+        // Quotas checked before traversal prove this bound. Keep native safety checks
+        // at each append; an invariant violation traps rather than publishing bytes.
+        std.debug.assert(self.used <= MaxBoundedBytes and count <= MaxPrivateBytes - self.used);
+        std.mem.writeInt(value_t, self.bytes[self.used..][0..count], value, .little);
+        self.used += count;
+    }
+};
+fn put(writer: *packet_t, comptime value_t: type, value: value_t) !void {
     try writer.put(value_t, value);
 }
-fn words(writer: *writer_t, value: anytype, comptime fields: anytype) !void {
+fn words(writer: *packet_t, value: anytype, comptime fields: anytype) !void {
     inline for (fields) |field| {
         const scalar = @field(value, field);
         if (@TypeOf(scalar) == f32) {
@@ -23,14 +51,14 @@ fn words(writer: *writer_t, value: anytype, comptime fields: anytype) !void {
 fn checked_header(value: anytype, tag: u32) !void {
     if (value.sType != tag or value.pNext != null or value.flags != 0) return error.Invalid;
 }
-fn state_header(writer: *writer_t, value: anytype, tag: u32) !void {
+fn state_header(writer: *packet_t, value: anytype, tag: u32) !void {
     try checked_header(value, tag);
     try put(writer, u64, 1);
     try put(writer, u32, tag);
     try put(writer, u64, 0);
     try put(writer, u32, value.flags);
 }
-fn count_array(writer: *writer_t, count: u32, pointer: anytype, maximum: u32, required: bool) !u32 {
+fn count_array(writer: *packet_t, count: u32, pointer: anytype, maximum: u32, required: bool) !u32 {
     if (count > maximum or (required and count != 0 and pointer == null)) return error.Invalid;
     try put(writer, u32, count);
     const actual: u32 = if (pointer == null) 0 else count;
@@ -41,7 +69,7 @@ fn elements(pointer: anytype, count: usize) []const @typeInfo(@TypeOf(pointer)).
     if (count == 0) return &.{};
     return pointer[0..count];
 }
-fn blob(writer: *writer_t, bytes: []const u8) !void {
+fn blob(writer: *packet_t, bytes: []const u8) !void {
     for (bytes) |byte| try put(writer, u8, byte);
     var padding = (4 - bytes.len % 4) % 4;
     while (padding != 0) : (padding -= 1) try put(writer, u8, 0);
@@ -54,7 +82,9 @@ fn blob(writer: *writer_t, bytes: []const u8) !void {
 /// state compatibility. Native object handles are never serialized without translation.
 /// Supports vertex bindings/attributes, topology, viewport/scissors, rasterization,
 /// multisampling, depth/stencil, blend, dynamic state and shader specialization.
-/// Returns complete owned packet or Invalid/Limit; no allocation, shared state or retention.
+/// Returns complete owned packet or Invalid/Limit. Validate bounded native topology first,
+/// then admit exact encoded length against8192byte public packet capacity before copying.
+/// Private16KiB staging follows the fixed quotas above; no partial output, allocations or retention.
 pub fn create_graphics_pipeline(device: u64, info: *const c.VkGraphicsPipelineCreateInfo, shader_ids: []const u64, layout: u64, pass: u64, output: u64) !writer_t {
     return create_graphics_pipeline_cached(device, 0, info, shader_ids, layout, pass, output);
 }
@@ -67,7 +97,7 @@ pub fn create_graphics_pipeline_cached(device: u64, cache: u64, info: *const c.V
         info.flags & ~@as(u32, 7 | c.VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0 or info.basePipelineHandle != null or info.basePipelineIndex != -1) return error.Invalid;
     const chain = try pipeline_helpers.collect_chain(info.pNext, true);
     if (info.stageCount == 0 and chain.library_count == 0) return error.Invalid;
-    var writer: writer_t = .{};
+    var writer: packet_t = .{};
     try put(&writer, u32, 65);
     try put(&writer, u32, 1);
     try put(&writer, u64, device);
@@ -192,7 +222,11 @@ pub fn create_graphics_pipeline_cached(device: u64, cache: u64, info: *const c.V
     try put(&writer, u64, 0);
     try put(&writer, u64, 1);
     try put(&writer, u64, output);
-    return writer;
+    if (writer.used > render.MaxBytes) return error.Limit;
+    var output_packet: writer_t = .{};
+    @memcpy(output_packet.bytes[0..writer.used], writer.bytes[0..writer.used]);
+    output_packet.used = writer.used;
+    return output_packet;
 }
 
 // Test-only independent generated encoder, never linked into production runtime.
@@ -329,19 +363,115 @@ test "maintenance5 full width effective flags survive either dynamic rendering c
 }
 
 test "graphics pipeline libraries preserve all three chain orders and zero-stage linking" {
-    var fixture:fixture_t=.{};fixture.link();fixture.info.renderPass=null;
-    const pipelines=[_]c.VkPipeline{@ptrFromInt(51),@ptrFromInt(53)};
-    var library=c.VkPipelineLibraryCreateInfoKHR{.sType=c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR,.libraryCount=2,.pLibraries=&pipelines};
-    var flags=c.VkPipelineCreateFlags2CreateInfo{.sType=c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO,.flags=0x800};
-    const orders=[_][3]u32{.{0,1,2},.{0,2,1},.{1,0,2},.{1,2,0},.{2,0,1},.{2,1,0}};
-    const pointers=[_]usize{@intFromPtr(&fixture.rendering),@intFromPtr(&flags),@intFromPtr(&library)};
-    for(orders) |order| {
-        for(order,0..) |index,position| {const header:*c.VkBaseOutStructure=@ptrFromInt(pointers[index]);header.pNext=if(position==2)null else @ptrFromInt(pointers[order[position+1]]);}
-        fixture.info.pNext=@ptrFromInt(pointers[order[0]]);try compare_fixture(&fixture);
+    var fixture: fixture_t = .{};
+    fixture.link();
+    fixture.info.renderPass = null;
+    const pipelines = [_]c.VkPipeline{ @ptrFromInt(51), @ptrFromInt(53) };
+    var library = c.VkPipelineLibraryCreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR, .libraryCount = 2, .pLibraries = &pipelines };
+    var flags = c.VkPipelineCreateFlags2CreateInfo{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO, .flags = 0x800 };
+    const orders = [_][3]u32{ .{ 0, 1, 2 }, .{ 0, 2, 1 }, .{ 1, 0, 2 }, .{ 1, 2, 0 }, .{ 2, 0, 1 }, .{ 2, 1, 0 } };
+    const pointers = [_]usize{ @intFromPtr(&fixture.rendering), @intFromPtr(&flags), @intFromPtr(&library) };
+    for (orders) |order| {
+        for (order, 0..) |index, position| {
+            const header: *c.VkBaseOutStructure = @ptrFromInt(pointers[index]);
+            header.pNext = if (position == 2) null else @ptrFromInt(pointers[order[position + 1]]);
+        }
+        fixture.info.pNext = @ptrFromInt(pointers[order[0]]);
+        try compare_fixture(&fixture);
     }
-    fixture.rendering.pNext=&library;library.pNext=null;fixture.info.pNext=&fixture.rendering;fixture.info.stageCount=0;fixture.info.pStages=null;
-    var expected:[8192]u8=undefined;const packet=try create_graphics_pipeline(8,&fixture.info,&.{},44,0,46);const used=venus_graphics_general_test_create(&fixture.info,&expected);try std.testing.expectEqualSlices(u8,expected[0..used],packet.bytes[0..packet.used]);
-    library.libraryCount=65;library.pLibraries=@ptrFromInt(8);try std.testing.expectError(error.Invalid,create_graphics_pipeline(8,&fixture.info,&.{},44,0,46));
-    library.libraryCount=1;library.pLibraries=null;try std.testing.expectError(error.Invalid,create_graphics_pipeline(8,&fixture.info,&.{},44,0,46));
-    library.libraryCount=0;try std.testing.expectError(error.Invalid,create_graphics_pipeline(8,&fixture.info,&.{},44,0,46));
+    fixture.rendering.pNext = &library;
+    library.pNext = null;
+    fixture.info.pNext = &fixture.rendering;
+    fixture.info.stageCount = 0;
+    fixture.info.pStages = null;
+    var expected: [8192]u8 = undefined;
+    const packet = try create_graphics_pipeline(8, &fixture.info, &.{}, 44, 0, 46);
+    const used = venus_graphics_general_test_create(&fixture.info, &expected);
+    try std.testing.expectEqualSlices(u8, expected[0..used], packet.bytes[0..packet.used]);
+    library.libraryCount = 65;
+    library.pLibraries = @ptrFromInt(8);
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &.{}, 44, 0, 46));
+    library.libraryCount = 1;
+    library.pLibraries = null;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &.{}, 44, 0, 46));
+    library.libraryCount = 0;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &.{}, 44, 0, 46));
+}
+
+test "graphics native headers stage names topology state counts and multisample bounds" {
+    var fixture: fixture_t = .{};
+    fixture.link();
+    const ids = [_]u64{ 42, 43, 47 };
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 0, 45, 46));
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 0));
+    inline for (.{ "sType", "stageCount", "flags", "basePipelineIndex" }) |field| {
+        fixture = .{};
+        fixture.link();
+        @field(fixture.info, field) = if (comptime std.mem.eql(u8, field, "sType")) 0 else if (comptime std.mem.eql(u8, field, "stageCount")) 6 else if (comptime std.mem.eql(u8, field, "flags")) 8 else 0;
+        try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    }
+    fixture = .{};
+    fixture.link();
+    fixture.info.pStages = null;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    fixture.link();
+    fixture.info.basePipelineHandle = @ptrFromInt(1);
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    fixture.info.basePipelineHandle = null;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 0, 46));
+    fixture.info.pNext = &fixture.rendering;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    for ([_]u32{ 0, 3, 32, 1 }) |stage| {
+        fixture = .{};
+        fixture.link();
+        fixture.stages[1].stage = stage;
+        try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    }
+    fixture = .{};
+    fixture.link();
+    fixture.stages[0].pName = null;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    fixture.stages[0].pName = "";
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    const long_name = [_:0]u8{'a'} ** 64;
+    fixture.stages[0].pName = &long_name;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    inline for (.{ "stages", "vertex", "assembly", "tessellation", "viewport", "raster", "multisample", "depth", "blend", "dynamic" }) |field| {
+        fixture = .{};
+        fixture.link();
+        if (comptime std.mem.eql(u8, field, "stages")) fixture.stages[0].sType = 0 else @field(fixture, field).sType = 0;
+        try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    }
+    fixture = .{};
+    fixture.link();
+    fixture.vertex.pNext = @ptrFromInt(1);
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    fixture.vertex.pNext = null;
+    fixture.vertex.flags = 1;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    for ([_]u32{ 0, 3, 128 }) |samples| {
+        fixture = .{};
+        fixture.link();
+        fixture.multisample.rasterizationSamples = samples;
+        try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+    }
+    fixture = .{};
+    fixture.link();
+    fixture.vertex.pVertexAttributeDescriptions = null;
+    try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
+}
+
+test "complete bounded graphics staging rejects public packet overflow without publication" {
+    var fixture: fixture_t = .{};
+    fixture.link();
+    var entries: [32]c.VkSpecializationMapEntry = undefined;
+    for (&entries, 0..) |*entry, index| entry.* = .{ .constantID = @intCast(index), .offset = @intCast(index * 4), .size = 4 };
+    const data = [_]u8{0} ** 1024;
+    const specialization: c.VkSpecializationInfo = .{ .mapEntryCount = 32, .pMapEntries = &entries, .dataSize = data.len, .pData = &data };
+    var stages: [5]c.VkPipelineShaderStageCreateInfo = undefined;
+    const ids = [_]u64{ 42, 43, 44, 45, 46 };
+    for (&stages, ids, 0..) |*stage, id, index| stage.* = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = @as(u32, 1) << @as(u5, @intCast(index)), .module = @ptrFromInt(id), .pName = "main", .pSpecializationInfo = &specialization };
+    fixture.info.stageCount = 5;
+    fixture.info.pStages = &stages;
+    try std.testing.expectError(error.Limit, create_graphics_pipeline(8, &fixture.info, &ids, 44, 45, 46));
 }
