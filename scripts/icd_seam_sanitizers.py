@@ -8,6 +8,7 @@ Zig retains Debug safety and exact original-module guard/reverse proofs. No driv
 Windows, physical-GPU or DXVK acceptance is inferred from this Linux seam gate.
 """
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -23,13 +24,18 @@ import icd_owned_sanitizers as owned
 CodecNames = ('capabilities', 'command', 'objects', 'instance_wire', 'query_wire', 'values')
 # Independent pinned C encoder/receiver oracle sources and include boundaries.
 GuestOracles = ('render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire',
-                'graphics_pipeline_wire', 'graphics_command_wire', 'features_query')
+                'graphics_pipeline_wire', 'graphics_command_wire', 'features_query', 'device_wire')
 GuestIncludes = ('-Iinclude', '-Itests/vgpu/encoder', '-Ibuild/venus_protocol',
                  '-Isubmodules/venus_protocol/tests', '-Isubmodules/venus_protocol/include')
 RendererIncludes = ('-Itests/vgpu/encoder', '-Ibuild/venus_renderer_protocol', '-Iinclude',
                     '-Isubmodules/venus_protocol/include', '-Isubmodules/venus_protocol/include/vulkan')
 # Bound tool-generated text before streaming; no unbounded retained subprocess output.
 MaxProofBytes = 256 * 1024 * 1024
+MaxRetainedArtifacts = 512
+CompleteSourceNames = (*owned.IcdEmbeddedSourceNames, *(f'venus_{name}.zig' for name in CodecNames))
+assert len(set(CompleteSourceNames)) == len(CompleteSourceNames) == 20
+# Freeze receipt must confirm whether the C frontend also needs device_wire.
+NativeOracleNames = ('features_query', 'features_reply', 'device_wire')
 
 
 def merge_inputs(provenance, additions):
@@ -76,7 +82,9 @@ def final_access_proof(binary, reports, output):
     No source/object mutation; synchronous, caller serializes its artifact directory.
     """
     modules = [dict(module) for report in reports for module in report['modules']]
-    assert len({module['source'] for module in modules}) == len(modules) == 18
+    expected_sources = {str((Path('src/vgpu') / name).resolve()) for name in CompleteSourceNames}
+    assert {module['source'] for module in modules} == expected_sources
+    assert len(modules) == len(expected_sources) == 20
     definitions = {}
     for module in modules:
         module['final_executable_access_hooks'] = 0
@@ -153,6 +161,74 @@ def object_manifest(paths):
     return [{'path': str(path), 'sha256': dependency.file_hash(path)} for path in paths]
 
 
+def publish_completion(output, latest_record, expected_units):
+    """[in] Borrow exclusive run/latest path/count; [out] own immutable receipt.
+
+    Require both complete same-binary proofs, exact current twenty-source identity
+    and unit count. Hash every retained regular artifact and all borrowed inputs;
+    no completion publication on failure. Per-run record is created exclusively.
+    Optional caller-owned latest bytes are fsynced then atomically replaced; every
+    temporary descriptor/file closes or unlinks deterministically on any error.
+    """
+    reports = {kind: json.loads((output / (kind + '_sanitized.json')).read_text())
+               for kind in ('native', 'test')}
+    native, tests = reports['native'], reports['test']
+    source_manifest = {module['source']: module['source_sha256'] for module in native['modules']}
+    expected_sources = {str((Path('src/vgpu') / name).resolve()) for name in CompleteSourceNames}
+    assert set(source_manifest) == expected_sources and len(source_manifest) == 20
+    assert {module['source']: module['source_sha256'] for module in tests['modules']} == source_manifest
+    assert native['icd_native_suites'] == 1 and tests['icd_debug_units'] == expected_units > 0
+    assert native['standalone_native_suites'] == tests['standalone_native_suites'] == 6
+    assert native['standalone_debug_units'] == tests['standalone_debug_units'] == 25
+    assert native['input_manifest'] == tests['input_manifest']
+    dependency.verify_inputs(source_manifest)
+    dependency.verify_inputs(native['input_manifest'])
+    report_references = {}
+    for kind, report in reports.items():
+        dependency.verify_inputs({entry['path']: entry['sha256'] for entry in report['ordered_link_manifest']})
+        binary = output / (kind + '_runner')
+        assert dependency.file_hash(binary) == report['executable_sha256']
+        report_path = output / (kind + '_sanitized.json')
+        report_references[kind] = {'path': str(report_path), 'sha256': dependency.file_hash(report_path)}
+    retained = {}
+    for path in sorted(output.rglob('*')):
+        assert not path.is_symlink(), 'unexpected retained artifact symlink'
+        if path.is_file():
+            assert len(retained) < MaxRetainedArtifacts
+            assert path.resolve().is_relative_to(output)
+            retained[str(path.resolve())] = dependency.file_hash(path)
+    dependency.verify_inputs(retained)
+    completion = output / 'completion.json'
+    record = {'schema': 'waddle_owned_icd_complete_seam_v1', 'complete': True,
+              'output': str(output), 'completion_record': str(completion),
+              'source_manifest': source_manifest, 'reports': report_references,
+              'expected_icd_debug_units': expected_units, 'retained_artifacts': retained}
+    content = (json.dumps(record, indent=2) + '\n').encode()
+    with completion.open('xb') as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    if latest_record is not None:
+        latest_record = latest_record.resolve()
+        assert latest_record != completion
+        latest_record.parent.mkdir(parents=True, exist_ok=True)
+        temporary = latest_record.with_name(latest_record.name + '.tmp-' + str(os.getpid()))
+        owned_temporary = False
+        try:
+            with temporary.open('xb') as stream:
+                owned_temporary = True
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, latest_record)
+            owned_temporary = False
+        finally:
+            if owned_temporary:
+                temporary.unlink(missing_ok=True)
+    print('Complete immutable seam record: ' + str(completion), flush=True)
+    return record
+
+
 def main():
     """[in] CLI exclusive output directory; [out] native/test complete seam reports.
 
@@ -162,12 +238,19 @@ def main():
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
-    output = parser.parse_args().output.resolve()
-    output.mkdir(parents=True, exist_ok=True)
+    parser.add_argument('--latest-record', type=Path)
+    parser.add_argument('--expected-icd-units', type=int, required=True)
+    arguments = parser.parse_args()
+    assert arguments.expected_icd_units > 0
+    artifact_root = arguments.output.resolve()
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    output = artifact_root / ('run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
+    output.mkdir()
+    print('Exclusive complete seam artifacts: ' + str(output), flush=True)
     source = Path('src/vgpu/venus_icd.zig')
     frontend = Path('tests/vgpu/icd.c')
-    inventories = owned.source_inventory(source)
-    assert len(inventories) == 12 and set(dependency.ModuleConfigs) == set(CodecNames)
+    inventories = owned.icd_source_inventory(source)
+    assert len(inventories) == 14 and set(dependency.ModuleConfigs) == set(CodecNames)
     provenance = {str(path): dependency.file_hash(path) for path in inventories}
     merge_inputs(provenance, {str(Path(__file__).resolve()): dependency.file_hash(Path(__file__).resolve()),
                              str(Path(dependency.__file__).resolve()): dependency.file_hash(Path(dependency.__file__).resolve()),
@@ -194,7 +277,7 @@ def main():
     safety = ['-fsanitize=address,leak,undefined', '-fno-omit-frame-pointer']
     c_flags = ['-std=c11', '-D_GNU_SOURCE', '-O1', '-g', *warnings, *safety]
     zig_flags = ['-Iinclude', '-Isubmodules/venus_protocol/include', '-O', 'Debug', '-lc']
-    oracle_objects = []
+    oracle_objects = {}
     for name in (*GuestOracles, 'features_reply'):
         includes = RendererIncludes if name == 'features_reply' else GuestIncludes
         oracle_source = Path('tests/vgpu') / (name + '_oracle.c')
@@ -203,7 +286,8 @@ def main():
         merge_inputs(provenance, dependency.input_provenance(source, oracle_source, includes, folder))
         oracle_object = folder / 'oracle.o'
         owned.run(['cc', *c_flags, *includes, '-c', str(oracle_source), '-o', str(oracle_object)])
-        oracle_objects.append(oracle_object)
+        assert name not in oracle_objects
+        oracle_objects[name] = oracle_object
     merge_inputs(provenance, dependency.input_provenance(source, frontend, GuestIncludes, output))
     (output / 'inputs.json').write_text(json.dumps(provenance, indent=2) + '\n')
     environment = dict(os.environ, ASAN_OPTIONS='detect_leaks=1:abort_on_error=1:halt_on_error=1',
@@ -219,9 +303,10 @@ def main():
     owned.run(['cc', *c_flags, *GuestIncludes, '-c', str(frontend), '-o', str(native_frontend)])
     owned.run(['cc', *c_flags, *GuestIncludes, '-Dmain=venus_icd_native_fixture', '-c', str(frontend), '-o', str(test_frontend)])
     values_oracle = output / 'dependencies' / 'values' / 'oracle.o'
-    # Native C ICD uses only these reply/query oracles; tests require all eight.
-    native_dependencies = [*codec_objects, values_oracle, oracle_objects[-2], oracle_objects[-1]]
-    test_dependencies = [test_frontend, *codec_objects, values_oracle, *oracle_objects]
+    assert set(oracle_objects) == {*GuestOracles, 'features_reply'}
+    assert len(oracle_objects) == 9 and len(set(oracle_objects.values())) == 9
+    native_dependencies = [*codec_objects, values_oracle, *(oracle_objects[name] for name in NativeOracleNames)]
+    test_dependencies = [test_frontend, *codec_objects, values_oracle, *oracle_objects.values()]
     immutable_objects = object_manifest([native_frontend, *test_dependencies])
     object_inputs = {entry['path']: entry['sha256'] for entry in immutable_objects}
     reports = {}
@@ -257,7 +342,7 @@ def main():
         modules = final_access_proof(binary, [report, *standalone_reports], output)
         binary_hash = dependency.file_hash(binary)
         unit_count = execute_fixture(binary, output, environment)
-        assert kind != 'test' or unit_count > 0, 'Debug unit completion message missing'
+        assert kind != 'test' or unit_count == arguments.expected_icd_units, 'Debug unit completion count differs from freeze'
         dependency.verify_inputs(provenance)
         dependency.verify_inputs(object_inputs)
         dependency.verify_inputs(current_objects)
@@ -282,6 +367,7 @@ def main():
         reports[kind]['modules'] = [{key: value for key, value in module.items()
                                     if key not in ('symbols', 'runtime_functions')}
                                    for module in modules]
+    publish_completion(output, arguments.latest_record, arguments.expected_icd_units)
     print(json.dumps(reports, indent=2), flush=True)
 
 
