@@ -135,7 +135,7 @@ static void normal_cycle(void)
     assert(venus_tcp_socket_send(&client,NULL,0,0,NULL)==RingOk);
     assert(venus_tcp_socket_receive(&server,NULL,0,&received,0,NULL)==RingOk && !received);
     assert(venus_tcp_socket_shutdown_write(&client)==RingOk);
-    assert(venus_tcp_socket_receive(&server,output,1,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed && !received);
+    assert(venus_tcp_socket_receive(&server,output,1,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed && !received && server.received_eof);
     /* A write-half-close retains reads for the real receiver retirement Ack. */
     assert(venus_tcp_socket_send(&server,input,32,venus_tcp_now_ms()+1000,NULL)==RingOk);
     assert(venus_tcp_socket_receive(&client,output,32,&received,venus_tcp_now_ms()+1000,NULL)==RingOk && !memcmp(input,output,32));
@@ -148,14 +148,14 @@ static void terminal_tests(void)
     venus_tcp_socket_t client={0},server={0}; pair(&client,&server);
     uint8_t bytes[8]={1,2,3,4,5,6,7,8}; size_t received=0;
     _Atomic uint32_t cancelled=0;
-    assert(venus_tcp_socket_receive(&server,bytes,8,&received,venus_tcp_now_ms()+20,&cancelled)==RingTimeout && !received);
+    assert(venus_tcp_socket_receive(&server,bytes,8,&received,venus_tcp_now_ms()+20,&cancelled)==RingTimeout && !received && !server.received_eof);
     assert(venus_tcp_socket_send(&client,bytes,3,venus_tcp_now_ms()+1000,NULL)==RingOk);
     assert(venus_tcp_socket_receive(&server,bytes,8,&received,venus_tcp_now_ms()+20,NULL)==RingTimeout && received==3);
     assert(venus_tcp_socket_send(&client,bytes,3,venus_tcp_now_ms()+1000,NULL)==RingOk);
     assert(venus_tcp_socket_shutdown_write(&client)==RingOk);
-    assert(venus_tcp_socket_receive(&server,bytes,8,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed && received==3);
+    assert(venus_tcp_socket_receive(&server,bytes,8,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed && received==3 && server.received_eof);
     atomic_store_explicit(&cancelled,1,memory_order_release);
-    assert(venus_tcp_socket_receive(&server,bytes,8,&received,venus_tcp_now_ms()+1000,&cancelled)==RingCancelled && !received);
+    assert(venus_tcp_socket_receive(&server,bytes,8,&received,venus_tcp_now_ms()+1000,&cancelled)==RingCancelled && !received && !server.received_eof);
     assert(venus_tcp_socket_send(&server,bytes,8,venus_tcp_now_ms()+1000,&cancelled)==RingCancelled);
     venus_tcp_socket_close(&server); venus_tcp_socket_close(&client);
     venus_tcp_socket_t listener={0}; uint32_t port;
@@ -272,11 +272,13 @@ static void fault_tests(void)
     assert(venus_tcp_socket_shutdown_write(&client)==RingClosed && fault==FaultNone);
     fault=FaultSend;
     assert(venus_tcp_socket_send(&client,bytes,sizeof bytes,venus_tcp_now_ms()+1000,NULL)==RingClosed);
+    server.received_eof=1; /* Verify native failure clears stale EOF evidence. */
     fault=FaultReceive;
-    assert(venus_tcp_socket_receive(&server,bytes,sizeof bytes,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed && !received);
+    assert(venus_tcp_socket_receive(&server,bytes,sizeof bytes,&received,venus_tcp_now_ms()+1000,NULL)==RingClosed && !received && !server.received_eof);
     uint64_t deadline=venus_tcp_now_ms()+1000;
+    server.received_eof=1;
     fault=FaultClock;
-    assert(venus_tcp_socket_receive(&server,bytes,sizeof bytes,&received,deadline,NULL)==RingClosed && !received);
+    assert(venus_tcp_socket_receive(&server,bytes,sizeof bytes,&received,deadline,NULL)==RingClosed && !received && !server.received_eof);
     fault=FaultRandom;
     assert(venus_tcp_random(bytes,sizeof bytes)==RingClosed);
     assert(fault==FaultNone);

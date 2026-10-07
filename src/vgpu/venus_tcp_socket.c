@@ -237,6 +237,7 @@ venus_ring_status_t venus_tcp_socket_receive(venus_tcp_socket_t *owner, void *by
     size_t length, size_t *received, uint64_t deadline, const _Atomic uint32_t *cancel)
 {
     if (received) *received=0;
+    if (owner) owner->received_eof=0;
     if (!owner || !owner->initialized || (!bytes && length) || !received || length>VenusTcpMaxCommandBytes) return RingInvalid;
     uint8_t *cursor=bytes;
     while (*received<length) {
@@ -248,7 +249,8 @@ venus_ring_status_t venus_tcp_socket_receive(venus_tcp_socket_t *owner, void *by
         ssize_t count=recv(native_handle(owner),cursor+*received,length-*received,0);
 #endif
         if (count>0) { *received+=(size_t)count; continue; }
-        if (!count || !would_block()) return RingClosed;
+        if (!count) { owner->received_eof=1; return RingClosed; }
+        if (!would_block()) return RingClosed;
         status=wait_ready(native_handle(owner),0,deadline,cancel);
         if (status!=RingOk) return status;
     }

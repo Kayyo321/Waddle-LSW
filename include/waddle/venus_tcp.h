@@ -133,6 +133,7 @@ venus_ring_status_t venus_tcp_response_limit(const venus_request_t *request, con
 typedef struct venus_tcp_socket_t {
     uintptr_t handle; /**< Private native socket; meaningful only when initialized. */
     uint32_t initialized; /**< One while socket and optional Winsock reference are owned. */
+    uint32_t received_eof; /**< Last receive observed actual native recv0; reset per call, never inferred from error. */
 } venus_tcp_socket_t;
 /** @brief Get monotonic milliseconds for a whole-operation deadline.
  * @return Native monotonic milliseconds, zero on unavailable clock. No allocation,
@@ -183,7 +184,8 @@ venus_ring_status_t venus_tcp_socket_send(venus_tcp_socket_t *socket, const void
  * @param[in] length Actual bounded extent. @param[out] received Nonnull owned count,
  * zeroed before argument checks. @param[in] deadline_ms Fixed absolute deadline.
  * @param[in] cancel Nullable atomic borrowed flag. @return Ok, Invalid, Closed,
- * Cancelled or Timeout. Closed with received zero is clean EOF before a new header;
+ * Cancelled or Timeout. Last-receive received_eof is reset before checks and set only by actual recv0.
+ * Closed with received zero AND received_eof1 is clean EOF before a new header;
  * Closed with partial bytes must be treated as truncated protocol by the caller.
  * Sole owner thread; no heap, retained pointer or retry after terminal protocol failure.
  */
