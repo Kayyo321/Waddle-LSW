@@ -4936,3 +4936,65 @@ additional proofs; individual proof children retain180s/256MiB bounds, physical
 GPU cases retain300s, and GPU fences retain their1s deadlines. Any failed gate
 fails CI; parent timeout grants no acceptance or retry override. Windows remains
 15minutes until measured new native-gate execution warrants a separate change.
+
+### Full extension reply prerequisite: bounded byte transfer, unchanged TCP profile
+
+This is a specified future increment, not accepted runtime behavior. Current
+command rx=4096, service reply allocation=65536 and TCP operation reply limit=4096
+remain the running checkpoint. The pure extension codec permits1024 native entries
+and274460 reply bytes; command14 enumeration has no record-offset argument, so
+repeating smaller fills cannot enumerate later records. The already implemented
+RequestReply envelope instead has a byte offset (argument_zero) and length
+(argument_one). Dispatch forwards both to venus_receiver_reply; receiver bounds
+check against the actual mapped allocation. TCP retains offsets and limits each
+length to4096. Therefore future assembly reads one completed immutable reply in
+successive byte ranges, never paginates extension records or changes TCPv1.
+
+Extend the existing allocation-free command owner rather than duplicate its
+submission/fence/response machinery. Add an owned size_t reply_offset and explicit
+CommandReading phase without renumbering existing enum values. Initialization
+requires the whole zero record and sets offset0. Start publishes the existing
+reply-stream prefix with that owner's entire rx extent and accepts one nonzero
+CPU fence; only Idle may start. Poll in Submitted performs the existing CPU poll;
+Again retains Submitted/offset0. A validated successful CPU poll enters Reading.
+Reading requests min(4096,rx_bytes-reply_offset) bytes at exactly reply_offset,
+into the exclusive rx suffix. A validated success alone advances the cursor by
+that length. Again keeps the cursor/phase and retries the same range; partial
+private bytes are never available through take. Every other failed read after
+accepted submission becomes existing sticky Lost, including Invalid/Limit; no
+new start, result publication or silent reset is permitted. After the last
+successful range, validate the first reply command identity before entering
+Ready. Take returns the entire borrowed rx only from Ready, then clears offset,
+fence and command ID back to Idle. Submitted/Reading take returns Again with
+NULL/zero outputs. Free still requires actual pending receiver retirement or
+abandonment before releasing borrowed buffers. Sole session thread owns all
+cursor mutations; no pointer retention beyond initialized borrowed storage.
+
+Current rx<=4096 must preserve one-poll/one-read success and all existing status
+precedence. Tests must inject Again at first/middle/final chunks, each malformed
+response field, terminal statuses, wrong final identity and caller start/take
+while Reading. Test exact4/4096/4100/274460 and16MiB supported owner extents,
+check every byte and request offset/length, protect adjacent canaries, and prove
+no cursor advance on unsuccessful reads. Preserve≥90% production coverage,
+independent C ABI checks, genuine owned access hooks, zero allocator/leak gates
+and actual Windows execution. The original per-call frontend deadlines remain;
+the outer synchronous query also retains its existing whole-command deadline,
+so a sequence of chunks cannot reset that deadline indefinitely.
+
+Capabilities160 does not report actual reply allocation. A larger guest owner
+must never infer allocation from a parser mask or unchanged capset. Before any
+full extension query, separately implement and verify an explicit trusted host
+configuration whose requested524288-byte power-of-two receiver resource is
+actually mapped at exactly524288. The current worker CLI initializes its service
+configuration internally; controller private JSON cannot set reply_bytes. The
+configuration mechanism, compatibility/error handling and actual mapping proof
+require their own atomic contract and gates. Keep TCP command/reply ceilings and
+wire profile unchanged. Fail closed on insufficient actual host capacity.
+
+A future extension query may use a separately initialized exclusive command
+owner sharing the idle binding's tx under the existing ICD mutex, with bounded
+private fill rx; it must propagate sticky transport uncertainty to the binding
+and retain borrowed storage until retirement. This integration and per-physical
+cache allocation/lifecycle need a separate specification before coding. Public
+extensions and optional features remain empty/false until the guest runtime
+allowlist, actual host list and enabled device state all support their semantics.
