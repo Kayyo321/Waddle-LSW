@@ -10392,3 +10392,94 @@ test "timeline wait retains nondispatchable duplicate owners and releases only i
         try std.testing.expect(child_object(semaphore.*.handle, c.VK_OBJECT_TYPE_SEMAPHORE, device.*.id) != null);
     }
 }
+
+test "device child result queries preserve ownership and publish only validated host bytes" {
+    const fixture_t = struct {
+        opcode: u32 = 0,
+        result: i32 = c.VK_SUCCESS,
+        submissions: usize = 0,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                if (input == null or length < 40) return c.RingCorrupt;
+                fixture.opcode = std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little);
+                fixture.submissions += 1;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                if (capacity < 40) return c.RingCorrupt;
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], fixture.opcode, .little);
+                std.mem.writeInt(i32, bytes[4..8], fixture.result, .little);
+                if (fixture.opcode == 49) {
+                    std.mem.writeInt(u64, bytes[8..16], 8, .little);
+                    @memset(bytes[16..24], 0xa9);
+                } else if (fixture.opcode == 63) {
+                    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+                    std.mem.writeInt(u64, bytes[16..24], 8, .little);
+                    std.mem.writeInt(u64, bytes[24..32], 8, .little);
+                    @memset(bytes[32..40], 0xbc);
+                }
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    var fixture = fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    var device: [*c]c.venus_object_t = null;
+    var other: [*c]c.venus_object_t = null;
+    var event: [*c]c.venus_object_t = null;
+    var query_pool: [*c]c.venus_object_t = null;
+    var cache_record: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &other));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_EVENT, device.*.id, 0, &event));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_QUERY_POOL, device.*.id, 0, &query_pool));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PIPELINE_CACHE, device.*.id, 0, &cache_record));
+    const native_device: c.VkDevice = @ptrFromInt(device.*.handle);
+    const foreign_device: c.VkDevice = @ptrFromInt(other.*.handle);
+    const native_event: c.VkEvent = @ptrFromInt(event.*.handle);
+    const native_pool: c.VkQueryPool = @ptrFromInt(query_pool.*.handle);
+    const native_cache: c.VkPipelineCache = @ptrFromInt(cache_record.*.handle);
+    resource_state(query_pool).* = .{ .id = query_pool.*.id, .buffer_size = 2, .buffer_usage = c.VK_QUERY_TYPE_TIMESTAMP };
+    var output = [_]u8{0x77} ** 8;
+    var size: usize = output.len;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), get_event_status(foreign_device, native_event));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), get_query_pool_results(foreign_device, native_pool, 0, 1, output.len, &output, 8, c.VK_QUERY_RESULT_64_BIT));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), get_pipeline_cache_data(foreign_device, native_cache, &size, &output));
+    try std.testing.expectEqual(@as(usize, 0), fixture.submissions);
+    fixture.result = c.VK_EVENT_SET;
+    try std.testing.expectEqual(@as(c_int, c.VK_EVENT_SET), get_event_status(native_device, native_event));
+    fixture.result = c.VK_EVENT_RESET;
+    try std.testing.expectEqual(@as(c_int, c.VK_EVENT_RESET), get_event_status(native_device, native_event));
+    resource_state(event).buffer_usage = c.VK_EVENT_CREATE_DEVICE_ONLY_BIT;
+    const before = fixture.submissions;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), set_event(native_device, native_event));
+    try std.testing.expectEqual(before, fixture.submissions);
+    resource_state(event).buffer_usage = 0;
+    fixture.result = c.VK_SUCCESS;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), set_event(native_device, native_event));
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), reset_event(native_device, native_event));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), get_query_pool_results(native_device, native_pool, 2, 1, output.len, &output, 8, c.VK_QUERY_RESULT_64_BIT));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), get_query_pool_results(native_device, native_pool, 0, 1, output.len, &output, 7, c.VK_QUERY_RESULT_64_BIT));
+    fixture.result = c.VK_NOT_READY;
+    try std.testing.expectEqual(@as(c_int, c.VK_NOT_READY), get_query_pool_results(native_device, native_pool, 1, 1, output.len, &output, 8, c.VK_QUERY_RESULT_64_BIT));
+    try std.testing.expectEqualSlices(u8, &([_]u8{0xa9} ** 8), &output);
+    fixture.result = c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    @memset(&output, 0x55);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY), get_query_pool_results(native_device, native_pool, 0, 1, output.len, &output, 8, c.VK_QUERY_RESULT_64_BIT));
+    try std.testing.expectEqualSlices(u8, &([_]u8{0x55} ** 8), &output);
+    fixture.result = c.VK_INCOMPLETE;
+    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), get_pipeline_cache_data(native_device, native_cache, &size, &output));
+    try std.testing.expectEqual(@as(usize, 8), size);
+    try std.testing.expectEqualSlices(u8, &([_]u8{0xbc} ** 8), &output);
+    try std.testing.expect(child_object(cache_record.*.handle, c.VK_OBJECT_TYPE_PIPELINE_CACHE, device.*.id) != null);
+    fixture.result = c.VK_EVENT_SET;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), reset_event(native_device, native_event));
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+}
