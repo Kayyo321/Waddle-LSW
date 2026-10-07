@@ -4,6 +4,8 @@
 #include "waddle/venus_worker.h"
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #if defined(__SANITIZE_ADDRESS__)
@@ -54,6 +56,9 @@ int main(int argc, char **argv) {
     venus_ring_status_t status = venus_service_run_presented(
         &config, VenusWorkerMappingFd, VenusWorkerStreamFd, presented ? VenusWorkerFrameFd : -1,
         (int32_t)controller, context, &worker_cancel);
+    const char *diagnostics = getenv("WADDLE_TCP_DIAGNOSTICS");
+    if (diagnostics && !strcmp(diagnostics, "1"))
+        fprintf(stderr, "Venus worker service terminated status=%d\n", (int)status);
     if (presented)
         close(VenusWorkerFrameFd);
     close(VenusWorkerMappingFd);
