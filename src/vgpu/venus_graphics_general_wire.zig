@@ -63,8 +63,10 @@ pub fn create_graphics_pipeline(device: u64, info: *const c.VkGraphicsPipelineCr
 /// Caller retains cache ownership and verifies device ancestry before submission.
 pub fn create_graphics_pipeline_cached(device: u64, cache: u64, info: *const c.VkGraphicsPipelineCreateInfo, shader_ids: []const u64, layout: u64, pass: u64, output: u64) !writer_t {
     if (device == 0 or layout == 0 or output == 0 or info.sType != c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO or
-        info.stageCount == 0 or info.stageCount > 5 or info.stageCount != shader_ids.len or info.pStages == null or
-        info.flags & ~@as(u32, 7) != 0 or info.basePipelineHandle != null or info.basePipelineIndex != -1) return error.Invalid;
+        info.stageCount > 5 or info.stageCount != shader_ids.len or (info.stageCount != 0 and info.pStages == null) or
+        info.flags & ~@as(u32, 7 | c.VK_PIPELINE_CREATE_LIBRARY_BIT_KHR) != 0 or info.basePipelineHandle != null or info.basePipelineIndex != -1) return error.Invalid;
+    const chain = try pipeline_helpers.collect_chain(info.pNext, true);
+    if (info.stageCount == 0 and chain.library_count == 0) return error.Invalid;
     var writer: writer_t = .{};
     try put(&writer, u32, 65);
     try put(&writer, u32, 1);
@@ -73,7 +75,6 @@ pub fn create_graphics_pipeline_cached(device: u64, cache: u64, info: *const c.V
     try put(&writer, u32, 1);
     try put(&writer, u64, 1);
     try put(&writer, u32, info.sType);
-    const chain = try pipeline_helpers.collect_chain(info.pNext, true);
     try pipeline_helpers.encode_chain(&writer, &chain);
     const dynamic_rendering = chain.rendering;
     if ((pass == 0 and !dynamic_rendering) or (pass != 0 and dynamic_rendering)) return error.Invalid;
@@ -325,4 +326,22 @@ test "maintenance5 full width effective flags survive either dynamic rendering c
     try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
     fixture.rendering.pNext = &flags2;
     try std.testing.expectError(error.Invalid, create_graphics_pipeline_cached(8, 52, &fixture.info, &.{ 42, 43, 47 }, 44, 0, 46));
+}
+
+test "graphics pipeline libraries preserve all three chain orders and zero-stage linking" {
+    var fixture:fixture_t=.{};fixture.link();fixture.info.renderPass=null;
+    const pipelines=[_]c.VkPipeline{@ptrFromInt(51),@ptrFromInt(53)};
+    var library=c.VkPipelineLibraryCreateInfoKHR{.sType=c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR,.libraryCount=2,.pLibraries=&pipelines};
+    var flags=c.VkPipelineCreateFlags2CreateInfo{.sType=c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO,.flags=0x800};
+    const orders=[_][3]u32{.{0,1,2},.{0,2,1},.{1,0,2},.{1,2,0},.{2,0,1},.{2,1,0}};
+    const pointers=[_]usize{@intFromPtr(&fixture.rendering),@intFromPtr(&flags),@intFromPtr(&library)};
+    for(orders) |order| {
+        for(order,0..) |index,position| {const header:*c.VkBaseOutStructure=@ptrFromInt(pointers[index]);header.pNext=if(position==2)null else @ptrFromInt(pointers[order[position+1]]);}
+        fixture.info.pNext=@ptrFromInt(pointers[order[0]]);try compare_fixture(&fixture);
+    }
+    fixture.rendering.pNext=&library;library.pNext=null;fixture.info.pNext=&fixture.rendering;fixture.info.stageCount=0;fixture.info.pStages=null;
+    var expected:[8192]u8=undefined;const packet=try create_graphics_pipeline(8,&fixture.info,&.{},44,0,46);const used=venus_graphics_general_test_create(&fixture.info,&expected);try std.testing.expectEqualSlices(u8,expected[0..used],packet.bytes[0..packet.used]);
+    library.libraryCount=65;library.pLibraries=@ptrFromInt(8);try std.testing.expectError(error.Invalid,create_graphics_pipeline(8,&fixture.info,&.{},44,0,46));
+    library.libraryCount=1;library.pLibraries=null;try std.testing.expectError(error.Invalid,create_graphics_pipeline(8,&fixture.info,&.{},44,0,46));
+    library.libraryCount=0;try std.testing.expectError(error.Invalid,create_graphics_pipeline(8,&fixture.info,&.{},44,0,46));
 }

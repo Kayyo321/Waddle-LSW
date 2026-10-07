@@ -9,17 +9,22 @@ pub const MaxSpecializationEntries = 32;
 pub const MaxSpecializationData = 1024;
 /// Maximum specialization packet contribution, including pointer/count/size/blob padding.
 pub const MaxSpecializationBytes = 8 + 4 + 8 + 16 * MaxSpecializationEntries + 8 + 8 + MaxSpecializationData;
-/// Owned chain topology of at most2 recognized nodes; addresses borrow caller records
+/// Maximum borrowed translated pipeline-library identities per graphics chain.
+/// Immutable quota, no ownership or shared mutation.
+pub const MaxPipelineLibraries = 64;
+/// Owned chain topology of at most3 recognized nodes; addresses borrow caller records
 /// until immediate encoding, no heap allocation or independent native lifetime.
 pub const chain_t = struct {
     /// Initialized forward count0..2.
     count: usize = 0,
     /// Borrowed accessible aligned SDK addresses, valid only during caller's synchronous call.
-    addresses: [2]usize = undefined,
+    addresses: [3]usize = undefined,
     /// Owned recognized tags in forward order.
-    tags: [2]u32 = undefined,
+    tags: [3]u32 = undefined,
     /// True when a dynamic rendering format signature is present.
     rendering: bool = false,
+    /// Number of translated library owners, copied for zero-stage link validation.
+    library_count: u32 = 0,
 };
 fn address(field: *const anyopaque) usize {
     return @as(*align(1) const usize, @ptrCast(field)).*;
@@ -31,7 +36,7 @@ fn elements(comptime value_t: type, field: *const anyopaque, count: usize) ![]co
     const pointer: [*]const value_t = @ptrFromInt(bits);
     return pointer[0..count];
 }
-/// Collect bounded optional pipeline chain, recognizing RenderingCreateInfo and Flags2.
+/// Collect bounded optional pipeline chain, recognizing RenderingCreateInfo, Flags2 and graphics LibraryCreateInfo.
 /// [in] first nullable borrowed accessible SDK chain; allow_rendering false for compute.
 /// Caller owns immutable full records/arrays until encoding. Invalid for unknown/duplicate/
 /// over-quota/misaligned nodes or malformed format arrays. No mutation/allocations/locks;
@@ -40,7 +45,7 @@ pub fn collect_chain(first: ?*const anyopaque, allow_rendering: bool) !chain_t {
     var result: chain_t = .{};
     var next: usize = if (first) |pointer| @intFromPtr(pointer) else 0;
     while (next != 0) {
-        if (result.count == 2 or next % @alignOf(c.VkBaseInStructure) != 0) return error.Invalid;
+        if (result.count == 3 or next % @alignOf(c.VkBaseInStructure) != 0) return error.Invalid;
         const header: *const c.VkBaseInStructure = @ptrFromInt(next);
         for (result.tags[0..result.count]) |tag| if (tag == header.sType) return error.Invalid;
         switch (header.sType) {
@@ -52,6 +57,14 @@ pub fn collect_chain(first: ?*const anyopaque, allow_rendering: bool) !chain_t {
                 result.rendering = true;
             },
             c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO => {},
+            c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR => {
+                if (!allow_rendering) return error.Invalid;
+                const info: *const c.VkPipelineLibraryCreateInfoKHR = @ptrFromInt(next);
+                if (info.libraryCount > MaxPipelineLibraries) return error.Invalid;
+                const libraries = try elements(c.VkPipeline, @ptrCast(&info.pLibraries), info.libraryCount);
+                for (libraries) |library| if (library == null) return error.Invalid;
+                result.library_count = info.libraryCount;
+            },
             else => return error.Invalid,
         }
         result.addresses[result.count] = next;
@@ -67,7 +80,7 @@ pub fn collect_chain(first: ?*const anyopaque, allow_rendering: bool) !chain_t {
 /// Caller validates enabled maintenance5 and actual effective flag semantics. Returns Limit
 /// for packet exhaustion, Invalid for changed input topology. No allocations/retained pointers.
 pub fn encode_chain(writer: anytype, chain: *const chain_t) !void {
-    if (chain.count > 2) return error.Invalid;
+    if (chain.count > 3) return error.Invalid;
     for (chain.tags[0..chain.count], chain.addresses[0..chain.count], 0..) |tag, bits, index| {
         if (bits == 0 or bits % @alignOf(c.VkBaseInStructure) != 0) return error.Invalid;
         const header: *const c.VkBaseInStructure = @ptrFromInt(bits);
@@ -84,6 +97,13 @@ pub fn encode_chain(writer: anytype, chain: *const chain_t) !void {
             c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO => {
                 const info: *const c.VkPipelineCreateFlags2CreateInfo = @ptrFromInt(chain.addresses[remaining]);
                 try writer.put(u64, info.flags);
+            },
+            c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR => {
+                const info: *const c.VkPipelineLibraryCreateInfoKHR = @ptrFromInt(chain.addresses[remaining]);
+                if (info.libraryCount > MaxPipelineLibraries or info.libraryCount != chain.library_count) return error.Invalid;
+                const libraries = try elements(c.VkPipeline, @ptrCast(&info.pLibraries), info.libraryCount);
+                try writer.put(u32, info.libraryCount); try writer.put(u64, libraries.len);
+                for (libraries) |library| { if (library == null) return error.Invalid; try writer.put(u64, @intFromPtr(library)); }
             },
             c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO => {
                 const info: *const c.VkPipelineRenderingCreateInfo = @ptrFromInt(chain.addresses[remaining]);
