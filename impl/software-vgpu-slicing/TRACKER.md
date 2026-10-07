@@ -402,7 +402,9 @@ Each row preserves its atomic commit, task/overall delta and evidence. Historica
 
 | `325422a` | feat(vgpu): own actual negotiated capability snapshots in the ICD; Complete three native/Windows/header link-list changes for capability sources captured in a8b639e. | #3 +0%; overall +0%. | Final complete binding checkpoint; no duplicated acceptance credit. |
 | `728d09a` | feat(vgpu): implement authenticated sequential TCP server ownership; Own actual-peer token/profile/capability/sequence/deadline/status/EOF/cancellation handling, preserving synthetic guest scope in units. | #3/#11 +0%; overall +0%. |8cycles;100%lines124/124,92.02%branches173/188; zero ASan/LSan/UBSan findings; actual Win11 exact handle baseline/SHA D4FCA66C77EAB9E84A117E9F2B1D04EB90BCA7DF3DE64641CA317AA6D55DD8B5; tcp_server_coverage.log, tcp_server_sanitizers_final.log, windows11_vm/tcp_server_peer_units.log; no cross-VM GPU credit. |
-| current (resolve by subject) | docs(vgpu): require production-only standalone codec coverage; Specify exact legacy fixture boundaries and meaningful malformed-owner rejection tests to repair true command coverage89.33%. | #3 +0%; overall +0%. | Historical91.67%included test callback; corrected production gate pending. |
+| `da4dfb5` | docs(vgpu): require production-only standalone codec coverage; Specify exact legacy fixture boundaries and meaningful malformed-owner rejection tests to repair true command coverage89.33%. | #3 +0%; overall +0%. | Historical91.67%included test callback; corrected production gate pending. |
+
+| current (resolve by subject) | chore(vgpu): require embedded ICD access checks in aggregate safety; Include the owned closure target in GNUmakefile and the aggregate ICD sanitizer dependency list. | #3 +0%; overall +0%. | make vgpu-icd-sanitizers passes legacy C/allocator/lifecycle/fault/state gates plus genuine10-file embedded access instrumentation; build/icd_capability_binding_aggregate_safety.log; separate codecs/Windows/GPU remain independent. |
 
 ## Historical acceptance notes
 

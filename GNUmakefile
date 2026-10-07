@@ -209,3 +209,5 @@ include scripts/vgpu_dxvk.mk
 include scripts/vgpu_workloads.mk
 
 include scripts/vgpu_tcp.mk
+
+include scripts/vgpu_icd_owned_safety.mk
