@@ -5289,3 +5289,113 @@ Independent guest request and receiver reply oracles freshly compile static-inli
 Fresh Debug/ReleaseSafe and independently crosslinked Windows native unit executables required; exact guest SHA/exit/actualunits retained, not compilation credit. >=90%productionline andbranch coverage for wire/native/helper functions; testfixtures/std excluded with exact boundaries and compiler guards accounted separately. Linux genuine owned LLVM access instrumentation retains entire originalDebug module guards/reverse bytes; exact source set native/wire/render3, all production declarations/instantiations/symbols/actualfinalaccesses accounted. Alltest bodies of selected helpers must emit real hooks; no new missing-runtime/lazy exceptions. Each private nativeOS unit run links exactlyTWO proposed Properties C oracles, once each; other unrelatedoracles absent. Native wire/runtime helpers have no Cexports in this proposal: do not invent a native production-object gate with absent bodies; genuine nativeOS Zigtest binary includes every tested production definition and independent Cinterop. C oracles have process ASan/LSan/UBSan, Zigstd testing allocator0 plus retained Debug checks. UniqueUTC/PID outputs, immutable source/object/report/IR/binary/executionhash receipt only after allproofs/suites pass; original180stool/256MiB bounds maintained. Root integrates CI privately after actualverified gates.
 
 Later public integration needs a separate contract for all7core1.1 queries, exact negotiated parser masks/schema/identity, cache ownership and support reductions, finite wholequery deadline/remaining budget, real direct/shared/Linux/Windows/GPU query proof and enlarged completeowned graph. PublicAPI/extension advertisement remains1.0/empty as currentruntime until honestly implemented semantic support. No support/feature booleans, driver identifiers, UUIDs, limits or extension availability are invented by these codecs.
+
+
+### Exact absolute native channel API prerequisite
+
+Adopted icd_memory lease; prerequisite only, all progress+0. Legacy relative
+channel semantics stay unchanged.
+
+#### Exact additive public interface
+
+`uint64_t venus_channel_time_ms(void)` returns the platform stream I/O monotonic
+millisecond clock with the existing nonzero origin: Linux CLOCK_MONOTONIC+1,
+Windows GetTickCount64+1. Zero means clock failure/overflow. It borrows nothing,
+allocates nothing, is thread-safe, and changes no session/channel. Absolute
+values are local to this platform clock; never send them over a transport.
+
+`venus_ring_status_t venus_channel_deadline_until(venus_channel_t *channel,
+uint64_t deadline_ms)` configures the exact supplied absolute value, never adds
+an interval to it and never refreshes it during partial frame/ring progress.
+Caller exclusively owns the initialized channel/session; borrowed stream,
+optional cancel flag and mapping outlive the call. No event allocation or I/O.
+The existing configured deadline stays unchanged on EVERY non-Ok result.
+
+Order is exact:
+1. Null/uninitialized channel, deadline zero, or partial received control frame:
+   RingInvalid; no clock/cancel sampling, session/ring/deadline change or I/O.
+2. Already SessionClosed: RingClosed; preserve reason, rings and deadline, no
+   sampling. No attempt to reopen or overwrite an earlier terminal reason.
+3. Nonzero acquire-load cancellation: close both rings with StopCancel,
+   RingCancelled; cancellation beats clock failure and temporal checks.
+4. Sample platform clock ONCE. Zero: close StopDisconnect, RingClosed.
+5. `deadline_ms <= now`: close StopDeadline, RingTimeout, before any publication.
+6. `deadline_ms - now > 60000`: RingInvalid without state changes. Subtraction
+   after ordering avoids overflow; no artificial addition or clamping.
+7. Store EXACT deadline_ms; RingOk. Remaining lifetime is 1..60000ms at this
+   sample. Subsequent existing framing/ring checks enforce this same value.
+
+This operation samples now only for validation; it does not resample a relative
+budget or shift the given deadline. Successful installation may expire before
+caller resumes; the next I/O check rejects it. Fields remain read-only publicly.
+
+#### Meaningful verification
+
+Real Linux nonblocking socket/ring fixtures: absolute handshake/backpressure;
+partial Offer/Stop bytes cannot install/extend a new deadline, canary incoming
+bytes/deadline unchanged; expiration of partial receive preserves staged bytes
+and closes rings; blocked ring transfer times out under exact installed deadline
+with no head publication or caller buffer mutation; already expired deadline
+closes before handshake/peer publication. Deterministic wrapped clock covers
+exact boundary, 60000/60001, UINT64_MAX subtraction, failure and cancellation
+precedence, no-call local validation, terminal preservation. Original relative
+cases continue to execute unchanged. Native Windows named-pipe fixture exercises
+same-clock installation, expiration/no I/O, cancellation, partial progress and
+ring timeout with balanced handle cleanup; CPU execution only with wddm lease.
+
+Compile Linux strict C11, C ASan+LSan+UBSan zero findings; run existing honest
+channel/stream production coverage without denominator changes (>=90% lines
+and branches for both). Use unique private outputs and preserve old default
+coverage directories intact before existing script executes. Strict Windows
+cross-link into unique private executable; no shared generated/runtime rebuild.
+
+Commit only header, channel source and relevant native/Windows fixture changes,
+under full flock /tmp/waddle_git_index.lock, initially empty index and exact
+owned staged paths. Save commands, source hashes, test logs and coverage under
+build/absolute_channel_checkpoint/. RPC and guest are separate future commits.
+
+
+### Exact absolute TCP-client callback prerequisite
+
+Root leases only client source, exchange_until prototype/header comments and
+matching client fixtures; no bootstrap/server/wire/socket/controller changes.
+Add venus_tcp_client_exchange_until(void *context, request, input, length,
+response, output, capacity, uint64_t deadline_ms) and typed
+venus_tcp_client_exchange_until_cancel(client,...,deadline_ms,cancel).
+All existing buffer/alias/nullability/admitted-subset/sole-thread/no-retention
+rules remain. Absolute values use venus_tcp_now_ms from the same local socket
+clock; never transmit them or alter TCPv1. Client configured cap remains immutable.
+Legacy exchange/exchange_cancel retain their existing relative semantics and
+share the existing framing/validation implementation with the new wrappers.
+
+Common validation order preserves alias guards before response clearing, local
+argument/payload limits, sticky loss, initialized/session/configured-cap checks.
+For absolute calls, zero deadline is local Invalid before sequence/serialization
+or private staging/I/O. Sequence exhaustion and request/expected-capacity checks
+retain their existing precedence. Absolute nonzero cancellation closes socket/
+poisons Cancelled before clock/temporal checks. Sample native clock once; zero
+or configured-cap addition overflow poisons Closed. Effective deadline is
+min(caller_absolute,now+configured_cap); already expired poisons Timeout before
+framing publication. One fixed value covers all partial header/payload sends and
+receives. Input staging may change privately only after preflight; input/output
+alias remains safe through staged transport. No heap, new owner fields, persistent
+budget or deadline reset. Zero/invalid local calls preserve session/sequence/loss.
+
+Complete valid ordinary response needs one final absolute-call clock/cancel check
+before output/response/next-sequence publication: cancellation poisons Cancelled;
+zero or backward clock poisons Closed; now>=effective_deadline poisons Timeout.
+This includes decoding/staging time and zero-byte replies. Terminal native/wire
+failure already poisons and publishes nothing. Ordinary valid Ok/Again/Invalid/
+Limit preserve original decoded operation semantics only before deadline, consume
+exactly one sequence, and retain validated zero-payload error responses. Late
+success/error receives no credit; socket closure marks uncertainty, not host
+retirement. Legacy calls add no post-clock/cancel sample or new status precedence.
+
+Require real peer tests for clipped configured cap, reused caller deadline across
+multiple exchanges, partial response header/payload expiry, zero/expired deadline,
+cancel/clock/no-I/O/sticky/output/sequence behavior and valid ordinary errors.
+Fault injection must target actual C calls, preserve peer isolation and verify
+all native resources return to baseline. Strict Linux/native Windows builds,
+actual Windows CPU execution,>=90% unchanged-denominator production coverage,
+C-ASan/LSan/UBSan zero findings required. Native Windows CPU work coordinates
+with wddm; no GPU/profile changes or large-query/public ICD claims.
