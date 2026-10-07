@@ -290,7 +290,12 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
     status = ID3D11Device_CreateQuery(device, &query_description, &completion);
     if (FAILED(status) || !completion)
         goto cleanup;
-    const FLOAT Color[] = {0.125f, 0.25f, 0.5f, 1.0f};
+    /* D3D11.3 section 3.2.3.6 permits 0.6 integer ULP when converting
+     * FLOAT to UNORM. Use byte centers so the exact readback oracle has
+     * one legal result; 0.5f lies between 127 and 128 in eight-bit UNORM.
+     * https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#FLOATtoUNORM
+     */
+    const FLOAT Color[] = {32.0f / 255.0f, 64.0f / 255.0f, 128.0f / 255.0f, 1.0f};
     stage="GPU clear and completion";
     puts("DXVK stage: record GPU clear.");fflush(stdout);
     ID3D11DeviceContext_ClearRenderTargetView(context, view, Color);
