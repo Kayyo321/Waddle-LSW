@@ -115,6 +115,7 @@ cleanup:
 static void wait_retired(const wchar_t *path,uint64_t identity) {
     char expected[64];int length=snprintf(expected,sizeof expected,"retired_session=%016llx\n",(unsigned long long)identity);
     if(length<=0 || (size_t)length>=sizeof expected)abort();
+    fprintf(stderr,"Retained native session=%016llx awaiting trusted actual worker retirement\n",(unsigned long long)identity);fflush(stderr);
     for(;;) {
         HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
         if(file!=INVALID_HANDLE_VALUE) {
