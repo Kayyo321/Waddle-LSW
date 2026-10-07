@@ -7,6 +7,8 @@ const features_wire = @import("venus_features_wire.zig");
 const properties_native = @import("venus_properties_native.zig");
 const properties_wire = @import("venus_properties_wire.zig");
 const extensions_wire = @import("venus_extensions_wire.zig");
+const wsi = @import("venus_wsi.zig");
+var wsi_state = wsi.state_t{};
 const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
 const compute_state = @import("venus_compute_state.zig");
@@ -207,6 +209,18 @@ const QueueTimelineTag: u32 = 1000384005;
 var ring_slots = [_]bool{false} ** 64;
 var device_caches = [_]device_cache_t{.{}} ** 16;
 var mutex = std.Thread.Mutex{};
+// Internal synchronous composition may nest Vulkan operations on one thread. The actual
+// process mutex stays held until the outermost operation retires; callbacks cannot reenter.
+threadlocal var lock_depth: usize = 0;
+fn lock_icd() void {
+    if (lock_depth == 0) mutex.lock();
+    lock_depth += 1;
+}
+fn unlock_icd() void {
+    std.debug.assert(lock_depth != 0);
+    lock_depth -= 1;
+    if (lock_depth == 0) mutex.unlock();
+}
 var namespace_id: u32 = 1;
 var command = std.mem.zeroes(c.venus_command_t);
 var objects = std.mem.zeroes(c.venus_objects_t);
@@ -237,6 +251,7 @@ const exchange_t = *const fn (
     usize,
 ) callconv(.C) c_int;
 fn clear() void {
+    wsi_state = .{};
     retire_extension_cache(0);
     for (&resource_states) |*state| release_shadow(state);
     mapping_slots = [_]bool{false} ** 64;
@@ -266,8 +281,8 @@ fn clear() void {
 }
 /// Borrow one exclusive negotiated backend; public header defines ownership/deadlines/threads.
 export fn venus_icd_bind(exchange: ?exchange_t, context: ?*anyopaque) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     const status = bind_locked(exchange, context);
     if (status != c.RingOk) return status;
     negotiated_capabilities = std.mem.zeroes(c.venus_capabilities_t);
@@ -276,8 +291,8 @@ export fn venus_icd_bind(exchange: ?exchange_t, context: ?*anyopaque) c_int {
 }
 /// Copy the actual negotiated profile; public header defines borrowed owners and failure preservation.
 export fn venus_icd_bind_capabilities(exchange: ?exchange_t, context: ?*anyopaque, capabilities: [*c]const c.venus_capabilities_t) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (capabilities == null or c.venus_capabilities_compatible(capabilities) != c.RingOk) return c.RingInvalid;
     const status = bind_locked(exchange, context);
     if (status != c.RingOk) return status;
@@ -291,6 +306,7 @@ fn bind_locked(exchange: ?exchange_t, context: ?*anyopaque) c_int {
     if (namespace_id == std.math.maxInt(u32)) return c.RingLimit;
     const status = c.venus_objects_init(&objects, &slots, slots.len, namespace_id, context);
     std.debug.assert(status == c.RingOk);
+    wsi_state.next_id = (@as(u64, namespace_id) << 32) | 1;
     namespace_id += 1;
     const initialized = c.venus_command_init(&command, exchange, context, &tx, tx.len, &rx, 4096);
     std.debug.assert(initialized == c.RingOk);
@@ -300,8 +316,8 @@ fn bind_locked(exchange: ?exchange_t, context: ?*anyopaque) c_int {
 /// Header defines borrowed callback lifetime and caller-owned receiver retirement on failure.
 export fn venus_icd_bind_timed(exchange_until: c.venus_icd_exchange_until_t, clock_ms: c.venus_icd_clock_t,
     context: ?*anyopaque, capabilities: [*c]const c.venus_capabilities_t, reply_bytes: u32) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (exchange_until == null or clock_ms == null or context == null or capabilities == null or
         command.exchange != null or reply_bytes != TimedReplyBytes or
         c.venus_capabilities_compatible(capabilities) != c.RingOk) return c.RingInvalid;
@@ -359,8 +375,8 @@ fn timed_adapter(context: ?*anyopaque, offered: [*c]const c.venus_request_t, inp
 }
 /// Release an empty binding; header specifies no frontend/resource teardown.
 export fn venus_icd_unbind() c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (objects.live_count != 0 or command.state == c.CommandSubmitted or
         command.state == c.CommandReading or command.state == c.CommandReady) return c.RingAgain;
     clear();
@@ -368,8 +384,8 @@ export fn venus_icd_unbind() c_int {
 }
 /// Reset only after the caller retires the old receiver; header defines cancellation boundary.
 export fn venus_icd_abandon() void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     clear();
 }
 /// External loader negotiation; accepts2..5, header defines preserved failure output.
@@ -442,8 +458,8 @@ fn create_instance(
     output: [*c]c.VkInstance,
 ) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (info == null or command.exchange == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -515,8 +531,8 @@ fn destroy_instance(
     allocator: [*c]const c.VkAllocationCallbacks,
 ) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     const handle = if (instance) |value| @intFromPtr(value) else return;
     const entry = cache(handle) orelse return;
     const record = object(handle, c.VK_OBJECT_TYPE_INSTANCE).?;
@@ -631,8 +647,8 @@ fn enumerate_physical(
     count: [*c]u32,
     output: [*c]c.VkPhysicalDevice,
 ) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (instance == null or count == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const entry = cache(@intFromPtr(instance.?)) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
@@ -730,8 +746,8 @@ fn format_properties(
     format: c.VkFormat,
     output: [*c]c.VkFormatProperties,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return;
     const reply = physical_request(physical, 4, &.{format}, null) orelse return;
     var reader = reader_t{ .bytes = reply };
@@ -759,8 +775,8 @@ fn image_properties(
     flags: c.VkImageCreateFlags,
     output: [*c]c.VkImageFormatProperties,
 ) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const reply = physical_request(
         physical,
@@ -798,8 +814,8 @@ fn queue_properties(
     count: [*c]u32,
     output: [*c]c.VkQueueFamilyProperties,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (count == null) return;
     const fill = output != null;
     if (fill and count.* == 0) return;
@@ -829,8 +845,8 @@ fn sparse_properties(
     count: [*c]u32,
     output: [*c]c.VkSparseImageFormatProperties,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (count == null) return;
     const fill = output != null;
     if (fill and count.* == 0) return;
@@ -920,8 +936,8 @@ fn create_device(
     output_address: ?*anyopaque,
 ) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     const output_raw = output_address orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (@intFromPtr(output_raw) % @alignOf(c.VkDevice) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
     const output: *c.VkDevice = @ptrCast(@alignCast(output_raw));
@@ -1015,8 +1031,8 @@ fn get_device_queue(
     index: u32,
     output: [*c]c.VkQueue,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return;
     output.* = null;
     if (device == null or lost != c.RingOk) return;
@@ -1066,8 +1082,8 @@ fn destroy_device(
     allocator: [*c]const c.VkAllocationCallbacks,
 ) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null) return;
     const entry = device_cache(@intFromPtr(device.?)) orelse return;
     const record = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
@@ -1079,6 +1095,9 @@ fn destroy_device(
         if (ticket.queue != 0 and object(ticket.queue, c.VK_OBJECT_TYPE_QUEUE).?.parent_id == record.id)
             return;
     }
+    const callback_context = wsi_callback_context_t{ .device = entry.handle };
+    const backend = wsi_backend(&callback_context);
+    wsi.destroy_device(&wsi_state, &backend, entry.handle);
     for (slots) |child| {
         if (child.id != 0 and child.parent_id == record.id and child.kind != c.VK_OBJECT_TYPE_QUEUE)
             return;
@@ -1153,8 +1172,8 @@ fn ensure_raw_extensions(physical: c.VkPhysicalDevice) !*const extension_cache_t
 /// and is freed on acknowledged parent destruction or receiver-retired abandonment.
 fn device_extensions(physical: c.VkPhysicalDevice, layer: [*c]const u8,
     count: [*c]u32, output: [*c]c.VkExtensionProperties) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null)
         return c.VK_ERROR_INITIALIZATION_FAILED;
     if (count == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -1266,8 +1285,8 @@ fn project_core(flags: *const [features_wire.CoreFlags]u32) [features_wire.CoreF
 /// payloads preserved. Invalid native input issues no command and leaves all bytes unchanged.
 /// Corrupt replies preserve output and poison binding. Mutex serialized, no heap/pointer retention.
 fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (!negotiated_capabilities_ready or physical_features_cache(physical) == null) return;
     const address = output_address orelse return;
     if (@intFromPtr(address) % @alignOf(c.VkPhysicalDeviceFeatures2) != 0) return;
@@ -1294,8 +1313,8 @@ fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv
 /// Invalid topology or malformed replies preserve all output bytes. No retained caller pointers;
 /// the process mutex serializes transport and publication. Unknown payloads remain untouched.
 fn properties2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (!negotiated_capabilities_ready or physical_features_cache(physical) == null) return;
     const address = output_address orelse return;
     if (@intFromPtr(address) % @alignOf(c.VkPhysicalDeviceProperties2) != 0) return;
@@ -1332,8 +1351,8 @@ fn project_properties(staged: *c.VkPhysicalDeviceProperties) void {
 /// Query actual host properties into caller storage only after bounded reply validation.
 /// Borrowed output, no allocations; errors preserve output and poison transport binding.
 fn properties(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceProperties) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return;
     var staged = raw_properties(physical) orelse return;
     project_properties(&staged);
@@ -1344,8 +1363,8 @@ fn properties(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceProper
 /// native core storage. Errors preserve output; malformed replies poison binding. Mutex serialized,
 /// no allocations or retained caller pointers; legacy mode uses command3 and never command147.
 fn features(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceFeatures) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return;
     var raw: [features_wire.CoreFlags]u32 = undefined;
     if (negotiated_capabilities_ready) {
@@ -1379,8 +1398,8 @@ fn memory(
     physical: c.VkPhysicalDevice,
     output: [*c]c.VkPhysicalDeviceMemoryProperties,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return;
     const reply = query(physical, 8) orelse return;
     if (c.venus_values_memory_decode(output, reply.ptr, reply.len) != c.RingOk) {
@@ -1441,8 +1460,8 @@ fn create_fence(
     output: [*c]c.VkFence,
 ) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO or
@@ -1488,8 +1507,8 @@ fn destroy_fence(
     allocator: [*c]const c.VkAllocationCallbacks,
 ) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or fence == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(
@@ -1530,8 +1549,8 @@ fn create_semaphore(
     output: [*c]c.VkSemaphore,
 ) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO or
@@ -1577,8 +1596,8 @@ fn destroy_semaphore(
     allocator: [*c]const c.VkAllocationCallbacks,
 ) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or semaphore == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(
@@ -1619,8 +1638,8 @@ fn create_buffer(
     output: [*c]c.VkBuffer,
 ) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null or
@@ -1704,8 +1723,8 @@ fn destroy_buffer(
     allocator: [*c]const c.VkAllocationCallbacks,
 ) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or buffer == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(
@@ -1752,8 +1771,8 @@ fn buffer_requirements(
     buffer: c.VkBuffer,
     output: [*c]c.VkMemoryRequirements,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or buffer == null or output == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(
@@ -1817,21 +1836,29 @@ fn create_render_resource(parent: *c.venus_object_t, kind: u32, writer: *render_
 /// Returns native result or local invalid/OOM/loss; mutex serialized and allocation-free.
 fn create_render_pass(device: c.VkDevice, info: [*c]const c.VkRenderPassCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkRenderPass) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var writer = graphics_wire.create_render_pass(@ptrCast(info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var staged_info = info.*;
+    var attachment: c.VkAttachmentDescription = undefined;
+    if (staged_info.attachmentCount == 1 and staged_info.pAttachments != null) {
+        attachment = staged_info.pAttachments[0];
+        if (attachment.initialLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) attachment.initialLayout = c.VK_IMAGE_LAYOUT_GENERAL;
+        if (attachment.finalLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) attachment.finalLayout = c.VK_IMAGE_LAYOUT_GENERAL;
+        staged_info.pAttachments = &attachment;
+    }
+    var writer = graphics_wire.create_render_pass(@ptrCast(&staged_info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
     var handle: u64 = 0;
     const result = create_render_resource(parent, c.VK_OBJECT_TYPE_RENDER_PASS, &writer, &handle);
     if (result != c.VK_SUCCESS) return result;
     const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_RENDER_PASS, parent.id).?);
-    state.render_format = info.*.pAttachments[0].format;
-    state.render_initial_layout = info.*.pAttachments[0].initialLayout;
-    state.render_final_layout = info.*.pAttachments[0].finalLayout;
+    state.render_format = staged_info.pAttachments[0].format;
+    state.render_initial_layout = staged_info.pAttachments[0].initialLayout;
+    state.render_final_layout = staged_info.pAttachments[0].finalLayout;
     output.* = @ptrFromInt(handle);
     return c.VK_SUCCESS;
 }
@@ -1840,8 +1867,8 @@ fn create_render_pass(device: c.VkDevice, info: [*c]const c.VkRenderPassCreateIn
 /// Copied pipeline/framebuffer compatibility survives retirement; mutex serialized.
 fn destroy_render_pass(device: c.VkDevice, pass: c.VkRenderPass, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (pass) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_RENDER_PASS, 83);
 }
 
@@ -1871,8 +1898,8 @@ fn framebuffer_attachment(view: *const c.venus_object_t, width: u32, height: u32
 /// Copies scalar compatibility/view identity; no array retention or heap allocation; mutex serialized.
 fn create_framebuffer(device: c.VkDevice, info: [*c]const c.VkFramebufferCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkFramebuffer) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -1900,8 +1927,8 @@ fn create_framebuffer(device: c.VkDevice, info: [*c]const c.VkFramebufferCreateI
 /// Void; invalid/pending ignored. Exact native acknowledgment retires owned token; mutex serialized.
 fn destroy_framebuffer(device: c.VkDevice, framebuffer: c.VkFramebuffer, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (framebuffer) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_FRAMEBUFFER, 81);
 }
 
@@ -1910,8 +1937,8 @@ fn destroy_framebuffer(device: c.VkDevice, framebuffer: c.VkFramebuffer, allocat
 /// Mutex serialized, allocation-free; owns identity until exact host destruction or retired abandon.
 fn create_image(device: c.VkDevice, info: [*c]const c.VkImageCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkImage) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -1961,8 +1988,8 @@ fn image_range_valid(state: *const resource_state_t, range: c.VkImageSubresource
 /// Mutex serialized, allocation-free; rejects format reinterpretation and unbound/invalid image ranges.
 fn create_image_view(device: c.VkDevice, info: [*c]const c.VkImageViewCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkImageView) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null or info.*.image == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2025,16 +2052,16 @@ fn destroy_render_resource(device: c.VkDevice, handle: u64, kind: u32, command_i
 /// Void; invalid/pending/live-view resources ignored. Mutex serialized; host loss retains ownership.
 fn destroy_image(device: c.VkDevice, image: c.VkImage, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (image) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_IMAGE, 55);
 }
 /// Destroy view and release image retention. [in] nullable tokens/callbacks borrowed for call.
 /// Void; invalid/pending ignored. Mutex serialized; exact host acknowledgment precedes retirement.
 fn destroy_image_view(device: c.VkDevice, view: c.VkImageView, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (view) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_IMAGE_VIEW, 58);
 }
 /// Create one core compute pipeline from same-device private shader/layout definitions.
@@ -2045,8 +2072,8 @@ fn destroy_image_view(device: c.VkDevice, view: c.VkImageView, allocator: [*c]co
 /// The successful pipeline owns a copied layout profile; shader/layout tokens may then retire.
 fn create_compute_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCache, count: u32, infos: [*c]const c.VkComputePipelineCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkPipeline) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     // Unsupported counts are rejected before accessing caller arrays or output extents.
     if (count != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2079,8 +2106,8 @@ fn create_compute_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCach
 /// Returns native/local invalid/OOM/loss; fixed shared64-pipeline quota, mutex serialized.
 fn create_graphics_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCache, count: u32, infos: [*c]const c.VkGraphicsPipelineCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkPipeline) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null or count != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or pipeline_cache != null or infos == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2116,16 +2143,16 @@ fn create_graphics_pipelines(device: c.VkDevice, pipeline_cache: c.VkPipelineCac
 /// Mutex serialized, no allocation; destroying recorded pipeline invalidates affected commands.
 fn destroy_pipeline(device: c.VkDevice, pipeline: c.VkPipeline, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (pipeline) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_PIPELINE, 67);
 }
 
 /// Query actual image requirements. [in] nullable private tokens borrowed; [out] nullable storage.
 /// Void; output preserved on failure. Mutex serialized, allocation-free; malformed host reply poisons binding.
 fn image_requirements(device: c.VkDevice, image: c.VkImage, output: [*c]c.VkMemoryRequirements) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or image == null or output == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(@intFromPtr(image.?), c.VK_OBJECT_TYPE_IMAGE, parent.id) orelse return;
@@ -2153,8 +2180,8 @@ fn query_image_requirements(device_id: u64, image_id: u64) ?c.VkMemoryRequiremen
 /// Bind image memory. [in] nonnull same-device image/memory tokens borrowed; offset checked/aligned.
 /// Returns host result/local invalid/loss; mutex serialized, allocation-free, relationship published on success.
 fn bind_image_memory(device: c.VkDevice, image: c.VkImage, memory_handle: c.VkDeviceMemory, offset: u64) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or image == null or memory_handle == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2186,8 +2213,8 @@ fn bind_image_memory(device: c.VkDevice, image: c.VkImage, memory_handle: c.VkDe
 /// Mutex serialized, allocation-free; host owns semantic SPIR-V validation and execution.
 fn create_shader_module(device: c.VkDevice, info: [*c]const c.VkShaderModuleCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkShaderModule) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2203,8 +2230,8 @@ fn create_shader_module(device: c.VkDevice, info: [*c]const c.VkShaderModuleCrea
 /// Void; invalid/inflight ignored. Mutex serialized, exact acknowledgment retires ownership.
 fn destroy_shader_module(device: c.VkDevice, shader: c.VkShaderModule, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (shader) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_SHADER_MODULE, 60);
 }
 
@@ -2213,8 +2240,8 @@ fn destroy_shader_module(device: c.VkDevice, shader: c.VkShaderModule, allocator
 /// Mutex serialized; fixed slot owns snapshot until exact native retirement or receiver abandon.
 fn create_descriptor_layout(device: c.VkDevice, info: [*c]const c.VkDescriptorSetLayoutCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorSetLayout) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2242,8 +2269,8 @@ fn create_descriptor_layout(device: c.VkDevice, info: [*c]const c.VkDescriptorSe
 /// Mutex serialized; fixed snapshot released only after exact native acknowledgment.
 fn destroy_descriptor_layout(device: c.VkDevice, layout: c.VkDescriptorSetLayout, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (layout) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, 73);
 }
 /// Create a pipeline layout with copied structural set/push definitions.
@@ -2252,8 +2279,8 @@ fn destroy_descriptor_layout(device: c.VkDevice, layout: c.VkDescriptorSetLayout
 /// Mutex serialized; fixed profile ownership ends after native retirement or receiver abandon.
 fn create_pipeline_layout(device: c.VkDevice, info: [*c]const c.VkPipelineLayoutCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkPipelineLayout) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2299,8 +2326,8 @@ fn create_pipeline_layout(device: c.VkDevice, info: [*c]const c.VkPipelineLayout
 /// Void; invalid/pending ignored. Mutex serialized; acknowledgment precedes slot scrubbing.
 fn destroy_pipeline_layout(device: c.VkDevice, layout: c.VkPipelineLayout, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     destroy_render_resource(device, if (layout) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, 69);
 }
 
@@ -2309,8 +2336,8 @@ fn destroy_pipeline_layout(device: c.VkDevice, layout: c.VkPipelineLayout, alloc
 /// Mutex serialized; owns native identity and quotas until destruction or retired abandon.
 fn create_descriptor_pool(device: c.VkDevice, info: [*c]const c.VkDescriptorPoolCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorPool) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2370,8 +2397,8 @@ fn retire_pool_sets(pool: *c.venus_object_t) void {
 /// flags must0. Returns native/local invalid/loss; pending sets prohibit reset.
 /// Mutex serialized, allocation-free; successful retirement scrubs profiles and refunds all quotas.
 fn reset_descriptor_pool(device: c.VkDevice, pool_handle: c.VkDescriptorPool, flags: u32) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (device == null or pool_handle == null or flags != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2390,8 +2417,8 @@ fn reset_descriptor_pool(device: c.VkDevice, pool_handle: c.VkDescriptorPool, fl
 /// Void; invalid/pending ignored. Mutex serialized; prefix acknowledgment precedes every release.
 fn destroy_descriptor_pool(device: c.VkDevice, pool_handle: c.VkDescriptorPool, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or pool_handle == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const pool = child_object(@intFromPtr(pool_handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id) orelse return;
@@ -2433,8 +2460,8 @@ fn rollback_descriptor_sets(records: []const *c.venus_object_t) void {
 /// [out] output nonnull handles[count], cleared for bounded failures; count>64 preserves storage.
 /// Returns native/local invalid/OOM/loss. Mutex serialized, allocation-free; uncertain IDs retained until abandon.
 fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSetAllocateInfo, output: [*c]c.VkDescriptorSet) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     defer @memset(&descriptor_allocation_snapshots, .{});
     if (info == null or output == null or info.*.descriptorSetCount == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
     const count = info.*.descriptorSetCount;
@@ -2493,8 +2520,8 @@ fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSe
 /// count0 is a no-op;1..64 requires accessible nonnull immutable sets and FREE_SET pool flag.
 /// Returns native/local invalid/loss. Mutex serialized; duplicates/foreign/pending reject before native work.
 fn free_descriptor_sets(device: c.VkDevice, pool_handle: c.VkDescriptorPool, count: u32, handles: [*c]const c.VkDescriptorSet) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (count == 0) return c.VK_SUCCESS;
     if (count > 64 or device == null or pool_handle == null or handles == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2581,8 +2608,8 @@ fn descriptor_span(profile: *profiles.descriptor_set_t, binding: u32, first: u32
 /// Writes validate actual limits, resource usage/bounds/parent. Pending destinations reject; copy sources may be pending/undefined.
 /// Core destination updates invalidate referencing recording/executable commands after acknowledgment.
 fn update_descriptor_sets(device: c.VkDevice, write_count: u32, writes: [*c]const c.VkWriteDescriptorSet, copy_count: u32, copies: [*c]const c.VkCopyDescriptorSet) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     defer @memset(&descriptor_update_snapshots, .{});
     defer @memset(std.mem.asBytes(&descriptor_wire_buffers), 0);
     if (device == null or lost != c.RingOk or write_count > 64 or copy_count > 64 or (write_count != 0 and writes == null) or (copy_count != 0 and copies == null) or (write_count == 0 and copy_count == 0)) return;
@@ -2663,8 +2690,8 @@ fn allocate_memory(
     output: [*c]c.VkDeviceMemory,
 ) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null or
@@ -2720,8 +2747,8 @@ fn free_memory(
     allocator: [*c]const c.VkAllocationCallbacks,
 ) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or memory_handle == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(
@@ -2817,8 +2844,8 @@ fn copy_mapping(state: *resource_state_t, offset: u64, size: u64, writing: bool)
 /// @return SUCCESS, MEMORY_MAP_FAILED for invalid bounds/export/quota, host OOM, or device loss.
 /// @note Mutex serialized. ICD owns shadow until unmap/free/abandon; caller externally synchronizes GPU access.
 fn map_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory, offset: u64, size: u64, flags: u32, output: [*c]?*anyopaque) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_MEMORY_MAP_FAILED;
     output.* = null;
     if (device == null or memory_handle == null or flags != 0) return c.VK_ERROR_MEMORY_MAP_FAILED;
@@ -2885,8 +2912,8 @@ fn map_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory, offset: u64, 
 /// @param[in] memory_handle Nullable token; no implicit noncoherent flush.
 /// @note Mutex serialized, allocation-free serializer; pointer expires upon return.
 fn unmap_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or memory_handle == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(@intFromPtr(memory_handle.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id) orelse return;
@@ -2920,8 +2947,8 @@ fn mapped_ranges(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMem
 /// @return SUCCESS, MEMORY_MAP_FAILED for local range/resource errors, or sticky DEVICE_LOST.
 /// @note Mutex serialized, no allocation; caller synchronizes GPU access and shadow writers.
 fn flush_memory(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMemoryRange) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     return mapped_ranges(device, count, ranges, true);
 }
 /// Acquire actual receiver allocation bytes into validated noncoherent shadow ranges.
@@ -2929,8 +2956,8 @@ fn flush_memory(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMemo
 /// @return SUCCESS, MEMORY_MAP_FAILED for local range/resource errors, or sticky DEVICE_LOST.
 /// @note Mutex serialized, no allocation; caller waits GPU completion before invalidation.
 fn invalidate_memory(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMemoryRange) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     return mapped_ranges(device, count, ranges, false);
 }
 /// Bind a buffer to memory_handle using actual host requirements and overflow-safe bounds.
@@ -2946,8 +2973,8 @@ fn bind_buffer_memory(
     memory_handle: c.VkDeviceMemory,
     offset: u64,
 ) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (device == null or buffer == null or memory_handle == null)
         return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -3010,8 +3037,8 @@ fn create_command_pool(
     output: [*c]c.VkCommandPool,
 ) callconv(.C) c_int {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     output.* = null;
     if (device == null or info == null or
@@ -3074,8 +3101,8 @@ fn destroy_command_pool(
     allocator: [*c]const c.VkAllocationCallbacks,
 ) callconv(.C) void {
     _ = allocator;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or pool == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(
@@ -3129,8 +3156,8 @@ fn destroy_command_pool(
 /// @return Host result, local initialization error or sticky device loss.
 /// @note Mutex serialized, allocation-free; caller ensures no child is pending GPU use.
 fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (device == null or pool == null or flags > 1) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(
@@ -3202,8 +3229,8 @@ fn allocate_command_buffers(
     info: [*c]const c.VkCommandBufferAllocateInfo,
     output: [*c]c.VkCommandBuffer,
 ) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (info == null or output == null or info.*.commandBufferCount == 0)
         return c.VK_ERROR_INITIALIZATION_FAILED;
     const native_info = info.*;
@@ -3297,8 +3324,8 @@ fn free_command_buffers(
     count: u32,
     buffers: [*c]const c.VkCommandBuffer,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (count == 0 or count > 64 or device == null or pool == null or buffers == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const pool_record = child_object(
@@ -3354,8 +3381,8 @@ fn begin_command_buffer(
     buffer: c.VkCommandBuffer,
     info: [*c]const c.VkCommandBufferBeginInfo,
 ) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (buffer == null or info == null or
         info.*.sType != c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO or info.*.pNext != null or
@@ -3413,8 +3440,8 @@ fn begin_command_buffer(
 /// @return Host result, local initialization error or sticky device loss.
 /// @note Mutex serialized, no allocation or ownership transfer.
 fn end_command_buffer(buffer: c.VkCommandBuffer) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (buffer == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const record = object(
@@ -3489,8 +3516,8 @@ fn graphics_family_supported(pool: *const c.venus_object_t) bool {
 /// Void; invalid recording/dependencies invalidate locally. Native acknowledgment precedes copied state
 /// and pass/framebuffer/view/image/memory references. No caller pointers retained; mutex serialized.
 fn begin_render_pass(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkRenderPassBeginInfo, contents: u32) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3553,8 +3580,8 @@ fn begin_render_pass(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkRend
 /// End active pass. [in] nullable borrowed command token. Invalid ordering invalidates locally.
 /// Void; exact opcode135 acknowledgment exits pass while preserving pipeline; mutex serialized.
 fn end_render_pass(command_buffer: c.VkCommandBuffer) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3572,8 +3599,8 @@ fn end_render_pass(command_buffer: c.VkCommandBuffer) callconv(.C) void {
 /// Void; requires active compatible pass and live graphics pipeline. No vertex arrays retained.
 /// Exact acknowledgment publishes pipeline reference; invalid ordering invalidates; mutex serialized.
 fn draw(command_buffer: c.VkCommandBuffer, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3601,8 +3628,8 @@ fn draw(command_buffer: c.VkCommandBuffer, vertex_count: u32, instance_count: u3
 /// Void; rejects inside pass, usages/sample/format/ranges before native work. Exact opcode116 ack
 /// retains image/buffer and both memories until GPU retirement. Mutex serialized, allocation-free.
 fn copy_image_to_buffer(command_buffer: c.VkCommandBuffer, image: c.VkImage, layout: u32, buffer: c.VkBuffer, count: u32, regions: [*c]const c.VkBufferImageCopy) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3623,7 +3650,8 @@ fn copy_image_to_buffer(command_buffer: c.VkCommandBuffer, image: c.VkImage, lay
     const image_state = resource_state(image_record);
     const buffer_state = resource_state(buffer_record);
     if (image_state.image_type != c.VK_IMAGE_TYPE_2D or image_state.image_samples != 1 or
-        (image_state.image_format != 37 and image_state.image_format != 44) or
+        (image_state.image_format != 37 and image_state.image_format != 43 and
+        image_state.image_format != 44 and image_state.image_format != 50) or
         image_state.image_usage & c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT == 0 or
         buffer_state.buffer_usage & c.VK_BUFFER_USAGE_TRANSFER_DST_BIT == 0) {
         state.command_state = .Invalid;
@@ -3674,8 +3702,8 @@ fn graphics_recording(state: *const resource_state_t) *graphics_state.recording_
 /// Void; malformed recording inputs invalidate. Mutex serialized, allocation-free.
 /// Exact opcode acknowledgment precedes local state and lifetime reference publication.
 fn bind_pipeline(command_buffer: c.VkCommandBuffer, point: u32, pipeline: c.VkPipeline) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3706,8 +3734,8 @@ fn bind_pipeline(command_buffer: c.VkCommandBuffer, point: u32, pipeline: c.VkPi
 /// Void; invalid recordings invalidate. Mutex serialized, allocation-free; owns copied definitions.
 fn bind_descriptor_sets(command_buffer: c.VkCommandBuffer, point: u32, layout: c.VkPipelineLayout, first: u32, count: u32, sets: [*c]const c.VkDescriptorSet, dynamic_count: u32, dynamic_offsets: [*c]const u32) callconv(.C) void {
     _ = dynamic_offsets;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3757,8 +3785,8 @@ fn bind_descriptor_sets(command_buffer: c.VkCommandBuffer, point: u32, layout: c
 /// Void; malformed recording invalidates. Mutex serialized, no allocation/retained input pointer.
 /// Copied per-stage compatibility and initialized-byte state publishes after native acknowledgment.
 fn push_constants(command_buffer: c.VkCommandBuffer, layout: c.VkPipelineLayout, stages: u32, offset: u32, size: u32, values: ?*const anyopaque) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3787,8 +3815,8 @@ fn push_constants(command_buffer: c.VkCommandBuffer, layout: c.VkPipelineLayout,
 /// Void; malformed recording invalidates. Mutex serialized, no allocation or pointer retention.
 /// Acknowledged dispatch retains consumed buffers; core descriptor updates invalidate recordings.
 fn dispatch(command_buffer: c.VkCommandBuffer, x: u32, y: u32, z: u32) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
     const state = resource_state(record);
@@ -3882,8 +3910,8 @@ fn fill_buffer(
     size: u64,
     data: u32,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(
         @intFromPtr(command_buffer.?),
@@ -3945,8 +3973,8 @@ fn copy_buffer(
     count: u32,
     regions: [*c]const c.VkBufferCopy,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(
         @intFromPtr(command_buffer.?),
@@ -4046,8 +4074,8 @@ fn update_buffer(
     data_size: u64,
     data: ?*const anyopaque,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(
         @intFromPtr(command_buffer.?),
@@ -4139,8 +4167,8 @@ fn pipeline_barrier(
     image_count: u32,
     image_barriers: [*c]const c.VkImageMemoryBarrier,
 ) callconv(.C) void {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk or command_buffer == null) return;
     const record = object(
         @intFromPtr(command_buffer.?),
@@ -4210,7 +4238,16 @@ fn pipeline_barrier(
             state.command_state = .Invalid;
             return;
         }
-        render_wire.image_barrier(&image_encoded, @ptrCast(&barrier), target.?.id) catch {
+        var translated = barrier;
+        var device_handle: u64 = 0;
+        for (device_caches) |entry| if (entry.handle != 0 and object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?.id == pool.parent_id) {
+            device_handle = entry.handle; break;
+        };
+        if (wsi.is_present_image(&wsi_state, device_handle, target.?.handle)) {
+            if (translated.oldLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) translated.oldLayout = c.VK_IMAGE_LAYOUT_GENERAL;
+            if (translated.newLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) translated.newLayout = c.VK_IMAGE_LAYOUT_GENERAL;
+        }
+        render_wire.image_barrier(&image_encoded, @ptrCast(&translated), target.?.id) catch {
             state.command_state = .Invalid;
             return;
         };
@@ -4271,8 +4308,8 @@ fn pipeline_barrier(
 /// @return Host result, initialization error or sticky device loss.
 /// @note Mutex serialized, allocation-free; changes state only after exact host success.
 fn reset_command_buffer(buffer: c.VkCommandBuffer, flags: u32) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (buffer == null or flags > 1) return c.VK_ERROR_INITIALIZATION_FAILED;
     const record = object(
@@ -4320,8 +4357,8 @@ fn encode_fences(command_id: u32, device: c.VkDevice, fences: []const c.VkFence)
 /// @return Host result, local device error or sticky transport/peer device loss.
 /// @note Mutex serialized, allocation-free; never resets a foreign device's object.
 fn reset_fences(device: c.VkDevice, count: u32, fences: [*c]const c.VkFence) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (count == 0 or count > 64 or fences == null) return c.VK_ERROR_DEVICE_LOST;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const writer = encode_fences(37, device, fences[0..count]) orelse return c.VK_ERROR_DEVICE_LOST;
@@ -4338,8 +4375,8 @@ fn reset_fences(device: c.VkDevice, count: u32, fences: [*c]const c.VkFence) cal
 /// @return VK_SUCCESS, VK_NOT_READY, negative host result or sticky device loss.
 /// @note Mutex serialized, no allocation; CPU completion does not imply signaled GPU fence.
 fn get_fence_status(device: c.VkDevice, fence: c.VkFence) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or fence == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const parent = object(
         @intFromPtr(device.?),
@@ -4363,8 +4400,8 @@ fn fence_status_locked(parent: *const c.venus_object_t, record: *const c.venus_o
 }
 
 fn wait_round(device: c.VkDevice, fences: []const c.VkFence, all: u32) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     var writer = encode_fences(39, device, fences) orelse return c.VK_ERROR_DEVICE_LOST;
     writer.put(u32, all);
@@ -4403,8 +4440,8 @@ fn wait_fences(
     var snapshot: [64]c.VkFence = undefined;
     @memcpy(snapshot[0..count], fences[0..count]);
     var timer = std.time.Timer.start() catch {
-        mutex.lock();
-        defer mutex.unlock();
+        lock_icd();
+        defer unlock_icd();
         return failure(c.RingInvalid);
     };
     while (true) {
@@ -4458,9 +4495,9 @@ fn ring_idle(ring: u32, timer: *std.time.Timer) c_int {
         } else if (status != c.RingAgain) {
             return failure(status);
         }
-        mutex.unlock();
+        unlock_icd();
         if (status == c.RingAgain) std.time.sleep(std.time.ns_per_ms) else std.Thread.yield() catch {};
-        mutex.lock();
+        lock_icd();
     }
 }
 /// Wait for actual retirement of every initialized queue in the borrowed device.
@@ -4468,8 +4505,8 @@ fn ring_idle(ring: u32, timer: *std.time.Timer) c_int {
 /// @return VK_SUCCESS or sticky VK_ERROR_DEVICE_LOST on invalid/clock/deadline/peer errors.
 /// @note Mutex serialized; no allocation; pending GPU loss requires receiver retirement/abandon.
 fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const entry = device_cache(@intFromPtr(device.?)) orelse return c.VK_ERROR_DEVICE_LOST;
     const record = object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?;
@@ -4497,8 +4534,8 @@ fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
 /// @note No allocation; mutex held per exchange, released between polls so other queues progress.
 /// Active idle reference prevents queue/device destruction and same-queue submission.
 fn queue_wait_idle(queue: c.VkQueue) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (queue == null or lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const record = object(
         @intFromPtr(queue.?),
@@ -4536,8 +4573,8 @@ fn queue_submit(
     submits: [*c]const c.VkSubmitInfo,
     fence: c.VkFence,
 ) callconv(.C) c_int {
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     if (queue == null or (count != 0 and submits == null)) return c.VK_ERROR_INITIALIZATION_FAILED;
     if (count > 16) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -4679,6 +4716,11 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
     const Entries = .{
         .{ "vkGetDeviceProcAddr", &get_device_proc },
         .{ "vkDestroyDevice", &destroy_device },
+        .{ "vkCreateSwapchainKHR", &create_swapchain },
+        .{ "vkDestroySwapchainKHR", &destroy_swapchain },
+        .{ "vkGetSwapchainImagesKHR", &swapchain_images },
+        .{ "vkAcquireNextImageKHR", &acquire_next_image },
+        .{ "vkQueuePresentKHR", &queue_present },
         .{ "vkGetDeviceQueue", &get_device_queue },
         .{ "vkDeviceWaitIdle", &device_wait_idle },
         .{ "vkQueueWaitIdle", &queue_wait_idle },
@@ -4756,8 +4798,8 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
 /// @return Borrowed static function pointer or NULL for unsupported/invalid inputs.
 fn get_device_proc(device: c.VkDevice, name: [*c]const u8) callconv(.C) c.PFN_vkVoidFunction {
     const valid_name = bounded_name(name) orelse return null;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (device == null or device_cache(@intFromPtr(device.?)) == null) return null;
     return device_proc(valid_name);
 }
@@ -4781,6 +4823,12 @@ fn physical_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkGetPhysicalDeviceSparseImageFormatProperties", &sparse_properties },
         .{ "vkEnumerateDeviceExtensionProperties", &device_extensions },
         .{ "vkCreateDevice", &create_device },
+        .{ "vkCreateWin32SurfaceKHR", &create_win32_surface },
+        .{ "vkDestroySurfaceKHR", &destroy_surface },
+        .{ "vkGetPhysicalDeviceSurfaceSupportKHR", &surface_support },
+        .{ "vkGetPhysicalDeviceSurfaceCapabilitiesKHR", &surface_capabilities },
+        .{ "vkGetPhysicalDeviceSurfaceFormatsKHR", &surface_formats },
+        .{ "vkGetPhysicalDeviceSurfacePresentModesKHR", &surface_modes },
     };
     inline for (Entries) |entry| if (std.mem.eql(u8, name, entry[0])) return @ptrCast(entry[1]);
     return null;
@@ -4791,8 +4839,8 @@ export fn venus_icd_get_instance_proc_addr(
     optional_name: [*c]const u8,
 ) c.PFN_vkVoidFunction {
     const name = bounded_name(optional_name) orelse return null;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (instance != null and cache(@intFromPtr(instance.?)) == null) return null;
     const Globals = .{
         .{ "vkGetInstanceProcAddr", &venus_icd_get_instance_proc_addr },
@@ -4816,8 +4864,8 @@ export fn venus_icd_get_physical_proc_addr(
     optional_name: [*c]const u8,
 ) c.PFN_vkVoidFunction {
     const name = bounded_name(optional_name) orelse return null;
-    mutex.lock();
-    defer mutex.unlock();
+    lock_icd();
+    defer unlock_icd();
     if (instance == null or cache(@intFromPtr(instance.?)) == null) return null;
     return physical_proc(name);
 }
@@ -6698,4 +6746,353 @@ test "timed callback completion at whole deadline is sticky and never publishes 
     var length: usize = 0;
     try std.testing.expectEqual(@as(c_int, c.RingTimeout), c.venus_command_take(&command, &view, &length));
     try std.testing.expect(view == null and length == 0);
+}
+
+// WSI callbacks borrow one stack-owned device/queue context for this synchronous transaction.
+const wsi_callback_context_t = struct { device: u64, queue: c.VkQueue = null };
+fn wsi_device(context: ?*anyopaque) c.VkDevice {
+    return @ptrFromInt(@as(*const wsi_callback_context_t, @ptrCast(@alignCast(context.?))).device);
+}
+fn wsi_queue(context: ?*anyopaque) c.VkQueue {
+    const private: *const wsi_callback_context_t = @ptrCast(@alignCast(context.?));
+    if (private.queue != null) return private.queue;
+    const device = wsi_device(context);
+    const entry = device_cache(@intFromPtr(device.?)) orelse return null;
+    if (entry.family_count == 0) return null;
+    var queue: c.VkQueue = null;
+    get_device_queue(device, entry.families[0], 0, &queue);
+    return queue;
+}
+fn wsi_memory_type(device: c.VkDevice, bits: u32, flags: u32) ?u32 {
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return null;
+    var physical: c.VkPhysicalDevice = null;
+    for (slots) |entry| if (entry.kind == c.VK_OBJECT_TYPE_PHYSICAL_DEVICE and entry.id == parent.parent_id) {
+        physical = @ptrFromInt(entry.handle);
+        break;
+    };
+    const reply = query(physical, 8) orelse return null;
+    var properties_value: c.VkPhysicalDeviceMemoryProperties = undefined;
+    if (c.venus_values_memory_decode(&properties_value, reply.ptr, reply.len) != c.RingOk) {
+        _ = failure(c.RingCorrupt);
+        return null;
+    }
+    for (properties_value.memoryTypes[0..properties_value.memoryTypeCount], 0..) |value, index| {
+        if (bits & (@as(u32, 1) << @as(u5, @intCast(index))) != 0 and value.propertyFlags & flags == flags)
+            return @intCast(index);
+    }
+    return null;
+}
+fn wsi_create_image(context: ?*anyopaque, width: u32, height: u32, format: u32, usage: u32,
+    image_out: *u64, memory_out: *u64) callconv(.C) c_int {
+    const device = wsi_device(context);
+    const info = c.VkImageCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = c.VK_IMAGE_TYPE_2D, .format = format, .extent = .{ .width = width, .height = height, .depth = 1 },
+        .mipLevels = 1, .arrayLayers = 1, .samples = c.VK_SAMPLE_COUNT_1_BIT, .tiling = c.VK_IMAGE_TILING_OPTIMAL,
+        .usage = usage | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = c.VK_IMAGE_LAYOUT_UNDEFINED };
+    var image: c.VkImage = null;
+    var result = create_image(device, &info, null, &image);
+    if (result != c.VK_SUCCESS) return result;
+    var requirements = std.mem.zeroes(c.VkMemoryRequirements);
+    image_requirements(device, image, &requirements);
+    const index = wsi_memory_type(device, requirements.memoryTypeBits, 0) orelse {
+        destroy_image(device, image, null);
+        return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    };
+    const allocation = c.VkMemoryAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = requirements.size, .memoryTypeIndex = index };
+    var memory_handle: c.VkDeviceMemory = null;
+    result = allocate_memory(device, &allocation, null, &memory_handle);
+    if (result != c.VK_SUCCESS) { destroy_image(device, image, null); return result; }
+    result = bind_image_memory(device, image, memory_handle, 0);
+    if (result != c.VK_SUCCESS) {
+        destroy_image(device, image, null);
+        free_memory(device, memory_handle, null);
+        return result;
+    }
+    image_out.* = @intFromPtr(image.?);
+    memory_out.* = @intFromPtr(memory_handle.?);
+    return c.VK_SUCCESS;
+}
+fn wsi_destroy_image(context: ?*anyopaque, image: u64, memory_handle: u64) callconv(.C) void {
+    const device = wsi_device(context);
+    destroy_image(device, @ptrFromInt(image), null);
+    free_memory(device, @ptrFromInt(memory_handle), null);
+}
+fn wsi_acquire(context: ?*anyopaque, semaphore: u64, fence: u64) callconv(.C) c_int {
+    const queue = wsi_queue(context);
+    if (queue == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const signal: c.VkSemaphore = if (semaphore != 0) @ptrFromInt(semaphore) else null;
+    const submission = c.VkSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .signalSemaphoreCount = if (signal != null) 1 else 0, .pSignalSemaphores = if (signal != null) &signal else null };
+    return queue_submit(queue, 1, &submission, if (fence != 0) @ptrFromInt(fence) else null);
+}
+fn wsi_readback(context: ?*anyopaque, image_handle: u64, width: u32, height: u32, _: u32,
+    pixels: [*]u8, length: usize, wait_count: u32, waits: [*c]const c.VkSemaphore) callconv(.C) c_int {
+    const device = wsi_device(context);
+    const queue = wsi_queue(context);
+    if (queue == null or wait_count > 64 or length > MaxMappedBytes) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    const image: c.VkImage = @ptrFromInt(image_handle);
+    const queue_family = resource_state(object(@intFromPtr(queue.?), c.VK_OBJECT_TYPE_QUEUE).?).queue_family;
+    const buffer_info = c.VkBufferCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = length, .usage = c.VK_BUFFER_USAGE_TRANSFER_DST_BIT, .sharingMode = c.VK_SHARING_MODE_EXCLUSIVE };
+    var buffer: c.VkBuffer = null;
+    var result = create_buffer(device, &buffer_info, null, &buffer);
+    if (result != c.VK_SUCCESS) return result;
+    defer destroy_buffer(device, buffer, null);
+    var requirements = std.mem.zeroes(c.VkMemoryRequirements);
+    buffer_requirements(device, buffer, &requirements);
+    const index = wsi_memory_type(device, requirements.memoryTypeBits,
+        c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) orelse
+        return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    const allocation = c.VkMemoryAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = requirements.size, .memoryTypeIndex = index };
+    var memory_handle: c.VkDeviceMemory = null;
+    result = allocate_memory(device, &allocation, null, &memory_handle);
+    if (result != c.VK_SUCCESS) return result;
+    // Buffer binding must be removed before freeing its backing memory.
+    defer {
+        destroy_buffer(device, buffer, null);
+        buffer = null;
+        free_memory(device, memory_handle, null);
+    }
+    result = bind_buffer_memory(device, buffer, memory_handle, 0);
+    if (result != c.VK_SUCCESS) return result;
+    const pool_info = c.VkCommandPoolCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = c.VK_COMMAND_POOL_CREATE_TRANSIENT_BIT, .queueFamilyIndex = queue_family };
+    var pool: c.VkCommandPool = null;
+    result = create_command_pool(device, &pool_info, null, &pool);
+    if (result != c.VK_SUCCESS) return result;
+    defer destroy_command_pool(device, pool, null);
+    const command_info = c.VkCommandBufferAllocateInfo{ .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = pool, .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1 };
+    var command_buffer: c.VkCommandBuffer = null;
+    result = allocate_command_buffers(device, &command_info, &command_buffer);
+    if (result != c.VK_SUCCESS) return result;
+    defer free_command_buffers(device, pool, 1, &command_buffer);
+    const begin_info = c.VkCommandBufferBeginInfo{ .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = c.VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
+    result = begin_command_buffer(command_buffer, &begin_info);
+    if (result != c.VK_SUCCESS) return result;
+    const barrier = c.VkImageMemoryBarrier{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = c.VK_ACCESS_MEMORY_WRITE_BIT, .dstAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout = c.VK_IMAGE_LAYOUT_GENERAL, .newLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .srcQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = c.VK_QUEUE_FAMILY_IGNORED,
+        .image = image, .subresourceRange = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1 } };
+    pipeline_barrier(command_buffer, c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, c.VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, null, 0, null, 1, &barrier);
+    const region = c.VkBufferImageCopy{ .imageSubresource = .{ .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT, .layerCount = 1 },
+        .imageExtent = .{ .width = width, .height = height, .depth = 1 } };
+    copy_image_to_buffer(command_buffer, image, c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
+    var restore = barrier;
+    restore.srcAccessMask = c.VK_ACCESS_TRANSFER_READ_BIT;
+    restore.dstAccessMask = c.VK_ACCESS_MEMORY_READ_BIT;
+    restore.oldLayout = c.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    restore.newLayout = c.VK_IMAGE_LAYOUT_GENERAL;
+    pipeline_barrier(command_buffer, c.VK_PIPELINE_STAGE_TRANSFER_BIT, c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        0, 0, null, 0, null, 1, &restore);
+    result = end_command_buffer(command_buffer);
+    if (result != c.VK_SUCCESS) return result;
+    var stages = [_]u32{c.VK_PIPELINE_STAGE_TRANSFER_BIT} ** 64;
+    const submission = c.VkSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = wait_count, .pWaitSemaphores = waits, .pWaitDstStageMask = &stages,
+        .commandBufferCount = 1, .pCommandBuffers = &command_buffer };
+    result = queue_submit(queue, 1, &submission, null);
+    if (result != c.VK_SUCCESS) return result;
+    result = queue_wait_idle(queue);
+    if (result != c.VK_SUCCESS) return result;
+    var mapping: ?*anyopaque = null;
+    result = map_memory(device, memory_handle, 0, length, 0, &mapping);
+    if (result != c.VK_SUCCESS) return result;
+    defer unmap_memory(device, memory_handle);
+    const range = c.VkMappedMemoryRange{ .sType = c.VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+        .memory = memory_handle, .offset = 0, .size = length };
+    result = invalidate_memory(device, 1, &range);
+    if (result != c.VK_SUCCESS) return result;
+    @memcpy(pixels[0..length], @as([*]const u8, @ptrCast(mapping.?))[0..length]);
+    return c.VK_SUCCESS;
+}
+fn wsi_backend(context: *const wsi_callback_context_t) wsi.backend_t {
+    return .{ .context = @constCast(context), .create = wsi_create_image, .destroy = wsi_destroy_image,
+        .acquire = wsi_acquire, .readback = @ptrCast(&wsi_readback) };
+}
+
+// Native Win32 ABI represented without requiring Windows SDK typedefs on Linux builds.
+const win32_surface_info_t = extern struct {
+    type_tag: u32, next: ?*const anyopaque, flags: u32, instance: ?*anyopaque, window: ?*anyopaque,
+};
+/// Create a surface borrowing the caller HWND until destruction; no native window ownership transfer.
+fn create_win32_surface(instance: c.VkInstance, info_address: ?*const anyopaque,
+    _: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkSurfaceKHR) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (instance == null or info_address == null or @intFromPtr(info_address.?) % @alignOf(win32_surface_info_t) != 0)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    const owner = object(@intFromPtr(instance.?), c.VK_OBJECT_TYPE_INSTANCE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const info: *const win32_surface_info_t = @ptrCast(@alignCast(info_address.?));
+    if (info.type_tag != c.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR or info.next != null or info.flags != 0 or info.window == null)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    var id: u64 = 0;
+    const result = wsi.create_surface(&wsi_state, owner.id, @intFromPtr(info.window.?), &id);
+    if (result == c.VK_SUCCESS) output.* = @ptrFromInt(id);
+    return result;
+}
+/// Destroy only a surface owned by this live instance; borrowed native window remains caller owned.
+fn destroy_surface(instance: c.VkInstance, surface: c.VkSurfaceKHR, _: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (instance == null or surface == null) return;
+    const owner = object(@intFromPtr(instance.?), c.VK_OBJECT_TYPE_INSTANCE) orelse return;
+    _ = wsi.destroy_surface(&wsi_state, owner.id, @intFromPtr(surface.?));
+}
+fn surface_owned(physical: c.VkPhysicalDevice, surface: c.VkSurfaceKHR) bool {
+    if (physical == null or surface == null) return false;
+    const owner = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return false;
+    return wsi.supports_surface(&wsi_state, owner.parent_id, @intFromPtr(surface.?));
+}
+/// Report presentation support for a live surface and existing graphics queue family; borrowed output.
+fn surface_support(physical: c.VkPhysicalDevice, family: u32, surface: c.VkSurfaceKHR, output: [*c]u32) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (output == null or !surface_owned(physical, surface)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    var count: u32 = 64;
+    var values: [64]c.VkQueueFamilyProperties = undefined;
+    queue_properties(physical, &count, &values);
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    output.* = @intFromBool(family < count and values[family].queueCount != 0 and
+        values[family].queueFlags & c.VK_QUEUE_GRAPHICS_BIT != 0);
+    return c.VK_SUCCESS;
+}
+/// Return synchronized actual HWND dimensions and bounded swapchain capabilities; caller owns output.
+fn surface_capabilities(physical: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, output: [*c]c.VkSurfaceCapabilitiesKHR) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (output == null or !surface_owned(physical, surface)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    return wsi.capabilities(&wsi_state, @intFromPtr(surface.?), @ptrCast(output));
+}
+/// Enumerate native sink byte formats; count/fill output borrowed for this synchronous call.
+fn surface_formats(physical: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, count: [*c]u32, output: [*c]c.VkSurfaceFormatKHR) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (count == null or !surface_owned(physical, surface)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    return wsi.formats(&wsi_state, @intFromPtr(surface.?), @ptrCast(count), if (output != null) @ptrCast(output) else null);
+}
+/// Enumerate native sink presentation timing; output/count borrowed, no allocation.
+fn surface_modes(physical: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, count: [*c]u32, output: [*c]c.VkPresentModeKHR) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (count == null or !surface_owned(physical, surface)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    return wsi.modes(&wsi_state, @intFromPtr(surface.?), @ptrCast(count), if (output != null) @ptrCast(output) else null);
+}
+/// Create a device-owned swapchain with real bound host images; callbacks publish only complete owners.
+fn create_swapchain(device: c.VkDevice, info: [*c]const c.VkSwapchainCreateInfoKHR,
+    _: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkSwapchainKHR) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or device_cache(@intFromPtr(device.?)) == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const handle = @intFromPtr(device.?);
+    const device_record = object(handle, c.VK_OBJECT_TYPE_DEVICE).?;
+    var physical: c.VkPhysicalDevice = null;
+    for (slots) |candidate| if (candidate.kind == c.VK_OBJECT_TYPE_PHYSICAL_DEVICE and candidate.id == device_record.parent_id) {
+        physical = @ptrFromInt(candidate.handle); break;
+    };
+    if (!surface_owned(physical, info.*.surface)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    const callback_context = wsi_callback_context_t{ .device = handle };
+    const backend = wsi_backend(&callback_context);
+    var id: u64 = 0;
+    const result = wsi.create_swapchain(&wsi_state, &backend, handle, @ptrCast(info), &id);
+    if (result == c.VK_SUCCESS) output.* = @ptrFromInt(id);
+    return result;
+}
+/// Destroy owned swapchain images before their memory; uncertain transport retains opaque core owners.
+fn destroy_swapchain(device: c.VkDevice, chain: c.VkSwapchainKHR, _: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (device == null or chain == null or device_cache(@intFromPtr(device.?)) == null) return;
+    const handle = @intFromPtr(device.?);
+    const callback_context = wsi_callback_context_t{ .device = handle };
+    const backend = wsi_backend(&callback_context);
+    wsi.destroy_swapchain(&wsi_state, &backend, handle, @intFromPtr(chain.?));
+}
+/// Enumerate immutable borrowed host-image handles; image lifetime follows swapchain ownership.
+fn swapchain_images(device: c.VkDevice, chain: c.VkSwapchainKHR, count: [*c]u32, output: [*c]c.VkImage) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (device == null or chain == null or count == null or device_cache(@intFromPtr(device.?)) == null)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    return wsi.get_images(&wsi_state, @intFromPtr(device.?), @intFromPtr(chain.?), @ptrCast(count),
+        if (output != null) @ptrCast(output) else null);
+}
+/// Acquire one owned image and signal requested real Vulkan sync objects before publishing its index.
+fn acquire_next_image(device: c.VkDevice, chain: c.VkSwapchainKHR, timeout: u64,
+    semaphore: c.VkSemaphore, fence: c.VkFence, index: [*c]u32) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (device == null or chain == null or index == null or device_cache(@intFromPtr(device.?)) == null)
+        return c.VK_ERROR_INITIALIZATION_FAILED;
+    const handle = @intFromPtr(device.?);
+    const callback_context = wsi_callback_context_t{ .device = handle };
+    const backend = wsi_backend(&callback_context);
+    return wsi.acquire_next(&wsi_state, &backend, handle, @intFromPtr(chain.?), timeout,
+        if (semaphore) |value| @intFromPtr(value) else 0, if (fence) |value| @intFromPtr(value) else 0, @ptrCast(index));
+}
+/// Present real GPU pixels after consuming wait semaphores and synchronous completion. Temporary
+/// host-visible buffers/maps are deterministically retired on success; failed transport requires abandonment.
+fn queue_present(queue: c.VkQueue, info: [*c]const c.VkPresentInfoKHR) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (queue == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR or info.*.pNext != null or
+        info.*.swapchainCount == 0 or info.*.swapchainCount > wsi.MaxSwapchains or info.*.pSwapchains == null or
+        info.*.pImageIndices == null or info.*.waitSemaphoreCount > 64 or
+        (info.*.waitSemaphoreCount != 0 and info.*.pWaitSemaphores == null)) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const owner = object(@intFromPtr(queue.?), c.VK_OBJECT_TYPE_QUEUE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const device = device_cache_for_queue(owner);
+    const handle = device.handle;
+    const callback_context = wsi_callback_context_t{ .device = handle, .queue = queue };
+    const backend = wsi_backend(&callback_context);
+    if (info.*.waitSemaphoreCount != 0) {
+        var stages = [_]u32{c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} ** 64;
+        const wait_submission = c.VkSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = info.*.waitSemaphoreCount, .pWaitSemaphores = info.*.pWaitSemaphores,
+            .pWaitDstStageMask = &stages };
+        const submitted = queue_submit(queue, 1, &wait_submission, null);
+        if (submitted != c.VK_SUCCESS) return submitted;
+        const completed = queue_wait_idle(queue);
+        if (completed != c.VK_SUCCESS) return completed;
+    }
+    var overall: c_int = c.VK_SUCCESS;
+    for (info.*.pSwapchains[0..info.*.swapchainCount], info.*.pImageIndices[0..info.*.swapchainCount], 0..) |chain, index, item| {
+        const waits: []const c.VkSemaphore = &.{}; // Shared wait objects were consumed once above.
+        const result = if (chain != null) wsi.present(&wsi_state, &backend, MappingAllocator, handle,
+            @intFromPtr(chain.?), index, @ptrCast(waits)) else c.VK_ERROR_INITIALIZATION_FAILED;
+        if (info.*.pResults != null) info.*.pResults[item] = result;
+        if (overall == c.VK_SUCCESS and result != c.VK_SUCCESS) overall = result;
+    }
+    return overall;
+}
+
+test "public WSI surface namespace native queries and nested lock ownership preserve HWND lifetime" {
+    var fixture = feature_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    const instance: c.VkInstance = @ptrFromInt(caches[0].handle);
+    const info = win32_surface_info_t{ .type_tag = c.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+        .next = null, .flags = 0, .instance = @ptrFromInt(1), .window = @ptrFromInt(1) };
+    var surface: c.VkSurfaceKHR = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_win32_surface(instance, &info, null, &surface));
+    var values = std.mem.zeroes(c.VkSurfaceCapabilitiesKHR);
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_capabilities(physical, surface, &values));
+    try std.testing.expectEqual(@as(u32, 64), values.currentExtent.width);
+    var count: u32 = 0;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), surface_formats(physical, surface, &count, null));
+    try std.testing.expect(count >= 2);
+    var formats: [4]c.VkSurfaceFormatKHR = undefined;
+    count = 1;
+    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), surface_formats(physical, surface, &count, &formats));
+    try std.testing.expectEqual(@as(u32, 1), count);
+    try std.testing.expectEqual(@as(usize, 0), lock_depth);
+    lock_icd();
+    lock_icd();
+    try std.testing.expectEqual(@as(usize, 2), lock_depth);
+    unlock_icd();
+    try std.testing.expectEqual(@as(usize, 1), lock_depth);
+    unlock_icd();
+    destroy_surface(instance, surface, null);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_SURFACE_LOST_KHR), surface_capabilities(physical, surface, &values));
+    try std.testing.expectEqual(@as(u32, 0), fixture.commands);
 }
