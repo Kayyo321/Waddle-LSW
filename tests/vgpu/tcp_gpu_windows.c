@@ -2,7 +2,8 @@
  * Probe bodies below are immutable byte-for-byte copies from worker_presented.c
  * SHA256 a68383c92faad311bdbe885fbb7da57622144d08164553469322a63fce953968.
  * No mock exchange/capability/renderer is installed. Public API stays1.0 with no
- * enabled extension or feature; physical acceptance requires independent host proof.
+ * enabled feature. triangle_queries legally enables KHR physical queries; other
+ * workloads retain no extensions. Physical acceptance requires independent host proof.
  */
 #define COBJMACROS
 #define VgpuIcdLoader
@@ -657,6 +658,39 @@ cleanup:
     return result;
 }
 
+/** @brief Query actual modern physical wire paths without enabling unimplemented features.
+ * @param[in] physical Live borrowed device, lookup Live borrowed instance dispatcher,
+ * instance Parent lifetime, legacy Actual projected legacy features/properties.
+ * @return Zero after legal enabled KHR queries, boolean domains and host properties.
+ * @note Sole fixture thread; stack chains borrowed only until synchronous calls return.
+ */
+static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAddr lookup,VkInstance instance,
+    const VkPhysicalDeviceFeatures *legacy,const VkPhysicalDeviceProperties *property)
+{
+    PFN_vkGetPhysicalDeviceFeatures2KHR get_features=(PFN_vkGetPhysicalDeviceFeatures2KHR)lookup(instance,"vkGetPhysicalDeviceFeatures2KHR");
+    PFN_vkGetPhysicalDeviceProperties2KHR get_properties=(PFN_vkGetPhysicalDeviceProperties2KHR)lookup(instance,"vkGetPhysicalDeviceProperties2KHR");
+    if(!get_features || !get_properties)return 1;
+    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
+    VkPhysicalDeviceRobustness2FeaturesEXT robust={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,.pNext=&maintenance};
+    VkPhysicalDeviceVulkan13Features features13={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,.pNext=&robust};
+    VkPhysicalDeviceVulkan12Features features12={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,.pNext=&features13};
+    VkPhysicalDeviceVulkan11Features features11={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,.pNext=&features12};
+    VkPhysicalDeviceFeatures2 features={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&features11};
+    get_features(physical,&features);
+    if(memcmp(&features.features,legacy,sizeof *legacy) || features.pNext!=&features11 || features11.pNext!=&features12 || features12.pNext!=&features13 || features13.pNext!=&robust || robust.pNext!=&maintenance || maintenance.pNext)return 1;
+    const void *nodes[]={&features11,&features12,&features13,&robust,&maintenance};
+    const size_t offsets[]={offsetof(VkPhysicalDeviceVulkan11Features,storageBuffer16BitAccess),offsetof(VkPhysicalDeviceVulkan12Features,samplerMirrorClampToEdge),offsetof(VkPhysicalDeviceVulkan13Features,robustImageAccess),offsetof(VkPhysicalDeviceRobustness2FeaturesEXT,robustBufferAccess2),offsetof(VkPhysicalDeviceMaintenance5FeaturesKHR,maintenance5)};
+    const size_t counts[]={12,47,15,3,1};
+    for(size_t index=0;index<5;index++)for(size_t flag=0;flag<counts[index];flag++){VkBool32 value=0;memcpy(&value,(const uint8_t *)nodes[index]+offsets[index]+flag*sizeof value,sizeof value);if(value>VK_TRUE)return 1;}
+    VkPhysicalDeviceVulkan13Properties properties13={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES};
+    VkPhysicalDeviceVulkan12Properties properties12={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES,.pNext=&properties13};
+    VkPhysicalDeviceVulkan11Properties properties11={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES,.pNext=&properties12};
+    VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&properties11};
+    get_properties(physical,&properties);
+    if(properties.properties.apiVersion!=property->apiVersion || properties.properties.vendorID!=property->vendorID || properties.properties.deviceID!=property->deviceID || strcmp(properties.properties.deviceName,property->deviceName) || !properties13.maxBufferSize || !properties12.driverName[0] || !memchr(properties12.driverName,0,sizeof properties12.driverName) || properties.pNext!=&properties11 || properties11.pNext!=&properties12 || properties12.pNext!=&properties13 || properties13.pNext)return 1;
+    printf("Native modern KHR physical queries PASS driver=%s max_buffer=%llu\n",properties12.driverName,(unsigned long long)properties13.maxBufferSize);fflush(stdout);return 0;
+}
+
 /** @brief Run eight actual GPU lifetimes over one explicit authenticated binding.
  * @param[in] argc/argv Immutable trusted absolute bootstrap/loader/manifest/config/
  * retirement-receipt paths, workload and exact physical-device name.
@@ -667,7 +701,9 @@ cleanup:
  */
 int main(int argc,char **argv)
 {
-    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push")))return 2;
+    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries")))return 2;
+    int modern_queries=!strcmp(argv[6],"triangle_queries");
+    int graphics_workload=!strcmp(argv[6],"triangle") || modern_queries;
     if(!medium_integrity()){fputs("Native GPU fixture requires medium integrity\n",stderr);return 2;}
     if(GetFileAttributesA(argv[5])!=INVALID_FILE_ATTRIBUTES){fputs("Retirement receipt must be fresh\n",stderr);return 2;}
     HMODULE bootstrap_module=NULL,loader_module=NULL,system_dxgi_module=NULL;
@@ -700,7 +736,8 @@ int main(int argc,char **argv)
     for(unsigned iteration=0;iteration<8;iteration++) {
         stage="Vulkan1.0 instance creation";
         VkApplicationInfo application={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.apiVersion=VK_API_VERSION_1_0};
-        VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.pApplicationInfo=&application};
+        const char *query_extension=VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+        VkInstanceCreateInfo info={.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,.pApplicationInfo=&application,.enabledExtensionCount=modern_queries ? 1u : 0u,.ppEnabledExtensionNames=modern_queries ? &query_extension : NULL};
         if(create_instance(&info,NULL,&instance)!=VK_SUCCESS || !instance)goto cleanup;
         destroy_instance=owned_destroy_instance;
         PFN_vkEnumeratePhysicalDevices enumerate=(PFN_vkEnumeratePhysicalDevices)lookup(instance,"vkEnumeratePhysicalDevices");
@@ -710,7 +747,7 @@ int main(int argc,char **argv)
         PFN_vkGetPhysicalDeviceQueueFamilyProperties queues=(PFN_vkGetPhysicalDeviceQueueFamilyProperties)lookup(instance,"vkGetPhysicalDeviceQueueFamilyProperties");
         PFN_vkCreateDevice create_device=(PFN_vkCreateDevice)lookup(instance,"vkCreateDevice");
         PFN_vkGetDeviceProcAddr device_proc=(PFN_vkGetDeviceProcAddr)lookup(instance,"vkGetDeviceProcAddr");
-        if(!destroy_instance || !enumerate || !properties || !features || !memory || !queues || !create_device || !device_proc || lookup(instance,"vkGetPhysicalDeviceFeatures2KHR"))goto cleanup;
+        if(!destroy_instance || !enumerate || !properties || !features || !memory || !queues || !create_device || !device_proc || (!modern_queries && lookup(instance,"vkGetPhysicalDeviceFeatures2KHR")))goto cleanup;
         stage="exact actual NVIDIA selection and zero feature intersection";
         uint32_t count=0;if(enumerate(instance,&count,NULL)!=VK_SUCCESS || !count || count>16)goto cleanup;
         VkPhysicalDevice devices[16]={0};uint32_t capacity=count;if(enumerate(instance,&capacity,devices)!=VK_SUCCESS || capacity!=count)goto cleanup;
@@ -718,11 +755,11 @@ int main(int argc,char **argv)
         for(uint32_t index=0;index<count;index++) {
             VkPhysicalDeviceProperties property={0};VkPhysicalDeviceFeatures actual={0},zero={0};properties(devices[index],&property);features(devices[index],&actual);
             if(property.apiVersion!=VK_API_VERSION_1_0 || memcmp(&actual,&zero,sizeof zero))goto cleanup;
-            if(!strcmp(property.deviceName,argv[7])){if(selected)goto cleanup;selected=devices[index];memory(selected,&supported_memory);}
+            if(!strcmp(property.deviceName,argv[7])){if(selected)goto cleanup;selected=devices[index];memory(selected,&supported_memory);if(modern_queries && modern_query_probe(selected,lookup,instance,&actual,&property))goto cleanup;}
         }
         if(!selected || !supported_memory.memoryTypeCount || supported_memory.memoryTypeCount>VK_MAX_MEMORY_TYPES || !supported_memory.memoryHeapCount || supported_memory.memoryHeapCount>VK_MAX_MEMORY_HEAPS)goto cleanup;
         uint32_t family_count=64;VkQueueFamilyProperties families[64]={0};queues(selected,&family_count,families);if(!family_count || family_count>64)goto cleanup;
-        VkQueueFlags required=!strcmp(argv[6],"triangle") ? VK_QUEUE_GRAPHICS_BIT : VK_QUEUE_COMPUTE_BIT;
+        VkQueueFlags required=graphics_workload ? VK_QUEUE_GRAPHICS_BIT : VK_QUEUE_COMPUTE_BIT;
         uint32_t family=0;while(family<family_count && (!families[family].queueCount || !(families[family].queueFlags&required)))family++;
         if(family==family_count)goto cleanup;
         float priority=0.5f;VkDeviceQueueCreateInfo queue_info={.sType=VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,.queueFamilyIndex=family,.queueCount=1,.pQueuePriorities=&priority};
@@ -735,7 +772,7 @@ int main(int argc,char **argv)
         if(!destroy_device || !get_queue || !device_idle)goto cleanup;
         VkQueue queue=NULL,repeated=NULL;get_queue(device,family,0,&queue);get_queue(device,family,0,&repeated);if(!queue || repeated!=queue)goto cleanup;
         stage="exact hardware workload output";
-        if(!strcmp(argv[6],"triangle")){if(triangle_probe(device,queue,family,&supported_memory,device_proc))goto cleanup;}
+        if(graphics_workload){if(triangle_probe(device,queue,family,&supported_memory,device_proc))goto cleanup;}
         else if(compute_probe(device,queue,family,&supported_memory,device_proc,!strcmp(argv[6],"compute_push"),37+iteration*19))goto cleanup;
         stage="application teardown before matching actual retirement Ack";
         if(device_idle(device)!=VK_SUCCESS)goto cleanup;
