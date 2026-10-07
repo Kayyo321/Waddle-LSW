@@ -13591,3 +13591,68 @@ test "variable descriptor retirement refunds actual count after native ACK" {
         } else try std.testing.expect(child_object(graph.pool.handle,c.VK_OBJECT_TYPE_DESCRIPTOR_POOL,graph.device.id)==null);
     };
 }
+// Append after retired WSI group; actual frontend ticket and proof transitions.
+const wsi_retired_proof_fixture_t=struct {
+    base:wsi_retired_fixture_t=. {},
+    gpu_requests:usize=0,
+    fail_proof:bool=false,
+    fn exchange(context:?*anyopaque,request:[*c]const c.venus_request_t,input:?*const anyopaque,length:usize,response:[*c]c.venus_request_t,output:?*anyopaque,capacity:usize) callconv(.C) c_int {
+        const fixture:*@This()=@ptrCast(@alignCast(context.?));
+        if(request.*.kind==c.RequestGpuFence or request.*.kind==c.RequestGpuPoll) {
+            fixture.gpu_requests+=1;
+            if(fixture.fail_proof)return c.RingClosed;
+            response.* = .{.kind=request.*.kind,.direction=1,.argument_zero=if(request.*.kind==c.RequestGpuFence) 1 else 0};
+            return c.RingOk;
+        }
+        return wsi_retired_fixture_t.exchange(&fixture.base,request,input,length,response,output,capacity);
+    }
+};
+test "retired WSI images await actual frontend queue proof before last view ACK cleanup" {
+    for(0..2) |fail_proof| {
+        var fixture=wsi_retired_proof_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(wsi_retired_proof_fixture_t.exchange,&fixture));
+        defer venus_icd_abandon();
+        const graph=try wsi_status_graph_t.init();
+        const image_handle=graph.image.handle;
+        const memory_handle=graph.allocation.handle;
+        const view=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE_VIEW,graph.device.id,0);
+        const view_handle=view.handle;
+        resource_state(view).* = .{.id=view.id,.view_image=image_handle};
+        const pool=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL,graph.device.id,0);
+        resource_state(pool).* = .{.id=pool.id,.pool_family=0};
+        const recording=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER,pool.id,1);
+        resource_state(recording).* = .{.id=recording.id,.command_state=.Executable};
+        command_reference(resource_state(recording),graph.image);
+        command_reference(resource_state(recording),view);
+        command_reference(resource_state(recording),graph.allocation);
+        const handle:c.VkCommandBuffer=@ptrFromInt(recording.handle);
+        const submit=c.VkSubmitInfo{.sType=c.VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&handle};
+        try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),queue_submit(@ptrFromInt(graph.queue.handle),1,&submit,null));
+        try std.testing.expectEqual(@as(u32,1),resource_state(view).inflight_count);
+        try std.testing.expectEqual(@as(u32,1),resource_state(graph.image).inflight_count);
+        try std.testing.expectEqual(command_state_t.Pending,resource_state(recording).command_state);
+        // Defensive invalid-order call must preserve every pending owner.
+        destroy_swapchain(@ptrFromInt(graph.device.handle),@ptrFromInt(101),null);
+        destroy_image_view(@ptrFromInt(graph.device.handle),@ptrFromInt(view_handle),null);
+        try std.testing.expectEqualSlices(u32,&.{18},fixture.base.sequence[0..fixture.base.used]);
+        fixture.fail_proof=fail_proof!=0;
+        try std.testing.expectEqual(if(fail_proof==0) @as(c_int,c.VK_SUCCESS) else c.VK_ERROR_DEVICE_LOST,queue_wait_idle(@ptrFromInt(graph.queue.handle)));
+        try std.testing.expectEqual(if(fail_proof==0) @as(usize,2) else 1,fixture.gpu_requests);
+        destroy_image_view(@ptrFromInt(graph.device.handle),@ptrFromInt(view_handle),null);
+        if(fail_proof==0) {
+            try std.testing.expectEqualSlices(u32,&.{18,58,55,22},fixture.base.sequence[0..fixture.base.used]);
+            try std.testing.expectEqual(@as(usize,7),objects.live_count);
+            try std.testing.expect(owned_child_object(image_handle,c.VK_OBJECT_TYPE_IMAGE,graph.device.id)==null);
+            try std.testing.expect(child_object(memory_handle,c.VK_OBJECT_TYPE_DEVICE_MEMORY,graph.device.id)==null);
+            try std.testing.expectEqual(command_state_t.Invalid,resource_state(recording).command_state);
+            for(submission_tickets) |ticket| try std.testing.expectEqual(@as(u64,0),ticket.queue);
+        } else {
+            try std.testing.expectEqualSlices(u32,&.{18},fixture.base.sequence[0..fixture.base.used]);
+            try std.testing.expectEqual(@as(usize,10),objects.live_count);
+            try std.testing.expectEqual(@as(u32,1),resource_state(graph.image).inflight_count);
+            try std.testing.expectEqual(@as(u32,1),resource_state(view).inflight_count);
+            try std.testing.expectEqual(command_state_t.Pending,resource_state(recording).command_state);
+            try std.testing.expect(submission_tickets[0].queue!=0);
+        }
+    }
+}
