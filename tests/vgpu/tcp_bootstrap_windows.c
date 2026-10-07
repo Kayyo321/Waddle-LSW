@@ -73,6 +73,20 @@ static DWORD WINAPI bootstrap_peer_run(LPVOID argument)
     assert(venus_tcp_ack_encode(hello.session+(peer->mode==PeerRetireMismatch),bytes,VenusTcpAckBytes)==RingOk);send_bytes(&socket_value,bytes,VenusTcpAckBytes);
     venus_tcp_socket_close(&socket_value);venus_tcp_scrub(&client,sizeof client);return 0;
 }
+/** @brief Initialize independently traced process lifetime GUI dependencies.
+ * @note Sole test thread. Each module reference is acquired from System32 and
+ * released here. No project DLL is loaded. USER32 ETW and GDI desktop/IO cache
+ * handles belong to Windows process initialization; the exact baseline is taken
+ * afterward and must hold across every project lifetime and final DLL release.
+ */
+static void warm_system_gui(void)
+{
+    HMODULE user32=LoadLibraryExA("user32.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    HMODULE gdi32=LoadLibraryExA("gdi32.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    HMODULE dwmapi=LoadLibraryExA("dwmapi.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    assert(user32 && gdi32 && dwmapi);
+    assert(FreeLibrary(dwmapi) && FreeLibrary(gdi32) && FreeLibrary(user32));
+}
 static void warm_client(void)
 {
     peer_t peer={0};assert(venus_tcp_socket_listen(&peer.listener,0,&peer.port)==RingOk);
@@ -112,6 +126,7 @@ int main(int argc,char **argv)
      * the exact repeated-owner baseline. Diagnostic snapshots separately record
      * one-time SDK ALPC/thread-pool objects and eight ntmarta.dll semaphores acquired during the initial SDK owner query. */
     private_config(argv[3],argv[2],12345,1);assert(start(argv[3],strlen(argv[3])+1)==RingInvalid);assert(!session() && stop()==RingOk);
+    warm_system_gui();assert(!GetModuleHandleA(argv[2]));
     sleep_ms(1000);unsigned baseline=resource_count();
     for(unsigned cycle=0;cycle<24;cycle++) {
         private_config(argv[3],argv[2],12345,1);assert(start(argv[3],strlen(argv[3])+1)==RingInvalid);assert(!session() && stop()==RingOk);native_baseline(baseline);
@@ -134,7 +149,7 @@ int main(int argc,char **argv)
         assert(WaitForSingleObject(thread,5000)==WAIT_OBJECT_0);assert(CloseHandle(thread));assert(!GetModuleHandleA(argv[2]));assert(socket(AF_INET,SOCK_STREAM,IPPROTO_TCP)==INVALID_SOCKET && WSAGetLastError()==WSANOTINITIALISED);native_baseline(baseline);
     }
     assert(DeleteFileA(argv[3]));assert(FreeLibrary(library));
-    assert(!GetModuleHandleA(argv[1]));
+    assert(!GetModuleHandleA(argv[1]));native_baseline(baseline);
     fprintf(stderr,"Bootstrap quiescent handles=%u afterDLLrelease=%u\n",baseline,resource_count());
     puts("Windows bootstrap: private SID ACL rejection,24 real TCP/ICD binding/module cycles (12matching+12lost synthetic retirement Ack), exact native handle baseline PASS (synthetic peer; no GPU)");return 0;
 }
