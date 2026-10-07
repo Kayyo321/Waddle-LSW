@@ -424,7 +424,9 @@ Each row preserves its atomic commit, task/overall delta and evidence. Historica
 | `c2faa4c` | fix(ci): link the negotiated capability codec in Windows ICD gates; Add capability library to all three explicit workflow ICD link lists. | #3/#10/#11 +0%; overall +0%. | CI37556752590 Windows112584658369 failed undefined venus_capabilities_compatible at9111799; YAML and three isolated corrected Windows crosslinks pass, inputs SHA-stable; build/windows_ci_capability_links/{snapshot.json,links_v2.log}; full native CI rerun pending. |
 
 | `862046b` | test(vgpu): aggregate all six standalone ICD dependency ASan gates; Add seventh aggregate target after six separate verified module registrations. | #3 +0%; overall +0%. |6native fixtures+25Debug units, genuinehooks/full accounting/guard reverse/provenance, zero findings; build/icd_dependency_aggregate_gate.log; combined ICD seam remains separate. |
-| current (resolve by subject) | docs(vgpu): require actual access proof across the complete ICD seam; Specify private linkage of embedded ICD and six sanitized codecs, fresh C oracles and all18-source final-executable hook proof. | #3 +0%; overall +0%. | New isolated output/source freeze required; no public artifact replacement or Windows/GPU/DXVK credit. |
+| `33d4ca3` | docs(vgpu): require actual access proof across the complete ICD seam; Specify private linkage of embedded ICD and six sanitized codecs, fresh C oracles and all18-source final-executable hook proof. | #3 +0%; overall +0%. | New isolated output/source freeze required; no public artifact replacement or Windows/GPU/DXVK credit. |
+
+| current (resolve by subject) | docs(vgpu): distinguish direct feature queries from loader API acceptance; Specify full direct ICD chain proof and legal loader core-query/cache proof under the unchanged1.0/no-extension ceiling. | #3 +0%; overall +0%. | First direct physical triangle passed; loader KHR alias absent by pinned enabled-extension gate, shared first attempt failed and preserved; corrected full acceptance pending. |
 
 ## Historical acceptance notes
 
