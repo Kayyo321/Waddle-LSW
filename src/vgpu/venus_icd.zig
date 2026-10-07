@@ -6729,7 +6729,7 @@ fn general_pipeline_first_format(info: *const c.VkGraphicsPipelineCreateInfo, pa
     var next = info.pNext;
     var count: usize = 0;
     while (next) |pointer| {
-        if (count == 2 or @intFromPtr(pointer) % @alignOf(c.VkBaseInStructure) != 0) return null;
+        if (count == 3 or @intFromPtr(pointer) % @alignOf(c.VkBaseInStructure) != 0) return null;
         count += 1;
         const header: *const c.VkBaseInStructure = @ptrCast(@alignCast(pointer));
         if (header.sType == c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO) {
@@ -12368,4 +12368,286 @@ test "root GetDeviceQueue2 preserves existing borrowed queue and rejects unimple
     info.queueIndex = 1; invoke_query(device, &info, &output); try std.testing.expect(output == null); info.queueIndex = 0;
     invoke_query(device, &info, &output); try std.testing.expectEqual(queue.handle, @intFromPtr(output.?)); try std.testing.expectEqual(@as(usize, 0), fixture.calls);
     try std.testing.expectEqual(@as(usize, 2), objects.live_count);
+}
+
+// Append-only tests; integrated image_ownership_fixture_t supplies bounded native owners.
+const graphics_creation_fixture_t = struct {
+    base: image_ownership_fixture_t = .{},
+    mode: u8 = 0,
+    created_id: u64 = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        if (request.*.kind == c.RequestSubmit) {
+            const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+            const opcode = std.mem.readInt(u32, bytes[36..40], .little);
+            if (opcode == 59 or opcode == 65) fixture.created_id = std.mem.readInt(u64, bytes[length - 8 ..][0..8], .little);
+            fixture.base.mode = if (opcode == 65 and fixture.mode == 3) 1 else 0;
+        }
+        const status = image_ownership_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (status != c.RingOk or request.*.kind != c.RequestReply) return status;
+        if (fixture.base.command_id == 59 or fixture.base.command_id == 65) {
+            const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+            const negative = fixture.base.command_id == 65 and fixture.mode == 1;
+            std.mem.writeInt(i32, bytes[4..8], if (negative) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else 0, .little);
+            std.mem.writeInt(u64, bytes[8..16], 1, .little);
+            std.mem.writeInt(u64, bytes[16..24], if (negative) 0 else fixture.created_id + @as(u64, if (fixture.base.command_id == 65 and fixture.mode == 2) 1 else 0), .little);
+        }
+        return status;
+    }
+};
+const graphics_creation_graph_t = struct {
+    device: *c.venus_object_t,
+    layout: *c.venus_object_t,
+    shader: *c.venus_object_t,
+    pass: *c.venus_object_t,
+    cache: *c.venus_object_t,
+    fn init() !@This() {
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const layout = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_PIPELINE_LAYOUT, device.id, 0);
+        resource_state(layout).* = .{ .id = layout.id, .profile_index = try profiles.reserve_slot(&profile_registry.pipeline_layouts, profiles.pipeline_layout_t{}) };
+        const shader = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_SHADER_MODULE, device.id, 0);
+        const pass = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_RENDER_PASS, device.id, 0);
+        resource_state(pass).* = .{ .id = pass.id, .render_format = 37 };
+        const cache_record = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_PIPELINE_CACHE, device.id, 0);
+        return .{ .device = device, .layout = layout, .shader = shader, .pass = pass, .cache = cache_record };
+    }
+};
+const graphics_creation_inputs_t = struct {
+    stage: c.VkPipelineShaderStageCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_VERTEX_BIT, .pName = "main" },
+    vertex: c.VkPipelineVertexInputStateCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO },
+    assembly: c.VkPipelineInputAssemblyStateCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, .topology = c.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST },
+    viewport_value: c.VkViewport = .{ .width = 8, .height = 8, .maxDepth = 1 },
+    scissor: c.VkRect2D = .{ .extent = .{ .width = 8, .height = 8 } },
+    viewport: c.VkPipelineViewportStateCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO, .viewportCount = 1, .scissorCount = 1 },
+    raster: c.VkPipelineRasterizationStateCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, .rasterizerDiscardEnable = 1, .lineWidth = 1 },
+    multisample: c.VkPipelineMultisampleStateCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, .rasterizationSamples = 1 },
+    blend_attachment: c.VkPipelineColorBlendAttachmentState = .{ .colorWriteMask = 15 },
+    blend: c.VkPipelineColorBlendStateCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, .attachmentCount = 1 },
+    info: c.VkGraphicsPipelineCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, .stageCount = 1, .basePipelineIndex = -1 },
+    fn link(self: *@This(), graph: graphics_creation_graph_t) void {
+        self.stage.module = @ptrFromInt(graph.shader.handle);
+        self.viewport.pViewports = &self.viewport_value;
+        self.viewport.pScissors = &self.scissor;
+        self.blend.pAttachments = &self.blend_attachment;
+        self.info.pStages = &self.stage;
+        self.info.layout = @ptrFromInt(graph.layout.handle);
+        self.info.renderPass = @ptrFromInt(graph.pass.handle);
+        self.info.pVertexInputState = &self.vertex;
+        self.info.pInputAssemblyState = &self.assembly;
+        self.info.pViewportState = &self.viewport;
+        self.info.pRasterizationState = &self.raster;
+        self.info.pMultisampleState = &self.multisample;
+        self.info.pColorBlendState = &self.blend;
+    }
+};
+
+test "graphics creation native pipeline publication and inline shader teardown follow host result" {
+    for (0..2) |inline_shader| for (0..4) |mode| {
+        var fixture = graphics_creation_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(graphics_creation_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_creation_graph_t.init();
+        var inputs = graphics_creation_inputs_t{};
+        inputs.link(graph);
+        const code = [_]u32{ 0x07230203, 0x00010000, 0, 1, 0 };
+        var inline_info = c.VkShaderModuleCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = @sizeOf(@TypeOf(code)), .pCode = &code };
+        if (inline_shader != 0) { inputs.stage.module = null; inputs.stage.pNext = &inline_info; }
+        var output: c.VkPipeline = @ptrFromInt(8);
+        const result = create_graphics_pipelines(@ptrFromInt(graph.device.handle), @ptrFromInt(graph.cache.handle), 1, &inputs.info, null, &output);
+        try std.testing.expectEqual(if (mode == 0) @as(c_int, c.VK_SUCCESS) else if (mode == 1) @as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY) else @as(c_int, c.VK_ERROR_DEVICE_LOST), result);
+        try std.testing.expectEqual(mode == 0, output != null);
+        const expected_live: usize = if (mode == 1) 5 else if (mode == 0) 6 else 6 + inline_shader;
+        try std.testing.expectEqual(expected_live, objects.live_count);
+        try std.testing.expectEqual(if (inline_shader == 0) @as(usize, 1) else if (mode <= 1) @as(usize, 3) else @as(usize, 2), fixture.base.submissions);
+        if (mode == 0) {
+            const pipeline = child_object(@intFromPtr(output.?), c.VK_OBJECT_TYPE_PIPELINE, graph.device.id).?;
+            const state = resource_state(pipeline);
+            try std.testing.expectEqual(@as(u32, 37), state.render_format);
+            try std.testing.expectEqual(@as(u32, c.VK_PIPELINE_BIND_POINT_GRAPHICS), state.pipeline_bind_point);
+            try std.testing.expectEqualDeep(profiles.get_profile(&profile_registry.pipeline_layouts, resource_state(graph.layout).profile_index).?.*, profiles.get_profile(&profile_registry.pipelines, state.profile_index).?.*);
+            destroy_pipeline(@ptrFromInt(graph.device.handle), output, null);
+            try std.testing.expectEqual(@as(usize, 5), objects.live_count);
+        }
+        // All persistent native inputs remain caller owned; only temporary modules retire.
+        for ([_]*c.venus_object_t{ graph.layout, graph.shader, graph.pass, graph.cache }) |record| try std.testing.expect(child_object(record.handle, record.kind, graph.device.id) != null);
+        if (mode == 1) for (profile_registry.pipelines) |slot| try std.testing.expect(!slot.occupied);
+    };
+}
+
+test "graphics creation library linking accepts all recognized chain orders and preserves native identities" {
+    for (0..6) |order| {
+        var fixture = graphics_creation_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(graphics_creation_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_creation_graph_t.init();
+        const library_record = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_PIPELINE, graph.device.id, 0);
+        resource_state(library_record).* = .{ .id = library_record.id, .pipeline_bind_point = c.VK_PIPELINE_BIND_POINT_GRAPHICS };
+        const library_handle: c.VkPipeline = @ptrFromInt(library_record.handle);
+        var library = c.VkPipelineLibraryCreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR, .libraryCount = 1, .pLibraries = &library_handle };
+        const format: c.VkFormat = c.VK_FORMAT_R8G8B8A8_UNORM;
+        var rendering = c.VkPipelineRenderingCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .colorAttachmentCount = 1, .pColorAttachmentFormats = &format };
+        var flags = c.VkPipelineCreateFlags2CreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR, .flags = c.VK_PIPELINE_CREATE_2_DISABLE_OPTIMIZATION_BIT_KHR };
+        const permutations = [_][3]usize{ .{ 0, 1, 2 }, .{ 0, 2, 1 }, .{ 1, 0, 2 }, .{ 1, 2, 0 }, .{ 2, 0, 1 }, .{ 2, 1, 0 } };
+        var nodes = [_]*c.VkBaseOutStructure{ @ptrCast(&library), @ptrCast(&rendering), @ptrCast(&flags) };
+        const sequence = permutations[order];
+        for (sequence, 0..) |node, index| nodes[node].pNext = if (index + 1 < 3) nodes[sequence[index + 1]] else null;
+        var inputs = graphics_creation_inputs_t{};
+        inputs.link(graph);
+        inputs.info.stageCount = 0;
+        inputs.info.pStages = null;
+        inputs.info.renderPass = null;
+        inputs.info.pNext = nodes[sequence[0]];
+        var output: c.VkPipeline = null;
+        try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_graphics_pipelines(@ptrFromInt(graph.device.handle), null, 1, &inputs.info, null, &output));
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.submissions);
+        try std.testing.expectEqual(library_record.handle, @intFromPtr(library.pLibraries[0].?));
+        try std.testing.expect(child_object(library_record.handle, c.VK_OBJECT_TYPE_PIPELINE, graph.device.id) != null);
+        try std.testing.expectEqual(@as(u32, 37), resource_state(child_object(@intFromPtr(output.?), c.VK_OBJECT_TYPE_PIPELINE, graph.device.id).?).render_format);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+    }
+}
+
+test "graphics creation rejects foreign owners and native stage failures before pipeline reservation" {
+    for (0..7) |case| {
+        var fixture = graphics_creation_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(graphics_creation_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_creation_graph_t.init();
+        const foreign = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        var inputs = graphics_creation_inputs_t{};
+        inputs.link(graph);
+        if (case == 0) graph.layout.parent_id = foreign.id;
+        if (case == 1) graph.shader.parent_id = foreign.id;
+        if (case == 2) graph.pass.parent_id = foreign.id;
+        if (case == 3) graph.cache.parent_id = foreign.id;
+        if (case == 4) inputs.stage.sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        if (case == 5) inputs.raster.depthClampEnable = 2;
+        if (case == 6) @as(*align(1) usize, @ptrCast(&inputs.info.pVertexInputState)).* = @intFromPtr(&inputs.vertex) + 1;
+        var output: c.VkPipeline = @ptrFromInt(8);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_graphics_pipelines(@ptrFromInt(graph.device.handle), @ptrFromInt(graph.cache.handle), 1, &inputs.info, null, &output));
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(usize, 0), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 6), objects.live_count);
+        for (profile_registry.pipelines) |slot| try std.testing.expect(!slot.occupied);
+    }
+}
+
+test "graphics creation releases earlier inline shader when later native stage fails" {
+    for (0..2) |case| {
+        var fixture = graphics_creation_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(graphics_creation_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_creation_graph_t.init();
+        var inputs = graphics_creation_inputs_t{};
+        inputs.link(graph);
+        const foreign = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const foreign_shader = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_SHADER_MODULE, foreign.id, 0);
+        const code = [_]u32{ 0x07230203, 0x00010000, 0, 1, 0 };
+        var inline_info = c.VkShaderModuleCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = @sizeOf(@TypeOf(code)), .pCode = &code };
+        var stages = [_]c.VkPipelineShaderStageCreateInfo{
+            .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .pNext = &inline_info, .stage = c.VK_SHADER_STAGE_VERTEX_BIT, .pName = "main" },
+            .{ .sType = if (case == 0) c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO else c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .module = @ptrFromInt(foreign_shader.handle), .stage = c.VK_SHADER_STAGE_FRAGMENT_BIT, .pName = "main" },
+        };
+        inputs.info.stageCount = 2;
+        inputs.info.pStages = &stages;
+        var output: c.VkPipeline = @ptrFromInt(8);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_graphics_pipelines(@ptrFromInt(graph.device.handle), null, 1, &inputs.info, null, &output));
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(usize, 2), fixture.base.submissions);
+        try std.testing.expectEqual(@as(u32, 60), fixture.base.command_id);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        for (profile_registry.pipelines) |slot| try std.testing.expect(!slot.occupied);
+    }
+}
+
+test "graphics creation batch preserves earlier success when later input fails" {
+    var fixture = graphics_creation_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(graphics_creation_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const graph = try graphics_creation_graph_t.init();
+    var inputs = graphics_creation_inputs_t{};
+    inputs.link(graph);
+    var infos = [_]c.VkGraphicsPipelineCreateInfo{ inputs.info, inputs.info };
+    infos[1].sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    var outputs = [_]c.VkPipeline{ @ptrFromInt(8), @ptrFromInt(8) };
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_graphics_pipelines(@ptrFromInt(graph.device.handle), null, 2, &infos, null, &outputs));
+    try std.testing.expect(outputs[0] != null and outputs[1] == null);
+    try std.testing.expectEqual(@as(usize, 1), fixture.base.submissions);
+    try std.testing.expectEqual(@as(usize, 6), objects.live_count);
+    const first = child_object(@intFromPtr(outputs[0].?), c.VK_OBJECT_TYPE_PIPELINE, graph.device.id).?;
+    try std.testing.expect(resource_state(first).profile_index != 0);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+}
+
+const root_layout_query_fixture_t = struct {
+    base: root_sync_fixture_t = .{},
+    corrupt: bool = false,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        const status = root_sync_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (status != c.RingOk or request.*.kind != c.RequestReply) return status;
+        if (capacity < 52 or output == null) return c.RingCorrupt;
+        const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+        std.mem.writeInt(u64, bytes[4..12], 1, .little);
+        switch (fixture.base.opcode) {
+            56 => { for ([_]u64{ 64, 1024, 64, 1024, 1024 }, 0..) |value, index| std.mem.writeInt(u64, bytes[12+index*8..][0..8], value, .little); },
+            84, 280 => { std.mem.writeInt(u32, bytes[12..16], 8, .little); std.mem.writeInt(u32, bytes[16..20], 4, .little); },
+            else => return c.RingCorrupt,
+        }
+        if (fixture.corrupt) bytes[0] ^= 1;
+        return c.RingOk;
+    }
+};
+test "root subresource2 and render granularity publish actual values only from validated owned queries" {
+    inline for (0..3) |operation| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = root_layout_query_fixture_t{ .corrupt = corrupt };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_layout_query_fixture_t.exchange, &fixture)); defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const image = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, parent.id, 0);
+        const pass = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_RENDER_PASS, parent.id, 0);
+        resource_state(image).* = .{ .id = image.id, .image_format = 37, .image_levels = 2, .image_layers = 2 };
+        const device: c.VkDevice = @ptrFromInt(parent.handle); const foreign_device: c.VkDevice = @ptrFromInt(foreign.handle);
+        if (operation == 0) {
+            const invoke_query = root_runtime_fn(image_subresource_layout2); const image_handle: c.VkImage = @ptrFromInt(image.handle);
+            var unknown = c.VkBaseOutStructure{ .sType = 0x7ffffff0 };
+            var info = c.VkImageSubresource2KHR{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_SUBRESOURCE_2_KHR, .imageSubresource = .{ .aspectMask = 1, .mipLevel = 1, .arrayLayer = 1 } };
+            var output = c.VkSubresourceLayout2KHR{ .sType = c.VK_STRUCTURE_TYPE_SUBRESOURCE_LAYOUT_2_KHR, .pNext = &unknown, .subresourceLayout = .{ .size = 99 } };
+            invoke_query(device, image_handle, null, &output); invoke_query(device, image_handle, &info, null);
+            invoke_query(null, image_handle, &info, &output); invoke_query(device, null, &info, &output); invoke_query(foreign_device, image_handle, &info, &output); invoke_query(@ptrFromInt(1), image_handle, &info, &output);
+            info.sType = 0; invoke_query(device, image_handle, &info, &output); info.sType = c.VK_STRUCTURE_TYPE_IMAGE_SUBRESOURCE_2_KHR;
+            output.sType = 0; invoke_query(device, image_handle, &info, &output); output.sType = c.VK_STRUCTURE_TYPE_SUBRESOURCE_LAYOUT_2_KHR;
+            info.pNext = @ptrFromInt(8); invoke_query(device, image_handle, &info, &output); info.pNext = null;
+            unknown.pNext = &unknown; invoke_query(device, image_handle, &info, &output); unknown.pNext = null;
+            info.imageSubresource.mipLevel = 2; invoke_query(device, image_handle, &info, &output); info.imageSubresource.mipLevel = 1;
+            info.imageSubresource.arrayLayer = 2; invoke_query(device, image_handle, &info, &output); info.imageSubresource.arrayLayer = 1;
+            info.imageSubresource.aspectMask = 2; invoke_query(device, image_handle, &info, &output); info.imageSubresource.aspectMask = 0; invoke_query(device, image_handle, &info, &output); info.imageSubresource.aspectMask = 1;
+            try std.testing.expectEqual(@as(usize, 0), fixture.base.calls);
+            invoke_query(device, image_handle, &info, &output);
+            try std.testing.expectEqual(@as(u64, if (corrupt) 99 else 1024), output.subresourceLayout.size);
+            try std.testing.expectEqual(@as(?*anyopaque, &unknown), output.pNext); try std.testing.expectEqual(@as(u32, 0x7ffffff0), unknown.sType);
+        } else {
+            var output = c.VkExtent2D{ .width = 99, .height = 99 };
+            if (operation == 1) {
+                const invoke_query = root_runtime_fn(render_area_granularity); const pass_handle: c.VkRenderPass = @ptrFromInt(pass.handle);
+                invoke_query(null, pass_handle, &output); invoke_query(device, null, &output); invoke_query(device, pass_handle, null); invoke_query(foreign_device, pass_handle, &output); invoke_query(@ptrFromInt(1), pass_handle, &output);
+                try std.testing.expectEqual(@as(usize, 0), fixture.base.calls); invoke_query(device, pass_handle, &output);
+            } else {
+                const invoke_query = root_runtime_fn(rendering_area_granularity);
+                const formats = [_]c.VkFormat{37};
+                var info = c.VkRenderingAreaInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR, .colorAttachmentCount = 1, .pColorAttachmentFormats = &formats };
+                invoke_query(null, &info, &output); invoke_query(device, null, &output); invoke_query(device, &info, null); invoke_query(@ptrFromInt(1), &info, &output);
+                info.viewMask = 1; invoke_query(device, &info, &output); info.viewMask = 0;
+                info.sType = 0; invoke_query(device, &info, &output); info.sType = c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR;
+                info.pNext = @ptrFromInt(8); invoke_query(device, &info, &output); info.pNext = null;
+                info.pColorAttachmentFormats = null; invoke_query(device, &info, &output); info.pColorAttachmentFormats = &formats;
+                info.colorAttachmentCount = 9; invoke_query(device, &info, &output); info.colorAttachmentCount = 1;
+                try std.testing.expectEqual(@as(usize, 0), fixture.base.calls); invoke_query(device, &info, &output);
+            }
+            try std.testing.expectEqual(@as(u32, if (corrupt) 99 else 8), output.width); try std.testing.expectEqual(@as(u32, if (corrupt) 99 else 4), output.height);
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.calls); try std.testing.expectEqual(corrupt, lost != c.RingOk);
+        try std.testing.expectEqual(@as(usize, 4), objects.live_count);
+    };
 }
