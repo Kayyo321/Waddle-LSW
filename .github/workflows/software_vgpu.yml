@@ -9,7 +9,7 @@ permissions:
 jobs:
   transport:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     container:
       image: debian:trixie-slim
       options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined

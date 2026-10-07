@@ -4924,3 +4924,15 @@ The updated seam CLI takes a caller-exclusive base (normally build/icd_complete_
 The physical CLI accepts mutually exclusive explicit --seam-output and --seam-record references. Record mode first validates its exact twenty-source/current-source identity and both report hashes, then borrows that canonical immutable run directory. Direct-path mode applies the same exact source/object/IR/proof validity, never a guessed latest directory. Its existing native reproof, three final executable/DSO access proofs, unchanged driver policy, session cleanup, original workload/fence deadlines and full fifteen-case matrix remain required. New physical output uses its own unique base/run directory; current eighteen-source receipts stay byte-identical. All source/header/runtime/object/report hashes are checked before and after acceptance.
 
 Aggregate physical gating depends on a fresh successful complete-seam target in the SAME make dependency graph, then consumes only its atomically published record. A failed prerequisite stops make before physical launch, even if an older latest record exists. Serialize shared receiver/GPU ownership as before. Root integrates aggregate safety/CI ordering separately after candidate checks; embedded-only IR proof is superseded by the complete same-binary seam rather than counted as another independent module acceptance. Require actual new native/Windows and hardware proof before credit; twenty-source instrumentation alone does not establish Windows/DXVK/API feature support.
+
+### CI parent budget for the complete owned seam
+
+The Linux transport job has a60-minute parent timeout. The successful clean
+checkpoint c2faa4c, run37557528193/job112587097749, consumed2496s
+(2026-10-07T01:31:31Z through02:13:07Z), before the new device-native,
+device-wire, extension-wire and complete20-source seam gates. The retained
+receipt is build/ci_c2faa4c_verified.json. Parent budget accommodates those
+additional proofs; individual proof children retain180s/256MiB bounds, physical
+GPU cases retain300s, and GPU fences retain their1s deadlines. Any failed gate
+fails CI; parent timeout grants no acceptance or retry override. Windows remains
+15minutes until measured new native-gate execution warrants a separate change.
