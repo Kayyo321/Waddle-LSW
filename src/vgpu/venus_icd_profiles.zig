@@ -193,6 +193,41 @@ pub fn create_set_profile(layout: *const descriptor_layout_t) !descriptor_set_t 
     }
     return profile;
 }
+/// [in] bounded normalized layout snapshot; [out] owned sparse metadata with no elements.
+/// Large descriptor capacities do not allocate proportional storage. Caller serializes;
+/// sampler tokens are copied and their lifetime remains the caller's responsibility.
+pub fn create_sparse_set_profile(layout: *const descriptor_layout_t) !descriptor_set_t {
+    if (layout.binding_count > MaxBindings or layout.immutable_count > 128) return error.Invalid;
+    for (layout.bindings[0..layout.binding_count], 0..) |binding, index| {
+        if (binding.descriptor_type > 10 or binding.descriptor_count > 65536 or
+            (binding.descriptor_count != 0 and binding.stage_flags == 0) or binding.stage_flags & ~@as(u32, 0x3f) != 0 or
+            (index != 0 and layout.bindings[index-1].binding >= binding.binding) or
+            @as(usize,binding.immutable_offset) + binding.immutable_count > layout.immutable_count) return error.Invalid;
+    }
+    return .{ .layout = layout.*, .sparse = true };
+}
+/// [in,out] exclusively owned sparse set; [in] binding/element target.
+/// Returns an existing or newly owned element, Invalid for undeclared extent,
+/// Exhausted without mutation when the bounded written-element ledger is full.
+/// No heap or native pointers; caller validates resources before publication.
+pub fn sparse_element(profile: *descriptor_set_t, binding_number: u32, element: u32) !*descriptor_t {
+    if (!profile.sparse) return error.Invalid;
+    for (profile.descriptors[0..profile.descriptor_count]) |*descriptor| {
+        if (descriptor.binding == binding_number and descriptor.array_element == element) return descriptor;
+    }
+    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| {
+        if (binding.binding != binding_number) continue;
+        const extent = if (profile.has_variable_count and binding.binding == profile.variable_binding) profile.variable_count else binding.descriptor_count;
+        if (element >= extent) return error.Invalid;
+        if (profile.descriptor_count == profile.descriptors.len) return error.Exhausted;
+        const destination = &profile.descriptors[profile.descriptor_count];
+        destination.* = .{ .binding = binding_number, .array_element = element, .descriptor_type = binding.descriptor_type };
+        profile.descriptor_count += 1;
+        return destination;
+    }
+    return error.Invalid;
+}
+
 // Test-only fixtures.
 const fixture_t = struct {
     fn bindings(input: []const binding_t) !descriptor_layout_t {
@@ -319,40 +354,6 @@ test "push range profiles accept256 ceiling and reject all overflow directions" 
         try std.testing.expectError(error.Invalid, fixture_t.pipeline(&.{}, &.{range}));
 }
 
-/// [in] bounded normalized layout snapshot; [out] owned sparse metadata with no elements.
-/// Large descriptor capacities do not allocate proportional storage. Caller serializes;
-/// sampler tokens are copied and their lifetime remains the caller's responsibility.
-pub fn create_sparse_set_profile(layout: *const descriptor_layout_t) !descriptor_set_t {
-    if (layout.binding_count > MaxBindings or layout.immutable_count > 128) return error.Invalid;
-    for (layout.bindings[0..layout.binding_count], 0..) |binding, index| {
-        if (binding.descriptor_type > 10 or binding.descriptor_count > 65536 or
-            (binding.descriptor_count != 0 and binding.stage_flags == 0) or binding.stage_flags & ~@as(u32, 0x3f) != 0 or
-            (index != 0 and layout.bindings[index-1].binding >= binding.binding) or
-            @as(usize,binding.immutable_offset) + binding.immutable_count > layout.immutable_count) return error.Invalid;
-    }
-    return .{ .layout = layout.*, .sparse = true };
-}
-/// [in,out] exclusively owned sparse set; [in] binding/element target.
-/// Returns an existing or newly owned element, Invalid for undeclared extent,
-/// Exhausted without mutation when the bounded written-element ledger is full.
-/// No heap or native pointers; caller validates resources before publication.
-pub fn sparse_element(profile: *descriptor_set_t, binding_number: u32, element: u32) !*descriptor_t {
-    if (!profile.sparse) return error.Invalid;
-    for (profile.descriptors[0..profile.descriptor_count]) |*descriptor| {
-        if (descriptor.binding == binding_number and descriptor.array_element == element) return descriptor;
-    }
-    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| {
-        if (binding.binding != binding_number) continue;
-        const extent = if (profile.has_variable_count and binding.binding == profile.variable_binding) profile.variable_count else binding.descriptor_count;
-        if (element >= extent) return error.Invalid;
-        if (profile.descriptor_count == profile.descriptors.len) return error.Exhausted;
-        const destination = &profile.descriptors[profile.descriptor_count];
-        destination.* = .{ .binding = binding_number, .array_element = element, .descriptor_type = binding.descriptor_type };
-        profile.descriptor_count += 1;
-        return destination;
-    }
-    return error.Invalid;
-}
 test "sparse descriptor capacities retain only written identities and fail atomically" {
     var layout = descriptor_layout_t{ .binding_count = 1 };
     layout.bindings[0] = .{ .binding = 4, .descriptor_type = 2, .descriptor_count = 65536, .stage_flags = 17 };
@@ -364,4 +365,48 @@ test "sparse descriptor capacities retain only written identities and fail atomi
     for (0..127) |index| _ = try sparse_element(&profile,4,@intCast(index));
     try std.testing.expectError(error.Exhausted,sparse_element(&profile,4,999));
     try std.testing.expectEqual(@as(usize,128), profile.descriptor_count);
+}
+
+test "variable descriptor allocations preserve layout compatibility and bound only written elements" {
+    var layout = descriptor_layout_t{ .binding_count = 2 };
+    layout.bindings[0] = .{ .binding = 1, .descriptor_type = 6, .descriptor_count = 1, .stage_flags = 32 };
+    layout.bindings[1] = .{ .binding = 9, .descriptor_type = 2, .descriptor_count = 65536, .stage_flags = 16 };
+    var profile = try create_sparse_set_profile(&layout);
+    profile.has_variable_count = true;
+    profile.variable_binding = 9;
+    profile.variable_count = 2;
+    _ = try sparse_element(&profile, 1, 0);
+    _ = try sparse_element(&profile, 9, 1);
+    try std.testing.expectEqual(@as(u32, 65536), profile.layout.bindings[1].descriptor_count);
+    try std.testing.expectError(error.Invalid, sparse_element(&profile, 9, 2));
+    try std.testing.expectError(error.Invalid, sparse_element(&profile, 8, 0));
+    profile.variable_count = 0;
+    try std.testing.expectError(error.Invalid, sparse_element(&profile, 9, 0));
+    profile.sparse = false;
+    try std.testing.expectError(error.Invalid, sparse_element(&profile, 1, 0));
+    var empty = try create_sparse_set_profile(&.{});
+    try std.testing.expectError(error.Invalid, sparse_element(&empty, 1, 0));
+}
+
+test "sparse copied layout rejects corrupt quotas and immutable ownership extents" {
+    var layout = descriptor_layout_t{ .binding_count = MaxBindings + 1 };
+    try std.testing.expectError(error.Invalid, create_sparse_set_profile(&layout));
+    layout = .{ .immutable_count = 129 };
+    try std.testing.expectError(error.Invalid, create_sparse_set_profile(&layout));
+    layout = .{ .binding_count = 1 };
+    layout.bindings[0] = .{ .descriptor_type = 2, .descriptor_count = 0 };
+    _ = try create_sparse_set_profile(&layout);
+    layout.bindings[0].immutable_count = 1;
+    try std.testing.expectError(error.Invalid, create_sparse_set_profile(&layout));
+    layout.bindings[0].immutable_count = 0;
+    layout.bindings[0].descriptor_count = 65537;
+    try std.testing.expectError(error.Invalid, create_sparse_set_profile(&layout));
+    layout.bindings[0].descriptor_count = 1;
+    try std.testing.expectError(error.Invalid, create_sparse_set_profile(&layout));
+    layout.bindings[0].stage_flags = 64;
+    try std.testing.expectError(error.Invalid, create_sparse_set_profile(&layout));
+    layout.bindings[0].stage_flags = 16;
+    layout.binding_count = 2;
+    layout.bindings[1] = layout.bindings[0];
+    try std.testing.expectError(error.Invalid, create_sparse_set_profile(&layout));
 }

@@ -111,6 +111,18 @@ pub fn push_bytes(state: *command_profile_t, layout: *const profiles.pipeline_la
     }
 }
 
+/// [in,out] exclusive command profile; [in] borrowed layout/tokens, copied.
+/// Apply Vulkan graphics compatibility disturbance independently of compute.
+/// No heap/native pointers; Invalid leaves the original profile unchanged.
+pub fn bind_graphics_sets(state: *command_profile_t, layout: *const profiles.pipeline_layout_t, first: usize, tokens: []const u64) !void {
+    var staged = command_profile_t{ .descriptor_layout_ready = state.graphics_descriptor_layout_ready, .descriptor_layout = state.graphics_descriptor_layout, .sets = state.graphics_sets };
+    try bind_sets(&staged, layout, first, tokens);
+    state.graphics_descriptor_layout_ready = staged.descriptor_layout_ready;
+    state.graphics_descriptor_layout = staged.descriptor_layout;
+    state.graphics_sets = staged.sets;
+}
+
+
 // Test-only fixtures.
 const fixture_t = struct {
     fn test_bind_sets(state: *command_profile_t, definition: *const profiles.pipeline_layout_t, first: usize, tokens: []const u64) !void {
@@ -337,17 +349,6 @@ test "256 push initialization spans every bitmap word and clears definition chan
     try std.testing.expectEqual(@as(usize, 424), @sizeOf(push_profile_t));
     try std.testing.expectEqual(@as(usize, 86048), @sizeOf(command_profile_t));
     try std.testing.expectEqual(@as(usize, 5507584), @sizeOf(registry_t));
-}
-
-/// [in,out] exclusive command profile; [in] borrowed layout/tokens, copied.
-/// Apply Vulkan graphics compatibility disturbance independently of compute.
-/// No heap/native pointers; Invalid leaves the original profile unchanged.
-pub fn bind_graphics_sets(state: *command_profile_t, layout: *const profiles.pipeline_layout_t, first: usize, tokens: []const u64) !void {
-    var staged = command_profile_t{ .descriptor_layout_ready = state.graphics_descriptor_layout_ready, .descriptor_layout = state.graphics_descriptor_layout, .sets = state.graphics_sets };
-    try bind_sets(&staged, layout, first, tokens);
-    state.graphics_descriptor_layout_ready = staged.descriptor_layout_ready;
-    state.graphics_descriptor_layout = staged.descriptor_layout;
-    state.graphics_sets = staged.sets;
 }
 
 test "graphics descriptor binds preserve the independent compute and push domains" {
