@@ -5839,3 +5839,29 @@ available; observer expiration, synthetic ACK fixtures or failed UMDH capture do
 not count as completed acceptance. The documented Windows11SDK UMDH bug requires
 signed Windows10SDK UMDH for this audit; per-image UST state must be restored to
 its exact pre-audit state in all paths.
+
+
+### Repository-owned DXVK monitor owner cleanup (user-approved exception)
+
+Pinned DXVK2.7.1 getMonitorEdid acquires a Windows device-information set. The
+repository patch owns that HDEVINFO in a stack-scoped guard, releases it on every
+return and rejects INVALID_HANDLE_VALUE without attempting destruction. No
+caller storage escapes, and no rendering/API/acceptance behavior changes. This
+is the human-authorized narrow exception to the original unchanged-DXVK guide.
+
+vgpu-dxvk-client-build always invokes scripts/build_dxvk_client.py. The driver
+verifies the pristine main and nested dependency pins, archives them into a new
+ignored private source tree, applies the tracked patch, and builds offline. It
+preserves previous source/build/snapshot artifacts and atomically publishes
+build/dxvk_client.json under a dedicated process lock. Cache identity includes
+patch/driver hashes, exact dependency pins, tool versions and settings; reuse
+checks both output DLL hashes. A failed build publishes no replacement receipt.
+Fresh checkouts and CI use the same tracked build route and patch. Native
+acceptance records pinned2.7.1 plus the downstream fix with exact DLL/patch
+provenance. Final heap qualification must show release across repeated actual
+COM/DLL lifetimes; successful rendering alone does not establish zero leaks.
+
+With robustness2 nullDescriptor enabled, vertex binding accepts a NULL buffer
+only at offset0 and sends native identity0. Mixed bindings retain only real
+buffer/allocation owners after native ACK. Disabled support or a nonzero NULL
+offset fails before transmission; loss preserves uncertainty for real owners.

@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 85% | Basic real Windows/DXVK rendering,compute,presentation and normal teardown pass; genuine device-reset/Present-reset and owned teardown verified at da50fb7; full48-frame/eight-lifetime WSI passes. Whole-core coverage83.39%, current final sanitizer/GPU matrix/native heap gates pending; robust2 null vertex binding correction in progress |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Integrated implementation and real rendering/compute/presentation/loss teardown pass; whole-production coverage90.07%branch/98.50%line verified at37df8b4. NULL vertex behavior implemented. Approved repository-wide DXVK cleanup build passes at094c34c; current final sanitizers, GPU matrix and patched native heap acceptance pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -22,7 +22,7 @@
 | #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned offline x64 loader build and actual ISO-VM medium-integrity discovery verified; real receiver bootstrap and GPU/DXVK remain pending |
 
-**Total Feature Completion**: `76.25%`
+**Total Feature Completion**: `77.5%`
 
 ## Commit History & Progress Log
 
@@ -981,3 +981,38 @@ per-image registry state was restored and failed capture retained. Signed
 Windows10SDK tools are prepared for a fresh current-code capture; no heap credit
 yet. A robust2 null vertex-binding correctness gap is being fixed before final
 source freeze. TODO#3 is85%, Time Ended remains TBD; no completion claim.
+
+
+### Whole-core coverage verified; approved repository-wide DXVK cleanup
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `c7580ad` | docs(vgpu): record genuine loss qualification and remaining final gates | #3 +0%; overall +0%. |85% milestone attributed to da50fb7, not documentation. |
+| `478a58d` | test(vgpu): expand physical, memory and wrapper boundary coverage | #3 +0%; overall +0%. |352 integrated tests; unchanged whole-production gate retained. |
+| `ee70c1a` | test(vgpu): verify descriptor copy and graphics ownership guards | #3 +0%; overall +0%. |357 integrated tests with native encoder oracles and failure ownership checks. |
+| `7e15868` | fix(vgpu): support legal robustness2 null vertex bindings | #3 +0%; overall +0%. |NULL native identity allowed only with enabled nullDescriptor and offset0; mixed real owners retained after ACK. Disabled/malformed input rejected without RPC. Targeted D/RS/native oracles pass; production source frozen here. |
+| `fb46a01` | test(dxvk): keep repeated lifetimes on the pinned DXGI factory | #3 +0%; overall +0%. |Exact loaded vendor factory/adapter is passed to pinned D3D11; three same-process real lifetimes pass device/render/compute/presentation and normal teardown in pristine eb81b3350d8e7546. Native heap growth remains a failure. |
+| `a34d93a` | test(vgpu): qualify final resource and submission edge cases | #3 +0%; overall +0%. |372 tests; actual ACK/loss, independent packets, cancellation and copied ownership. Whole gate89.92% remains below90%. |
+| `7cf6c01` | test(vgpu): verify render pass attachment and sampled layout guards | #3 +0%; overall +0%. |374 tests; whole gate89.99% still below90%; no rounding to acceptance. |
+| `37df8b4` | test(vgpu): preserve immutable sampler ownership through descriptor retirement | #3 +5%; overall +1.25% for verified whole-core coverage milestone. |375 Debug/ReleaseSafe tests and128 native tests pass. Whole production scope90.07%branch4335/4813 and98.50%line4677/4748; unchanged90% gate passes in run-20261007T213414219044Z-1351006. |
+| `094c34c` | fix(dxvk): apply tracked device information owner cleanup to every client build | #3 +0%; overall +0% (patched native acceptance pending). |User explicitly approved the narrow upstream cleanup exception and required repository-wide application. Tracked patch plus standard make driver builds246 targets and verifies exact repeat cache; clean pinned submodules and pristine DLL builds preserved. |
+
+The external native audit eb81b3350d8e7546 passes all three actual FL11/device,
+4096 GPU pixels,64 compute words,4096 client pixels and normal teardown lifetimes,
+but fails heap qualification: pinned DXVK getMonitorEdid acquires HDEVINFO without
+SetupDiDestroyDeviceInfoList on every return. The user authorized the prepared
+minimal cleanup patch with the explicit requirement that fresh checkouts receive
+the same fix. patches/dxvk/setupapi_device_info_owner.patch and the standard
+vgpu-dxvk-client-build driver now satisfy that requirement without changing the
+upstream submodule pin. Provenance includes patch/driver/dependency/DLL hashes.
+The accepted client is pinned2.7.1 plus this tracked downstream owner fix; it must
+not be reported as an unchanged upstream binary. Exact invalid acquisition and
+all normal/error returns use scoped release. Rendering and acceptance assertions
+are unchanged. Patched actual heap, normal/sanitized DXVK and fault checks remain
+pending. Matched Microsoft PDBs support attribution of residual native stacks;
+no allocation suppression or blanket OS exclusion substitutes for qualification.
+
+TODO#3 is90% and Time Ended remains TBD. Current required ICD sanitizer/Windows
+checks,12-case real GPU matrix/full repeated WSI and patched native zero-leak
+acceptance remain open. Historical pristine failures, DLLs and registry recovery
+receipts remain intact. README and VM state are preserved.

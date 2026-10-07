@@ -349,3 +349,35 @@ Valid unchanged stress/pure receipts remain reusable. TODO#3 is85%, overall76.25
 final15% pending all gates; no100% or Time Ended until genuine final acceptance.
 Preserve old native PIDs4296/1404, VM/disks/TPM, all snapshots and failed artifacts,
 known untracked files and README. Do not squash/reset/restart completed work.
+
+
+### 2026-10-07 resume final qualification at90%, approved tracked DXVK fix
+
+Production is frozen at7e15868 (legal robustness2 NULL vertex bindings). Core
+37df8b4 has375 passing Debug/ReleaseSafe tests/native128; unchanged whole-core
+coverage passes90.07%branch4335/4813 and98.50%line4677/4748 in
+run-20261007T213414219044Z-1351006. Final current ICD SAN/test/Windows make is
+running in icd_final_current_test_san_windows.log; account for that result before
+launching replacements. Existing passing unchanged pure/stress receipts remain
+valid. Agents and source/index/VM ownership remain unchanged.
+
+User approved the minimal confirmed DXVK SetupAPI owner cleanup and specifically
+requires repository-wide application.094c34c tracks the patch and standard client
+build driver. Full246-target Windows build and verified repeat-cache build pass.
+Exact pins remain pristine; old build/dxvk_win64 and every deployed snapshot stay
+preserved. Current accepted dependency must be described as pinned2.7.1 plus
+tracked downstream owner fix. WDDM private snapshot/audit routes consume the
+receipt-backed DLL/patch hashes, without pristine fallback.
+
+Pristine heap eb81b3350d8e7546 passes all three same-process GPU/compute/client
+lifetimes and full normal native teardown but fails actual allocation growth.
+SetupAPI owner leak is confirmed; residual compiler locale/loader TLS stacks
+require matched attribution and genuine ownership cleanup if needed. Root has
+matched official ntdll/ucrtbase/devobj/setupapi/D3DCompiler47 PDBs in
+build/root_todo3_continuation/native_symbols_eb81. WDDM alone operates VM/GPU and
+coordinates patched three-lifetime native heap, current normal/SAN/fault DXVK,
+12-case Vulkan GPU matrix and repeated48/eight-life WSI acceptance. Preserve
+original negative audits, tools and exact per-image registry restore receipts.
+
+TODO#3 is90%, overall77.5%; no100% until final qualification genuinely passes.
+Keep Time Ended TBD, all old native PIDs, branch/history/untracked files and README.
