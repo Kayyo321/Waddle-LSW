@@ -184,6 +184,8 @@ static void wait_retired(const wchar_t *path,uint64_t identity) {
     }
 }
 
+#include "dxvk_fault_windows.inc"
+
 /* Accept ordinary absolute drive/UNC paths; refuse search-path resolution. */
 static int absolute_file(const wchar_t *path, const wchar_t *basename) {
     if (!path || !*path)
@@ -202,12 +204,17 @@ static int absolute_file(const wchar_t *path, const wchar_t *basename) {
 /** @brief Run one real DXVK device/swapchain transaction on the selected ICD.
  * @param[in] argc Exactly eight. @param[in] argv Nonnull borrowed absolute paths:
  * executable, vulkan-1.dll, DXVK dxgi.dll, DXVK d3d11.dll, Waddle ICD manifest, bootstrap DLL, private config, fresh retirement receipt.
- * @return Zero after device, exact render/compute results, Present and teardown; two for
- * invalid prerequisites; one for native/DXVK failure. No skipped success.
- * @note Single main thread; SDK/DXVK may own internal threads. No fixture heap.
+ * @return Zero after normal device/results/Present/teardown; one for normal
+ * failure or completely verified optional postflush loss; two for invalid
+ * prerequisites or failed loss verification. Supervisor requires stage markers.
+ * @note Single main thread, optional joined submission-lock helper, and vendor
+ * threads. No fixture heap; modules outlive COM references and helper borrows.
  * Modules outlive COM objects; partial acquisition uses the same cleanup path.
  */
 static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
+    char fault_text[16];DWORD fault_length=GetEnvironmentVariableA("WADDLE_DXVK_FAULT",fault_text,sizeof fault_text);
+    int fault_case=fault_length!=0;
+    if(fault_case&&(fault_length>=sizeof fault_text||strcmp(fault_text,"postflush")||audit_enabled))return 2;
     if (argc != 8 || !absolute_file(argv[1], L"vulkan-1.dll") ||
         !absolute_file(argv[2], L"dxgi.dll") || !absolute_file(argv[3], L"d3d11.dll") ||
         !absolute_file(argv[4], NULL) || wcschr(argv[4], L';') ||
@@ -228,6 +235,7 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
         return 1;
     }
     int result = 1;
+    int fault_verified=0;
     HMODULE loader = NULL, dxgi = NULL, d3d11 = NULL, bootstrap=NULL;
     bootstrap_start_t start=NULL;bootstrap_stop_t stop=NULL;bootstrap_session_t session=NULL;bootstrap_abandon_t abandon=NULL;
     uint64_t identity=0;
@@ -348,6 +356,12 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
     status = ID3D11Device_GetDeviceRemovedReason(device);
     if (FAILED(status))
         goto cleanup;
+    if(fault_case){
+        stage="actual transport loss after recorded GPU work";
+        status=verify_transport_loss(device,context,view,swapchain,argv[7],identity);
+        if(FAILED(status))goto cleanup;
+        fault_verified=1;
+    }
     result = 0;
 cleanup:
     if (result)
@@ -371,7 +385,7 @@ cleanup:
         result = 1;
     if(stop && session && abandon) {
         venus_ring_status_t retirement=stop();uint64_t retained=session();
-        if(retirement!=RingOk && retained){result=1;wait_retired(argv[7],retained);while(abandon(retained)!=RingOk)Sleep(10);}
+        if(retirement!=RingOk && retained){if(!fault_verified)result=1;wait_retired(argv[7],retained);while(abandon(retained)!=RingOk)Sleep(10);}
         else if(retirement!=RingOk)result=1;
     }
     if (d3d11 && !FreeLibrary(d3d11))
@@ -382,9 +396,11 @@ cleanup:
         result = 1;
     if(bootstrap && !FreeLibrary(bootstrap))result=1;
     if(GetModuleHandleW(argv[5]) || GetModuleHandleW(argv[1]) || GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[3]) || GetModuleHandleW(L"waddle_vulkan_experimental.dll"))result=1;
-    if (!result)
+    if (!result && fault_verified)
+        puts("DXVK actual device removal and owned native teardown verified after trusted retirement.");
+    else if (!result)
         puts("DXVK real device, exact pixels/compute, swapchain Present and teardown succeeded on the selected ICD.");
-    return result;
+    return fault_case ? (fault_verified && !result ? 1 : 2) : result;
 }
 
 #include "dxvk_heap_audit_windows.inc"
