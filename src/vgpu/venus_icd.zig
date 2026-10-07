@@ -10,6 +10,7 @@ const extensions_wire = @import("venus_extensions_wire.zig");
 const wsi = @import("venus_wsi.zig");
 const extra_wire = @import("venus_extra_objects_wire.zig");
 const modern_sync = @import("venus_modern_sync_wire.zig");
+const requirements2_wire = @import("venus_requirements2_wire.zig");
 var wsi_state = wsi.state_t{};
 const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
@@ -72,6 +73,65 @@ fn retire_extension_cache(handle: u64) void {
         if (entry.records) |records| MappingAllocator.free(records);
         entry.* = .{};
     };
+}
+const InstanceProperties2: u32 = 1;
+const InstanceSurface: u32 = 2;
+const InstanceWin32Surface: u32 = 4;
+const instance_advertisement_t = struct { handle: u64 = 0, api: u32 = c.VK_API_VERSION_1_0, mask: u32 = 0 };
+var instance_advertisements = [_]instance_advertisement_t{.{}} ** MaxInstances;
+const InstanceExtensionNames = [_][]const u8{ "VK_KHR_get_physical_device_properties2", "VK_KHR_surface", "VK_KHR_win32_surface" };
+const InstanceExtensionVersions = [_]u32{ c.VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_SPEC_VERSION, c.VK_KHR_SURFACE_SPEC_VERSION, 6 };
+fn instance_extension_supported(index: usize) bool {
+    if (!negotiated_capabilities_ready) return false;
+    return index == 0 or builtin.os.tag == .windows or builtin.is_test;
+}
+fn admit_instance_extensions(info: *const c.VkInstanceCreateInfo) !u32 {
+    if (info.enabledExtensionCount > InstanceExtensionNames.len or
+        (info.enabledExtensionCount != 0 and info.ppEnabledExtensionNames == null)) return error.Invalid;
+    if (info.enabledExtensionCount != 0 and @intFromPtr(info.ppEnabledExtensionNames) % @alignOf([*c]const u8) != 0) return error.Invalid;
+    var mask: u32 = 0;
+    if (info.enabledExtensionCount != 0) for (info.ppEnabledExtensionNames[0..info.enabledExtensionCount]) |pointer| {
+        const name = bounded_name(pointer) orelse return error.Invalid;
+        var found = false;
+        for (InstanceExtensionNames, 0..) |known, index| {
+            if (!std.mem.eql(u8, name, known)) continue;
+            if (!instance_extension_supported(index)) return error.Extension;
+            const bit = @as(u32, 1) << @as(u5, @intCast(index));
+            if (mask & bit != 0) return error.Invalid;
+            mask |= bit;
+            found = true;
+            break;
+        }
+        if (!found) return error.Extension;
+    };
+    if (mask & InstanceWin32Surface != 0 and mask & InstanceSurface == 0) return error.Extension;
+    return mask;
+}
+fn instance_proc_allowed(handle: u64, name: []const u8) bool {
+    var enabled = instance_advertisement_t{};
+    for (instance_advertisements) |entry| if (entry.handle == handle) { enabled = entry; break; };
+    if (std.mem.eql(u8, name, "vkGetPhysicalDeviceFeatures2KHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceProperties2KHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceFormatProperties2KHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceImageFormatProperties2KHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceQueueFamilyProperties2KHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceMemoryProperties2KHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceSparseImageFormatProperties2KHR"))
+        return enabled.mask & InstanceProperties2 != 0;
+    if (std.mem.eql(u8, name, "vkGetPhysicalDeviceFeatures2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceProperties2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceFormatProperties2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceImageFormatProperties2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceQueueFamilyProperties2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceMemoryProperties2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceSparseImageFormatProperties2"))
+        return enabled.api >= c.VK_API_VERSION_1_1;
+    if (std.mem.eql(u8, name, "vkCreateWin32SurfaceKHR") or std.mem.eql(u8, name, "vkGetPhysicalDeviceWin32PresentationSupportKHR"))
+        return enabled.mask & InstanceWin32Surface != 0;
+    if (std.mem.eql(u8, name, "vkDestroySurfaceKHR") or std.mem.eql(u8, name, "vkGetPhysicalDeviceSurfaceSupportKHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR") or std.mem.eql(u8, name, "vkGetPhysicalDeviceSurfaceFormatsKHR") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceSurfacePresentModesKHR")) return enabled.mask & InstanceSurface != 0;
+    return true;
 }
 const instance_cache_t = struct {
     handle: u64 = 0,
@@ -260,6 +320,7 @@ fn clear() void {
     c.venus_command_free(&command);
     c.venus_objects_free(&objects);
     caches = [_]instance_cache_t{.{}} ** MaxInstances;
+    instance_advertisements = [_]instance_advertisement_t{.{}} ** MaxInstances;
     device_caches = [_]device_cache_t{.{}} ** 16;
     ring_slots = [_]bool{false} ** 64;
     gpu_fences = [_]u64{0} ** 64;
@@ -472,6 +533,8 @@ fn create_instance(
             ((version >> 22) & 0x7f) != 1 or ((version >> 12) & 0x3ff) != 0))
             return c.VK_ERROR_INCOMPATIBLE_DRIVER;
     }
+    const extension_mask = admit_instance_extensions(@ptrCast(info)) catch |err| return
+        if (err == error.Extension) c.VK_ERROR_EXTENSION_NOT_PRESENT else c.VK_ERROR_INITIALIZATION_FAILED;
     var available: ?*instance_cache_t = null;
     for (&caches) |*entry| if (entry.handle == 0) {
         available = entry;
@@ -496,6 +559,10 @@ fn create_instance(
         next = link.pNext;
     }
     native_info.pNext = null;
+    // Pinned receiver rejects all application instance names and creates an actual >=1.1
+    // host instance (vkr_instance.c). Query/Win32 names describe guest behavior only.
+    native_info.enabledExtensionCount = 0;
+    native_info.ppEnabledExtensionNames = null;
     var encoded: [4096]u8 = undefined;
     var written: usize = 0;
     const status = c.venus_instance_wire_create(
@@ -523,6 +590,12 @@ fn create_instance(
         return result;
     }
     entry.* = .{ .handle = instance.*.handle };
+    for (&instance_advertisements) |*advertisement| if (advertisement.handle == 0) {
+        advertisement.* = .{ .handle = instance.*.handle, .mask = extension_mask,
+            .api = if (info.*.pApplicationInfo != null and info.*.pApplicationInfo.*.apiVersion != 0)
+                info.*.pApplicationInfo.*.apiVersion else c.VK_API_VERSION_1_0 };
+        break;
+    };
     output.* = @ptrFromInt(instance.*.handle);
     return c.VK_SUCCESS;
 }
@@ -569,6 +642,7 @@ fn destroy_instance(
         _ = failure(c.RingCorrupt);
         return;
     }
+    for (&instance_advertisements) |*advertisement| if (advertisement.handle == handle) { advertisement.* = .{}; break; };
     entry.* = .{};
 }
 fn discover(entry: *instance_cache_t) c_int {
@@ -1414,6 +1488,27 @@ fn memory(
             memory_type.propertyFlags &= ~@as(u32, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
         memory_type.propertyFlags &= ~@as(u32, c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }
+}
+/// Enumerate implemented guest instance names; borrowed count/capacity storage, mutex serialized.
+/// Guest query and Win32 names are never forwarded as unsupported Linux host names.
+fn enumerate_instance_extensions(layer: [*c]const u8, count: [*c]u32, output: [*c]c.VkExtensionProperties) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (count == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (layer != null) return c.VK_ERROR_LAYER_NOT_PRESENT;
+    var names: [3]c.VkExtensionProperties = undefined;
+    var total: u32 = 0;
+    for (InstanceExtensionNames, InstanceExtensionVersions, 0..) |name, version, index| {
+        if (!instance_extension_supported(index)) continue;
+        names[total] = std.mem.zeroes(c.VkExtensionProperties);
+        @memcpy(names[total].extensionName[0..name.len], name);
+        names[total].specVersion = version;
+        total += 1;
+    }
+    if (output == null) { count.* = total; return c.VK_SUCCESS; }
+    const copied = @min(count.*, total);
+    @memcpy(output[0..copied], names[0..copied]);
+    count.* = copied;
+    return if (copied < total) c.VK_INCOMPLETE else c.VK_SUCCESS;
 }
 /// Enumerate empty supported instance extensions; borrowed output, no allocation or transport.
 fn enumerate_extensions(
@@ -4843,6 +4938,17 @@ fn physical_proc(name: []const u8) c.PFN_vkVoidFunction {
     if (negotiated_capabilities_ready and (std.mem.eql(u8, name, "vkGetPhysicalDeviceProperties2") or
         std.mem.eql(u8, name, "vkGetPhysicalDeviceProperties2KHR"))) return @ptrCast(&properties2);
     const Entries = .{
+        .{ "vkGetPhysicalDeviceFormatProperties2", &format_properties2 },
+        .{ "vkGetPhysicalDeviceFormatProperties2KHR", &format_properties2 },
+        .{ "vkGetPhysicalDeviceImageFormatProperties2", &image_properties2 },
+        .{ "vkGetPhysicalDeviceImageFormatProperties2KHR", &image_properties2 },
+        .{ "vkGetPhysicalDeviceQueueFamilyProperties2", &queue_properties2 },
+        .{ "vkGetPhysicalDeviceQueueFamilyProperties2KHR", &queue_properties2 },
+        .{ "vkGetPhysicalDeviceMemoryProperties2", &memory2 },
+        .{ "vkGetPhysicalDeviceMemoryProperties2KHR", &memory2 },
+        .{ "vkGetPhysicalDeviceSparseImageFormatProperties2", &sparse_properties2 },
+        .{ "vkGetPhysicalDeviceSparseImageFormatProperties2KHR", &sparse_properties2 },
+
         .{ "vkGetPhysicalDeviceProperties", &properties },
         .{ "vkGetPhysicalDeviceFeatures", &features },
         .{ "vkGetPhysicalDeviceMemoryProperties", &memory },
@@ -4874,7 +4980,7 @@ export fn venus_icd_get_instance_proc_addr(
     const Globals = .{
         .{ "vkGetInstanceProcAddr", &venus_icd_get_instance_proc_addr },
         .{ "vkCreateInstance", &create_instance },
-        .{ "vkEnumerateInstanceExtensionProperties", &enumerate_extensions },
+        .{ "vkEnumerateInstanceExtensionProperties", &enumerate_instance_extensions },
         .{ "vkEnumerateInstanceVersion", &enumerate_version },
     };
     inline for (Globals) |entry| if (std.mem.eql(u8, name, entry[0])) return @ptrCast(entry[1]);
@@ -4885,6 +4991,7 @@ export fn venus_icd_get_instance_proc_addr(
         .{ "vkGetDeviceProcAddr", &get_device_proc },
     };
     inline for (Entries) |entry| if (std.mem.eql(u8, name, entry[0])) return @ptrCast(entry[1]);
+    if (!instance_proc_allowed(@intFromPtr(instance.?), name)) return null;
     return physical_proc(name) orelse device_proc(name);
 }
 /// Physical query lookup; header defines validated instance and supported procedure scope.
@@ -4896,6 +5003,7 @@ export fn venus_icd_get_physical_proc_addr(
     lock_icd();
     defer unlock_icd();
     if (instance == null or cache(@intFromPtr(instance.?)) == null) return null;
+    if (!instance_proc_allowed(@intFromPtr(instance.?), name)) return null;
     return physical_proc(name);
 }
 comptime {
@@ -6007,6 +6115,13 @@ const feature_fixture_t = struct {
                 response.*.argument_zero = self.commands;
                 @memset(&self.reply, 0);
                 switch (self.current) {
+                    0 => {
+                        std.mem.writeInt(u32, self.reply[0..4], 0, .little);
+                        std.mem.writeInt(i32, self.reply[4..8], c.VK_SUCCESS, .little);
+                        std.mem.writeInt(u64, self.reply[8..16], 1, .little);
+                        std.mem.writeInt(u64, self.reply[16..24], std.mem.readInt(u64, wire[wire.len - 8 ..][0..8], .little), .little);
+                        self.bytes = 24;
+                    },
                     6 => {
                         var value = std.mem.zeroes(c.VkPhysicalDeviceProperties);
                         value.apiVersion = self.api;
@@ -7459,3 +7574,138 @@ fn reset_query_pool(device: c.VkDevice, pool: c.VkQueryPool, first: u32, count: 
     const packet = modern_sync.reset_query_pool(parent.id, record.id, first, count) catch return;
     _ = command_acknowledged(&packet, 171);
 }
+
+test "legal API1.0 guest Properties2 extension admission gates aliases without forwarding host names" {
+    var fixture = feature_fixture_t{};
+    const capabilities = feature_test_capabilities();
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(feature_fixture_t.exchange, &fixture, &capabilities));
+    defer venus_icd_abandon();
+    var count: u32 = 0;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), enumerate_instance_extensions(null, &count, null));
+    try std.testing.expectEqual(@as(u32, 3), count);
+    var values: [3]c.VkExtensionProperties = undefined;
+    count = 1;
+    try std.testing.expectEqual(@as(c_int, c.VK_INCOMPLETE), enumerate_instance_extensions(null, &count, &values));
+    try std.testing.expectEqualStrings("VK_KHR_get_physical_device_properties2", std.mem.sliceTo(&values[0].extensionName, 0));
+    const names = [_][*c]const u8{"VK_KHR_get_physical_device_properties2"};
+    var info = c.VkInstanceCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+        .enabledExtensionCount = names.len, .ppEnabledExtensionNames = &names };
+    var instance: c.VkInstance = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_instance(&info, null, &instance));
+    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkGetPhysicalDeviceFeatures2KHR") != null);
+    try std.testing.expect(venus_icd_get_physical_proc_addr(instance, "vkGetPhysicalDeviceProperties2KHR") != null);
+    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkGetPhysicalDeviceFeatures2") == null);
+    try std.testing.expect(venus_icd_get_instance_proc_addr(instance, "vkCreateWin32SurfaceKHR") == null);
+    const prior = fixture.commands;
+    const unknown = [_][*c]const u8{"VK_EXT_unsupported"};
+    info.ppEnabledExtensionNames = &unknown;
+    var rejected: c.VkInstance = @ptrFromInt(1);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_EXTENSION_NOT_PRESENT), create_instance(&info, null, &rejected));
+    try std.testing.expect(rejected == null);
+    try std.testing.expectEqual(prior, fixture.commands);
+    destroy_instance(instance, null);
+    for (instance_advertisements) |entry| try std.testing.expect(entry.handle == 0);
+}
+
+// Merge into ICD: const requirements2_wire=@import("venus_requirements2_wire.zig");
+// physical_proc entries and KHR names listed at end. Unknown output payloads are
+// preserved; all results originate in actual host queries. Recursive ICD lock
+// permits composition without exposing the shared reply scratch to another thread.
+fn query2_chain(next: ?*anyopaque) !?*c.VkFormatProperties3 {
+    var addresses: [64]usize = undefined;
+    var count: usize = 0;
+    var current = next;
+    var format3: ?*c.VkFormatProperties3 = null;
+    while (current) |address| {
+        const bits = @intFromPtr(address);
+        if (bits % @alignOf(c.VkBaseOutStructure) != 0 or count == addresses.len) return error.Invalid;
+        for (addresses[0..count]) |prior| if (prior == bits) return error.Invalid;
+        addresses[count] = bits; count += 1;
+        const header: *c.VkBaseOutStructure = @ptrCast(@alignCast(address));
+        if (header.sType == c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3) {
+            if (format3 != null or bits % @alignOf(c.VkFormatProperties3) != 0) return error.Invalid;
+            format3 = @ptrCast(@alignCast(address));
+        }
+        current = @ptrCast(header.pNext);
+    }
+    return format3;
+}
+/// [in] live borrowed physical, format, canonical output header and bounded chain.
+/// [out] Actual32-bit flags and requested actual64-bit flags; unknown payloads and
+/// headers preserved. Invalid chain or host failure preserves output. No retention,
+/// allocations; process mutex serializes the actual transport transaction.
+fn format_properties2(physical: c.VkPhysicalDevice, format: c.VkFormat, output: [*c]c.VkFormatProperties2) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or output == null or @intFromPtr(output) % @alignOf(c.VkFormatProperties2) != 0 or output.*.sType != c.VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2) return;
+    const extended = query2_chain(output.*.pNext) catch return;
+    const record = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) orelse return;
+    const packet = requirements2_wire.format_properties2(record.id, format, extended != null) catch return;
+    const reply = transact(packet.bytes[0..packet.used]) orelse return;
+    const value = requirements2_wire.decode_format(reply, extended != null) catch { _ = failure(c.RingCorrupt); return; };
+    output.*.formatProperties = .{ .linearTilingFeatures = value.core.linearTilingFeatures,
+        .optimalTilingFeatures = value.core.optimalTilingFeatures, .bufferFeatures = value.core.bufferFeatures };
+    if (extended) |node| { node.linearTilingFeatures = value.extended[0]; node.optimalTilingFeatures = value.extended[1]; node.bufferFeatures = value.extended[2]; }
+}
+/// [in] live physical, canonical core-only image request and output headers.
+/// [out] Actual host image constraints or exact native error. Input extension
+/// semantics are rejected until implemented; unknown output nodes stay untouched.
+/// No retained pointers/heap; serialized transaction and commit-on-success output.
+fn image_properties2(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceImageFormatInfo2, output: [*c]c.VkImageFormatProperties2) callconv(.C) c_int {
+    lock_icd(); defer unlock_icd();
+    if (info == null or output == null or @intFromPtr(info) % @alignOf(c.VkPhysicalDeviceImageFormatInfo2) != 0 or @intFromPtr(output) % @alignOf(c.VkImageFormatProperties2) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2 or output.*.sType != c.VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2) return c.VK_ERROR_INITIALIZATION_FAILED;
+    _ = query2_chain(output.*.pNext) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (info.*.pNext != null) return c.VK_ERROR_FORMAT_NOT_SUPPORTED;
+    var value: c.VkImageFormatProperties = undefined;
+    const result = image_properties(physical, info.*.format, info.*.type, info.*.tiling, info.*.usage, info.*.flags, &value);
+    if (result == c.VK_SUCCESS) output.*.imageFormatProperties = value;
+    return result;
+}
+/// [in] live physical, count and nullable fill array; each filled header canonical.
+/// [out] Actual host family count/values bounded64, preserves chain/header. Failure
+/// preserves count and payload. No ownership transfer/heap; mutex serialized.
+fn queue_properties2(physical: c.VkPhysicalDevice, count: [*c]u32, output: [*c]c.VkQueueFamilyProperties2) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (count == null or physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null or lost != c.RingOk) return;
+    if (output == null) { queue_properties(physical, count, null); return; }
+    const capacity: u32 = @min(count.*, 64);
+    for (output[0..capacity]) |item| { if (item.sType != c.VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2) return; _ = query2_chain(item.pNext) catch return; }
+    var values: [64]c.VkQueueFamilyProperties = undefined;
+    var copied = capacity;
+    queue_properties(physical, &copied, &values);
+    if (lost != c.RingOk or copied > capacity) return;
+    for (0..copied) |index| output[index].queueFamilyProperties = values[index];
+    count.* = copied;
+}
+/// [in] borrowed live physical and canonical memory output/chain. [out] Actual
+/// projected host types/heaps, preserving headers and unknown extension payloads.
+/// Failure preserves payload; no retained pointers/heap; serialized transport.
+fn memory2(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceMemoryProperties2) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null or lost != c.RingOk or output == null or @intFromPtr(output) % @alignOf(c.VkPhysicalDeviceMemoryProperties2) != 0 or output.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2) return;
+    _ = query2_chain(output.*.pNext) catch return;
+    var value = std.mem.zeroes(c.VkPhysicalDeviceMemoryProperties);
+    memory(physical, &value);
+    if (lost != c.RingOk or value.memoryTypeCount == 0) return;
+    output.*.memoryProperties = value;
+}
+/// [in] borrowed physical/core sparse request and count/nullable canonical array.
+/// [out] Actual host sparse granularity/aspects and count; unknown nodes/header
+/// preserved. Error preserves count/output, no retention/heap; mutex serialized.
+fn sparse_properties2(physical: c.VkPhysicalDevice, info: [*c]const c.VkPhysicalDeviceSparseImageFormatInfo2, count: [*c]u32, output: [*c]c.VkSparseImageFormatProperties2) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null or lost != c.RingOk or count == null or info == null or @intFromPtr(info) % @alignOf(c.VkPhysicalDeviceSparseImageFormatInfo2) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2 or info.*.pNext != null) return;
+    if (output == null) { sparse_properties(physical, info.*.format, info.*.type, info.*.samples, info.*.usage, info.*.tiling, count, null); return; }
+    const capacity: u32 = @min(count.*, 64);
+    for (output[0..capacity]) |item| { if (item.sType != c.VK_STRUCTURE_TYPE_SPARSE_IMAGE_FORMAT_PROPERTIES_2) return; _ = query2_chain(item.pNext) catch return; }
+    var values: [64]c.VkSparseImageFormatProperties = undefined;
+    var copied = capacity;
+    sparse_properties(physical, info.*.format, info.*.type, info.*.samples, info.*.usage, info.*.tiling, &copied, &values);
+    if (lost != c.RingOk or copied > capacity) return;
+    for (0..copied) |index| output[index].properties = values[index];
+    count.* = copied;
+}
+// physical_proc: vkGetPhysicalDeviceFormatProperties2[KHR] -> format_properties2
+// vkGetPhysicalDeviceImageFormatProperties2[KHR] -> image_properties2
+// vkGetPhysicalDeviceQueueFamilyProperties2[KHR] -> queue_properties2
+// vkGetPhysicalDeviceMemoryProperties2[KHR] -> memory2
+// vkGetPhysicalDeviceSparseImageFormatProperties2[KHR] -> sparse_properties2

@@ -1034,9 +1034,13 @@ static void features2_public(void) {
     assert(venus_icd_bind_capabilities(exchange, &fixture, &capabilities) == RingOk);
     memset(&capabilities, 0xff, sizeof(capabilities));
     for (unsigned cycle = 0; cycle < 3; cycle++) {
-        VkInstance instance = create();
+        const char *names[] = {"VK_KHR_get_physical_device_properties2"};
+        VkInstanceCreateInfo info = {.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            .enabledExtensionCount=1, .ppEnabledExtensionNames=names};
+        VkInstance instance = NULL;
+        assert(create_function()(&info, NULL, &instance) == VK_SUCCESS && instance);
         PFN_vkGetPhysicalDeviceFeatures2 query = (PFN_vkGetPhysicalDeviceFeatures2)
-            lookup_external(instance, "vkGetPhysicalDeviceFeatures2");
+            lookup_external(instance, "vkGetPhysicalDeviceFeatures2KHR");
         PFN_vkGetPhysicalDeviceFeatures2 alias = (PFN_vkGetPhysicalDeviceFeatures2)
             venus_icd_get_physical_proc_addr(instance, "vkGetPhysicalDeviceFeatures2KHR");
         assert(query && alias == query);
