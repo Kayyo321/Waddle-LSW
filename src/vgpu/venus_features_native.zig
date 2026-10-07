@@ -153,6 +153,20 @@ pub fn publish_batch(chain: *const chain_t, nodes: []const node_t) !void {
 /// Success writes only named Boolean fields, preserving outer/chain headers, padding and canaries.
 /// Fixed bounded scalar storage; no heap, locks, transport or pointer retention.
 pub fn publish_features2(output_address: ?*anyopaque, chain: *const chain_t, nodes: []const node_t, core: []const u32) !void {
+    try validate_features2(output_address, chain, nodes, core);
+    const output: *c.VkPhysicalDeviceFeatures2 = @ptrCast(@alignCast(output_address.?));
+    for (nodes, 0..) |node, index| publish_node(chain.addresses[index].?, node.flags[0..node.flag_count]);
+    publish_flags(c.VkPhysicalDeviceFeatures, &output.features, core);
+}
+
+/// Preflight complete Features2 output topology without mutation. [in] output_address nullable,
+/// nonnull refers to accessible initialized externally synchronized native storage. [in] chain,
+/// nodes and core are initialized immutable call-borrowed records disjoint from every output;
+/// chain is collected from exactly output.pNext with unchanged headers/links. Invalid for outer
+/// null/alignment/tag, core extent/Boolean, known node schema/header/Boolean or pair/outer overlap.
+/// Success authorizes publication only while all same-call inputs remain unchanged. No output
+/// byte writes, allocation, transport, locks, global mutation or retained pointers on either result.
+pub fn validate_features2(output_address: ?*anyopaque, chain: *const chain_t, nodes: []const node_t, core: []const u32) !void {
     const raw = output_address orelse return error.Invalid;
     const address = @intFromPtr(raw);
     if (address % @alignOf(c.VkPhysicalDeviceFeatures2) != 0) return error.Invalid;
@@ -166,8 +180,6 @@ pub fn publish_features2(output_address: ?*anyopaque, chain: *const chain_t, nod
         const target_end = target_address + native_size(node.type_tag); // validate_batch proved no overflow.
         if (address < target_end and target_address < end) return error.Invalid;
     }
-    for (nodes, 0..) |node, index| publish_node(chain.addresses[index].?, node.flags[0..node.flag_count]);
-    publish_flags(c.VkPhysicalDeviceFeatures, &output.features, core);
 }
 
 // Test-only fixtures.
@@ -352,6 +364,9 @@ test "all55 core one-hots preserve complete outer bytes and known adjacent outpu
         }
         const known_offset = @offsetOf(box_t, "known") + @offsetOf(c.VkPhysicalDeviceMaintenance5FeaturesKHR, "maintenance5");
         std.mem.writeInt(u32, expected[known_offset..][0..4], 1, @import("builtin").target.cpu.arch.endian());
+        const preflight_before = std.mem.asBytes(&box).*;
+        try @call(.never_inline, validate_features2, .{ &box.output, &chain, &[_]node_t{node}, &core });
+        try std.testing.expectEqualSlices(u8, &preflight_before, std.mem.asBytes(&box));
         try @call(.never_inline, publish_features2, .{ &box.output, &chain, &[_]node_t{node}, &core });
         try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&box));
     }
@@ -378,36 +393,44 @@ test "Features2 malformed final core or chain leaves every output byte unchanged
     var core = [_]u32{1} ** 56;
     const before = std.mem.asBytes(&box).*;
     for ([_]usize{ 0, 54, 56 }) |count| {
+        try std.testing.expectError(error.Invalid, @call(.never_inline, validate_features2, .{ &box.output, &chain, &nodes, core[0..count] }));
         try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ &box.output, &chain, &nodes, core[0..count] }));
         try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
     }
     for (0..55) |index| {
         for ([_]u32{ 2, 0xffffffff }) |invalid| {
             core[index] = invalid;
+            try std.testing.expectError(error.Invalid, @call(.never_inline, validate_features2, .{ &box.output, &chain, &nodes, core[0..55] }));
             try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ &box.output, &chain, &nodes, core[0..55] }));
             try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
         }
         core[index] = 1;
     }
     nodes[1].flags[0] = 2;
+    try std.testing.expectError(error.Invalid, validate_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
     nodes[1] = record(Tags[5]);
     nodes[1].flag_count = 0;
+    try std.testing.expectError(error.Invalid, validate_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
     nodes[1] = record(Tags[5]);
     nodes[1].type_tag = Tags[4];
+    try std.testing.expectError(error.Invalid, validate_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
     nodes[1] = record(Tags[5]);
     box.output.sType = 0;
     const invalid_header = std.mem.asBytes(&box).*;
+    try std.testing.expectError(error.Invalid, validate_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectError(error.Invalid, publish_features2(&box.output, &chain, &nodes, core[0..55]));
     try std.testing.expectEqualSlices(u8, &invalid_header, std.mem.asBytes(&box));
     box.output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     const misaligned: *anyopaque = @ptrFromInt(9);
+    try std.testing.expectError(error.Invalid, @call(.never_inline, validate_features2, .{ @as(?*anyopaque, null), &chain, &nodes, core[0..55] }));
     try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ @as(?*anyopaque, null), &chain, &nodes, core[0..55] }));
+    try std.testing.expectError(error.Invalid, @call(.never_inline, validate_features2, .{ misaligned, &chain, &nodes, core[0..55] }));
     try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ misaligned, &chain, &nodes, core[0..55] }));
     try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
     const unknown_before = .{ box.unknown, box.middle, box.tail };
@@ -425,6 +448,7 @@ test "Features2 core versus chain overlap rejection and empty maximal chains" {
     output.pNext = overlapping;
     const chain = try collect_chain(output.pNext);
     const before = std.mem.asBytes(&output).*;
+    try std.testing.expectError(error.Invalid, @call(.never_inline, validate_features2, .{ &output, &chain, &[_]node_t{record(Tags[4])}, &core }));
     try std.testing.expectError(error.Invalid, @call(.never_inline, publish_features2, .{ &output, &chain, &[_]node_t{record(Tags[4])}, &core }));
     try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&output));
     var natives: std.meta.Tuple(&NativeTypes) = undefined;
@@ -438,4 +462,39 @@ test "Features2 core versus chain overlap rejection and empty maximal chains" {
     output.pNext = &natives[0];
     const maximal = try collect_chain(output.pNext);
     try publish_features2(&output, &maximal, &nodes, &core);
+}
+
+test "Features2 preflight preserves every maximal native payload and byte" {
+    const box_t = extern struct {
+        before: u64,
+        output: c.VkPhysicalDeviceFeatures2,
+        vulkan11: c.VkPhysicalDeviceVulkan11Features,
+        vulkan12: c.VkPhysicalDeviceVulkan12Features,
+        vulkan13: c.VkPhysicalDeviceVulkan13Features,
+        robustness2: c.VkPhysicalDeviceRobustness2FeaturesEXT,
+        maintenance5: c.VkPhysicalDeviceMaintenance5FeaturesKHR,
+        host_query_reset: c.VkPhysicalDeviceHostQueryResetFeatures,
+        shader_draw_parameters: c.VkPhysicalDeviceShaderDrawParametersFeatures,
+        transform_feedback: c.VkPhysicalDeviceTransformFeedbackFeaturesEXT,
+        after: u64,
+    };
+    var box: box_t = undefined;
+    @memset(std.mem.asBytes(&box), 0xa5);
+    box.output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    box.output.pNext = &box.vulkan11;
+    const native_names = .{ "vulkan11", "vulkan12", "vulkan13", "robustness2", "maintenance5", "host_query_reset", "shader_draw_parameters", "transform_feedback" };
+    var nodes: [MaxNodes]node_t = undefined;
+    inline for (native_names, Tags, 0..) |name, tag, index| {
+        const native = &@field(box, name);
+        native.sType = tag;
+        native.pNext = if (index + 1 < MaxNodes) &@field(box, native_names[index + 1]) else null;
+        nodes[index] = record(tag);
+    }
+    const chain = try collect_chain(box.output.pNext);
+    const core = [_]u32{0} ** CoreFlags;
+    const before = std.mem.asBytes(&box).*;
+    try @call(.never_inline, validate_features2, .{ &box.output, &chain, &nodes, &core });
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&box));
+    try @call(.never_inline, publish_features2, .{ &box.output, &chain, &nodes, &core });
+    try std.testing.expect(!std.mem.eql(u8, &before, std.mem.asBytes(&box)));
 }
