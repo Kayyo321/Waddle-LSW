@@ -44,6 +44,7 @@ static HRESULT verify_pixels(ID3D11Device *device,ID3D11DeviceContext *context,I
     ID3D11Texture2D *staging=NULL;HRESULT status=ID3D11Device_CreateTexture2D(device,&description,NULL,&staging);
     if(FAILED(status))return status;
     ID3D11DeviceContext_CopyResource(context,(ID3D11Resource *)staging,(ID3D11Resource *)backbuffer);
+    puts("DXVK stage: map GPU staging pixels.");fflush(stdout);
     D3D11_MAPPED_SUBRESOURCE mapping={0};status=ID3D11DeviceContext_Map(context,(ID3D11Resource *)staging,0,D3D11_MAP_READ,0,&mapping);
     if(SUCCEEDED(status)) {
         if(!mapping.pData || mapping.RowPitch<256)status=E_FAIL;
@@ -105,6 +106,7 @@ static HRESULT verify_compute(ID3D11Device *device,ID3D11DeviceContext *context)
     ID3D11DeviceContext_Dispatch(context,8,1,1);
     ID3D11UnorderedAccessView *empty=NULL;ID3D11DeviceContext_CSSetUnorderedAccessViews(context,0,1,&empty,NULL);ID3D11DeviceContext_CSSetShader(context,NULL,NULL,0);
     ID3D11DeviceContext_CopyResource(context,(ID3D11Resource *)staging,(ID3D11Resource *)output);
+    puts("DXVK stage: map compute storage results.");fflush(stdout);
     D3D11_MAPPED_SUBRESOURCE mapping={0};status=ID3D11DeviceContext_Map(context,(ID3D11Resource *)staging,0,D3D11_MAP_READ,0,&mapping);
     if(SUCCEEDED(status)) {
         if(!mapping.pData)status=E_FAIL;
@@ -272,9 +274,13 @@ int wmain(int argc, wchar_t **argv) {
         goto cleanup;
     const FLOAT Color[] = {0.125f, 0.25f, 0.5f, 1.0f};
     stage="GPU clear and completion";
+    puts("DXVK stage: record GPU clear.");fflush(stdout);
     ID3D11DeviceContext_ClearRenderTargetView(context, view, Color);
+    puts("DXVK stage: record GPU completion event.");fflush(stdout);
     ID3D11DeviceContext_End(context, (ID3D11Asynchronous *)completion);
+    puts("DXVK stage: flush GPU clear and event.");fflush(stdout);
     ID3D11DeviceContext_Flush(context);
+    puts("DXVK stage: poll GPU completion event.");fflush(stdout);
     ULONGLONG started = GetTickCount64();
     BOOL finished = FALSE;
     do {
