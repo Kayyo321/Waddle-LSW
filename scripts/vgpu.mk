@@ -765,8 +765,8 @@ build/vgpu_query_wire_test.exe: tests/vgpu/query_wire.c build/venus_query_wire_w
 vgpu-windows: build/vgpu_query_wire_test.exe
 
 # Experimental public loader/instance ABI; backend transport remains caller owned.
-VgpuIcdObjects = build/venus_icd.o build/venus_command.o build/venus_objects.o build/venus_instance_wire.o build/venus_query_wire.o build/venus_values.o
-VgpuIcdHeaders = include/waddle/venus_icd.h include/waddle/venus_objects.h include/waddle/venus_query_wire.h include/waddle/venus_instance_wire.h include/waddle/venus_values.h include/waddle/venus_command.h
+VgpuIcdObjects = build/venus_capabilities.o build/venus_icd.o build/venus_command.o build/venus_objects.o build/venus_instance_wire.o build/venus_query_wire.o build/venus_values.o
+VgpuIcdHeaders = include/waddle/venus_capabilities.h include/waddle/venus_icd.h include/waddle/venus_objects.h include/waddle/venus_query_wire.h include/waddle/venus_instance_wire.h include/waddle/venus_values.h include/waddle/venus_command.h
 build/venus_icd.o: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_command_wire.zig src/vgpu/venus_graphics_state.zig src/vgpu/venus_graphics_pipeline_wire.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 
@@ -785,7 +785,7 @@ vgpu-icd-sanitizers: $(VgpuIcdObjects) build/venus_values_oracle.o
 build/venus_icd_windows.lib: src/vgpu/venus_icd.zig src/vgpu/venus_graphics_command_wire.zig src/vgpu/venus_graphics_state.zig src/vgpu/venus_graphics_pipeline_wire.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_compute_state.zig $(VgpuIcdHeaders) | build
 	$(ZIG) build-lib $< $(VgpuInstanceWireIncludes) -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
 
-VgpuIcdWindowsLibraries = build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
+VgpuIcdWindowsLibraries = build/venus_capabilities_windows.lib build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
 build/venus_values_oracle_windows.obj: tests/vgpu/values.c | build vgpu-protocol
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $(VgpuValuesOracleIncludes) -DVgpuValuesOracle -c $< -o $@
 
