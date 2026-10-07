@@ -8423,7 +8423,7 @@ fn descriptor_layout_support(device: c.VkDevice, info: [*c]const c.VkDescriptorS
         return;
     };
     const packet = extra_wire.descriptor_layout_support(parent.id, prepared.writer.bytes[0..prepared.writer.used]) catch return;
-    const reply = transact(packet.bytes[0..packet.used]) orelse return;
+    const reply = transact_sized(packet.bytes[0..packet.used], 28) orelse return;
     const supported = extra_wire.decode_descriptor_layout_support(reply) catch { _ = failure(c.RingCorrupt); return; };
     output.*.supported = @intFromBool(supported);
     // Variable descriptor count is not advertised or admitted by implemented policy.
