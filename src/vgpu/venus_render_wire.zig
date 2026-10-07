@@ -25,11 +25,19 @@ pub const writer_t = struct {
         std.mem.writeInt(word_t, self.bytes[self.used..][0..size], word, .little);
         self.used += size;
     }
-    fn require_capacity(self: *const writer_t, bytes: usize) !void {
+    /// Check a complete upcoming record against remaining owned scratch capacity.
+    /// [in] self borrowed immutable, bytes required additional extent; no mutation.
+    /// Returns Limit for corrupt prefix or insufficient space; no allocation/retention,
+    /// independent immutable calls are thread-safe under caller-owned synchronization.
+    pub fn require_capacity(self: *const writer_t, bytes: usize) !void {
         if (self.used > self.bytes.len or bytes > self.bytes.len - self.used) return error.Limit;
     }
-    // Only called after a complete record capacity proof; each scalar stays bounded.
-    fn put_proven(self: *writer_t, comptime word_t: type, word: word_t) void {
+    /// Append one scalar after successful complete-record capacity admission.
+    /// [in,out] self borrowed exclusive; [in] word by value, no pointer retention.
+    /// Caller must validate every count and ensure the full record was admitted using
+    /// require_capacity before this append. An invariant failure traps; storage remains
+    /// bounds checked. No allocation/shared state; distinct writers are thread-safe.
+    pub fn put_proven(self: *writer_t, comptime word_t: type, word: word_t) void {
         self.put(word_t, word) catch unreachable;
     }
     /// Append synchronous command header. [in,out] self exclusive; [in] id nonzero host ID.
