@@ -11315,6 +11315,9 @@ const hidden_fence_fixture_t = struct {
     identity: u64 = 0,
     fence_status: i32 = c.VK_NOT_READY,
     submit_result: i32 = c.VK_SUCCESS,
+    create_result: i32 = c.VK_SUCCESS,
+    corrupt_create: bool = false,
+    corrupt_destroy: bool = false,
     corrupt_submit: bool = false,
     creates: usize = 0,
     destroys: usize = 0,
@@ -11340,12 +11343,12 @@ const hidden_fence_fixture_t = struct {
             c.RequestReply => {
                 if (output == null or capacity < 24) return c.RingCorrupt;
                 const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity]; @memset(bytes, 0);
-                std.mem.writeInt(u32, bytes[0..4], if(fixture.opcode == 206 and fixture.corrupt_submit) 999 else fixture.opcode, .little);
-                const result = if(fixture.opcode == 38) fixture.fence_status else if(fixture.opcode == 206) fixture.submit_result else c.VK_SUCCESS;
+                std.mem.writeInt(u32, bytes[0..4], if((fixture.opcode == 206 and fixture.corrupt_submit) or (fixture.opcode == 35 and fixture.corrupt_create) or (fixture.opcode == 36 and fixture.corrupt_destroy)) 999 else fixture.opcode, .little);
+                const result = if(fixture.opcode == 38) fixture.fence_status else if(fixture.opcode == 206) fixture.submit_result else if(fixture.opcode == 35) fixture.create_result else c.VK_SUCCESS;
                 std.mem.writeInt(i32, bytes[4..8], result, .little);
                 if (fixture.opcode == 35) {
                     std.mem.writeInt(u64, bytes[8..16], 1, .little);
-                    std.mem.writeInt(u64, bytes[16..24], fixture.identity, .little);
+                    std.mem.writeInt(u64, bytes[16..24], if(fixture.create_result < 0) 0 else fixture.identity, .little);
                 }
                 response.*.payload_bytes = @intCast(capacity);
             },
@@ -12650,4 +12653,120 @@ test "root subresource2 and render granularity publish actual values only from v
         try std.testing.expectEqual(@as(usize, 1), fixture.base.calls); try std.testing.expectEqual(corrupt, lost != c.RingOk);
         try std.testing.expectEqual(@as(usize, 4), objects.live_count);
     };
+}
+
+// Append-only supplemental draft; depends on graphics_creation_* helpers.
+const inline_shader_failure_fixture_t = struct {
+    base: graphics_creation_fixture_t = .{},
+    mode: u8 = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        const result = graphics_creation_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (result != c.RingOk or fixture.base.base.command_id != 59) return result;
+        if (request.*.kind == c.RequestSubmit and fixture.mode == 2) return c.RingClosed;
+        if (request.*.kind == c.RequestReply) {
+            const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+            if (fixture.mode == 0) {
+                std.mem.writeInt(i32, bytes[4..8], c.VK_ERROR_OUT_OF_DEVICE_MEMORY, .little);
+                std.mem.writeInt(u64, bytes[16..24], 0, .little);
+            } else std.mem.writeInt(u64, bytes[16..24], fixture.base.created_id + 1, .little);
+        }
+        return result;
+    }
+};
+test "graphics creation inline module host failure prevents pipeline reservation and preserves uncertain owners" {
+    for (0..3) |mode| {
+        var fixture = inline_shader_failure_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(inline_shader_failure_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_creation_graph_t.init();
+        var inputs = graphics_creation_inputs_t{};
+        inputs.link(graph);
+        const code = [_]u32{ 0x07230203, 0x00010000, 0, 1, 0 };
+        var inline_info = c.VkShaderModuleCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = @sizeOf(@TypeOf(code)), .pCode = &code };
+        inputs.stage.module = null;
+        inputs.stage.pNext = &inline_info;
+        var output: c.VkPipeline = @ptrFromInt(8);
+        const result = create_graphics_pipelines(@ptrFromInt(graph.device.handle), null, 1, &inputs.info, null, &output);
+        try std.testing.expectEqual(if (mode == 0) @as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY) else @as(c_int, c.VK_ERROR_DEVICE_LOST), result);
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(if (mode == 0) @as(usize, 5) else 6, objects.live_count);
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.base.submissions);
+        for (profile_registry.pipelines) |slot| try std.testing.expect(!slot.occupied);
+    }
+}
+
+// Append-only extension; graphics_creation_graph_t/inputs/fixture must be integrated.
+test "graphics creation foreign compute and cyclic libraries reject before host reservation" {
+    for (0..5) |case| {
+        var fixture = graphics_creation_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(graphics_creation_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try graphics_creation_graph_t.init();
+        const foreign = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const library_record = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_PIPELINE, if (case == 0) foreign.id else graph.device.id, 0);
+        resource_state(library_record).* = .{ .id = library_record.id, .pipeline_bind_point = if (case == 1) c.VK_PIPELINE_BIND_POINT_COMPUTE else c.VK_PIPELINE_BIND_POINT_GRAPHICS };
+        const library_handle: c.VkPipeline = if (case == 2) null else @ptrFromInt(library_record.handle);
+        var library = c.VkPipelineLibraryCreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR, .libraryCount = if (case == 3) 0 else 1, .pLibraries = &library_handle };
+        const format: c.VkFormat = c.VK_FORMAT_R8G8B8A8_UNORM;
+        var rendering = c.VkPipelineRenderingCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO, .pNext = &library, .colorAttachmentCount = 1, .pColorAttachmentFormats = &format };
+        if (case == 4) library.pNext = &rendering;
+        var inputs = graphics_creation_inputs_t{};
+        inputs.link(graph);
+        inputs.info.stageCount = 0;
+        inputs.info.pStages = null;
+        inputs.info.renderPass = null;
+        inputs.info.pNext = &rendering;
+        var output: c.VkPipeline = @ptrFromInt(8);
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_graphics_pipelines(@ptrFromInt(graph.device.handle), null, 1, &inputs.info, null, &output));
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(usize, 0), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        for (profile_registry.pipelines) |slot| try std.testing.expect(!slot.occupied);
+    }
+}
+
+
+test "hidden native fence constructor and uncertain destruction preserve exact owner responsibility" {
+    for ([_]u32{0,1,2}) |scenario| {
+        var fixture = hidden_fence_fixture_t{
+            .create_result = if(scenario == 0) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_SUCCESS,
+            .corrupt_create = scenario == 1,
+            .corrupt_destroy = scenario == 2,
+            .fence_status = c.VK_SUCCESS,
+        };
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(hidden_fence_fixture_t.exchange,&fixture));
+        defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const queue = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_QUEUE,parent.id,1);
+        resource_state(parent).id = parent.id; resource_state(queue).id = queue.id;
+        device_caches[0].handle = parent.handle; reply_profile_ready = true;
+        const result = root_runtime_fn(queue_submit2)(@ptrFromInt(queue.handle),0,null,null);
+        try std.testing.expectEqual(@as(usize,1),fixture.creates);
+        if(scenario == 0) {
+            try std.testing.expectEqual(@as(c_int,c.VK_ERROR_OUT_OF_DEVICE_MEMORY),result);
+            try std.testing.expectEqual(@as(u32,2),objects.live_count);
+            try std.testing.expectEqual(@as(u64,0),fixture.submitted_fence);
+            try std.testing.expectEqual(@as(u64,0),submission_tickets[0].queue);
+        } else if(scenario == 1) {
+            try std.testing.expectEqual(@as(c_int,c.VK_ERROR_DEVICE_LOST),result);
+            try std.testing.expectEqual(@as(u32,3),objects.live_count);
+            try std.testing.expectEqual(@as(u64,0),fixture.submitted_fence);
+            try std.testing.expectEqual(@as(u64,0),submission_tickets[0].queue);
+            try std.testing.expectEqual(@as(usize,0),fixture.destroys);
+        } else {
+            try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),result);
+            const hidden = submission_tickets[0].fence;
+            _ = poll_submission_fences(parent);
+            try std.testing.expectEqual(@as(c_int,c.RingCorrupt),lost);
+            try std.testing.expectEqual(@as(u64,0),submission_tickets[0].queue);
+            try std.testing.expectEqual(@as(u32,0),resource_state(queue).inflight_count);
+            // GPU proof retires submitted resources; an uncertain destroy ACK
+            // cannot release the distinct host fence owner before receiver retirement.
+            try std.testing.expect(internal_fence_record(hidden) != null);
+            try std.testing.expectEqual(@as(u32,3),objects.live_count);
+            try std.testing.expectEqual(@as(usize,1),fixture.destroys);
+        }
+    }
 }
