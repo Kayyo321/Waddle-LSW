@@ -128,13 +128,27 @@ pub fn create_sampler(device:u64,id:u64,info:*const c.VkSamplerCreateInfo) !writ
     var writer:writer_t=.{};try create_header(&writer,70,device,c.VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO);
     try scalars(&writer,info.*);try finish(&writer,id);return writer;
 }
-/// [in] info borrowed no-chain view; buffer_id resolved host buffer, native handle
-/// ignored after caller ownership validation. Caller checks format/alignment/range.
-/// [out] Exact create52 packet or Invalid tag/flags/identity/format/zero range.
-/// No allocation/retention; distinct owners safe concurrently.
+/// [in] info borrowed view with at most one aligned, terminated buffer-usage-flags2
+/// node; buffer_id resolves its host owner. Caller checks enabled maintenance5,
+/// usage subset of the buffer, native format features, alignment and range.
+/// [out] Exact create52 packet preserving optional nonzero texel usage bits4/8,
+/// or Invalid tag/chain/flags/identity/format/zero range. No allocation or retained
+/// pointers; owned initialized prefix, distinct owners safe concurrently.
 pub fn create_buffer_view(device:u64,id:u64,buffer_id:u64,info:*const c.VkBufferViewCreateInfo) !writer_t {
-    if(!valid_header(info.*,c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO) or info.flags!=0 or buffer_id==0 or info.format==0 or info.range==0)return error.Invalid;
-    var writer:writer_t=.{};try create_header(&writer,52,device,c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO);
+    if(info.sType!=c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO or info.flags!=0 or buffer_id==0 or info.format==0 or info.range==0)return error.Invalid;
+    var usage:?u64=null;
+    if(info.pNext) |pointer| {
+        if(@intFromPtr(pointer)%@alignOf(c.VkBufferUsageFlags2CreateInfo)!=0)return error.Invalid;
+        const node:*const c.VkBufferUsageFlags2CreateInfo=@ptrCast(@alignCast(pointer));
+        if(node.sType!=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO or node.pNext!=null or node.usage==0 or node.usage & ~@as(u64,12)!=0)return error.Invalid;
+        usage=node.usage;
+    }
+    var writer=try start_packet(52,device);
+    writer.put_proven(u64,1);writer.put_proven(u32,c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO);
+    if(usage) |value| {
+        writer.put_proven(u64,1);writer.put_proven(u32,c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO);
+        writer.put_proven(u64,0);writer.put_proven(u64,value);
+    } else writer.put_proven(u64,0);
     writer.put_proven(u32,info.flags);writer.put_proven(u64,buffer_id);writer.put_proven(u32,info.format);writer.put_proven(u64,info.offset);writer.put_proven(u64,info.range);try finish(&writer,id);return writer;
 }
 /// [in] info core query type0..2/count1..4096 with known pipeline-statistics bits;
@@ -543,4 +557,27 @@ test "remaining object identity and native output boundary paths" {
     var oversized = [_]u8{0} ** 4097;
     try std.testing.expectError(error.Corrupt, decode_cache_data(&reply, &oversized));
     reply[0] = 49; try std.testing.expectError(error.Corrupt, decode_query_results(&reply, &oversized));
+}
+
+test "maintenance5 buffer view usage matches pinned native encoder and rejects invalid chains" {
+    var node=c.VkBufferUsageFlags2CreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO,.usage=8};
+    var info=c.VkBufferViewCreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,.pNext=&node,.buffer=@ptrFromInt(13),.format=c.VK_FORMAT_R32_UINT,.offset=0,.range=256};
+    for([_]u64{4,8,12}) |usage| {
+        node.usage=usage;
+        try compare(try create_buffer_view(7,11,13,&info),52,&info);
+        try std.testing.expectEqual(usage,node.usage);
+    }
+    for([_]u64{0,1,16,@as(u64,1)<<40}) |usage| {
+        node.usage=usage;
+        try std.testing.expectError(error.Invalid,create_buffer_view(7,11,13,&info));
+    }
+    node.usage=8;node.sType=c.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    try std.testing.expectError(error.Invalid,create_buffer_view(7,11,13,&info));
+    node.sType=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO;node.pNext=&node;
+    try std.testing.expectError(error.Invalid,create_buffer_view(7,11,13,&info));
+    var duplicate=c.VkBufferUsageFlags2CreateInfo{.sType=c.VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO,.usage=4};
+    node.pNext=&duplicate;
+    try std.testing.expectError(error.Invalid,create_buffer_view(7,11,13,&info));
+    node.pNext=null;info.pNext=@ptrFromInt(1);
+    try std.testing.expectError(error.Invalid,create_buffer_view(7,11,13,&info));
 }
