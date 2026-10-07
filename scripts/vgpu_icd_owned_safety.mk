@@ -27,5 +27,5 @@ vgpu-objects-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_
 	python3 scripts/icd_dependency_sanitizers.py objects build/icd_dependency_safety/objects
 
 .PHONY: vgpu-instance_wire-owned-sanitizers
-vgpu-instance_wire-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_instance_wire.zig tests/vgpu/instance_wire.c include/waddle/venus_instance_wire.h build/venus_protocol/vn_protocol_driver_instance.h
+vgpu-instance_wire-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_instance_wire.zig tests/vgpu/instance_wire.c include/waddle/venus_instance_wire.h
 	python3 scripts/icd_dependency_sanitizers.py instance_wire build/icd_dependency_safety/instance_wire
