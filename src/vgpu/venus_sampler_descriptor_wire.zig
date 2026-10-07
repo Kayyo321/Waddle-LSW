@@ -21,8 +21,8 @@ pub const write_t = struct {
     buffers: []const descriptors.buffer_info_t = &.{},
     texels: []const u64 = &.{},
 };
-fn put(writer: *writer_t, comptime value_t: type, value: value_t) !void {
-    try writer.put(value_t, value);
+fn put_proven(writer: *writer_t, comptime value_t: type, value: value_t) void {
+    writer.put(value_t, value) catch unreachable;
 }
 fn payload_count(write: write_t) !usize {
     if (write.descriptor_type > 10 or write.set == 0) return error.Invalid;
@@ -37,7 +37,8 @@ fn payload_count(write: write_t) !usize {
 /// All slices borrowed accessible immutable until return; IDs translated and externally
 /// retained. Null identities are legal only with caller-verified null/immutable semantics.
 /// Caller validates exact binding spans/usage/layout/type and update-after-bind rules.
-/// Returns owned packet or Invalid/Limit; no partial packet published, allocations or retention.
+/// Returns owned packet or Invalid/Limit; topology validation precedes exact packet-capacity
+/// admission. No encoding begins on failure, no partial packet published or allocations/retention.
 pub fn update_sets(device: u64, writes: []const write_t, copies: []const descriptors.copy_t) !writer_t {
     if (device == 0 or writes.len > 64 or copies.len > 64) return error.Invalid;
     for (writes) |write| {
@@ -52,85 +53,53 @@ pub fn update_sets(device: u64, writes: []const write_t, copies: []const descrip
         if (copy.source_set == copy.destination_set and copy.source_binding == copy.destination_binding and
             copy.source_element < copy.destination_element + copy.count and copy.destination_element < copy.source_element + copy.count) return error.Invalid;
     }
+    // Arrays above are validated: exact size arithmetic is bounded by64writes/copies
+    // with128payload records each, so no usize overflow or partial encoding occurs.
+    var packet_bytes: usize = 40 + 52 * copies.len;
+    for (writes) |write| packet_bytes += 60 + 20 * write.images.len + 24 * write.buffers.len + 8 * write.texels.len;
+    if (packet_bytes > render.MaxBytes) return error.Limit;
     var writer: writer_t = .{};
-    try writer.header(79, device);
-    try put(&writer, u32, @intCast(writes.len));
-    try put(&writer, u64, writes.len);
+    writer.header(79, device) catch unreachable;
+    put_proven(&writer, u32, @intCast(writes.len));
+    put_proven(&writer, u64, writes.len);
     for (writes) |write| {
-        const count = try payload_count(write);
-        try put(&writer, u32, c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
-        try put(&writer, u64, 0);
-        try put(&writer, u64, write.set);
-        try put(&writer, u32, write.binding);
-        try put(&writer, u32, write.element);
-        try put(&writer, u32, @intCast(count));
-        try put(&writer, u32, write.descriptor_type);
-        try put(&writer, u64, write.images.len);
+        const count = payload_count(write) catch unreachable;
+        put_proven(&writer, u32, c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET);
+        put_proven(&writer, u64, 0);
+        put_proven(&writer, u64, write.set);
+        put_proven(&writer, u32, write.binding);
+        put_proven(&writer, u32, write.element);
+        put_proven(&writer, u32, @intCast(count));
+        put_proven(&writer, u32, write.descriptor_type);
+        put_proven(&writer, u64, write.images.len);
         for (write.images) |image| {
-            try put(&writer, u64, image.sampler);
-            try put(&writer, u64, image.view);
-            try put(&writer, u32, image.layout);
+            put_proven(&writer, u64, image.sampler);
+            put_proven(&writer, u64, image.view);
+            put_proven(&writer, u32, image.layout);
         }
-        try put(&writer, u64, write.buffers.len);
+        put_proven(&writer, u64, write.buffers.len);
         for (write.buffers) |buffer| {
-            try put(&writer, u64, buffer.buffer_id);
-            try put(&writer, u64, buffer.offset);
-            try put(&writer, u64, buffer.range);
+            put_proven(&writer, u64, buffer.buffer_id);
+            put_proven(&writer, u64, buffer.offset);
+            put_proven(&writer, u64, buffer.range);
         }
-        try put(&writer, u64, write.texels.len);
-        for (write.texels) |view| try put(&writer, u64, view);
+        put_proven(&writer, u64, write.texels.len);
+        for (write.texels) |view| put_proven(&writer, u64, view);
     }
-    try put(&writer, u32, @intCast(copies.len));
-    try put(&writer, u64, copies.len);
+    put_proven(&writer, u32, @intCast(copies.len));
+    put_proven(&writer, u64, copies.len);
     for (copies) |copy| {
-        try put(&writer, u32, c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET);
-        try put(&writer, u64, 0);
-        try put(&writer, u64, copy.source_set);
-        try put(&writer, u32, copy.source_binding);
-        try put(&writer, u32, copy.source_element);
-        try put(&writer, u64, copy.destination_set);
-        try put(&writer, u32, copy.destination_binding);
-        try put(&writer, u32, copy.destination_element);
-        try put(&writer, u32, copy.count);
+        put_proven(&writer, u32, c.VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET);
+        put_proven(&writer, u64, 0);
+        put_proven(&writer, u64, copy.source_set);
+        put_proven(&writer, u32, copy.source_binding);
+        put_proven(&writer, u32, copy.source_element);
+        put_proven(&writer, u64, copy.destination_set);
+        put_proven(&writer, u32, copy.destination_binding);
+        put_proven(&writer, u32, copy.destination_element);
+        put_proven(&writer, u32, copy.count);
     }
     return writer;
-}
-
-// Test-only independent pinned encoder entrypoints.
-extern fn venus_sampler_descriptor_test_write(*const c.VkWriteDescriptorSet, [*]u8) usize;
-fn compare(writer: writer_t, expected: []const u8) !void {
-    try std.testing.expectEqual(expected.len, writer.used);
-    try std.testing.expectEqualSlices(u8, expected, writer.bytes[0..writer.used]);
-}
-test "image texel buffer writes match generated bytes" {
-    var expected: [8192]u8 = undefined;
-    var images: [128]image_info_t = undefined;
-    var native_images: [128]c.VkDescriptorImageInfo = undefined;
-    var buffers: [128]descriptors.buffer_info_t = undefined;
-    var native_buffers: [128]c.VkDescriptorBufferInfo = undefined;
-    var texels: [128]u64 = undefined;
-    var native_texels: [128]c.VkBufferView = undefined;
-    for (0..128) |index| {
-        images[index] = .{ .sampler = 42 + index, .view = 242 + index, .layout = c.VK_IMAGE_LAYOUT_GENERAL };
-        native_images[index] = .{ .sampler = @ptrFromInt(images[index].sampler), .imageView = @ptrFromInt(images[index].view), .imageLayout = images[index].layout };
-        buffers[index] = .{ .buffer_id = 442 + index, .offset = index * 16, .range = 64 };
-        native_buffers[index] = .{ .buffer = @ptrFromInt(buffers[index].buffer_id), .offset = buffers[index].offset, .range = buffers[index].range };
-        texels[index] = 642 + index;
-        native_texels[index] = @ptrFromInt(texels[index]);
-    }
-    for (0..11) |kind| for ([_]usize{ 1, 128 }) |count| {
-        const image = kind <= 3 or kind == 10;
-        const texel = kind == 4 or kind == 5;
-        const write = write_t{ .set = 15, .binding = 3, .element = 2, .descriptor_type = @intCast(kind), .images = if (image) images[0..count] else &.{}, .buffers = if (!image and !texel) buffers[0..count] else &.{}, .texels = if (texel) texels[0..count] else &.{} };
-        const native = c.VkWriteDescriptorSet{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(15), .dstBinding = 3, .dstArrayElement = 2, .descriptorCount = @intCast(count), .descriptorType = @intCast(kind), .pImageInfo = if (image) &native_images else null, .pBufferInfo = if (!image and !texel) &native_buffers else null, .pTexelBufferView = if (texel) &native_texels else null };
-        try compare(try update_sets(8, &.{write}, &.{}), expected[0..venus_sampler_descriptor_test_write(&native, &expected)]);
-    };
-}
-test "descriptor invalid shapes reject before publication" {
-    try std.testing.expectError(error.Invalid, update_sets(8, &.{.{ .set = 15, .binding = 0, .element = 0, .descriptor_type = 2 }}, &.{}));
-    try std.testing.expectError(error.Invalid, update_sets(8, &.{.{ .set = 15, .binding = 0, .element = 0, .descriptor_type = 2, .images = &.{.{ .view = 1 }} }}, &.{}));
-    const writes = [_]write_t{.{ .set = 15, .binding = 0, .element = 0, .descriptor_type = 1, .images = &([_]image_info_t{.{ .view = 1, .layout = 1 }} ** 128) }} ** 4;
-    try std.testing.expectError(error.Limit, update_sets(8, &writes, &.{}));
 }
 
 /// Translated immutable sampler array for one native layout binding. Empty means absent;
@@ -172,32 +141,36 @@ pub fn create_layout(device: u64, output: u64, info: *const c.VkDescriptorSetLay
             }
         };
     }
+    var packet_bytes: usize = 76 + 24 * immutable.len;
+    for (immutable) |samplers| packet_bytes += 8 * samplers.ids.len;
+    if (flags) |value| packet_bytes += 24 + 4 * @as(usize, value.bindingCount);
+    if (packet_bytes > render.MaxBytes) return error.Limit;
     var writer: writer_t = .{};
-    try writer.header(72, device);
-    try put(&writer, u64, 1);
-    try put(&writer, u32, info.sType);
+    writer.header(72, device) catch unreachable;
+    put_proven(&writer, u64, 1);
+    put_proven(&writer, u32, info.sType);
     if (flags) |value| {
-        try put(&writer, u64, 1);
-        try put(&writer, u32, value.sType);
-        try put(&writer, u64, 0);
-        try put(&writer, u32, value.bindingCount);
-        try put(&writer, u64, value.bindingCount);
-        for (array_elements(value.pBindingFlags, value.bindingCount)) |mask| try put(&writer, u32, mask);
-    } else try put(&writer, u64, 0);
-    try put(&writer, u32, info.flags);
-    try put(&writer, u32, info.bindingCount);
-    try put(&writer, u64, info.bindingCount);
+        put_proven(&writer, u64, 1);
+        put_proven(&writer, u32, value.sType);
+        put_proven(&writer, u64, 0);
+        put_proven(&writer, u32, value.bindingCount);
+        put_proven(&writer, u64, value.bindingCount);
+        for (array_elements(value.pBindingFlags, value.bindingCount)) |mask| put_proven(&writer, u32, mask);
+    } else put_proven(&writer, u64, 0);
+    put_proven(&writer, u32, info.flags);
+    put_proven(&writer, u32, info.bindingCount);
+    put_proven(&writer, u64, info.bindingCount);
     for (array_elements(info.pBindings, info.bindingCount), immutable) |binding, samplers| {
-        try put(&writer, u32, binding.binding);
-        try put(&writer, u32, binding.descriptorType);
-        try put(&writer, u32, binding.descriptorCount);
-        try put(&writer, u32, binding.stageFlags);
-        try put(&writer, u64, samplers.ids.len);
-        for (samplers.ids) |id| try put(&writer, u64, id);
+        put_proven(&writer, u32, binding.binding);
+        put_proven(&writer, u32, binding.descriptorType);
+        put_proven(&writer, u32, binding.descriptorCount);
+        put_proven(&writer, u32, binding.stageFlags);
+        put_proven(&writer, u64, samplers.ids.len);
+        for (samplers.ids) |id| put_proven(&writer, u64, id);
     }
-    try put(&writer, u64, 0);
-    try put(&writer, u64, 1);
-    try put(&writer, u64, output);
+    put_proven(&writer, u64, 0);
+    put_proven(&writer, u64, 1);
+    put_proven(&writer, u64, output);
     return writer;
 }
 /// Encode real descriptor-pool capacity without allocating metadata for unused capacity.
@@ -214,21 +187,22 @@ pub fn create_pool(device: u64, output: u64, info: *const c.VkDescriptorPoolCrea
         if (total > 1048576) return error.Invalid;
     }
     var writer: writer_t = .{};
-    try writer.header(74, device);
-    try put(&writer, u64, 1);
-    try put(&writer, u32, info.sType);
-    try put(&writer, u64, 0);
-    try put(&writer, u32, info.flags);
-    try put(&writer, u32, info.maxSets);
-    try put(&writer, u32, info.poolSizeCount);
-    try put(&writer, u64, info.poolSizeCount);
+    // At most64pool records:80+64*8bytes fit the owned packet.
+    writer.header(74, device) catch unreachable;
+    put_proven(&writer, u64, 1);
+    put_proven(&writer, u32, info.sType);
+    put_proven(&writer, u64, 0);
+    put_proven(&writer, u32, info.flags);
+    put_proven(&writer, u32, info.maxSets);
+    put_proven(&writer, u32, info.poolSizeCount);
+    put_proven(&writer, u64, info.poolSizeCount);
     for (array_elements(info.pPoolSizes, info.poolSizeCount)) |size| {
-        try put(&writer, u32, size.type);
-        try put(&writer, u32, size.descriptorCount);
+        put_proven(&writer, u32, size.type);
+        put_proven(&writer, u32, size.descriptorCount);
     }
-    try put(&writer, u64, 0);
-    try put(&writer, u64, 1);
-    try put(&writer, u64, output);
+    put_proven(&writer, u64, 0);
+    put_proven(&writer, u64, 1);
+    put_proven(&writer, u64, output);
     return writer;
 }
 /// Encode allocated set identities with optional variable descriptor counts. Native chain
@@ -249,24 +223,62 @@ pub fn allocate_sets(device: u64, pool: u64, info: *const c.VkDescriptorSetAlloc
     for (layouts) |layout| if (layout == 0) return error.Invalid;
     for (sets, 0..) |id, index| if (id == 0 or std.mem.indexOfScalar(u64, sets[0..index], id) != null) return error.Invalid;
     var writer: writer_t = .{};
-    try writer.header(77, device);
-    try put(&writer, u64, 1);
-    try put(&writer, u32, info.sType);
+    // At most64sets and optional64counts:64+64*16+24+64*4bytes fit.
+    writer.header(77, device) catch unreachable;
+    put_proven(&writer, u64, 1);
+    put_proven(&writer, u32, info.sType);
     if (variable) |value| {
-        try put(&writer, u64, 1);
-        try put(&writer, u32, value.sType);
-        try put(&writer, u64, 0);
-        try put(&writer, u32, value.descriptorSetCount);
-        try put(&writer, u64, value.descriptorSetCount);
-        for (array_elements(value.pDescriptorCounts, value.descriptorSetCount)) |count| try put(&writer, u32, count);
-    } else try put(&writer, u64, 0);
-    try put(&writer, u64, pool);
-    try put(&writer, u32, @intCast(layouts.len));
-    try put(&writer, u64, layouts.len);
-    for (layouts) |layout| try put(&writer, u64, layout);
-    try put(&writer, u64, sets.len);
-    for (sets) |id| try put(&writer, u64, id);
+        put_proven(&writer, u64, 1);
+        put_proven(&writer, u32, value.sType);
+        put_proven(&writer, u64, 0);
+        put_proven(&writer, u32, value.descriptorSetCount);
+        put_proven(&writer, u64, value.descriptorSetCount);
+        for (array_elements(value.pDescriptorCounts, value.descriptorSetCount)) |count| put_proven(&writer, u32, count);
+    } else put_proven(&writer, u64, 0);
+    put_proven(&writer, u64, pool);
+    put_proven(&writer, u32, @intCast(layouts.len));
+    put_proven(&writer, u64, layouts.len);
+    for (layouts) |layout| put_proven(&writer, u64, layout);
+    put_proven(&writer, u64, sets.len);
+    for (sets) |id| put_proven(&writer, u64, id);
     return writer;
+}
+
+// Test-only independent pinned encoder entrypoints.
+extern fn venus_sampler_descriptor_test_write(*const c.VkWriteDescriptorSet, [*]u8) usize;
+fn compare(writer: writer_t, expected: []const u8) !void {
+    try std.testing.expectEqual(expected.len, writer.used);
+    try std.testing.expectEqualSlices(u8, expected, writer.bytes[0..writer.used]);
+}
+test "image texel buffer writes match generated bytes" {
+    var expected: [8192]u8 = undefined;
+    var images: [128]image_info_t = undefined;
+    var native_images: [128]c.VkDescriptorImageInfo = undefined;
+    var buffers: [128]descriptors.buffer_info_t = undefined;
+    var native_buffers: [128]c.VkDescriptorBufferInfo = undefined;
+    var texels: [128]u64 = undefined;
+    var native_texels: [128]c.VkBufferView = undefined;
+    for (0..128) |index| {
+        images[index] = .{ .sampler = 42 + index, .view = 242 + index, .layout = c.VK_IMAGE_LAYOUT_GENERAL };
+        native_images[index] = .{ .sampler = @ptrFromInt(images[index].sampler), .imageView = @ptrFromInt(images[index].view), .imageLayout = images[index].layout };
+        buffers[index] = .{ .buffer_id = 442 + index, .offset = index * 16, .range = 64 };
+        native_buffers[index] = .{ .buffer = @ptrFromInt(buffers[index].buffer_id), .offset = buffers[index].offset, .range = buffers[index].range };
+        texels[index] = 642 + index;
+        native_texels[index] = @ptrFromInt(texels[index]);
+    }
+    for (0..11) |kind| for ([_]usize{ 1, 128 }) |count| {
+        const image = kind <= 3 or kind == 10;
+        const texel = kind == 4 or kind == 5;
+        const write = write_t{ .set = 15, .binding = 3, .element = 2, .descriptor_type = @intCast(kind), .images = if (image) images[0..count] else &.{}, .buffers = if (!image and !texel) buffers[0..count] else &.{}, .texels = if (texel) texels[0..count] else &.{} };
+        const native = c.VkWriteDescriptorSet{ .sType = c.VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = @ptrFromInt(15), .dstBinding = 3, .dstArrayElement = 2, .descriptorCount = @intCast(count), .descriptorType = @intCast(kind), .pImageInfo = if (image) &native_images else null, .pBufferInfo = if (!image and !texel) &native_buffers else null, .pTexelBufferView = if (texel) &native_texels else null };
+        try compare(try update_sets(8, &.{write}, &.{}), expected[0..venus_sampler_descriptor_test_write(&native, &expected)]);
+    };
+}
+test "descriptor invalid shapes reject before publication" {
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{.{ .set = 15, .binding = 0, .element = 0, .descriptor_type = 2 }}, &.{}));
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{.{ .set = 15, .binding = 0, .element = 0, .descriptor_type = 2, .images = &.{.{ .view = 1 }} }}, &.{}));
+    const writes = [_]write_t{.{ .set = 15, .binding = 0, .element = 0, .descriptor_type = 1, .images = &([_]image_info_t{.{ .view = 1, .layout = 1 }} ** 128) }} ** 4;
+    try std.testing.expectError(error.Limit, update_sets(8, &writes, &.{}));
 }
 
 // Test-only generated extended descriptor fixtures.
@@ -303,4 +315,145 @@ test "immutable sampler indexing flags large pool and variable counts match gene
     try compare(try allocate_sets(8, 42, &allocate, &.{ 52, 53 }, &.{ 43, 44 }), expected[0..venus_sampler_descriptor_test_allocate(&allocate, &expected)]);
     allocate.pNext = null;
     try compare(try allocate_sets(8, 42, &allocate, &.{ 52, 53 }, &.{ 43, 44 }), expected[0..venus_sampler_descriptor_test_allocate(&allocate, &expected)]);
+}
+
+test "mixed writes independent payload family arithmetic and copy ranges reject" {
+    const image = [_]image_info_t{.{ .view = 42, .layout = 1 }};
+    const buffer = [_]descriptors.buffer_info_t{.{ .buffer_id = 42, .offset = 0, .range = 4 }};
+    var write = write_t{ .set = 42, .binding = 0, .element = 0, .descriptor_type = 6, .buffers = &buffer };
+    write.set = 0;
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{write}, &.{}));
+    write.set = 42;
+    write.images = &image;
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{write}, &.{}));
+    write.images = &.{};
+    write.texels = &.{43};
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{write}, &.{}));
+    write.texels = &.{};
+    write.element = std.math.maxInt(u32);
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{write}, &.{}));
+    write.element = 0;
+    var invalid_buffer = buffer[0];
+    invalid_buffer.offset = std.math.maxInt(u64);
+    write.buffers = &.{invalid_buffer};
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{write}, &.{}));
+    invalid_buffer.offset = 8;
+    invalid_buffer.range = std.math.maxInt(u64) - 1;
+    write.buffers = &.{invalid_buffer};
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{write}, &.{}));
+    invalid_buffer.range = 0;
+    write.buffers = &.{invalid_buffer};
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{write}, &.{}));
+    const initial = descriptors.copy_t{ .source_set = 42, .source_binding = 0, .source_element = 0, .destination_set = 43, .destination_binding = 0, .destination_element = 0, .count = 1 };
+    inline for (.{ "source_set", "destination_set", "count", "source_element", "destination_element" }) |field| {
+        var copy = initial;
+        @field(copy, field) = if (comptime std.mem.endsWith(u8, field, "element")) std.math.maxInt(u32) else 0;
+        try std.testing.expectError(error.Invalid, update_sets(8, &.{}, &.{copy}));
+    }
+    var copy = initial;
+    copy.count = 129;
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{}, &.{copy}));
+    copy = initial;
+    copy.destination_set = copy.source_set;
+    try std.testing.expectError(error.Invalid, update_sets(8, &.{}, &.{copy}));
+    copy.destination_binding = 1;
+    _ = try update_sets(8, &.{}, &.{copy});
+}
+
+test "layout flags immutable owners variable binding and packet budget failures" {
+    var bindings = [_]c.VkDescriptorSetLayoutBinding{.{ .binding = 0, .descriptorType = 2, .descriptorCount = 1, .stageFlags = 16 }};
+    var masks = [_]u32{0};
+    var flags: c.VkDescriptorSetLayoutBindingFlagsCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO, .bindingCount = 1, .pBindingFlags = &masks };
+    const initial: c.VkDescriptorSetLayoutCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &bindings, .pNext = &flags };
+    var info = initial;
+    inline for (.{ "sType", "flags", "bindingCount" }) |field| {
+        info = initial;
+        @field(info, field) = if (comptime std.mem.eql(u8, field, "sType")) 0 else if (comptime std.mem.eql(u8, field, "flags")) 1 else 65;
+        try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    }
+    info = initial;
+    info.pBindings = null;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    info = initial;
+    flags.sType = 0;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    flags.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    flags.pNext = &flags;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    flags.pNext = null;
+    flags.bindingCount = 2;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    flags.bindingCount = 1;
+    flags.pBindingFlags = null;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    flags.pBindingFlags = &masks;
+    const initial_binding = bindings[0];
+    inline for (.{ "descriptorType", "descriptorCount", "stageFlags" }) |field| {
+        bindings[0] = initial_binding;
+        @field(bindings[0], field) = if (comptime std.mem.eql(u8, field, "descriptorType")) 11 else if (comptime std.mem.eql(u8, field, "descriptorCount")) 65537 else 0x40;
+        try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    }
+    bindings[0] = initial_binding;
+    bindings[0].stageFlags = 0;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    bindings[0] = initial_binding;
+    for ([_]u32{ 16, 1 }) |mask| {
+        masks[0] = mask;
+        try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    }
+    masks[0] = 8;
+    bindings[0].descriptorType = c.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    masks[0] = 0;
+    bindings[0] = initial_binding;
+    const native_sampler = [_]c.VkSampler{@ptrFromInt(52)};
+    bindings[0].pImmutableSamplers = &native_sampler;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{}}));
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{ .ids = &.{52} }}));
+    bindings[0].descriptorType = 0;
+    try std.testing.expectError(error.Invalid, create_layout(8, 42, &info, &.{.{ .ids = &.{0} }}));
+    const native_many = [_]c.VkSampler{@ptrFromInt(52)} ** 1024;
+    const many = [_]u64{52} ** 1024;
+    bindings[0].descriptorCount = 1024;
+    bindings[0].pImmutableSamplers = &native_many;
+    try std.testing.expectError(error.Limit, create_layout(8, 42, &info, &.{.{ .ids = &many }}));
+}
+
+test "variable set allocation chain and pool quotas preserve output ownership" {
+    const native_layouts = [_]c.VkDescriptorSetLayout{@ptrFromInt(52)};
+    var counts = [_]u32{1};
+    var variable: c.VkDescriptorSetVariableDescriptorCountAllocateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO, .descriptorSetCount = 1, .pDescriptorCounts = &counts };
+    const initial: c.VkDescriptorSetAllocateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, .descriptorPool = @ptrFromInt(42), .descriptorSetCount = 1, .pSetLayouts = &native_layouts, .pNext = &variable };
+    var info = initial;
+    info.sType = 0;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    info = initial;
+    info.descriptorPool = null;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    info = initial;
+    info.pSetLayouts = null;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    info = initial;
+    variable.sType = 0;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    variable.sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+    variable.pNext = &variable;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    variable.pNext = null;
+    variable.descriptorSetCount = 2;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    variable.descriptorSetCount = 1;
+    variable.pDescriptorCounts = null;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    variable.pDescriptorCounts = &counts;
+    counts[0] = 65537;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{53}));
+    counts[0] = 1;
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{52}, &.{0}));
+    try std.testing.expectError(error.Invalid, allocate_sets(8, 42, &info, &.{0}, &.{53}));
+    const sizes = [_]c.VkDescriptorPoolSize{.{ .type = 6, .descriptorCount = 1048577 }};
+    var pool: c.VkDescriptorPoolCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &sizes };
+    try std.testing.expectError(error.Invalid, create_pool(8, 42, &pool));
+    pool.maxSets = 0;
+    try std.testing.expectError(error.Invalid, create_pool(8, 42, &pool));
 }
