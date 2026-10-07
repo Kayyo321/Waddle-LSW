@@ -805,9 +805,28 @@ int main(int argc,char **argv)
         for(uint32_t index=0;index<count;index++) {
             VkPhysicalDeviceProperties property={0};VkPhysicalDeviceFeatures actual={0};properties(devices[index],&property);features(devices[index],&actual);
             if(property.apiVersion<VK_API_VERSION_1_0 || property.apiVersion>VK_API_VERSION_1_3)goto cleanup;
+            /* Public core allowlist: every other feature stays unavailable even
+             * if the native device supports it. Enabled device features remain
+             * NULL below; this checks advertisement independently of use. */
+            const size_t CoreFeatureOffsets[]={
+                offsetof(VkPhysicalDeviceFeatures,depthBiasClamp),offsetof(VkPhysicalDeviceFeatures,depthClamp),
+                offsetof(VkPhysicalDeviceFeatures,dualSrcBlend),offsetof(VkPhysicalDeviceFeatures,fillModeNonSolid),
+                offsetof(VkPhysicalDeviceFeatures,fullDrawIndexUint32),offsetof(VkPhysicalDeviceFeatures,geometryShader),
+                offsetof(VkPhysicalDeviceFeatures,tessellationShader),offsetof(VkPhysicalDeviceFeatures,fragmentStoresAndAtomics),
+                offsetof(VkPhysicalDeviceFeatures,drawIndirectFirstInstance),offsetof(VkPhysicalDeviceFeatures,imageCubeArray),
+                offsetof(VkPhysicalDeviceFeatures,independentBlend),offsetof(VkPhysicalDeviceFeatures,multiDrawIndirect),
+                offsetof(VkPhysicalDeviceFeatures,multiViewport),offsetof(VkPhysicalDeviceFeatures,occlusionQueryPrecise),
+                offsetof(VkPhysicalDeviceFeatures,robustBufferAccess),offsetof(VkPhysicalDeviceFeatures,sampleRateShading),
+                offsetof(VkPhysicalDeviceFeatures,shaderClipDistance),offsetof(VkPhysicalDeviceFeatures,shaderCullDistance),
+                offsetof(VkPhysicalDeviceFeatures,shaderImageGatherExtended),offsetof(VkPhysicalDeviceFeatures,shaderInt64),
+                offsetof(VkPhysicalDeviceFeatures,shaderSampledImageArrayDynamicIndexing),offsetof(VkPhysicalDeviceFeatures,textureCompressionBC)};
             for(size_t flag=0;flag<sizeof actual/sizeof(VkBool32);flag++){
                 VkBool32 value=0;memcpy(&value,(const uint8_t *)&actual+flag*sizeof value,sizeof value);
                 if(value>VK_TRUE)goto cleanup;
+                if(value){int allowed=0;for(size_t index=0;index<sizeof CoreFeatureOffsets/sizeof CoreFeatureOffsets[0];index++)
+                    if(CoreFeatureOffsets[index]==flag*sizeof value)allowed=1;
+                    if(!allowed)goto cleanup;
+                }
             }
             if(!strcmp(property.deviceName,argv[7])){
                 if(selected || property.apiVersion!=VK_API_VERSION_1_3 ||
