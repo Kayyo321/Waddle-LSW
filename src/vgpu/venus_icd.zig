@@ -1,5 +1,7 @@
 //! Experimental bounded Vulkan dispatch; full device API/DXVK support is separately gated.
 const std = @import("std");
+const device_native = @import("venus_device_native.zig");
+const device_wire = @import("venus_device_wire.zig");
 const features_native = @import("venus_features_native.zig");
 const features_wire = @import("venus_features_wire.zig");
 const descriptor_wire = @import("venus_descriptor_wire.zig");
@@ -57,7 +59,14 @@ const instance_cache_t = struct {
     physical: [MaxDevices]u64 = [_]u64{0} ** MaxDevices,
     feature_caches: [MaxDevices]physical_feature_cache_t = [_]physical_feature_cache_t{.{}} ** MaxDevices,
 };
+// Immutable mutex-owned optional enablement, live only after exact device-create ACK.
+// Canonical owned values; no caller pointer/raw support state. Whole-cache retirement scrubs it.
+const device_enabled_state_t = struct {
+    features: features_wire.result_t = .{},
+    extension_mask: u32 = 0,
+};
 const device_cache_t = struct {
+    enabled_state: device_enabled_state_t = .{},
     handle: u64 = 0,
     graphics_queue_ready: bool = false,
     graphics_queue_count: u32 = 0,
@@ -75,6 +84,12 @@ const device_cache_t = struct {
     rings: [64]u32 = [_]u32{0} ** 64,
     ready: [64]bool = [_]bool{false} ** 64,
 };
+comptime {
+    if (@sizeOf(device_enabled_state_t) != 1796 or @alignOf(device_enabled_state_t) != 4 or
+        @sizeOf(device_cache_t) != 3080 or @alignOf(device_cache_t) != 8 or
+        @offsetOf(device_cache_t, "enabled_state") != 544 or @sizeOf(@TypeOf(device_caches)) != 49280)
+        @compileError("Immutable device enablement cache ABI changed");
+}
 const command_state_t = enum { Initial, Recording, Executable, Invalid, Pending };
 const resource_state_t = struct {
     id: u64 = 0,
@@ -752,66 +767,25 @@ fn device_cache(handle: u64) ?*device_cache_t {
     for (&device_caches) |*entry| if (entry.handle == handle) return entry;
     return null;
 }
-fn encode_device(info: *const c.VkDeviceCreateInfo, physical_id: u64, id: u64) !writer_t {
-    if (info.sType != c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO or info.flags != 0 or
-        info.queueCreateInfoCount == 0 or info.queueCreateInfoCount > 16 or
-        info.pQueueCreateInfos == null) return error.Invalid;
-    if (info.enabledLayerCount != 0) return error.Layer;
-    if (info.enabledExtensionCount != 0) return error.Extension;
-    var next = info.pNext;
-    var links: usize = 0;
-    while (next != null) {
-        const link: *const c.VkBaseInStructure = @ptrCast(@alignCast(next.?));
-        if (links == 32 or link.sType != c.VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO)
-            return error.Extension;
-        links += 1;
-        next = link.pNext;
+fn encode_device(request: *const device_native.owned_request_t, physical_id: u64, id: u64) !render_wire.writer_t {
+    var queues: [16]device_wire.queue_t = undefined;
+    var offset: usize = 0;
+    for (0..request.queue_count) |index| {
+        const count = request.counts[index];
+        queues[index] = .{ .family_index = request.families[index], .priorities = request.priorities[offset..][0..count] };
+        offset += count;
     }
-    var writer = writer_t{};
-    writer.header(11, physical_id);
-    writer.put(u64, 1);
-    writer.put(u32, c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
-    writer.put(u64, 0);
-    writer.put(u32, 0);
-    writer.put(u32, info.queueCreateInfoCount);
-    writer.put(u64, info.queueCreateInfoCount);
-    var total: u32 = 0;
-    for (info.pQueueCreateInfos[0..info.queueCreateInfoCount], 0..) |queue, index| {
-        if (queue.sType != c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO or
-            queue.pNext != null or queue.flags != 0 or queue.queueCount == 0 or
-            queue.queueCount > 16 or queue.pQueuePriorities == null) return error.Invalid;
-        for (info.pQueueCreateInfos[0..index]) |previous| {
-            if (previous.queueFamilyIndex == queue.queueFamilyIndex) return error.Invalid;
-        }
-        total += queue.queueCount;
-        if (total > 64) return error.Invalid;
-        writer.put(u32, c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO);
-        writer.put(u64, 0);
-        writer.put(u32, 0);
-        writer.put(u32, queue.queueFamilyIndex);
-        writer.put(u32, queue.queueCount);
-        writer.put(u64, queue.queueCount);
-        for (queue.pQueuePriorities[0..queue.queueCount]) |priority| {
-            if (!std.math.isFinite(priority) or priority < 0 or priority > 1) return error.Invalid;
-            writer.put(u32, @bitCast(priority));
-        }
+    // Native preflight established the entire owned shape/<=1096-byte capacity before reservation.
+    return device_wire.create_device(physical_id, id, queues[0..request.queue_count], &.{}, if (request.legacy_present) &request.legacy else null, request.nodes[0..request.node_count]);
+}
+fn disabled_device_state() device_enabled_state_t {
+    var result = device_enabled_state_t{};
+    result.features.count = features_wire.MaxNodes;
+    for (FeatureTags, FeatureCounts, 0..) |tag, count, index| {
+        result.features.nodes[index].type_tag = tag;
+        result.features.nodes[index].flag_count = count;
     }
-    writer.put(u32, 0);
-    writer.put(u64, 0);
-    writer.put(u32, 0);
-    writer.put(u64, 0);
-    writer.put(u64, @intFromBool(info.pEnabledFeatures != null));
-    if (info.pEnabledFeatures != null) {
-        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| {
-            const boolean = @field(info.pEnabledFeatures.*, field.name);
-            if (boolean > 1) return error.Invalid;
-            writer.put(u32, boolean);
-        }
-    }
-    writer.put(u64, 0);
-    writer.put(u64, 1);
-    writer.put(u64, id);
-    return writer;
+    return result;
 }
 fn identity_reply(bytes: []const u8, command_id: u32, id: u64, has_result: bool) !i32 {
     var reader = reader_t{ .bytes = bytes };
@@ -823,29 +797,41 @@ fn identity_reply(bytes: []const u8, command_id: u32, id: u64, has_result: bool)
     return result;
 }
 /// Borrowed native input, allocation-free serialized reservation/publication; NULL output on error.
-/// Canonical core queues/features only; unknown extension/layer chains explicitly rejected.
+/// Full bounded native preflight precedes namespace/reservations; all optional true/names rejected.
+/// Valid unknown headers and false modern records omit without payload/host-support queries.
 /// @param[in] physical Nonnull live private physical handle, validated without dereference.
-/// @param[in] info Nonnull borrowed accessible native structs/priorities/features for this call.
+/// @param[in] info_address Nullable untyped accessible immutable disjoint native structs/arrays,
+/// bounded names and features for this synchronous call; no retained input pointer.
 /// @param[in] allocator Nullable borrowed callbacks; no allocations performed or retained.
-/// @param[out] output Nonnull borrowed writable handle, NULL on any error.
-/// @return Native host result, initialization/layer/extension/host-memory errors or device loss.
+/// @param[out] output_address Nullable untyped borrowed VkDevice storage, disjoint from inputs;
+/// alignment checked before writing NULL. Invalid/misaligned output is never dereferenced.
+/// @return Native host result, initialization/layer/feature/extension/host-memory errors or loss.
+/// Mutex serialized; snapshot borrows end before reservation/encoding, no caller pointer retained.
 fn create_device(
     physical: c.VkPhysicalDevice,
-    info: [*c]const c.VkDeviceCreateInfo,
+    info_address: ?*const anyopaque,
     allocator: [*c]const c.VkAllocationCallbacks,
-    output: [*c]c.VkDevice,
+    output_address: ?*anyopaque,
 ) callconv(.C) c_int {
     _ = allocator;
     mutex.lock();
     defer mutex.unlock();
-    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const output_raw = output_address orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (@intFromPtr(output_raw) % @alignOf(c.VkDevice) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const output: *c.VkDevice = @ptrCast(@alignCast(output_raw));
     output.* = null;
-    if (physical == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (physical == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(
         @intFromPtr(physical.?),
         c.VK_OBJECT_TYPE_PHYSICAL_DEVICE,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const request = device_native.preflight(info_address) catch |err| return switch (err) {
+        error.LayerNotPresent => c.VK_ERROR_LAYER_NOT_PRESENT,
+        error.FeatureNotPresent => c.VK_ERROR_FEATURE_NOT_PRESENT,
+        error.ExtensionNotPresent => c.VK_ERROR_EXTENSION_NOT_PRESENT,
+        else => c.VK_ERROR_INITIALIZATION_FAILED,
+    };
     var available: ?*device_cache_t = null;
     for (&device_caches) |*entry| if (entry.handle == 0) {
         available = entry;
@@ -855,20 +841,19 @@ fn create_device(
     var record: [*c]c.venus_object_t = null;
     if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, parent.id, 1, &record) !=
         c.RingOk) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    const encoded = encode_device(@ptrCast(info), parent.id, record.*.id) catch |err| {
-        _ = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1);
-        return switch (err) {
-            error.Layer => c.VK_ERROR_LAYER_NOT_PRESENT,
-            error.Extension => c.VK_ERROR_EXTENSION_NOT_PRESENT,
-            else => c.VK_ERROR_INITIALIZATION_FAILED,
-        };
+    const encoded = encode_device(&request, parent.id, record.*.id) catch {
+        // Internal owned-profile invariant failure: no peer/queue/ring ownership yet.
+        // Release exactly this device; monotonic namespace identity is never rewound.
+        const release_status = c.venus_objects_release(&objects, record.*.handle, c.VK_OBJECT_TYPE_DEVICE, 1);
+        std.debug.assert(release_status == c.RingOk);
+        return c.VK_ERROR_INITIALIZATION_FAILED;
     };
-    var staged = device_cache_t{ .handle = record.*.handle, .family_count = info.*.queueCreateInfoCount };
+    var staged = device_cache_t{ .handle = record.*.handle, .family_count = request.queue_count };
     var queue_index: usize = 0;
-    for (info.*.pQueueCreateInfos[0..staged.family_count], 0..) |queue_info, family_index| {
-        staged.families[family_index] = queue_info.queueFamilyIndex;
-        staged.counts[family_index] = queue_info.queueCount;
-        for (0..queue_info.queueCount) |_| {
+    for (0..staged.family_count) |family_index| {
+        staged.families[family_index] = request.families[family_index];
+        staged.counts[family_index] = request.counts[family_index];
+        for (0..request.counts[family_index]) |_| {
             var ring: ?u32 = null;
             for (ring_slots[1..], 1..) |occupied, ring_index| if (!occupied) {
                 ring = @intCast(ring_index);
@@ -898,6 +883,7 @@ fn create_device(
         release_device_reservation(&staged, record);
         return result;
     }
+    staged.enabled_state = disabled_device_state();
     entry.* = staged;
     resource_state(record).* = .{ .id = record.*.id };
     output.* = @ptrFromInt(entry.handle);
@@ -4752,72 +4738,74 @@ test "bounded device input validation and identity reply truncations" {
         .ppEnabledExtensionNames = null,
         .pEnabledFeatures = &feature,
     };
-    _ = try encode_device(&info, 1, 2);
+    _ = try device_native.preflight(&info);
     feature.robustBufferAccess = 2;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     feature.robustBufferAccess = 1;
+    try std.testing.expectError(error.FeatureNotPresent, device_native.preflight(&info));
+    feature.robustBufferAccess = 0;
     info.enabledLayerCount = 1;
-    try std.testing.expectError(error.Layer, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.LayerNotPresent, device_native.preflight(&info));
     info.enabledLayerCount = 0;
     info.enabledExtensionCount = 1;
-    try std.testing.expectError(error.Extension, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     info.enabledExtensionCount = 0;
     var link = c.VkBaseInStructure{
         .sType = c.VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
         .pNext = null,
     };
     info.pNext = &link;
-    _ = try encode_device(&info, 1, 2);
+    _ = try device_native.preflight(&info);
     link.pNext = &link;
-    try std.testing.expectError(error.Extension, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     link.pNext = null;
     link.sType = c.VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    try std.testing.expectError(error.Extension, encode_device(&info, 1, 2));
+    _ = try device_native.preflight(&info); // Experimental unknown-header skip, not legal application use.
     info.pNext = null;
     info.queueCreateInfoCount = 2;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     for (&queues, 0..) |*queue, index| queue.queueFamilyIndex = @intCast(index);
     info.queueCreateInfoCount = 16;
     for (&queues) |*queue| queue.queueCount = 16;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     for (&queues) |*queue| queue.queueCount = 4;
-    _ = try encode_device(&info, 1, 2);
+    _ = try device_native.preflight(&info);
     info.queueCreateInfoCount = 1;
     for ([_]f32{ -1, 2, std.math.inf(f32), std.math.nan(f32) }) |priority| {
         priorities[0] = priority;
-        try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+        try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     }
     priorities[0] = 0.5;
     queues[0].pQueuePriorities = null;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     queues[0].pQueuePriorities = &priorities;
     queues[0].queueCount = 0;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     queues[0].queueCount = 17;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     queues[0].queueCount = 1;
     queues[0].flags = 1;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     queues[0].flags = 0;
     queues[0].pNext = &link;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     queues[0].pNext = null;
     queues[0].sType = 0;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     queues[0].sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     info.sType = 0;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     info.sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     info.flags = 1;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     info.flags = 0;
     info.queueCreateInfoCount = 0;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     info.queueCreateInfoCount = 17;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = null;
-    try std.testing.expectError(error.Invalid, encode_device(&info, 1, 2));
+    try std.testing.expectError(error.Invalid, device_native.preflight(&info));
     var bytes: [24]u8 = undefined;
     std.mem.writeInt(u32, bytes[0..4], 11, .little);
     std.mem.writeInt(i32, bytes[4..8], 0, .little);
@@ -5715,6 +5703,11 @@ const feature_fixture_t = struct {
     current: u32 = 0,
     commands: u32 = 0,
     feature_commands: u32 = 0,
+    create_result: i32 = 0,
+    corrupt_create: bool = false,
+    corrupt_create_identity: bool = false,
+    corrupt_destroy: bool = false,
+    expected_device_info: ?*const c.VkDeviceCreateInfo = null,
     reply: [4096]u8 = undefined,
     bytes: usize = 0,
     fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
@@ -5742,6 +5735,24 @@ const feature_fixture_t = struct {
                         self.bytes = 4;
                     },
                     3 => self.bytes = venus_values_test_encode(3, &self.reply, self.reply.len),
+                    11 => {
+                        const physical_id = std.mem.readInt(u64, wire[8..16], .little);
+                        const device_id = std.mem.readInt(u64, wire[wire.len - 8 ..][0..8], .little);
+                        if (self.expected_device_info) |info| {
+                            var expected: [8192]u8 = undefined;
+                            const used = venus_device_test_encode(info, physical_id, device_id, &expected);
+                            std.debug.assert(std.mem.eql(u8, expected[0..used], wire));
+                        }
+                        std.mem.writeInt(u32, self.reply[0..4], if (self.corrupt_create) 99 else 11, .little);
+                        std.mem.writeInt(i32, self.reply[4..8], self.create_result, .little);
+                        std.mem.writeInt(u64, self.reply[8..16], 1, .little);
+                        std.mem.writeInt(u64, self.reply[16..24], if (self.create_result < 0) 0 else if (self.corrupt_create_identity) device_id ^ 1 else device_id, .little);
+                        self.bytes = 24;
+                    },
+                    12 => {
+                        std.mem.writeInt(u32, self.reply[0..4], if (self.corrupt_destroy) 99 else 12, .little);
+                        self.bytes = 4;
+                    },
                     147 => {
                         self.feature_commands += 1;
                         var expected: [4096]u8 = undefined;
@@ -6076,4 +6087,257 @@ test "Features2 failed parent teardown retains raw cache until explicit abandonm
     try std.testing.expect(physical_features_cache(physical) == null);
     try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2") == null);
     try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2KHR") == null);
+}
+
+extern fn venus_device_test_encode(*const c.VkDeviceCreateInfo, u64, u64, [*]u8) usize;
+const device_native_test_node_t = extern struct { type_tag: u32, next: ?*const anyopaque = null, flags: [55]u32 = [_]u32{0} ** 55 };
+fn device_test_info(queues: []const c.VkDeviceQueueCreateInfo) c.VkDeviceCreateInfo {
+    return .{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = @intCast(queues.len), .pQueueCreateInfos = queues.ptr };
+}
+fn device_test_queue(priorities: []const f32) c.VkDeviceQueueCreateInfo {
+    return .{ .sType = c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueCount = @intCast(priorities.len), .pQueuePriorities = priorities.ptr };
+}
+fn expect_disabled_device(entry: *const device_cache_t) !void {
+    try std.testing.expectEqualDeep(disabled_device_state(), entry.enabled_state);
+    try std.testing.expectEqual(@as(u8, 8), entry.enabled_state.features.count);
+}
+
+test "public device preflight rejects192 true flags before identity cache ring and transport mutation" {
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    var info = device_test_info(&queues);
+    for ([_]bool{ false, true }) |warm| {
+        var fixture = feature_fixture_t{ .hot = 0 };
+        const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+        defer venus_icd_abandon();
+        if (warm) {
+            var core: c.VkPhysicalDeviceFeatures = undefined;
+            features(physical, &core);
+            try std.testing.expectEqual(@as(u32, 1), physical_features_cache(physical).?.raw.core[0]);
+        }
+        const previous_objects = objects;
+        const previous_slots = slots;
+        const previous_caches = device_caches;
+        const previous_rings = ring_slots;
+        const previous_physical = caches;
+        const previous_commands = fixture.commands;
+        var output: c.VkDevice = null;
+        var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+        info.pEnabledFeatures = &legacy;
+        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| {
+            @field(legacy, field.name) = 1;
+            try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+            try std.testing.expect(output == null);
+            @field(legacy, field.name) = 0;
+        }
+        info.pEnabledFeatures = null;
+        const tags = [_]u32{c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2} ++ FeatureTags;
+        const counts = [_]u8{55} ++ FeatureCounts;
+        for (tags, counts) |tag, count| {
+            var node = device_native_test_node_t{ .type_tag = tag };
+            info.pNext = &node;
+            for (0..count) |index| {
+                node.flags[index] = 1;
+                try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+                try std.testing.expect(output == null);
+                node.flags[index] = 0;
+            }
+        }
+        info.pNext = null;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, @ptrFromInt(1), null, @ptrCast(&output)));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, &info, null, @ptrFromInt(1)));
+        const names = [_][*c]const u8{"VK_EXT_unsupported"};
+        info.enabledExtensionCount = 1;
+        info.ppEnabledExtensionNames = &names;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_EXTENSION_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+        info.enabledExtensionCount = 0;
+        info.enabledLayerCount = 1;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_LAYER_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+        info.enabledLayerCount = 0;
+        try std.testing.expectEqualDeep(previous_objects, objects);
+        try std.testing.expectEqualDeep(previous_slots, slots);
+        try std.testing.expectEqualDeep(previous_caches, device_caches);
+        try std.testing.expectEqualDeep(previous_rings, ring_slots);
+        try std.testing.expectEqualDeep(previous_physical, caches);
+        try std.testing.expectEqual(previous_commands, fixture.commands);
+    }
+}
+
+test "public device ACK owns immutable canonical state and exact independent minimal maximum packets" {
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    var priorities = [_]f32{0.5} ** 16;
+    var queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(priorities[0..4])} ** 16;
+    for (&queues, 0..) |*queue, index| queue.queueFamilyIndex = @intCast(index);
+    var info = device_test_info(&queues);
+    var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+    info.pEnabledFeatures = &legacy;
+    const maximum = try device_native.preflight(&info);
+    const maximum_packet = try encode_device(&maximum, 7, 42);
+    var expected: [8192]u8 = undefined;
+    const maximum_used = venus_device_test_encode(&info, 7, 42, &expected);
+    try std.testing.expectEqual(@as(usize, 1096), maximum_packet.used);
+    try std.testing.expectEqualSlices(u8, expected[0..maximum_used], maximum_packet.bytes[0..maximum_packet.used]);
+    info.queueCreateInfoCount = 1;
+    queues[0].queueCount = 1;
+    fixture.expected_device_info = &info;
+    var first: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&first)));
+    try std.testing.expectEqual(@as(u32, 1), fixture.commands); // No hidden API/features query.
+    const first_entry = device_cache(@intFromPtr(first.?)).?;
+    try expect_disabled_device(first_entry);
+    const retained = first_entry.*;
+    legacy.robustBufferAccess = 1;
+    priorities[0] = 0.75;
+    try std.testing.expectEqualDeep(retained, first_entry.*);
+    info.pEnabledFeatures = null;
+    var modern = device_native_test_node_t{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
+    var extension = device_native_test_node_t{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT };
+    modern.next = &extension;
+    info.pNext = &modern;
+    var selected = info;
+    selected.pNext = null;
+    fixture.expected_device_info = &selected;
+    var second: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&second)));
+    const second_entry = device_cache(@intFromPtr(second.?)).?;
+    try std.testing.expect(first_entry != second_entry);
+    try expect_disabled_device(second_entry);
+    extension.flags[0] = 1;
+    modern.flags[0] = 1;
+    priorities[0] = 0.25;
+    try expect_disabled_device(first_entry);
+    try expect_disabled_device(second_entry);
+    var child: [*c]c.venus_object_t = null;
+    const first_record = object(@intFromPtr(first.?), c.VK_OBJECT_TYPE_DEVICE).?;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, first_record.id, 1, &child));
+    const before_refusal = fixture.commands;
+    destroy_device(first, null);
+    try std.testing.expectEqual(before_refusal, fixture.commands);
+    try expect_disabled_device(first_entry);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, child.*.handle, c.VK_OBJECT_TYPE_BUFFER, 1));
+    destroy_device(first, null);
+    try std.testing.expectEqualDeep(device_cache_t{}, first_entry.*);
+    try expect_disabled_device(second_entry);
+    fixture.fail_command = 12;
+    destroy_device(second, null);
+    try expect_disabled_device(second_entry);
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    venus_icd_abandon();
+    try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+}
+
+test "public device explicit failure rolls back while uncertain create retains only opaque owners" {
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    const info = device_test_info(&queues);
+    for (0..4) |mode| {
+        var fixture = feature_fixture_t{};
+        const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+        defer venus_icd_abandon();
+        if (mode == 0) fixture.create_result = c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        if (mode == 1) fixture.corrupt_create = true;
+        if (mode == 2) fixture.fail_command = 11;
+        if (mode == 3) fixture.corrupt_create_identity = true;
+        var output: c.VkDevice = null;
+        const result = create_device(physical, &info, null, @ptrCast(&output));
+        try std.testing.expect(output == null);
+        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_ERROR_DEVICE_LOST), result);
+        try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+        var live_devices: usize = 0;
+        var live_queues: usize = 0;
+        for (slots) |slot| {
+            if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_DEVICE) live_devices += 1;
+            if (slot.id != 0 and slot.kind == c.VK_OBJECT_TYPE_QUEUE) live_queues += 1;
+        }
+        try std.testing.expectEqual(@as(usize, @intFromBool(mode != 0)), live_devices);
+        try std.testing.expectEqual(live_devices, live_queues);
+        try std.testing.expectEqual(mode != 0, ring_slots[1]);
+        try std.testing.expectEqual(@as(c_int, if (mode == 0) c.RingOk else if (mode == 2) c.RingClosed else c.RingCorrupt), lost);
+        try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+        venus_icd_abandon();
+        try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
+        try std.testing.expectEqualDeep([_]bool{false} ** 64, ring_slots);
+    }
+}
+
+test "public device full registry preflight precedence queue rollback and idle-owner refusal retain state" {
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    var info = device_test_info(&queues);
+    var first: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&first)));
+    const first_entry = device_cache(@intFromPtr(first.?)).?;
+    const first_record = object(@intFromPtr(first.?), c.VK_OBJECT_TYPE_DEVICE).?;
+    const retained = first_entry.*;
+    var handles: [508]u64 = undefined;
+    for (&handles) |*handle| {
+        var child: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_BUFFER, first_record.id, 0, &child));
+        handle.* = child.*.handle;
+    }
+    try std.testing.expectEqual(@as(u32, 512), objects.live_count);
+    const previous_id = objects.next_id;
+    const previous_commands = fixture.commands;
+    var output: c.VkDevice = null;
+    var legacy = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+    legacy.robustBufferAccess = 1;
+    info.pEnabledFeatures = &legacy;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&output)));
+    try std.testing.expectEqual(previous_id, objects.next_id);
+    info.pEnabledFeatures = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), create_device(physical, &info, null, @ptrCast(&output)));
+    try std.testing.expectEqual(previous_id, objects.next_id);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, handles[507], c.VK_OBJECT_TYPE_BUFFER, 0));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY), create_device(physical, &info, null, @ptrCast(&output)));
+    try std.testing.expectEqual(previous_id + 1, objects.next_id); // Queue failure consumed/released device only.
+    try std.testing.expectEqual(@as(u32, 511), objects.live_count);
+    try std.testing.expect(output == null);
+    try std.testing.expectEqual(previous_commands, fixture.commands);
+    try std.testing.expectEqualDeep(retained, first_entry.*);
+    try std.testing.expect(ring_slots[1] and !ring_slots[2]);
+    for (handles[0..507]) |handle| try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_release(&objects, handle, c.VK_OBJECT_TYPE_BUFFER, 0));
+    resource_state(first_record).idle_refs = 1; // A live waiter owns this device until its completion.
+    destroy_device(first, null);
+    try std.testing.expectEqual(previous_commands, fixture.commands);
+    try std.testing.expectEqualDeep(retained, first_entry.*);
+    resource_state(first_record).idle_refs = 0;
+    destroy_device(first, null);
+    try std.testing.expectEqualDeep(device_cache_t{}, first_entry.*);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+}
+
+
+test "public malformed device destruction retains immutable state with exact output physical loss precedence" {
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    const info = device_test_info(&queues);
+    var output: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&output)));
+    const entry = device_cache(@intFromPtr(output.?)).?;
+    const retained = entry.*;
+    const live = objects.live_count;
+    fixture.corrupt_destroy = true;
+    destroy_device(output, null);
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+    try std.testing.expectEqualDeep(retained, entry.*);
+    try std.testing.expectEqual(live, objects.live_count);
+    try std.testing.expect(ring_slots[1]);
+    const before = fixture.commands;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), create_device(physical, @ptrFromInt(1), null, @ptrCast(&output)));
+    try std.testing.expect(output == null);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(null, @ptrFromInt(1), null, @ptrCast(&output)));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, @ptrFromInt(1), null, null));
+    try std.testing.expectEqual(before, fixture.commands);
+    try std.testing.expectEqual(@as(c_int, c.RingAgain), venus_icd_unbind());
+    try std.testing.expectEqualDeep(retained, entry.*);
+    venus_icd_abandon();
+    try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
 }

@@ -1677,15 +1677,18 @@ static void device_failures(void) {
                VK_ERROR_INITIALIZATION_FAILED);
         VkBaseInStructure chain = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO};
         info.pNext = &chain;
-        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_EXTENSION_NOT_PRESENT);
+        assert(device_create(physical[0], &info, NULL, &device) == VK_SUCCESS);
+        ((PFN_vkDestroyDevice)device_proc(device, "vkDestroyDevice"))(device, NULL);
         chain.sType = VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO;
         chain.pNext = &chain;
-        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_EXTENSION_NOT_PRESENT);
+        assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
         info.pNext = NULL;
         info.enabledLayerCount = 1;
         assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_LAYER_NOT_PRESENT);
         info.enabledLayerCount = 0;
         info.enabledExtensionCount = 1;
+        const char *extension_name = "VK_EXT_unsupported";
+        info.ppEnabledExtensionNames = &extension_name;
         assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_EXTENSION_NOT_PRESENT);
         info.enabledExtensionCount = 0;
         queue_info.queueCount = 0;
@@ -1806,6 +1809,10 @@ static void device_failures(void) {
     info.pEnabledFeatures = &features;
     assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_INITIALIZATION_FAILED);
     features.robustBufferAccess = 1;
+    unsigned rejected_before = fixture.submissions;
+    assert(device_create(physical[0], &info, NULL, &device) == VK_ERROR_FEATURE_NOT_PRESENT && !device);
+    assert(fixture.submissions == rejected_before);
+    features.robustBufferAccess = 0;
     for (unsigned index = 0; index < 4; index++) {
         queues[0].queueCount = index == 3 ? 15 : 16;
         assert(device_create(physical[0], &info, NULL, &devices[index]) == VK_SUCCESS);
