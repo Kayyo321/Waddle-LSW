@@ -31,6 +31,11 @@ ModuleConfigs = {
         'includes': ['-Iinclude'],
         'oracle_macro': None,
     },
+    'command': {
+        'boundary': 'const fixture_t = struct {',
+        'includes': ['-Iinclude'],
+        'oracle_macro': None,
+    },
 }
 
 
@@ -157,7 +162,8 @@ def main():
         else:
             owned.run(['zig', 'test', str(source), *zig_flags, *oracle, *runtime, '--test-no-exec',
                        '-femit-llvm-ir=' + str(original_ir), '-femit-bin=' + str(output / 'test_original')])
-        report = owned.instrument(source, original_ir, sanitized_ir, inventories)
+        report = owned.instrument(source, original_ir, sanitized_ir, inventories,
+                                  mode='native' if kind == 'native' else 'tests')
         owned.run(['clang-19', '-Wno-override-module', '-fPIC', '-fsanitize=address', '-g', '-c',
                    str(sanitized_ir), '-o', str(sanitized_object)])
         owned.verify_access_hooks(sanitized_object, report, sanitized_ir)

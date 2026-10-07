@@ -17,3 +17,7 @@ vgpu-icd-owned-sanitizers: scripts/icd_owned_sanitizers.py $(IcdOwnedSafetySourc
 .PHONY: vgpu-capabilities-owned-sanitizers
 vgpu-capabilities-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_capabilities.zig tests/vgpu/capabilities.c include/waddle/venus_capabilities.h include/waddle/venus_ring.h
 	python3 scripts/icd_dependency_sanitizers.py capabilities build/icd_dependency_safety/capabilities
+
+.PHONY: vgpu-command-owned-sanitizers
+vgpu-command-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_command.zig tests/vgpu/command.c include/waddle/venus_command.h include/waddle/venus_request.h include/waddle/venus_ring.h
+	python3 scripts/icd_dependency_sanitizers.py command build/icd_dependency_safety/command
