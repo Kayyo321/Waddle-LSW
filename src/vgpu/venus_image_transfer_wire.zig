@@ -66,9 +66,20 @@ fn transfer_prefix(opcode: u32, command: u64, source: u64, source_image_layout: 
 /// live ownership, compatible formats, exact subresources/bounds and command recording state.
 /// Independent calls are thread-safe; no borrowed pointer outlives the call.
 pub fn copy_image(command: u64, source: u64, source_image_layout: u32, target: u64, target_image_layout: u32, regions: []const c.VkImageCopy) !writer_t {
+    return copy_image_inner(command, source, source_image_layout, target, target_image_layout, regions, false);
+}
+/// [in] native regions already normalized by image_transfer_native.copy_region, with
+/// actual image ownership, bounds, block geometry and 3D/array layer correspondence
+/// checked by caller. Unequal layer counts are legal for these validated copies.
+/// Returns an owned unchanged native packet or Invalid; borrows only for this call,
+/// allocation-free and thread-safe. Structural guards still apply to every region.
+pub fn copy_image_validated(command: u64, source: u64, source_image_layout: u32, target: u64, target_image_layout: u32, regions: []const c.VkImageCopy) !writer_t {
+    return copy_image_inner(command, source, source_image_layout, target, target_image_layout, regions, true);
+}
+fn copy_image_inner(command: u64, source: u64, source_image_layout: u32, target: u64, target_image_layout: u32, regions: []const c.VkImageCopy, geometry_validated: bool) !writer_t {
     if (command == 0 or source == 0 or target == 0 or !source_layout(source_image_layout) or !target_layout(target_image_layout) or regions.len == 0 or regions.len > MaxRegions) return error.Invalid;
     for (regions) |region| if (!layers_valid(region.srcSubresource) or !layers_valid(region.dstSubresource) or
-        region.srcSubresource.aspectMask != region.dstSubresource.aspectMask or region.srcSubresource.layerCount != region.dstSubresource.layerCount or
+        region.srcSubresource.aspectMask != region.dstSubresource.aspectMask or (!geometry_validated and region.srcSubresource.layerCount != region.dstSubresource.layerCount) or
         !offset_valid(region.srcOffset) or !offset_valid(region.dstOffset) or !extent_valid(region.extent)) return error.Invalid;
     var writer = transfer_prefix(113, command, source, source_image_layout, target, target_image_layout, regions.len);
     for (regions) |region| {
@@ -337,4 +348,13 @@ test "all transfer entrypoints reject missing owners layouts quotas and negative
     copy.srcOffset.y = 0;
     copy.srcOffset.z = -1;
     try std.testing.expectError(error.Invalid, fixture_t.function(copy_image)(8, 42, 6, 43, 7, &.{copy}));
+}
+
+test "validated slice array copy packet preserves native region against encoder" {
+    var request = c.VkImageCopy{ .srcSubresource = .{ .aspectMask = 1, .layerCount = 1 }, .dstSubresource = .{ .aspectMask = 1, .baseArrayLayer = 2, .layerCount = 3 }, .srcOffset = .{ .z = 1 }, .extent = .{ .width = 8, .height = 8, .depth = 3 } };
+    const clear = [_]u32{0} ** 4;
+    try compare(try fixture_t.function(copy_image_validated )(8, 42, 1, 43, 7, &.{request}), 0, 1, &request, &clear);
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image )(8, 42, 1, 43, 7, &.{request}));
+    request.dstSubresource.layerCount = 0;
+    try std.testing.expectError(error.Invalid, fixture_t.function(copy_image_validated )(8, 42, 1, 43, 7, &.{request}));
 }
