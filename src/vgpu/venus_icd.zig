@@ -8343,7 +8343,8 @@ fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, ti
     };
     const count = info.*.semaphoreCount;
     const flags = info.*.flags;
-    const saved_namespace = namespace_id;
+    const saved_namespace = objects.namespace_id;
+    const saved_parent_id = parent.id;
     var ids: [64]u64 = undefined;
     var handles: [64]u64 = undefined;
     var values: [64]u64 = undefined;
@@ -8353,7 +8354,7 @@ fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, ti
             unlock_icd();
             return c.VK_ERROR_INITIALIZATION_FAILED;
         }
-        const record = child_object(@intFromPtr(native.?), c.VK_OBJECT_TYPE_SEMAPHORE, parent.id) orelse {
+        const record = child_object(@intFromPtr(native.?), c.VK_OBJECT_TYPE_SEMAPHORE, saved_parent_id) orelse {
             unlock_icd();
             return c.VK_ERROR_INITIALIZATION_FAILED;
         };
@@ -8365,12 +8366,12 @@ fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, ti
         handles[index] = record.handle;
         values[index] = info.*.pValues[index];
     }
-    for (handles[0..count]) |handle| resource_state(object(handle, c.VK_OBJECT_TYPE_SEMAPHORE).?).idle_refs += 1;
+    for (handles[0..count]) |handle| resource_state(child_object(handle, c.VK_OBJECT_TYPE_SEMAPHORE, saved_parent_id).?).idle_refs += 1;
     unlock_icd();
     defer {
         lock_icd();
-        if (namespace_id == saved_namespace) for (handles[0..count], ids[0..count]) |handle, id| {
-            if (object(handle, c.VK_OBJECT_TYPE_SEMAPHORE)) |record| {
+        if (objects.namespace_id == saved_namespace) for (handles[0..count], ids[0..count]) |handle, id| {
+            if (child_object(handle, c.VK_OBJECT_TYPE_SEMAPHORE, saved_parent_id)) |record| {
                 if (record.id == id) {
                     std.debug.assert(resource_state(record).idle_refs != 0);
                     resource_state(record).idle_refs -= 1;
@@ -8381,11 +8382,17 @@ fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, ti
     }
     while (true) {
         lock_icd();
-        if (namespace_id != saved_namespace or lost != c.RingOk) {
+        if (objects.namespace_id != saved_namespace or lost != c.RingOk) {
             unlock_icd();
             return c.VK_ERROR_DEVICE_LOST;
         }
-        const writer = modern_sync.wait_semaphores(parent.id, ids[0..count], values[0..count], flags, 0) catch {
+        for (handles[0..count], ids[0..count]) |handle, id| {
+            const current = child_object(handle, c.VK_OBJECT_TYPE_SEMAPHORE, saved_parent_id) orelse {
+                unlock_icd(); return c.VK_ERROR_DEVICE_LOST;
+            };
+            if (current.id != id) { unlock_icd(); return c.VK_ERROR_DEVICE_LOST; }
+        }
+        const writer = modern_sync.wait_semaphores(saved_parent_id, ids[0..count], values[0..count], flags, 0) catch {
             unlock_icd();
             return c.VK_ERROR_INITIALIZATION_FAILED;
         };
@@ -8399,7 +8406,7 @@ fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, ti
             unlock_icd();
             return status;
         }
-        const visible_result = if (result == c.VK_SUCCESS) synchronize_device_mappings(parent.id, false) else result;
+        const visible_result = if (result == c.VK_SUCCESS) synchronize_device_mappings(saved_parent_id, false) else result;
         unlock_icd();
         if (result != c.VK_TIMEOUT) return visible_result;
         if (timeout != std.math.maxInt(u64) and timer.read() >= timeout) return c.VK_TIMEOUT;
@@ -10325,4 +10332,61 @@ fn descriptor_layout_support(device: c.VkDevice, info: [*c]const c.VkDescriptorS
     output.*.supported = @intFromBool(supported);
     // Variable descriptor count is not advertised or admitted by implemented policy.
     if (variable) |value| value.maxVariableDescriptorCount = 0;
+}
+
+test "timeline wait retains nondispatchable duplicate owners and releases only idle references" {
+    const fixture_t = struct {
+        mode: usize,
+        device: c.VkDevice = null,
+        semaphore: c.VkSemaphore = null,
+        parent_id: u64 = 0,
+        captured: bool = false,
+        fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+            const fixture: *@This() = @ptrCast(@alignCast(context.?));
+            response.* = std.mem.zeroes(c.venus_request_t);
+            response.*.kind = request.*.kind;
+            response.*.direction = 1;
+            if (request.*.kind == c.RequestSubmit) {
+                if (length < 40 or std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little) != 173) return c.RingCorrupt;
+                const record = child_object(@intFromPtr(fixture.semaphore.?), c.VK_OBJECT_TYPE_SEMAPHORE, fixture.parent_id) orelse return c.RingCorrupt;
+                if (resource_state(record).idle_refs != 2 or resource_state(record).inflight_count != 1) return c.RingCorrupt;
+                destroy_semaphore(fixture.device, fixture.semaphore, null);
+                if (child_object(record.handle, c.VK_OBJECT_TYPE_SEMAPHORE, fixture.parent_id) == null) return c.RingCorrupt;
+                fixture.captured = true;
+                if (fixture.mode == 2) return c.RingClosed;
+                response.*.argument_zero = 1;
+            } else if (request.*.kind == c.RequestReply) {
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity];
+                @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], 173, .little);
+                std.mem.writeInt(i32, bytes[4..8], if (fixture.mode == 1) c.VK_TIMEOUT else c.VK_SUCCESS, .little);
+                response.*.payload_bytes = @intCast(capacity);
+            } else if (request.*.kind != c.RequestPoll) return c.RingInvalid;
+            return c.RingOk;
+        }
+    };
+    for (0..3) |mode| {
+        var fixture = fixture_t{ .mode = mode };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        var device: [*c]c.venus_object_t = null;
+        var semaphore: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DEVICE, 0, 1, &device));
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_SEMAPHORE, device.*.id, 0, &semaphore));
+        const state = resource_state(semaphore);
+        state.buffer_usage = 1;
+        state.inflight_count = 1;
+        fixture.device = @ptrFromInt(device.*.handle);
+        fixture.semaphore = @ptrFromInt(semaphore.*.handle);
+        fixture.parent_id = device.*.id;
+        const semaphores = [_]c.VkSemaphore{ fixture.semaphore, fixture.semaphore };
+        const values = [_]u64{ 1, 1 };
+        const info = c.VkSemaphoreWaitInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 2, .pSemaphores = &semaphores, .pValues = &values };
+        const expected: c_int = if (mode == 1) c.VK_TIMEOUT else if (mode == 2) c.VK_ERROR_DEVICE_LOST else c.VK_SUCCESS;
+        try std.testing.expectEqual(expected, wait_semaphores(fixture.device, &info, 0));
+        try std.testing.expect(fixture.captured);
+        try std.testing.expectEqual(@as(u32, 0), state.idle_refs);
+        try std.testing.expectEqual(@as(u32, 1), state.inflight_count);
+        try std.testing.expect(child_object(semaphore.*.handle, c.VK_OBJECT_TYPE_SEMAPHORE, device.*.id) != null);
+    }
 }
