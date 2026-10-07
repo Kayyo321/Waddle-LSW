@@ -36,6 +36,11 @@ ModuleConfigs = {
         'includes': ['-Iinclude'],
         'oracle_macro': None,
     },
+    'objects': {
+        'boundary': None,
+        'includes': ['-Iinclude', '-Isubmodules/venus_protocol/include'],
+        'oracle_macro': None,
+    },
 }
 
 

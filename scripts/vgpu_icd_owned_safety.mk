@@ -21,3 +21,7 @@ vgpu-capabilities-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts
 .PHONY: vgpu-command-owned-sanitizers
 vgpu-command-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_command.zig tests/vgpu/command.c include/waddle/venus_command.h include/waddle/venus_request.h include/waddle/venus_ring.h
 	python3 scripts/icd_dependency_sanitizers.py command build/icd_dependency_safety/command
+
+.PHONY: vgpu-objects-owned-sanitizers
+vgpu-objects-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_objects.zig tests/vgpu/objects.c include/waddle/venus_objects.h submodules/venus_protocol/include/vulkan/vk_icd.h
+	python3 scripts/icd_dependency_sanitizers.py objects build/icd_dependency_safety/objects
