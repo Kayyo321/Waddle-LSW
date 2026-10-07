@@ -22,6 +22,10 @@ import icd_owned_sanitizers as owned
 
 # Exact contracted separately linked codec set; never consume public objects.
 CodecNames = ('capabilities', 'command', 'objects', 'instance_wire', 'query_wire', 'values')
+# Exact named allocator-suite inventory; totals alone cannot admit missing units.
+CodecDebugUnitCounts = {'capabilities': 3, 'command': 9, 'objects': 4,
+                       'instance_wire': 5, 'query_wire': 3, 'values': 4}
+assert set(CodecDebugUnitCounts) == set(CodecNames)
 # Independent pinned C encoder/receiver oracle sources and include boundaries.
 GuestOracles = ('render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire',
                 'graphics_pipeline_wire', 'graphics_command_wire', 'features_query', 'device_wire')
@@ -179,7 +183,8 @@ def publish_completion(output, latest_record, expected_units):
     assert {module['source']: module['source_sha256'] for module in tests['modules']} == source_manifest
     assert native['icd_native_suites'] == 1 and tests['icd_debug_units'] == expected_units > 0
     assert native['standalone_native_suites'] == tests['standalone_native_suites'] == 6
-    assert native['standalone_debug_units'] == tests['standalone_debug_units'] == 25
+    assert native['standalone_debug_unit_counts'] == tests['standalone_debug_unit_counts'] == CodecDebugUnitCounts
+    assert native['standalone_debug_units'] == tests['standalone_debug_units'] == sum(CodecDebugUnitCounts.values()) == 28
     assert native['input_manifest'] == tests['input_manifest']
     dependency.verify_inputs(source_manifest)
     dependency.verify_inputs(native['input_manifest'])
@@ -256,6 +261,7 @@ def main():
                              str(Path(dependency.__file__).resolve()): dependency.file_hash(Path(dependency.__file__).resolve()),
                              str(Path(owned.__file__).resolve()): dependency.file_hash(Path(owned.__file__).resolve())})
     standalone_reports, codec_objects, standalone_units = [], [], 0
+    standalone_counts = {}
     for name in CodecNames:
         folder = output / 'dependencies' / name
         folder.mkdir(parents=True, exist_ok=True)
@@ -269,6 +275,11 @@ def main():
         for kind, report in reports.items():
             validate_report(report, 'native' if kind == 'native' else 'tests',
                             {Path('src/vgpu/venus_' + name + '.zig').resolve()})
+        observed_units = re.findall(r'^All (\d+) tests passed\.$', (folder / 'gate.log').read_text(), re.M)
+        assert observed_units == [str(CodecDebugUnitCounts[name])], 'named codec execution count differs from freeze: ' + name
+        assert reports['native']['unit_tests'] == 0
+        assert reports['test']['unit_tests'] == CodecDebugUnitCounts[name]
+        standalone_counts[name] = reports['test']['unit_tests']
         standalone_units += reports['test']['unit_tests']
         standalone_reports.append(reports['native'])
         codec_objects.append(folder / 'native_sanitized.o')
@@ -359,6 +370,7 @@ def main():
         report['executable_sha256'] = binary_hash
         report['standalone_native_suites'] = len(CodecNames)
         report['standalone_debug_units'] = standalone_units
+        report['standalone_debug_unit_counts'] = standalone_counts
         report['icd_native_suites'] = 1 if kind == 'native' else 0
         report['icd_debug_units'] = unit_count
         normalized.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
