@@ -5029,3 +5029,263 @@ These gates do not prove larger receiver allocation, elapsed query deadlines,
 current-head CI or new physical/WindowsGPU/DXVK acceptance. Failed first real
 Windows triangle97→157 native handles is preserved, receives no success credit,
 and is being diagnosed; its exact pixels/natural host retirement alone do not pass.
+
+
+### Complete extension query: adopted staged implementation contract
+
+This is an adopted contract; production integration/acceptance remains pending.
+#### Concrete existing boundaries
+
+- command14 has no extension-record offset. The codec permits1024 entries and
+  274460 reply bytes; full byte assembly needs68 reads at≤4096 bytes.
+- RequestReply carries byte offset/length. Receiver reply bounds use the actual
+  mapped extent. TCP validates length≤4096 and preserves the offset.
+- Receiver creation requests config.reply_bytes and rejects any different actual
+  mapped extent. Current trusted worker initializes65536 internally.
+- Capabilities160 has no allocation-size field. Controller JSON cannot set the
+  worker's reply extent. Do not infer it from parser bits or API properties.
+- Direct guest_exchange_timeout already limits one RPC by a relative budget.
+  Channel/ring I/O ultimately uses one absolute CLOCK_MONOTONIC deadline.
+- TCP client currently resamples now+configured_timeout for each exchange; its
+  socket I/O already accepts an absolute local monotonic deadline. TCP server
+  forwards one operation using remaining host-side budget. Existing ICD transact
+  has1000 poll/sleep iterations, not an elapsed whole-query deadline.
+
+#### 1. Absolute frontend deadline, additive native ABI
+
+Recommend an absolute deadline callback rather than passing a relative remaining
+budget that the callback resamples. Use the SAME monotonic clock as the frontend
+I/O, supplied by that frontend, so time spent entering the callback cannot extend
+an already chosen query deadline. Windows TCP uses venus_tcp_now_ms/GetTickCount64;
+direct Linux uses venus_stream_time_ms, including its existing+1 convention.
+Never translate an absolute Windows value into the Linux host clock or transmit
+local absolute timestamps over TCPv1.
+
+Proposed native types in the ICD public header:
+
+- venus_icd_clock_t(context, uint64_t *now_ms) -> venus_ring_status_t. Both pointers
+  nonnull, output0 on failure, no allocation/retention/reentry; sole ICD mutex
+  thread. Nonzero output is the frontend I/O's local monotonic millisecond clock.
+- venus_icd_exchange_until_t(context, request, input, length, response, output,
+  capacity, uint64_t deadline_ms) -> venus_ring_status_t. Existing exchange buffer,
+  alias, validation, ownership and status rules; deadline borrowed for this call,
+  not persisted or extended. Complete operation uses min(deadline_ms,
+  now+configured_exchange_timeout_ms), shared across all its partial I/O.
+- venus_icd_frontend_timed_t owns four borrowed pointers: legacy exchange,
+  exchange_until, clock, context; followed by reply_bytes:u32,
+  exchange_timeout_ms:u32, transaction_timeout_ms:u32. Candidate native x64
+  size48/align8; independent final C/function-signature assertions remain required.
+
+Keep existing bind APIs and ordinary command ownership unchanged. Add
+venus_icd_bind_capabilities_timed(frontend, capabilities): validate/deep-copy
+profile values and actual compatible capabilities, retaining only callbacks and
+context until unbind/receiver-retired abandon. Profile pointer itself is not
+retained. Require all four pointers, fixed requested reply_bytes524288,
+exchange timeout1..60000 and transaction timeout exactly5000 for the first
+increment. Reject malformed/occupied/exhausted bindings BEFORE frontend calls;
+rejection preserves incumbent state and namespace. Legacy binds do not authorize
+large queries and retain their existing empty public extension behavior.
+
+This additive bind must establish allocation proof below before object/command
+initialization or namespace consumption. Probe callbacks may run synchronously
+while binding; their owner must be initialized/negotiated and live BEFORE calling
+bind. Bootstrap must have an explicit BindStarting callback phase rather than
+requiring bootstrap.bound before these two callbacks; failure must not abandon an
+incumbent binding. Any active client/session still belongs to its caller and
+requires existing verified receiver retirement before teardown/module release.
+
+Direct frontend additions should accept an absolute deadline at channel/RPC/guest
+layers without resetting it after partial frames/ring transfers. TCP client adds
+exchange_until_cancel and a no-cancel wrapper, reusing one implementation for
+legacy and timed paths. Keep client.timeout_ms immutable. Past deadline is
+terminal Timeout before I/O; malformed local deadline/arguments are Invalid
+before publication; clock failure is Closed. Preserve existing sticky loss and
+alias/output rules. TCP server and wire profile need no deadline field or larger
+payload limit: guest timeout closes its transport, while any remaining host work
+is uncertain until supervised retirement. It does not claim host cancellation.
+
+#### 2. Prove actual receiver allocation with existing bounded range operations
+
+Change the trusted new worker configuration to request524288 bytes explicitly;
+keep receiver exact-map validation. Do not silently edit a private JSON field the
+worker never reads. Preserve the old compiled65536 worker/copies for current
+Windows evidence and unsupported-capacity negative tests. New normal/sanitized
+workers require actual create/map/teardown acceptance, not only config-unit tests.
+
+Inside the additive timed bind, after all local profile/incumbent checks, sample
+one5000ms whole-proof deadline using the supplied clock. No Venus Submit occurs.
+Perform two literal, valid RequestReply envelopes using that SAME deadline:
+
+1. offset524287,length1: require exact successful shape and one returned byte.
+   Its value is irrelevant; never claim it is a Vulkan reply or support bit.
+2. offset524288,length1: require ordinary RingInvalid with a fully validated
+   RequestInvalid response, zero payload, unchanged output byte and no sticky
+   transport loss. A different failure is not a capacity proof.
+
+Under the verified trusted receiver's immutable mapping and exact range predicate,
+lower success proves extent≥524288; upper bounds rejection proves extent<524289.
+Together they prove exact524288. RequestReply accepts byte granularity, so neither
+request needs alignment or changes TCP operation limits. Validate every response
+field using the existing exchange abstraction; actual frontends independently
+validate sequence/session. Again retries the same probe under the same deadline;
+all other failures reject the new bind. Sample after the second response and
+before publication. Never accept a result delivered at/after the deadline.
+
+On insufficient old65536 extent, the lower probe fails and no large binding is
+published. A larger1048576 extent fails the upper exact-profile probe. Failure
+consumes no ICD namespace/reservation/cache/ring ownership; caller retains its
+already negotiated frontend and follows actual retirement. No application API,
+public extension name or feature bit is inferred from this allocation proof.
+
+#### 3. One bounded mutex-owned extension workspace
+
+Use one static process-local workspace, not a >500KiB native call stack and not
+256 retained full name lists. It borrows the existing binding tx only while the
+ordinary command owner is Idle and the ICD mutex is held. Its private command
+owner uses the deadline adapter; its rx is disjoint from binding tx/normal rx,
+workspace command/deadline records and normalized extension records.
+
+Proposed layout model after root's80-byte command ABI:
+- deadline_state_t: deadline_ms:u64,last_now_ms:u64,active:bool,
+  submission_possible:bool; size24/align8.
+- workspace: command80,deadline24,rx[274460],records[1024] of260-byte records;
+  size540808/align8; rx offset104,record offset274564.
+- compact per-physical cache: versions[32]u32,raw_count:u32,
+  available_mask:u32,ready:bool; size140/align4. No strings/pointers/clock retained.
+
+Private Linux/native Windows compile-time proposal assertions are preserved in
+this directory. They model proposed declarations, not production ABI acceptance.
+Actual integrated definitions/import closure must be measured again.
+
+The immutable compiled registry has≤32 names/specVersion requirements and zero
+implementation-ready names initially. Decode/validate every actual full name
+and duplicate before selecting registry matches; retain versions/mask/count only.
+A complete actual list with an empty guest registry gives ready=true/raw_count=M
+and mask0. This is not a fabricated empty actual list. Current public projection
+remains zero and device preflight still rejects every requested extension name.
+Ready caches are scoped to the exact physical handle/instance lifetime and reused
+without transport; clear on accepted instance retirement or binding abandonment.
+No mutation of another physical cache or device enabled state.
+
+#### 4. Entire count/fill/race sequence has one deadline
+
+Validate native count/layer/physical/loss inputs before transport; preserve the
+existing invalid-handle/layer precedence and use untyped alignment validation
+before any new count write. Instance-extension enumeration remains unchanged.
+The timed device getter performs actual raw-cache collection then returns the
+intersection; legacy getter retains existing0 with raw cache uninitialized.
+This distinction is explicit and supplies no success claim for a failed raw query.
+
+For a cold timed cache, sample once; reject0/backward/overflow clocks. Set an
+absolute now+5000 deadline; never reset it for a new command or race attempt.
+Clock sample before/after every callback, after decode/projection and before cache
+publication. Past deadline cannot publish success. The frontend passes the
+absolute value to its real I/O; sleep uses at most1ms remaining and never follows
+an expired sample. This is cooperative deadline enforcement, not an OS scheduling
+or asynchronous preemption guarantee. Decoder work is finite/bounded and a late
+completed decode is discarded, not published.
+
+At most3 count/fill attempts share that deadline:
+- Count command uses28-byte private reply owner; validate count≤1024.
+- Count0 completes that snapshot without fill and can publish an empty actual list.
+- CountN>0: fill capacityN, reply owner extent28+268*N; validate every returned
+  record/name/duplicate using the pure codec. A successful count≤N is a complete
+  list even if the count shrank. Never treat VK_INCOMPLETE as complete.
+- Incomplete fill discards the entire staged list/mask and starts a fresh count;
+  no partial positive names or ready flag. After3 incomplete attempts return a
+  local INITIALIZATION_FAILED error with cache unready; no fake success. An
+  already consumed validated incomplete reply permits normal workspace reset.
+
+A count>1024 returns bounded-capacity OUT_OF_HOST_MEMORY with no ready cache and
+no sticky loss. Malformed wire/name/duplicate/identity causes sticky Corrupt;
+transport cancellation/timeout/closed retains its sticky loss. An exact host
+negative result must preserve its native result, and DEVICE_LOST is sticky; the
+current pure codec's Backend error does not carry that result. Before integration,
+add a separately verified codec status-decode interface after full prefix/shape
+validation; do not manually peek bytes4..8 ahead of validation or duplicate format.
+
+Once any Submit may have reached the peer, Timeout/corruption retains the whole
+workspace owner/borrowed storage, propagates binding loss, and blocks reuse and
+unbind until actual receiver-retired abandon. No free of a pending/Reading/Lost
+query owner. A validated final reply allows take/reset; subsequent local capacity,
+race-limit or ordinary host error can release workspace without uncertainty.
+Successful cache publication atomically precedes workspace scrub/release. Native
+count output0 on query error; record output remains unchanged. API/feature/extension
+advertisement is unchanged and actual DXVK acceptance remains separate.
+
+#### Atomic checkpoints and genuine gates
+
+1. Root command/header chunks + narrow unbind regression (already assigned).
+2. Absolute channel/RPC/guest APIs, each coherent layer and meaningful error tests;
+   separate TCP-client timed/cancel callback increment, immutable configured cap.
+   Test partial-header/payload progress against original absolute deadline, expired
+   calls/no publication, clock failure, cancellation, exact output/sequence state;
+   ≥90% production coverage and real native Windows callback tests.
+3. Trusted worker524288 config and independently actual two-range allocation gate;
+   old65536 and larger1048576 fail closed. Real normal/sanitized receiver/transport
+   owner teardown, zero findings; GPU lease only after wddm current12 work releases.
+4. Additive timed bind/probe ownership; strict x64 C/Zig/Windows ABI assertions,
+   failure/no namespace mutation/incumbent preservation/callback-starting lifecycle
+   tests and actual authenticated Windows range proof before raw enumeration.
+5. Codec backend-status API and full query/cache integration. Fresh request/reply
+   C oracles once each, exact new import closure (extension adds one source), fresh
+   native/Windows/coverage/genuine complete-owned/physical gates. Meaningful1/1024,
+   full68chunk bytes/canaries, grow/shrink/3incomplete attempts, clock/late callback,
+   each chunk retry/fault, full cache isolation/clear/retained uncertainty tests.
+   Actual Windows→host command14 list with count/full names/specVersions and public
+   projected0; current four GPU paths remain passing under unchanged driver policy.
+
+Every checkpoint is separate and+0 until milestone acceptance. icd_memory owns
+additive channel/RPC/guest APIs in separate atomic steps. Root leases only TCP
+client exchange_until wrappers/header prototypes/client fixtures from wddm;
+server/bootstrap/socket/wire/controller/GPU ownership stays with wddm. Timed bind,
+trusted worker config and large public query need their later explicit source
+leases/gates; no current advertisement or copied-runtime changes are authorized.
+
+
+### Standalone Properties2: adopted exact five-node contract
+
+The following pure-codec/native-output scope and exact three staged file leases
+are adopted for image_pipeline. Each verified step is a separate atomic commit;
+public ICD/import/GNU/workflow/transport/advertisement remains root-owned. No GPU
+lease or acceptance follows from this contract.
+
+#### Grounding and scope
+PinnedDXVK2.7.1 c3dd74be6baec53786d4e064a572185b70347a17 device_info.cpp CORE_VERSIONS chains Vulkan11/12/13 unconditionally; EXTENSIONS_WITH_PROPERTIES chains robustness2 and maintenance5 only when extensions are supported. initDeviceProperties calls actual vkGetPhysicalDeviceProperties2; queue and memory initialization separately call QueueFamilyProperties2 and MemoryProperties2. Its optional property node set also contains conservative rasterization/custom border color/descriptor buffer/extended dynamic state3/graphics pipeline library/line rasterization/multi draw/transform feedback/vertex divisor/maintenance6/7. This increment covers only coreProperties plus core11/12/13, robustness2, maintenance5. Do not claim allDXVK property requirements or advertise those extensions. All7core1.1physical2 entry points ultimately remain required (Features2,Properties2,FormatProperties2,ImageFormatProperties2,QueueFamilyProperties2,MemoryProperties2,SparseImageFormatProperties2); only pure Properties2 metadata begins here.
+
+#### Proposed exact lease and atomic sequence
+1. src/vgpu/venus_properties_wire.zig + tests/vgpu/properties_oracle.h + tests/vgpu/properties_query_oracle.c + tests/vgpu/properties_reply_oracle.c: one coherent allocation-free typed request/reply codec and independent pinned oracles, meaningful Debug/ReleaseSafe units.
+2. src/vgpu/venus_properties_native.zig: one pure native chain collector/transactional publisher and its built-in units. Imported wire/render remain read-only.
+3. scripts/icd_properties_sanitizers.py + scripts/vgpu_properties_safety.mk: reusable standalone3-source access proof/testing gates (wire/native/render) and private unique output/receipt. Root integrates GNU/CI separately after verification.
+No new public ICD import or C API, shared runtime rebuild, header generation, socket/worker/GPU test, Windows deployment, README mutation, or ownership change. Build private files/read pinned generated headers only. Windows crosscompile/native test execution is coordinated with wddm separately. New test/header/API names use owned snake_case/type_t/PascalCase; fixed imported SDK names remain vendor ABI references.
+
+#### Exact schema, ownership and packet layout
+Recognize exactly five unique canonical Vulkan structure tags for Vulkan11/12/13Properties, Robustness2PropertiesEXT, Maintenance5PropertiesKHR; core-promoted maintenance5 alias has the same numeric tag and counts as the same node. MaxNodes5; no additional aliases as separate nodes, duplicates, unknown tags or oversized request profiles. Allocation-free query(nonzero translated physical_id,tags) returns owned render.writer_t; no native address or actualVk handle is transmitted. Require caller-validated negotiated parser profile before eventual runtime use. Independent guest encoder proves command148/flags1/physical64/present64=1/rootSType/forward chain (present64=1,tag32) and terminator64=0. Exact query bytes36+12*n, maximum96. All fields little-endian, no native padding.
+
+Reply starts command32=148, present64=1, rootProperties2SType, forward chain presence/tag metadata, terminator64=0; payloads follow in REVERSE chain order then coreProperties payload. These sizes come from actual pinned generated vn_sizeof_* functions in the private ABI probe, not native sizeof or assumed word counts. Empty-chain reply892bytes, maximum all5 reply2044bytes. Each node adds12metadata bytes plus its exact payload below; core payload868bytes. Requests allow any ordered subset of the exactfive nodes; all326 ordered subsets must match independent C oracles. No result VkResult field is invented for this void Vulkan query.
+
+| SDK payload | native size/alignment | named payload fields | Boolean fields | wire payload bytes |
+| --- | --- | --- | --- | --- |
+| VkPhysicalDeviceVulkan11Properties | 112/8 | 15 | 3 | 116 |
+| VkPhysicalDeviceVulkan12Properties | 736/8 | 52 | 26 | 744 |
+| VkPhysicalDeviceVulkan13Properties | 216/8 | 45 | 32 | 192 |
+| VkPhysicalDeviceRobustness2PropertiesEXT | 32/8 | 2 | 0 | 16 |
+| VkPhysicalDeviceMaintenance5Properties | 40/8 | 6 | 6 | 24 |
+
+Pinned coreProperties size824/alignment8; outerProperties2 size840/alignment8; Limits504/8 with106named fields and3Booleans; SparseProperties20/4 with5Booleans; ConformanceVersion4/1 has4u8 fields (wire encodes each scalar according to pinned rules, not a4byte memcpy). Exact SDK field names/types/array extents/native offsets/bytes and Boolean spelling are enumerated in impl/software-vgpu-slicing/properties_field_inventory.json, generated from immutable vulkan_core.h and verified by actual Coffsetof/sizeof. Proposal input hashes bind this inventory, probe log and pinned DXVK/generated headers. The committed inventory SHA256 is0945872d0789014947921f16082ee5f7f63b5bd78ea7680fecb18ae9fcc971b3; actual probe log SHA3117dd0c498e035641066d11db3ee6dc1de49c1e60a07d8f0f7f89f9e238d5ec. Both are checked before implementation. Comptime checks freeze every scalar/array field count/type/width and x64 Linux/Windows native ABI; no assumptions that arbitrary u32 equalsBoolean.
+
+Owned node_t is {type_tag, typed SDK-value union} with actual selected SDK payload data; result_t owns count, fixedfive-node storage and typed coreProperties value. Embedded SDK sType is canonical and pNext alwaysNULL; no foreign pointer ownership/retention. Inactive union/storage and native padding in owned DTO initialized zero. Native padding is never parsed from wire or used as data. No heap/shared/global state; borrowed byte/tag slices expire atreturn. Unknown native objects belong exclusively to caller, unlike unrecognized wire tags which reject.
+
+Decode(bytes,tags) validates request profile before parsing; Bounds for every prefix shorter than exact requested892+12*n+sum(payload) bytes; Corrupt for command/presence/tag/order/terminator/fixed-array extent/Boolean/nonfinite float/missing bounded-stringNUL errors. Use exact little-endian scalars: u64 remains8, u32/enums/flags remain32bits; scalar u8 and fixed arrays follow the pinned stride/count rules. Array size prefixes must equal each immutable SDK extent. UUID/LUID bytes are opaque. Every actual75 Boolean members across core/selectednodes is0/1, using explicit semantic field inventory rather than Ctypedef equality (VkBool32 aliasesu32). Float fields preserve finite bit patterns including negative0; rejectNaN/Inf without fabricating replacement values. Nonboolean integer/enum/flag values remain exact opaque-width values; future guest policy separately validates/clamps advertised support. Fixed deviceName/driverName/driverInfo require NUL within256; normalize suffix afterfirstNUL to0, preserving prefix bytes without invented UTF8 constraints. Extra receiver scratch after exact initialized prefix is ignored, never copied. Validate complete reply into local owned value beforereturn; failure exposes no partial result. Max2044 staticallyproved, no packet/array multiplication overflow.
+
+#### Pure native topology and publication
+collect_chain(first nullable accessible initialized nativepNext header) returns owned bounded snapshot with exactly recognized forwardtag/order/address plus all walked header observations; MaxWalkNodes64 excludes outer root. Snapshot owns scalar/header copies and borrows actual objects only until publication/retirement. No allocation/transport/cache/locks. Before each cast, reject nonnull alignment mismatch or address+header overflow; caller must provide accessible objects, arbitrary foreign addresses are not memory-probed. A repeated address rejects cycles/aliasing; atmost64headers (unknownincluded) and5recognizedunique tags; reject64->65 before reading65th header. Unknown payload is never accessed. Full known objects must be accessible aligned native SDK storage; external synchronization keeps every header/link/target immutable through validation and publication.
+
+publish_properties2(output_address,chain,result) first validates nonnull aligned rootProperties2, exactrootSType, exact observed topology/header identities/links/currentforwardrecognizedorder/count, canonical resulttags/headerNULL invariants and every Boolean/float/string/array datum. Compute overflow-checked full target ranges for outer840 and each known exactstruct; reject any pairwise overlap, any intersection with chain/result input extents, and any recognized/outer target intersecting an observed unknown header. Caller additionally guarantees unknown payload objects are disjoint (their full sizes are deliberately not guessed). No field write before ALL validation succeeds. After success copy only named coreProperties members/nested Limits/Sparse members and named selected node payload fields; preserve outer/known sType,pNext,native padding, unknown headers/payloads and canaries. No memcpy of whole native structs, no stale snapshot or changed-linked-chain publication, no pointer retention after call. Nullableouter/misalignment/wrongtag/count/duplicates/changedlinks/overflow/known overlap/root overlap/badlastnode data errors returnInvalid with every output byte unchanged. Header-only unknown objects must be tested under genuineASan to prove no payload read.
+
+#### Required proof and semantic limits
+Independent guest request and receiver reply oracles freshly compile static-inline pinned generators as strict C-ASan/LSan/UBSan; no shared oracle object, system Vulkan loader/GPU/backend callback or copied Zig decoder as oracle. Fill actual SDK structures deterministically with distinctive per-member sentinels and one-field variants; verify allmixedu32/u64/u8/arrays/strings/floats/nativeoffsetof data (both C and Zig), all326 ordered subsets, every truncation and each malformed shape/fixedarray length, everyBoolean2, nonfinite floats, unterminated string/bounded tail normalization and ignored scratch. Native tests use root/node/header/padding/canary byte snapshots; unknown-header-only structures, cycles, duplicates, MaxWalk64/65, late errors, changedlinks, alignment and alias cases prove transactional nonmutation. Deterministic256-cycle stress with allfive nodeorders/typeddata checks everyresultfield/header/canary and cleanup. Use std.testing.allocator allocations in meaningful corpus owners with immediate defer/free; zero leaked bytes for success/error/stress.
+
+Fresh Debug/ReleaseSafe and independently crosslinked Windows native unit executables required; exact guest SHA/exit/actualunits retained, not compilation credit. >=90%productionline andbranch coverage for wire/native/helper functions; testfixtures/std excluded with exact boundaries and compiler guards accounted separately. Linux genuine owned LLVM access instrumentation retains entire originalDebug module guards/reverse bytes; exact source set native/wire/render3, all production declarations/instantiations/symbols/actualfinalaccesses accounted. Alltest bodies of selected helpers must emit real hooks; no new missing-runtime/lazy exceptions. Each private nativeOS unit run links exactlyTWO proposed Properties C oracles, once each; other unrelatedoracles absent. Native wire/runtime helpers have no Cexports in this proposal: do not invent a native production-object gate with absent bodies; genuine nativeOS Zigtest binary includes every tested production definition and independent Cinterop. C oracles have process ASan/LSan/UBSan, Zigstd testing allocator0 plus retained Debug checks. UniqueUTC/PID outputs, immutable source/object/report/IR/binary/executionhash receipt only after allproofs/suites pass; original180stool/256MiB bounds maintained. Root integrates CI privately after actualverified gates.
+
+Later public integration needs a separate contract for all7core1.1 queries, exact negotiated parser masks/schema/identity, cache ownership and support reductions, finite wholequery deadline/remaining budget, real direct/shared/Linux/Windows/GPU query proof and enlarged completeowned graph. PublicAPI/extension advertisement remains1.0/empty as currentruntime until honestly implemented semantic support. No support/feature booleans, driver identifiers, UUIDs, limits or extension availability are invented by these codecs.
