@@ -61,6 +61,30 @@ fn scalars(writer:*writer_t,info:anytype) !void {
         }
     }
 }
+/// [in] live device/render-pass host IDs. [out] Actual84 granularity query,
+/// Invalid zero identity; ownership remains caller, no heap or retained pointers.
+pub fn render_granularity(device:u64,pass:u64) !writer_t {
+    if(pass==0)return error.Invalid;
+    var writer:writer_t=.{};try writer.header(84,device);try writer.put(u64,pass);try writer.put(u64,1);return writer;
+}
+/// [in] canonical maintenance5 area description, <=8 accessible formats; caller
+/// checks enabled multiview/format limits. [out] Exact280 hostquery; Invalid shape,
+/// Limit attachment quota. No heap/retention/shared state.
+pub fn rendering_granularity(device:u64,info:*const c.VkRenderingAreaInfoKHR) !writer_t {
+    if(info.sType!=c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR or info.pNext!=null or (info.colorAttachmentCount!=0 and info.pColorAttachmentFormats==null))return error.Invalid;
+    if(info.colorAttachmentCount>8)return error.Limit;
+    var writer:writer_t=.{};try create_header(&writer,280,device,c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR);
+    try writer.put(u32,info.viewMask);try writer.put(u32,info.colorAttachmentCount);try writer.put(u64,info.colorAttachmentCount);
+    if(info.colorAttachmentCount!=0)for(info.pColorAttachmentFormats[0..info.colorAttachmentCount]) |format|try writer.put(u32,format);
+    try writer.put(u32,info.depthAttachmentFormat);try writer.put(u32,info.stencilAttachmentFormat);try writer.put(u64,1);return writer;
+}
+/// [in] completed84/280 immutable reply, matchingopcode. [out] Exact nonzero actual
+/// host extent or Corrupt identity/presence/truncation/empty extent. No retention.
+pub fn decode_granularity(reply:[]const u8,opcode:u32) !c.VkExtent2D {
+    if((opcode!=84 and opcode!=280) or reply.len<20 or std.mem.readInt(u32,reply[0..4],.little)!=opcode or std.mem.readInt(u64,reply[4..12],.little)!=1)return error.Corrupt;
+    const value=c.VkExtent2D{.width=std.mem.readInt(u32,reply[12..16],.little),.height=std.mem.readInt(u32,reply[16..20],.little)};
+    if(value.width==0 or value.height==0)return error.Corrupt;return value;
+}
 /// [in] device/image resolved live host IDs and borrowed single-aspect native
 /// subresource. Caller validates linear tiling, mip/layer range and image owner.
 /// [out] Exact56 owned packet or Invalid identity/aspect. No retention/allocation.
@@ -306,4 +330,17 @@ test "actual subresource layout request and host reply retain exact offset and p
     const value=try decode_subresource(&reply);try std.testing.expectEqual(@as(u64,256),value.offset);try std.testing.expectEqual(@as(u64,16384),value.depthPitch);
     for(0..reply.len) |length|try std.testing.expectError(error.Corrupt,decode_subresource(reply[0..length]));
     std.mem.writeInt(u64,reply[12..20],std.math.maxInt(u64),.little);try std.testing.expectError(error.Corrupt,decode_subresource(&reply));
+}
+
+test "actual render-pass and maintenance5 area granularity packets preserve formats" {
+    try compare(try render_granularity(7,11),84,null);
+    const formats=[_]u32{37,44};var info=c.VkRenderingAreaInfoKHR{.sType=c.VK_STRUCTURE_TYPE_RENDERING_AREA_INFO_KHR,.colorAttachmentCount=2,.pColorAttachmentFormats=&formats,.depthAttachmentFormat=126};
+    try compare(try rendering_granularity(7,&info),280,&info);
+    info.colorAttachmentCount=0;info.pColorAttachmentFormats=null;try compare(try rendering_granularity(7,&info),280,&info);
+    info.colorAttachmentCount=9;info.pColorAttachmentFormats=@ptrFromInt(8);try std.testing.expectError(error.Limit,rendering_granularity(7,&info));
+    try std.testing.expectError(error.Invalid,render_granularity(7,0));
+    var reply=[_]u8{0} ** 20;std.mem.writeInt(u32,reply[0..4],280,.little);std.mem.writeInt(u64,reply[4..12],1,.little);std.mem.writeInt(u32,reply[12..16],8,.little);std.mem.writeInt(u32,reply[16..20],16,.little);
+    const extent=try decode_granularity(&reply,280);try std.testing.expectEqual(@as(u32,8),extent.width);try std.testing.expectEqual(@as(u32,16),extent.height);
+    for(0..20) |length|try std.testing.expectError(error.Corrupt,decode_granularity(reply[0..length],280));
+    try std.testing.expectError(error.Corrupt,decode_granularity(&reply,84));std.mem.writeInt(u32,reply[12..16],0,.little);try std.testing.expectError(error.Corrupt,decode_granularity(&reply,280));
 }

@@ -7,6 +7,7 @@
 #pragma GCC diagnostic ignored "-Wpointer-arith"
 #include "vn_protocol_driver_device_memory.h"
 #include "vn_protocol_driver_image.h"
+#include "vn_protocol_driver_render_pass.h"
 #include "vn_protocol_driver_sampler.h"
 #include "vn_protocol_driver_buffer_view.h"
 #include "vn_protocol_driver_query_pool.h"
@@ -28,6 +29,8 @@ size_t venus_extra_objects_test_encode(uint32_t opcode, const void *info, unsign
     VkPipelineCache cache=(VkPipelineCache)(uintptr_t)11;
     switch(opcode) {
     case 21: {VkDeviceMemory memory=(VkDeviceMemory)(uintptr_t)11;vn_encode_vkAllocateMemory(&encoder,1,device,info,NULL,&memory);break;}
+    case 84: {VkExtent2D extent;vn_encode_vkGetRenderAreaGranularity(&encoder,1,device,(VkRenderPass)(uintptr_t)11,&extent);break;}
+    case 280: {VkExtent2D extent;vn_encode_vkGetRenderingAreaGranularity(&encoder,1,device,info,&extent);break;}
     case 56: {VkSubresourceLayout layout;vn_encode_vkGetImageSubresourceLayout(&encoder,1,device,(VkImage)(uintptr_t)11,info,&layout);break;}
     case 42: vn_encode_vkCreateEvent(&encoder,1,device,info,NULL,&event);break;
     case 47: vn_encode_vkCreateQueryPool(&encoder,1,device,info,NULL,&pool);break;
