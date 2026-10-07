@@ -18,8 +18,6 @@
 static const char *fault;
 static unsigned fault_call=1,fault_seen,allocations,module_releases,retirement_calls;
 static venus_ring_status_t bind_status=RingOk,unbind_status=RingOk,retire_status=RingOk,init_status=RingOk;
-static venus_command_exchange_t bound_callback;
-static void *bound_context;
 static unsigned abandoned,fail_module_release_once;
 static const char ConfigPath[]="C:\\private.json";
 static const char ModulePath[]="C:\\fixture.dll";
@@ -33,6 +31,8 @@ typedef struct handle_t { int fd,token; } handle_t;
 typedef struct security_t { uint32_t owner[4]; ACL acl; ACCESS_ALLOWED_ACE ace; } security_t;
 static uint32_t current_sid[4]={1,2,3,4};
 #include "../../src/vgpu/tcp_bootstrap_windows.c"
+static bootstrap_exchange_until_t bound_callback;
+static void *bound_context;
 HANDLE CreateFileA(const char *path,DWORD access,DWORD sharing,void *security,DWORD disposition,DWORD flags,HANDLE template)
 {
     assert(!strcmp(path,ConfigPath) && access==GENERIC_READ && sharing==FILE_SHARE_READ && !security && disposition==OPEN_EXISTING && flags==FILE_FLAG_OPEN_REPARSE_POINT && !template);
@@ -109,9 +109,12 @@ HMODULE LoadLibraryExA(const char *path,HANDLE file,DWORD flags)
     return hit("load") ? NULL : acquire(1);
 }
 int FreeLibrary(HMODULE module) { assert(module);if(fail_module_release_once){fail_module_release_once=0;return 0;}if(hit("free_module"))return 0;release(module);module_releases++;return 1; }
-static venus_ring_status_t bind_icd(venus_command_exchange_t callback_value,void *context,const venus_capabilities_t *capabilities)
+static venus_ring_status_t bind_icd(bootstrap_exchange_until_t callback_value,bootstrap_clock_t clock_value,void *context,const venus_capabilities_t *capabilities,uint32_t reply_bytes)
 {
-    assert(callback_value && context && capabilities->wire_format_version==42);
+    assert(callback_value && clock_value && context && capabilities->wire_format_version==42 && reply_bytes==524288);
+    assert(clock_value(context)>0);
+    venus_request_t request={.kind=RequestPoll},response={0};
+    assert(callback_value(context,&request,NULL,0,&response,NULL,0,2000)==RingAgain);
     if(bind_status==RingOk){bound_callback=callback_value;bound_context=context;}
     return bind_status;
 }
@@ -121,7 +124,7 @@ FARPROC GetProcAddress(HMODULE module,const char *name)
 {
     assert(module);FARPROC output=NULL;
     if(hit("export"))return NULL;
-    if(!strcmp(name,"venus_icd_bind_capabilities")){icd_bind_t value=bind_icd;memcpy(&output,&value,sizeof output);}
+    if(!strcmp(name,"venus_icd_bind_timed")){icd_bind_t value=bind_icd;memcpy(&output,&value,sizeof output);}
     else if(!strcmp(name,"venus_icd_unbind")){icd_unbind_t value=unbind_icd;memcpy(&output,&value,sizeof output);}
     else {assert(!strcmp(name,"venus_icd_abandon"));icd_abandon_t value=abandon_icd;memcpy(&output,&value,sizeof output);}
     return output;
@@ -148,8 +151,8 @@ venus_ring_status_t venus_tcp_client_init(venus_tcp_client_t *client,const venus
 void venus_tcp_client_free(venus_tcp_client_t *client) { memset(client,0,sizeof *client); }
 venus_ring_status_t venus_tcp_client_retire(venus_tcp_client_t *client,const _Atomic uint32_t *cancel)
 { assert(client->session==123 && cancel);retirement_calls++;return retire_status; }
-venus_ring_status_t venus_tcp_client_exchange_cancel(venus_tcp_client_t *client,const venus_request_t *request,const void *input,size_t length,venus_request_t *response,void *output,size_t capacity,const _Atomic uint32_t *cancel)
-{ assert(client->session==123 && request && !input && !length && response && !output && !capacity && cancel);return RingAgain; }
+venus_ring_status_t venus_tcp_client_exchange_until_cancel(venus_tcp_client_t *client,const venus_request_t *request,const void *input,size_t length,venus_request_t *response,void *output,size_t capacity,uint64_t deadline_ms,const _Atomic uint32_t *cancel)
+{ assert(deadline_ms==2000);assert(client->session==123 && request && !input && !length && response && !output && !capacity && cancel);return RingAgain; }
 static unsigned descriptors(void)
 {
     DIR *directory=opendir("/proc/self/fd");assert(directory);unsigned count=0;while(readdir(directory))count++;assert(!closedir(directory));return count;
@@ -188,9 +191,9 @@ int main(void)
     bind_status=RingAgain;assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingAgain);assert(!venus_tcp_bootstrap_session());reset();
     bind_status=RingAgain;retire_status=RingCorrupt;assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingCorrupt);assert(venus_tcp_bootstrap_session()==123 && allocations==1 && !bootstrap.bound);assert(venus_tcp_bootstrap_abandon(124)==RingInvalid);assert(venus_tcp_bootstrap_abandon(123)==RingOk);reset();
     assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingOk);assert(venus_tcp_bootstrap_session()==123 && bound_callback && bound_context);assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingAgain);
-    venus_request_t request={.kind=RequestPoll},response={0};assert(callback(NULL,&request,NULL,0,&response,NULL,0)==RingClosed);assert(bound_callback(bound_context,&request,NULL,0,&response,NULL,0)==RingAgain);
+    venus_request_t request={.kind=RequestPoll},response={0};assert(callback(NULL,&request,NULL,0,&response,NULL,0,2000)==RingClosed);assert(bound_callback(bound_context,&request,NULL,0,&response,NULL,0,2000)==RingAgain);
     unbind_status=RingAgain;assert(venus_tcp_bootstrap_stop()==RingAgain);assert(bootstrap.bound && venus_tcp_bootstrap_session()==123);unbind_status=RingOk;
-    retire_status=RingCorrupt;assert(venus_tcp_bootstrap_stop()==RingCorrupt);assert(!bootstrap.bound && bootstrap.module && venus_tcp_bootstrap_session()==123);assert(callback(&bootstrap,&request,NULL,0,&response,NULL,0)==RingClosed);
+    retire_status=RingCorrupt;assert(venus_tcp_bootstrap_stop()==RingCorrupt);assert(!bootstrap.bound && bootstrap.module && venus_tcp_bootstrap_session()==123);assert(callback(&bootstrap,&request,NULL,0,&response,NULL,0,2000)==RingClosed);
     assert(venus_tcp_bootstrap_abandon(0)==RingInvalid);assert(venus_tcp_bootstrap_abandon(124)==RingInvalid);assert(venus_tcp_bootstrap_abandon(123)==RingOk);reset();
     assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingOk);assert(venus_tcp_bootstrap_abandon(123)==RingOk);assert(abandoned==1);reset();
     assert(venus_tcp_bootstrap_start(ConfigPath,sizeof ConfigPath)==RingOk);select_fault("free_module",1);unsigned old=retirement_calls;assert(venus_tcp_bootstrap_stop()==RingClosed);assert(allocations==1 && bootstrap.retired && venus_tcp_bootstrap_session()==123);assert(retirement_calls==old+1);reset();assert(retirement_calls==old+1);

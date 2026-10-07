@@ -57,7 +57,19 @@ static DWORD WINAPI bootstrap_peer_run(LPVOID argument)
     assert(venus_tcp_server_hello_encode(&hello,bytes,sizeof bytes)==RingOk);send_bytes(&socket_value,bytes,sizeof bytes);
     receive_bytes(&socket_value,bytes,VenusCapabilitiesBytes);assert(venus_tcp_profile_validate(bytes,VenusCapabilitiesBytes)==RingOk);
     assert(venus_tcp_ack_encode(hello.session,bytes,VenusTcpAckBytes)==RingOk);send_bytes(&socket_value,bytes,VenusTcpAckBytes);
-    size_t received=0;assert(venus_tcp_socket_receive(&socket_value,bytes,VenusRequestHeaderBytes,&received,venus_tcp_now_ms()+5000,NULL)==RingClosed && !received);
+    size_t received=0;
+    for (;;) {
+        venus_ring_status_t status=venus_tcp_socket_receive(&socket_value,bytes,VenusRequestHeaderBytes,&received,venus_tcp_now_ms()+5000,NULL);
+        if(status==RingClosed){assert(!received);break;}
+        assert(status==RingOk && received==VenusRequestHeaderBytes);
+        venus_request_t request={0};assert(venus_request_decode(&request,bytes,VenusRequestHeaderBytes)==RingOk);
+        assert(request.kind==RequestReply && request.argument_one==1 && (request.argument_zero==524287 || request.argument_zero==524288));
+        venus_request_t response={.kind=RequestReply,.direction=1,.sequence=request.sequence,
+            .status=request.argument_zero==524287 ? RequestSuccess : RequestInvalid,
+            .payload_bytes=request.argument_zero==524287 ? 1 : 0};
+        assert(venus_request_encode(&response,bytes,VenusRequestHeaderBytes)==RingOk);send_bytes(&socket_value,bytes,VenusRequestHeaderBytes);
+        if(response.payload_bytes){uint8_t zero=0;send_bytes(&socket_value,&zero,1);}
+    }
     assert(venus_tcp_ack_encode(hello.session+(peer->mode==PeerRetireMismatch),bytes,VenusTcpAckBytes)==RingOk);send_bytes(&socket_value,bytes,VenusTcpAckBytes);
     venus_tcp_socket_close(&socket_value);venus_tcp_scrub(&client,sizeof client);return 0;
 }

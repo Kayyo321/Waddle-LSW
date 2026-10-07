@@ -15,7 +15,11 @@ _Static_assert(ATOMIC_INT_LOCK_FREE==2,"Owned cancellation requires lock-free in
  * Callback/context stay borrowed until unbind/abandon; ICD mutex serializes application calls.
  * Returns existing ICD Ring status, allocates nothing, never owns caller transport storage.
  */
-typedef venus_ring_status_t (*icd_bind_t)(venus_command_exchange_t,void *,const venus_capabilities_t *);
+typedef venus_ring_status_t (*bootstrap_exchange_until_t)(void *,const venus_request_t *,const void *,size_t,venus_request_t *,void *,size_t,uint64_t);
+/** @brief Borrowed monotonic clock; zero reports a clock failure. */
+typedef uint64_t (*bootstrap_clock_t)(void *);
+/** @brief Bounded query binding; callback/context borrowed through unbind. */
+typedef venus_ring_status_t (*icd_bind_t)(bootstrap_exchange_until_t,bootstrap_clock_t,void *,const venus_capabilities_t *,uint32_t);
 /** @brief Resolved quiescent ICD release ABI; no arguments/storage; Ok or Again while objects live. */
 typedef venus_ring_status_t (*icd_unbind_t)(void);
 /** @brief Resolved trusted receiver-retired abandonment ABI; no storage/return; application quiesced. */
@@ -31,6 +35,7 @@ typedef struct bootstrap_t {
     icd_unbind_t unbind; /**< Borrowed function; usable only while module retained. */
     icd_abandon_t abandon; /**< Borrowed function; trusted exact retirement precondition. */
     uint64_t session; /**< Copied nonzero admitted identity, preserved until module release succeeds. */
+    uint32_t starting; /**< Bind probes may use the authenticated client before publication. */
     uint32_t bound; /**< This owner installed the callback; incumbent bindings are never abandoned. */
     uint32_t retired; /**< Matching Ack or trusted exact-session assertion has proved retirement. */
     HANDLE pending_config; /**< Failed file release retained until stop retries native closure. */
@@ -126,10 +131,15 @@ static int exact_module(HMODULE module,const char *path)
     return length && length<sizeof actual && !_stricmp(actual,expected);
 }
 static venus_ring_status_t callback(void *context,const venus_request_t *request,const void *input,size_t length,
-    venus_request_t *response,void *output,size_t capacity)
+    venus_request_t *response,void *output,size_t capacity,uint64_t deadline_ms)
 {
-    if (context!=&bootstrap || !bootstrap.bound) return RingClosed;
-    return venus_tcp_client_exchange_cancel(&bootstrap.client,request,input,length,response,output,capacity,&bootstrap.cancel);
+    if (context!=&bootstrap || (!bootstrap.bound && !bootstrap.starting)) return RingClosed;
+    return venus_tcp_client_exchange_until_cancel(&bootstrap.client,request,input,length,response,output,capacity,deadline_ms,&bootstrap.cancel);
+}
+static uint64_t clock_ms(void *context)
+{
+    if(context!=&bootstrap || (!bootstrap.bound && !bootstrap.starting))return 0;
+    return venus_tcp_now_ms();
 }
 static venus_ring_status_t release_module(void)
 {
@@ -137,7 +147,7 @@ static venus_ring_status_t release_module(void)
     venus_tcp_client_free(&bootstrap.client);
     if (bootstrap.module && !FreeLibrary(bootstrap.module)) return RingClosed;
     bootstrap.module=NULL; bootstrap.bind=NULL; bootstrap.unbind=NULL; bootstrap.abandon=NULL;
-    bootstrap.session=0; bootstrap.bound=0; bootstrap.retired=0;
+    bootstrap.session=0; bootstrap.starting=0; bootstrap.bound=0; bootstrap.retired=0;
     atomic_store_explicit(&bootstrap.cancel,0,memory_order_release);
     return RingOk;
 }
@@ -152,7 +162,7 @@ venus_ring_status_t venus_tcp_bootstrap_start(const char *path,size_t bytes)
     bootstrap.module=LoadLibraryExA(config.icd_path,NULL,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!bootstrap.module) { status=RingClosed; goto failure; }
     if (!exact_module(bootstrap.module,config.icd_path)) { status=RingInvalid; goto failure; }
-    FARPROC procedure=GetProcAddress(bootstrap.module,"venus_icd_bind_capabilities");
+    FARPROC procedure=GetProcAddress(bootstrap.module,"venus_icd_bind_timed");
     _Static_assert(sizeof procedure==sizeof bootstrap.bind,"Resolved x64 function representation");
     memcpy(&bootstrap.bind,&procedure,sizeof procedure);
     procedure=GetProcAddress(bootstrap.module,"venus_icd_unbind");memcpy(&bootstrap.unbind,&procedure,sizeof procedure);
@@ -161,7 +171,10 @@ venus_ring_status_t venus_tcp_bootstrap_start(const char *path,size_t bytes)
     status=venus_tcp_client_init(&bootstrap.client,&config,&bootstrap.cancel);
     venus_tcp_scrub(&config,sizeof config); if (status!=RingOk) goto failure;
     bootstrap.session=bootstrap.client.session;
-    status=bootstrap.bind(callback,&bootstrap,&bootstrap.client.capabilities); if (status!=RingOk) goto failure;
+    bootstrap.starting=1;
+    status=bootstrap.bind(callback,clock_ms,&bootstrap,&bootstrap.client.capabilities,524288);
+    bootstrap.starting=0;
+    if (status!=RingOk) goto failure;
     bootstrap.bound=1;
     return RingOk;
 failure:
