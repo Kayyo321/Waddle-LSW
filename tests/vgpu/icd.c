@@ -213,7 +213,19 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                 response->payload_bytes = (uint32_t)capacity; fixture->mapping_reads++;
             } else {
                 assert(input && length == request->argument_one && !output && !capacity);
-                memcpy(fixture->mapping_storage + request->argument_zero, input, length);
+                if (request->flags == 2) {
+                    const unsigned char *packet = input;
+                    assert(length >= 17 && request->argument_zero == 0);
+                    uint32_t count = read_u32(packet); size_t cursor = 4; uint64_t previous_end = 0;
+                    for (uint32_t i = 0; i < count; ++i) {
+                        assert(cursor + 12 <= length);
+                        uint64_t offset = read_u64(packet + cursor); uint32_t bytes = read_u32(packet + cursor + 8);
+                        assert(bytes && offset >= previous_end && bytes <= length - cursor - 12 && offset + bytes <= sizeof(fixture->mapping_storage));
+                        memcpy(fixture->mapping_storage + offset, packet + cursor + 12, bytes);
+                        previous_end = offset + bytes; cursor += 12 + bytes;
+                    }
+                    assert(cursor == length);
+                } else memcpy(fixture->mapping_storage + request->argument_zero, input, length);
                 fixture->mapping_writes++;
             }
         }
@@ -785,6 +797,8 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
                     assert(fixture->view_info);
                     VkImageViewCreateInfo info = *fixture->view_info;
                     info.image = (VkImage)(uintptr_t)read_u64(bytes + 40);
+                    if (info.subresourceRange.levelCount == VK_REMAINING_MIP_LEVELS) info.subresourceRange.levelCount = fixture->image_info->mipLevels - info.subresourceRange.baseMipLevel;
+                    if (info.subresourceRange.layerCount == VK_REMAINING_ARRAY_LAYERS) info.subresourceRange.layerCount = fixture->image_info->arrayLayers - info.subresourceRange.baseArrayLayer;
                     VkImageView view = (VkImageView)(uintptr_t)id;
                     vn_encode_vkCreateImageView(&encoder, 1, device, &info, NULL, &view);
                 }
@@ -4413,7 +4427,7 @@ static void mapping_contract(void) {
         PFN_vkDestroyDevice destroy_device = (PFN_vkDestroyDevice)lookup(device, "vkDestroyDevice");
         assert(map && unmap && flush && invalidate);
         VkMemoryAllocateInfo memory_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = 16384, .memoryTypeIndex = 0};
-        if (scenario == 13) memory_info.allocationSize = 16777217;
+        if (scenario == 13) memory_info.allocationSize = 268435457;
         if (scenario == 15) memory_info.allocationSize = 16383;
         fixture.memory_info = &memory_info;
         VkDeviceMemory memory = NULL;
@@ -4534,7 +4548,18 @@ static void mapping_contract(void) {
         if (scenario == 9 || scenario == 10) { venus_icd_abandon(); continue; }
         assert(((unsigned char *)pointer)[0] == 0x37 && ((unsigned char *)pointer)[16383] == 0x37);
         unmap(NULL, memory); unmap((VkDevice)(uintptr_t)1, memory); unmap(device, NULL); unmap(foreign, memory);
+        if (scenario == 0) {
+            memset(pointer, 0x61, 8192);
+            ((unsigned char *)pointer)[10000] = 0x62;
+            ((unsigned char *)pointer)[16382] = 0x63;
+            fixture.mapping_storage[16383] = 0xa9;
+        }
         unmap(device, memory); unmap(device, memory);
+        if (scenario == 0) {
+            assert(fixture.mapping_storage[0] == 0x61 && fixture.mapping_storage[8191] == 0x61);
+            assert(fixture.mapping_storage[10000] == 0x62 && fixture.mapping_storage[16382] == 0x63);
+            assert(fixture.mapping_storage[16383] == 0xa9);
+        }
         assert(flush(device, 1, &range) == VK_ERROR_MEMORY_MAP_FAILED);
         assert(map(device, memory, 4096, 8192, 0, &pointer) == VK_SUCCESS && fixture.mapping_creates == 1);
         range.offset = 0; range.size = 4096;

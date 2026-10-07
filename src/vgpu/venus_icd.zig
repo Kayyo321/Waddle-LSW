@@ -9,6 +9,7 @@ const properties_wire = @import("venus_properties_wire.zig");
 const extensions_wire = @import("venus_extensions_wire.zig");
 const wsi = @import("venus_wsi.zig");
 const extra_wire = @import("venus_extra_objects_wire.zig");
+const image_view_native = @import("venus_image_view_native.zig");
 const template_native = @import("venus_descriptor_template_native.zig");
 const pipeline_helpers = @import("venus_pipeline_wire_helpers.zig");
 const mixed_wire = @import("venus_sampler_descriptor_wire.zig");
@@ -44,7 +45,7 @@ const graphics_pipeline_wire = @import("venus_graphics_pipeline_wire.zig");
 const graphics_command_wire = @import("venus_graphics_command_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
-const MaxMappedBytes: u64 = 16777216;
+const MaxMappedBytes: u64 = 268435456;
 const MappingChunkBytes: usize = 4096;
 var mapping_slots = [_]bool{false} ** 64;
 const c = @cImport({
@@ -206,6 +207,7 @@ const resource_state_t = struct {
     type_index: u32 = 0,
     mapping_resource: u32 = 0,
     mapped_bytes: ?[]align(4096) u8 = null,
+    mapped_baseline: ?[]u8 = null,
     mapped_offset: u64 = 0,
     mapped_size: u64 = 0,
     bound_memory: u64 = 0,
@@ -228,6 +230,7 @@ const resource_state_t = struct {
     image_type: u32 = 0,
     image_usage: u32 = 0,
     image_tiling: u32 = 0,
+    image_view_metadata: image_view_native.image_t = .{},
     view_image: u64 = 0,
     buffer_references: [8]u64 = [_]u64{0} ** 8,
     queue_family: u32 = 0,
@@ -1518,11 +1521,11 @@ fn memory(
         _ = failure(c.RingCorrupt);
         return;
     }
-    // Copy-backed mappings require explicit flush/invalidate, never promise coherence.
+    // Actual coherent host types use implicit dirty publication and completed-GPU merging.
+    // Noncoherent host allocations have no supported map/export path.
     for (output.*.memoryTypes[0..output.*.memoryTypeCount]) |*memory_type| {
         if (memory_type.propertyFlags & c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT == 0)
             memory_type.propertyFlags &= ~@as(u32, c.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
-        memory_type.propertyFlags &= ~@as(u32, c.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     }
 }
 /// Enumerate implemented guest instance names; borrowed count/capacity storage, mutex serialized.
@@ -2090,6 +2093,7 @@ fn create_image(device: c.VkDevice, info: [*c]const c.VkImageCreateInfo, allocat
     if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const metadata = image_view_native.snapshot(@ptrCast(info)) catch return c.VK_ERROR_INITIALIZATION_FAILED;
     var writer = render_wire.create_image(@ptrCast(info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
     const dimension = @max(info.*.extent.width, @max(info.*.extent.height, info.*.extent.depth));
     if (info.*.mipLevels > 32 - @clz(dimension) or
@@ -2112,6 +2116,7 @@ fn create_image(device: c.VkDevice, info: [*c]const c.VkImageCreateInfo, allocat
     state.image_type = info.*.imageType;
     state.image_usage = info.*.usage;
     state.image_tiling = info.*.tiling;
+    state.image_view_metadata = metadata;
     output.* = @ptrFromInt(handle);
     return c.VK_SUCCESS;
 }
@@ -2132,7 +2137,7 @@ fn image_range_valid(state: *const resource_state_t, range: c.VkImageSubresource
 }
 /// Create a view retaining its image. [in] device/info nonnull borrowed, allocator nullable unused.
 /// [out] output nonnull storage, NULL on failure. Returns host result/local invalid/OOM/loss.
-/// Mutex serialized, allocation-free; rejects format reinterpretation and unbound/invalid image ranges.
+/// Mutex serialized, allocation-free; validates owned mutable-format compatibility and cube/subresource ranges.
 fn create_image_view(device: c.VkDevice, info: [*c]const c.VkImageViewCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkImageView) callconv(.C) c_int {
     _ = allocator;
     lock_icd();
@@ -2143,22 +2148,21 @@ fn create_image_view(device: c.VkDevice, info: [*c]const c.VkImageViewCreateInfo
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const image = child_object(@intFromPtr(info.*.image.?), c.VK_OBJECT_TYPE_IMAGE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const state = resource_state(image);
-    if (state.bound_memory == 0 or info.*.format != state.image_format or !image_range_valid(state, info.*.subresourceRange)) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const view_type = info.*.viewType;
-    if ((state.image_type == 0 and view_type != 0 and view_type != 4) or
-        (state.image_type == 1 and view_type != 1 and view_type != 5) or
-        (state.image_type == 2 and view_type != 2)) return c.VK_ERROR_INITIALIZATION_FAILED;
-    if ((view_type == 0 or view_type == 1 or view_type == 2) and
-        info.*.subresourceRange.layerCount != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (state.bound_memory == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const enabled = device_cache(parent.handle).?.enabled_state.features.core;
+    const range = image_view_native.validate(&state.image_view_metadata, @ptrCast(info), enabled[@offsetOf(c.VkPhysicalDeviceFeatures, "imageCubeArray") / 4] != 0) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var normalized = info.*;
+    normalized.subresourceRange = @bitCast(range);
     if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var writer = render_wire.create_image_view(@ptrCast(info), parent.id, image.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = render_wire.create_image_view(@ptrCast(&normalized), parent.id, image.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
     var handle: u64 = 0;
     const result = create_render_resource(parent, c.VK_OBJECT_TYPE_IMAGE_VIEW, &writer, &handle);
     if (result != c.VK_SUCCESS) return result;
     const view_state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_IMAGE_VIEW, parent.id).?);
     view_state.view_image = image.handle;
     view_state.view_type = info.*.viewType;
-    view_state.view_range = info.*.subresourceRange;
+    view_state.view_range = normalized.subresourceRange;
+    view_state.image_format = info.*.format;
     view_state.view_components = info.*.components;
     output.* = @ptrFromInt(handle);
     return c.VK_SUCCESS;
@@ -2858,6 +2862,8 @@ fn free_memory(
 }
 fn release_shadow(state: *resource_state_t) void {
     if (state.mapped_bytes) |bytes| MappingAllocator.free(bytes);
+    if (state.mapped_baseline) |baseline| MappingAllocator.free(baseline);
+    state.mapped_baseline = null;
     state.mapped_bytes = null;
     state.mapped_offset = 0;
     state.mapped_size = 0;
@@ -2880,6 +2886,83 @@ fn mapping_exchange(request: *const c.venus_request_t, input: ?*const anyopaque,
     }
     return c.RingOk;
 }
+// Baseline owns the last synchronized mapped bytes. CPU changes are published
+// before host signaling/submission; completed GPU bytes merge without replacing
+// CPU changes made since that baseline. Caller synchronizes conflicting accesses.
+fn merge_mapping(bytes: []u8, baseline: []u8, incoming: []const u8) void {
+    for (bytes, baseline, incoming) |*current, *previous, value| {
+        if (current.* == previous.*) current.* = value;
+        previous.* = value;
+    }
+}
+fn synchronize_mapping(state: *resource_state_t, writing: bool) c_int {
+    const bytes = state.mapped_bytes orelse return c.RingOk;
+    const baseline = state.mapped_baseline orelse return c.RingCorrupt;
+    const start: usize = @intCast(state.mapped_offset);
+    if (!writing) {
+        var offset: usize = 0;
+        var incoming: [MappingChunkBytes]u8 = undefined;
+        while (offset < baseline.len) {
+            const count = @min(incoming.len, baseline.len - offset);
+            var request = std.mem.zeroes(c.venus_request_t);
+            request.kind = c.RequestRead;
+            request.resource_id = state.mapping_resource;
+            request.argument_zero = start + offset;
+            request.argument_one = count;
+            const status = mapping_exchange(&request, null, 0, &incoming, count);
+            if (status != c.RingOk) return status;
+            merge_mapping(bytes[start + offset ..][0..count], baseline[offset..][0..count], incoming[0..count]);
+            offset += count;
+        }
+        return c.RingOk;
+    }
+    var cursor: usize = 0;
+    while (cursor < baseline.len) {
+        var packet: [MappingChunkBytes]u8 = undefined;
+        var used: usize = 4;
+        var ranges: u32 = 0;
+        while (cursor < baseline.len) {
+            while (cursor < baseline.len and bytes[start + cursor] == baseline[cursor]) cursor += 1;
+            if (cursor == baseline.len or packet.len - used < 13) break;
+            const first = cursor;
+            const maximum = packet.len - used - 12;
+            while (cursor < baseline.len and cursor - first < maximum and bytes[start + cursor] != baseline[cursor]) cursor += 1;
+            const count = cursor - first;
+            std.mem.writeInt(u64, packet[used..][0..8], start + first, .little);
+            std.mem.writeInt(u32, packet[used + 8 ..][0..4], @intCast(count), .little);
+            @memcpy(packet[used + 12 ..][0..count], bytes[start + first ..][0..count]);
+            used += 12 + count;
+            ranges += 1;
+        }
+        if (ranges == 0) continue;
+        std.mem.writeInt(u32, packet[0..4], ranges, .little);
+        var request = std.mem.zeroes(c.venus_request_t);
+        request.kind = c.RequestWrite;
+        request.flags = 2;
+        request.resource_id = state.mapping_resource;
+        request.argument_one = used;
+        request.payload_bytes = @intCast(used);
+        const status = mapping_exchange(&request, &packet, used, null, 0);
+        if (status != c.RingOk) return status;
+        var position: usize = 4;
+        for (0..ranges) |_| {
+            const offset: usize = @intCast(std.mem.readInt(u64, packet[position..][0..8], .little));
+            const count: usize = std.mem.readInt(u32, packet[position + 8 ..][0..4], .little);
+            @memcpy(baseline[offset - start ..][0..count], packet[position + 12 ..][0..count]);
+            position += 12 + count;
+        }
+    }
+    return c.RingOk;
+}
+fn synchronize_device_mappings(parent_id: u64, writing: bool) c_int {
+    for (&slots, &resource_states) |*record, *state| {
+        if (record.kind != c.VK_OBJECT_TYPE_DEVICE_MEMORY or record.parent_id != parent_id or state.mapped_bytes == null) continue;
+        const status = synchronize_mapping(state, writing);
+        if (status != c.RingOk) return failure(status);
+    }
+    return c.VK_SUCCESS;
+}
+
 fn copy_mapping(state: *resource_state_t, offset: u64, size: u64, writing: bool) c_int {
     const bytes = state.mapped_bytes.?;
     var cursor: u64 = offset;
@@ -2895,12 +2978,16 @@ fn copy_mapping(state: *resource_state_t, offset: u64, size: u64, writing: bool)
         const pointer = bytes[@intCast(cursor)..].ptr;
         const status = mapping_exchange(&request, if (writing) pointer else null, if (writing) count else 0, if (writing) null else pointer, if (writing) 0 else count);
         if (status != c.RingOk) return status;
+        if (state.mapped_baseline) |baseline| {
+            const base: usize = @intCast(cursor - state.mapped_offset);
+            @memcpy(baseline[base..][0..count], bytes[@intCast(cursor)..][0..count]);
+        }
         cursor += count;
         remaining -= count;
     }
     return c.RingOk;
 }
-/// Map a bounded noncoherent shadow of actual exported Vulkan allocation storage.
+/// Map a bounded coherent shadow of actual exported Vulkan allocation storage.
 /// @param[in] device Nonnull borrowed private parent; memory must belong to it.
 /// @param[in] memory_handle Nonnull owned allocation token, retained until free.
 /// @param[in] offset Byte offset strictly inside allocation; flags must be zero.
@@ -2967,6 +3054,12 @@ fn map_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory, offset: u64, 
         release_shadow(state);
         return if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else c.VK_ERROR_MEMORY_MAP_FAILED;
     }
+    const baseline = MappingAllocator.alloc(u8, @intCast(count)) catch {
+        release_shadow(state);
+        return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    };
+    @memcpy(baseline, bytes[@intCast(offset)..][0..@intCast(count)]);
+    state.mapped_baseline = baseline;
     state.mapped_offset = offset;
     state.mapped_size = count;
     output.* = bytes[@intCast(offset)..].ptr;
@@ -2974,7 +3067,7 @@ fn map_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory, offset: u64, 
 }
 /// Release only the ICD-owned shadow; export survives remap until memory free.
 /// @param[in] device Nullable borrowed parent, invalid/stale handles ignored.
-/// @param[in] memory_handle Nullable token; no implicit noncoherent flush.
+/// @param[in] memory_handle Nullable token; CPU dirty bytes publish before shadow retirement.
 /// @note Mutex serialized, allocation-free serializer; pointer expires upon return.
 fn unmap_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory) callconv(.C) void {
     lock_icd();
@@ -2982,6 +3075,9 @@ fn unmap_memory(device: c.VkDevice, memory_handle: c.VkDeviceMemory) callconv(.C
     if (device == null or memory_handle == null) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
     const record = child_object(@intFromPtr(memory_handle.?), c.VK_OBJECT_TYPE_DEVICE_MEMORY, parent.id) orelse return;
+    if (synchronize_mapping(resource_state(record), true) != c.RingOk) {
+        _ = failure(c.RingClosed);
+    }
     release_shadow(resource_state(record));
 }
 fn mapped_ranges(device: c.VkDevice, count: u32, ranges: [*c]const c.VkMappedMemoryRange, writing: bool) c_int {
@@ -4342,7 +4438,10 @@ fn fence_status_locked(parent: *const c.venus_object_t, record: *const c.venus_o
     writer.put(u64, record.id);
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = result_reply(reply, 38, c.VK_NOT_READY);
-    if (result == c.VK_SUCCESS) retire_fence(record.handle);
+    if (result == c.VK_SUCCESS) {
+        retire_fence(record.handle);
+        return synchronize_device_mappings(parent.id, false);
+    }
     return result;
 }
 
@@ -4366,7 +4465,7 @@ fn wait_round(device: c.VkDevice, fences: []const c.VkFence, all: u32) c_int {
             if (status != c.VK_SUCCESS and status != c.VK_NOT_READY) return status;
         }
     }
-    return result;
+    return synchronize_device_mappings(parent.id, false);
 }
 /// Wait with nonblocking host rounds and the caller's monotonic timeout.
 /// @param[in] device Nonnull live parent, must remain live throughout call.
@@ -4473,7 +4572,7 @@ fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
         if (result != c.VK_SUCCESS) return result;
         retire_queue(entry.queues[index]);
     };
-    return c.VK_SUCCESS;
+    return synchronize_device_mappings(record.id, false);
 }
 /// Wait for actual GPU retirement of the queue using its receiver timeline.
 /// @param[in] queue Nullable private handle, validated without dereference.
@@ -4501,7 +4600,10 @@ fn queue_wait_idle(queue: c.VkQueue) callconv(.C) c_int {
             defer end_idle(idle_handle, c.VK_OBJECT_TYPE_QUEUE, idle_id, idle_namespace);
             var timer = std.time.Timer.start() catch return failure(c.RingInvalid);
             const result = ring_idle(entry.rings[index], &timer);
-            if (result == c.VK_SUCCESS) retire_queue(idle_handle);
+            if (result == c.VK_SUCCESS) {
+                retire_queue(idle_handle);
+                return synchronize_device_mappings(parent.id, false);
+            }
             return result;
         };
     }
@@ -4636,6 +4738,8 @@ fn queue_submit(
             writer.put(u64, child_object(@intFromPtr(semaphore.?), c.VK_OBJECT_TYPE_SEMAPHORE, record.parent_id).?.id);
     };
     writer.put(u64, if (fence_record) |selected| selected.id else 0);
+    const mapping_result = synchronize_device_mappings(parent.id, true);
+    if (mapping_result != c.VK_SUCCESS) return mapping_result;
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = result_reply(reply, 18, 0);
     if (result == c.VK_SUCCESS) {
@@ -7396,6 +7500,10 @@ fn get_event_status(device: c.VkDevice, event: c.VkEvent) callconv(.C) c_int {
 fn set_event(device: c.VkDevice, event: c.VkEvent) callconv(.C) c_int {
     lock_icd();
     defer unlock_icd();
+    if (device == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const mapping_result = synchronize_device_mappings(parent.id, true);
+    if (mapping_result != c.VK_SUCCESS) return mapping_result;
     return event_operation_locked(device, event, 45);
 }
 
@@ -7959,6 +8067,8 @@ fn queue_submit2(
         if (status != c.VK_NOT_READY) return status;
     }
     const writer = modern_sync.queue_submit2(record.id, @ptrCast(normalized[0..count]), if (fence_record) |selected| selected.id else 0) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    const mapping_result = synchronize_device_mappings(parent.id, true);
+    if (mapping_result != c.VK_SUCCESS) return mapping_result;
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = result_reply(reply, 206, 0);
     if (result == c.VK_SUCCESS) {
@@ -8001,6 +8111,8 @@ fn get_semaphore_counter_value(device: c.VkDevice, semaphore: c.VkSemaphore, out
     const decoded = modern_sync.decode_counter(reply) catch return failure(c.RingCorrupt);
     if (decoded.result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
     if (decoded.result != c.VK_SUCCESS) return decoded.result;
+    const mapping_result = synchronize_device_mappings(parent.id, false);
+    if (mapping_result != c.VK_SUCCESS) return mapping_result;
     output.* = decoded.value;
     return c.VK_SUCCESS;
 }
@@ -8014,6 +8126,8 @@ fn signal_semaphore(device: c.VkDevice, info: [*c]const c.VkSemaphoreSignalInfo)
     const record = child_object(@intFromPtr(info.*.semaphore.?), c.VK_OBJECT_TYPE_SEMAPHORE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     if (resource_state(record).buffer_usage != 1) return c.VK_ERROR_INITIALIZATION_FAILED;
     const writer = modern_sync.signal_semaphore(parent.id, record.id, info.*.value) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    const mapping_result = synchronize_device_mappings(parent.id, true);
+    if (mapping_result != c.VK_SUCCESS) return mapping_result;
     const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
     const result = result_reply(reply, 174, 0);
     if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
@@ -8091,8 +8205,9 @@ fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, ti
             unlock_icd();
             return status;
         }
+        const visible_result = if (result == c.VK_SUCCESS) synchronize_device_mappings(parent.id, false) else result;
         unlock_icd();
-        if (result != c.VK_TIMEOUT) return result;
+        if (result != c.VK_TIMEOUT) return visible_result;
         if (timeout != std.math.maxInt(u64) and timer.read() >= timeout) return c.VK_TIMEOUT;
         std.time.sleep(if (timeout == std.math.maxInt(u64)) 1_000_000 else @min(1_000_000, timeout -| timer.read()));
     }
@@ -9824,4 +9939,13 @@ test "mutable pending descriptors retain new allocation owners exactly until tic
     try std.testing.expectEqual(@as(u32,0),resource_state(buffer).inflight_count);
     try std.testing.expectEqual(@as(u32,0),resource_state(allocation).inflight_count);
     try std.testing.expectEqual(@as(u64,0),ticket.queue);
+}
+
+test "coherent merge preserves CPU changes and replaces completed GPU bytes" {
+    var current = [_]u8{ 1, 9, 3, 4 };
+    var baseline = [_]u8{ 1, 2, 3, 4 };
+    const incoming = [_]u8{ 5, 6, 7, 8 };
+    merge_mapping(&current, &baseline, &incoming);
+    try std.testing.expectEqualSlices(u8, &.{ 5, 9, 7, 8 }, &current);
+    try std.testing.expectEqualSlices(u8, &incoming, &baseline);
 }
