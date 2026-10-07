@@ -205,6 +205,7 @@ int wmain(int argc, wchar_t **argv) {
     ID3D11RenderTargetView *view = NULL;
     ID3D11Query *completion = NULL;
     HRESULT status = E_FAIL;
+    const char *stage="authenticated bootstrap";
     bootstrap=LoadLibraryExW(argv[5],NULL,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     if(!bootstrap)goto cleanup;
     FARPROC bootstrap_proc=GetProcAddress(bootstrap,"venus_tcp_bootstrap_start");memcpy(&start,&bootstrap_proc,sizeof start);
@@ -217,6 +218,8 @@ int wmain(int argc, wchar_t **argv) {
     if(!path_bytes || start(config_path,(size_t)path_bytes)!=RingOk)goto cleanup;
     identity=session();if(!identity)goto cleanup;
     printf("Authenticated real DXVK session=%016llx\n",(unsigned long long)identity);fflush(stdout);
+    printf("DXVK actual ICD module base=%p\n",(void *)GetModuleHandleW(L"waddle_vulkan_experimental.dll"));fflush(stdout);
+    stage="native loader and DXVK module acquisition";
     loader = LoadLibraryExW(argv[1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!loader)
         goto cleanup;
@@ -248,11 +251,14 @@ int wmain(int argc, wchar_t **argv) {
     description.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     const D3D_FEATURE_LEVEL Levels[] = {D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL selected = 0;
+    stage="real D3D11 device and swapchain creation";
     status = create(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                     Levels, 1, D3D11_SDK_VERSION, &description, &swapchain, &device,
                     &selected, &context);
     if (FAILED(status) || !swapchain || !device || !context || selected != Levels[0])
         goto cleanup;
+    puts("DXVK actual D3D11 feature level11 device and swapchain created.");fflush(stdout);
+    stage="backbuffer and render target acquisition";
     status = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_ID3D11Texture2D, (void **)&backbuffer);
     if (FAILED(status) || !backbuffer)
         goto cleanup;
@@ -260,10 +266,12 @@ int wmain(int argc, wchar_t **argv) {
     if (FAILED(status) || !view)
         goto cleanup;
     D3D11_QUERY_DESC query_description = {.Query = D3D11_QUERY_EVENT};
+    stage="GPU completion query creation";
     status = ID3D11Device_CreateQuery(device, &query_description, &completion);
     if (FAILED(status) || !completion)
         goto cleanup;
     const FLOAT Color[] = {0.125f, 0.25f, 0.5f, 1.0f};
+    stage="GPU clear and completion";
     ID3D11DeviceContext_ClearRenderTargetView(context, view, Color);
     ID3D11DeviceContext_End(context, (ID3D11Asynchronous *)completion);
     ID3D11DeviceContext_Flush(context);
@@ -282,8 +290,9 @@ int wmain(int argc, wchar_t **argv) {
         }
         Sleep(1);
     } while (1);
-    status=verify_pixels(device,context,backbuffer);if(FAILED(status))goto cleanup;
-    status=verify_compute(device,context);if(FAILED(status))goto cleanup;
+    stage="exact GPU staging pixels";status=verify_pixels(device,context,backbuffer);if(FAILED(status))goto cleanup;
+    stage="exact compute storage words";status=verify_compute(device,context);if(FAILED(status))goto cleanup;
+    stage="actual swapchain presentation";
     status = IDXGISwapChain_Present(swapchain, 0, 0);
     if (status != S_OK)
         goto cleanup;
@@ -294,8 +303,8 @@ int wmain(int argc, wchar_t **argv) {
     result = 0;
 cleanup:
     if (result)
-        fprintf(stderr, "DXVK acceptance failed: HRESULT=0x%08lx Win32=%lu\n",
-                (unsigned long)status, (unsigned long)GetLastError());
+        fprintf(stderr, "DXVK acceptance failed: stage=%s HRESULT=0x%08lx Win32=%lu\n",
+                stage, (unsigned long)status, (unsigned long)GetLastError());
     if (context)
         ID3D11DeviceContext_ClearState(context);
     if (completion)
