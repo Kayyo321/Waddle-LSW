@@ -135,7 +135,7 @@ pub fn copy_region(source: image_t, target: image_t, request: c.VkImageCopy, mai
             if (request.extent.depth > native.dstSubresource.layerCount) return error.Invalid;
             native.dstSubresource.layerCount = request.extent.depth;
         }
-    } else if ((!different or first_remaining or second_remaining) and native.srcSubresource.layerCount != native.dstSubresource.layerCount) return error.Invalid;
+    } else if (!different and native.srcSubresource.layerCount != native.dstSubresource.layerCount) return error.Invalid;
     if (volume_pair and request.extent.depth != (if (source.image_type != 2) native.srcSubresource.layerCount else native.dstSubresource.layerCount)) return error.Invalid;
     var source_size = request.extent;
     var target_size = request.extent;
@@ -150,7 +150,7 @@ pub fn copy_region(source: image_t, target: image_t, request: c.VkImageCopy, mai
     // Array layers stand in for volume depth; native extent is still unchanged.
     if (source.image_type != 2) source_size.depth = 1;
     if (target.image_type != 2) target_size.depth = 1;
-    if (!different and source.image_type != 2 and request.extent.depth != 1) return error.Invalid;
+    if ((source.image_type == 0 or target.image_type == 0 or (!different and source.image_type != 2)) and request.extent.depth != 1) return error.Invalid;
     if (different and !volume_pair and (source.image_type == 0 or target.image_type == 0) and request.extent.height != 1) return error.Invalid;
     return .{ .native = native, .source_extent = try copy_footprint(source, native.srcSubresource, native.srcOffset, source_size, first), .target_extent = try copy_footprint(target, native.dstSubresource, native.dstOffset, target_size, second) };
 }
@@ -425,6 +425,9 @@ test "copy slices and owned remaining layer normalization require actual enabled
     const remaining = try copy_region(volume, array, request, true);
     try std.testing.expectEqual(@as(u32, 3), remaining.native.dstSubresource.layerCount);
     try std.testing.expectEqual(@as(u32, c.VK_REMAINING_ARRAY_LAYERS), request.dstSubresource.layerCount);
+    var one_remaining = request;
+    one_remaining.dstSubresource.layerCount = 3;
+    _ = try copy_region(volume, array, one_remaining, true);
     request.extent.depth = 5;
     try std.testing.expectError(error.Invalid, copy_region(volume, array, request, true));
     request.extent.depth = 3;
@@ -439,6 +442,9 @@ test "copy slices and owned remaining layer normalization require actual enabled
     _ = try copy_region(array, line, request, true);
     _ = try copy_region(line, volume, request, true);
     _ = try copy_region(volume, line, request, true);
+    request.extent.depth = 2;
+    try std.testing.expectError(error.Invalid, copy_region(line, array, request, true));
+    request.extent.depth = 1;
     request.extent.height = 2;
     try std.testing.expectError(error.Invalid, copy_region(line, array, request, true));
 }
