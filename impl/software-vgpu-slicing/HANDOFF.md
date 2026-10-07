@@ -30,12 +30,14 @@ use durable ignored build checkpoints. Root helper:
 - Root: docs/tracker/workflow/GNU and standalone device/extension gates;
   `build/root_todo3_continuation/checkpoint.md`.
 - icd_memory: public ICD/native/device ownership; device integrationd4dc30b is
-  committed. `build/device_integration_checkpoint.md`. Current read-only next
-  assignment: exact large-query/timed-callback/actual-allocation design.
+  committed. `build/device_integration_checkpoint.md`. Channel4064193 has actualWinCPU acceptance; cappedabsoluteRPC source/tests
+  in progress under0d6a58b, then separatelyadopted guest callback. Publiclargequery
+  remains unleased; designunder build/large_extension_query_design/.
 - image_pipeline: exact access/seam/physical helpers and safety makefile;
   `build/image_pipeline_checkpoint/HANDOFF.md`. Physical helper7486580 and exact
-  named codec-count helper01d910c committed;14 embedded+6 linked sources. Current
-  read-only Properties2 proposal. Historical physical runner remains pinned to
+  named codec-count helper01d910c committed;14 embedded+6 linked sources. Current Properties2 stages: wire+2independentoracles; nativechain; private
+  safetyhelper. Three namedCobjects include freshread-only renderoracle for full
+  import tests, per8b69019. PublicICD/WSI/modernadvertisement remains unleased. Historical physical runner remains pinned to
   d4dc30b/25-unit graph and rejects the new b06be83/28 graph; new physical proof
   needs a coherent separately frozen runtime, not reused historical acceptance.
 - wddm_dxvk: TCP/Windows bootstrap, TCP contracts/tests and pending
@@ -85,7 +87,9 @@ native handle baseline97→157; NO acceptance/progress credit. All failed artifa
 retained. Diagnostic-only byte-identical-runtime rerun traces native handle
 owners; original baseline assertion stays. Root CPUWinRM lease completed/released.
 
-01d910c pushed without rewriting history; full new-head CI is pending. Prior
+01d910c pushed without rewriting history; cleanCI37631620496 Linux+Windows
+success, immutable receipt6289b0a2... under root_todo3_continuation/ci_command28_complete.
+This proves01d910c only; later source/realGPU/DXVK still pending. Prior
 clean Linux/Windows37557528193 passed atc2faa4c, not new ABI acceptance. Linux
 parent60min;180s proof children/256MiB text,300s physical cases and1s fences
 unchanged. TODO3=55%, overall68.75%, #11=60%; no duplicate milestone credit.
@@ -124,3 +128,24 @@ Current1000poll/sleep loop is an iteration bound, not an elapsed deadline; next
 large-query design must provide monotonic whole-query time and remaining timed
 callback budgets before production code. Public extension cache/query, modern
 API/features/Properties2/WSI and pinned DXVKdevice/swapchain remain pending.
+
+## Absolute transport and interrupted diagnostic checkpoint
+
+Native channel4064193: local clock+1 origin, exact deadline with no renewal;
+95.08%116/122 branches98.61%142/144 lines, stream97.62%41/42 and100%33/33;
+strictnative/CSan3 zero, actualWin channel_until_882e15f8 native0/exact43c03 SHA
+and balancedhandles. Separate cappedRPC work now owned by icd_memory.
+Root owns only TCPclient/source/header prototypes/clienttest/wrapflag wiring;
+final_frozen provenance d3dafbfb... under build/absolute_tcp_client_checkpoint,
+EXE5e40dac6...,100%156/156 lines93.48%215/230 branches/zeroCSan3. ActualWinCPU
+execution pending through wddm; no shared runtime/GPU build mutation.
+
+Paused diagnostic tcp_gpu_diag_9871f859 failed shared output read/idle timing and
+lost supervisor in-memory retirement proof. Exact failed Windows PID5748/image/
+creation/SHA was force-terminated1464091718 under explicit authorization; no
+acceptance, leak, abandonment or synthetic receipt. All artifacts stay. Before
+next GPU launch require durable initial/intermediate/final SID/controller/starttime/
+pidfd ownership journal, coherent nested finite budgets and owned cancellation
+checks. Native shared-read FileStream must dispose and fail on read errors.
+Independent system DXGI reproduces persistent OS handles but does not establish
+exact actual GPU attribution or justify baseline inflation. Existing assertion stays.
