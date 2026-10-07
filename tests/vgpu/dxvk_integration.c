@@ -20,6 +20,13 @@ typedef HRESULT (WINAPI *create_device_swapchain_t)(
     UINT, const DXGI_SWAP_CHAIN_DESC *, IDXGISwapChain **, ID3D11Device **,
     D3D_FEATURE_LEVEL *, ID3D11DeviceContext **);
 
+/** @brief Pinned DXGI factory export; transfers one caller-owned COM reference.
+ * @param[in] iid Borrowed nonnull factory interface identity.
+ * @param[out] factory Nonnull output, released before the exporting DLL.
+ * @return S_OK or the native factory failure. Sole fixture thread.
+ */
+typedef HRESULT (WINAPI *create_factory_t)(REFIID iid,void **factory);
+
 /** @brief System compiler export; returned blobs belong to the caller. */
 typedef HRESULT (WINAPI *compile_shader_t)(const void *,SIZE_T,const char *,const D3D_SHADER_MACRO *,ID3DInclude *,const char *,const char *,UINT,UINT,ID3DBlob **,ID3DBlob **);
 /** @brief Explicit bootstrap start; path borrowed for call, session owned by DLL. */
@@ -240,6 +247,8 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
     bootstrap_start_t start=NULL;bootstrap_stop_t stop=NULL;bootstrap_session_t session=NULL;bootstrap_abandon_t abandon=NULL;
     uint64_t identity=0;
     HWND window = NULL;
+    IDXGIFactory *factory = NULL;
+    IDXGIAdapter *adapter = NULL;
     IDXGISwapChain *swapchain = NULL;
     ID3D11Device *device = NULL;
     ID3D11DeviceContext *context = NULL;
@@ -280,6 +289,20 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
             (void *)loader,(void *)dxgi,(void *)d3d11,(void *)bootstrap,
             (void *)GetModuleHandleW(L"waddle_vulkan_experimental.dll"));fflush(stdout);
     }
+    /* The first lifetime can initialize resident system DXGI dependencies.
+     * Explicitly use the pinned module's factory on every lifetime, rather
+     * than relying on d3d11.dll's basename import resolution after reload.
+     * The pinned D3D11 implementation uses this adapter's actual parent.
+     */
+    stage="pinned DXVK factory and adapter acquisition";
+    create_factory_t create_factory=NULL;
+    FARPROC factory_proc=GetProcAddress(dxgi,"CreateDXGIFactory1");
+    memcpy(&create_factory,&factory_proc,sizeof create_factory);
+    if(!create_factory)goto cleanup;
+    status=create_factory(&IID_IDXGIFactory,(void **)&factory);
+    if(FAILED(status) || !factory)goto cleanup;
+    status=IDXGIFactory_EnumAdapters(factory,0,&adapter);
+    if(FAILED(status) || !adapter)goto cleanup;
     window = CreateWindowExW(0, L"STATIC", L"Waddle DXVK acceptance",
                              WS_POPUP | WS_VISIBLE,
                              100, 100, 64, 64, NULL, NULL, GetModuleHandleW(NULL), NULL);
@@ -299,7 +322,7 @@ static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
     const D3D_FEATURE_LEVEL Levels[] = {D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL selected = 0;
     stage="real D3D11 device and swapchain creation";
-    status = create(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    status = create(adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
                     Levels, 1, D3D11_SDK_VERSION, &description, &swapchain, &device,
                     &selected, &context);
     if (FAILED(status) || !swapchain || !device || !context || selected != Levels[0])
@@ -381,6 +404,10 @@ cleanup:
         ID3D11DeviceContext_Release(context);
     if (device)
         ID3D11Device_Release(device);
+    if (adapter)
+        IDXGIAdapter_Release(adapter);
+    if (factory)
+        IDXGIFactory_Release(factory);
     if (window && !DestroyWindow(window))
         result = 1;
     if(stop && session && abandon) {
