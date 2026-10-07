@@ -89,6 +89,12 @@ fn rendering_chain(writer: *writer_t, pointer: ?*const anyopaque) !bool {
 /// multisampling, depth/stencil, blend, dynamic state and shader specialization.
 /// Returns complete owned packet or Invalid/Limit; no allocation, shared state or retention.
 pub fn create_graphics_pipeline(device: u64, info: *const c.VkGraphicsPipelineCreateInfo, shader_ids: []const u64, layout: u64, pass: u64, output: u64) !writer_t {
+    return create_graphics_pipeline_cached(device, 0, info, shader_ids, layout, pass, output);
+}
+/// Encode a full general graphics pipeline with translated same-device cache ID or0.
+/// Input validation, ownership/lifetime, return errors and thread safety match create_graphics_pipeline.
+/// Caller retains cache ownership and verifies device ancestry before submission.
+pub fn create_graphics_pipeline_cached(device: u64, cache: u64, info: *const c.VkGraphicsPipelineCreateInfo, shader_ids: []const u64, layout: u64, pass: u64, output: u64) !writer_t {
     if (device == 0 or layout == 0 or output == 0 or info.sType != c.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO or
         info.stageCount == 0 or info.stageCount > 5 or info.stageCount != shader_ids.len or info.pStages == null or
         info.flags & ~@as(u32, 7) != 0 or info.basePipelineHandle != null or info.basePipelineIndex != -1) return error.Invalid;
@@ -96,7 +102,7 @@ pub fn create_graphics_pipeline(device: u64, info: *const c.VkGraphicsPipelineCr
     try put(&writer, u32, 65);
     try put(&writer, u32, 1);
     try put(&writer, u64, device);
-    try put(&writer, u64, 0);
+    try put(&writer, u64, cache);
     try put(&writer, u32, 1);
     try put(&writer, u64, 1);
     try put(&writer, u32, info.sType);
@@ -317,4 +323,16 @@ test "general graphics rejects untranslated identity and unsafe native arrays" {
     fixture.entries[1].size = 1;
     fixture.entries[1].constantID = 0;
     try std.testing.expectError(error.Invalid, create_graphics_pipeline(8, &fixture.info, &.{ 42, 43, 47 }, 44, 45, 46));
+}
+
+extern fn venus_graphics_general_test_cached(*const c.VkGraphicsPipelineCreateInfo, u64, [*]u8) usize;
+test "translated graphics pipeline cache matches generated encoder" {
+    var fixture: fixture_t = .{};
+    fixture.link();
+    var expected: [8192]u8 = undefined;
+    for ([_]u64{ 0, 52, 0xfedcba9876543210 }) |cache| {
+        const writer = try create_graphics_pipeline_cached(8, cache, &fixture.info, &.{ 42, 43, 47 }, 44, 45, 46);
+        const used = venus_graphics_general_test_cached(&fixture.info, cache, &expected);
+        try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
+    }
 }

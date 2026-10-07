@@ -101,3 +101,20 @@ size_t venus_render_test_compute(const VkComputePipelineCreateInfo *info, unsign
     vn_encode_vkCreateComputePipelines(&encoder, 1, (VkDevice)(uintptr_t)7, NULL, 1, &translated, NULL, &pipeline);
     return encoder.used;
 }
+/** Encode translated compute pipeline with explicit host cache.
+ * @param[in] info Nonnull borrowed accessible canonical native record.
+ * @param[in] cache Translated same-device cache identity,0 for absent.
+ * @param[out] bytes Nonnull exclusive8192-byte caller storage.
+ * @return Complete bytes; no allocation/retention, disjoint outputs thread-safe.
+ */
+size_t venus_render_test_compute_cached(const VkComputePipelineCreateInfo *info,
+    uint64_t cache, unsigned char *bytes) {
+    struct instance_encoder_t encoder = {.bytes=bytes,.capacity=8192};
+    VkComputePipelineCreateInfo translated = *info;
+    translated.stage.module=(VkShaderModule)(uintptr_t)42;
+    translated.layout=(VkPipelineLayout)(uintptr_t)43;
+    VkPipeline pipeline=(VkPipeline)(uintptr_t)44;
+    vn_encode_vkCreateComputePipelines(&encoder,1,(VkDevice)(uintptr_t)7,
+        (VkPipelineCache)(uintptr_t)cache,1,&translated,NULL,&pipeline);
+    return encoder.used;
+}

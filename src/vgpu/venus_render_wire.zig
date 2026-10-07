@@ -697,6 +697,12 @@ test "barrier exhaustion at each scalar boundary returns Limit within scratch ex
 /// Returns owned bounded packet or Invalid/Limit before publication; no allocation or locks.
 /// Caller owns semantic shader/layout validation and pipeline lifetime/host result handling.
 pub fn create_compute_pipeline(info: *const c.VkComputePipelineCreateInfo, device_id: u64, shader_id: u64, layout_id: u64, pipeline_id: u64) !writer_t {
+    return create_compute_pipeline_cached(info, device_id, 0, shader_id, layout_id, pipeline_id);
+}
+/// Encode a compute pipeline using a translated same-device cache ID, or0 for no cache.
+/// Borrowed input validation, packet ownership/errors and thread safety match create_compute_pipeline.
+/// Caller retains cache ownership and validates its device ancestry before submission.
+pub fn create_compute_pipeline_cached(info: *const c.VkComputePipelineCreateInfo, device_id: u64, cache_id: u64, shader_id: u64, layout_id: u64, pipeline_id: u64) !writer_t {
     if (device_id == 0 or shader_id == 0 or layout_id == 0 or pipeline_id == 0 or
         info.sType != c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO or info.pNext != null or
         info.flags != 0 or info.basePipelineHandle != null or info.basePipelineIndex < -1 or info.basePipelineIndex > 0 or
@@ -712,7 +718,7 @@ pub fn create_compute_pipeline(info: *const c.VkComputePipelineCreateInfo, devic
     // At most396 bytes: bounded name includes its NUL and four-byte wire padding.
     writer.require_capacity(140 + padded) catch unreachable;
     writer.header(66, device_id) catch unreachable;
-    writer.put_proven(u64, 0);
+    writer.put_proven(u64, cache_id);
     writer.put_proven(u32, 1);
     writer.put_proven(u64, 1);
     writer.put_proven(u32, c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO);
@@ -829,4 +835,15 @@ test "mutable cube and bounded format-list images match generated encoder" {
     info.arrayLayers = 6;
     info.extent.height = 1;
     try std.testing.expectError(error.Invalid, create_image(&info, 7, 42));
+}
+
+extern fn venus_render_test_compute_cached(*const c.VkComputePipelineCreateInfo, u64, [*]u8) usize;
+test "translated compute pipeline cache matches generated encoder" {
+    const info = c.VkComputePipelineCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, .stage = .{ .sType = c.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, .stage = c.VK_SHADER_STAGE_COMPUTE_BIT, .pName = "main" }, .basePipelineIndex = -1 };
+    var expected: [MaxBytes]u8 = undefined;
+    for ([_]u64{ 0, 52, 0xfedcba9876543210 }) |cache| {
+        const writer = try create_compute_pipeline_cached(&info, 7, cache, 42, 43, 44);
+        const count = venus_render_test_compute_cached(&info, cache, &expected);
+        try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    }
 }

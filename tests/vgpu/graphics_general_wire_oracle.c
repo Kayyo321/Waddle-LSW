@@ -20,3 +20,17 @@ size_t venus_graphics_general_test_create(const VkGraphicsPipelineCreateInfo *in
         1,info,NULL,&pipeline);
     return encoder.used;
 }
+/** Encode full translated graphics pipeline with explicit host cache.
+ * @param[in] info Nonnull borrowed accessible native graph with translated handles.
+ * @param[in] cache Translated same-device cache identity,0 for absent.
+ * @param[out] output Nonnull exclusive8192-byte caller storage.
+ * @return Complete bytes; allocation-free, disjoint outputs thread-safe, no retention.
+ */
+size_t venus_graphics_general_test_cached(const VkGraphicsPipelineCreateInfo *info,
+    uint64_t cache, unsigned char *output) {
+    struct instance_encoder_t encoder = {.bytes=output,.capacity=8192};
+    VkPipeline pipeline=(VkPipeline)(uintptr_t)46;
+    vn_encode_vkCreateGraphicsPipelines(&encoder,1,(VkDevice)(uintptr_t)8,
+        (VkPipelineCache)(uintptr_t)cache,1,info,NULL,&pipeline);
+    return encoder.used;
+}
