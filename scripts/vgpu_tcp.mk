@@ -132,3 +132,22 @@ vgpu-tcp-bridge-test vgpu-tcp-bridge-coverage:
 
 vgpu-tcp-bridge-sanitizers:
 	python3 tests/vgpu/tcp_bridge_coverage.py sanitizers
+
+# Explicit Windows bootstrap owner; no project DLL-entry I/O or shared ICD rebuild.
+VgpuTcpBootstrapWindowsSources = src/vgpu/tcp_bootstrap_windows.c src/vgpu/venus_tcp_client.c src/vgpu/venus_tcp_socket.c
+VgpuTcpBootstrapWindowsObjects = build/tcp_peer_request_windows.lib build/tcp_peer_capabilities_windows.lib build/venus_tcp_wire_windows.lib
+
+build/waddle_tcp_bootstrap.dll: $(VgpuTcpBootstrapWindowsSources) src/vgpu/tcp_bootstrap_windows.def include/waddle/venus_tcp.h $(VgpuTcpBootstrapWindowsObjects) | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -shared $(VgpuTcpBootstrapWindowsSources) src/vgpu/tcp_bootstrap_windows.def $(VgpuTcpBootstrapWindowsObjects) -lws2_32 -lbcrypt -ladvapi32 -o $@
+
+build/vgpu_tcp_bootstrap_test.exe: tests/vgpu/tcp_bootstrap_windows.c tests/vgpu/tcp_wire_oracle.c src/vgpu/venus_tcp_client.c src/vgpu/venus_tcp_socket.c include/waddle/venus_tcp.h $(VgpuTcpBootstrapWindowsObjects) | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/tcp_bootstrap_windows.c tests/vgpu/tcp_wire_oracle.c src/vgpu/venus_tcp_client.c src/vgpu/venus_tcp_socket.c $(VgpuTcpBootstrapWindowsObjects) -lws2_32 -lbcrypt -ladvapi32 -o $@
+
+.PHONY: vgpu-tcp-bootstrap-windows vgpu-tcp-bootstrap-coverage vgpu-tcp-bootstrap-sanitizers
+vgpu-tcp-bootstrap-windows: build/waddle_tcp_bootstrap.dll build/vgpu_tcp_bootstrap_test.exe
+
+vgpu-tcp-bootstrap-coverage:
+	python3 tests/vgpu/tcp_bootstrap_sdk_coverage.py
+
+vgpu-tcp-bootstrap-sanitizers:
+	python3 tests/vgpu/tcp_bootstrap_sdk_coverage.py sanitizers
