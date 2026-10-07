@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Gate each owned runtime production source at 90% lines and branches."""
+from datetime import datetime, timezone
+import os
 import gzip
 import json
 from pathlib import Path
-import shutil
 import subprocess
 
-output = Path.cwd() / 'build/coverage/vgpu/runtime'
-if output.exists():
-    shutil.rmtree(output)
-output.mkdir(parents=True)
+output = Path.cwd() / 'build/coverage/vgpu/runtime' / (
+    'run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
+output.mkdir(parents=True, exist_ok=False)
+print('preserved runtime coverage: ' + str(output), flush=True)
 objects = []
 for module in ('rpc', 'dispatch'):
     obj = output / (module + '.o')
