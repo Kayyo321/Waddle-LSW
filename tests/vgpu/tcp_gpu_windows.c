@@ -798,14 +798,23 @@ int main(int argc,char **argv)
         PFN_vkCreateDevice create_device=(PFN_vkCreateDevice)lookup(instance,"vkCreateDevice");
         PFN_vkGetDeviceProcAddr device_proc=(PFN_vkGetDeviceProcAddr)lookup(instance,"vkGetDeviceProcAddr");
         if(!destroy_instance || !enumerate || !properties || !features || !memory || !queues || !create_device || !device_proc || (!modern_queries && lookup(instance,"vkGetPhysicalDeviceFeatures2KHR")))goto cleanup;
-        stage="exact actual NVIDIA selection and zero feature intersection";
+        stage="exact actual NVIDIA selection and implemented feature intersection";
         uint32_t count=0;if(enumerate(instance,&count,NULL)!=VK_SUCCESS || !count || count>16)goto cleanup;
         VkPhysicalDevice devices[16]={0};uint32_t capacity=count;if(enumerate(instance,&capacity,devices)!=VK_SUCCESS || capacity!=count)goto cleanup;
         VkPhysicalDevice selected=NULL;VkPhysicalDeviceMemoryProperties supported_memory={0};
         for(uint32_t index=0;index<count;index++) {
-            VkPhysicalDeviceProperties property={0};VkPhysicalDeviceFeatures actual={0},zero={0};properties(devices[index],&property);features(devices[index],&actual);
-            if(property.apiVersion!=VK_API_VERSION_1_0 || memcmp(&actual,&zero,sizeof zero))goto cleanup;
-            if(!strcmp(property.deviceName,argv[7])){if(selected)goto cleanup;selected=devices[index];memory(selected,&supported_memory);if(modern_queries && modern_query_probe(selected,lookup,instance,&actual,&property))goto cleanup;}
+            VkPhysicalDeviceProperties property={0};VkPhysicalDeviceFeatures actual={0};properties(devices[index],&property);features(devices[index],&actual);
+            if(property.apiVersion<VK_API_VERSION_1_0 || property.apiVersion>VK_API_VERSION_1_3)goto cleanup;
+            for(size_t flag=0;flag<sizeof actual/sizeof(VkBool32);flag++){
+                VkBool32 value=0;memcpy(&value,(const uint8_t *)&actual+flag*sizeof value,sizeof value);
+                if(value>VK_TRUE)goto cleanup;
+            }
+            if(!strcmp(property.deviceName,argv[7])){
+                if(selected || property.apiVersion!=VK_API_VERSION_1_3 ||
+                    !actual.tessellationShader || !actual.fragmentStoresAndAtomics || !actual.drawIndirectFirstInstance)goto cleanup;
+                selected=devices[index];memory(selected,&supported_memory);
+                if(modern_queries && modern_query_probe(selected,lookup,instance,&actual,&property))goto cleanup;
+            }
         }
         if(!selected || !supported_memory.memoryTypeCount || supported_memory.memoryTypeCount>VK_MAX_MEMORY_TYPES || !supported_memory.memoryHeapCount || supported_memory.memoryHeapCount>VK_MAX_MEMORY_HEAPS)goto cleanup;
         uint32_t family_count=64;VkQueueFamilyProperties families[64]={0};queues(selected,&family_count,families);if(!family_count || family_count>64)goto cleanup;
