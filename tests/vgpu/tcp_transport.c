@@ -11,6 +11,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <sys/random.h>
 #include <sys/socket.h>
@@ -20,7 +22,7 @@
 #ifdef TcpFaultTests
 /* Inject one real native failure before publication; all successful native
  * resources still use the OS and production ownership cleanup paths. */
-typedef enum fault_t { FaultNone, FaultSocket, FaultFcntlGet, FaultFcntlSet,
+typedef enum fault_t { FaultNone, FaultSocket, FaultTcpOption, FaultFcntlGet, FaultFcntlSet,
     FaultFdGet, FaultFdSet, FaultBind, FaultListen, FaultName, FaultConnect,
     FaultSocketError, FaultAccept, FaultPoll, FaultSend, FaultReceive,
     FaultRandom, FaultClock, FaultConnectProgress, FaultPollInterrupted,
@@ -34,6 +36,14 @@ static int should_fail(fault_t wanted)
 int __real_socket(int domain, int type, int protocol);
 int __wrap_socket(int domain, int type, int protocol)
 { return should_fail(FaultSocket) ? -1 : __real_socket(domain,type,protocol); }
+int __real_setsockopt(int fd,int level,int option,const void *value,socklen_t extent);
+/** @brief Inject native socket-option failure with real publication cleanup.
+ * @param[in] fd/level/option/value/extent Borrowed native socket option arguments.
+ * @return Minus1/EIO once for FaultTcpOption; otherwise real OS result.
+ * @note Sole fault-test thread; pointer never retained, no allocation/ownership.
+ */
+int __wrap_setsockopt(int fd,int level,int option,const void *value,socklen_t extent)
+{ return should_fail(FaultTcpOption) ? -1 : __real_setsockopt(fd,level,option,value,extent); }
 int __real_fcntl(int fd, int command, ...);
 int __wrap_fcntl(int fd, int command, ...)
 {
@@ -112,12 +122,29 @@ static unsigned resource_count(void)
     assert(!closedir(directory)); return count;
 #endif
 }
+/** @brief Verify immediate request/response socket behavior on a live borrowed owner.
+ * @param[in] socket Nonnull connected borrowed native owner.
+ * @note Sole test thread; no handle reference or option storage retained.
+ */
+static void no_delay_enabled(const venus_tcp_socket_t *socket)
+{
+    int enabled=0;
+#ifdef _WIN32
+    int extent=sizeof enabled;
+    assert(!getsockopt((SOCKET)socket->handle,IPPROTO_TCP,TCP_NODELAY,(char *)&enabled,&extent));
+#else
+    socklen_t extent=sizeof enabled;
+    assert(!getsockopt((int)socket->handle,IPPROTO_TCP,TCP_NODELAY,&enabled,&extent));
+#endif
+    assert(enabled==1);
+}
 static void pair(venus_tcp_socket_t *client, venus_tcp_socket_t *server)
 {
     venus_tcp_socket_t listener={0}; uint32_t port=0;
     assert(venus_tcp_socket_listen(&listener,0,&port)==RingOk && port);
     assert(venus_tcp_socket_connect(client,"127.0.0.1",port,venus_tcp_now_ms()+1000,NULL)==RingOk);
     assert(venus_tcp_socket_accept(&listener,server,venus_tcp_now_ms()+1000,NULL)==RingOk);
+    no_delay_enabled(client);no_delay_enabled(server);
     venus_tcp_socket_close(&listener);
 }
 static void normal_cycle(void)
@@ -248,6 +275,10 @@ static void fault_tests(void)
     /* Drain connection queued by SO_ERROR failure before accept-failure checks. */
     assert(venus_tcp_socket_accept(&listener,&server,venus_tcp_now_ms()+1000,NULL)==RingOk);
     venus_tcp_socket_close(&server);
+    assert(venus_tcp_socket_connect(&client,"127.0.0.1",port,venus_tcp_now_ms()+1000,NULL)==RingOk);
+    unsigned accept_baseline=resource_count();fault=FaultTcpOption;
+    assert(venus_tcp_socket_accept(&listener,&server,venus_tcp_now_ms()+1000,NULL)==RingClosed && !server.initialized);
+    assert(fault==FaultNone && resource_count()==accept_baseline);venus_tcp_socket_close(&client);
     assert(venus_tcp_socket_connect(&client,"127.0.0.1",port,venus_tcp_now_ms()+1000,NULL)==RingOk);
     fault=FaultFcntlGet;
     assert(venus_tcp_socket_accept(&listener,&server,venus_tcp_now_ms()+1000,NULL)==RingClosed && !server.initialized);

@@ -28,7 +28,7 @@ build/vgpu_tcp_wire_test.exe: tests/vgpu/tcp_wire.c tests/vgpu/tcp_wire_oracle.c
 
 vgpu-tcp-wire-windows: build/vgpu_tcp_wire_test.exe
 
-VgpuTcpSocketWrapFlags = -Wl,--wrap=socket,--wrap=fcntl,--wrap=bind,--wrap=listen,--wrap=getsockname,--wrap=connect,--wrap=getsockopt,--wrap=accept,--wrap=poll,--wrap=send,--wrap=recv,--wrap=getrandom,--wrap=clock_gettime,--wrap=shutdown
+VgpuTcpSocketWrapFlags = -Wl,--wrap=socket,--wrap=setsockopt,--wrap=fcntl,--wrap=bind,--wrap=listen,--wrap=getsockname,--wrap=connect,--wrap=getsockopt,--wrap=accept,--wrap=poll,--wrap=send,--wrap=recv,--wrap=getrandom,--wrap=clock_gettime,--wrap=shutdown
 
 build/vgpu_tcp_transport_test: tests/vgpu/tcp_transport.c src/vgpu/venus_tcp_socket.c include/waddle/venus_tcp.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DTcpFaultTests tests/vgpu/tcp_transport.c src/vgpu/venus_tcp_socket.c $(VgpuTcpSocketWrapFlags) -pthread -o $@

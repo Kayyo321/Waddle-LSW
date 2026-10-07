@@ -11,7 +11,7 @@ output = root / "build/coverage/vgpu/venus_tcp_socket"
 if output.exists():
     shutil.rmtree(output)
 output.mkdir(parents=True)
-wrapped = ["socket", "fcntl", "bind", "listen", "getsockname", "connect", "getsockopt",
+wrapped = ["socket", "setsockopt", "fcntl", "bind", "listen", "getsockname", "connect", "getsockopt",
            "accept", "poll", "send", "recv", "getrandom", "clock_gettime", "shutdown"]
 subprocess.run(["cc", "-D_GNU_SOURCE", "-Iinclude", "-std=c11", "-Wall", "-Wextra",
                 "-Wpedantic", "-Werror", "-O0", "-g", "--coverage", "-fprofile-abs-path",

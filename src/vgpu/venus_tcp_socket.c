@@ -14,6 +14,7 @@ typedef SOCKET native_socket_t;
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <netinet/tcp.h>
 #include <sys/random.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -57,8 +58,13 @@ static int would_block(void)
     return errno==EAGAIN || errno==EWOULDBLOCK || errno==EINTR || errno==EINPROGRESS;
 #endif
 }
-static int make_nonblocking(native_socket_t handle)
+/* Configure the sole unpublished native owner. Header/payload exchanges must
+ * not wait for Nagle/delayed ACK before the peer can decode a complete request.
+ * Caller closes the handle and balances runtime ownership on every failure. */
+static int configure_socket(native_socket_t handle)
 {
+    int no_delay=1;
+    if(setsockopt(handle,IPPROTO_TCP,TCP_NODELAY,(const char *)&no_delay,sizeof no_delay))return 0;
 #ifdef _WIN32
     u_long enabled=1;
     return ioctlsocket(handle, FIONBIO, &enabled)==0;
@@ -106,7 +112,7 @@ static venus_ring_status_t fresh(venus_tcp_socket_t *owner)
     if (!runtime_acquire()) return RingClosed;
     native_socket_t handle=socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (handle==NativeInvalid) { runtime_release(); return RingClosed; }
-    if (!make_nonblocking(handle)) { close_native(handle); runtime_release(); return RingClosed; }
+    if (!configure_socket(handle)) { close_native(handle); runtime_release(); return RingClosed; }
     owner->handle=(uintptr_t)handle;
     owner->initialized=1;
     return RingOk;
@@ -203,7 +209,7 @@ venus_ring_status_t venus_tcp_socket_accept(const venus_tcp_socket_t *listener,
         native_socket_t handle=accept(native_handle(listener),NULL,NULL);
         if (handle!=NativeInvalid) {
             if (!runtime_acquire()) { close_native(handle); return RingClosed; }
-            if (!make_nonblocking(handle)) { close_native(handle); runtime_release(); return RingClosed; }
+            if (!configure_socket(handle)) { close_native(handle); runtime_release(); return RingClosed; }
             owner->handle=(uintptr_t)handle; owner->initialized=1;
             return RingOk;
         }
