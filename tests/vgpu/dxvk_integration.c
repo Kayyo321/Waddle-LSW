@@ -367,7 +367,7 @@ cleanup:
     if (result)
         fprintf(stderr, "DXVK acceptance failed: stage=%s HRESULT=0x%08lx Win32=%lu\n",
                 stage, (unsigned long)status, (unsigned long)GetLastError());
-    if (context)
+    if (context && !fault_verified)
         ID3D11DeviceContext_ClearState(context);
     if (completion)
         ID3D11Query_Release(completion);

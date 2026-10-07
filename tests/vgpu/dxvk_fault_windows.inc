@@ -65,6 +65,12 @@ static HRESULT verify_transport_loss(ID3D11Device *device,ID3D11DeviceContext *c
     dxvk_fault_lock_t lock={0};HANDLE thread=NULL;HRESULT result=E_FAIL;
     HRESULT status=ID3D11Device_QueryInterface(device,&DxvkFaultInteropId,(void **)&lock.interop);
     if(FAILED(status)||!lock.interop)return FAILED(status)?status:E_NOINTERFACE;
+    /* Release context bindings while the device is healthy. The later clear
+     * targets the borrowed view directly and introduces no context bindings.
+     * Recording another ClearState after device removal would create fresh CS
+     * work in DXVK's destructor rather than merely releasing these owners. */
+    ID3D11DeviceContext_ClearState(context);
+    lock.interop->vtable->flush_rendering_commands(lock.interop);
     lock.locked=CreateEventW(NULL,TRUE,FALSE,NULL);
     lock.release=CreateEventW(NULL,TRUE,FALSE,NULL);
     if(!lock.locked||!lock.release)goto cleanup;
