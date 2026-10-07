@@ -16,6 +16,7 @@ pub const image_t = struct {
     levels: u32 = 0,
     layers: u32 = 0,
     samples: u32 = 0,
+    usage: u32 = 0,
     view_format_count: usize = 0,
     view_formats: [MaxViewFormats]u32 = [_]u32{0} ** MaxViewFormats,
 };
@@ -95,7 +96,7 @@ pub fn snapshot(info: *const c.VkImageCreateInfo) !image_t {
     if ((info.imageType == 0 and (info.extent.height != 1 or info.extent.depth != 1)) or (info.imageType == 1 and info.extent.depth != 1) or (info.imageType == 2 and info.arrayLayers != 1)) return error.Invalid;
     if (info.samples != 1 and (info.imageType != 1 or info.mipLevels != 1)) return error.Invalid;
     if (info.flags & c.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT != 0 and (info.imageType != 1 or info.extent.width != info.extent.height or info.arrayLayers < 6 or info.samples != 1)) return error.Invalid;
-    var result = image_t{ .flags = info.flags, .image_type = info.imageType, .format = info.format, .extent = .{ info.extent.width, info.extent.height, info.extent.depth }, .levels = info.mipLevels, .layers = info.arrayLayers, .samples = info.samples };
+    var result = image_t{ .flags = info.flags, .image_type = info.imageType, .format = info.format, .extent = .{ info.extent.width, info.extent.height, info.extent.depth }, .levels = info.mipLevels, .layers = info.arrayLayers, .samples = info.samples, .usage = info.usage };
     const address = @as(*align(1) const usize, @ptrCast(&info.pNext)).*;
     if (address != 0) {
         if (address % @alignOf(c.VkImageFormatListCreateInfo) != 0) return error.Invalid;
@@ -116,14 +117,28 @@ pub fn snapshot(info: *const c.VkImageCreateInfo) !image_t {
     }
     return result;
 }
+/// Snapshot a single optional ImageViewUsage chain into an owned scalar.
+/// [in] info borrowed accessible SDK record; recognized aligned node requires nonzero usage
+/// and no successor. Returns null when absent, usage value when present, or Invalid.
+/// No allocations, caller pointer retention, output mutation, or shared state.
+pub fn view_usage(info: *const c.VkImageViewCreateInfo) !?u32 {
+    const address = @as(*align(1) const usize, @ptrCast(&info.pNext)).*;
+    if (address == 0) return null;
+    if (address % @alignOf(c.VkImageViewUsageCreateInfo) != 0) return error.Invalid;
+    const node: *const c.VkImageViewUsageCreateInfo = @ptrFromInt(address);
+    if (node.sType != c.VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO or node.pNext != null or node.usage == 0) return error.Invalid;
+    return node.usage;
+}
 /// Validate an image view and resolve REMAINING mip/layer counts into actual positive spans.
 /// [in] image immutable owned snapshot, info borrowed SDK record; cube_array_enabled reflects
-/// this device's admitted feature, not raw host support. image token/usage/binding and actual
+/// this device's admitted feature, not raw host support. Optional view usage must be a nonzero
+/// subset of owned image usage. Image token/binding and actual
 /// host format/view support remain caller-owned. CUBE=6 layers; CUBE_ARRAY=6N with feature.
 /// Mutable views use the same XML class and must appear in any nonempty owned format list.
 /// [out] returned range owns scalars only. Invalid leaves callers untouched; no allocation.
 pub fn validate(image: *const image_t, info: *const c.VkImageViewCreateInfo, cube_array_enabled: bool) !c.VkImageSubresourceRange {
-    if (info.sType != c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO or info.pNext != null or info.flags != 0 or info.viewType > 6 or image.levels == 0 or image.layers == 0 or image.view_format_count > MaxViewFormats) return error.Invalid;
+    if (info.sType != c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO or info.flags != 0 or info.viewType > 6 or image.levels == 0 or image.layers == 0 or image.view_format_count > MaxViewFormats) return error.Invalid;
+    if (try view_usage(info)) |usage| if (usage & ~image.usage != 0) return error.Invalid;
     if (info.format != image.format and (image.flags & c.VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT == 0 or !try compatible(image.format, info.format))) return error.Invalid;
     _ = try format_class(info.format);
     if (image.view_format_count != 0 and std.mem.indexOfScalar(u32, image.view_formats[0..image.view_format_count], info.format) == null) return error.Invalid;
@@ -237,4 +252,30 @@ test "native header quotas malformed pointers aspect and dimensional ranges reje
     creation.pNext = null;
     creation.mipLevels = 8;
     try std.testing.expectError(error.Invalid, snapshot(&creation));
+}
+
+test "image view usage chain owns scalar and requires actual image usage subset" {
+    var creation = image_info();
+    creation.usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_SAMPLED_BIT;
+    const image = try snapshot(&creation);
+    var view = view_info();
+    var node: c.VkImageViewUsageCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO, .usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT };
+    view.pNext = &node;
+    const usage = (try view_usage(&view)).?;
+    _ = try validate(&image, &view, false);
+    node.usage = c.VK_IMAGE_USAGE_STORAGE_BIT;
+    try std.testing.expectEqual(@as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT), usage);
+    try std.testing.expectError(error.Invalid, validate(&image, &view, false));
+    node.usage = 0;
+    try std.testing.expectError(error.Invalid, view_usage(&view));
+    node.usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    node.pNext = &node;
+    try std.testing.expectError(error.Invalid, view_usage(&view));
+    node.pNext = null;
+    node.sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    try std.testing.expectError(error.Invalid, view_usage(&view));
+    view.pNext = @ptrFromInt(3);
+    try std.testing.expectError(error.Invalid, view_usage(&view));
+    view.pNext = null;
+    try std.testing.expectEqual(@as(?u32, null), try view_usage(&view));
 }

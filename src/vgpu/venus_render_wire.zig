@@ -1,5 +1,6 @@
 //! Allocation-free core image wire encoding. Callers validate object ownership and GPU lifetimes.
 const std = @import("std");
+const image_view_native = @import("venus_image_view_native.zig");
 const pipeline_helpers = @import("venus_pipeline_wire_helpers.zig");
 const c = @cImport({
     @cInclude("vulkan/vulkan.h");
@@ -130,23 +131,30 @@ pub fn create_image(info: *const c.VkImageCreateInfo, device_id: u64, image_id: 
     finish_create(&writer, image_id);
     return writer;
 }
-/// Encode core vkCreateImageView. [in] info borrowed canonical record; native image handle ignored.
+/// Encode core vkCreateImageView with optional single ImageViewUsage chain.
+/// [in] info borrowed canonical record; native image handle ignored, no caller pointers retained.
 /// [in] IDs nonzero translated host identities. Returns owned packet or Invalid/Limit.
 /// No allocation/retention; caller validates format compatibility and range against image metadata.
 pub fn create_image_view(info: *const c.VkImageViewCreateInfo, device_id: u64, image_id: u64, view_id: u64) !writer_t {
     if (device_id == 0 or view_id == 0) return error.Invalid;
-    if (info.sType != c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO or info.pNext != null or
+    if (info.sType != c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO or
         info.flags != 0 or info.viewType > 6 or info.format <= 0 or info.format > 184 or
         image_id == 0 or !range_valid(info.subresourceRange)) return error.Invalid;
+    const usage = try image_view_native.view_usage(@ptrCast(info));
     const components = [_]u32{ info.components.r, info.components.g, info.components.b, info.components.a };
     for (components) |component| if (component > 6) return error.Invalid;
     var writer = writer_t{};
     // Validated counts prove the complete owned packet fits before any append.
-    writer.require_capacity(116) catch unreachable;
+    writer.require_capacity(if (usage != null) 132 else 116) catch unreachable;
     writer.header(57, device_id) catch unreachable;
     writer.put_proven(u64, 1);
     writer.put_proven(u32, c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
-    writer.put_proven(u64, 0);
+    writer.put_proven(u64, if (usage != null) 1 else 0);
+    if (usage) |value| {
+        writer.put_proven(u32, c.VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO);
+        writer.put_proven(u64, 0);
+        writer.put_proven(u32, value);
+    }
     writer.put_proven(u32, 0);
     writer.put_proven(u64, image_id);
     writer.put_proven(u32, info.viewType);
@@ -863,4 +871,20 @@ test "maintenance5 compute flags and shader specialization match generated packe
     try std.testing.expectEqualSlices(u8, expected[0..used], writer.bytes[0..writer.used]);
     flags2.pNext = &flags2;
     try std.testing.expectError(error.Invalid, create_compute_pipeline_cached(&info, 7, 52, 42, 43, 44));
+}
+
+test "view usage chain matches pinned serializer without borrowed pointer retention" {
+    var expected: [MaxBytes]u8 = undefined;
+    var node: c.VkImageViewUsageCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO, .usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT };
+    var info: c.VkImageViewCreateInfo = .{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .pNext = &node, .viewType = 1, .format = 37, .subresourceRange = .{ .aspectMask = 1, .levelCount = 1, .layerCount = 1 } };
+    const writer = try create_image_view(&info, 7, 42, 43);
+    const count = venus_render_test_view(&info, &expected);
+    node.usage = 0;
+    try std.testing.expectEqualSlices(u8, expected[0..count], writer.bytes[0..writer.used]);
+    try std.testing.expectError(error.Invalid, create_image_view(&info, 7, 42, 43));
+    node.usage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    node.pNext = &node;
+    try std.testing.expectError(error.Invalid, create_image_view(&info, 7, 42, 43));
+    info.pNext = @ptrFromInt(3);
+    try std.testing.expectError(error.Invalid, create_image_view(&info, 7, 42, 43));
 }
