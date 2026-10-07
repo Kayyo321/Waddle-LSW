@@ -277,6 +277,8 @@ const resource_state_t = struct {
     image_layers: u32 = 0,
     image_format: u32 = 0,
     image_type: u32 = 0,
+    /// Retired guest WSI image; native image/allocation stay owned until views and GPU uses retire.
+    retired_wsi_image: bool = false,
     image_usage: u32 = 0,
     image_tiling: u32 = 0,
     image_view_metadata: image_view_native.image_t = .{},
@@ -1412,6 +1414,7 @@ fn destroy_device(
     const backend = wsi_backend(&callback_context);
     wsi.destroy_device(&wsi_state, &backend, entry.handle);
     retire_device_templates(record.id);
+    retire_wsi_images(device);
     for (slots) |child| {
         if (child.id != 0 and child.parent_id == record.id and child.kind != c.VK_OBJECT_TYPE_QUEUE)
             return;
@@ -1789,12 +1792,17 @@ fn enumerate_version(version: [*c]u32) callconv(.C) c_int {
     version.* = if (reply_profile_ready) ImplementedApiVersion else c.VK_API_VERSION_1_0;
     return c.VK_SUCCESS;
 }
-fn child_object(handle: u64, kind: u32, parent_id: u64) ?*c.venus_object_t {
+fn owned_child_object(handle: u64, kind: u32, parent_id: u64) ?*c.venus_object_t {
     var record: [*c]c.venus_object_t = null;
     if (c.venus_objects_lookup(&objects, handle, kind, 0, &record) != c.RingOk or
         record.*.parent_id != parent_id) return null;
-    if (kind == c.VK_OBJECT_TYPE_FENCE and resource_state(record).internal_fence) return null;
     return @ptrCast(record);
+}
+fn child_object(handle: u64, kind: u32, parent_id: u64) ?*c.venus_object_t {
+    const record = owned_child_object(handle,kind,parent_id) orelse return null;
+    if ((kind == c.VK_OBJECT_TYPE_FENCE and resource_state(record).internal_fence) or
+        (kind == c.VK_OBJECT_TYPE_IMAGE and resource_state(record).retired_wsi_image)) return null;
+    return record;
 }
 fn result_reply(bytes: []const u8, command_id: u32, pending: i32) c_int {
     var reader = reader_t{ .bytes = bytes };
@@ -2477,7 +2485,7 @@ fn create_image_view(device: c.VkDevice, info: [*c]const c.VkImageViewCreateInfo
 fn destroy_render_resource(device: c.VkDevice, handle: u64, kind: u32, command_id: u32) void {
     if (device == null or handle == 0) return;
     const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
-    const record = child_object(handle, kind, parent.id) orelse return;
+    const record = owned_child_object(handle, kind, parent.id) orelse return;
     const index = resource_index(record);
     const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
     if (resource_state(record).inflight_count != 0) return;
@@ -2510,6 +2518,9 @@ fn destroy_image(device: c.VkDevice, image: c.VkImage, allocator: [*c]const c.Vk
     _ = allocator;
     lock_icd();
     defer unlock_icd();
+    if(device==null or image==null) return;
+    const parent=object(@intFromPtr(device.?),c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    if(child_object(@intFromPtr(image.?),c.VK_OBJECT_TYPE_IMAGE,parent.id)==null) return;
     destroy_render_resource(device, if (image) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_IMAGE, 55);
 }
 /// Destroy view and release image retention. [in] nullable tokens/callbacks borrowed for call.
@@ -2519,6 +2530,7 @@ fn destroy_image_view(device: c.VkDevice, view: c.VkImageView, allocator: [*c]co
     lock_icd();
     defer unlock_icd();
     destroy_render_resource(device, if (view) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_IMAGE_VIEW, 58);
+    retire_wsi_images(device);
 }
 /// Create one core compute pipeline from same-device private shader/layout definitions.
 /// [in] device nonnull borrowed; cache must be NULL; count1, infos nonnull borrowed for call.
@@ -4958,7 +4970,9 @@ fn device_wait_idle(device: c.VkDevice) callconv(.C) c_int {
         if (result != c.VK_SUCCESS) return result;
         retire_queue(entry.queues[index]);
     };
-    return synchronize_device_mappings(record.id, false);
+    const result = synchronize_device_mappings(record.id, false);
+    if(result==c.VK_SUCCESS) retire_wsi_images(device);
+    return result;
 }
 /// Wait for actual GPU retirement of the queue using its receiver timeline.
 /// @param[in] queue Nullable private handle, validated without dereference.
@@ -5095,7 +5109,7 @@ fn queue_submit(
     for (slots, 0..) |child, index| {
         const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
         if (staged.references[index / 64] & bit == 0) continue;
-        if (child.id == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (child.id == 0 or (child.kind == c.VK_OBJECT_TYPE_IMAGE and resource_states[index].retired_wsi_image)) return c.VK_ERROR_INITIALIZATION_FAILED;
         if (child.kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER) continue;
         if (child.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET) {
             const pool = descriptor_pool_for(&child) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -5515,10 +5529,28 @@ fn wsi_create_image(context: ?*anyopaque, width: u32, height: u32, format: u32, 
     memory_out.* = @intFromPtr(memory_handle.?);
     return c.VK_SUCCESS;
 }
+/// Retire exact native WSI image then its bound allocation only after views and
+/// GPU references complete. Borrowed device, mutex held, no allocation. Loss
+/// preserves unresolved owners; retired guest identities remain inaccessible.
+fn retire_wsi_images(device: c.VkDevice) void {
+    if (device == null or lost != c.RingOk) return;
+    const parent = object(@intFromPtr(device.?),c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    for (&slots) |*entry| if(entry.id!=0 and entry.kind==c.VK_OBJECT_TYPE_IMAGE and entry.parent_id==parent.id and resource_state(entry).retired_wsi_image) {
+        const image_handle=entry.handle;
+        const memory_handle=resource_state(entry).bound_memory;
+        destroy_render_resource(device,image_handle,c.VK_OBJECT_TYPE_IMAGE,55);
+        if(owned_child_object(image_handle,c.VK_OBJECT_TYPE_IMAGE,parent.id)==null and memory_handle!=0)
+            free_memory(device,@ptrFromInt(memory_handle),null);
+        if(lost!=c.RingOk) return;
+    };
+}
 fn wsi_destroy_image(context: ?*anyopaque, image: u64, memory_handle: u64) callconv(.C) void {
-    const device = wsi_device(context);
-    destroy_image(device, @ptrFromInt(image), null);
-    free_memory(device, @ptrFromInt(memory_handle), null);
+    const device=wsi_device(context);
+    const parent=object(@intFromPtr(device.?),c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const entry=owned_child_object(image,c.VK_OBJECT_TYPE_IMAGE,parent.id) orelse return;
+    if(resource_state(entry).bound_memory!=memory_handle) return;
+    resource_state(entry).retired_wsi_image=true;
+    retire_wsi_images(device);
 }
 fn wsi_acquire(context: ?*anyopaque, semaphore: u64, fence: u64) callconv(.C) c_int {
     const queue = wsi_queue(context);
@@ -6523,7 +6555,7 @@ fn queue_submit2(
     for (slots, 0..) |child, index| {
         const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
         if (staged.references[index / 64] & bit == 0) continue;
-        if (child.id == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        if (child.id == 0 or (child.kind == c.VK_OBJECT_TYPE_IMAGE and resource_states[index].retired_wsi_image)) return c.VK_ERROR_INITIALIZATION_FAILED;
         if (child.kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER) continue;
         if (child.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_SET) {
             const pool = descriptor_pool_for(&child) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -13429,4 +13461,87 @@ test "coverage query and event preflight preserve outputs and ownership without 
     try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),call(device,event_handle));
     try std.testing.expectEqual(@as(usize,0),fixture.base.calls);
     try std.testing.expectEqual(@as(u32,4),objects.live_count);
+}
+
+// Append-only regression using proposed retired_wsi_image/owned_child_object policy.
+const wsi_retired_fixture_t=struct {
+    base:image_ownership_fixture_t=. {},
+    fail_opcode:u32=0,
+    sequence:[8]u32=[_]u32{0} ** 8,
+    used:usize=0,
+    fn exchange(context:?*anyopaque,request:[*c]const c.venus_request_t,input:?*const anyopaque,length:usize,response:[*c]c.venus_request_t,output:?*anyopaque,capacity:usize) callconv(.C) c_int {
+        const fixture:*@This()=@ptrCast(@alignCast(context.?));
+        if(request.*.kind==c.RequestSubmit) {
+            const bytes=@as([*]const u8,@ptrCast(input.?))[0..length];
+            const opcode=std.mem.readInt(u32,bytes[36..40],.little);
+            std.debug.assert(fixture.used<fixture.sequence.len);
+            fixture.sequence[fixture.used]=opcode;fixture.used+=1;
+            if(opcode==fixture.fail_opcode)return c.RingClosed;
+        }
+        return image_ownership_fixture_t.exchange(&fixture.base,request,input,length,response,output,capacity);
+    }
+};
+test "retired WSI images reject guest use and await last view ACK before backing retirement" {
+    for([_]u32{0,58,55,22}) |failure_opcode| {
+        var fixture=wsi_retired_fixture_t{};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(wsi_retired_fixture_t.exchange,&fixture));
+        defer venus_icd_abandon();
+        const graph=try wsi_status_graph_t.init();
+        const image_handle=graph.image.handle;
+        const memory_handle=graph.allocation.handle;
+        const first=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE_VIEW,graph.device.id,0);
+        const last=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE_VIEW,graph.device.id,0);
+        const first_handle=first.handle;
+        const last_handle=last.handle;
+        resource_state(first).* = .{.id=first.id,.view_image=image_handle,.image_usage=c.VK_IMAGE_USAGE_SAMPLED_BIT};
+        resource_state(last).* = .{.id=last.id,.view_image=image_handle,.image_usage=c.VK_IMAGE_USAGE_SAMPLED_BIT};
+        destroy_swapchain(@ptrFromInt(graph.device.handle),@ptrFromInt(101),null);
+        try std.testing.expectEqual(@as(u64,0),wsi_state.swapchains[0].id);
+        try std.testing.expectEqual(@as(usize,0),fixture.used);
+        try std.testing.expect(resource_state(graph.image).retired_wsi_image);
+        try std.testing.expect(child_object(image_handle,c.VK_OBJECT_TYPE_IMAGE,graph.device.id)==null);
+        try std.testing.expect(owned_child_object(image_handle,c.VK_OBJECT_TYPE_IMAGE,graph.device.id)!=null);
+        var view_info=c.VkImageViewCreateInfo{.sType=c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,.image=@ptrFromInt(image_handle),.viewType=c.VK_IMAGE_VIEW_TYPE_2D,.format=c.VK_FORMAT_B8G8R8A8_UNORM,.subresourceRange=.{.aspectMask=c.VK_IMAGE_ASPECT_COLOR_BIT,.levelCount=1,.layerCount=1}};
+        var rejected:c.VkImageView=@ptrFromInt(8);
+        try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),create_image_view(@ptrFromInt(graph.device.handle),&view_info,null,&rejected));
+        try std.testing.expect(rejected==null);
+        try std.testing.expectEqual(@as(usize,0),fixture.used);
+        destroy_image_view(@ptrFromInt(graph.device.handle),@ptrFromInt(first_handle),null);
+        try std.testing.expectEqual(@as(usize,1),fixture.used);
+        try std.testing.expect(child_object(first_handle,c.VK_OBJECT_TYPE_IMAGE_VIEW,graph.device.id)==null);
+        try std.testing.expect(owned_child_object(image_handle,c.VK_OBJECT_TYPE_IMAGE,graph.device.id)!=null);
+        try std.testing.expect(child_object(memory_handle,c.VK_OBJECT_TYPE_DEVICE_MEMORY,graph.device.id)!=null);
+        fixture.fail_opcode=failure_opcode;
+        destroy_image_view(@ptrFromInt(graph.device.handle),@ptrFromInt(last_handle),null);
+        const expected:[]const u32=if(failure_opcode==58) &.{58,58} else if(failure_opcode==55) &.{58,58,55} else &.{58,58,55,22};
+        try std.testing.expectEqualSlices(u32,expected,fixture.sequence[0..fixture.used]);
+        try std.testing.expectEqual(failure_opcode==58,child_object(last_handle,c.VK_OBJECT_TYPE_IMAGE_VIEW,graph.device.id)!=null);
+        try std.testing.expectEqual(failure_opcode==58 or failure_opcode==55,owned_child_object(image_handle,c.VK_OBJECT_TYPE_IMAGE,graph.device.id)!=null);
+        try std.testing.expectEqual(failure_opcode!=0,child_object(memory_handle,c.VK_OBJECT_TYPE_DEVICE_MEMORY,graph.device.id)!=null);
+        const expected_live:usize=if(failure_opcode==58) 8 else if(failure_opcode==55) 7 else if(failure_opcode==22) 6 else 5;
+        try std.testing.expectEqual(expected_live,objects.live_count);
+        // Local retirement must never bypass a lost receiver's opaque owners.
+        retire_wsi_images(@ptrFromInt(graph.device.handle));
+        try std.testing.expectEqual(expected.len,fixture.used);
+    }
+}
+
+test "retired WSI images reject previously recorded attachment references before queue submission" {
+    var fixture=image_ownership_fixture_t{};
+    try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture)); defer venus_icd_abandon();
+    const graph=try wsi_status_graph_t.init();
+    const pool=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL,graph.device.id,0);
+    const recording=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER,pool.id,1);
+    resource_state(recording).command_state=.Executable;
+    command_reference(resource_state(recording),graph.image);
+    resource_state(graph.image).retired_wsi_image=true;
+    const command_buffer:c.VkCommandBuffer=@ptrFromInt(recording.handle);
+    const info=c.VkSubmitInfo{.sType=c.VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&command_buffer};
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(queue_submit)(@ptrFromInt(graph.queue.handle),1,&info,null));
+    const entry=c.VkCommandBufferSubmitInfo{.sType=c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,.commandBuffer=command_buffer};
+    const modern=c.VkSubmitInfo2{.sType=c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2,.commandBufferInfoCount=1,.pCommandBufferInfos=&entry};
+    try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(queue_submit2)(@ptrFromInt(graph.queue.handle),1,&modern,null));
+    try std.testing.expectEqual(@as(usize,0),fixture.submissions);
+    try std.testing.expectEqual(command_state_t.Executable,resource_state(recording).command_state);
+    try std.testing.expectEqual(@as(u32,0),resource_state(graph.image).inflight_count);
 }
