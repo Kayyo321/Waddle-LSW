@@ -7931,22 +7931,18 @@ fn copy_image(command_buffer: c.VkCommandBuffer, source: c.VkImage, source_layou
         context.state.command_state = .Invalid;
         return;
     }
-    for (regions[0..count]) |region| {
-        const first = image_geometry.region(image_geometry_metadata(src.state), @bitCast(region.srcSubresource), @bitCast(region.srcOffset), @bitCast(region.extent)) catch {
+    var normalized: [64]c.VkImageCopy = undefined;
+    const parent = device_by_id(context.parent_id) orelse { context.state.command_state = .Invalid; return; };
+    const maintenance5 = device_feature(parent, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, 0);
+    for (regions[0..count], 0..) |region, index| {
+        const validated = image_geometry.copy_region(image_geometry_metadata(src.state), image_geometry_metadata(dst.state), @bitCast(region), maintenance5) catch {
             context.state.command_state = .Invalid;
             return;
         };
-        const second = image_geometry.region(image_geometry_metadata(dst.state), @bitCast(region.dstSubresource), @bitCast(region.dstOffset), @bitCast(region.extent)) catch {
-            context.state.command_state = .Invalid;
-            return;
-        };
-        if (first.bytes != second.bytes or first.width != second.width or first.height != second.height or (region.srcSubresource.aspectMask != 1 and src.state.image_format != dst.state.image_format)) {
-            context.state.command_state = .Invalid;
-            return;
-        }
+        normalized[index] = @bitCast(validated.native);
     }
     if (src.record.id == dst.record.id) {
-        for (regions[0..count]) |first| for (regions[0..count]) |second| if (copy_regions_overlap(first, second)) {
+        for (normalized[0..count]) |first| for (normalized[0..count]) |second| if (copy_regions_overlap(first, second)) {
             context.state.command_state = .Invalid;
             return;
         };
@@ -7954,7 +7950,7 @@ fn copy_image(command_buffer: c.VkCommandBuffer, source: c.VkImage, source_layou
         context.state.command_state = .Invalid;
         return;
     }
-    const writer = image_transfer.copy_image(context.record.id, src.record.id, source_layout, dst.record.id, target_layout, @ptrCast(regions[0..count])) catch {
+    const writer = image_transfer.copy_image_validated(context.record.id, src.record.id, source_layout, dst.record.id, target_layout, @ptrCast(normalized[0..count])) catch {
         context.state.command_state = .Invalid;
         return;
     };
@@ -13745,4 +13741,77 @@ test "command reset preserves healthy OOM and locally resets after reset reply d
         try std.testing.expectEqual(@as(usize,3),objects.live_count);
         try std.testing.expectEqual(@as(c_int,if(status==c.VK_ERROR_DEVICE_LOST)c.RingClosed else c.RingOk),lost);
     };
+}
+
+const rendering_attachment_graph_t=struct {
+    device:*c.venus_object_t,pool:*c.venus_object_t,recording:*c.venus_object_t,
+    image:*c.venus_object_t,memory:*c.venus_object_t,view:*c.venus_object_t,
+    resolve_image:*c.venus_object_t,resolve_memory:*c.venus_object_t,resolve_view:*c.venus_object_t,
+    fn init() !@This() {
+        const device=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const pool=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL,device.id,0);
+        const recording=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER,pool.id,1);
+        const allocation=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY,device.id,0);
+        const image=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE,device.id,0);
+        const view=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE_VIEW,device.id,0);
+        const resolve_memory=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY,device.id,0);
+        const resolve_image=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE,device.id,0);
+        const resolve_view=try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE_VIEW,device.id,0);
+        device_caches[0]=.{.handle=device.handle,.graphics_queue_ready=true,.graphics_queue_count=1};
+        device_caches[0].graphics_queue_flags[0]=c.VK_QUEUE_GRAPHICS_BIT;
+        resource_state(recording).* = .{.id=recording.id,.command_state=.Recording,.command_profile_index=try profiles.reserve_slot(&command_registry.commands,compute_state.command_profile_t{})};
+        for([_]*c.venus_object_t{image,resolve_image},[_]*c.venus_object_t{allocation,resolve_memory}) |target,backing| resource_state(target).* = .{.id=target.id,.bound_memory=backing.handle,.image_usage=c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|3,.image_type=c.VK_IMAGE_TYPE_2D,.image_extent=.{16,16,1},.image_levels=2,.image_layers=4,.image_format=c.VK_FORMAT_R8G8B8A8_UNORM,.image_samples=1};
+        resource_state(image).image_samples=4;resource_state(image).image_levels=1;
+        for([_]*c.venus_object_t{view,resolve_view},[_]*c.venus_object_t{image,resolve_image}) |target,backing| resource_state(target).* = .{.id=target.id,.view_image=backing.handle,.view_type=c.VK_IMAGE_VIEW_TYPE_2D_ARRAY,.view_range=.{.aspectMask=1,.levelCount=1,.layerCount=4},.image_format=c.VK_FORMAT_R8G8B8A8_UNORM,.image_usage=c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
+        return .{.device=device,.pool=pool,.recording=recording,.image=image,.memory=allocation,.view=view,.resolve_image=resolve_image,.resolve_memory=resolve_memory,.resolve_view=resolve_view};
+    }
+    fn attachment(graph:*const @This()) c.VkRenderingAttachmentInfo {
+        return .{.sType=c.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,.imageView=@ptrFromInt(graph.view.handle),.imageLayout=c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,.resolveImageView=@ptrFromInt(graph.resolve_view.handle),.resolveImageLayout=c.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,.resolveMode=c.VK_RESOLVE_MODE_AVERAGE_BIT,.loadOp=c.VK_ATTACHMENT_LOAD_OP_CLEAR,.storeOp=c.VK_ATTACHMENT_STORE_OP_STORE};
+    }
+};
+
+test "normalized image copies retain actual block and slice owners only after native ACK" {
+    for (0..6) |case| for (0..3) |mode| {
+        var fixture=image_ownership_fixture_t{.mode=@intCast(mode)};
+        try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture)); defer venus_icd_abandon();
+        const graph=try rendering_attachment_graph_t.init();
+        const first=resource_state(graph.image); const second=resource_state(graph.resolve_image);
+        first.image_samples=1;first.image_levels=1;second.image_levels=1;
+        first.requirements.size=256;second.requirements.size=256;
+        var region=c.VkImageCopy{.srcSubresource=.{.aspectMask=1,.layerCount=1},.dstSubresource=.{.aspectMask=1,.layerCount=1},.extent=.{.width=7,.height=3,.depth=1}};
+        switch(case) {
+            0=>{first.image_format=167;first.image_extent=.{7,3,1};second.image_format=113;second.image_extent=.{1,1,1};},
+            1=>{second.image_format=167;second.image_extent=.{7,3,1};first.image_format=113;first.image_extent=.{1,1,1};region.extent=.{.width=1,.height=1,.depth=1};},
+            2,3,4,5=>{
+                const volume=if(case==2 or case==4) first else second;
+                const array=if(case==2 or case==4) second else first;
+                volume.image_type=c.VK_IMAGE_TYPE_3D;volume.image_extent=.{8,8,4};volume.image_layers=1;
+                array.image_extent=.{8,8,1};array.image_layers=4;
+                region.extent=.{.width=8,.height=8,.depth=3};
+                if(case==2 or case==4) {region.srcOffset.z=1;region.dstSubresource.layerCount=3;} else {region.dstOffset.z=1;region.srcSubresource.layerCount=3;}
+                if(case>=4) {
+                    region.srcSubresource.layerCount=c.VK_REMAINING_ARRAY_LAYERS;region.dstSubresource.layerCount=c.VK_REMAINING_ARRAY_LAYERS;
+                    const enabled=&device_caches[0].enabled_state.features;
+                    enabled.count=1;enabled.nodes[0].type_tag=c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR;enabled.nodes[0].flag_count=1;enabled.nodes[0].flags[0]=1;
+                }
+            },
+            else=>unreachable,
+        }
+        copy_image(@ptrFromInt(graph.recording.handle),@ptrFromInt(graph.image.handle),c.VK_IMAGE_LAYOUT_GENERAL,@ptrFromInt(graph.resolve_image.handle),c.VK_IMAGE_LAYOUT_GENERAL,1,&region);
+        try std.testing.expectEqual(@as(usize,1),fixture.submissions);
+        for([_]*c.venus_object_t{graph.image,graph.resolve_image,graph.memory,graph.resolve_memory}) |entry| try std.testing.expectEqual(mode==0,image_ownership_fixture_t.retained(graph.recording,entry));
+        try std.testing.expectEqual(mode==0,lost==c.RingOk);
+        try std.testing.expectEqual(@as(usize,9),objects.live_count);
+        if(case>=4) try std.testing.expectEqual(@as(u32,c.VK_REMAINING_ARRAY_LAYERS),region.srcSubresource.layerCount);
+    };
+}
+test "remaining copy layers require enabled feature before any native command publication" {
+    var fixture=image_ownership_fixture_t{};
+    try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture)); defer venus_icd_abandon();
+    const graph=try rendering_attachment_graph_t.init();resource_state(graph.image).image_samples=1;
+    const region=c.VkImageCopy{.srcSubresource=.{.aspectMask=1,.layerCount=c.VK_REMAINING_ARRAY_LAYERS},.dstSubresource=.{.aspectMask=1,.layerCount=c.VK_REMAINING_ARRAY_LAYERS},.extent=.{.width=8,.height=8,.depth=1}};
+    copy_image(@ptrFromInt(graph.recording.handle),@ptrFromInt(graph.image.handle),c.VK_IMAGE_LAYOUT_GENERAL,@ptrFromInt(graph.resolve_image.handle),c.VK_IMAGE_LAYOUT_GENERAL,1,&region);
+    try std.testing.expectEqual(@as(usize,0),fixture.submissions);
+    try std.testing.expectEqual(command_state_t.Invalid,resource_state(graph.recording).command_state);
+    try std.testing.expectEqual([_]u64{0} ** 8,resource_state(graph.recording).buffer_references);
 }
