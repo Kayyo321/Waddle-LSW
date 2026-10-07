@@ -207,6 +207,7 @@ include scripts/vgpu.mk
 include scripts/vgpu_features.mk
 include scripts/vgpu_device_wire.mk
 include scripts/vgpu_device_native.mk
+include scripts/vgpu_extensions_wire.mk
 include scripts/vgpu_dxvk.mk
 include scripts/vgpu_workloads.mk
 
