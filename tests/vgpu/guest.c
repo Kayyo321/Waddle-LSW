@@ -8,9 +8,11 @@ static venus_session_t session;
 static int calls, frees, fault_step, bad_shape, bad_version;
 static uint32_t wire_status, expected_timeout;
 static venus_ring_status_t exchange_status;
+static uint64_t expected_deadline;
+static unsigned absolute_calls, legacy_calls;
 static unsigned char profile[160] = {[0] = 1,  [4] = 0x33, [5] = 0x41, [6] = 0x40, [8] = 1,
                                      [12] = 3, [16] = 1,   [20] = 1,   [68] = 3,   [152] = 1};
-venus_ring_status_t venus_rpc_exchange(venus_rpc_t *record, const venus_request_t *request,
+static venus_ring_status_t fixture_exchange(venus_rpc_t *record, const venus_request_t *request,
                                        const void *input, size_t length, venus_request_t *response,
                                        void *output, size_t capacity, uint32_t timeout) {
     assert(record == &rpc && timeout == expected_timeout);
@@ -32,12 +34,34 @@ venus_ring_status_t venus_rpc_exchange(venus_rpc_t *record, const venus_request_
         if (!response->status)
             rpc.negotiated = 1;
     } else {
-        assert(request->kind == RequestSubmit);
-        assert(length == 8 && capacity == 4);
+        assert(request->kind == RequestSubmit || request->kind == RequestReply);
+        if (request->kind == RequestSubmit)
+            assert(length == 8 && capacity == 4);
+        else {
+            assert(!input && !length && capacity == 4 && request->argument_one == 4);
+            response->kind = RequestReply;
+            response->direction = 1;
+            response->sequence = 1;
+            response->argument_zero = 0;
+            response->payload_bytes = response->status == RequestSuccess ? 4 : 0;
+        }
         if (!response->status)
             memset(output, 0xa5, capacity);
     }
     return RingOk;
+}
+venus_ring_status_t venus_rpc_exchange(venus_rpc_t *record, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity,
+    uint32_t timeout) {
+    legacy_calls++;
+    return fixture_exchange(record, request, input, length, response, output, capacity, timeout);
+}
+venus_ring_status_t venus_rpc_exchange_until(venus_rpc_t *record, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity,
+    uint64_t deadline, uint32_t timeout) {
+    assert(deadline == expected_deadline && deadline);
+    absolute_calls++;
+    return fixture_exchange(record, request, input, length, response, output, capacity, timeout);
 }
 void venus_rpc_free(venus_rpc_t *record) {
     assert(record == &rpc);
@@ -49,6 +73,7 @@ static void reset(void) {
     expected_timeout = 100;
     wire_status = RequestSuccess;
     exchange_status = RingOk;
+    expected_deadline = absolute_calls = legacy_calls = 0;
     session = (venus_session_t){.role = SessionGuest, .state = SessionReady};
     channel = (venus_channel_t){.session = &session};
     rpc = (venus_rpc_t){.channel = &channel, .next_sequence = 1};
@@ -164,9 +189,97 @@ static void test_exchange_timeout(void) {
         venus_guest_free(&guest);
     }
 }
+static void test_exchange_until(void) {
+    const venus_ring_status_t Statuses[] = {RingOk, RingAgain, RingInvalid, RingCorrupt,
+                                          RingClosed, RingCancelled, RingTimeout, RingLimit};
+    venus_request_t request = {.kind = RequestReply, .argument_one = 4}, response;
+    unsigned char output[4];
+    const venus_request_t Empty = {0};
+    venus_guest_t guest = {0};
+    reset();
+    assert(venus_guest_exchange_until(NULL, &request, NULL, 0, NULL, output, 4, 1) == RingInvalid);
+    assert(venus_guest_exchange_until(NULL, &request, NULL, 0, &response, output, 4, 1) == RingInvalid);
+    assert(venus_guest_exchange_until(&guest, &request, NULL, 0, &response, output, 4, 1) == RingInvalid);
+    assert(!calls && !absolute_calls && !frees);
+    assert(venus_guest_init(&guest, &rpc, 100) == RingOk);
+    for (unsigned mode = 0; mode < 4; mode++) {
+        venus_request_t offered = request;
+        if (mode == 2) offered.kind = RequestCapabilities;
+        if (mode == 3) offered.kind = RequestNegotiate;
+        memset(&response, 0xa5, sizeof(response));
+        memset(output, 0x57, sizeof(output));
+        unsigned char saved[sizeof(guest)];
+        memcpy(saved, &guest, sizeof(guest));
+        assert(venus_guest_exchange_until(&guest, mode == 1 ? NULL : &offered, NULL, 0,
+            &response, output, 4, mode == 0 ? 0 : UINT64_MAX) == RingInvalid);
+        assert(!memcmp(&response, &Empty, sizeof(response)));
+        assert(!memcmp(saved, &guest, sizeof(guest)));
+        assert(calls == 2 && legacy_calls == 2 && !absolute_calls && !frees);
+        assert(output[0] == 0x57 && output[3] == 0x57);
+    }
+    venus_guest_free(&guest);
+    const uint32_t Caps[] = {1, 60000};
+    for (size_t index = 0; index < sizeof(Caps) / sizeof(Caps[0]); index++) {
+        reset();
+        expected_timeout = Caps[index];
+        assert(venus_guest_init(&guest, &rpc, Caps[index]) == RingOk);
+        expected_deadline = UINT64_MAX;
+        assert(venus_guest_exchange_until(&guest, &request, NULL, 0, &response,
+                                         output, 4, expected_deadline) == RingOk);
+        assert(absolute_calls == 1 && legacy_calls == 2 && calls == 3);
+        assert(guest.timeout_ms == Caps[index] && guest.lost == RingOk && !frees);
+        assert(response.payload_bytes == 4 && output[0] == 0xa5 && output[3] == 0xa5);
+        venus_guest_free(&guest);
+    }
+    for (unsigned status = 0; status < 8; status++) {
+        for (unsigned transport = 0; transport < 2; transport++) {
+            reset();
+            assert(venus_guest_init(&guest, &rpc, 100) == RingOk);
+            expected_deadline = UINT64_MAX;
+            fault_step = 3;
+            if (transport) exchange_status = Statuses[status];
+            else wire_status = status;
+            memset(output, 0x57, sizeof(output));
+            assert(venus_guest_exchange_until(&guest, &request, NULL, 0, &response,
+                                             output, 4, expected_deadline) == Statuses[status]);
+            assert(absolute_calls == 1 && legacy_calls == 2 && calls == 3);
+            assert(guest.timeout_ms == 100);
+            int terminal = status >= 3 && status <= 6;
+            assert(frees == terminal);
+            if (transport && status)
+                assert(!memcmp(&response, &Empty, sizeof(response)));
+            else
+                assert(response.status == status && response.kind == RequestReply);
+            assert(output[0] == (status ? 0x57 : 0xa5));
+            if (terminal) {
+                assert(guest.lost == Statuses[status]);
+                assert(venus_guest_exchange_until(&guest, &request, NULL, 0, &response,
+                                                  output, 4, 0) == Statuses[status]);
+                assert(!memcmp(&response, &Empty, sizeof(response)));
+                assert(absolute_calls == 1 && legacy_calls == 2 && calls == 3 && frees == 1);
+            } else
+                assert(guest.lost == RingOk);
+            venus_guest_free(&guest);
+        }
+    }
+    reset();
+    assert(venus_guest_init(&guest, &rpc, 100) == RingOk);
+    expected_deadline = 1; /* Already expired at any valid nonzero RPC clock. */
+    fault_step = 3;
+    exchange_status = RingTimeout;
+    memset(output, 0x57, sizeof(output));
+    assert(venus_guest_exchange_until(&guest, &request, NULL, 0, &response,
+                                     output, 4, 1) == RingTimeout);
+    assert(absolute_calls == 1 && legacy_calls == 2 && frees == 1);
+    assert(guest.timeout_ms == 100 && output[0] == 0x57 && output[3] == 0x57);
+    assert(!memcmp(&response, &Empty, sizeof(response)));
+    venus_guest_free(&guest);
+}
+
 int main(void) {
     test_init();
     test_exchange_timeout();
+    test_exchange_until();
     const venus_ring_status_t Statuses[] = {RingOk,     RingAgain,     RingInvalid, RingCorrupt,
                                             RingClosed, RingCancelled, RingTimeout, RingLimit};
     venus_request_t request = {.kind = RequestSubmit, .payload_bytes = 8}, response;

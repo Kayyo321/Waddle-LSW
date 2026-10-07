@@ -58,6 +58,29 @@ venus_ring_status_t venus_guest_exchange(venus_guest_t *guest, const venus_reque
 venus_ring_status_t venus_guest_exchange_timeout(venus_guest_t *guest, const venus_request_t *request,
     const void *input, size_t length, venus_request_t *response, void *output, size_t capacity,
     uint32_t timeout_ms);
+/** @brief Exchange under one caller absolute deadline and the configured cap.
+ * @param[in,out] guest Nonnull live caller-owned sole-submission-thread frontend;
+ * configured timeout remains immutable, borrowed RPC/storage outlive this call.
+ * @param[in] request Nonnull immutable sequence-zero request, excluding discovery/negotiation.
+ * @param[in] input Nullable only for length zero; borrowed private input[length].
+ * @param[in] length Exact payload extent, bounded by RPC scratch.
+ * @param[out] response Nonnull disjoint private record, zeroed before exchange;
+ * a validated acknowledged terminal wire result is retained.
+ * @param[out] output Nullable when no payload is expected; otherwise private
+ * output[capacity], unchanged on transport/local failure. Input/output may alias
+ * each other, never scratch/records/mapping; no pointer or payload retention.
+ * @param[in] capacity Actual accessible output extent, enough for expected reply.
+ * @param[in] deadline_ms Nonzero local absolute venus_channel_time_ms timestamp.
+ * @return Existing guest/RPC statuses. Basic arguments precede sticky loss,
+ * which precedes zero-deadline/forbidden-kind validation. RPC validates remaining
+ * payload shape, selects the immutable cap and checks time before publication.
+ * @note No allocation or guest-side clock sampling/relative-budget reset.
+ * Terminal results close RPC once and stay sticky until free/new session; this
+ * does not prove host cancellation or receiver retirement. Sole owner thread.
+ */
+venus_ring_status_t venus_guest_exchange_until(venus_guest_t *guest, const venus_request_t *request,
+    const void *input, size_t length, venus_request_t *response, void *output, size_t capacity,
+    uint64_t deadline_ms);
 /** @brief Close borrowed RPC and reset local frontend without freeing its storage.
  * @param[in,out] guest Nullable zero/live frontend, sole thread after calls stop.
  * @note Idempotent, no allocation; caller releases channel/stream/mapping afterward.
