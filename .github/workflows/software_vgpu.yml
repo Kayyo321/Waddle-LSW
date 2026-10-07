@@ -351,13 +351,13 @@ jobs:
         run: |
           zig build-lib src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -o build/vgpu_icd_test.exe
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -o build/vgpu_icd_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_icd_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig build-obj src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.obj'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -shared src/vgpu/venus_icd.def build/venus_icd_windows.obj build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib -o build/waddle_vulkan_experimental.dll
+          zig cc -target x86_64-windows-gnu -shared src/vgpu/venus_icd.def build/venus_icd_windows.obj build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib -o build/waddle_vulkan_experimental.dll
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd_dll.c -o build/vgpu_icd_dll_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -401,7 +401,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -c 'import json,pathlib; pathlib.Path("build/waddle_vulkan_experimental_windows.json").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("build/waddle_vulkan_experimental.dll").resolve()),"api_version":"1.0.0"}},indent=2)+"\n")'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -ladvapi32 -o build/vgpu_icd_loader_test.exe
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj -ladvapi32 -o build/vgpu_icd_loader_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:WADDLE_TEST_VULKAN_LOADER = (Resolve-Path build/vendor/vulkan_loader_windows/loader/Release/vulkan-1.dll).Path
           ./build/vgpu_icd_loader_test.exe
