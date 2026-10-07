@@ -12,3 +12,8 @@ IcdOwnedSafetySources = src/vgpu/venus_icd.zig src/vgpu/venus_descriptor_wire.zi
 # be accounted for and the entire LLVM module must pass exact reverse proof.
 vgpu-icd-owned-sanitizers: scripts/icd_owned_sanitizers.py $(IcdOwnedSafetySources) $(VgpuIcdHeaders) $(IcdOwnedSafetyObjects) $(IcdOwnedSafetyOracles)
 	python3 scripts/icd_owned_sanitizers.py src/vgpu/venus_icd.zig build/icd_closure_safety
+
+# Separately linked codec access instrumentation; private native/allocator suites.
+.PHONY: vgpu-capabilities-owned-sanitizers
+vgpu-capabilities-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py src/vgpu/venus_capabilities.zig tests/vgpu/capabilities.c include/waddle/venus_capabilities.h include/waddle/venus_ring.h
+	python3 scripts/icd_dependency_sanitizers.py capabilities build/icd_dependency_safety/capabilities
