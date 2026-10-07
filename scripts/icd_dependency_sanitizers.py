@@ -55,6 +55,13 @@ ModuleConfigs = {
                      '-Isubmodules/venus_protocol/include'],
         'oracle_macro': 'VgpuQueryOracle',
     },
+    'values': {
+        'boundary': None,
+        'includes': ['-Itests/vgpu/encoder', '-Ibuild/venus_renderer_protocol',
+                     '-Iinclude', '-Isubmodules/venus_protocol/include',
+                     '-Isubmodules/venus_protocol/include/vulkan'],
+        'oracle_macro': 'VgpuValuesOracle',
+    },
 }
 
 
