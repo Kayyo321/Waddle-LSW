@@ -3414,10 +3414,14 @@ static void image_readback_contract(VkDevice device, PFN_vkGetDeviceProcAddr loo
             region.bufferOffset = 1;
         if (scenario == 9)
             region.bufferOffset = 16384;
-        if (scenario == 10)
-            region.bufferRowLength = 64;
-        if (scenario == 11)
-            region.bufferImageHeight = 64;
+        if (scenario == 10) {
+            region.bufferRowLength = 1;
+            region.imageExtent.width = 2;
+        }
+        if (scenario == 11) {
+            region.bufferImageHeight = 1;
+            region.imageExtent.height = 2;
+        }
         if (scenario == 12)
             region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         if (scenario == 13)

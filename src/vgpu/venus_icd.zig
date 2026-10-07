@@ -9,6 +9,11 @@ const properties_wire = @import("venus_properties_wire.zig");
 const extensions_wire = @import("venus_extensions_wire.zig");
 const wsi = @import("venus_wsi.zig");
 const extra_wire = @import("venus_extra_objects_wire.zig");
+const mixed_wire = @import("venus_sampler_descriptor_wire.zig");
+const dynamic_graphics = @import("venus_graphics_dynamic_wire.zig");
+const image_transfer = @import("venus_image_transfer_wire.zig");
+const image_geometry = @import("venus_image_transfer_native.zig");
+const transfer2 = @import("venus_transfer2_native.zig");
 const sampler_descriptors = @import("venus_sampler_descriptor_wire.zig");
 const shader_wire = @import("venus_shader_wire.zig");
 const general_graphics = @import("venus_graphics_general_wire.zig");
@@ -183,6 +188,10 @@ const resource_state_t = struct {
     profile_index: u8 = 0,
     pipeline_bind_point: u32 = 0,
     command_profile_index: u8 = 0,
+    index_buffer: u64 = 0,
+    index_offset: u64 = 0,
+    index_size: u64 = 0,
+    index_type: u32 = 0,
     descriptor_max_sets: u32 = 0,
     descriptor_live_sets: u32 = 0,
     descriptor_capacity: [11]u32 = [_]u32{0} ** 11,
@@ -215,6 +224,7 @@ const resource_state_t = struct {
     image_format: u32 = 0,
     image_type: u32 = 0,
     image_usage: u32 = 0,
+    image_tiling: u32 = 0,
     view_image: u64 = 0,
     buffer_references: [8]u64 = [_]u64{0} ** 8,
     queue_family: u32 = 0,
@@ -2096,6 +2106,7 @@ fn create_image(device: c.VkDevice, info: [*c]const c.VkImageCreateInfo, allocat
     state.image_format = info.*.format;
     state.image_type = info.*.imageType;
     state.image_usage = info.*.usage;
+    state.image_tiling = info.*.tiling;
     output.* = @ptrFromInt(handle);
     return c.VK_SUCCESS;
 }
@@ -2342,32 +2353,7 @@ fn destroy_shader_module(device: c.VkDevice, shader: c.VkShaderModule, allocator
 /// Create copied descriptor-layout metadata. [in] nullable device/info/callbacks borrowed.
 /// [out] output nonnull token storage, NULL on error. Returns native/local invalid/OOM/loss.
 /// Mutex serialized; fixed slot owns snapshot until exact native retirement or receiver abandon.
-fn create_descriptor_layout(device: c.VkDevice, info: [*c]const c.VkDescriptorSetLayoutCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorSetLayout) callconv(.C) c_int {
-    _ = allocator;
-    lock_icd();
-    defer unlock_icd();
-    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    output.* = null;
-    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var writer = render_wire.create_descriptor_layout(@ptrCast(info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
-    var bindings: [profiles.MaxBindings]profiles.binding_t = undefined;
-    if (info.*.bindingCount != 0) for (info.*.pBindings[0..info.*.bindingCount], 0..) |binding, index| {
-        bindings[index] = .{ .binding = binding.binding, .descriptor_type = binding.descriptorType, .descriptor_count = binding.descriptorCount, .stage_flags = binding.stageFlags };
-    };
-    const profile = profiles.normalize_bindings(bindings[0..info.*.bindingCount]) catch return c.VK_ERROR_INITIALIZATION_FAILED;
-    const index = profiles.reserve_slot(&profile_registry.descriptor_layouts, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    var handle: u64 = 0;
-    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, &writer, &handle);
-    if (result != c.VK_SUCCESS) {
-        if (lost == c.RingOk) std.debug.assert(profiles.release_slot(&profile_registry.descriptor_layouts, index));
-        return result;
-    }
-    resource_state(child_object(handle, c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, parent.id).?).profile_index = index;
-    output.* = @ptrFromInt(handle);
-    return c.VK_SUCCESS;
-}
+
 /// Destroy descriptor layout token; copied dependent definitions impose no retention.
 /// [in] nullable borrowed tokens/callbacks. Void; invalid/pending ignored, no allocations.
 /// Mutex serialized; fixed snapshot released only after exact native acknowledgment.
@@ -2438,65 +2424,7 @@ fn destroy_pipeline_layout(device: c.VkDevice, layout: c.VkPipelineLayout, alloc
 /// Create fixed-quota pool metadata. [in] nullable borrowed device/info/callbacks.
 /// [out] output nonnull, NULL on failure. Returns native/local invalid/OOM/loss.
 /// Mutex serialized; owns native identity and quotas until destruction or retired abandon.
-fn create_descriptor_pool(device: c.VkDevice, info: [*c]const c.VkDescriptorPoolCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorPool) callconv(.C) c_int {
-    _ = allocator;
-    lock_icd();
-    defer unlock_icd();
-    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    output.* = null;
-    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    var writer = descriptor_wire.create_pool(@ptrCast(info), parent.id, 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
-    var handle: u64 = 0;
-    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, &writer, &handle);
-    if (result != c.VK_SUCCESS) return result;
-    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id).?);
-    state.pool_flags = info.*.flags;
-    state.descriptor_max_sets = info.*.maxSets;
-    if (info.*.poolSizeCount != 0) for (info.*.pPoolSizes[0..info.*.poolSizeCount]) |size| {
-        state.descriptor_capacity[size.type] += size.descriptorCount;
-    };
-    output.* = @ptrFromInt(handle);
-    return c.VK_SUCCESS;
-}
-fn descriptor_pool_for(record: *const c.venus_object_t) ?*c.venus_object_t {
-    for (&slots) |*slot| if (slot.id != 0 and slot.id == record.parent_id and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_POOL) return slot;
-    return null;
-}
-fn descriptor_set_for(handle: c.VkDescriptorSet, device_id: u64) ?*c.venus_object_t {
-    var found: [*c]c.venus_object_t = null;
-    if (c.venus_objects_lookup(&objects, if (handle) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, 0, &found) != c.RingOk) return null;
-    const record: *c.venus_object_t = @ptrCast(found);
-    const pool = descriptor_pool_for(record) orelse return null;
-    return if (pool.parent_id == device_id) record else null;
-}
-fn descriptor_set_idle(record: *const c.venus_object_t) bool {
-    return resource_state(record).inflight_count == 0;
-}
-fn retire_descriptor_set(record: *c.venus_object_t, pool: *c.venus_object_t) void {
-    const state = resource_state(record);
-    const profile = profiles.get_profile(&profile_registry.sets, state.profile_index).?;
-    const owner = resource_state(pool);
-    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| owner.descriptor_used[binding.descriptor_type] -= binding.descriptor_count;
-    owner.descriptor_live_sets -= 1;
-    const index = resource_index(record);
-    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
-    for (&resource_states) |*command_state| if (command_state.buffer_references[index / 64] & bit != 0) {
-        command_state.command_state = .Invalid;
-        command_state.buffer_references = [_]u64{0} ** 8;
-    };
-    std.debug.assert(profiles.release_slot(&profile_registry.sets, state.profile_index));
-    state.* = .{};
-    std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, 0) == c.RingOk);
-}
-fn descriptor_pool_idle(pool: *const c.venus_object_t) bool {
-    for (&slots) |*child| if (child.id != 0 and child.parent_id == pool.id and !descriptor_set_idle(child)) return false;
-    return true;
-}
-fn retire_pool_sets(pool: *c.venus_object_t) void {
-    for (&slots) |*child| if (child.id != 0 and child.parent_id == pool.id) retire_descriptor_set(child, pool);
-}
+
 /// Reset pool and all sets only after exact native success. [in] nullable borrowed private tokens.
 /// flags must0. Returns native/local invalid/loss; pending sets prohibit reset.
 /// Mutex serialized, allocation-free; successful retirement scrubs profiles and refunds all quotas.
@@ -2563,63 +2491,7 @@ fn rollback_descriptor_sets(records: []const *c.venus_object_t) void {
 /// [in] nonnull borrowed device/info; native accessible arrays1..64, no chain.
 /// [out] output nonnull handles[count], cleared for bounded failures; count>64 preserves storage.
 /// Returns native/local invalid/OOM/loss. Mutex serialized, allocation-free; uncertain IDs retained until abandon.
-fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSetAllocateInfo, output: [*c]c.VkDescriptorSet) callconv(.C) c_int {
-    lock_icd();
-    defer unlock_icd();
-    defer @memset(&descriptor_allocation_snapshots, .{});
-    if (info == null or output == null or info.*.descriptorSetCount == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const count = info.*.descriptorSetCount;
-    if (count > 64) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    @memset(output[0..count], null);
-    if (device == null or info.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO or info.*.pNext != null or info.*.descriptorPool == null or info.*.pSetLayouts == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    const pool = child_object(@intFromPtr(info.*.descriptorPool.?), c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
-    const owner = resource_state(pool);
-    if (count > owner.descriptor_max_sets - owner.descriptor_live_sets) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    var layouts: [64]u64 = undefined;
-    const snapshots = &descriptor_allocation_snapshots;
-    var needed = [_]u32{0} ** 11;
-    for (info.*.pSetLayouts[0..count], 0..) |handle, index| {
-        if (handle == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-        const layout = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
-        const profile = profiles.get_profile(&profile_registry.descriptor_layouts, resource_state(layout).profile_index).?;
-        snapshots[index] = profiles.create_set_profile(profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-        layouts[index] = layout.id;
-        for (profile.bindings[0..profile.binding_count]) |binding| needed[binding.descriptor_type] += binding.descriptor_count;
-    }
-    for (needed, 0..) |value, kind| if (value > owner.descriptor_capacity[kind] - owner.descriptor_used[kind]) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    var records: [64]*c.venus_object_t = undefined;
-    var ids: [64]u64 = undefined;
-    var reserved: usize = 0;
-    while (reserved < count) : (reserved += 1) {
-        const index = profiles.reserve_slot(&profile_registry.sets, snapshots[reserved]) catch {
-            rollback_descriptor_sets(records[0..reserved]);
-            return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-        };
-        var record: [*c]c.venus_object_t = null;
-        if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.id, 0, &record) != c.RingOk) {
-            std.debug.assert(profiles.release_slot(&profile_registry.sets, index));
-            rollback_descriptor_sets(records[0..reserved]);
-            return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-        }
-        resource_state(record).* = .{ .id = record.*.id, .profile_index = index };
-        records[reserved] = record;
-        ids[reserved] = record.*.id;
-    }
-    var writer = descriptor_wire.allocate_sets(@ptrCast(info), layouts[0..count], parent.id, pool.id, ids[0..count]) catch unreachable;
-    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
-    const result = descriptor_sets_reply(reply, ids[0..count]) catch return failure(c.RingCorrupt);
-    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
-    if (result != c.VK_SUCCESS) {
-        rollback_descriptor_sets(records[0..count]);
-        return result;
-    }
-    owner.descriptor_live_sets += count;
-    for (needed, 0..) |value, kind| owner.descriptor_used[kind] += value;
-    for (records[0..count], 0..) |record, index| output[index] = @ptrFromInt(record.handle);
-    return c.VK_SUCCESS;
-}
+
 /// Free a whole validated pool-owned batch after native success. [in] borrowed nullable tokens/array.
 /// count0 is a no-op;1..64 requires accessible nonnull immutable sets and FREE_SET pool flag.
 /// Returns native/local invalid/loss. Mutex serialized; duplicates/foreign/pending reject before native work.
@@ -3365,7 +3237,8 @@ fn command_pool_for(record: *const c.venus_object_t) ?*c.venus_object_t {
     return null;
 }
 // Successful reset retains the live command reservation, only scrubbing its binding definitions.
-fn reset_command_profile(state: *const resource_state_t) void {
+fn reset_command_profile(state: *resource_state_t) void {
+    state.index_buffer = 0; state.index_offset = 0; state.index_size = 0; state.index_type = 0;
     if (state.command_profile_index != 0) {
         profiles.get_profile(&command_registry.commands, state.command_profile_index).?.* = .{};
         graphics_state.reset(&graphics_recordings[state.command_profile_index - 1]);
@@ -3802,76 +3675,7 @@ fn draw(command_buffer: c.VkCommandBuffer, vertex_count: u32, instance_count: u3
 /// regions accessible count1..64 records for this call, no retention. Layout GENERAL/TRANSFER_SRC.
 /// Void; rejects inside pass, usages/sample/format/ranges before native work. Exact opcode116 ack
 /// retains image/buffer and both memories until GPU retirement. Mutex serialized, allocation-free.
-fn copy_image_to_buffer(command_buffer: c.VkCommandBuffer, image: c.VkImage, layout: u32, buffer: c.VkBuffer, count: u32, regions: [*c]const c.VkBufferImageCopy) callconv(.C) void {
-    lock_icd();
-    defer unlock_icd();
-    if (lost != c.RingOk or command_buffer == null) return;
-    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
-    const state = resource_state(record);
-    if (state.command_state != .Recording) return;
-    const pool = command_pool_for(record) orelse return;
-    if (graphics_recording(state).active_format != 0 or image == null or buffer == null or count == 0 or count > 64 or regions == null) {
-        state.command_state = .Invalid;
-        return;
-    }
-    const image_record = child_object(@intFromPtr(image.?), c.VK_OBJECT_TYPE_IMAGE, pool.parent_id) orelse {
-        state.command_state = .Invalid;
-        return;
-    };
-    const buffer_record = child_object(@intFromPtr(buffer.?), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) orelse {
-        state.command_state = .Invalid;
-        return;
-    };
-    const image_state = resource_state(image_record);
-    const buffer_state = resource_state(buffer_record);
-    if (image_state.image_type != c.VK_IMAGE_TYPE_2D or image_state.image_samples != 1 or
-        (image_state.image_format != 37 and image_state.image_format != 43 and
-        image_state.image_format != 44 and image_state.image_format != 50) or
-        image_state.image_usage & c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT == 0 or
-        buffer_state.buffer_usage & c.VK_BUFFER_USAGE_TRANSFER_DST_BIT == 0) {
-        state.command_state = .Invalid;
-        return;
-    }
-    const image_memory = child_object(image_state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
-        state.command_state = .Invalid;
-        return;
-    };
-    const buffer_memory = child_object(buffer_state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
-        state.command_state = .Invalid;
-        return;
-    };
-    const writer = graphics_command_wire.copy_image_to_buffer(record.id, image_record.id, buffer_record.id, layout,
-        image_state.image_extent[0], image_state.image_extent[1], buffer_state.buffer_size,
-        @ptrCast(regions[0..count])) catch {
-        state.command_state = .Invalid;
-        return;
-    };
-    if (image_state.bound_memory == buffer_state.bound_memory) {
-        const source_start = image_state.memory_offset;
-        const source_end = source_start + image_state.requirements.size;
-        for (regions[0..count]) |region| {
-            const destination_start = buffer_state.memory_offset + region.bufferOffset;
-            const byte_count = @as(u64, region.imageExtent.width) * region.imageExtent.height * 4;
-            const destination_end = destination_start + byte_count;
-            if (destination_start < source_end and source_start < destination_end) {
-                state.command_state = .Invalid;
-                return;
-            }
-        }
-    }
-    if (!command_acknowledged(&writer, 116)) return;
-    for ([_]*c.venus_object_t{ image_record, buffer_record, image_memory, buffer_memory }) |target| command_reference(state, target);
-}
 
-fn outside_render_pass(state: *resource_state_t) bool {
-    if (state.command_profile_index == 0 or graphics_recording(state).active_format == 0) return true;
-    state.command_state = .Invalid;
-    return false;
-}
-fn graphics_recording(state: *const resource_state_t) *graphics_state.recording_t {
-    std.debug.assert(state.command_profile_index != 0);
-    return &graphics_recordings[state.command_profile_index - 1];
-}
 /// Bind graphics or compute pipeline without disturbing the other bind point or descriptor/push state.
 /// [in] nullable private borrowed command/pipeline tokens and core point0/1.
 /// Void; malformed recording inputs invalidate. Mutex serialized, allocation-free.
@@ -4872,6 +4676,60 @@ fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
         .{ "vkDeviceWaitIdle", &device_wait_idle },
         .{ "vkQueueWaitIdle", &queue_wait_idle },
         .{ "vkQueueSubmit", &queue_submit },
+        .{ "vkGetDeviceQueue2", &get_device_queue2 },
+        .{ "vkCmdSetEvent2", &cmd_set_event2 },
+        .{ "vkCmdSetEvent2KHR", &cmd_set_event2 },
+        .{ "vkCmdResetEvent2", &cmd_reset_event2 },
+        .{ "vkCmdResetEvent2KHR", &cmd_reset_event2 },
+        .{ "vkCmdWaitEvents2", &cmd_wait_events2 },
+        .{ "vkCmdWaitEvents2KHR", &cmd_wait_events2 },
+        .{ "vkCmdSetViewport", &set_viewport },
+        .{ "vkCmdSetViewportWithCount", &set_viewport_with_count },
+        .{ "vkCmdSetScissor", &set_scissor },
+        .{ "vkCmdSetScissorWithCount", &set_scissor_with_count },
+        .{ "vkCmdSetCullMode", &set_cull_mode },
+        .{ "vkCmdSetFrontFace", &set_front_face },
+        .{ "vkCmdSetPrimitiveTopology", &set_primitive_topology },
+        .{ "vkCmdSetDepthTestEnable", &set_depth_test_enable },
+        .{ "vkCmdSetDepthWriteEnable", &set_depth_write_enable },
+        .{ "vkCmdSetDepthCompareOp", &set_depth_compare_op },
+        .{ "vkCmdSetDepthBoundsTestEnable", &set_depth_bounds_test_enable },
+        .{ "vkCmdSetStencilTestEnable", &set_stencil_test_enable },
+        .{ "vkCmdSetRasterizerDiscardEnable", &set_rasterizer_discard_enable },
+        .{ "vkCmdSetDepthBiasEnable", &set_depth_bias_enable },
+        .{ "vkCmdSetPrimitiveRestartEnable", &set_primitive_restart_enable },
+        .{ "vkCmdSetStencilCompareMask", &set_stencil_compare_mask },
+        .{ "vkCmdSetStencilWriteMask", &set_stencil_write_mask },
+        .{ "vkCmdSetStencilReference", &set_stencil_reference },
+        .{ "vkCmdSetDepthBias", &set_depth_bias },
+        .{ "vkCmdSetDepthBounds", &set_depth_bounds },
+        .{ "vkCmdSetBlendConstants", &set_blend_constants },
+        .{ "vkCmdSetStencilOp", &set_stencil_op },
+        .{ "vkCmdBindVertexBuffers", &bind_vertex_buffers },
+        .{ "vkCmdBindVertexBuffers2", &bind_vertex_buffers2 },
+        .{ "vkCmdBindIndexBuffer", &bind_index_buffer },
+        .{ "vkCmdBindIndexBuffer2KHR", &bind_index_buffer2 },
+        .{ "vkCmdDrawIndexed", &draw_indexed },
+        .{ "vkCmdDrawIndirect", &draw_indirect },
+        .{ "vkCmdDrawIndexedIndirect", &draw_indexed_indirect },
+        .{ "vkCmdCopyImage", &copy_image },
+        .{ "vkCmdCopyBufferToImage", &copy_buffer_to_image },
+        .{ "vkCmdBlitImage", &blit_image },
+        .{ "vkCmdResolveImage", &cmd_resolve_image },
+        .{ "vkCmdClearColorImage", &clear_color_image },
+        .{ "vkCmdClearDepthStencilImage", &clear_depth_stencil_image },
+        .{ "vkCmdCopyBuffer2", &copy_buffer2 },
+        .{ "vkCmdCopyBuffer2KHR", &copy_buffer2 },
+        .{ "vkCmdCopyImage2", &copy_image2 },
+        .{ "vkCmdCopyImage2KHR", &copy_image2 },
+        .{ "vkCmdBlitImage2", &blit_image2 },
+        .{ "vkCmdBlitImage2KHR", &blit_image2 },
+        .{ "vkCmdCopyBufferToImage2", &copy_buffer_to_image2 },
+        .{ "vkCmdCopyBufferToImage2KHR", &copy_buffer_to_image2 },
+        .{ "vkCmdCopyImageToBuffer2", &copy_image_to_buffer2 },
+        .{ "vkCmdCopyImageToBuffer2KHR", &copy_image_to_buffer2 },
+        .{ "vkCmdResolveImage2", &resolve_image2 },
+        .{ "vkCmdResolveImage2KHR", &resolve_image2 },
         .{ "vkGetBufferMemoryRequirements2", &buffer_requirements2 },
         .{ "vkGetBufferMemoryRequirements2KHR", &buffer_requirements2 },
         .{ "vkGetImageMemoryRequirements2", &image_requirements2 },
@@ -7428,6 +7286,15 @@ fn destroy_sampler(device: c.VkDevice, value: c.VkSampler, allocator: [*c]const 
     _ = allocator;
     lock_icd();
     defer unlock_icd();
+    if (value) |pointer| {
+        const token = @intFromPtr(pointer);
+        for (profile_registry.descriptor_layouts) |entry| if (entry.occupied) {
+            if (std.mem.indexOfScalar(u64,entry.profile.immutable_samplers[0..entry.profile.immutable_count],token) != null) return;
+        };
+        for (profile_registry.sets) |entry| if (entry.occupied) {
+            if (std.mem.indexOfScalar(u64,entry.profile.layout.immutable_samplers[0..entry.profile.layout.immutable_count],token) != null) return;
+        };
+    }
     destroy_render_resource(device, if (value) |pointer| @intFromPtr(pointer) else 0, c.VK_OBJECT_TYPE_SAMPLER, 71);
 }
 
@@ -8085,88 +7952,6 @@ fn queue_submit2(
 /// Invalid Recording inputs invalidate command; no heap/pointers retained. After ACK,
 /// bound image/buffer and allocation owners remain retained through command retirement.
 /// Caller contract requires enabled synchronization2 and valid per-queue stage/access scopes.
-fn pipeline_barrier2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkDependencyInfo) callconv(.C) void {
-    lock_icd();
-    defer unlock_icd();
-    if (lost != c.RingOk or command_buffer == null) return;
-    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
-    const state = resource_state(record);
-    if (state.command_state != .Recording) return;
-    if (!outside_render_pass(state)) return;
-    const pool = command_pool_for(record) orelse return;
-    if (info == null or info.*.sType != c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO or info.*.pNext != null or
-        info.*.dependencyFlags & ~@as(u32, 7) != 0 or info.*.memoryBarrierCount > 64 or
-        info.*.bufferMemoryBarrierCount > 64 or info.*.imageMemoryBarrierCount > 64 or
-        (info.*.memoryBarrierCount != 0 and info.*.pMemoryBarriers == null) or
-        (info.*.bufferMemoryBarrierCount != 0 and info.*.pBufferMemoryBarriers == null) or
-        (info.*.imageMemoryBarrierCount != 0 and info.*.pImageMemoryBarriers == null))
-    {
-        state.command_state = .Invalid;
-        return;
-    }
-    var buffers: [64]c.VkBufferMemoryBarrier2 = undefined;
-    var images: [64]c.VkImageMemoryBarrier2 = undefined;
-    var references: [256]*c.venus_object_t = undefined;
-    var reference_count: usize = 0;
-    if (info.*.bufferMemoryBarrierCount != 0) for (info.*.pBufferMemoryBarriers[0..info.*.bufferMemoryBarrierCount], 0..) |barrier, index| {
-        const target = if (barrier.buffer) |handle| child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) else null;
-        if (target == null or !configured_family_pair(pool.parent_id, barrier.srcQueueFamilyIndex, barrier.dstQueueFamilyIndex)) {
-            state.command_state = .Invalid;
-            return;
-        }
-        const resource = resource_state(target.?);
-        const memory_record = child_object(resource.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id);
-        if (memory_record == null or barrier.offset >= resource.buffer_size or
-            (barrier.size != std.math.maxInt(u64) and (barrier.size == 0 or barrier.size > resource.buffer_size - barrier.offset)))
-        {
-            state.command_state = .Invalid;
-            return;
-        }
-        buffers[index] = barrier;
-        buffers[index].buffer = @ptrFromInt(target.?.id);
-        references[reference_count] = target.?;
-        references[reference_count + 1] = memory_record.?;
-        reference_count += 2;
-    };
-    var device_handle: u64 = 0;
-    for (device_caches) |entry| if (entry.handle != 0 and object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?.id == pool.parent_id) {
-        device_handle = entry.handle;
-        break;
-    };
-    if (info.*.imageMemoryBarrierCount != 0) for (info.*.pImageMemoryBarriers[0..info.*.imageMemoryBarrierCount], 0..) |barrier, index| {
-        const target = if (barrier.image) |handle| child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_IMAGE, pool.parent_id) else null;
-        if (target == null or !configured_family_pair(pool.parent_id, barrier.srcQueueFamilyIndex, barrier.dstQueueFamilyIndex)) {
-            state.command_state = .Invalid;
-            return;
-        }
-        const resource = resource_state(target.?);
-        const memory_record = child_object(resource.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id);
-        if (memory_record == null or !image_range_valid(resource, barrier.subresourceRange) or
-            barrier.newLayout == c.VK_IMAGE_LAYOUT_UNDEFINED or barrier.newLayout == c.VK_IMAGE_LAYOUT_PREINITIALIZED)
-        {
-            state.command_state = .Invalid;
-            return;
-        }
-        images[index] = barrier;
-        images[index].image = @ptrFromInt(target.?.id);
-        if (wsi.is_present_image(&wsi_state, device_handle, target.?.handle)) {
-            if (images[index].oldLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) images[index].oldLayout = c.VK_IMAGE_LAYOUT_GENERAL;
-            if (images[index].newLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) images[index].newLayout = c.VK_IMAGE_LAYOUT_GENERAL;
-        }
-        references[reference_count] = target.?;
-        references[reference_count + 1] = memory_record.?;
-        reference_count += 2;
-    };
-    var translated = info.*;
-    translated.pBufferMemoryBarriers = if (info.*.bufferMemoryBarrierCount != 0) &buffers else null;
-    translated.pImageMemoryBarriers = if (info.*.imageMemoryBarrierCount != 0) &images else null;
-    const packet = modern_sync.pipeline_barrier2(record.id, @ptrCast(&translated)) catch {
-        state.command_state = .Invalid;
-        return;
-    };
-    if (!command_acknowledged(&packet, 204)) return;
-    for (references[0..reference_count]) |target| command_reference(state, target);
-}
 
 /// [in] live device and borrowed canonical info; optional single semaphore-type
 /// node. [out] owned semaphore or null. Serialized; host errors retain no output.
@@ -8637,4 +8422,1149 @@ fn retain_draw_descriptors(parent_id: u64,state: *resource_state_t,metadata: *co
             if(buffer_token != 0) {const buffer=child_object(buffer_token,c.VK_OBJECT_TYPE_BUFFER,parent_id).?;command_reference(state,buffer);command_reference(state,child_object(resource_state(buffer).bound_memory,c.VK_OBJECT_TYPE_DEVICE_MEMORY,parent_id).?);}
         }
     }
+}
+
+/// Create owned sorted mixed descriptor metadata. [in] borrowed live device/native
+/// input; flags chain and immutable samplers copied. [out] ownedlayout or null.
+/// Caller immutable feature policy required; serialized no caller pointers retained.
+fn create_descriptor_layout(device: c.VkDevice, info: [*c]const c.VkDescriptorSetLayoutCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorSetLayout) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO or info.*.bindingCount > profiles.MaxBindings or (info.*.bindingCount != 0 and (info.*.pBindings == null or @intFromPtr(info.*.pBindings) % @alignOf(c.VkDescriptorSetLayoutBinding) != 0))) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var flags: ?*const c.VkDescriptorSetLayoutBindingFlagsCreateInfo = null;
+    if (info.*.pNext) |pointer| {
+        if (@intFromPtr(pointer) % @alignOf(c.VkDescriptorSetLayoutBindingFlagsCreateInfo) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        flags = @ptrCast(@alignCast(pointer));
+        const value = flags.?;
+        if (value.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO or value.pNext != null or (value.bindingCount != 0 and (value.bindingCount != info.*.bindingCount or value.pBindingFlags == null or @intFromPtr(value.pBindingFlags) % @alignOf(u32) != 0))) return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
+    var profile = profiles.descriptor_layout_t{ .binding_count = info.*.bindingCount };
+    var immutable = [_]mixed_wire.immutable_samplers_t{.{}} ** profiles.MaxBindings;
+    var sampler_ids: [128]u64 = undefined;
+    var native_bindings: [profiles.MaxBindings]c.VkDescriptorSetLayoutBinding = undefined;
+    if (info.*.bindingCount != 0) for (info.*.pBindings[0..info.*.bindingCount], 0..) |binding, index| {
+        native_bindings[index] = binding;
+        var definition = profiles.binding_t{ .binding = binding.binding, .descriptor_type = binding.descriptorType, .descriptor_count = binding.descriptorCount, .stage_flags = binding.stageFlags, .binding_flags = if (flags != null and flags.?.bindingCount != 0) flags.?.pBindingFlags[index] else 0, .immutable_offset = @intCast(profile.immutable_count) };
+        if (binding.descriptorCount == 0) native_bindings[index].pImmutableSamplers = null;
+        if (binding.descriptorCount != 0 and binding.pImmutableSamplers != null) {
+            if (binding.descriptorType > 1 or @intFromPtr(binding.pImmutableSamplers) % @alignOf(c.VkSampler) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+            if (binding.descriptorCount > 128 - profile.immutable_count) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+            const first = profile.immutable_count;
+            for (binding.pImmutableSamplers[0..binding.descriptorCount]) |handle| {
+                if (handle == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+                const sampler = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_SAMPLER, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+                sampler_ids[profile.immutable_count] = sampler.id;
+                profile.immutable_samplers[profile.immutable_count] = sampler.handle;
+                profile.immutable_count += 1;
+            }
+            definition.immutable_count = @intCast(binding.descriptorCount);
+            immutable[index].ids = sampler_ids[first..profile.immutable_count];
+        }
+        var destination = index;
+        while (destination > 0 and profile.bindings[destination - 1].binding > definition.binding) : (destination -= 1) profile.bindings[destination] = profile.bindings[destination - 1];
+        if (destination > 0 and profile.bindings[destination - 1].binding == definition.binding) return c.VK_ERROR_INITIALIZATION_FAILED;
+        profile.bindings[destination] = definition;
+    };
+    _ = profiles.create_sparse_set_profile(&profile) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    var normalized = info.*;
+    normalized.pBindings = if (info.*.bindingCount == 0) null else @ptrCast(&native_bindings);
+    var writer = mixed_wire.create_layout(parent.id, 1, @ptrCast(&normalized), immutable[0..info.*.bindingCount]) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    for (profile.bindings[0..profile.binding_count]) |binding| {
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT != 0 and !update_after_bind_supported(parent,binding.descriptor_type)) return c.VK_ERROR_FEATURE_NOT_PRESENT;
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT != 0 and !descriptor_feature(parent,"descriptorBindingUpdateUnusedWhilePending")) return c.VK_ERROR_FEATURE_NOT_PRESENT;
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT != 0 and !descriptor_feature(parent,"descriptorBindingPartiallyBound")) return c.VK_ERROR_FEATURE_NOT_PRESENT;
+        if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT != 0 and !descriptor_feature(parent,"descriptorBindingVariableDescriptorCount")) return c.VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    const index = profiles.reserve_slot(&profile_registry.descriptor_layouts, profile) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, &writer, &handle);
+    if (result != c.VK_SUCCESS) {
+        if (lost == c.RingOk) std.debug.assert(profiles.release_slot(&profile_registry.descriptor_layouts, index));
+        return result;
+    }
+    resource_state(child_object(handle, c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, parent.id).?).profile_index = index;
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+/// Create real large-capacity descriptor pool without proportional metadata.
+/// [in] borrowed native info; [out] owned identity/null. Serialized; actual sets
+/// retain fixed registry metadata independently of declared poolscalar budgets.
+fn create_descriptor_pool(device: c.VkDevice, info: [*c]const c.VkDescriptorPoolCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkDescriptorPool) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or (info.*.poolSizeCount != 0 and (info.*.pPoolSizes == null or @intFromPtr(info.*.pPoolSizes) % @alignOf(c.VkDescriptorPoolSize) != 0))) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (info.*.flags & c.VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT != 0 and !descriptor_feature(parent,"descriptorBindingSampledImageUpdateAfterBind") and !descriptor_feature(parent,"descriptorBindingStorageImageUpdateAfterBind") and !descriptor_feature(parent,"descriptorBindingUniformBufferUpdateAfterBind") and !descriptor_feature(parent,"descriptorBindingStorageBufferUpdateAfterBind")) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = mixed_wire.create_pool(parent.id, 1, @ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, &writer, &handle);
+    if (result != c.VK_SUCCESS) return result;
+    const state = resource_state(child_object(handle, c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id).?);
+    state.pool_flags = info.*.flags;
+    state.descriptor_max_sets = info.*.maxSets;
+    if (info.*.poolSizeCount != 0) for (info.*.pPoolSizes[0..info.*.poolSizeCount]) |size| {
+        state.descriptor_capacity[size.type] += size.descriptorCount;
+    };
+    output.* = @ptrFromInt(handle);
+    return c.VK_SUCCESS;
+}
+
+/// Allocate owned sparse descriptor sets with original compatible layout definition
+/// and explicit actual variablecounts. [in] nativearraysborrowed throughcall; [out]
+/// null-onfailure tokens. Nativefailure rollsbackall reservedmetadata; loss retains
+/// uncertainowners until trustedretirement. Poolbudgets charge/refundactualcounts.
+fn allocate_descriptor_sets(device: c.VkDevice, info: [*c]const c.VkDescriptorSetAllocateInfo, output: [*c]c.VkDescriptorSet) callconv(.C) c_int {
+    lock_icd();
+    defer unlock_icd();
+    defer @memset(&descriptor_allocation_snapshots, .{});
+    if (info == null or output == null or info.*.descriptorSetCount == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const count = info.*.descriptorSetCount;
+    if (count > 64) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    @memset(output[0..count], null);
+    if (device == null or info.*.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO or info.*.descriptorPool == null or info.*.pSetLayouts == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var variable: ?*const c.VkDescriptorSetVariableDescriptorCountAllocateInfo = null;
+    if (info.*.pNext) |pointer| {
+        if (@intFromPtr(pointer) % @alignOf(c.VkDescriptorSetVariableDescriptorCountAllocateInfo) != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        variable = @ptrCast(@alignCast(pointer));
+        const value = variable.?;
+        if (value.sType != c.VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO or value.pNext != null or (value.descriptorSetCount != 0 and (value.descriptorSetCount != count or value.pDescriptorCounts == null or @intFromPtr(value.pDescriptorCounts) % @alignOf(u32) != 0))) return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const pool = child_object(@intFromPtr(info.*.descriptorPool.?), c.VK_OBJECT_TYPE_DESCRIPTOR_POOL, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const owner = resource_state(pool);
+    if (count > owner.descriptor_max_sets - owner.descriptor_live_sets) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var layouts: [64]u64 = undefined;
+    const snapshots = &descriptor_allocation_snapshots;
+    var needed = [_]u32{0} ** 11;
+    for (info.*.pSetLayouts[0..count], 0..) |handle, index| {
+        if (handle == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+        const layout = child_object(@intFromPtr(handle.?), c.VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+        const profile = profiles.get_profile(&profile_registry.descriptor_layouts, resource_state(layout).profile_index).?;
+        snapshots[index] = profiles.create_sparse_set_profile(profile) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+        var found_variable = false;
+        for (profile.bindings[0..profile.binding_count]) |binding| if (binding.binding_flags & c.VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT != 0) {
+            if (found_variable) return c.VK_ERROR_INITIALIZATION_FAILED;
+            found_variable = true;
+            const actual = if (variable != null and variable.?.descriptorSetCount != 0) variable.?.pDescriptorCounts[index] else 0;
+            if (actual > binding.descriptor_count) return c.VK_ERROR_INITIALIZATION_FAILED;
+            snapshots[index].has_variable_count = true;
+            snapshots[index].variable_binding = binding.binding;
+            snapshots[index].variable_count = actual;
+        };
+        if (variable != null and variable.?.descriptorSetCount != 0 and !found_variable and variable.?.pDescriptorCounts[index] != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        layouts[index] = layout.id;
+        for (profile.bindings[0..profile.binding_count]) |binding| {
+            const actual = if (snapshots[index].has_variable_count and binding.binding == snapshots[index].variable_binding) snapshots[index].variable_count else binding.descriptor_count;
+            needed[binding.descriptor_type] = std.math.add(u32, needed[binding.descriptor_type], actual) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+    }
+    for (needed, 0..) |value, kind| if (value > owner.descriptor_capacity[kind] - owner.descriptor_used[kind]) return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+    var provisional_ids: [64]u64 = undefined;
+    for (provisional_ids[0..count], 0..) |*id, index| id.* = index + 1;
+    _ = mixed_wire.allocate_sets(parent.id, pool.id, @ptrCast(info), layouts[0..count], provisional_ids[0..count]) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var records: [64]*c.venus_object_t = undefined;
+    var ids: [64]u64 = undefined;
+    var reserved: usize = 0;
+    while (reserved < count) : (reserved += 1) {
+        const index = profiles.reserve_slot(&profile_registry.sets, snapshots[reserved]) catch {
+            rollback_descriptor_sets(records[0..reserved]);
+            return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        };
+        var record: [*c]c.venus_object_t = null;
+        if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, pool.id, 0, &record) != c.RingOk) {
+            std.debug.assert(profiles.release_slot(&profile_registry.sets, index));
+            rollback_descriptor_sets(records[0..reserved]);
+            return c.VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        resource_state(record).* = .{ .id = record.*.id, .profile_index = index };
+        records[reserved] = record;
+        ids[reserved] = record.*.id;
+    }
+    const writer = mixed_wire.allocate_sets(parent.id, pool.id, @ptrCast(info), layouts[0..count], ids[0..count]) catch unreachable;
+    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = descriptor_sets_reply(reply, ids[0..count]) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result != c.VK_SUCCESS) {
+        rollback_descriptor_sets(records[0..count]);
+        return result;
+    }
+    owner.descriptor_live_sets += count;
+    for (needed, 0..) |value, kind| owner.descriptor_used[kind] += value;
+    for (records[0..count], 0..) |record, index| output[index] = @ptrFromInt(record.handle);
+    return c.VK_SUCCESS;
+}
+
+// Replace original pipeline_barrier2 body with wrapper below; normalization is
+// shared and produces no host command_buffer or ownership change before complete validation.
+const dependency_result_t = struct { packet: modern_sync.writer_t, references: [8]u64 };
+/// [in] borrowed live recording command_buffer and canonical dependency. [out] owned
+/// translated packet/reference bitmap or null with invalid command_buffer. No heap or
+/// retained native pointers; existing process mutex must be held.
+fn normalize_dependency(record: *c.venus_object_t, info: [*c]const c.VkDependencyInfo) ?dependency_result_t {
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return null;
+    if (!outside_render_pass(state)) return null;
+    const pool = command_pool_for(record) orelse return null;
+    if (info == null or info.*.sType != c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO or info.*.pNext != null or
+        info.*.dependencyFlags & ~@as(u32, 7) != 0 or info.*.memoryBarrierCount > 64 or
+        info.*.bufferMemoryBarrierCount > 64 or info.*.imageMemoryBarrierCount > 64 or
+        (info.*.memoryBarrierCount != 0 and info.*.pMemoryBarriers == null) or
+        (info.*.bufferMemoryBarrierCount != 0 and info.*.pBufferMemoryBarriers == null) or
+        (info.*.imageMemoryBarrierCount != 0 and info.*.pImageMemoryBarriers == null))
+    {
+        state.command_state = .Invalid;
+        return null;
+    }
+    var buffers: [64]c.VkBufferMemoryBarrier2 = undefined;
+    var images: [64]c.VkImageMemoryBarrier2 = undefined;
+    var references: [256]*c.venus_object_t = undefined;
+    var reference_count: usize = 0;
+    if (info.*.bufferMemoryBarrierCount != 0) for (info.*.pBufferMemoryBarriers[0..info.*.bufferMemoryBarrierCount], 0..) |barrier, index| {
+        const target = if (barrier.buffer) |handle| child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) else null;
+        if (target == null or !configured_family_pair(pool.parent_id, barrier.srcQueueFamilyIndex, barrier.dstQueueFamilyIndex)) {
+            state.command_state = .Invalid;
+            return null;
+        }
+        const resource = resource_state(target.?);
+        const memory_record = child_object(resource.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id);
+        if (memory_record == null or barrier.offset >= resource.buffer_size or
+            (barrier.size != std.math.maxInt(u64) and (barrier.size == 0 or barrier.size > resource.buffer_size - barrier.offset)))
+        {
+            state.command_state = .Invalid;
+            return null;
+        }
+        buffers[index] = barrier;
+        buffers[index].buffer = @ptrFromInt(target.?.id);
+        references[reference_count] = target.?;
+        references[reference_count + 1] = memory_record.?;
+        reference_count += 2;
+    };
+    var device_handle: u64 = 0;
+    for (device_caches) |entry| if (entry.handle != 0 and object(entry.handle, c.VK_OBJECT_TYPE_DEVICE).?.id == pool.parent_id) {
+        device_handle = entry.handle;
+        break;
+    };
+    if (info.*.imageMemoryBarrierCount != 0) for (info.*.pImageMemoryBarriers[0..info.*.imageMemoryBarrierCount], 0..) |barrier, index| {
+        const target = if (barrier.image) |handle| child_object(@intFromPtr(handle), c.VK_OBJECT_TYPE_IMAGE, pool.parent_id) else null;
+        if (target == null or !configured_family_pair(pool.parent_id, barrier.srcQueueFamilyIndex, barrier.dstQueueFamilyIndex)) {
+            state.command_state = .Invalid;
+            return null;
+        }
+        const resource = resource_state(target.?);
+        const memory_record = child_object(resource.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id);
+        if (memory_record == null or !image_range_valid(resource, barrier.subresourceRange) or
+            barrier.newLayout == c.VK_IMAGE_LAYOUT_UNDEFINED or barrier.newLayout == c.VK_IMAGE_LAYOUT_PREINITIALIZED)
+        {
+            state.command_state = .Invalid;
+            return null;
+        }
+        images[index] = barrier;
+        images[index].image = @ptrFromInt(target.?.id);
+        if (wsi.is_present_image(&wsi_state, device_handle, target.?.handle)) {
+            if (images[index].oldLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) images[index].oldLayout = c.VK_IMAGE_LAYOUT_GENERAL;
+            if (images[index].newLayout == c.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) images[index].newLayout = c.VK_IMAGE_LAYOUT_GENERAL;
+        }
+        references[reference_count] = target.?;
+        references[reference_count + 1] = memory_record.?;
+        reference_count += 2;
+    };
+    var translated = info.*;
+    translated.pBufferMemoryBarriers = if (info.*.bufferMemoryBarrierCount != 0) &buffers else null;
+    translated.pImageMemoryBarriers = if (info.*.imageMemoryBarrierCount != 0) &images else null;
+    const packet = modern_sync.pipeline_barrier2(record.id, @ptrCast(&translated)) catch {
+        state.command_state = .Invalid;
+        return null;
+    };
+    var retained = [_]u64{0} ** 8;
+    for (references[0..reference_count]) |target| { const index = resource_index(target); retained[index / 64] |= @as(u64, 1) << @as(u6, @intCast(index % 64)); }
+    return .{.packet=packet,.references=retained};
+}
+
+fn dependency_retain(state: *resource_state_t, references: [8]u64) void {
+    for (&state.buffer_references, references) |*current, bits| current.* |= bits;
+}
+/// [in] borrowed command_buffer/dependency. Actual host barriers and owners publish only
+/// after complete normalization and acknowledged204. No heap, mutex serialized.
+fn pipeline_barrier2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkDependencyInfo) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const normalized = normalize_dependency(record, info) orelse return;
+    if (command_acknowledged(&normalized.packet, 204)) dependency_retain(resource_state(record), normalized.references);
+}
+fn append_dependency_bytes(writer: *modern_sync.writer_t, bytes: []const u8) !void {
+    if (writer.used > writer.bytes.len or bytes.len > writer.bytes.len-writer.used) return error.Limit;
+    @memcpy(writer.bytes[writer.used..][0..bytes.len], bytes); writer.used += bytes.len;
+}
+fn command_event(record: *c.venus_object_t, event: c.VkEvent) ?*c.venus_object_t {
+    const pool = command_pool_for(record) orelse return null;
+    if (event == null) return null;
+    return child_object(@intFromPtr(event.?), c.VK_OBJECT_TYPE_EVENT, pool.parent_id);
+}
+/// [in] same-device command_buffer/event and borrowed dependency. [out] Actual201 host
+/// signal/dependency; command_buffer retains event and all resources only after ACK.
+/// Invalid input invalidates recording, no heap/native pointer retention, mutex.
+fn cmd_set_event2(command_buffer: c.VkCommandBuffer, event: c.VkEvent, info: [*c]const c.VkDependencyInfo) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    const selected = command_event(record, event) orelse { state.command_state = .Invalid; return; };
+    const normalized = normalize_dependency(record, info) orelse return;
+    var packet: modern_sync.writer_t = .{};
+    packet.header(201, record.id) catch unreachable; packet.put(u64, selected.id) catch unreachable;
+    append_dependency_bytes(&packet, normalized.packet.bytes[16..normalized.packet.used]) catch { state.command_state=.Invalid; return; };
+    if (!command_acknowledged(&packet, 201)) return;
+    dependency_retain(state, normalized.references); command_reference(state, selected);
+}
+/// [in] recording command_buffer/event/full64-bit stage. [out] actual202 and retained
+/// event after ACK; invalid/lost never publishes owners. No heap, mutex serialized.
+fn cmd_reset_event2(command_buffer: c.VkCommandBuffer, event: c.VkEvent, stage: c.VkPipelineStageFlags2) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording or !outside_render_pass(state)) return;
+    const selected = command_event(record, event) orelse { state.command_state=.Invalid; return; };
+    const packet = modern_sync.reset_event2(record.id, selected.id, stage) catch {state.command_state=.Invalid; return;};
+    if (command_acknowledged(&packet,202)) command_reference(state,selected);
+}
+/// [in]1..64 same-device events and matching borrowed dependencies. [out] one
+/// actual203 host command_buffer after complete normalization; retains bitmap of every
+/// event/resource on ACK. Quota/capacity failure invalidates command_buffer, no partial
+/// host packet; allocation-free and process mutex serialized.
+fn cmd_wait_events2(command_buffer: c.VkCommandBuffer, count: u32, events: [*c]const c.VkEvent, infos: [*c]const c.VkDependencyInfo) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (lost != c.RingOk or command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const state = resource_state(record);
+    if (state.command_state != .Recording or !outside_render_pass(state)) return;
+    if (count==0 or count>64 or events==null or infos==null) {state.command_state=.Invalid; return;}
+    var ids: [64]u64 = undefined;
+    var references = [_]u64{0} ** 8;
+    for (events[0..count],0..) |event,index| {
+        const selected=command_event(record,event) orelse {state.command_state=.Invalid; return;};
+        ids[index]=selected.id; const slot=resource_index(selected);
+        references[slot/64] |= @as(u64,1)<<@as(u6,@intCast(slot%64));
+    }
+    var packet: modern_sync.writer_t = .{};
+    packet.header(203,record.id) catch unreachable;
+    packet.put(u32,count) catch unreachable; packet.put(u64,count) catch unreachable;
+    for (ids[0..count]) |id| packet.put(u64,id) catch unreachable;
+    packet.put(u64,count) catch unreachable;
+    for (infos[0..count]) |*info| {
+        const normalized=normalize_dependency(record,info) orelse return;
+        append_dependency_bytes(&packet,normalized.packet.bytes[24..normalized.packet.used]) catch {state.command_state=.Invalid; return;};
+        for (&references,normalized.references) |*current,bits| current.* |= bits;
+    }
+    if(command_acknowledged(&packet,203))dependency_retain(state,references);
+}
+// dispatch core/KHR vkCmdSetEvent2, vkCmdResetEvent2, vkCmdWaitEvents2
+
+/// [in] live device and borrowed canonical unprotected queue request. [out]
+/// Borrowed same-device queue or null on failure, no ownership transfer. Protected
+/// queues unsupported and never advertised; no heap, recursive mutex serialized.
+fn get_device_queue2(device: c.VkDevice, info: [*c]const c.VkDeviceQueueInfo2, output: [*c]c.VkQueue) callconv(.C) void {
+    lock_icd(); defer unlock_icd();
+    if (output == null) return;
+    output.* = null;
+    if (info == null or @intFromPtr(info) % @alignOf(c.VkDeviceQueueInfo2) != 0 or info.*.sType != c.VK_STRUCTURE_TYPE_DEVICE_QUEUE_INFO_2 or info.*.pNext != null or info.*.flags != 0) return;
+    get_device_queue(device, info.*.queueFamilyIndex, info.*.queueIndex, output);
+}
+// vkGetDeviceQueue2 -> get_device_queue2 (1.1 route).
+
+// Owner imports const dynamic_graphics = @import("venus_graphics_dynamic_wire.zig");
+// All functions execute under the existing ICD mutex. Caller integrates enabled feature
+// checks and draw descriptor validation with its mixed-descriptor state helper.
+fn dynamic_command_record(command_buffer: c.VkCommandBuffer) ?*c.venus_object_t {
+    if (lost != c.RingOk or command_buffer == null) return null;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return null;
+    if (resource_state(record).command_state != .Recording) return null;
+    return record;
+}
+fn dynamic_command_ack(record: *c.venus_object_t, writer: ?dynamic_graphics.writer_t) void {
+    const encoded = writer orelse {
+        resource_state(record).command_state = .Invalid;
+        return;
+    };
+    _ = command_acknowledged(&encoded, std.mem.readInt(u32, encoded.bytes[0..4], .little));
+}
+fn set_viewport(command_buffer: c.VkCommandBuffer, first: u32, count: u32, values: [*c]const c.VkViewport) callconv(.C) void {
+    set_viewport_impl(command_buffer, first, count, values, false);
+}
+fn set_viewport_with_count(command_buffer: c.VkCommandBuffer, count: u32, values: [*c]const c.VkViewport) callconv(.C) void {
+    set_viewport_impl(command_buffer, 0, count, values, true);
+}
+fn set_viewport_impl(command_buffer: c.VkCommandBuffer, first: u32, count: u32, values: [*c]const c.VkViewport, with_count: bool) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    if (count == 0 or count > 16 or values == null) {
+        resource_state(record).command_state = .Invalid;
+        return;
+    }
+    dynamic_command_ack(record, dynamic_graphics.viewports(record.id, first, @ptrCast(values[0..count]), with_count) catch null);
+}
+fn set_scissor(command_buffer: c.VkCommandBuffer, first: u32, count: u32, values: [*c]const c.VkRect2D) callconv(.C) void {
+    set_scissor_impl(command_buffer, first, count, values, false);
+}
+fn set_scissor_with_count(command_buffer: c.VkCommandBuffer, count: u32, values: [*c]const c.VkRect2D) callconv(.C) void {
+    set_scissor_impl(command_buffer, 0, count, values, true);
+}
+fn set_scissor_impl(command_buffer: c.VkCommandBuffer, first: u32, count: u32, values: [*c]const c.VkRect2D, with_count: bool) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    if (count == 0 or count > 16 or values == null) {
+        resource_state(record).command_state = .Invalid;
+        return;
+    }
+    dynamic_command_ack(record, dynamic_graphics.scissors(record.id, first, @ptrCast(values[0..count]), with_count) catch null);
+}
+fn set_cull_mode(command_buffer: c.VkCommandBuffer, value: c.VkCullModeFlags) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .CullMode, value) catch null);
+}
+fn set_front_face(command_buffer: c.VkCommandBuffer, value: c.VkFrontFace) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .FrontFace, value) catch null);
+}
+fn set_primitive_topology(command_buffer: c.VkCommandBuffer, value: c.VkPrimitiveTopology) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .PrimitiveTopology, value) catch null);
+}
+fn set_depth_test_enable(command_buffer: c.VkCommandBuffer, value: c.VkBool32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .DepthTestEnable, value) catch null);
+}
+fn set_depth_write_enable(command_buffer: c.VkCommandBuffer, value: c.VkBool32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .DepthWriteEnable, value) catch null);
+}
+fn set_depth_compare_op(command_buffer: c.VkCommandBuffer, value: c.VkCompareOp) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .DepthCompareOp, value) catch null);
+}
+fn set_depth_bounds_test_enable(command_buffer: c.VkCommandBuffer, value: c.VkBool32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .DepthBoundsTestEnable, value) catch null);
+}
+fn set_stencil_test_enable(command_buffer: c.VkCommandBuffer, value: c.VkBool32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .StencilTestEnable, value) catch null);
+}
+fn set_rasterizer_discard_enable(command_buffer: c.VkCommandBuffer, value: c.VkBool32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .RasterizerDiscardEnable, value) catch null);
+}
+fn set_depth_bias_enable(command_buffer: c.VkCommandBuffer, value: c.VkBool32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .DepthBiasEnable, value) catch null);
+}
+fn set_primitive_restart_enable(command_buffer: c.VkCommandBuffer, value: c.VkBool32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.scalar(record.id, .PrimitiveRestartEnable, value) catch null);
+}
+fn set_stencil_compare_mask(command_buffer: c.VkCommandBuffer, faces: c.VkStencilFaceFlags, value: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.stencil_mask(record.id, .CompareMask, faces, value) catch null);
+}
+fn set_stencil_write_mask(command_buffer: c.VkCommandBuffer, faces: c.VkStencilFaceFlags, value: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.stencil_mask(record.id, .WriteMask, faces, value) catch null);
+}
+fn set_stencil_reference(command_buffer: c.VkCommandBuffer, faces: c.VkStencilFaceFlags, value: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.stencil_mask(record.id, .Reference, faces, value) catch null);
+}
+fn set_depth_bias(command_buffer: c.VkCommandBuffer, constant: f32, clamp: f32, slope: f32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.depth_bias(record.id, .{ constant, clamp, slope }) catch null);
+}
+fn set_depth_bounds(command_buffer: c.VkCommandBuffer, minimum: f32, maximum: f32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.depth_bounds(record.id, minimum, maximum) catch null);
+}
+fn set_blend_constants(command_buffer: c.VkCommandBuffer, values: [*c]const f32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    if (values == null) {
+        resource_state(record).command_state = .Invalid;
+        return;
+    }
+    dynamic_command_ack(record, dynamic_graphics.blend_constants(record.id, values[0..4].*) catch null);
+}
+fn set_stencil_op(command_buffer: c.VkCommandBuffer, faces: c.VkStencilFaceFlags, fail: c.VkStencilOp, pass: c.VkStencilOp, depth_fail: c.VkStencilOp, compare: c.VkCompareOp) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    dynamic_command_ack(record, dynamic_graphics.stencil_ops(record.id, faces, .{ fail, pass, depth_fail, compare }) catch null);
+}
+fn bind_vertex_buffers(command_buffer: c.VkCommandBuffer, first: u32, count: u32, buffers: [*c]const c.VkBuffer, offsets: [*c]const c.VkDeviceSize) callconv(.C) void {
+    bind_vertex_buffers_impl(command_buffer, first, count, buffers, offsets, null, null, false);
+}
+fn bind_vertex_buffers2(command_buffer: c.VkCommandBuffer, first: u32, count: u32, buffers: [*c]const c.VkBuffer, offsets: [*c]const c.VkDeviceSize, sizes: [*c]const c.VkDeviceSize, strides: [*c]const c.VkDeviceSize) callconv(.C) void {
+    bind_vertex_buffers_impl(command_buffer, first, count, buffers, offsets, sizes, strides, true);
+}
+fn bind_vertex_buffers_impl(command_buffer: c.VkCommandBuffer, first: u32, count: u32, buffers: [*c]const c.VkBuffer, offsets: [*c]const c.VkDeviceSize, sizes: [*c]const c.VkDeviceSize, strides: [*c]const c.VkDeviceSize, v2: bool) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    const state = resource_state(record);
+    const pool = command_pool_for(record) orelse return;
+    if (count == 0 or count > 32 or first > 32 - count or buffers == null or offsets == null) {
+        state.command_state = .Invalid;
+        return;
+    }
+    var ids: [32]u64 = undefined;
+    var refs: [64]*c.venus_object_t = undefined;
+    for (buffers[0..count], 0..) |handle, index| {
+        const buffer = if (handle) |token| child_object(@intFromPtr(token), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) else null;
+        if (buffer == null) {
+            state.command_state = .Invalid;
+            return;
+        }
+        const meta = resource_state(buffer.?);
+        const allocation = child_object(meta.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
+            state.command_state = .Invalid;
+            return;
+        };
+        if (meta.buffer_usage & c.VK_BUFFER_USAGE_VERTEX_BUFFER_BIT == 0 or offsets[index] > meta.buffer_size or (sizes != null and sizes[index] != c.VK_WHOLE_SIZE and sizes[index] > meta.buffer_size - offsets[index])) {
+            state.command_state = .Invalid;
+            return;
+        }
+        ids[index] = buffer.?.id;
+        refs[index * 2] = buffer.?;
+        refs[index * 2 + 1] = allocation;
+    }
+    const writer = dynamic_graphics.bind_vertex_buffers(record.id, first, ids[0..count], offsets[0..count], if (sizes != null) sizes[0..count] else null, if (strides != null) strides[0..count] else null, v2) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, if (v2) 220 else 105)) return;
+    for (refs[0 .. count * 2]) |reference| command_reference(state, reference);
+}
+fn bind_index_buffer(command_buffer: c.VkCommandBuffer, buffer: c.VkBuffer, offset: c.VkDeviceSize, index_type: c.VkIndexType) callconv(.C) void {
+    bind_index_buffer_impl(command_buffer, buffer, offset, null, index_type);
+}
+fn bind_index_buffer2(command_buffer: c.VkCommandBuffer, buffer: c.VkBuffer, offset: c.VkDeviceSize, size: c.VkDeviceSize, index_type: c.VkIndexType) callconv(.C) void {
+    bind_index_buffer_impl(command_buffer, buffer, offset, size, index_type);
+}
+fn bind_index_buffer_impl(command_buffer: c.VkCommandBuffer, handle: c.VkBuffer, offset: c.VkDeviceSize, size: ?c.VkDeviceSize, index_type: c.VkIndexType) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    const state = resource_state(record);
+    const pool = command_pool_for(record) orelse return;
+    const buffer = if (handle) |token| child_object(@intFromPtr(token), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) else null;
+    if (buffer == null) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const meta = resource_state(buffer.?);
+    const allocation = child_object(meta.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (meta.buffer_usage & c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT == 0 or offset > meta.buffer_size or (size != null and size.? != c.VK_WHOLE_SIZE and size.? > meta.buffer_size - offset)) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const writer = dynamic_graphics.bind_index_buffer(record.id, buffer.?.id, offset, index_type, size) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, if (size != null) 279 else 104)) return;
+    command_reference(state, buffer.?);
+    command_reference(state, allocation);
+    state.index_buffer = @intFromPtr(handle.?);
+    state.index_offset = offset;
+    state.index_size = if (size != null and size.? != c.VK_WHOLE_SIZE) size.? else meta.buffer_size - offset;
+    state.index_type = index_type;
+}
+
+// Import dynamic_graphics alongside dynamic_graphics.zig entrypoint draft.
+// Owner supplies validate_draw_descriptors(parent_id,state,metadata,stage_mask) bool,
+// and retain_draw_descriptors(parent_id,state,metadata,stage_mask) void after ACK.
+// Metadata here must be the separate graphics command profile selected by owner.
+fn validate_graphics_draw(record: *c.venus_object_t) ?*c.venus_object_t {
+    const state = resource_state(record);
+    const pool = command_pool_for(record) orelse return null;
+    const token = graphics_state.draw_pipeline(graphics_recording(state)) catch {
+        state.command_state = .Invalid;
+        return null;
+    };
+    const pipeline = child_object(token, c.VK_OBJECT_TYPE_PIPELINE, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return null;
+    };
+    if (resource_state(pipeline).pipeline_bind_point != c.VK_PIPELINE_BIND_POINT_GRAPHICS or !validate_draw_descriptors(pool.parent_id, state, command_profile(record), 0x1f)) {
+        state.command_state = .Invalid;
+        return null;
+    }
+    return pipeline;
+}
+fn bound_index_for_draw(record: *c.venus_object_t, first: u32, count: u32) ?*c.venus_object_t {
+    const state = resource_state(record);
+    const pool = command_pool_for(record) orelse return null;
+    const buffer = child_object(state.index_buffer, c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return null;
+    };
+    const meta = resource_state(buffer);
+    if (meta.bound_memory == 0 or meta.buffer_usage & c.VK_BUFFER_USAGE_INDEX_BUFFER_BIT == 0 or state.index_type > 1 or state.index_offset > meta.buffer_size) {
+        state.command_state = .Invalid;
+        return null;
+    }
+    const element_bytes: u64 = if (state.index_type == c.VK_INDEX_TYPE_UINT16) 2 else 4;
+    const size = @min(state.index_size, meta.buffer_size - state.index_offset);
+    const first_bytes = @as(u64, first) * element_bytes;
+    const count_bytes = @as(u64, count) * element_bytes;
+    if (first_bytes > size or count_bytes > size - first_bytes) {
+        state.command_state = .Invalid;
+        return null;
+    }
+    return buffer;
+}
+fn draw_indexed(command_buffer: c.VkCommandBuffer, count: u32, instances: u32, first: u32, vertex_offset: i32, first_instance: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    const pipeline = validate_graphics_draw(record) orelse return;
+    const index = bound_index_for_draw(record, first, count) orelse return;
+    const writer = dynamic_graphics.draw_indexed(record.id, count, instances, first, vertex_offset, first_instance) catch {
+        resource_state(record).command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, 107)) return;
+    const pool = command_pool_for(record).?;
+    retain_draw_descriptors(pool.parent_id, resource_state(record), command_profile(record), 0x1f);
+    command_reference(resource_state(record), pipeline);
+    command_reference(resource_state(record), index);
+}
+fn draw_indirect(command_buffer: c.VkCommandBuffer, buffer: c.VkBuffer, offset: c.VkDeviceSize, count: u32, stride: u32) callconv(.C) void {
+    draw_indirect_impl(command_buffer, buffer, offset, count, stride, false);
+}
+fn draw_indexed_indirect(command_buffer: c.VkCommandBuffer, buffer: c.VkBuffer, offset: c.VkDeviceSize, count: u32, stride: u32) callconv(.C) void {
+    draw_indirect_impl(command_buffer, buffer, offset, count, stride, true);
+}
+fn draw_indirect_impl(command_buffer: c.VkCommandBuffer, handle: c.VkBuffer, offset: c.VkDeviceSize, count: u32, stride: u32, indexed: bool) void {
+    lock_icd();
+    defer unlock_icd();
+    const record = dynamic_command_record(command_buffer) orelse return;
+    const state = resource_state(record);
+    const pool = command_pool_for(record) orelse return;
+    const pipeline = validate_graphics_draw(record) orelse return;
+    const index = if (indexed) bound_index_for_draw(record, 0, 0) orelse return else null;
+    const buffer = if (handle) |token| child_object(@intFromPtr(token), c.VK_OBJECT_TYPE_BUFFER, pool.parent_id) else null;
+    if (buffer == null) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const meta = resource_state(buffer.?);
+    const allocation = child_object(meta.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, pool.parent_id) orelse {
+        state.command_state = .Invalid;
+        return;
+    };
+    const command_bytes: u64 = if (indexed) 20 else 16;
+    const bytes: u64 = if (count == 0) 0 else @as(u64, count - 1) * stride + command_bytes;
+    if (meta.buffer_usage & c.VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT == 0 or offset > meta.buffer_size or bytes > meta.buffer_size - offset) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const writer = dynamic_graphics.draw_indirect(record.id, buffer.?.id, offset, count, stride, indexed) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, if (indexed) 109 else 108)) return;
+    retain_draw_descriptors(pool.parent_id, state, command_profile(record), 0x1f);
+    command_reference(state, pipeline);
+    command_reference(state, buffer.?);
+    command_reference(state, allocation);
+    if (index) |record_index| command_reference(state, record_index);
+}
+
+// Owner imports image_transfer = venus_image_transfer_wire.zig and
+// image_geometry = venus_image_transfer_native.zig, transfer2 = venus_transfer2_native.zig.
+// Wrapper pointers are Vulkan valid-call borrowed inputs; counts bounded before slicing.
+const image_transfer_record_t = struct { record: *c.venus_object_t, state: *resource_state_t, parent_id: u64 };
+fn image_transfer_record(command_buffer: c.VkCommandBuffer) ?image_transfer_record_t {
+    if (lost != c.RingOk or command_buffer == null) return null;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return null;
+    const state = resource_state(record);
+    if (state.command_state != .Recording) return null;
+    if (!outside_render_pass(state)) return null;
+    const pool = command_pool_for(record) orelse return null;
+    return .{ .record = record, .state = state, .parent_id = pool.parent_id };
+}
+const image_transfer_resource_t = struct { record: *c.venus_object_t, allocation: *c.venus_object_t, state: *resource_state_t };
+fn image_transfer_resource(context: image_transfer_record_t, handle: u64, kind: u32, usage: u32) ?image_transfer_resource_t {
+    const record = child_object(handle, kind, context.parent_id) orelse {
+        context.state.command_state = .Invalid;
+        return null;
+    };
+    const state = resource_state(record);
+    const actual_usage = if (kind == c.VK_OBJECT_TYPE_IMAGE) state.image_usage else state.buffer_usage;
+    const allocation = child_object(state.bound_memory, c.VK_OBJECT_TYPE_DEVICE_MEMORY, context.parent_id) orelse {
+        context.state.command_state = .Invalid;
+        return null;
+    };
+    if (actual_usage & usage != usage) {
+        context.state.command_state = .Invalid;
+        return null;
+    }
+    return .{ .record = record, .allocation = allocation, .state = state };
+}
+fn image_geometry_metadata(state: *const resource_state_t) image_geometry.image_t {
+    return .{ .format = state.image_format, .image_type = state.image_type, .extent = state.image_extent, .levels = state.image_levels, .layers = state.image_layers };
+}
+fn image_transfer_retain(context: image_transfer_record_t, resource: image_transfer_resource_t) void {
+    command_reference(context.state, resource.record);
+    command_reference(context.state, resource.allocation);
+}
+fn image_transfer_fail(command_buffer: c.VkCommandBuffer) void {
+    if (command_buffer == null) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    if (resource_state(record).command_state == .Recording) resource_state(record).command_state = .Invalid;
+}
+fn transfers_memory_overlap(source: image_transfer_resource_t, target: image_transfer_resource_t, source_offset: u64, source_size: u64, target_offset: u64, target_size: u64) bool {
+    if (source.state.bound_memory != target.state.bound_memory) return false;
+    const first = std.math.add(u64, source.state.memory_offset, source_offset) catch return true;
+    const second = std.math.add(u64, target.state.memory_offset, target_offset) catch return true;
+    const first_end = std.math.add(u64, first, source_size) catch return true;
+    const second_end = std.math.add(u64, second, target_size) catch return true;
+    return first < second_end and second < first_end;
+}
+fn copy_regions_overlap(source: c.VkImageCopy, target: c.VkImageCopy) bool {
+    const a = source.srcSubresource;
+    const b = target.dstSubresource;
+    if (a.mipLevel != b.mipLevel or a.aspectMask & b.aspectMask == 0 or a.baseArrayLayer >= b.baseArrayLayer + b.layerCount or b.baseArrayLayer >= a.baseArrayLayer + a.layerCount) return false;
+    const first = [_]i32{ source.srcOffset.x, source.srcOffset.y, source.srcOffset.z };
+    const second = [_]i32{ target.dstOffset.x, target.dstOffset.y, target.dstOffset.z };
+    const sizes_a = [_]u32{ source.extent.width, source.extent.height, source.extent.depth };
+    const sizes_b = [_]u32{ target.extent.width, target.extent.height, target.extent.depth };
+    for (first, second, sizes_a, sizes_b) |x, y, width, height| if (@as(i64, x) >= @as(i64, y) + height or @as(i64, y) >= @as(i64, x) + width) return false;
+    return true;
+}
+/// Validate bound same-device resources, exact block/mip/layer geometry and disjoint copy
+/// memory before sending opcode113. Retains both images/allocations only after host ACK.
+fn copy_image(command_buffer: c.VkCommandBuffer, source: c.VkImage, source_layout: u32, target: c.VkImage, target_layout: u32, count: u32, regions: [*c]const c.VkImageCopy) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const context = image_transfer_record(command_buffer) orelse return;
+    if (source == null or target == null or count == 0 or count > 64 or regions == null) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    const src = image_transfer_resource(context, @intFromPtr(source.?), c.VK_OBJECT_TYPE_IMAGE, c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT) orelse return;
+    const dst = image_transfer_resource(context, @intFromPtr(target.?), c.VK_OBJECT_TYPE_IMAGE, c.VK_IMAGE_USAGE_TRANSFER_DST_BIT) orelse return;
+    if (src.state.image_samples != dst.state.image_samples) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    for (regions[0..count]) |region| {
+        const first = image_geometry.region(image_geometry_metadata(src.state), @bitCast(region.srcSubresource), @bitCast(region.srcOffset), @bitCast(region.extent)) catch {
+            context.state.command_state = .Invalid;
+            return;
+        };
+        const second = image_geometry.region(image_geometry_metadata(dst.state), @bitCast(region.dstSubresource), @bitCast(region.dstOffset), @bitCast(region.extent)) catch {
+            context.state.command_state = .Invalid;
+            return;
+        };
+        if (first.bytes != second.bytes or first.width != second.width or first.height != second.height or (region.srcSubresource.aspectMask != 1 and src.state.image_format != dst.state.image_format)) {
+            context.state.command_state = .Invalid;
+            return;
+        }
+    }
+    if (src.record.id == dst.record.id) {
+        for (regions[0..count]) |first| for (regions[0..count]) |second| if (copy_regions_overlap(first, second)) {
+            context.state.command_state = .Invalid;
+            return;
+        };
+    } else if (transfers_memory_overlap(src, dst, 0, src.state.requirements.size, 0, dst.state.requirements.size)) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    const writer = image_transfer.copy_image(context.record.id, src.record.id, source_layout, dst.record.id, target_layout, @ptrCast(regions[0..count])) catch {
+        context.state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, 113)) return;
+    image_transfer_retain(context, src);
+    image_transfer_retain(context, dst);
+}
+/// Upload/readback shared validation follows compressed row/slice and 3D/array semantics;
+/// actual buffer and image allocation overlap is rejected. Native data borrowed for call.
+fn buffer_image_transfer(command_buffer: c.VkCommandBuffer, buffer: c.VkBuffer, image: c.VkImage, layout: u32, count: u32, regions: [*c]const c.VkBufferImageCopy, upload: bool) void {
+    lock_icd();
+    defer unlock_icd();
+    const context = image_transfer_record(command_buffer) orelse return;
+    if (buffer == null or image == null or count == 0 or count > 64 or regions == null) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    const buf = image_transfer_resource(context, @intFromPtr(buffer.?), c.VK_OBJECT_TYPE_BUFFER, if (upload) c.VK_BUFFER_USAGE_TRANSFER_SRC_BIT else c.VK_BUFFER_USAGE_TRANSFER_DST_BIT) orelse return;
+    const img = image_transfer_resource(context, @intFromPtr(image.?), c.VK_OBJECT_TYPE_IMAGE, if (upload) c.VK_IMAGE_USAGE_TRANSFER_DST_BIT else c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT) orelse return;
+    if (img.state.image_samples != 1) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    for (regions[0..count],0..) |region,index| {
+        const span = image_geometry.buffer_span(image_geometry_metadata(img.state), @bitCast(region)) catch {
+            context.state.command_state = .Invalid;
+            return;
+        };
+        if (region.bufferOffset > buf.state.buffer_size or span > buf.state.buffer_size - region.bufferOffset or transfers_memory_overlap(buf, img, region.bufferOffset, span, 0, img.state.requirements.size)) {
+            context.state.command_state = .Invalid;
+            return;
+        }
+        if (!upload) for (regions[0..index]) |prior| {
+            const prior_span = image_geometry.buffer_span(image_geometry_metadata(img.state),@bitCast(prior)) catch unreachable;
+            if (region.bufferOffset < prior.bufferOffset + prior_span and prior.bufferOffset < region.bufferOffset + span) { context.state.command_state = .Invalid; return; }
+        };
+    }
+    const writer = if (upload) image_transfer.copy_buffer_to_image(context.record.id, buf.record.id, img.record.id, layout, @ptrCast(regions[0..count])) catch {
+        context.state.command_state = .Invalid;
+        return;
+    } else image_transfer.copy_image_to_buffer(context.record.id, img.record.id, buf.record.id, layout, @ptrCast(regions[0..count])) catch {
+        context.state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, if (upload) 115 else 116)) return;
+    image_transfer_retain(context, buf);
+    image_transfer_retain(context, img);
+}
+fn copy_buffer_to_image(command_buffer: c.VkCommandBuffer, buffer: c.VkBuffer, image: c.VkImage, layout: u32, count: u32, regions: [*c]const c.VkBufferImageCopy) callconv(.C) void {
+    buffer_image_transfer(command_buffer, buffer, image, layout, count, regions, true);
+}
+// Replaces the existing narrow copy_image_to_buffer wrapper.
+fn copy_image_to_buffer(command_buffer: c.VkCommandBuffer, image: c.VkImage, layout: u32, buffer: c.VkBuffer, count: u32, regions: [*c]const c.VkBufferImageCopy) callconv(.C) void {
+    buffer_image_transfer(command_buffer, buffer, image, layout, count, regions, false);
+}
+fn blit_box(image: *const resource_state_t, layers: c.VkImageSubresourceLayers, offsets: [2]c.VkOffset3D) bool {
+    const first = [_]i32{ offsets[0].x, offsets[0].y, offsets[0].z };
+    const last = [_]i32{ offsets[1].x, offsets[1].y, offsets[1].z };
+    var starts: [3]i32 = undefined;
+    var sizes: [3]u32 = undefined;
+    for (first, last, 0..) |a, b, index| {
+        starts[index] = @min(a, b);
+        sizes[index] = @intCast(@abs(@as(i64, b) - a));
+    }
+    const shape = image_geometry.region(image_geometry_metadata(image), @bitCast(layers), .{ .x = starts[0], .y = starts[1], .z = starts[2] }, .{ .width = sizes[0], .height = sizes[1], .depth = sizes[2] }) catch return false;
+    return shape.width == 1 and shape.height == 1;
+}
+/// Blit uncompressed bound images with exact endpoint/mip/layer bounds and sample1.
+/// Owner must additionally check actual source/destination format BLIT features and
+/// linear-filter feature before advertising/reaching this entrypoint.
+fn blit_image(command_buffer: c.VkCommandBuffer, source: c.VkImage, source_layout: u32, target: c.VkImage, target_layout: u32, count: u32, regions: [*c]const c.VkImageBlit, filter: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const context = image_transfer_record(command_buffer) orelse return;
+    if (source == null or target == null or count == 0 or count > 64 or regions == null or filter > 1) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    const src = image_transfer_resource(context, @intFromPtr(source.?), c.VK_OBJECT_TYPE_IMAGE, c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT) orelse return;
+    const dst = image_transfer_resource(context, @intFromPtr(target.?), c.VK_OBJECT_TYPE_IMAGE, c.VK_IMAGE_USAGE_TRANSFER_DST_BIT) orelse return;
+    if (src.state.image_samples != 1 or dst.state.image_samples != 1 or transfers_memory_overlap(src, dst, 0, src.state.requirements.size, 0, dst.state.requirements.size)) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    if (!blit_format_supported(context.parent_id, src.state, dst.state, filter)) { context.state.command_state = .Invalid; return; }
+    for (regions[0..count]) |region| {
+        image_geometry.blit_compatible(src.state.image_format,dst.state.image_format,region.srcSubresource.aspectMask,filter) catch { context.state.command_state = .Invalid; return; };
+        if (!blit_box(src.state, region.srcSubresource, region.srcOffsets) or !blit_box(dst.state, region.dstSubresource, region.dstOffsets) or (region.srcSubresource.aspectMask != 1 and (src.state.image_format != dst.state.image_format or filter != 0))) {
+            context.state.command_state = .Invalid;
+            return;
+        }
+    }
+    const writer = image_transfer.blit_image(context.record.id, src.record.id, source_layout, dst.record.id, target_layout, @ptrCast(regions[0..count]), filter) catch {
+        context.state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, 114)) return;
+    image_transfer_retain(context, src);
+    image_transfer_retain(context, dst);
+}
+/// Resolve same-format multisample color source to sample1 destination, with exact
+/// mip/layer/geometry and nonoverlapping allocation checks. Both owners survive GPU work.
+fn cmd_resolve_image(command_buffer: c.VkCommandBuffer, source: c.VkImage, source_layout: u32, target: c.VkImage, target_layout: u32, count: u32, regions: [*c]const c.VkImageResolve) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    const context = image_transfer_record(command_buffer) orelse return;
+    if (source == null or target == null or count == 0 or count > 64 or regions == null) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    const src = image_transfer_resource(context, @intFromPtr(source.?), c.VK_OBJECT_TYPE_IMAGE, c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT) orelse return;
+    const dst = image_transfer_resource(context, @intFromPtr(target.?), c.VK_OBJECT_TYPE_IMAGE, c.VK_IMAGE_USAGE_TRANSFER_DST_BIT) orelse return;
+    if (src.state.image_samples <= 1 or dst.state.image_samples != 1 or src.state.image_format != dst.state.image_format or transfers_memory_overlap(src, dst, 0, src.state.requirements.size, 0, dst.state.requirements.size)) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    for (regions[0..count]) |region| {
+        _ = image_geometry.region(image_geometry_metadata(src.state), @bitCast(region.srcSubresource), @bitCast(region.srcOffset), @bitCast(region.extent)) catch {
+            context.state.command_state = .Invalid;
+            return;
+        };
+        _ = image_geometry.region(image_geometry_metadata(dst.state), @bitCast(region.dstSubresource), @bitCast(region.dstOffset), @bitCast(region.extent)) catch {
+            context.state.command_state = .Invalid;
+            return;
+        };
+    }
+    const writer = image_transfer.resolve_image(context.record.id, src.record.id, source_layout, dst.record.id, target_layout, @ptrCast(regions[0..count])) catch {
+        context.state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, 122)) return;
+    image_transfer_retain(context, src);
+    image_transfer_retain(context, dst);
+}
+fn clear_image(command_buffer: c.VkCommandBuffer, image: c.VkImage, layout: u32, value: ?*const anyopaque, count: u32, ranges: [*c]const c.VkImageSubresourceRange, depth: bool) void {
+    lock_icd();
+    defer unlock_icd();
+    const context = image_transfer_record(command_buffer) orelse return;
+    if (image == null or value == null or count == 0 or count > 64 or ranges == null) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    const img = image_transfer_resource(context, @intFromPtr(image.?), c.VK_OBJECT_TYPE_IMAGE, c.VK_IMAGE_USAGE_TRANSFER_DST_BIT) orelse return;
+    const aspects = image_aspects(img.state.image_format);
+    if ((depth and aspects == 1) or (!depth and aspects != 1)) {
+        context.state.command_state = .Invalid;
+        return;
+    }
+    if (!depth) {
+        const shape = image_geometry.block(img.state.image_format,1) catch { context.state.command_state = .Invalid; return; };
+        if (shape.width != 1 or shape.height != 1) { context.state.command_state = .Invalid; return; }
+    }
+    for (ranges[0..count]) |range| if (!image_range_valid(img.state, range)) {
+        context.state.command_state = .Invalid;
+        return;
+    };
+    var color: [4]u32 = undefined;
+    var depth_value: c.VkClearDepthStencilValue = undefined;
+    if (depth) @memcpy(std.mem.asBytes(&depth_value), @as([*]const u8, @ptrCast(value.?))[0..@sizeOf(@TypeOf(depth_value))]) else @memcpy(std.mem.asBytes(&color), @as([*]const u8, @ptrCast(value.?))[0..16]);
+    const writer = if (depth) image_transfer.clear_depth_stencil(context.record.id, img.record.id, layout, @bitCast(depth_value), @ptrCast(ranges[0..count])) catch {
+        context.state.command_state = .Invalid;
+        return;
+    } else image_transfer.clear_color(context.record.id, img.record.id, layout, color, @ptrCast(ranges[0..count])) catch {
+        context.state.command_state = .Invalid;
+        return;
+    };
+    if (!command_acknowledged(&writer, if (depth) 120 else 119)) return;
+    image_transfer_retain(context, img);
+}
+fn clear_color_image(command_buffer: c.VkCommandBuffer, image: c.VkImage, layout: u32, color: [*c]const c.VkClearColorValue, count: u32, ranges: [*c]const c.VkImageSubresourceRange) callconv(.C) void {
+    clear_image(command_buffer, image, layout, color, count, ranges, false);
+}
+fn clear_depth_stencil_image(command_buffer: c.VkCommandBuffer, image: c.VkImage, layout: u32, value: [*c]const c.VkClearDepthStencilValue, count: u32, ranges: [*c]const c.VkImageSubresourceRange) callconv(.C) void {
+    clear_image(command_buffer, image, layout, value, count, ranges, true);
+}
+
+// Six core/KHR CopyCommands2 entrypoints normalize into owned classic regions.
+// Existing wrappers provide identical ownership, geometry and host ACK retention.
+fn copy_buffer2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkCopyBufferInfo2) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (info == null) {
+        image_transfer_fail(command_buffer);
+        return;
+    }
+    const normalized = transfer2.copy_buffer(@ptrCast(info)) catch {
+        image_transfer_fail(command_buffer);
+        return;
+    };
+    copy_buffer(command_buffer, @ptrCast(normalized.source), @ptrCast(normalized.target), normalized.count, @ptrCast(&normalized.regions));
+}
+fn copy_image2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkCopyImageInfo2) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (info == null) {
+        image_transfer_fail(command_buffer);
+        return;
+    }
+    const normalized = transfer2.copy_image(@ptrCast(info)) catch {
+        image_transfer_fail(command_buffer);
+        return;
+    };
+    copy_image(command_buffer, @ptrCast(normalized.source), normalized.source_layout, @ptrCast(normalized.target), normalized.target_layout, normalized.count, @ptrCast(&normalized.regions));
+}
+fn blit_image2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkBlitImageInfo2) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (info == null) {
+        image_transfer_fail(command_buffer);
+        return;
+    }
+    const normalized = transfer2.blit_image(@ptrCast(info)) catch {
+        image_transfer_fail(command_buffer);
+        return;
+    };
+    blit_image(command_buffer, @ptrCast(normalized.source), normalized.source_layout, @ptrCast(normalized.target), normalized.target_layout, normalized.count, @ptrCast(&normalized.regions), normalized.filter);
+}
+fn copy_buffer_to_image2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkCopyBufferToImageInfo2) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (info == null) {
+        image_transfer_fail(command_buffer);
+        return;
+    }
+    const normalized = transfer2.copy_buffer_to_image(@ptrCast(info)) catch {
+        image_transfer_fail(command_buffer);
+        return;
+    };
+    copy_buffer_to_image(command_buffer, @ptrCast(normalized.buffer), @ptrCast(normalized.image), normalized.layout, normalized.count, @ptrCast(&normalized.regions));
+}
+fn copy_image_to_buffer2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkCopyImageToBufferInfo2) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (info == null) {
+        image_transfer_fail(command_buffer);
+        return;
+    }
+    const normalized = transfer2.copy_image_to_buffer(@ptrCast(info)) catch {
+        image_transfer_fail(command_buffer);
+        return;
+    };
+    copy_image_to_buffer(command_buffer, @ptrCast(normalized.image), normalized.layout, @ptrCast(normalized.buffer), normalized.count, @ptrCast(&normalized.regions));
+}
+fn resolve_image2(command_buffer: c.VkCommandBuffer, info: [*c]const c.VkResolveImageInfo2) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (info == null) {
+        image_transfer_fail(command_buffer);
+        return;
+    }
+    const normalized = transfer2.resolve_image(@ptrCast(info)) catch {
+        image_transfer_fail(command_buffer);
+        return;
+    };
+    cmd_resolve_image(command_buffer, @ptrCast(normalized.source), normalized.source_layout, @ptrCast(normalized.target), normalized.target_layout, normalized.count, @ptrCast(&normalized.regions));
+}
+
+
+fn descriptor_pool_for(record: *const c.venus_object_t) ?*c.venus_object_t {
+    for (&slots) |*slot| if (slot.id != 0 and slot.id == record.parent_id and slot.kind == c.VK_OBJECT_TYPE_DESCRIPTOR_POOL) return slot;
+    return null;
+}
+fn descriptor_set_for(handle: c.VkDescriptorSet, device_id: u64) ?*c.venus_object_t {
+    var found: [*c]c.venus_object_t = null;
+    if (c.venus_objects_lookup(&objects, if (handle) |value| @intFromPtr(value) else 0, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, 0, &found) != c.RingOk) return null;
+    const record: *c.venus_object_t = @ptrCast(found);
+    const pool = descriptor_pool_for(record) orelse return null;
+    return if (pool.parent_id == device_id) record else null;
+}
+fn descriptor_set_idle(record: *const c.venus_object_t) bool {
+    return resource_state(record).inflight_count == 0;
+}
+fn retire_descriptor_set(record: *c.venus_object_t, pool: *c.venus_object_t) void {
+    const state = resource_state(record);
+    const profile = profiles.get_profile(&profile_registry.sets, state.profile_index).?;
+    const owner = resource_state(pool);
+    for (profile.layout.bindings[0..profile.layout.binding_count]) |binding| owner.descriptor_used[binding.descriptor_type] -= binding.descriptor_count;
+    owner.descriptor_live_sets -= 1;
+    const index = resource_index(record);
+    const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+    for (&resource_states) |*command_state| if (command_state.buffer_references[index / 64] & bit != 0) {
+        command_state.command_state = .Invalid;
+        command_state.buffer_references = [_]u64{0} ** 8;
+    };
+    std.debug.assert(profiles.release_slot(&profile_registry.sets, state.profile_index));
+    state.* = .{};
+    std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_DESCRIPTOR_SET, 0) == c.RingOk);
+}
+fn descriptor_pool_idle(pool: *const c.venus_object_t) bool {
+    for (&slots) |*child| if (child.id != 0 and child.parent_id == pool.id and !descriptor_set_idle(child)) return false;
+    return true;
+}
+fn retire_pool_sets(pool: *c.venus_object_t) void {
+    for (&slots) |*child| if (child.id != 0 and child.parent_id == pool.id) retire_descriptor_set(child, pool);
+}
+
+
+fn outside_render_pass(state: *resource_state_t) bool {
+    if (state.command_profile_index == 0 or graphics_recording(state).active_format == 0) return true;
+    state.command_state = .Invalid;
+    return false;
+}
+fn graphics_recording(state: *const resource_state_t) *graphics_state.recording_t {
+    std.debug.assert(state.command_profile_index != 0);
+    return &graphics_recordings[state.command_profile_index - 1];
+}
+/// Check real physical format features for the actual image tilings; no synthetic flags.
+fn blit_format_supported(parent_id: u64, source: *const resource_state_t, target: *const resource_state_t, filter: u32) bool {
+    const parent = device_by_id(parent_id) orelse return false;
+    var physical: c.VkPhysicalDevice = null;
+    for (slots) |slot| if (slot.id == parent.parent_id and slot.kind == c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) { physical = @ptrFromInt(slot.handle); break; };
+    if (physical == null) return false;
+    var src = std.mem.zeroes(c.VkFormatProperties);
+    var dst = std.mem.zeroes(c.VkFormatProperties);
+    format_properties(physical,source.image_format,&src);
+    if (lost != c.RingOk) return false;
+    format_properties(physical,target.image_format,&dst);
+    if (lost != c.RingOk) return false;
+    const src_flags = if (source.image_tiling == c.VK_IMAGE_TILING_LINEAR) src.linearTilingFeatures else src.optimalTilingFeatures;
+    const dst_flags = if (target.image_tiling == c.VK_IMAGE_TILING_LINEAR) dst.linearTilingFeatures else dst.optimalTilingFeatures;
+    return src_flags & c.VK_FORMAT_FEATURE_BLIT_SRC_BIT != 0 and dst_flags & c.VK_FORMAT_FEATURE_BLIT_DST_BIT != 0 and (filter == 0 or src_flags & c.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT != 0);
+}
+
+/// Read one requested Vulkan12 descriptor-indexing feature by its named native offset.
+fn descriptor_feature(parent: *const c.venus_object_t, comptime name: []const u8) bool {
+    const index = (@offsetOf(c.VkPhysicalDeviceVulkan12Features,name)-@offsetOf(c.VkPhysicalDeviceVulkan12Features,"samplerMirrorClampToEdge"))/4;
+    return device_feature(parent,c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,index);
+}
+fn update_after_bind_supported(parent: *const c.venus_object_t, kind: u32) bool {
+    return switch(kind) {
+        0,1,2 => descriptor_feature(parent,"descriptorBindingSampledImageUpdateAfterBind"),
+        3 => descriptor_feature(parent,"descriptorBindingStorageImageUpdateAfterBind"),
+        4 => descriptor_feature(parent,"descriptorBindingUniformTexelBufferUpdateAfterBind"),
+        5 => descriptor_feature(parent,"descriptorBindingStorageTexelBufferUpdateAfterBind"),
+        6 => descriptor_feature(parent,"descriptorBindingUniformBufferUpdateAfterBind"),
+        7 => descriptor_feature(parent,"descriptorBindingStorageBufferUpdateAfterBind"),
+        else => false,
+    };
 }
