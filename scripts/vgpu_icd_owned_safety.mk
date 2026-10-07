@@ -42,3 +42,9 @@ vgpu-values-owned-sanitizers: scripts/icd_dependency_sanitizers.py scripts/icd_o
 # are required by read-only discovery and are never make prerequisites here.
 .PHONY: vgpu-icd-dependency-sanitizers
 vgpu-icd-dependency-sanitizers: vgpu-capabilities-owned-sanitizers vgpu-command-owned-sanitizers vgpu-objects-owned-sanitizers vgpu-instance_wire-owned-sanitizers vgpu-query_wire-owned-sanitizers vgpu-values-owned-sanitizers
+
+# Full private owned seam: nested codec rebuilds, fresh C oracles and final-binary
+# access proof. Header discovery is read-only; no generated/shared prerequisite.
+.PHONY: vgpu-icd-complete-seam-sanitizers
+vgpu-icd-complete-seam-sanitizers: scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
+	python3 scripts/icd_seam_sanitizers.py build/icd_complete_seam_safety
