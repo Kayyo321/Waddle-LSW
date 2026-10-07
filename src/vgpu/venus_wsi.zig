@@ -380,3 +380,115 @@ test "transactional create failure and signal readback failure preserve ownershi
     try std.testing.expectEqual(fixture.created - 1, fixture.destroyed);
     try std.testing.expect(destroy_surface(&state, 7, surface_id));
 }
+
+test "surface namespace exhaustion stale owners incomplete enumeration and invalid swapchain parameters" {
+    var state: state_t = .{};
+    var fixture: fixture_t = .{};
+    const backend = test_backend(&fixture);
+    var id: u64 = 99;
+    for ([_][2]u64{ .{ 0, 1 }, .{ 7, 0 }, .{ 7, 2 } }) |invalid| try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, create_surface(&state, invalid[0], @intCast(invalid[1]), &id));
+    state.next_id = std.math.maxInt(u64);
+    try std.testing.expectEqual(c.VK_ERROR_TOO_MANY_OBJECTS, create_surface(&state, 7, 1, &id));
+    state.next_id = 1;
+    for (0..MaxSurfaces) |_| try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &id));
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_HOST_MEMORY, create_surface(&state, 7, 1, &id));
+    try std.testing.expect(!supports_surface(&state, 8, id));
+    try std.testing.expect(!supports_surface(&state, 7, 0));
+    try std.testing.expect(!destroy_surface(&state, 8, id));
+    var caps: c.VkSurfaceCapabilitiesKHR = undefined;
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, capabilities(&state, 0, &caps));
+    var count: u32 = 1;
+    var format_values: [4]c.VkSurfaceFormatKHR = undefined;
+    var mode_values: [2]c.VkPresentModeKHR = undefined;
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, formats(&state, 0, &count, null));
+    try std.testing.expectEqual(c.VK_INCOMPLETE, formats(&state, id, &count, &format_values));
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, modes(&state, 0, &count, null));
+    try std.testing.expectEqual(c.VK_INCOMPLETE, modes(&state, id, &count, &mode_values));
+    try std.testing.expectEqual(c.VK_SUCCESS, modes(&state, id, &count, null));
+    const initial = test_info(id);
+    inline for (.{ "sType", "flags", "minImageCount", "imageArrayLayers", "imageFormat", "imageColorSpace", "imageUsage", "imageSharingMode", "preTransform", "compositeAlpha", "presentMode" }) |field| {
+        var info = initial;
+        @field(info, field) = if (comptime std.mem.eql(u8, field, "sType")) 0 else if (comptime std.mem.eql(u8, field, "minImageCount")) 1 else if (comptime std.mem.eql(u8, field, "imageArrayLayers")) 2 else if (comptime std.mem.eql(u8, field, "imageFormat")) 1 else if (comptime std.mem.eql(u8, field, "imageUsage")) 0 else if (comptime std.mem.eql(u8, field, "preTransform") or std.mem.eql(u8, field, "compositeAlpha")) 0 else 1;
+        try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &id));
+    }
+    var info = initial;
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 0, &info, &id));
+    info.pNext = @ptrFromInt(1);
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &id));
+    info = initial;
+    info.surface = null;
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &id));
+    info.surface = @ptrFromInt(999);
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, create_swapchain(&state, &backend, 9, &info, &id));
+    for ([_]u32{ 0, 16385 }) |extent| {
+        inline for (.{ "width", "height" }) |axis| {
+            info = initial;
+            @field(info.imageExtent, axis) = extent;
+            try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &id));
+        }
+    }
+    info = initial;
+    info.minImageCount = 4;
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &id));
+    info = initial;
+    info.imageUsage = 0x80000000;
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &id));
+    info = initial;
+    info.oldSwapchain = @ptrFromInt(999);
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &id));
+    info = initial;
+    var chain: u64 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain));
+    var images: [3]u64 = undefined;
+    count = 3;
+    try std.testing.expectEqual(c.VK_SUCCESS, get_images(&state, 9, chain, &count, &images));
+    try std.testing.expect(!is_present_image(&state, 0, images[0]));
+    try std.testing.expect(!is_present_image(&state, 9, 0));
+    try std.testing.expect(!is_present_image(&state, 8, images[0]));
+    try std.testing.expect(!is_present_image(&state, 9, 999));
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, get_images(&state, 0, chain, &count, null));
+    var index: u32 = 0;
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, acquire_next(&state, &backend, 9, 0, 0, 1, 0, &index));
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, acquire_next(&state, &backend, 9, chain, 0, 0, 0, &index));
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, present(&state, &backend, std.testing.allocator, 9, 0, 0, &.{}));
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, present(&state, &backend, std.testing.allocator, 9, chain, 3, &.{}));
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, present(&state, &backend, std.testing.allocator, 9, chain, 0, &.{}));
+    destroy_swapchain(&state, &backend, 0, chain);
+    destroy_device(&state, &backend, 8);
+    destroy_device(&state, &backend, 9);
+    try std.testing.expectEqual(fixture.created, fixture.destroyed);
+}
+
+test "presentation resize allocation failure and swapchain namespace quotas preserve owners" {
+    var state: state_t = .{};
+    var fixture: fixture_t = .{};
+    const backend = test_backend(&fixture);
+    var surface_id: u64 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+    const info = test_info(surface_id);
+    var chain_id: u64 = 0;
+    state.next_id = std.math.maxInt(u64);
+    try std.testing.expectEqual(c.VK_ERROR_TOO_MANY_OBJECTS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    state.next_id = 2;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    var index: u32 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, acquire_next(&state, &backend, 9, chain_id, 0, 0, 12, &index));
+    const slot = swapchain(&state, 9, chain_id).?;
+    slot.width = 63;
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
+    slot.width = 64;
+    slot.height = 63;
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
+    slot.height = 64;
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_HOST_MEMORY, present(&state, &backend, std.testing.failing_allocator, 9, chain_id, index, &.{}));
+    const waits = [_]c.VkSemaphore{@ptrFromInt(1)} ** 65;
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &waits));
+    for (1..MaxSwapchains) |_| try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_HOST_MEMORY, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    destroy_device(&state, &backend, 9);
+    try std.testing.expectEqual(fixture.created, fixture.destroyed);
+    state.surfaces[0].hwnd = 2;
+    var count: u32 = 0;
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, formats(&state, surface_id, &count, null));
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, modes(&state, surface_id, &count, null));
+}
