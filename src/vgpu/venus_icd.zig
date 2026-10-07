@@ -8,6 +8,8 @@ const properties_native = @import("venus_properties_native.zig");
 const properties_wire = @import("venus_properties_wire.zig");
 const extensions_wire = @import("venus_extensions_wire.zig");
 const wsi = @import("venus_wsi.zig");
+const extra_wire = @import("venus_extra_objects_wire.zig");
+const modern_sync = @import("venus_modern_sync_wire.zig");
 var wsi_state = wsi.state_t{};
 const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
@@ -1733,6 +1735,8 @@ fn destroy_buffer(
         parent.id,
     ) orelse return;
     if (resource_state(record).inflight_count != 0) return;
+    for (&slots) |*child| if (child.id != 0 and child.kind == c.VK_OBJECT_TYPE_BUFFER_VIEW and
+        child.parent_id == parent.id and resource_state(child).view_image == record.handle) return;
     const index = resource_index(record);
     const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
     for (resource_states) |state| if (state.buffer_references[index / 64] & bit != 0 and
@@ -4714,6 +4718,31 @@ fn device_cache_for_queue(record: *const c.venus_object_t) *device_cache_t {
 
 fn device_proc(name: []const u8) c.PFN_vkVoidFunction {
     const Entries = .{
+        .{ "vkCreateSampler", &create_sampler },
+        .{ "vkDestroySampler", &destroy_sampler },
+        .{ "vkCreateBufferView", &create_buffer_view },
+        .{ "vkDestroyBufferView", &destroy_buffer_view },
+        .{ "vkCreateQueryPool", &create_query_pool },
+        .{ "vkDestroyQueryPool", &destroy_query_pool },
+        .{ "vkGetQueryPoolResults", &get_query_pool_results },
+        .{ "vkResetQueryPool", &reset_query_pool },
+        .{ "vkResetQueryPoolEXT", &reset_query_pool },
+        .{ "vkCmdBeginQuery", &cmd_begin_query },
+        .{ "vkCmdEndQuery", &cmd_end_query },
+        .{ "vkCmdResetQueryPool", &cmd_reset_query_pool },
+        .{ "vkCmdWriteTimestamp", &cmd_write_timestamp },
+        .{ "vkCmdWriteTimestamp2", &cmd_write_timestamp2 },
+        .{ "vkCmdWriteTimestamp2KHR", &cmd_write_timestamp2 },
+        .{ "vkCreatePipelineCache", &create_pipeline_cache },
+        .{ "vkDestroyPipelineCache", &destroy_pipeline_cache },
+        .{ "vkGetPipelineCacheData", &get_pipeline_cache_data },
+        .{ "vkMergePipelineCaches", &merge_pipeline_caches },
+        .{ "vkCreateEvent", &create_event },
+        .{ "vkDestroyEvent", &destroy_event },
+        .{ "vkGetEventStatus", &get_event_status },
+        .{ "vkSetEvent", &set_event },
+        .{ "vkResetEvent", &reset_event },
+
         .{ "vkGetDeviceProcAddr", &get_device_proc },
         .{ "vkDestroyDevice", &destroy_device },
         .{ "vkCreateSwapchainKHR", &create_swapchain },
@@ -7095,4 +7124,338 @@ test "public WSI surface namespace native queries and nested lock ownership pres
     destroy_surface(instance, surface, null);
     try std.testing.expectEqual(@as(c_int, c.VK_ERROR_SURFACE_LOST_KHR), surface_capabilities(physical, surface, &values));
     try std.testing.expectEqual(@as(u32, 0), fixture.commands);
+}
+
+/// Create device-owned sampler. [in] device/info borrowed nonnull; callbacks nullable unused.
+/// [out] output nonnull, NULL on failure; success transfers token until destruction.
+/// Native validation/loss/OOM returned; mutex serialized, packet and metadata owned locally.
+fn create_sampler(device: c.VkDevice, info: [*c]const c.VkSamplerCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkSampler) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var packet = extra_wire.create_sampler(parent.id, 1, @ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_SAMPLER, &packet, &handle);
+    if (result == c.VK_SUCCESS) output.* = @ptrFromInt(handle);
+    return result;
+}
+
+/// Create device-owned query_pool. [in] device/info borrowed nonnull; callbacks nullable unused.
+/// [out] output nonnull, NULL on failure; success transfers token until destruction.
+/// Native validation/loss/OOM returned; mutex serialized, packet and metadata owned locally.
+fn create_query_pool(device: c.VkDevice, info: [*c]const c.VkQueryPoolCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkQueryPool) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var packet = extra_wire.create_query_pool(parent.id, 1, @ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_QUERY_POOL, &packet, &handle);
+
+    if (result == c.VK_SUCCESS) {
+        const record = child_object(handle, c.VK_OBJECT_TYPE_QUERY_POOL, parent.id).?;
+        const state = resource_state(record);
+        state.buffer_size = info.*.queryCount;
+        state.buffer_usage = info.*.queryType;
+        state.descriptor_max_sets = info.*.pipelineStatistics;
+    }
+    if (result == c.VK_SUCCESS) output.* = @ptrFromInt(handle);
+    return result;
+}
+
+/// Create device-owned pipeline_cache. [in] device/info borrowed nonnull; callbacks nullable unused.
+/// [out] output nonnull, NULL on failure; success transfers token until destruction.
+/// Native validation/loss/OOM returned; mutex serialized, packet and metadata owned locally.
+fn create_pipeline_cache(device: c.VkDevice, info: [*c]const c.VkPipelineCacheCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkPipelineCache) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var packet = extra_wire.create_pipeline_cache(parent.id, 1, @ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_PIPELINE_CACHE, &packet, &handle);
+    if (result == c.VK_SUCCESS) output.* = @ptrFromInt(handle);
+    return result;
+}
+
+/// Create device-owned event. [in] device/info borrowed nonnull; callbacks nullable unused.
+/// [out] output nonnull, NULL on failure; success transfers token until destruction.
+/// Native validation/loss/OOM returned; mutex serialized, packet and metadata owned locally.
+fn create_event(device: c.VkDevice, info: [*c]const c.VkEventCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkEvent) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var packet = extra_wire.create_event(parent.id, 1, @ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_EVENT, &packet, &handle);
+
+    if (result == c.VK_SUCCESS) resource_state(child_object(handle, c.VK_OBJECT_TYPE_EVENT, parent.id).?).buffer_usage = info.*.flags;
+    if (result == c.VK_SUCCESS) output.* = @ptrFromInt(handle);
+    return result;
+}
+
+/// Create buffer view. [in] device/info borrowed, callbacks nullable unused.
+/// [out] output NULL on failure, otherwise owned device token retaining backing buffer.
+/// Return native/local invalid/OOM/loss; fixed metadata and packet, mutex serialized.
+fn create_buffer_view(device: c.VkDevice, info: [*c]const c.VkBufferViewCreateInfo, allocator: [*c]const c.VkAllocationCallbacks, output: [*c]c.VkBufferView) callconv(.C) c_int {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    if (output == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    output.* = null;
+    if (device == null or info == null or info.*.buffer == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const buffer = child_object(@intFromPtr(info.*.buffer.?), c.VK_OBJECT_TYPE_BUFFER, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const state = resource_state(buffer);
+    if (state.buffer_usage & (c.VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | c.VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT) == 0 or
+        info.*.offset >= state.buffer_size or (info.*.range != c.VK_WHOLE_SIZE and (info.*.range == 0 or info.*.range > state.buffer_size - info.*.offset))) return c.VK_ERROR_INITIALIZATION_FAILED;
+    var packet = extra_wire.create_buffer_view(parent.id, 1, buffer.id, @ptrCast(info)) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var handle: u64 = 0;
+    const result = create_render_resource(parent, c.VK_OBJECT_TYPE_BUFFER_VIEW, &packet, &handle);
+    if (result == c.VK_SUCCESS) {
+        resource_state(child_object(handle, c.VK_OBJECT_TYPE_BUFFER_VIEW, parent.id).?).view_image = buffer.handle;
+        output.* = @ptrFromInt(handle);
+    }
+    return result;
+}
+
+/// Destroy sampler. [in] nullable borrowed device/token/callbacks; no output.
+/// Exact host completion retires guest identity; pending or lost owners stay retained.
+/// Mutex serialized; no allocation, ownership transfer or guessed destruction.
+fn destroy_sampler(device: c.VkDevice, value: c.VkSampler, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    destroy_render_resource(device, if (value) |pointer| @intFromPtr(pointer) else 0, c.VK_OBJECT_TYPE_SAMPLER, 71);
+}
+
+/// Destroy query_pool. [in] nullable borrowed device/token/callbacks; no output.
+/// Exact host completion retires guest identity; pending or lost owners stay retained.
+/// Mutex serialized; no allocation, ownership transfer or guessed destruction.
+fn destroy_query_pool(device: c.VkDevice, value: c.VkQueryPool, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    destroy_render_resource(device, if (value) |pointer| @intFromPtr(pointer) else 0, c.VK_OBJECT_TYPE_QUERY_POOL, 48);
+}
+
+/// Destroy pipeline_cache. [in] nullable borrowed device/token/callbacks; no output.
+/// Exact host completion retires guest identity; pending or lost owners stay retained.
+/// Mutex serialized; no allocation, ownership transfer or guessed destruction.
+fn destroy_pipeline_cache(device: c.VkDevice, value: c.VkPipelineCache, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    destroy_render_resource(device, if (value) |pointer| @intFromPtr(pointer) else 0, c.VK_OBJECT_TYPE_PIPELINE_CACHE, 62);
+}
+
+/// Destroy event. [in] nullable borrowed device/token/callbacks; no output.
+/// Exact host completion retires guest identity; pending or lost owners stay retained.
+/// Mutex serialized; no allocation, ownership transfer or guessed destruction.
+fn destroy_event(device: c.VkDevice, value: c.VkEvent, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    destroy_render_resource(device, if (value) |pointer| @intFromPtr(pointer) else 0, c.VK_OBJECT_TYPE_EVENT, 43);
+}
+
+/// Destroy buffer_view. [in] nullable borrowed device/token/callbacks; no output.
+/// Exact host completion retires guest identity; pending or lost owners stay retained.
+/// Mutex serialized; no allocation, ownership transfer or guessed destruction.
+fn destroy_buffer_view(device: c.VkDevice, value: c.VkBufferView, allocator: [*c]const c.VkAllocationCallbacks) callconv(.C) void {
+    _ = allocator;
+    lock_icd();
+    defer unlock_icd();
+    destroy_render_resource(device, if (value) |pointer| @intFromPtr(pointer) else 0, c.VK_OBJECT_TYPE_BUFFER_VIEW, 53);
+}
+
+fn event_operation_locked(device: c.VkDevice, event: c.VkEvent, opcode: u32) c_int {
+    if (device == null or event == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const record = child_object(@intFromPtr(event.?), c.VK_OBJECT_TYPE_EVENT, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    if (resource_state(record).buffer_usage & c.VK_EVENT_CREATE_DEVICE_ONLY_BIT != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const packet = extra_wire.event_operation(parent.id, record.id, opcode) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    const reply = transact(packet.bytes[0..packet.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    var reader = reader_t{ .bytes = reply };
+    const received = reader.scalar(u32) catch return failure(c.RingCorrupt);
+    const result = reader.scalar(i32) catch return failure(c.RingCorrupt);
+    if (received != opcode) return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    if (result > 0 and !(opcode == 44 and (result == c.VK_EVENT_SET or result == c.VK_EVENT_RESET))) return failure(c.RingCorrupt);
+    return result;
+}
+
+/// Host event operation. [in] live borrowed device/event, no ownership transfer.
+/// Returns actual event status/native result or local invalid/loss; mutex serialized.
+fn get_event_status(device: c.VkDevice, event: c.VkEvent) callconv(.C) c_int {
+    lock_icd();
+    defer unlock_icd();
+    return event_operation_locked(device, event, 44);
+}
+
+/// Host event operation. [in] live borrowed device/event, no ownership transfer.
+/// Returns actual event status/native result or local invalid/loss; mutex serialized.
+fn set_event(device: c.VkDevice, event: c.VkEvent) callconv(.C) c_int {
+    lock_icd();
+    defer unlock_icd();
+    return event_operation_locked(device, event, 45);
+}
+
+/// Host event operation. [in] live borrowed device/event, no ownership transfer.
+/// Returns actual event status/native result or local invalid/loss; mutex serialized.
+fn reset_event(device: c.VkDevice, event: c.VkEvent) callconv(.C) c_int {
+    lock_icd();
+    defer unlock_icd();
+    return event_operation_locked(device, event, 46);
+}
+
+/// Read actual pool results. [in] device/pool live borrowed; output memory borrowed for call.
+/// [out] data receives validated native bytes including availability on NOT_READY.
+/// Returns native result/local invalid/OOM/loss; caller owns data, mutex serialized.
+fn get_query_pool_results(device: c.VkDevice, pool: c.VkQueryPool, first: u32, count: u32, data_size: usize, data: ?*anyopaque, stride: u64, flags: u32) callconv(.C) c_int {
+    lock_icd();
+    defer unlock_icd();
+    if (device == null or pool == null or data == null or count == 0 or data_size == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const record = child_object(@intFromPtr(pool.?), c.VK_OBJECT_TYPE_QUERY_POOL, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const state = resource_state(record);
+    if (first > state.buffer_size or count > state.buffer_size - first) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const words: u64 = if (state.buffer_usage == c.VK_QUERY_TYPE_PIPELINE_STATISTICS) @popCount(state.descriptor_max_sets) else 1;
+    const word_size: u64 = if (flags & c.VK_QUERY_RESULT_64_BIT != 0) 8 else 4;
+    const minimum = (words + @as(u64, if (flags & c.VK_QUERY_RESULT_WITH_AVAILABILITY_BIT != 0) 1 else 0)) * word_size;
+    if (stride < minimum or stride % word_size != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const preceding = std.math.mul(u64, stride, count - 1) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    const required = std.math.add(u64, preceding, minimum) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (required > data_size) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const packet = extra_wire.query_results(parent.id, record.id, first, count, data_size, stride, flags) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    const reply = transact(packet.bytes[0..packet.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const result = extra_wire.decode_query_results(reply, @as([*]u8, @ptrCast(data.?))[0..data_size]) catch return failure(c.RingCorrupt);
+    if (result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    return result;
+}
+/// Obtain driver cache_handle bytes. [in] live borrowed device/cache_handle, nullable data query_index.
+/// [in,out] size nonnull capacity/returned size; caller data owned through return.
+/// Native success/incomplete or invalid/loss returned; bounded4096 transfer, mutex serialized.
+fn get_pipeline_cache_data(device: c.VkDevice, cache_handle: c.VkPipelineCache, size: [*c]usize, data: ?*anyopaque) callconv(.C) c_int {
+    lock_icd();
+    defer unlock_icd();
+    if (device == null or cache_handle == null or size == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const record = child_object(@intFromPtr(cache_handle.?), c.VK_OBJECT_TYPE_PIPELINE_CACHE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    const capacity = if (data == null) 0 else @min(size.*, 4096);
+    const packet = extra_wire.cache_data(parent.id, record.id, capacity, data != null) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    const reply = transact(packet.bytes[0..packet.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const output: ?[]u8 = if (data) |pointer| @as([*]u8, @ptrCast(pointer))[0..capacity] else null;
+    const result = extra_wire.decode_cache_data(reply, output) catch return failure(c.RingCorrupt);
+    size.* = result.size;
+    if (result.result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
+    return result.result;
+}
+/// Merge bounded same-device driver caches. [in] destination/sources borrowed through return.
+/// Native result/local invalid/OOM/loss; no ownership transfer, mutex serialized.
+fn merge_pipeline_caches(device: c.VkDevice, destination: c.VkPipelineCache, count: u32, sources: [*c]const c.VkPipelineCache) callconv(.C) c_int {
+    lock_icd();
+    defer unlock_icd();
+    if (device == null or destination == null or count == 0 or count > 64 or sources == null) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const target = child_object(@intFromPtr(destination.?), c.VK_OBJECT_TYPE_PIPELINE_CACHE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
+    var ids: [64]u64 = undefined;
+    for (sources[0..count], 0..) |source, index| {
+        if (source == null or source == destination) return c.VK_ERROR_INITIALIZATION_FAILED;
+        const record = child_object(@intFromPtr(source.?), c.VK_OBJECT_TYPE_PIPELINE_CACHE, parent.id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+        ids[index] = record.id;
+    }
+    const packet = extra_wire.merge_caches(parent.id, target.id, ids[0..count]) catch return c.VK_ERROR_INITIALIZATION_FAILED;
+    const reply = transact(packet.bytes[0..packet.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    return result_reply(reply, 64, 0);
+}
+
+fn query_command_locked(command_buffer: c.VkCommandBuffer, pool: c.VkQueryPool, opcode: u32, first: u32, count: u32, flags: u32, stage: u64) void {
+    if (command_buffer == null or pool == null or lost != c.RingOk) return;
+    const record = object(@intFromPtr(command_buffer.?), c.VK_OBJECT_TYPE_COMMAND_BUFFER) orelse return;
+    const command_pool = command_pool_for(record) orelse return;
+    const target = child_object(@intFromPtr(pool.?), c.VK_OBJECT_TYPE_QUERY_POOL, command_pool.parent_id) orelse return;
+    const state = resource_state(record);
+    const target_state = resource_state(target);
+    if (state.command_state != .Recording or count == 0 or first > target_state.buffer_size or count > target_state.buffer_size - first) {
+        state.command_state = .Invalid;
+        return;
+    }
+    const packet = extra_wire.query_command(record.id, target.id, opcode, first, count, flags, stage) catch {
+        state.command_state = .Invalid;
+        return;
+    };
+    if (command_acknowledged(&packet, opcode)) command_reference(state, target);
+}
+/// Record a query_index begin; borrowed command_buffer/pool and scalar query_index/control values.
+/// Void; invalid recording is invalidated, ownership retained through pending GPU use.
+/// Mutex serialized; no heap allocation or pointer retention.
+fn cmd_begin_query(command_buffer: c.VkCommandBuffer, pool: c.VkQueryPool, query_index: u32, flags: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    query_command_locked(command_buffer, pool, 127, query_index, 1, flags, 0);
+}
+/// Record a query_index end. [in] command_buffer/pool borrowed live owners, query_index index copied.
+/// Void; malformed usage invalidates recording; mutex serialized, no allocation.
+fn cmd_end_query(command_buffer: c.VkCommandBuffer, pool: c.VkQueryPool, query_index: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    query_command_locked(command_buffer, pool, 128, query_index, 1, 0, 0);
+}
+/// Record pool-range reset. [in] borrowed live command_buffer/pool, copied bounded range.
+/// Void; invalid usage invalidates recording; references persist through GPU completion.
+fn cmd_reset_query_pool(command_buffer: c.VkCommandBuffer, pool: c.VkQueryPool, first: u32, count: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    query_command_locked(command_buffer, pool, 129, first, count, 0, 0);
+}
+/// Record classic timestamp. [in] borrowed command_buffer/pool, copied stage/query_index.
+/// Void; native timestamp support governs valid stages; mutex serialized/no allocation.
+fn cmd_write_timestamp(command_buffer: c.VkCommandBuffer, stage: u32, pool: c.VkQueryPool, query_index: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    query_command_locked(command_buffer, pool, 130, query_index, 1, 0, stage);
+}
+/// Record sync2 timestamp. [in] borrowed command_buffer/pool, copied stage64/query_index.
+/// Void; enabled sync2 required by Vulkan device contract; mutex serialized.
+fn cmd_write_timestamp2(command_buffer: c.VkCommandBuffer, stage: u64, pool: c.VkQueryPool, query_index: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    query_command_locked(command_buffer, pool, 205, query_index, 1, 0, stage);
+}
+/// Reset actual host query_index state. [in] device/pool borrowed, range copied.
+/// Void; invalid/pending calls ignored, native loss retains owners; mutex serialized.
+fn reset_query_pool(device: c.VkDevice, pool: c.VkQueryPool, first: u32, count: u32) callconv(.C) void {
+    lock_icd();
+    defer unlock_icd();
+    if (device == null or pool == null or lost != c.RingOk or count == 0) return;
+    const parent = object(@intFromPtr(device.?), c.VK_OBJECT_TYPE_DEVICE) orelse return;
+    const record = child_object(@intFromPtr(pool.?), c.VK_OBJECT_TYPE_QUERY_POOL, parent.id) orelse return;
+    const state = resource_state(record);
+    if (state.inflight_count != 0 or first > state.buffer_size or count > state.buffer_size - first) return;
+    const packet = modern_sync.reset_query_pool(parent.id, record.id, first, count) catch return;
+    _ = command_acknowledged(&packet, 171);
 }
