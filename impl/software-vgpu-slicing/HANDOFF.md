@@ -290,3 +290,27 @@ Preserve old native PIDs4296/1404, VM/snapshots/artifacts and untracked files.
 TODO#3 remains55%, overall68.75%; full90% core coverage, zero leaks, stress,
 actual normal/sanitized DXVK, full WSI, device loss and native DLL heap audit
 remain mandatory. Exclusive source ownership and shared-index locking unchanged.
+
+
+### 2026-10-07 basic real Windows/DXVK passes; enter final qualification
+
+Actual immutable81a46cb2 at e970799/snapshot20ed114b passes native0, real FL11
+device/swapchain,4096 exact GPU BGRA pixels,64 exact compute words,4096 exact
+client RGB pixels and normal COM/DLL teardown. Normal host resultstatus0, worker
+exit0, retired1; no failure abandonment substitutes for this result.
+
+The e591931e failed run confirmed image68/allocation69 alone blocked parent
+teardown, all in-flight/idle/fence/ticket counts zero. e970799 adds explicit hidden
+retired WSI image ownership and last-view-ACK retry, image55 before memory22 ACK.
+Retired guest image and old-view descriptor/recorded-submit use are rejected.
+9bc7de4 corrects effective variable count refund;0b8ecc8 proves pending ownership
+through actual frontend submit/fence polling/queue idle without manual decrements.
+
+Final qualification now runs: core required ICD tests/sanitizers/whole90% coverage/
+Windows builds; image changed extra-object coverage/sanitizers; root fresh worker
+and changed bridge sanitizer gate; WDDM sole VM/GPU owner for current normal and
+sanitized DXVK, full48-frame WSI/eight lifetimes, native transport32/bootstrap24,
+real device removal and external UMDH audit. Reuse valid unchanged receipts, fix
+failures and rerun affected gates. TODO#3 now80% (implementation/basic acceptance),
+overall75%; final20% remains open and Time Ended TBD. Preserve original branch,
+old native PIDs, all snapshots/artifacts, untracked files and shared-index lease.

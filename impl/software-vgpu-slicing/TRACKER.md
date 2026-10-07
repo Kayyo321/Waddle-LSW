@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; GetData, staging Map and4096 exact GPU pixels pass in actual Windows/DXVK; maintenance5 buffer-view usage and native stack overflow fixed; all64 exact compute words pass; presentation, whole-core coverage and final leak qualification pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 80% | Implemented; real pinned Windows/DXVK FL11 device,4096 exact GPU pixels,64 compute words,4096 presented pixels and normal COM/DLL/host retirement pass at e970799. Final whole-core90% coverage, leaks/sanitizers/stress, repeated native lifetimes, real device loss and native DLL heap audit in progress |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -22,7 +22,7 @@
 | #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned offline x64 loader build and actual ISO-VM medium-integrity discovery verified; real receiver bootstrap and GPU/DXVK remain pending |
 
-**Total Feature Completion**: `68.75%`
+**Total Feature Completion**: `75.0%`
 
 ## Commit History & Progress Log
 
@@ -927,3 +927,23 @@ Old native PIDs4296/1404 and all failed snapshots remain preserved.
 Whole-core90% coverage, final leaks/sanitizers/stress, complete Windows presentation
 and normal teardown, controlled device removal and external native DLL heap audit
 remain required. TODO#3 remains55%, overall68.75%; Time Ended remains TBD.
+
+
+### Implementation complete; final qualification started: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `8d1d02a` | test(vgpu): diagnose retained teardown owners and qualify native query events | #3 +0%; overall +0% (implementation milestone below). |286 D/RS/native128/Windows static pass; actual e591931e proves one orphan image68/allocation69, no tickets/fences/pending uses. |
+| `e970799` | fix(vgpu): retain retired swapchain images through cached view teardown | #3 +25%; overall +6.25%. | Actual81a46cb2 at immutable20ed114b passes native0, FL11/device,4096 GPU pixels,64 compute words,4096 presented pixels and normal teardown; hoststatus0/workerexit0/retired1. |
+| `9bc7de4` | fix(vgpu): refund effective variable descriptor allocation counts | #3 +0%; overall +0% (final qualification pending). |18 actual0/2/4 count × free/reset/destroy × ACK/loss cases D/RS pass; Windows static pass. |
+| `0b8ecc8` | test(vgpu): verify retired WSI ownership through actual queue completion | #3 +0%; overall +0% (final qualification pending). | Actual frontend ticket/fence/queue-idle proof permits last-view/image/memory ACK retirement; failed proof retains10 owners/ticket. Targeted D/RS pass. |
+
+The80% TODO#3 milestone distinguishes integrated working implementation and basic
+real Windows acceptance from final qualification. Remaining20% requires unchanged
+90% whole-production coverage, final zero-leak/sanitizer and stress gates, fresh
+current-code native transport/bootstrap/repeated WSI/DXVK lifetimes, actual device
+removal and external native DLL heap allocation audit. Time Ended remains TBD.
+Core owns the required integrated make gates; image owns changed extra-object
+serializer qualification; root owns final fresh-worker/bridge sanitizers and
+progress coordination; WDDM exclusively owns VM/GPU acceptance. Historical failed
+runs and retained native processes remain intact. No100% or final acceptance claim.

@@ -5790,3 +5790,20 @@ DXVK Present may enqueue native presentation on a background thread. Acceptance
 repeats DwmFlush and every exact64x64 client RGB comparison for at most10s, releases
 each acquired DC unconditionally, and rejects a late result. It records the first
 mismatch and count without tolerance, masks or skipped pixels.
+
+
+### Retired swapchain backing and descriptor allocation refunds
+
+Swapchain destruction invalidates guest image lookup immediately. A resource
+registry marker retains its native image and bound allocation while cached views
+or GPU references remain. Last-view destruction, proven device idle, and device
+teardown retry eligible retired images. Image destruction ACK precedes allocation
+free ACK. Unknown host completion preserves unresolved owners until trusted
+receiver retirement. Old-view descriptors and already-recorded submit graphs
+cannot use retired guest backing. No forced namespace clear is normal teardown.
+
+Descriptor set retirement refunds each variable binding's copied effective
+allocation count, including zero, while fixed bindings retain their declared
+counts. Original layout maxima remain copied for pipeline compatibility. Refund
+and registry publication occur only after the existing exact free/reset/destroy
+ACK; transport loss retains uncertain set/pool ownership.
