@@ -147,3 +147,33 @@ test "geometry rejects aspects mip shape strides alignment and arithmetic overfl
     huge.format = 185;
     try std.testing.expectError(error.Invalid, buffer_span(huge, copy));
 }
+fn numeric_class(format: u32) u32 {
+    return switch (format) {
+        13, 20, 27, 34, 41, 48, 55, 62, 68, 74, 81, 88, 95, 98, 101, 104, 107, 110, 113, 116, 119 => 1,
+        14, 21, 28, 35, 42, 49, 56, 63, 69, 75, 82, 89, 96, 99, 102, 105, 108, 111, 114, 117, 120 => 2,
+        else => 0,
+    };
+}
+/// Validate blit format classes and single aspect. Integer colors must share signedness;
+/// normalized/float colors may convert. Depth/stencil requires identical format and nearest.
+/// Compressed formats cannot blit. Host format BLIT/filter feature checks remain caller-owned.
+/// Returns Invalid without allocations or ownership changes; immutable calls thread-safe.
+pub fn blit_compatible(source: u32, target: u32, aspect: u32, filter: u32) !void {
+    const first = try block(source, aspect);
+    const second = try block(target, aspect);
+    if (filter > 1 or first.width != 1 or first.height != 1 or second.width != 1 or second.height != 1) return error.Invalid;
+    if (aspect == 1) {
+        if (numeric_class(source) != numeric_class(target)) return error.Invalid;
+    } else if (source != target or filter != 0) return error.Invalid;
+}
+test "blit numeric classes depth stencil and compression obey format conversion rules" {
+    try blit_compatible(37, 100, 1, 1);
+    try blit_compatible(13, 98, 1, 0);
+    try blit_compatible(14, 99, 1, 0);
+    try std.testing.expectError(error.Invalid, blit_compatible(13, 99, 1, 0));
+    try std.testing.expectError(error.Invalid, blit_compatible(37, 98, 1, 1));
+    try blit_compatible(130, 130, 4, 0);
+    try std.testing.expectError(error.Invalid, blit_compatible(130, 130, 2, 1));
+    try std.testing.expectError(error.Invalid, blit_compatible(124, 126, 2, 0));
+    try std.testing.expectError(error.Invalid, blit_compatible(131, 131, 1, 0));
+}
