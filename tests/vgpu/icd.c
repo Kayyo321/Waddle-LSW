@@ -82,6 +82,18 @@ size_t venus_values_test_encode(uint32_t kind, void *bytes, size_t capacity);
  * @note Allocation-free, synchronous; disjoint outputs thread-safe.
  */
 size_t venus_values_test_properties(const VkPhysicalDeviceProperties *properties, void *bytes, size_t capacity);
+/** @brief Independent pinned Features2 encoder query oracle.
+ * @param[in] tags Nonnull borrowed count known tags in requested order.
+ * @param[in] count At most eight. @param[out] output Exclusive 4096-byte storage.
+ * @return Initialized encoded extent. @note No allocations or retention, synchronous.
+ */
+size_t venus_features_test_query(const uint32_t *tags, size_t count, void *output);
+/** @brief Independent pinned Features2 reply oracle with Boolean sentinel patterns.
+ * @param[in] tags Borrowed known tag list. @param[in] count At most eight.
+ * @param[out] output Exclusive 4096-byte storage. @return Initialized encoded extent.
+ * @note No allocations or retention, synchronous and disjoint outputs thread-safe.
+ */
+size_t venus_features_test_reply(const uint32_t *tags, size_t count, void *output);
 /** @brief External Vulkan loader ABI alias, no storage or ownership. */
 extern VkResult
 negotiate_external(uint32_t *version) __asm__("vk_icdNegotiateLoaderICDInterfaceVersion");
@@ -93,6 +105,7 @@ extern PFN_vkVoidFunction lookup_external(VkInstance instance,
 typedef struct fixture_t {
     unsigned char reply[4096];
     uint32_t submissions;
+    uint32_t feature_queries;
     uint32_t enumerations;
     uint32_t command;
     uint32_t fail_command;
@@ -884,6 +897,20 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
             struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof(expected)};
             vn_encode_vkDestroyDevice(&encoder, 1, (VkDevice)(uintptr_t)read_u64(bytes + 8), NULL);
             assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+        } else if (fixture->command == 147) {
+            const uint32_t Tags[] = {
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
+            };
+            unsigned char expected[4096];
+            size_t extent = venus_features_test_query(Tags, 5, expected);
+            put_u64(expected + 8, read_u64(bytes + 8));
+            assert(length == 36 + extent && !memcmp(expected, bytes, extent));
+            assert(venus_features_test_reply(Tags, 5, fixture->reply));
+            fixture->feature_queries++;
         } else if (fixture->command != 1) {
             assert(
                 venus_values_test_encode(fixture->command, fixture->reply, sizeof(fixture->reply)));
@@ -991,6 +1018,70 @@ static void routing(void) {
     assert(extensions("missing", &count, NULL) == VK_ERROR_LAYER_NOT_PRESENT);
     assert(extensions(NULL, NULL, NULL) == VK_ERROR_INITIALIZATION_FAILED);
 }
+/** @brief Public core/KHR query aliases preserve headers, unknown payloads and cache lifetime.
+ * @note Sole test thread, bounded native stack storage, no retained caller pointers.
+ */
+static void features2_public(void) {
+    fixture_t fixture = fresh();
+    fixture.properties_override = 1;
+    fixture.properties_version = VK_API_VERSION_1_3;
+    venus_capabilities_t capabilities = {
+        .wire_format_version = 1, .vk_xml_version = VenusPinnedXmlVersion,
+        .vk_ext_command_serialization_spec_version = 1,
+        .vk_mesa_venus_protocol_spec_version = 3, .supports_blob_id_0 = 1,
+        .vk_extension_mask1 = {[0] = 1, [12] = 3}, .supports_multiple_timelines = 1,
+    };
+    assert(venus_icd_bind_capabilities(exchange, &fixture, &capabilities) == RingOk);
+    memset(&capabilities, 0xff, sizeof(capabilities));
+    for (unsigned cycle = 0; cycle < 3; cycle++) {
+        VkInstance instance = create();
+        PFN_vkGetPhysicalDeviceFeatures2 query = (PFN_vkGetPhysicalDeviceFeatures2)
+            lookup_external(instance, "vkGetPhysicalDeviceFeatures2");
+        PFN_vkGetPhysicalDeviceFeatures2 alias = (PFN_vkGetPhysicalDeviceFeatures2)
+            venus_icd_get_physical_proc_addr(instance, "vkGetPhysicalDeviceFeatures2KHR");
+        assert(query && alias == query);
+        PFN_vkEnumeratePhysicalDevices enumerate = (PFN_vkEnumeratePhysicalDevices)
+            lookup_external(instance, "vkEnumeratePhysicalDevices");
+        VkPhysicalDevice devices[2] = {0}; uint32_t count = 2;
+        assert(enumerate(instance, &count, devices) == VK_SUCCESS && count == 2);
+        for (unsigned index = 0; index < count; index++) {
+            struct unknown_t { VkStructureType sType; void *pNext; uint64_t sentinel[2]; } unknown;
+            memset(&unknown, 0xa5, sizeof(unknown));
+            unknown.sType = (VkStructureType)999999; unknown.pNext = NULL;
+            VkPhysicalDeviceShaderDrawParametersFeatures draw = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+                .pNext = &unknown, .shaderDrawParameters = VK_TRUE};
+            VkPhysicalDeviceMaintenance5FeaturesKHR maintenance = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+                .pNext = &draw, .maintenance5 = VK_TRUE};
+            VkPhysicalDeviceFeatures2 output = {
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &maintenance};
+            memset(&output.features, 0xa5, sizeof(output.features));
+            unsigned before = fixture.submissions;
+            query(devices[index], &output);
+            assert(fixture.submissions == before + 2 && fixture.feature_queries == cycle * 2 + index + 1);
+            const VkPhysicalDeviceFeatures ZeroCore = {0};
+            assert(!memcmp(&output.features, &ZeroCore, sizeof(ZeroCore)));
+            assert(output.sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 && output.pNext == &maintenance);
+            assert(maintenance.sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR &&
+                maintenance.pNext == &draw && maintenance.maintenance5 == VK_FALSE);
+            assert(draw.sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES &&
+                draw.pNext == &unknown && draw.shaderDrawParameters == VK_FALSE);
+            assert(unknown.sType == (VkStructureType)999999 && unknown.pNext == NULL &&
+                unknown.sentinel[0] == UINT64_C(0xa5a5a5a5a5a5a5a5) && unknown.sentinel[1] == UINT64_C(0xa5a5a5a5a5a5a5a5));
+            before = fixture.submissions;
+            alias(devices[index], &output);
+            VkPhysicalDeviceFeatures core;
+            PFN_vkGetPhysicalDeviceFeatures get_core = (PFN_vkGetPhysicalDeviceFeatures)
+                lookup_external(instance, "vkGetPhysicalDeviceFeatures");
+            get_core(devices[index], &core);
+            assert(fixture.submissions == before && !memcmp(&core, &output.features, sizeof(core)));
+        }
+        PFN_vkDestroyInstance destroy = (PFN_vkDestroyInstance)lookup_external(instance, "vkDestroyInstance");
+        destroy(instance, NULL);
+    }
+    assert(venus_icd_unbind() == RingOk);
+}
 static void healthy(fixture_t *fixture) {
     assert(venus_icd_bind(exchange, fixture) == RingOk);
     assert(venus_icd_bind(exchange, fixture) == RingInvalid);
@@ -998,6 +1089,8 @@ static void healthy(fixture_t *fixture) {
         VkInstance instance = create();
         assert(venus_icd_unbind() == RingAgain);
         assert(!lookup_external(instance, "vkUnknown"));
+        assert(!lookup_external(instance, "vkGetPhysicalDeviceFeatures2"));
+        assert(!lookup_external(instance, "vkGetPhysicalDeviceFeatures2KHR"));
         assert(lookup_external(instance, "vkCreateDevice"));
         assert(!venus_icd_get_physical_proc_addr(instance, "vkCreateInstance"));
         assert(venus_icd_get_physical_proc_addr(instance, "vkGetPhysicalDeviceProperties"));
@@ -1198,7 +1291,7 @@ static void healthy(fixture_t *fixture) {
         assert(!repeat);
         device_destroy(device_handle, NULL);
         assert(properties.apiVersion == VK_API_VERSION_1_0 && properties.vendorID == 42 &&
-               features.robustBufferAccess && memory.memoryTypeCount);
+               !features.robustBufferAccess && memory.memoryTypeCount);
         get_properties((VkPhysicalDevice)(uintptr_t)1, &properties);
         get_properties(NULL, &properties);
         get_properties(devices[0], NULL);
@@ -6304,6 +6397,7 @@ int main(void) {
     fixture.poll_again = 2;
     fixture.reply_again = 2;
     healthy(&fixture);
+    features2_public();
     concurrent();
     fence_failures();
     idle_failures();

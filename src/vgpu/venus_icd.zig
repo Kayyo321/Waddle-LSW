@@ -1,5 +1,7 @@
 //! Experimental bounded Vulkan dispatch; full device API/DXVK support is separately gated.
 const std = @import("std");
+const features_native = @import("venus_features_native.zig");
+const features_wire = @import("venus_features_wire.zig");
 const descriptor_wire = @import("venus_descriptor_wire.zig");
 const profiles = @import("venus_icd_profiles.zig");
 const compute_state = @import("venus_compute_state.zig");
@@ -29,11 +31,31 @@ const c = @cImport({
 });
 const MaxInstances: usize = 16;
 const MaxDevices: usize = 16;
+const physical_feature_cache_t = struct {
+    actual_api_version: u32 = 0,
+    actual_api_ready: bool = false,
+    raw_features_ready: bool = false,
+    raw: features_wire.result_t = .{},
+};
+const FeatureTags = [_]u32{
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+};
+const FeatureCounts = [_]u8{ 12, 47, 15, 1, 1, 2, 3, 1 };
+const CoreFeatureAllowlist = [_]u32{0} ** features_wire.CoreFlags;
+const NodeFeatureAllowlists = [_][features_wire.MaxNodeFlags]u32{[_]u32{0} ** features_wire.MaxNodeFlags} ** features_wire.MaxNodes;
 const instance_cache_t = struct {
     handle: u64 = 0,
     ready: bool = false,
     count: u32 = 0,
     physical: [MaxDevices]u64 = [_]u64{0} ** MaxDevices,
+    feature_caches: [MaxDevices]physical_feature_cache_t = [_]physical_feature_cache_t{.{}} ** MaxDevices,
 };
 const device_cache_t = struct {
     handle: u64 = 0,
@@ -1011,41 +1033,176 @@ fn device_extensions(
         return c.VK_ERROR_INITIALIZATION_FAILED;
     return enumerate_extensions(layer, count, output);
 }
+// Caller holds mutex; live physical namespace selects its parent-owned scalar cache only.
+fn physical_features_cache(physical: c.VkPhysicalDevice) ?*physical_feature_cache_t {
+    if (physical == null or object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE) == null) return null;
+    for (&caches) |*entry| {
+        for (entry.physical[0..entry.count], 0..) |handle, index| {
+            if (handle == @intFromPtr(physical.?)) return &entry.feature_caches[index];
+        }
+    }
+    return null;
+}
+// Decode before cache publication; subsequent fully decoded API values must preserve identity.
+fn raw_properties(physical: c.VkPhysicalDevice) ?c.VkPhysicalDeviceProperties {
+    const entry = physical_features_cache(physical) orelse return null;
+    const reply = query(physical, 6) orelse return null;
+    var staged: c.VkPhysicalDeviceProperties = undefined;
+    if (c.venus_values_properties_decode(&staged, reply.ptr, reply.len) != c.RingOk or
+        staged.apiVersion >> 29 != 0 or ((staged.apiVersion >> 22) & 0x7f) != 1 or
+        (entry.actual_api_ready and entry.actual_api_version != staged.apiVersion))
+    {
+        _ = failure(c.RingCorrupt);
+        return null;
+    }
+    entry.actual_api_version = staged.apiVersion;
+    entry.actual_api_ready = true;
+    return staged;
+}
+// Fixed owned Boolean copy in native declaration order, never native padding or a byte cast.
+fn native_core_flags(value: *const c.VkPhysicalDeviceFeatures) [features_wire.CoreFlags]u32 {
+    var flags: [features_wire.CoreFlags]u32 = undefined;
+    inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields, 0..) |field, index|
+        flags[index] = @field(value.*, field.name);
+    return flags;
+}
+// Caller holds mutex; immutable complete raw record is published only after full validation.
+fn ensure_raw_features(physical: c.VkPhysicalDevice) ?*const features_wire.result_t {
+    if (!negotiated_capabilities_ready or lost != c.RingOk) return null;
+    const entry = physical_features_cache(physical) orelse return null;
+    if (entry.raw_features_ready) return &entry.raw;
+    if (!entry.actual_api_ready) _ = raw_properties(physical) orelse return null;
+    var staged = features_wire.result_t{};
+    if (entry.actual_api_version < c.VK_API_VERSION_1_1) {
+        const reply = query(physical, 3) orelse return null;
+        var core: c.VkPhysicalDeviceFeatures = undefined;
+        if (c.venus_values_features_decode(&core, reply.ptr, reply.len) != c.RingOk) {
+            _ = failure(c.RingCorrupt);
+            return null;
+        }
+        staged.core = native_core_flags(&core);
+    } else {
+        var tags: [features_wire.MaxNodes]u32 = undefined;
+        var count: usize = 0;
+        for (FeatureTags, 0..) |tag, index| {
+            const supported = switch (index) {
+                0, 1, 4 => entry.actual_api_version >= c.VK_API_VERSION_1_2,
+                2 => entry.actual_api_version >= c.VK_API_VERSION_1_3,
+                3 => true,
+                5 => c.venus_capabilities_extension(&negotiated_capabilities, 29) != 0,
+                6 => c.venus_capabilities_extension(&negotiated_capabilities, 287) != 0,
+                7 => c.venus_capabilities_extension(&negotiated_capabilities, 471) != 0,
+                else => unreachable,
+            };
+            if (supported) {
+                tags[count] = tag;
+                count += 1;
+            }
+        }
+        const record = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE).?;
+        const writer = features_wire.query(record.id, tags[0..count]) catch unreachable;
+        const reply = transact(writer.bytes[0..writer.used]) orelse return null;
+        staged = features_wire.decode(reply, tags[0..count]) catch {
+            _ = failure(c.RingCorrupt);
+            return null;
+        };
+    }
+    entry.raw = staged;
+    entry.raw_features_ready = true;
+    return &entry.raw;
+}
+fn feature_index(tag: u32) usize {
+    for (FeatureTags, 0..) |known, index| if (known == tag) return index;
+    unreachable;
+}
+fn zero_feature_nodes(chain: *const features_native.chain_t) [features_wire.MaxNodes]features_wire.node_t {
+    var nodes = [_]features_wire.node_t{.{}} ** features_wire.MaxNodes;
+    for (chain.tags[0..chain.count], 0..) |tag, index|
+        nodes[index] = .{ .type_tag = tag, .flag_count = FeatureCounts[feature_index(tag)] };
+    return nodes;
+}
+fn project_core(flags: *const [features_wire.CoreFlags]u32) [features_wire.CoreFlags]u32 {
+    var projected: [features_wire.CoreFlags]u32 = undefined;
+    for (&projected, flags, CoreFeatureAllowlist) |*output, raw, mask| output.* = raw & mask;
+    return projected;
+}
+/// Query complete raw host features and publish only proven guest flags as one transaction.
+/// [in] physical nullable live namespace handle; [in,out] output_address nullable initialized
+/// accessible exclusive Features2 storage. Headers/links immutable for this call; unknown
+/// payloads preserved. Invalid native input issues no command and leaves all bytes unchanged.
+/// Corrupt replies preserve output and poison binding. Mutex serialized, no heap/pointer retention.
+fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv(.C) void {
+    mutex.lock();
+    defer mutex.unlock();
+    if (!negotiated_capabilities_ready or physical_features_cache(physical) == null) return;
+    const address = output_address orelse return;
+    if (@intFromPtr(address) % @alignOf(c.VkPhysicalDeviceFeatures2) != 0) return;
+    const output: *c.VkPhysicalDeviceFeatures2 = @ptrCast(@alignCast(address));
+    if (output.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) return;
+    const chain = features_native.collect_chain(output.pNext) catch return;
+    var nodes = zero_feature_nodes(&chain);
+    const zero_core = [_]u32{0} ** features_wire.CoreFlags;
+    features_native.validate_features2(output_address, &chain, nodes[0..chain.count], &zero_core) catch return;
+    const raw = ensure_raw_features(physical) orelse return;
+    const core = project_core(&raw.core);
+    for (nodes[0..chain.count]) |*node| {
+        const index = feature_index(node.type_tag);
+        for (raw.nodes[0..raw.count]) |source| {
+            if (source.type_tag != node.type_tag) continue;
+            for (node.flags[0..node.flag_count], source.flags[0..source.flag_count], NodeFeatureAllowlists[index][0..node.flag_count]) |*target, flag, mask|
+                target.* = flag & mask;
+            break;
+        }
+    }
+    features_native.publish_features2(output_address, &chain, nodes[0..chain.count], &core) catch return;
+}
 /// Query actual host properties into caller storage only after bounded reply validation.
 /// Borrowed output, no allocations; errors preserve output and poison transport binding.
-fn properties(
-    physical: c.VkPhysicalDevice,
-    output: [*c]c.VkPhysicalDeviceProperties,
-) callconv(.C) void {
+fn properties(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceProperties) callconv(.C) void {
     mutex.lock();
     defer mutex.unlock();
     if (output == null) return;
-    const reply = query(physical, 6) orelse return;
-    var staged: c.VkPhysicalDeviceProperties = undefined;
-    if (c.venus_values_properties_decode(&staged, reply.ptr, reply.len) != c.RingOk or
-        staged.apiVersion >> 29 != 0 or ((staged.apiVersion >> 22) & 0x7f) != 1)
-    {
-        _ = failure(c.RingCorrupt);
-        return;
-    }
+    var staged = raw_properties(physical) orelse return;
     staged.limits.maxPushConstantsSize = @min(staged.limits.maxPushConstantsSize, profiles.MaxPushBytes);
     staged.apiVersion = c.VK_API_VERSION_1_0;
     staged.limits.nonCoherentAtomSize = 1;
     staged.limits.minMemoryMapAlignment = 4096;
     output.* = staged;
 }
-/// Query actual host core features; same serialized/preserved-output contract as properties.
-fn features(
-    physical: c.VkPhysicalDevice,
-    output: [*c]c.VkPhysicalDeviceFeatures,
-) callconv(.C) void {
+/// Query raw host core features privately; publish the same implementation intersection as Features2.
+/// [in] physical nullable namespace handle; [out] output nullable borrowed initialized exclusive
+/// native core storage. Errors preserve output; malformed replies poison binding. Mutex serialized,
+/// no allocations or retained caller pointers; legacy mode uses command3 and never command147.
+fn features(physical: c.VkPhysicalDevice, output: [*c]c.VkPhysicalDeviceFeatures) callconv(.C) void {
     mutex.lock();
     defer mutex.unlock();
     if (output == null) return;
-    const reply = query(physical, 3) orelse return;
-    if (c.venus_values_features_decode(output, reply.ptr, reply.len) != c.RingOk) {
-        _ = failure(c.RingCorrupt);
+    var raw: [features_wire.CoreFlags]u32 = undefined;
+    if (negotiated_capabilities_ready) {
+        const snapshot = ensure_raw_features(physical) orelse return;
+        raw = snapshot.core;
+    } else {
+        const reply = query(physical, 3) orelse return;
+        var staged: c.VkPhysicalDeviceFeatures = undefined;
+        if (c.venus_values_features_decode(&staged, reply.ptr, reply.len) != c.RingOk) {
+            _ = failure(c.RingCorrupt);
+            return;
+        }
+        raw = native_core_flags(&staged);
     }
+    const core = project_core(&raw);
+    inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields, 0..) |field, index|
+        @field(output.*, field.name) = core[index];
+}
+comptime {
+    if (@sizeOf(features_wire.result_t) != 1792 or @alignOf(features_wire.result_t) != 4 or
+        @sizeOf(physical_feature_cache_t) != 1800 or @alignOf(physical_feature_cache_t) != 4 or
+        @offsetOf(physical_feature_cache_t, "raw") != 4 or
+        @offsetOf(physical_feature_cache_t, "actual_api_ready") != 1796 or
+        @offsetOf(physical_feature_cache_t, "raw_features_ready") != 1797 or
+        @sizeOf(instance_cache_t) != 28944 or @alignOf(instance_cache_t) != 8 or
+        @offsetOf(instance_cache_t, "feature_caches") != 140)
+        @compileError("Features2 raw cache ownership ABI changed");
 }
 /// Query actual host memory layout; same serialized/preserved-output contract as properties.
 fn memory(
@@ -2202,12 +2359,7 @@ fn ensure_descriptor_limits(parent: *const c.venus_object_t) bool {
         physical = @ptrFromInt(slot.handle);
         break;
     };
-    const reply = query(physical, 6) orelse return false;
-    var value: c.VkPhysicalDeviceProperties = undefined;
-    if (c.venus_values_properties_decode(&value, reply.ptr, reply.len) != c.RingOk) {
-        _ = failure(c.RingCorrupt);
-        return false;
-    }
+    const value = raw_properties(physical) orelse return false;
     const alignments = [_]u64{ value.limits.minUniformBufferOffsetAlignment, value.limits.minStorageBufferOffsetAlignment };
     const ranges = [_]u32{ value.limits.maxUniformBufferRange, value.limits.maxStorageBufferRange };
     for (alignments, ranges) |alignment, range| if (alignment == 0 or alignment & (alignment - 1) != 0 or range == 0) {
@@ -4445,6 +4597,8 @@ fn bounded_name(name: [*c]const u8) ?[]const u8 {
     return null;
 }
 fn physical_proc(name: []const u8) c.PFN_vkVoidFunction {
+    if (negotiated_capabilities_ready and (std.mem.eql(u8, name, "vkGetPhysicalDeviceFeatures2") or
+        std.mem.eql(u8, name, "vkGetPhysicalDeviceFeatures2KHR"))) return @ptrCast(&features2);
     const Entries = .{
         .{ "vkGetPhysicalDeviceProperties", &properties },
         .{ "vkGetPhysicalDeviceFeatures", &features },
@@ -5543,4 +5697,383 @@ test "negotiated binding owns the entire profile and rejected calls preserve the
     venus_icd_abandon();
     try std.testing.expect(!negotiated_capabilities_ready);
     try std.testing.expectEqualDeep(std.mem.zeroes(c.venus_capabilities_t), negotiated_capabilities);
+}
+
+extern fn venus_features_test_query([*]const u32, usize, [*]u8) usize;
+extern fn venus_features_test_reply([*]const u32, usize, [*]u8) usize;
+extern fn venus_features_test_reply_one_hot([*]const u32, usize, usize, [*]u8) usize;
+extern fn venus_values_test_encode(u32, [*]u8, usize) usize;
+extern fn venus_values_test_properties(*const c.VkPhysicalDeviceProperties, [*]u8, usize) usize;
+const feature_fixture_t = struct {
+    api: u32 = c.VK_API_VERSION_1_3,
+    tags: [8]u32 = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR },
+    count: usize = 8,
+    hot: ?usize = null,
+    corrupt_word: ?usize = null,
+    truncate: ?usize = null,
+    fail_command: u32 = std.math.maxInt(u32),
+    current: u32 = 0,
+    commands: u32 = 0,
+    feature_commands: u32 = 0,
+    reply: [4096]u8 = undefined,
+    bytes: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const self: *feature_fixture_t = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = request.*.kind;
+        response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                std.debug.assert(input != null and length >= 44);
+                const wire = @as([*]const u8, @ptrCast(input.?))[36..length];
+                self.current = std.mem.readInt(u32, wire[0..4], .little);
+                self.commands += 1;
+                if (self.current == self.fail_command) return c.RingClosed;
+                response.*.argument_zero = self.commands;
+                @memset(&self.reply, 0);
+                switch (self.current) {
+                    6 => {
+                        var value = std.mem.zeroes(c.VkPhysicalDeviceProperties);
+                        value.apiVersion = self.api;
+                        self.bytes = venus_values_test_properties(&value, &self.reply, self.reply.len);
+                    },
+                    1 => {
+                        std.mem.writeInt(u32, self.reply[0..4], 1, .little);
+                        self.bytes = 4;
+                    },
+                    3 => self.bytes = venus_values_test_encode(3, &self.reply, self.reply.len),
+                    147 => {
+                        self.feature_commands += 1;
+                        var expected: [4096]u8 = undefined;
+                        const count = self.count;
+                        const expected_bytes = venus_features_test_query(&self.tags, count, &expected);
+                        std.mem.writeInt(u64, expected[8..16], std.mem.readInt(u64, wire[8..16], .little), .little);
+                        std.debug.assert(std.mem.eql(u8, expected[0..expected_bytes], wire));
+                        self.bytes = if (self.hot) |selected| venus_features_test_reply_one_hot(&self.tags, count, selected, &self.reply) else venus_features_test_reply(&self.tags, count, &self.reply);
+                        if (self.corrupt_word) |word| std.mem.writeInt(u32, self.reply[word * 4 ..][0..4], 99, .little);
+                    },
+                    else => return c.RingInvalid,
+                }
+                std.debug.assert(self.bytes > 0);
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                std.debug.assert(output != null and capacity == 4096);
+                const bytes = if (self.current == 147 and self.truncate != null) self.truncate.? else capacity;
+                @memcpy(@as([*]u8, @ptrCast(output.?))[0..bytes], self.reply[0..bytes]);
+                response.*.payload_bytes = @intCast(bytes);
+            },
+            else => return c.RingInvalid,
+        }
+        return c.RingOk;
+    }
+};
+fn feature_test_capabilities() c.venus_capabilities_t {
+    var value = std.mem.zeroes(c.venus_capabilities_t);
+    value.wire_format_version = 1;
+    value.vk_xml_version = c.VenusPinnedXmlVersion;
+    value.vk_ext_command_serialization_spec_version = 1;
+    value.vk_mesa_venus_protocol_spec_version = 3;
+    value.supports_blob_id_0 = 1;
+    value.supports_multiple_timelines = 1;
+    value.vk_extension_mask1[0] = 1;
+    value.vk_extension_mask1[12] = 3;
+    for ([_]u32{ 29, 287, 471 }) |bit| value.vk_extension_mask1[bit / 32] |= @as(u32, 1) << @as(u5, @intCast(bit % 32));
+    return value;
+}
+fn feature_test_physical(fixture: *feature_fixture_t, capabilities: *const c.venus_capabilities_t) !c.VkPhysicalDevice {
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind_capabilities(feature_fixture_t.exchange, fixture, capabilities));
+    var instance: [*c]c.venus_object_t = null;
+    var physical: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, instance.*.id, 1, &physical));
+    caches[0].handle = instance.*.handle;
+    caches[0].ready = true;
+    caches[0].count = 1;
+    caches[0].physical[0] = physical.*.handle;
+    return @ptrFromInt(physical.*.handle);
+}
+test "Features2 cached raw137 one-hots are immutable while public flags stay false" {
+    const capabilities = feature_test_capabilities();
+    for (0..137) |selected| {
+        var fixture = feature_fixture_t{ .hot = selected };
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2(physical, &output);
+        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+        try std.testing.expectEqual(@as(u32, 1), fixture.feature_commands);
+        const entry = physical_features_cache(physical).?;
+        try std.testing.expect(entry.actual_api_ready and entry.raw_features_ready);
+        try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_3), entry.actual_api_version);
+        var position: usize = 0;
+        for (entry.raw.core) |flag| {
+            try std.testing.expectEqual(@as(u32, @intFromBool(position == selected)), flag);
+            position += 1;
+        }
+        for (entry.raw.nodes[0..entry.raw.count]) |node| for (node.flags[0..node.flag_count]) |flag| {
+            try std.testing.expectEqual(@as(u32, @intFromBool(position == selected)), flag);
+            position += 1;
+        };
+        try std.testing.expectEqual(@as(usize, 137), position);
+        inline for (@typeInfo(c.VkPhysicalDeviceFeatures).Struct.fields) |field| try std.testing.expectEqual(@as(u32, 0), @field(output.features, field.name));
+        const raw_before = entry.raw;
+        @memset(std.mem.asBytes(&output.features), 0xa5);
+        features2(physical, &output);
+        var core = std.mem.zeroes(c.VkPhysicalDeviceFeatures);
+        features(physical, &core);
+        try std.testing.expectEqualDeep(std.mem.zeroes(c.VkPhysicalDeviceFeatures), core);
+        try std.testing.expectEqualDeep(core, output.features);
+        try std.testing.expectEqualDeep(raw_before, entry.raw);
+        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+    }
+}
+test "Features2 actual API gates aggregates correctly and never147 on API1.0" {
+    const capabilities = feature_test_capabilities();
+    for ([_]u32{ c.VK_API_VERSION_1_0, c.VK_API_VERSION_1_1, c.VK_API_VERSION_1_2, c.VK_API_VERSION_1_3 }) |api| {
+        var fixture = feature_fixture_t{ .api = api };
+        if (api == c.VK_API_VERSION_1_1) {
+            fixture.tags = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, 0, 0, 0, 0 };
+            fixture.count = 4;
+        } else if (api == c.VK_API_VERSION_1_2) {
+            fixture.tags = .{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, 0 };
+            fixture.count = 7;
+        }
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2(physical, &output);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+        try std.testing.expectEqual(@as(u32, if (api == c.VK_API_VERSION_1_0) 0 else 1), fixture.feature_commands);
+        const entry = physical_features_cache(physical).?;
+        try std.testing.expectEqual(api, entry.actual_api_version);
+        try std.testing.expectEqual(@as(u8, @intCast(if (api == c.VK_API_VERSION_1_0) 0 else fixture.count)), entry.raw.count);
+    }
+}
+test "Features2 every truncated or corrupted initialized reply preserves complete output and raw cache" {
+    const capabilities = feature_test_capabilities();
+    for (0..2) |mode| {
+        const attempts: usize = if (mode == 0) 668 else 668 / 4;
+        for (0..attempts) |index| {
+            var fixture = feature_fixture_t{};
+            if (mode == 0) fixture.truncate = index else fixture.corrupt_word = index;
+            const physical = try feature_test_physical(&fixture, &capabilities);
+            defer venus_icd_abandon();
+            var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+            output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            @memset(std.mem.asBytes(&output.features), 0xa5);
+            const before = std.mem.asBytes(&output).*;
+            features2(physical, &output);
+            try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&output));
+            try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+            const entry = physical_features_cache(physical).?;
+            try std.testing.expect(entry.actual_api_ready and !entry.raw_features_ready);
+            try std.testing.expectEqualDeep(features_wire.result_t{}, entry.raw);
+            const commands = fixture.commands;
+            features2(physical, &output);
+            try std.testing.expectEqual(commands, fixture.commands);
+        }
+    }
+}
+
+test "Features2 native invalid topology cannot publish or transact" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    @memset(std.mem.asBytes(&outer.features), 0xa5);
+    var node = std.mem.zeroes(c.VkPhysicalDeviceShaderDrawParametersFeatures);
+    node.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+    node.shaderDrawParameters = 0xa5a5a5a5;
+    var duplicate = node;
+    var unknown = std.mem.zeroes(c.VkBaseOutStructure);
+    unknown.sType = 999999;
+    for (0..8) |mode| {
+        outer.pNext = &node;
+        node.pNext = null;
+        switch (mode) {
+            0 => outer.sType = 0,
+            1 => node.pNext = &node,
+            2 => {
+                node.pNext = &duplicate;
+                duplicate.pNext = null;
+            },
+            3 => outer.pNext = &outer,
+            4 => outer.pNext = @ptrFromInt(@intFromPtr(&node) + 1),
+            5 => {
+                unknown.pNext = &unknown;
+                outer.pNext = &unknown;
+            },
+            else => {},
+        }
+        const before = std.mem.asBytes(&outer).*;
+        const node_before = std.mem.asBytes(&node).*;
+        const address: ?*anyopaque = if (mode == 6) null else if (mode == 7) @ptrFromInt(@intFromPtr(&outer) + 1) else &outer;
+        features2(physical, address);
+        try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&outer));
+        try std.testing.expectEqualSlices(u8, &node_before, std.mem.asBytes(&node));
+        try std.testing.expectEqual(@as(u32, 0), fixture.commands);
+        try std.testing.expect(!physical_features_cache(physical).?.actual_api_ready);
+        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    }
+}
+test "Features2 parser masks are copied and unavailable requested nodes publish false" {
+    var capabilities = feature_test_capabilities();
+    capabilities.vk_extension_mask1[29 / 32] &= ~(@as(u32, 1) << 29);
+    capabilities.vk_extension_mask1[287 / 32] &= ~(@as(u32, 1) << 31);
+    capabilities.vk_extension_mask1[471 / 32] &= ~(@as(u32, 1) << 23);
+    var fixture = feature_fixture_t{ .count = 5 };
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    @memset(std.mem.asBytes(&capabilities), 0xff);
+    var transform = std.mem.zeroes(c.VkPhysicalDeviceTransformFeedbackFeaturesEXT);
+    transform.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
+    transform.transformFeedback = 1;
+    transform.geometryStreams = 1;
+    var robust = std.mem.zeroes(c.VkPhysicalDeviceRobustness2FeaturesEXT);
+    robust.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
+    robust.robustBufferAccess2 = 1;
+    robust.robustImageAccess2 = 1;
+    robust.nullDescriptor = 1;
+    transform.pNext = &robust;
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    outer.pNext = &transform;
+    features2(physical, &outer);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqual(@as(u32, 0), transform.transformFeedback | transform.geometryStreams | robust.robustBufferAccess2 | robust.robustImageAccess2 | robust.nullDescriptor);
+    try std.testing.expectEqual(@as(u8, 5), physical_features_cache(physical).?.raw.count);
+    try std.testing.expectEqual(@as(?*anyopaque, &robust), transform.pNext);
+}
+test "Features2 raw API mismatch invalid versions and failed backend preserve callers" {
+    const capabilities = feature_test_capabilities();
+    for ([_]u32{ 0, c.VK_API_VERSION_1_3 | (@as(u32, 1) << 29), (@as(u32, 2) << 22), c.VK_API_VERSION_1_3 }) |api| {
+        var fixture = feature_fixture_t{ .api = api };
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        @memset(std.mem.asBytes(&outer.features), 0xa5);
+        const before = std.mem.asBytes(&outer).*;
+        if (api == c.VK_API_VERSION_1_3) fixture.fail_command = 147;
+        features2(physical, &outer);
+        try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&outer));
+        try std.testing.expect(!physical_features_cache(physical).?.raw_features_ready);
+        try std.testing.expectEqual(@as(c_int, if (api == c.VK_API_VERSION_1_3) c.RingClosed else c.RingCorrupt), lost);
+    }
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2(physical, &outer);
+    var value = std.mem.zeroes(c.VkPhysicalDeviceProperties);
+    properties(physical, &value);
+    try std.testing.expectEqual(@as(u32, c.VK_API_VERSION_1_0), value.apiVersion);
+    fixture.api = c.VK_API_VERSION_1_2;
+    @memset(std.mem.asBytes(&value), 0xa5);
+    const before = std.mem.asBytes(&value).*;
+    properties(physical, &value);
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&value));
+    try std.testing.expectEqual(@as(c_int, c.RingCorrupt), lost);
+}
+test "Features2 distinct physical caches clear only with acknowledged parent teardown" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{ .hot = 0 };
+    const first = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    var second: [*c]c.venus_object_t = null;
+    try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_PHYSICAL_DEVICE, object(caches[0].handle, c.VK_OBJECT_TYPE_INSTANCE).?.id, 1, &second));
+    caches[0].count = 2;
+    caches[0].physical[1] = second.*.handle;
+    var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2(first, &outer);
+    fixture.hot = 1;
+    const next: c.VkPhysicalDevice = @ptrFromInt(second.*.handle);
+    features2(next, &outer);
+    try std.testing.expectEqual(@as(u32, 4), fixture.commands);
+    try std.testing.expectEqual(@as(u32, 1), physical_features_cache(first).?.raw.core[0]);
+    try std.testing.expectEqual(@as(u32, 0), physical_features_cache(first).?.raw.core[1]);
+    try std.testing.expectEqual(@as(u32, 0), physical_features_cache(next).?.raw.core[0]);
+    try std.testing.expectEqual(@as(u32, 1), physical_features_cache(next).?.raw.core[1]);
+    const instance: c.VkInstance = @ptrFromInt(caches[0].handle);
+    destroy_instance(instance, null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqualDeep(instance_cache_t{}, caches[0]);
+    try std.testing.expect(physical_features_cache(first) == null and physical_features_cache(next) == null);
+    features2(first, &outer);
+    try std.testing.expectEqual(@as(u32, 5), fixture.commands);
+}
+test "Features2 complete reordered native chain preserves every non-Boolean byte and raw ownership" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    defer venus_icd_abandon();
+    const native_t = struct {
+        v11: c.VkPhysicalDeviceVulkan11Features,
+        v12: c.VkPhysicalDeviceVulkan12Features,
+        v13: c.VkPhysicalDeviceVulkan13Features,
+        draw: c.VkPhysicalDeviceShaderDrawParametersFeatures,
+        reset: c.VkPhysicalDeviceHostQueryResetFeatures,
+        transform: c.VkPhysicalDeviceTransformFeedbackFeaturesEXT,
+        robust: c.VkPhysicalDeviceRobustness2FeaturesEXT,
+        maintenance: c.VkPhysicalDeviceMaintenance5FeaturesKHR,
+    };
+    const Fields = .{ "v11", "v12", "v13", "draw", "reset", "transform", "robust", "maintenance" };
+    var native: native_t = undefined;
+    @memset(std.mem.asBytes(&native), 0xa5);
+    inline for (FeatureTags, 0..) |tag, index| {
+        const field = Fields[index];
+        @field(native, field).sType = tag;
+        @field(native, field).pNext = if (index == 0) null else &@field(native, Fields[index - 1]);
+    }
+    var expected = std.mem.asBytes(&native).*;
+    inline for (FeatureTags, 0..) |_, index| {
+        const field = Fields[index];
+        const node_t = @TypeOf(@field(native, field));
+        inline for (@typeInfo(node_t).Struct.fields) |member| {
+            if (comptime !std.mem.eql(u8, member.name, "sType") and !std.mem.eql(u8, member.name, "pNext")) {
+                const offset = @offsetOf(@TypeOf(native), field) + @offsetOf(node_t, member.name);
+                std.mem.writeInt(u32, expected[offset..][0..4], 0, .little);
+            }
+        }
+    }
+    var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    output.pNext = &native.maintenance;
+    features2(physical, &output);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&native));
+    const entry = physical_features_cache(physical).?;
+    const raw = entry.raw;
+    @memset(&fixture.reply, 0xff);
+    @memset(std.mem.asBytes(&output.features), 0xa5);
+    features2(physical, &output);
+    try std.testing.expectEqualDeep(raw, entry.raw);
+    try std.testing.expectEqual(@as(u32, 2), fixture.commands);
+    try std.testing.expectEqualSlices(u8, &expected, std.mem.asBytes(&native));
+}
+test "Features2 failed parent teardown retains raw cache until explicit abandonment" {
+    const capabilities = feature_test_capabilities();
+    var fixture = feature_fixture_t{};
+    const physical = try feature_test_physical(&fixture, &capabilities);
+    var output = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+    output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2(physical, &output);
+    const before = caches[0];
+    fixture.fail_command = 1;
+    destroy_instance(@ptrFromInt(caches[0].handle), null);
+    try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    try std.testing.expectEqualDeep(before, caches[0]);
+    venus_icd_abandon();
+    try std.testing.expectEqualDeep(instance_cache_t{}, caches[0]);
+    try std.testing.expect(physical_features_cache(physical) == null);
+    try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2") == null);
+    try std.testing.expect(physical_proc("vkGetPhysicalDeviceFeatures2KHR") == null);
 }
