@@ -109,7 +109,7 @@ pub fn queue_submit2(queue_id: u64, submits: []const c.VkSubmitInfo2, fence_id: 
         try semaphore_submit(&writer, waits);
         try count(&writer, commands.len);
         for (commands) |entry| {
-            if (entry.sType != c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO or entry.pNext != null or entry.commandBuffer == null or entry.deviceMask != 1) return error.Invalid;
+            if (entry.sType != c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO or entry.pNext != null or entry.commandBuffer == null or entry.deviceMask > 1) return error.Invalid;
             try node(&writer, c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO);
             try writer.put(u64, handle_bits(entry.commandBuffer));
             try writer.put(u32, entry.deviceMask);
@@ -244,7 +244,7 @@ test "sync2 mixed barriers and submit2 preserve64-bit scopes values and native b
     var dependency=c.VkDependencyInfo{.sType=c.VK_STRUCTURE_TYPE_DEPENDENCY_INFO,.memoryBarrierCount=1,.pMemoryBarriers=&memory,.bufferMemoryBarrierCount=1,.pBufferMemoryBarriers=&buffer,.imageMemoryBarrierCount=1,.pImageMemoryBarriers=&image};
     try compare(try pipeline_barrier2(9,&dependency),204,&dependency,0);
     var semaphore=c.VkSemaphoreSubmitInfo{.sType=c.VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,.semaphore=@ptrFromInt(11),.value=1<<40,.stageMask=1<<42};
-    var command=c.VkCommandBufferSubmitInfo{.sType=c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,.commandBuffer=@ptrFromInt(15),.deviceMask=1};
+    var command=c.VkCommandBufferSubmitInfo{.sType=c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,.commandBuffer=@ptrFromInt(15),.deviceMask=0};
     var submit=c.VkSubmitInfo2{.sType=c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2,.waitSemaphoreInfoCount=1,.pWaitSemaphoreInfos=&semaphore,.commandBufferInfoCount=1,.pCommandBufferInfos=&command,.signalSemaphoreInfoCount=1,.pSignalSemaphoreInfos=&semaphore};
     try compare(try queue_submit2(9,(@as([*]c.VkSubmitInfo2,@ptrCast(&submit)))[0..1],13),206,&submit,1);
     try compare(try queue_submit2(9,&.{},13),206,null,0);
