@@ -3567,6 +3567,13 @@ fn destroy_command_pool(
 /// @param[in] flags Core0/1 release-resources flags only.
 /// @return Host result, local initialization error or sticky device loss.
 /// @note Mutex serialized, allocation-free; caller ensures no child is pending GPU use.
+/// Opt-in bounded failure record for command lifecycle diagnosis. Inputs borrowed
+/// only for this call under ICD mutex; no allocation, pointer retention or state
+/// change. WADDLE_ICD_DIAGNOSTICS must exist in this process environment.
+fn command_rejection_diagnostic(api: []const u8, state: *const resource_state_t) void {
+    if (!std.process.hasEnvVarConstant("WADDLE_ICD_DIAGNOSTICS")) return;
+    std.debug.print("Waddle ICD {s} rejected: state={s}, inflight={d}, flags={d}, lost={d}\n", .{ api, @tagName(state.command_state), state.inflight_count, state.command_flags, lost });
+}
 fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) callconv(.C) c_int {
     lock_icd();
     defer unlock_icd();
@@ -3582,8 +3589,10 @@ fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) cal
         parent.id,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     for (slots, 0..) |child, index|
-        if (child.parent_id == record.id and resource_states[index].command_state == .Pending)
+        if (child.parent_id == record.id and resource_states[index].command_state == .Pending) {
+            command_rejection_diagnostic("vkResetCommandPool", &resource_states[index]);
             return c.VK_ERROR_INITIALIZATION_FAILED;
+        };
     var writer = writer_t{};
     writer.header(87, parent.id);
     writer.put(u64, record.id);
@@ -3807,10 +3816,14 @@ fn begin_command_buffer(
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const pool = command_pool_for(record) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const state = resource_state(record);
-    if (state.command_state == .Recording or state.command_state == .Pending)
+    if (state.command_state == .Recording or state.command_state == .Pending) {
+        command_rejection_diagnostic("vkBeginCommandBuffer", state);
         return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (state.command_state != .Initial and resource_state(pool).pool_flags & 2 == 0)
+    }
+    if (state.command_state != .Initial and resource_state(pool).pool_flags & 2 == 0) {
+        command_rejection_diagnostic("vkBeginCommandBuffer implicit reset", state);
         return c.VK_ERROR_INITIALIZATION_FAILED;
+    }
     const secondary = state.command_level == 1;
     if (!secondary and info.*.flags == 5) return c.VK_ERROR_INITIALIZATION_FAILED;
     if (secondary) {
