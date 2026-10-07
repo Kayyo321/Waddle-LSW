@@ -993,5 +993,5 @@ vgpu-icd-test: vgpu-graphics-state-test
 vgpu-icd-sanitizers: vgpu-graphics-state-sanitizers
 vgpu-icd-coverage: vgpu-graphics-state-coverage
 
-# Genuine Zig access instrumentation of the ICD and its embedded source closure.
-vgpu-icd-sanitizers: vgpu-icd-owned-sanitizers
+# Genuine complete ICD/import and separately linked codec access instrumentation.
+vgpu-icd-sanitizers: vgpu-icd-complete-seam-sanitizers
