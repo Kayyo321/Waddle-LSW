@@ -62,4 +62,17 @@ int venus_receiver_memory_write(void *memory, uint64_t extent, uint64_t offset, 
  * @return One for 1..63, zero otherwise; pure/thread-safe/allocation-free.
  */
 int venus_receiver_gpu_timeline(uint32_t timeline);
+/** @brief Validate complete bounded scatter packet before accessing mapped bytes.
+ * @param[in] input Nullable immutable private input[length], borrowed.
+ * @param[in] length Exact17..4096 bytes. @param[in] extent Actual1..oneGiB extent.
+ * @return One valid/zero invalid. No allocation, ownership or shared state.
+ */
+int venus_receiver_scatter_valid(const void *input, size_t length, uint64_t extent);
+/** @brief Apply prevalidated ascending disjoint dirty spans; invalid preserves memory.
+ * @param[out] memory Nullable actual extent-byte coherent mapped storage.
+ * @param[in] extent Actual bytes. @param[in] input Nullable disjoint private packet.
+ * @param[in] length Exact packet bytes. @return RingOk or RingInvalid.
+ * @note No allocation/retention; caller owns CPU/GPU synchronization.
+ */
+int venus_receiver_scatter_write(void *memory, uint64_t extent, const void *input, size_t length);
 #endif

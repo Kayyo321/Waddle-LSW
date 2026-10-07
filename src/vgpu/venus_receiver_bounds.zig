@@ -138,3 +138,90 @@ test "GPU timeline zero and out-of-range never index owned arrays" {
     for (1..64) |timeline|
         try std.testing.expectEqual(@as(c_int, 1), @call(.never_inline, venus_receiver_gpu_timeline, .{@as(u32, @intCast(timeline))}));
 }
+
+/// Validate a borrowed immutable LE scatter packet before mapping or modifying storage.
+/// Packet: u32 count then count {u64 offset,u32 nonzero bytes,raw bytes}; exact
+/// 17..4096 bytes, ascending nonoverlapping spans within actual extent <=one GiB.
+/// Returns one valid/zero invalid. Null rejected; allocation-free and thread-safe.
+pub export fn venus_receiver_scatter_valid(input: ?[*]const u8, length: usize, extent: u64) c_int {
+    const source = input orelse return 0;
+    if (length < 17 or length > 4096 or extent == 0 or extent > 1073741824) return 0;
+    const bytes = source[0..length];
+    const count = std.mem.readInt(u32, bytes[0..4], .little);
+    if (count == 0 or count > (length - 4) / 13) return 0;
+    var cursor: usize = 4;
+    var previous_end: u64 = 0;
+    for (0..count) |_| {
+        if (length - cursor < 12) return 0;
+        const offset = std.mem.readInt(u64, bytes[cursor..][0..8], .little);
+        const span = std.mem.readInt(u32, bytes[cursor + 8..][0..4], .little);
+        cursor += 12;
+        if (span == 0 or span > length - cursor or offset < previous_end or
+            offset > extent or span > extent - offset) return 0;
+        previous_end = offset + span;
+        cursor += span;
+    }
+    return if (cursor == length) 1 else 0;
+}
+/// Write only exact validated dirty spans into caller-owned coherent mapping.
+/// [out] memory nullable actual extent-byte storage; [in] immutable disjoint packet
+/// borrowed for call. Invalid leaves every mapped byte unchanged. Returns0/-1.
+/// No allocation or pointer retention; caller serializes mapping and GPU ownership.
+export fn venus_receiver_scatter_write(memory: ?[*]u8, extent: u64, input: ?[*]const u8, length: usize) c_int {
+    const destination = memory orelse return -1;
+    if (venus_receiver_scatter_valid(input, length, extent) == 0) return -1;
+    const bytes = input.?[0..length];
+    const count = std.mem.readInt(u32, bytes[0..4], .little);
+    var cursor: usize = 4;
+    for (0..count) |_| {
+        const offset = std.mem.readInt(u64, bytes[cursor..][0..8], .little);
+        const span = std.mem.readInt(u32, bytes[cursor + 8..][0..4], .little);
+        cursor += 12;
+        @memcpy(destination[@intCast(offset)..][0..span], bytes[cursor..][0..span]);
+        cursor += span;
+    }
+    return 0;
+}
+test "scatter writes preserve disjoint GPU bytes and reject whole malformed packets" {
+    var packet = [_]u8{0} ** 30;
+    std.mem.writeInt(u32, packet[0..4], 2, .little);
+    std.mem.writeInt(u64, packet[4..12], 1, .little);
+    std.mem.writeInt(u32, packet[12..16], 1, .little);
+    packet[16] = 0xa1;
+    std.mem.writeInt(u64, packet[17..25], 7, .little);
+    std.mem.writeInt(u32, packet[25..29], 1, .little);
+    packet[29] = 0xb2;
+    var memory = [_]u8{0x55} ** 8;
+    try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_write(&memory, memory.len, &packet, packet.len));
+    try std.testing.expectEqualSlices(u8, &.{ 0x55, 0xa1, 0x55, 0x55, 0x55, 0x55, 0x55, 0xb2 }, &memory);
+    const saved = memory;
+    for ([_]u64{ 0, 1, 8, std.math.maxInt(u64) }) |offset| {
+        std.mem.writeInt(u64, packet[17..25], offset, .little);
+        try std.testing.expectEqual(@as(c_int, -1), venus_receiver_scatter_write(&memory, memory.len, &packet, packet.len));
+        try std.testing.expectEqualSlices(u8, &saved, &memory);
+    }
+    std.mem.writeInt(u64, packet[17..25], 7, .little);
+    for (0..packet.len) |length| try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(&packet, length, memory.len));
+    try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(null, packet.len, 8));
+    try std.testing.expectEqual(@as(c_int, -1), venus_receiver_scatter_write(null, 8, &packet, packet.len));
+    try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(&packet, 4097, 8));
+    try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(&packet, packet.len, 0));
+    try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(&packet, packet.len, 1073741825));
+    for ([_]u32{ 0, 3, 0xffffffff }) |count| {
+        std.mem.writeInt(u32, packet[0..4], count, .little);
+        try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(&packet, packet.len, 8));
+    }
+    std.mem.writeInt(u32, packet[0..4], 2, .little);
+    for ([_]u32{ 0, 2, 0xffffffff }) |span| {
+        std.mem.writeInt(u32, packet[25..29], span, .little);
+        try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(&packet, packet.len, 8));
+    }
+    std.mem.writeInt(u32, packet[25..29], 1, .little);
+    var trailing = [_]u8{0} ** 31;
+    @memcpy(trailing[0..30], &packet);
+    try std.testing.expectEqual(@as(c_int, 0), venus_receiver_scatter_valid(&trailing, trailing.len, 8));
+    var maximum = [_]u8{0} ** 4096;
+    std.mem.writeInt(u32, maximum[0..4], 1, .little);
+    std.mem.writeInt(u32, maximum[12..16], 4080, .little);
+    try std.testing.expectEqual(@as(c_int, 1), venus_receiver_scatter_valid(&maximum, maximum.len, 1073741824));
+}

@@ -371,6 +371,28 @@ venus_ring_status_t venus_receiver_resource_write(venus_receiver_t *receiver, ui
     return copy_resource(receiver, id, offset, input, NULL, length, 1);
 }
 
+venus_ring_status_t venus_receiver_resource_scatter_write(venus_receiver_t *receiver,
+    uint32_t id, const void *input, size_t length) {
+    venus_ring_status_t result = venus_receiver_poll(receiver);
+    if (result != RingOk)
+        return result;
+    venus_receiver_resource_t *resource = find_resource(receiver, id);
+    if (!resource || !(resource->flags & ResourceMap) ||
+        !venus_receiver_scatter_valid(input, length, resource->bytes))
+        return RingInvalid;
+    if (!resource->mapped) {
+        uint64_t bytes = 0;
+        if (virgl_renderer_resource_map(id, &resource->memory, &bytes) != 0)
+            return poison_receiver(receiver);
+        resource->mapped = 1;
+        if (!resource->memory || bytes < resource->bytes ||
+            (!resource->blob_id && bytes != resource->bytes))
+            return poison_receiver(receiver);
+    }
+    return (venus_ring_status_t)venus_receiver_scatter_write(
+        resource->memory, resource->bytes, input, length);
+}
+
 venus_ring_status_t venus_receiver_gpu_poll(const venus_receiver_t *receiver, uint32_t timeline,
                                             uint64_t fence) {
     if (!receiver || !venus_receiver_gpu_timeline(timeline) || !fence)

@@ -351,6 +351,24 @@ static void test_resources(void) {
     assert(venus_receiver_resource_write(receiver, 2, 4092, Input, sizeof(Input)) == RingOk);
     assert(venus_receiver_resource_read(receiver, 2, 4092, output, sizeof(Input)) == RingOk);
     assert(memcmp(output, Input, sizeof(Input)) == 0);
+    const unsigned char Scatter[30] = {2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0xa1,
+        3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0xb2};
+    assert(venus_receiver_resource_scatter_write(NULL, 2, Scatter, sizeof(Scatter)) == RingInvalid);
+    assert(venus_receiver_resource_scatter_write(receiver, 66, Scatter, sizeof(Scatter)) == RingInvalid);
+    assert(venus_receiver_resource_scatter_write(receiver, 2, NULL, sizeof(Scatter)) == RingInvalid);
+    assert(venus_receiver_resource_scatter_write(receiver, 2, Scatter, sizeof(Scatter)) == RingOk);
+    assert(venus_receiver_resource_read(receiver, 2, 0, output, 4) == RingOk);
+    assert(output[0] == 0xa1 && output[3] == 0xb2);
+    const unsigned char saved_middle[2] = {output[1], output[2]};
+    unsigned char malformed[30];
+    memcpy(malformed, Scatter, sizeof(malformed));
+    malformed[16] = 0xcc;
+    malformed[17] = 0xff;
+    malformed[18] = 0xff;
+    assert(venus_receiver_resource_scatter_write(receiver, 2, malformed, sizeof(malformed)) == RingInvalid);
+    assert(venus_receiver_resource_read(receiver, 2, 0, output, 4) == RingOk);
+    assert(output[0] == 0xa1 && output[3] == 0xb2 &&
+           output[1] == saved_middle[0] && output[2] == saved_middle[1]);
     assert(venus_receiver_resource_free(receiver, 2) == RingOk);
     assert(venus_receiver_resource_free(receiver, 2) == RingInvalid);
     assert(receiver->resource_bytes == 0 && receiver->resource_count == 0);

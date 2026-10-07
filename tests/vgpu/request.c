@@ -51,6 +51,22 @@ int main(void) {
     for (size_t index = 0; index < sizeof(bytes); index++)
         assert(bytes[index] == 0x5a);
 
+    value = (venus_request_t){.kind = RequestWrite, .sequence = 1, .resource_id = 2,
+        .flags = RequestWriteScatter, .payload_bytes = 17, .argument_one = 17};
+    assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingOk);
+    assert(venus_request_decode(&decoded, bytes, sizeof(bytes)) == RingOk);
+    value.payload_bytes = value.argument_one = 4096;
+    assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingOk);
+    value.payload_bytes = value.argument_one = 4097;
+    assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingInvalid);
+    value.payload_bytes = value.argument_one = 16;
+    assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingInvalid);
+    value.payload_bytes = value.argument_one = 17;
+    value.argument_zero = 1;
+    assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingInvalid);
+    value.argument_zero = 0;
+    value.flags = 3;
+    assert(venus_request_encode(&value, bytes, sizeof(bytes)) == RingInvalid);
     for (uint32_t kind = RequestCapabilities; kind <= RequestPresentPoll; kind++) {
         value = (venus_request_t){.kind = kind, .sequence = 1};
         if (kind == RequestSubmit)

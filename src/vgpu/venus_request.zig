@@ -44,8 +44,12 @@ fn valid_fields(value: *const venus_request_t) bool {
         3 => plain and value.payload_bytes == 0 and valid_range(value),
         4 => value.payload_bytes == 0 and resource_policy_t.venus_receiver_resource_request(value.resource_id, value.argument_zero, value.argument_one, value.flags) != 0,
         5 => resource_policy_t.venus_receiver_resource_slot(value.resource_id) != 0 and value.flags == 0 and no_arguments and value.payload_bytes == 0,
-        6, 7 => resource_policy_t.venus_receiver_resource_slot(value.resource_id) != 0 and value.flags == 0 and valid_range(value) and
-            (if (value.kind == 6) value.payload_bytes == 0 else value.payload_bytes == value.argument_one),
+        7 => if (value.flags == 2) resource_policy_t.venus_receiver_resource_slot(value.resource_id) != 0 and
+            value.argument_zero == 0 and value.argument_one == value.payload_bytes and
+            value.payload_bytes >= 17 and value.payload_bytes <= 4096 else
+            resource_policy_t.venus_receiver_resource_slot(value.resource_id) != 0 and value.flags == 0 and valid_range(value) and value.payload_bytes == value.argument_one,
+        6 => resource_policy_t.venus_receiver_resource_slot(value.resource_id) != 0 and value.flags == 0 and valid_range(value) and
+            value.payload_bytes == 0,
         9, 10 => plain and value.payload_bytes == 0 and value.argument_zero >= 1 and value.argument_zero < 64 and
             (if (value.kind == 9) value.argument_one == 0 else value.argument_one != 0),
         else => unreachable,

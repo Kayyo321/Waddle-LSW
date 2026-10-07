@@ -54,6 +54,9 @@ static venus_ring_status_t dispatch(venus_receiver_t *receiver, venus_rpc_t *rpc
         return venus_receiver_resource_read(receiver, request->resource_id, request->argument_zero,
                                             rpc->buffer, response->payload_bytes);
     case RequestWrite:
+        if (request->flags == RequestWriteScatter)
+            return venus_receiver_resource_scatter_write(receiver, request->resource_id,
+                                                       rpc->buffer, request->payload_bytes);
         return venus_receiver_resource_write(receiver, request->resource_id, request->argument_zero,
                                              rpc->buffer, request->payload_bytes);
     case RequestGpuFence:

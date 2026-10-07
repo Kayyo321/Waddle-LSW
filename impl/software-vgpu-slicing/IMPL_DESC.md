@@ -5704,3 +5704,28 @@ native compositor; IMMEDIATE displays synchronously. This compatibility path is
 not credited as zero-copy host presentation. Acceptance requires exact rendered
 readback/compute values, real swapchain Present, stable owned resources, project
 DLL absence, and naturally retired host controller/worker.
+
+
+### Bounded coherent mapping dirty-span writes
+
+`RequestWrite` retains its contiguous flags0 behavior. Flags `RequestWriteScatter`
+(value2) select an exact17..4096-byte immutable packet: little-endian u32 span
+count, then that many `{u64 byte_offset, u32 byte_length, raw byte_length bytes}`
+records. `argument_zero` is zero and `argument_one == payload_bytes`. Every span
+is nonempty, lies within the live resource's declared extent, and follows the
+previous span without overlap; trailing bytes are invalid. The existing envelope,
+resource IDs2..65, one-GiB aggregate backend quota, and TCP payload ceiling remain.
+
+The session thread owns receiver mapping and write serialization. The complete
+packet is validated against the declared extent before lazy native mapping or any
+write. Malformed packets return `RingInvalid` with all resource bytes preserved.
+Mapping failure poisons the receiver as existing contiguous writes do. Valid writes
+copy only listed bytes, retain no caller pointers, and allocate no additional memory.
+The caller still owns CPU/GPU synchronization and must use actual host-coherent
+memory. Scatter transport does not manufacture coherence or GPU completion.
+
+Acceptance: header field bounds; exactmaximum packet; truncated/count/length/offset
+and overlap rejection; malformed later spans preserve all bytes; disjoint intervening
+GPU bytes remain unchanged; ordinary dispatch response/status behavior; existing
+contiguous writes and resource teardown remain functional. Final sanitizer and
+integrated Windows/DXVK coherent-mapping qualification are separate pending gates.

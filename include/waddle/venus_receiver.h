@@ -143,6 +143,18 @@ venus_ring_status_t venus_receiver_resource_read(venus_receiver_t *receiver, uin
 venus_ring_status_t venus_receiver_resource_write(venus_receiver_t *receiver, uint32_t resource_id,
                                                   uint64_t offset, const void *input,
                                                   size_t length);
+/** @brief Write exact dirty spans without overwriting intervening GPU data.
+ * @param[in,out] receiver Nonnull session-thread-owned receiver; owns lazy mapping.
+ * @param[in] resource_id Live coherent ResourceMap ID,2..65.
+ * @param[in] input Nullable immutable disjoint packet borrowed only for call.
+ * @param[in] length Exact17..4096 bytes: LEu32 count, then LEu64 offset,
+ * LEu32 nonzero length and raw bytes per span. Ascending disjoint spans required.
+ * @return RingOk, RingInvalid, poll status, or RingCorrupt for SDK mapping failure.
+ * @note Entire packet validated before mapping/writing; invalid preserves all bytes.
+ * Allocation-free. Caller serializes CPU/GPU use; no native pointer escapes.
+ */
+venus_ring_status_t venus_receiver_resource_scatter_write(venus_receiver_t *receiver,
+    uint32_t resource_id, const void *input, size_t length);
 /** @brief Pinned renderer timeline slots; zero CPU, 1..63 GPU queues. */
 #define VenusReceiverTimelineCount 64u
 /** @brief Fence previously associated Venus GPU queue after CPU dispatch completes.

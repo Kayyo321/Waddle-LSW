@@ -133,6 +133,14 @@ venus_ring_status_t venus_receiver_resource_write(venus_receiver_t *receiver, ui
     calls++;
     return receiver_status;
 }
+venus_ring_status_t venus_receiver_resource_scatter_write(venus_receiver_t *receiver,
+    uint32_t id, const void *input, size_t length) {
+    assert(receiver && id == 2 && input && length == 17);
+    const unsigned char Expected[17] = {1, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0x31};
+    assert(memcmp(input, Expected, sizeof(Expected)) == 0);
+    calls++;
+    return receiver_status;
+}
 venus_ring_status_t venus_receiver_poll(const venus_receiver_t *receiver) {
     assert(receiver);
     calls++;
@@ -255,6 +263,22 @@ static void host_operations(void) {
                        (kind == RequestCapabilities ? host_capabilities[offset - 64] : 0x42));
             venus_rpc_free(&rpc);
         }
+    }
+    for (size_t index = 0; index < sizeof(Results) / sizeof(Results[0]); index++) {
+        reset(SessionHost);
+        venus_request_t request = request_for(RequestWrite), response;
+        request.sequence = 1;
+        request.flags = RequestWriteScatter;
+        request.payload_bytes = request.argument_one = 17;
+        prepare(request);
+        const unsigned char Packet[17] = {1, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0x31};
+        memcpy(peer_input + 64, Packet, sizeof(Packet));
+        receiver_status = Results[index];
+        assert(serve() == RingOk && rpc.next_sequence == 2 && calls == 1);
+        drain_peer();
+        assert(venus_request_decode(&response, peer_output, 64) == RingOk);
+        assert(response.status == Wire[index] && response.payload_bytes == 0 && outgoing_bytes == 64);
+        venus_rpc_free(&rpc);
     }
     for (uint32_t kind = RequestSubmit; kind <= RequestWrite; kind++) {
         if (kind != RequestSubmit && kind != RequestRead && kind != RequestWrite)

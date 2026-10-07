@@ -8,6 +8,8 @@
 /** @brief Maximum streamed payload/transfer bytes, before stricter owner
  * limits. */
 #define VenusRequestMaxPayload 16777216u
+/** @brief RequestWrite bounded scatter packet selector; zero remains contiguous. */
+#define RequestWriteScatter 2u
 /** @brief Envelope operations with distinct CPU, GPU and presentation completion. */
 typedef enum venus_request_kind_t {
     RequestCapabilities = 1, /**< Query the pinned 160-byte public capset. */
@@ -48,7 +50,7 @@ typedef struct venus_request_t {
     uint32_t payload_bytes; /**< Bytes following header, zero..16MiB. */
     uint32_t status;        /**< Wire status; requests always Success. */
     uint32_t resource_id;   /**< Request resource ID 2..65, otherwise zero. */
-    uint32_t flags;         /**< Create flags only; resource policy validated. */
+    uint32_t flags;         /**< Create policy flags or RequestWriteScatter; otherwise zero. */
     uint64_t argument_zero; /**< Operation offset/blob/CPU or GPU fence, otherwise
                                zero. */
     uint64_t argument_one;  /**< Requested bytes for resource/reply, otherwise zero. */
