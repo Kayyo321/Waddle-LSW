@@ -104,6 +104,16 @@ venus_ring_status_t venus_channel_deadline(venus_channel_t *channel, uint32_t ti
     assert(channel->initialized && timeout);
     return fault == 9 ? RingClosed : RingOk;
 }
+/* This host-owner fixture exercises only legacy relative service RPC. New
+ * absolute RPC symbols must link, but any accidental call fails the fixture. */
+uint64_t venus_channel_time_ms(void) {
+    abort();
+}
+venus_ring_status_t venus_channel_deadline_until(venus_channel_t *channel, uint64_t deadline_ms) {
+    (void)channel;
+    (void)deadline_ms;
+    abort();
+}
 venus_ring_status_t venus_channel_handshake(venus_channel_t *channel) {
     if (fault == 10)
         return RingTimeout;
