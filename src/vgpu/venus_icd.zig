@@ -10891,3 +10891,175 @@ test "submitted bound resource ranges remain allocation owned after guest resour
     try std.testing.expectEqual(@as(usize, 3), allocation.gpu_span_count);
     try std.testing.expectEqual(mapping_span_t{ .start = 128, .end = 384 }, allocation.gpu_spans[0]);
 }
+
+const root_sync_fixture_t = struct {
+    opcode: u32 = 0,
+    result: i32 = c.VK_SUCCESS,
+    calls: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = request.*.kind; response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                if (length < 44 or input == null) return c.RingCorrupt;
+                fixture.opcode = std.mem.readInt(u32, @as([*]const u8, @ptrCast(input.?))[36..40], .little);
+                fixture.calls += 1; response.*.argument_zero = 1;
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                if (capacity < 24 or output == null) return c.RingCorrupt;
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity]; @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], fixture.opcode, .little);
+                if (fixture.opcode == 175) std.mem.writeInt(u64, bytes[4..12], 0x12345000, .little) else {
+                    std.mem.writeInt(i32, bytes[4..8], fixture.result, .little);
+                    if (fixture.opcode == 172) {
+                        std.mem.writeInt(u64, bytes[8..16], 1, .little);
+                        std.mem.writeInt(u64, bytes[16..24], 41, .little);
+                    }
+                }
+                response.*.payload_bytes = @intCast(capacity);
+            },
+            else => return c.RingCorrupt,
+        }
+        return c.RingOk;
+    }
+    fn reserve(kind: u32, parent_id: u64, dispatchable: u32) !*c.venus_object_t {
+        var output: [*c]c.venus_object_t = null;
+        try std.testing.expectEqual(@as(c_int, c.RingOk), c.venus_objects_reserve(&objects, kind, parent_id, dispatchable, &output));
+        return @ptrCast(output);
+    }
+};
+fn root_runtime_fn(comptime function: anytype) @TypeOf(&function) {
+    var pointer = &function; return @as(*volatile @TypeOf(pointer), &pointer).*;
+}
+test "root timeline signal counter and wait outputs preserve ownership native statuses and failure state" {
+    for ([_]i32{ c.VK_SUCCESS, c.VK_ERROR_OUT_OF_DEVICE_MEMORY, c.VK_ERROR_DEVICE_LOST }) |status| {
+        var fixture = root_sync_fixture_t{ .result = status };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_sync_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const semaphore = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_SEMAPHORE, parent.id, 0);
+        resource_state(semaphore).buffer_usage = 1;
+        resource_state(semaphore).inflight_count = 3;
+        const device: c.VkDevice = @ptrFromInt(parent.handle);
+        const handle: c.VkSemaphore = @ptrFromInt(semaphore.handle);
+        var output: u64 = 99;
+        try std.testing.expectEqual(status, root_runtime_fn(get_semaphore_counter_value)(device, handle, &output));
+        try std.testing.expectEqual(@as(u64, if (status == c.VK_SUCCESS) 41 else 0), output);
+        try std.testing.expectEqual(@as(u32, 3), resource_state(semaphore).inflight_count);
+        if (status != c.VK_ERROR_DEVICE_LOST) {
+            const signal = c.VkSemaphoreSignalInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, .semaphore = handle, .value = 9 };
+            try std.testing.expectEqual(status, root_runtime_fn(signal_semaphore)(device, &signal));
+            try std.testing.expectEqual(@as(u32, 3), resource_state(semaphore).inflight_count);
+        } else try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    }
+}
+test "root sync native input rejection never invokes peer or publishes foreign identities" {
+    var fixture = root_sync_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_sync_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const foreign = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+    const semaphore = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_SEMAPHORE, parent.id, 0);
+    const device: c.VkDevice = @ptrFromInt(parent.handle);
+    const other: c.VkDevice = @ptrFromInt(foreign.handle);
+    const handle: c.VkSemaphore = @ptrFromInt(semaphore.handle);
+    var output: u64 = 99;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(get_semaphore_counter_value)(device, handle, null));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(get_semaphore_counter_value)(null, handle, &output));
+    try std.testing.expectEqual(@as(u64, 0), output);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(get_semaphore_counter_value)(device, null, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(get_semaphore_counter_value)(other, handle, &output));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(get_semaphore_counter_value)(device, handle, &output));
+    var signal = c.VkSemaphoreSignalInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, .semaphore = handle };
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(signal_semaphore)(null, &signal));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(signal_semaphore)(device, null));
+    signal.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(signal_semaphore)(device, &signal));
+    signal.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO; signal.pNext = @ptrFromInt(8);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(signal_semaphore)(device, &signal));
+    signal.pNext = null; signal.semaphore = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(signal_semaphore)(device, &signal));
+    signal.semaphore = handle; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(signal_semaphore)(other, &signal));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(signal_semaphore)(device, &signal));
+    var wait = c.VkSemaphoreWaitInfo{ .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO };
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(null, &wait, 0));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, null, 0));
+    const handles = [_]c.VkSemaphore{handle}; const values = [_]u64{1};
+    wait.semaphoreCount = 1; wait.pSemaphores = &handles; wait.pValues = &values;
+    wait.sType = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    wait.sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO; wait.pNext = @ptrFromInt(8);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    wait.pNext = null; wait.flags = 2; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    wait.flags = 0; wait.semaphoreCount = 0; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    wait.semaphoreCount = 65; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    wait.semaphoreCount = 1; wait.pSemaphores = null; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    wait.pSemaphores = &handles; wait.pValues = null; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    wait.pValues = &values; try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(other, &wait, 0));
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    resource_state(semaphore).buffer_usage = 1; resource_state(semaphore).idle_refs = std.math.maxInt(u32);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    resource_state(semaphore).idle_refs = 0; const null_handles = [_]c.VkSemaphore{null}; wait.pSemaphores = &null_handles;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), root_runtime_fn(wait_semaphores)(device, &wait, 0));
+    try std.testing.expectEqual(@as(usize, 0), fixture.calls);
+}
+test "image ownership CopyCommands2 translates handles without changing ACK ownership" {
+    // Every operation owns real memory records; failed ACKs cannot publish any refs.
+    for (0..4) |operation| for (0..3) |mode| {
+        var fixture = image_ownership_fixture_t{ .mode = @intCast(mode) };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(image_ownership_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const device = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, 0, 1);
+        const pool = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL, device.id, 0);
+        const recording = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER, pool.id, 1);
+        const source_memory = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const target_memory = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
+        const source = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        const target = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
+        const buffer = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_BUFFER, device.id, 0);
+        resource_state(recording).command_state = .Recording;
+        for ([_]*c.venus_object_t{ source, target }) |image| resource_state(image).* = .{ .id = image.id, .bound_memory = if (image == source) source_memory.handle else target_memory.handle, .image_usage = 3, .image_type = c.VK_IMAGE_TYPE_2D, .image_extent = .{ 8, 8, 1 }, .image_levels = 1, .image_layers = 1, .image_format = c.VK_FORMAT_R8G8B8A8_UNORM, .image_samples = 1, .requirements = .{ .size = 256 } };
+        resource_state(buffer).* = .{ .id = buffer.id, .bound_memory = target_memory.handle, .buffer_size = 256, .buffer_usage = 3 };
+        const cmd: c.VkCommandBuffer = @ptrFromInt(recording.handle);
+        const source_handle: c.VkImage = @ptrFromInt(source.handle);
+        const target_handle: c.VkImage = @ptrFromInt(target.handle);
+        var copy = std.mem.zeroes(c.VkImageCopy);
+        copy.srcSubresource = .{ .aspectMask = 1, .layerCount = 1 };
+        copy.dstSubresource = copy.srcSubresource;
+        copy.extent = .{ .width = 8, .height = 8, .depth = 1 };
+        switch (operation) {
+            0 => {
+                var region = c.VkImageCopy2{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_COPY_2, .srcSubresource = copy.srcSubresource, .dstSubresource = copy.dstSubresource, .extent = copy.extent };
+                var info = c.VkCopyImageInfo2{ .sType = c.VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2, .srcImage = source_handle, .srcImageLayout = c.VK_IMAGE_LAYOUT_GENERAL, .dstImage = target_handle, .dstImageLayout = c.VK_IMAGE_LAYOUT_GENERAL, .regionCount = 1, .pRegions = &region };
+                copy_image2(cmd, &info);
+            },
+            1, 2 => {
+                var region = c.VkBufferImageCopy2{ .sType = c.VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2, .imageSubresource = copy.srcSubresource, .imageExtent = copy.extent };
+                if (operation == 1) {
+                    var info = c.VkCopyBufferToImageInfo2{ .sType = c.VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2, .srcBuffer = @ptrFromInt(buffer.handle), .dstImage = source_handle, .dstImageLayout = c.VK_IMAGE_LAYOUT_GENERAL, .regionCount = 1, .pRegions = &region };
+                    copy_buffer_to_image2(cmd, &info);
+                } else {
+                    var info = c.VkCopyImageToBufferInfo2{ .sType = c.VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2, .srcImage = source_handle, .srcImageLayout = c.VK_IMAGE_LAYOUT_GENERAL, .dstBuffer = @ptrFromInt(buffer.handle), .regionCount = 1, .pRegions = &region };
+                    copy_image_to_buffer2(cmd, &info);
+                }
+            },
+            3 => {
+                resource_state(source).image_samples = 4;
+                var region = c.VkImageResolve2{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_RESOLVE_2, .srcSubresource = copy.srcSubresource, .dstSubresource = copy.dstSubresource, .extent = copy.extent };
+                var info = c.VkResolveImageInfo2{ .sType = c.VK_STRUCTURE_TYPE_RESOLVE_IMAGE_INFO_2, .srcImage = source_handle, .srcImageLayout = c.VK_IMAGE_LAYOUT_GENERAL, .dstImage = target_handle, .dstImageLayout = c.VK_IMAGE_LAYOUT_GENERAL, .regionCount = 1, .pRegions = &region };
+                resolve_image2(cmd, &info);
+            },
+            else => unreachable,
+        }
+        try std.testing.expectEqual(@as(usize, 1), fixture.submissions);
+        try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, source));
+        try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, source_memory));
+        {
+            try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, target_memory));
+            try std.testing.expectEqual(mode == 0, image_ownership_fixture_t.retained(recording, if (operation == 1 or operation == 2) buffer else target));
+        }
+        try std.testing.expectEqual(mode == 0, lost == c.RingOk);
+        // Connection failure keeps all private objects owned until explicit abandon.
+        try std.testing.expectEqual(@as(usize, 8), objects.live_count);
+    };
+}
