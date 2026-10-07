@@ -688,6 +688,27 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
     VkPhysicalDeviceProperties2 properties={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,.pNext=&properties11};
     get_properties(physical,&properties);
     if(properties.properties.apiVersion!=property->apiVersion || properties.properties.vendorID!=property->vendorID || properties.properties.deviceID!=property->deviceID || strcmp(properties.properties.deviceName,property->deviceName) || !properties13.maxBufferSize || !properties12.driverName[0] || !memchr(properties12.driverName,0,sizeof properties12.driverName) || properties.pNext!=&properties11 || properties11.pNext!=&properties12 || properties12.pNext!=&properties13 || properties13.pNext)return 1;
+    PFN_vkGetPhysicalDeviceFormatProperties2KHR get_format=(PFN_vkGetPhysicalDeviceFormatProperties2KHR)lookup(instance,"vkGetPhysicalDeviceFormatProperties2KHR");
+    PFN_vkGetPhysicalDeviceImageFormatProperties2KHR get_image=(PFN_vkGetPhysicalDeviceImageFormatProperties2KHR)lookup(instance,"vkGetPhysicalDeviceImageFormatProperties2KHR");
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties2KHR get_queues=(PFN_vkGetPhysicalDeviceQueueFamilyProperties2KHR)lookup(instance,"vkGetPhysicalDeviceQueueFamilyProperties2KHR");
+    PFN_vkGetPhysicalDeviceMemoryProperties2KHR get_memory=(PFN_vkGetPhysicalDeviceMemoryProperties2KHR)lookup(instance,"vkGetPhysicalDeviceMemoryProperties2KHR");
+    PFN_vkGetPhysicalDeviceSparseImageFormatProperties2KHR get_sparse=(PFN_vkGetPhysicalDeviceSparseImageFormatProperties2KHR)lookup(instance,"vkGetPhysicalDeviceSparseImageFormatProperties2KHR");
+    if(!get_format || !get_image || !get_queues || !get_memory || !get_sparse)return 1;
+    VkFormatProperties2 format={.sType=VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2};get_format(physical,VK_FORMAT_R8G8B8A8_UNORM,&format);
+    if(!(format.formatProperties.optimalTilingFeatures&VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT))return 1;
+    VkPhysicalDeviceImageFormatInfo2 image_info={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,.format=VK_FORMAT_R8G8B8A8_UNORM,.type=VK_IMAGE_TYPE_2D,.tiling=VK_IMAGE_TILING_OPTIMAL,.usage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT|VK_IMAGE_USAGE_TRANSFER_SRC_BIT};
+    VkImageFormatProperties2 image={.sType=VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
+    if(get_image(physical,&image_info,&image)!=VK_SUCCESS || image.imageFormatProperties.maxExtent.width<64 || image.imageFormatProperties.maxExtent.height<64 || !(image.imageFormatProperties.sampleCounts&VK_SAMPLE_COUNT_1_BIT))return 1;
+    uint32_t queue_count=0;get_queues(physical,&queue_count,NULL);if(!queue_count || queue_count>64)return 1;
+    VkQueueFamilyProperties2 queue_properties[64]={0};for(uint32_t index=0;index<queue_count;index++)queue_properties[index].sType=VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+    uint32_t queue_capacity=queue_count;get_queues(physical,&queue_capacity,queue_properties);if(queue_capacity!=queue_count)return 1;
+    int has_graphics=0;for(uint32_t index=0;index<queue_count;index++){if(queue_properties[index].sType!=VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2 || queue_properties[index].pNext)return 1;if(queue_properties[index].queueFamilyProperties.queueCount && (queue_properties[index].queueFamilyProperties.queueFlags&VK_QUEUE_GRAPHICS_BIT))has_graphics=1;}
+    if(!has_graphics)return 1;
+    VkPhysicalDeviceMemoryProperties2 memory={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};get_memory(physical,&memory);
+    if(!memory.memoryProperties.memoryTypeCount || memory.memoryProperties.memoryTypeCount>VK_MAX_MEMORY_TYPES || !memory.memoryProperties.memoryHeapCount || memory.memoryProperties.memoryHeapCount>VK_MAX_MEMORY_HEAPS)return 1;
+    for(uint32_t index=0;index<memory.memoryProperties.memoryTypeCount;index++)if(memory.memoryProperties.memoryTypes[index].heapIndex>=memory.memoryProperties.memoryHeapCount)return 1;
+    VkPhysicalDeviceSparseImageFormatInfo2 sparse_info={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2,.format=VK_FORMAT_R8G8B8A8_UNORM,.type=VK_IMAGE_TYPE_2D,.samples=VK_SAMPLE_COUNT_1_BIT,.usage=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL};
+    uint32_t sparse_count=0;get_sparse(physical,&sparse_info,&sparse_count,NULL);if(sparse_count)return 1; /* Sparse bindings are deliberately unadvertised. */
     printf("Native modern KHR physical queries PASS driver=%s max_buffer=%llu\n",properties12.driverName,(unsigned long long)properties13.maxBufferSize);fflush(stdout);return 0;
 }
 
