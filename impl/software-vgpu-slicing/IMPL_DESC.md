@@ -5399,3 +5399,96 @@ all native resources return to baseline. Strict Linux/native Windows builds,
 actual Windows CPU execution,>=90% unchanged-denominator production coverage,
 C-ASan/LSan/UBSan zero findings required. Native Windows CPU work coordinates
 with wddm; no GPU/profile changes or large-query/public ICD claims.
+
+
+### Exact capped absolute RPC prerequisite
+
+The following icd_memory contract is adopted. Channel and guest remain separate
+atomic increments; no public ICD/host dispatch/TCP/worker changes.
+
+Exact additive C declaration:
+
+```c
+venus_ring_status_t venus_rpc_exchange_until(venus_rpc_t *rpc,
+    const venus_request_t *request, const void *input, size_t length,
+    venus_request_t *response, void *output, size_t capacity,
+    uint64_t deadline_ms, uint32_t timeout_ms);
+```
+
+Parameter types/ownership match exchange. timeout_ms is the immutable configured
+per-exchange cap1..60000; no caller/frontend config is modified.
+Absolute platform-local venus_channel_time_ms origin; no retained new pointer,
+allocation or record ABI change. Legacy exchange stays semantically unchanged.
+Share validated private request/response framing rather than duplicate codec.
+
+Validation order matches legacy: null response returns Invalid; nonnull response
+zeroed immediately. Invalid RPC/channel/request/sequence/direction/payload/input
+or extent returns Invalid; offered-header encoding and expected reply-capacity
+validation follow before any time/cancel/transport call. Preserve the legacy
+offered-header encode failure result: Invalid when next_sequence is nonzero,
+Closed when already zero, without a new clock/cancel/terminal mutation there. Payload output remains
+unchanged on every failure; input/output may alias, both disjoint from scratch,
+records and mapping exactly as legacy contract. Absolute deadline0 or timeout_ms outside1..60000 is Invalid
+before terminal checks, no publication or clock. Required guest role remains a
+local Invalid before terminal checks. Already poisoned sequence/not-ready session
+is Closed and stays terminal; sequence UINT64_MAX and outstanding partial control
+frame are Corrupt, before clock/deadline installation. These existing semantics
+apply regardless of temporal value and retain existing stop reason.
+
+After all above validation, acquire cancellation first; nonzero closes Cancel
+and poisons sequence0 without clock sampling. Sample channel clock once for cap
+selection: zero OR now>UINT64_MAX-timeout_ms closes Disconnect, Closed and
+sequence0. This conservative addition-overflow failure precedes expiration even
+if caller deadline would otherwise be earlier and representable, matching legacy
+relative clock-overflow handling. Otherwise now>=deadline_ms closes Deadline,
+Timeout and sequence0 before publication. Compute cap_deadline=now+timeout_ms,
+choose effective deadline=min(deadline_ms,cap_deadline) exactly once, and retain
+first_now in call-local scalar storage until publication. No caller value is
+extended and no frontend configuration changes. Install this exact effective
+deadline via channel_deadline_until; its later clock sample only validates a
+preselected absolute value and can never extend it. A far-future nonzero caller
+absolute value, including UINT64_MAX, is valid and merely clipped by the actual
+configured cap: no irrelevant caller upper-distance rejection. This retains the
+60000ms ceiling and immutable configured cap. No guest-side clock/failure handling
+precedes shared RPC payload validation. Cancelled/Closed/Timeout terminal outcomes
+close both rings and poison next_sequence0. Other setter rejection propagates
+without poisoning before publication; pending partial frame/excess remaining
+cannot arise absent unexpected mutation on the sole owning session thread.
+Every subsequent bounded header/payload transfer keeps the exact installed value;
+no sampling adds a new relative interval, even across backpressure callbacks.
+
+After all private response bytes have arrived and all required wire validations
+are complete, before ANY output/response/negotiated flag/sequence publication:
+check session still ready (Closed), acquire cancellation (Cancelled), sample
+channel clock exactly once (zero OR now<first_now => Closed), then now>=installed deadline
+(Timeout). Each terminal outcome uses existing rpc_fail and publishes no caller
+payload/result or successful sequence increment. Preserve the private scratch and
+staged native state until owning lifecycle cleanup. A partial control frame alone
+is allowed at final time validation; no second deadline setter call or artificial
+partial-frame protocol error. This final check is absolute-only, so legacy wait
+and relative exchange semantics remain unchanged. The check does not perform I/O
+or refresh deadline. Successful final validation publishes legacy result atomically
+on the sole session thread; scheduling after that cooperative check has no hard
+realtime guarantee. Operation wire errors remain valid delivered response results.
+
+Keep existing dispatch/host relative begin API unchanged; absolute-only private
+begin helper is static and validates in the order above. Preserve monitor stack
+ownership and configured60000ms ceiling. Do not add a dispatch absolute API now.
+
+Meaningful mocks drive fragmented header/payload and exact private-only completion,
+verify supplied deadline unchanged on every call, invalid/no-publication cases,
+terminal/sequence/partial-control precedence, final late clock and cancellation,
+valid wire-error delivery and aliasing, configured shorter cap versus earlier
+caller deadline, UINT64_MAX cap addition overflow/irrelevant far-future caller value, first-sample
+cap retention, final backwards-clock rejection and
+malformed-payload-before-clock precedence. Real socket/ring fixture separately proves
+no-peer timeout, partial header/payload timeout, blocked request publication and
+normal absolute exchange with multiple chunks; preserves canaries, outputs,
+sequence and closed rings, joins peer before channel/storage cleanup. Gate honest
+unchanged runtime coverage engine >=90% each rpc/dispatch source with output literal
+redirected privately only; native strict and C ASan+LSan+UBSan0; strict Windows
+cross-build and actual CPU-only execution via explicit wddm lease.
+
+Commit header, RPC source, runtime mock changes and directly necessary real fixture
+only as one coherent absolute RPC change, separate from channel/guest. Full flock,
+initially empty/exact-owned staged index; retain all old and failed artifacts.
