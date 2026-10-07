@@ -279,3 +279,120 @@ test "image view usage chain owns scalar and requires actual image usage subset"
     view.pNext = null;
     try std.testing.expectEqual(@as(?u32, null), try view_usage(&view));
 }
+
+test "complete core formats and image creation dimensional failure boundaries" {
+    for (1..185) |format| try std.testing.expect(try compatible(@intCast(format), @intCast(format)));
+    try std.testing.expectError(error.Invalid, compatible(0, 37));
+    try std.testing.expectError(error.Invalid, compatible(37, 185));
+    const initial = image_info();
+    inline for (.{ "sType", "flags", "imageType", "mipLevels", "arrayLayers", "samples", "format" }) |field| {
+        var info = initial;
+        @field(info, field) = if (comptime std.mem.eql(u8, field, "sType")) 0 else if (comptime std.mem.eql(u8, field, "flags")) 1 else if (comptime std.mem.eql(u8, field, "imageType")) 3 else 0;
+        try std.testing.expectError(error.Invalid, snapshot(&info));
+    }
+    inline for (.{ "width", "height", "depth" }) |field| {
+        var info = initial;
+        @field(info.extent, field) = 0;
+        try std.testing.expectError(error.Invalid, snapshot(&info));
+    }
+    for ([_]u32{ 3, 128 }) |samples| {
+        var info = initial;
+        info.samples = samples;
+        try std.testing.expectError(error.Invalid, snapshot(&info));
+    }
+    var info = initial;
+    info.flags = 0;
+    info.imageType = 0;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info.extent.height = 1;
+    info.extent.depth = 2;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info.extent.depth = 1;
+    _ = try snapshot(&info);
+    info.imageType = 1;
+    info.extent.depth = 2;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info.imageType = 2;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info.arrayLayers = 1;
+    _ = try snapshot(&info);
+    info.samples = 2;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info.imageType = 1;
+    info.extent.depth = 1;
+    try std.testing.expectError(error.Invalid, snapshot(&info));
+    info.mipLevels = 1;
+    _ = try snapshot(&info);
+}
+
+test "view headers remaining ranges dimensions and multisample ownership boundaries" {
+    const creation = image_info();
+    const initial_image = try snapshot(&creation);
+    const initial_view = view_info();
+    inline for (.{ "sType", "flags", "viewType" }) |field| {
+        var view = initial_view;
+        @field(view, field) = if (comptime std.mem.eql(u8, field, "sType")) 0 else if (comptime std.mem.eql(u8, field, "viewType")) 7 else 1;
+        try std.testing.expectError(error.Invalid, validate(&initial_image, &view, true));
+    }
+    inline for (.{ "levels", "layers", "view_format_count" }) |field| {
+        var image = initial_image;
+        @field(image, field) = if (comptime std.mem.eql(u8, field, "view_format_count")) 33 else 0;
+        try std.testing.expectError(error.Invalid, validate(&image, &initial_view, true));
+    }
+    inline for (.{ "aspectMask", "baseMipLevel", "baseArrayLayer", "levelCount", "layerCount" }) |field| {
+        var view = initial_view;
+        @field(view.subresourceRange, field) = if (comptime std.mem.startsWith(u8, field, "base")) 99 else 0;
+        try std.testing.expectError(error.Invalid, validate(&initial_image, &view, true));
+    }
+    var view = initial_view;
+    view.subresourceRange.levelCount = 8;
+    try std.testing.expectError(error.Invalid, validate(&initial_image, &view, true));
+    view = initial_view;
+    view.subresourceRange.layerCount = 13;
+    try std.testing.expectError(error.Invalid, validate(&initial_image, &view, true));
+    var image = initial_image;
+    image.flags = 0;
+    try std.testing.expectError(error.Invalid, validate(&image, &initial_view, true));
+    image = initial_image;
+    image.extent[1] = 32;
+    try std.testing.expectError(error.Invalid, validate(&image, &initial_view, true));
+    image = initial_image;
+    image.samples = 2;
+    try std.testing.expectError(error.Invalid, validate(&image, &initial_view, true));
+    view = initial_view;
+    view.viewType = 5;
+    _ = try validate(&image, &view, true);
+    view.viewType = 1;
+    try std.testing.expectError(error.Invalid, validate(&image, &view, true));
+    view.subresourceRange.layerCount = 1;
+    _ = try validate(&image, &view, true);
+    image.image_type = 0;
+    try std.testing.expectError(error.Invalid, validate(&image, &view, true));
+    image.samples = 1;
+    view.viewType = 0;
+    _ = try validate(&image, &view, true);
+    view.viewType = 4;
+    _ = try validate(&image, &view, true);
+    image.image_type = 2;
+    try std.testing.expectError(error.Invalid, validate(&image, &view, true));
+    view.viewType = 2;
+    try std.testing.expectError(error.Invalid, validate(&image, &view, true));
+    view.subresourceRange.baseArrayLayer = 0;
+    _ = try validate(&image, &view, true);
+    image.image_type = 3;
+    try std.testing.expectError(error.Invalid, validate(&image, &view, true));
+    image = initial_image;
+    image.flags |= c.VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    view = initial_view;
+    view.format = 0;
+    try std.testing.expectError(error.Invalid, validate(&image, &view, true));
+    view.format = 124;
+    try std.testing.expectError(error.Invalid, validate(&image, &view, true));
+    image.format = 124;
+    view.subresourceRange.aspectMask = 2;
+    _ = try validate(&image, &view, true);
+    image.format = 127;
+    view.format = 127;
+    view.subresourceRange.aspectMask = 4;
+    _ = try validate(&image, &view, true);
+}
