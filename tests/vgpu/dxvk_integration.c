@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
+#include <dwmapi.h>
 #include "waddle/venus_tcp.h"
 #include <stdio.h>
 #include <wchar.h>
@@ -54,6 +55,24 @@ static HRESULT verify_pixels(ID3D11Device *device,ID3D11DeviceContext *context,I
     }
     ID3D11Texture2D_Release(staging);
     if(SUCCEEDED(status))puts("DXVK rendered 4096 exact BGRA pixels.");
+    return status;
+}
+
+/** @brief Verify the actual presented client area after compositor completion.
+ * @param[in] window Live borrowed 64 by 64 client HWND.
+ * @return S_OK for every exact presented RGB pixel; failure otherwise.
+ * @note Sole caller thread. Owns its acquired DC until unconditional ReleaseDC.
+ */
+static HRESULT verify_presented_pixels(HWND window) {
+    if(DwmFlush()!=S_OK)return E_FAIL;
+    RECT client={0};
+    if(!GetClientRect(window,&client) || client.right!=64 || client.bottom!=64)return E_FAIL;
+    HDC dc=GetDC(window);if(!dc)return E_FAIL;
+    HRESULT status=S_OK;
+    for(int row=0;row<64;row++)for(int column=0;column<64;column++)
+        if(GetPixel(dc,column,row)!=RGB(32,64,128))status=E_FAIL;
+    if(!ReleaseDC(window,dc))status=E_FAIL;
+    if(SUCCEEDED(status))puts("DXVK presented 4096 exact client RGB pixels.");
     return status;
 }
 
@@ -212,10 +231,11 @@ int wmain(int argc, wchar_t **argv) {
     if (!create)
         goto cleanup;
     window = CreateWindowExW(0, L"STATIC", L"Waddle DXVK acceptance",
-                             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                             0, 0, 64, 64, NULL, NULL, GetModuleHandleW(NULL), NULL);
+                             WS_POPUP | WS_VISIBLE,
+                             100, 100, 64, 64, NULL, NULL, GetModuleHandleW(NULL), NULL);
     if (!window)
         goto cleanup;
+    if(!UpdateWindow(window))goto cleanup;
     DXGI_SWAP_CHAIN_DESC description = {0};
     description.BufferDesc.Width = 64;
     description.BufferDesc.Height = 64;
@@ -267,6 +287,7 @@ int wmain(int argc, wchar_t **argv) {
     status = IDXGISwapChain_Present(swapchain, 0, 0);
     if (status != S_OK)
         goto cleanup;
+    status=verify_presented_pixels(window);if(FAILED(status))goto cleanup;
     status = ID3D11Device_GetDeviceRemovedReason(device);
     if (FAILED(status))
         goto cleanup;
