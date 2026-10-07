@@ -203,3 +203,36 @@ Image owner completes remaining helper/template/shader and render/instance gates
 then pure-module final sanitizers. No TODO#3 final acceptance or100% claim yet.
 All Zig/C vGPU coverage attempts now have unique directories; historical flat
 reports remain untouched. Shared-index lock and exclusive VM/GPU owner unchanged.
+
+
+### 2026-10-07 integrated transport and qualification milestone
+
+Keep the same branch, three owners, shared-index lock and exclusive Windows/GPU
+coordinator. The trusted TCP hello is now version2; validated resource reads can
+return65536 bytes while command replies and writes retain4096-byte limits.
+Completion refreshes intersect allocation-owned conservative submitted resource
+spans; initial maps still read actual complete mapped bytes. The controller owns
+a262144-byte mapping containing two65536-byte payload rings, with consistent
+allocation/attachment/unmap after proven worker retirement. Deadlines unchanged.
+
+Actual frozen Windows DXVK c731d380 creates FL11/device/swapchain and completes
+GetData, then throws during staging Map. Its controller/worker exit0 and owned
+session is empty; this is a failed acceptance, with no pixel/compute/present
+credit. New command reset/begin diagnostics de3920c and ring fix ed50df6 are
+being deployed in a fresh immutable snapshot by wddm_dxvk. Preserve all failed
+snapshots/logs. Timeline completion still cannot retire submitted ownership.
+
+Whole-core coverage now includes every production declaration and honestly
+fails its first complete run at55.28% branches/67.62% lines. Keep90% gates and
+continue meaningful wrapper/state-machine tests; pure-module qualification
+receipts are in build/image_pipeline_checkpoint/final_coverage_20261007.json
+and final_sanitizers_20261007.json. Profiles/compute state full scopes pass.
+
+The former cold bootstrap+9 handles are attributed to independent USER32/GDI
+process initialization by exact external creation stacks and a system-only
+LoadLibraryEx/FreeLibrary reproduction. Diagnostic24cycles retain exact111
+system handles with project DLL absence; final fresh native bootstrap24 remains
+pending. Final actual DXVK normal/sanitized, full48-frame WSI, controlled device
+removal, external native DLL heap audit, core coverage and final sanitizer/stress
+qualification remain open. TODO#3 remains55%; never substitute intermediate
+functional progress for final qualification. README remains untouched.

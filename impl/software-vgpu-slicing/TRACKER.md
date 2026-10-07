@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; final rendering/compute/present, whole-core coverage, leaks/stress pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 55% | Frontend, userland adapter, object ownership, queue idle synchronization, and native loader/shared ICD production-worker dispatch verified; modern API/command/coherent mapping implemented; actual DXVK FL11 device/swapchain created, timeline-wait panic fixed; GetData completes, staging Map failure under investigation; whole-core coverage and final rendering/compute/present/leak qualification pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -844,3 +844,25 @@ under `build/root_todo3_continuation/` and `build/sanitizers/vgpu/`. These resul
 cover their tested ownership paths, not completed full ICD/Windows/DXVK acceptance.
 Coverage runners now retain unique attempts for older modes as well, preserving
 all historical flat reports. TODO#3 remains55%; overall68.75% pending final gates.
+
+### Implementation and qualification milestone: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `6b88640` | refactor(vgpu): include every ICD production declaration in qualification | #3 +0%; overall +0% (qualification pending). | Full production coverage scope restored; first whole-core attempt fails honestly at 55.28% branches/67.62% lines; 90% thresholds unchanged. |
+| `0f5f495` | test(vgpu): identify blocking DXVK GPU completion operations | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `e395086` | test(vgpu): qualify complete sparse and graphics descriptor ownership | #3 +0%; overall +0% (qualification pending). | Complete production profiles 98.81% branches/100% lines; compute state 91.38%/97.56%; no truncated production credit. |
+| `b784be0` | test(vgpu): identify stalled actual receiver requests without payload logging | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `19d1aa7` | test(vgpu): retain dispatch runtime coverage qualification attempts | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `f8520da` | test(vgpu): exercise host child result publication and ownership | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `ec8de16` | test(vgpu): verify image recording and WSI ownership after acknowledgments | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `0b1f760` | fix(test): enforce elapsed DXVK GPU completion deadline | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `646f6b3` | test(vgpu): qualify bounded 64 KiB TCP resource reads | #3 +0%; overall +0% (qualification pending). | TCP client/server real socket boundary, partial EOF and oversized replies pass; client 93.48% branches/server 90.10%, both100% lines; sanitizers pass. |
+| `e530ac3` | feat(vgpu): negotiate bounded64KiB coherent resource reads | #3 +0%; overall +0% (qualification pending). | Hello version2 rejects old peers; 64KiB only for validated resource reads; command/write bounds unchanged. Wire units, owned sanitizer and97.42% branch/99.20% line gates pass. |
+| `bbafb14` | fix(vgpu): bound coherent refreshes to submitted resource spans | #3 +0%; overall +0% (qualification pending). | Actual initial maps retained; submitted buffer/image spans and exposed address ranges conservatively bound completion refreshes. Core Debug/ReleaseSafe/native checks pass; Windows GetData completes but staging Map fails. |
+| `c1f5d12` | test(vgpu): cover timeline result ownership and modern image copy wrappers | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `fe87b34` | test(vgpu): preserve TCP socket coverage attempts | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `928e241` | test(vgpu): verify buffer address exposure and coherent range ownership | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `ed50df6` | fix(vgpu): transfer resource reads through complete bridge payload rings | #3 +0%; overall +0% (qualification pending). | Owned262144-byte region/two65536-byte rings remove per64-byte polling bottleneck. Strict build and actual CPU lifecycle cases pass,100% lines/91.45% branches; final sanitizer and Windows rerun pending. |
+| `799990c` | test(vgpu): qualify bootstrap lifetimes after independent GUI initialization | #3 +0%; overall +0% (qualification pending). | Independent system-only GUI initialization reproduces exact9 cached system handles; diagnostic24 bootstrap lifetimes stable, final fresh production qualification pending. |
+| `de3920c` | chore(vgpu): add opt-in command lifecycle rejection diagnostics | #3 +0%; overall +0% (qualification pending). | Opt-in bounded local command lifecycle diagnostics;237 Debug/ReleaseSafe tests/native128/Windowsstatic pass. No ownership behavior changed. |
