@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <wchar.h>
 #include <stdlib.h>
+#include <process.h>
 #include <string.h>
 
 /** @brief Borrowed DXVK export signature; invocation transfers output references. */
@@ -116,6 +117,31 @@ static HRESULT verify_presented_pixels(HWND window) {
     }
 }
 
+/** @brief Joined compiler invocation; caller owns inputs, module and returned blobs.
+ * The worker borrows this record until its thread is joined. Compiler-owned
+ * CRT thread state is retired by normal thread exit while the DLL is loaded.
+ */
+typedef struct compiler_call_t {
+    compile_shader_t compile;
+    const char *source;
+    SIZE_T source_bytes;
+    HRESULT status;
+    ID3DBlob *code;
+    ID3DBlob *errors;
+} compiler_call_t;
+
+/** @brief Compile unchanged acceptance HLSL on a short-lived CRT thread.
+ * @param[in,out] opaque Nonnull borrowed compiler_call_t; writes status/blobs.
+ * @return Zero after compilation. Caller joins before reading or releasing.
+ * @note Sole worker; no D3D context access. Thread exit retires CRT/FLS owners.
+ */
+static unsigned __stdcall compile_worker(void *opaque) {
+    compiler_call_t *call=(compiler_call_t *)opaque;
+    call->status=call->compile(call->source,call->source_bytes,"acceptance_compute",NULL,NULL,
+        "main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&call->code,&call->errors);
+    return 0;
+}
+
 /** @brief Execute real DXVK compute and verify all 64 storage-buffer words.
  * @param[in] device/context Live borrowed COM references, held by caller.
  * @return S_OK after exact results, failure HRESULT otherwise.
@@ -131,7 +157,15 @@ static HRESULT verify_compute(ID3D11Device *device,ID3D11DeviceContext *context)
     FARPROC procedure=GetProcAddress(compiler,"D3DCompile");compile_shader_t compile=NULL;
     _Static_assert(sizeof compile==sizeof procedure,"Windows function representation");memcpy(&compile,&procedure,sizeof compile);
     if(!compile)goto cleanup;
-    status=compile(Shader,sizeof Shader-1,"acceptance_compute",NULL,NULL,"main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&code,&errors);
+    compiler_call_t call={.compile=compile,.source=Shader,.source_bytes=sizeof Shader-1,.status=E_FAIL};
+    uintptr_t thread_value=_beginthreadex(NULL,0,compile_worker,&call,0,NULL);
+    if(!thread_value)goto cleanup;
+    HANDLE thread=(HANDLE)thread_value;
+    /* A live worker keeps the stack record and compiler module borrowed.
+     * Never release either owner until the kernel proves thread termination. */
+    while(WaitForSingleObject(thread,INFINITE)!=WAIT_OBJECT_0)Sleep(1);
+    int thread_closed=CloseHandle(thread)!=0;
+    code=call.code;errors=call.errors;status=thread_closed ? call.status : E_FAIL;
     if(FAILED(status) || !code)goto cleanup;
     status=ID3D11Device_CreateComputeShader(device,ID3D10Blob_GetBufferPointer(code),ID3D10Blob_GetBufferSize(code),NULL,&shader);
     if(FAILED(status))goto cleanup;
