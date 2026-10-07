@@ -5662,3 +5662,23 @@ Atomic commit under full flock /tmp/waddle_git_index.lock, initially empty index
 exact owned staged set, detailed gates/evidence and TODO #3 +0. Before source,
 root adopts this exact interface/precedence. GPU/QMP/profile/shared worker build
 remain unleased and untouched; Windows execution requires wddm CPU scheduling.
+
+### Verified exact extension status codec
+
+Implemented additive decode_status under8aac4dc with shared bounded metadata and
+per-record declared-array checks. Existing count/fill negative Backend behavior,
+quota precedence and transactional semantic outputs remain. New result returns
+exact negativei32 after validation, never raw-byte peeking or fabricated success.
+Current source8d30520b... has9 Debug/ReleaseSafe units; independent unmodified
+pinned C request/reply oracles exercise exact negativecodes/max1024/everytruncation/
+malformed metadata/first-middle-last array shapes/undefined negative semantic
+payloads and byte preservation.96.43%54/56 sourcebranches,100%49/49 lines;13compiler
+guards separate. Genuine owned8defs60 finalASancalls1037 originalguards/fullreverse,
+fresh C-ASan/LSan/UBSan oracles and allocator tests zero leaks. Strict native C
+selftest and Csan exits0. ActualWin11 final freshDebug9/ReleaseSafe9 native0/exact
+beforeafter b7089934.../6a04ebc0... hashes: extensions_status_debug_654839bb and
+extensions_status_release_safe_c3b6e830. Durable verified_receipt.json under
+build/extensions_status_checkpoint. Initial missingNUL Cencoder fixture failed
+its boundedstrlen assertion; corrected, retained and all gates rerun. This is
+status-code acceptance only; publicraw cache/extent/timedbinding/modernruntime/
+realWindowsGPU/DXVK acceptance remain pending.

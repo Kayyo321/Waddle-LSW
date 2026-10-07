@@ -25,7 +25,7 @@ pub const fill_result_t = struct {
     /// True only for validated host VK_INCOMPLETE result.
     incomplete: bool,
 };
-const metadata_t = struct { count: u32, incomplete: bool };
+const metadata_t = struct { count: u32, incomplete: bool, result: i32 };
 comptime {
     std.debug.assert(@sizeOf(extension_t) == 260 and @alignOf(extension_t) == 4);
     std.debug.assert(@sizeOf(request_t) == 56 and @alignOf(request_t) == 8);
@@ -54,7 +54,7 @@ pub fn encode_fill(physical_id: u64, capacity: u32) !request_t {
     if (capacity == 0) return error.Invalid;
     return encode(physical_id, capacity);
 }
-fn metadata(bytes: []const u8, capacity: ?usize) !metadata_t {
+fn metadata(bytes: []const u8, capacity: ?usize, allow_backend: bool) !metadata_t {
     if (bytes.len < 28 or bytes.len > MaxReplyBytes) return error.Corrupt;
     if (std.mem.readInt(u32, bytes[0..4], .little) != 14 or
         std.mem.readInt(u64, bytes[8..16], .little) != 1) return error.Corrupt;
@@ -68,10 +68,28 @@ fn metadata(bytes: []const u8, capacity: ?usize) !metadata_t {
         if (array_count != 0) return error.Corrupt;
         if (count > MaxExtensions) return error.Limit;
     }
-    if (result < 0) return error.Backend;
-    if (result != 0 and !(capacity != null and result == 5)) return error.Corrupt;
-    return .{ .count = count, .incomplete = result == 5 };
+    if (result < 0) {
+        if (!allow_backend) return error.Backend;
+    } else if (result != 0 and !(capacity != null and result == 5)) return error.Corrupt;
+    return .{ .count = count, .incomplete = result == 5, .result = result };
 }
+/// [in] Borrow accessible immutable reply28..MaxReplyBytes through return; extra scratch ignored.
+/// [in] capacity null=count-mode; otherwise actual requested fill capacity1..1024.
+/// [out] Return exact signed result0, fill-only5 or any negative i32 after complete metadata
+/// and declared-array shape validation. No payload records escape; successful name/duplicate
+/// semantics still require decode_fill. Negative-result payload values are undefined Vulkan outputs.
+/// Invalid=local fill capacity; Corrupt=wire/shape/positive status; Limit=count-mode quota.
+/// No allocation, mutation, retained pointer or shared state; immutable disjoint calls thread safe.
+pub fn decode_status(bytes: []const u8, capacity: ?usize) !i32 {
+    if (capacity) |limit| if (limit == 0 or limit > MaxExtensions) return error.Invalid;
+    const decoded = try metadata(bytes, capacity, true);
+    if (capacity != null) for (0..decoded.count) |index| {
+        const start = 28 + index * 268;
+        if (std.mem.readInt(u64, bytes[start..][0..8], .little) != 256) return error.Corrupt;
+    };
+    return decoded.result;
+}
+
 fn name(entry: []const u8) ![]const u8 {
     if (std.mem.readInt(u64, entry[0..8], .little) != 256) return error.Corrupt;
     const storage = entry[8..264];
@@ -87,7 +105,7 @@ fn name(entry: []const u8) ![]const u8 {
 /// Corrupt=wire/mode/result; Limit=valid count exceeds quota; Backend=host negative.
 /// Allocation-free and thread safe for immutable inputs.
 pub fn decode_count(bytes: []const u8) !u32 {
-    return (try metadata(bytes, null)).count;
+    return (try metadata(bytes, null, false)).count;
 }
 /// [in] Borrow immutable reply through both validation/copy passes; tail ignored.
 /// [out] Borrow exclusive disjoint output[1..1024]; initialize only returned count.
@@ -96,7 +114,7 @@ pub fn decode_count(bytes: []const u8) !u32 {
 /// Return copied count/incomplete; no allocations/retention, disjoint calls thread safe.
 pub fn decode_fill(bytes: []const u8, output: []extension_t) !fill_result_t {
     if (output.len == 0 or output.len > MaxExtensions) return error.Invalid;
-    const decoded = try metadata(bytes, output.len);
+    const decoded = try metadata(bytes, output.len, false);
     for (0..decoded.count) |index| {
         const start = 28 + index * 268;
         const current = try name(bytes[start..][0..268]);
@@ -312,5 +330,95 @@ test "seeded repeated count fill and malformed reply stress preserves ownership"
             try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_fill, .{ bytes[0..used], &output }));
             try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&output));
         }
+    }
+}
+
+
+test "exact backend status preserves signed bits after count and fill shape validation" {
+    var properties: [2]c.VkExtensionProperties = undefined;
+    properties_fixture(&properties);
+    var bytes: [28 + 2 * 268 + 16]u8 = [_]u8{0xa5} ** (28 + 2 * 268 + 16);
+    for ([_]i32{ 0, -1, -2, -4, -1000000001, std.math.minInt(i32) }) |status| {
+        _ = venus_extensions_test_reply(status, 1024, null, &bytes, bytes.len);
+        const count_before = bytes;
+        try std.testing.expectEqual(status, try @call(.never_inline, decode_status, .{ &bytes, null }));
+        try std.testing.expectEqualSlices(u8, &count_before, &bytes);
+        for ([_]u32{ 0, 1, 2 }) |count| {
+            const used = venus_extensions_test_reply(status, count, &properties, &bytes, bytes.len);
+            const fill_before = bytes;
+            try std.testing.expectEqual(status, try @call(.never_inline, decode_status, .{ &bytes, @as(?usize, 2) }));
+            try std.testing.expectEqual(status, try @call(.never_inline, decode_status, .{ bytes[0..used], @as(?usize, 2) }));
+            try std.testing.expectEqualSlices(u8, &fill_before, &bytes);
+        }
+    }
+    _ = venus_extensions_test_reply(5, 2, &properties, &bytes, bytes.len);
+    try std.testing.expectEqual(@as(i32, 5), try @call(.never_inline, decode_status, .{ &bytes, @as(?usize, 2) }));
+    // Undefined negative-result native payloads need only declared shape: never use
+    // their semantic names or advertise anything from this status-only result.
+    @memset(std.mem.asBytes(&properties), 0xff);
+    for (&properties) |*property| property.extensionName[255] = 0;
+    _ = venus_extensions_test_reply(-4, 2, &properties, &bytes, bytes.len);
+    try std.testing.expectEqual(@as(i32, -4), try @call(.never_inline, decode_status, .{ &bytes, @as(?usize, 2) }));
+    var output: [2]extension_t = undefined;
+    @memset(std.mem.asBytes(&output), 0x5a);
+    const before = output;
+    try std.testing.expectError(error.Backend, decode_fill(&bytes, &output));
+    try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&output));
+}
+
+test "status decoder bounds every maximum fill stride before exposing a result" {
+    const properties = try std.testing.allocator.alloc(c.VkExtensionProperties, MaxExtensions);
+    defer std.testing.allocator.free(properties);
+    properties_fixture(properties);
+    const bytes = try std.testing.allocator.alloc(u8, MaxReplyBytes);
+    defer std.testing.allocator.free(bytes);
+    for ([_]i32{ 0, 5, -4, std.math.minInt(i32) }) |status| {
+        try std.testing.expectEqual(MaxReplyBytes, venus_extensions_test_reply(status, MaxExtensions, properties.ptr, bytes.ptr, bytes.len));
+        try std.testing.expectEqual(status, try @call(.never_inline, decode_status, .{ bytes, @as(?usize, MaxExtensions) }));
+        for (0..MaxReplyBytes) |cut| try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ bytes[0..cut], @as(?usize, MaxExtensions) }));
+        for ([_]usize{ 0, 512, 1023 }) |index| {
+            const offset = 28 + index * 268;
+            for ([_]u64{ 0, 255, 257, std.math.maxInt(u64) }) |extent| {
+                std.mem.writeInt(u64, bytes[offset..][0..8], extent, .little);
+                try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ bytes, @as(?usize, MaxExtensions) }));
+            }
+            std.mem.writeInt(u64, bytes[offset..][0..8], 256, .little);
+        }
+    }
+}
+
+test "status decoder rejects local capacities malformed metadata and positive misuse" {
+    var bytes: [32]u8 = [_]u8{0xa5} ** 32;
+    for ([_]usize{ 0, 1025, std.math.maxInt(usize) }) |capacity| {
+        try std.testing.expectError(error.Invalid, @call(.never_inline, decode_status, .{ @as([]const u8, &.{}), @as(?usize, capacity) }));
+    }
+    for ([_]i32{ 0, -4, std.math.minInt(i32) }) |status| {
+        _ = venus_extensions_test_reply(status, 0, null, &bytes, bytes.len);
+        const before = bytes;
+        for (0..28) |cut| try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ bytes[0..cut], null }));
+        for ([_]usize{ 0, 8, 20 }) |offset| {
+            bytes = before; bytes[offset] ^= 1;
+            try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ &bytes, null }));
+        }
+        bytes = before;
+        std.mem.writeInt(u32, bytes[16..20], 1025, .little);
+        try std.testing.expectError(error.Limit, @call(.never_inline, decode_status, .{ &bytes, null }));
+        bytes = before;
+        std.mem.writeInt(u32, bytes[16..20], 1, .little);
+        try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ &bytes, @as(?usize, 2) }));
+        bytes = before;
+        std.mem.writeInt(u32, bytes[16..20], 3, .little);
+        std.mem.writeInt(u64, bytes[20..28], 3, .little);
+        try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ &bytes, @as(?usize, 2) }));
+    }
+    const overlong = try std.testing.allocator.alloc(u8, MaxReplyBytes + 1);
+    defer std.testing.allocator.free(overlong);
+    @memset(overlong, 0);
+    _ = venus_extensions_test_reply(-4, 0, null, overlong.ptr, overlong.len);
+    try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ overlong, null }));
+    for ([_]i32{ 1, 2, 5, std.math.maxInt(i32) }) |status| {
+        _ = venus_extensions_test_reply(status, 0, null, &bytes, bytes.len);
+        try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ &bytes, null }));
+        if (status != 5) try std.testing.expectError(error.Corrupt, @call(.never_inline, decode_status, .{ &bytes, @as(?usize, 1) }));
     }
 }
