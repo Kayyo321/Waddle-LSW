@@ -247,6 +247,7 @@ const resource_state_t = struct {
     descriptor_used: [11]u32 = [_]u32{0} ** 11,
     inflight_count: u32 = 0,
     idle_refs: u32 = 0,
+    internal_fence: bool = false,
     allocation_size: u64 = 0,
     allocation_flags: u32 = 0,
     type_index: u32 = 0,
@@ -294,6 +295,7 @@ const submission_ticket_t = struct {
     queue: u64 = 0,
     sequence: u64 = 0,
     fence: u64 = 0,
+    fence_owned: bool = false,
     references: [8]u64 = [_]u64{0} ** 8,
 };
 var submission_tickets = [_]submission_ticket_t{.{}} ** 128;
@@ -306,6 +308,7 @@ fn include_reference(ticket: *submission_ticket_t, record: *const c.venus_object
     return repeated;
 }
 fn retire_ticket(ticket: *submission_ticket_t) void {
+    const owned_fence = if (ticket.fence_owned) ticket.fence else 0;
     for (&resource_states, 0..) |*state, index| {
         const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
         if (ticket.references[index / 64] & bit == 0) continue;
@@ -315,6 +318,7 @@ fn retire_ticket(ticket: *submission_ticket_t) void {
             state.command_state = if (state.command_flags & 1 != 0) .Invalid else .Executable;
     }
     ticket.* = .{};
+    if (owned_fence != 0) destroy_internal_fence(owned_fence);
 }
 fn retire_queue(handle: u64) void {
     for (&submission_tickets) |*ticket| if (ticket.queue == handle) retire_ticket(ticket);
@@ -1765,6 +1769,7 @@ fn child_object(handle: u64, kind: u32, parent_id: u64) ?*c.venus_object_t {
     var record: [*c]c.venus_object_t = null;
     if (c.venus_objects_lookup(&objects, handle, kind, 0, &record) != c.RingOk or
         record.*.parent_id != parent_id) return null;
+    if (kind == c.VK_OBJECT_TYPE_FENCE and resource_state(record).internal_fence) return null;
     return @ptrCast(record);
 }
 fn result_reply(bytes: []const u8, command_id: u32, pending: i32) c_int {
@@ -1846,6 +1851,11 @@ fn destroy_fence(
         c.VK_OBJECT_TYPE_FENCE,
         parent.id,
     ) orelse return;
+    destroy_fence_record(parent, record);
+}
+/// Destroy one mutex-owned fence after actual GPU retirement or acknowledged
+/// failed submission. Internal fence tokens are never exposed to guest lookup.
+fn destroy_fence_record(parent: *const c.venus_object_t, record: *c.venus_object_t) void {
     if (resource_state(record).inflight_count != 0) return;
     var writer = writer_t{};
     writer.header(36, parent.id);
@@ -1865,6 +1875,82 @@ fn destroy_fence(
     std.debug.assert(c.venus_objects_release(&objects, record.handle, c.VK_OBJECT_TYPE_FENCE, 0) ==
         c.RingOk);
 }
+/// Obtain the driver's hidden fence owner without exposing it to guest APIs.
+/// No native pointer dereference/allocation; caller holds ICD mutex.
+fn internal_fence_record(handle: u64) ?*c.venus_object_t {
+    var record: [*c]c.venus_object_t = null;
+    if (c.venus_objects_lookup(&objects, handle, c.VK_OBJECT_TYPE_FENCE, 0, &record) != c.RingOk or
+        !resource_state(record).internal_fence) return null;
+    return @ptrCast(record);
+}
+/// Retire a hidden native fence only after its ticket's independent GPU proof.
+/// Failed destruction ACK retains the host owner until trusted receiver retirement.
+fn destroy_internal_fence(handle: u64) void {
+    const record = internal_fence_record(handle) orelse return;
+    const parent = device_by_id(record.parent_id) orelse return;
+    destroy_fence_record(parent, record);
+}
+/// Attach a private native VkFence to a preflighted modern fenceless submission.
+/// Ticket owns the fence through actual GPU completion. Host creation failure
+/// preserves uncertain reservations on loss; acknowledged failure rolls back.
+fn attach_submission_fence(parent: *const c.venus_object_t, staged: *submission_ticket_t, selected: *?*c.venus_object_t) c_int {
+    if (!reply_profile_ready or selected.* != null) return c.VK_SUCCESS;
+    const info = c.VkFenceCreateInfo{ .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    var native_fence: c.VkFence = null;
+    const result = create_fence(@ptrFromInt(parent.handle), &info, null, &native_fence);
+    if (result != c.VK_SUCCESS) return result;
+    const record = child_object(@intFromPtr(native_fence.?), c.VK_OBJECT_TYPE_FENCE, parent.id).?;
+    resource_state(record).internal_fence = true;
+    staged.fence = record.handle;
+    staged.fence_owned = true;
+    _ = include_reference(staged, record);
+    selected.* = record;
+    return c.VK_SUCCESS;
+}
+/// Publish GPU owners on success or uncertain submit ACK. Sequence and reference
+/// quotas were checked before transport; sticky loss keeps all owners until abandon.
+fn publish_submission(parent_id: u64, target: *submission_ticket_t, staged: *submission_ticket_t) void {
+    submission_sequence += 1;
+    staged.sequence = submission_sequence;
+    target.* = staged.*;
+    retain_submission_mapping_spans(parent_id, staged.references);
+    for (&resource_states, 0..) |*state, index| {
+        const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
+        if (staged.references[index / 64] & bit == 0) continue;
+        std.debug.assert(state.inflight_count < submission_tickets.len);
+        state.inflight_count += 1;
+        if (slots[index].kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER) state.command_state = .Pending;
+    }
+}
+/// Complete a submitted packet; known native failure frees its unused hidden
+/// fence, while unknown dispatch/result preserves its ticket and every resource.
+fn finish_submission(parent_id: u64, target: *submission_ticket_t, staged: *submission_ticket_t, result: c_int) c_int {
+    if (result == c.VK_SUCCESS or lost != c.RingOk or result == c.VK_ERROR_DEVICE_LOST) {
+        publish_submission(parent_id, target, staged);
+        if (result != c.VK_SUCCESS) return failure(if (lost == c.RingOk) c.RingClosed else lost);
+        return result;
+    }
+    if (staged.fence_owned) destroy_internal_fence(staged.fence);
+    return if (lost == c.RingOk) result else c.VK_ERROR_DEVICE_LOST;
+}
+/// Poll actual native fence status, independent of arbitrary timeline values.
+/// Only complete same-queue prefixes retire. NOT_READY leaves owners intact.
+/// This never waits for unrelated later submissions or performs queue-wide idle.
+fn poll_submission_fences(parent: *const c.venus_object_t) c_int {
+    if (!reply_profile_ready) return c.VK_SUCCESS;
+    for (&submission_tickets) |*ticket| {
+        if (ticket.queue == 0 or ticket.fence == 0) continue;
+        const queue = object(ticket.queue, c.VK_OBJECT_TYPE_QUEUE) orelse return failure(c.RingCorrupt);
+        if (queue.parent_id != parent.id) continue;
+        const record = if (ticket.fence_owned) internal_fence_record(ticket.fence)
+            else child_object(ticket.fence, c.VK_OBJECT_TYPE_FENCE, parent.id);
+        const selected = record orelse return failure(c.RingCorrupt);
+        const result = fence_status_locked(parent, selected);
+        if (result != c.VK_SUCCESS and result != c.VK_NOT_READY) return result;
+    }
+    return c.VK_SUCCESS;
+}
+
 /// Create one device-owned nondispatchable semaphore without allocation.
 /// @param[in] device Nonnull live private device, validated without native dereference.
 /// @param[in] info Nonnull borrowed canonical flags0/no-extension native input.
@@ -3588,6 +3674,8 @@ fn reset_command_pool(device: c.VkDevice, pool: c.VkCommandPool, flags: u32) cal
         c.VK_OBJECT_TYPE_COMMAND_POOL,
         parent.id,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const proof = poll_submission_fences(parent);
+    if (proof != c.VK_SUCCESS) return proof;
     for (slots, 0..) |child, index|
         if (child.parent_id == record.id and resource_states[index].command_state == .Pending) {
             command_rejection_diagnostic("vkResetCommandPool", &resource_states[index]);
@@ -3815,6 +3903,9 @@ fn begin_command_buffer(
         c.VK_OBJECT_TYPE_COMMAND_BUFFER,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const pool = command_pool_for(record) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = device_by_id(pool.parent_id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const proof = poll_submission_fences(parent);
+    if (proof != c.VK_SUCCESS) return proof;
     const state = resource_state(record);
     if (state.command_state == .Recording or state.command_state == .Pending) {
         command_rejection_diagnostic("vkBeginCommandBuffer", state);
@@ -4624,6 +4715,9 @@ fn reset_command_buffer(buffer: c.VkCommandBuffer, flags: u32) callconv(.C) c_in
         c.VK_OBJECT_TYPE_COMMAND_BUFFER,
     ) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
     const pool = command_pool_for(record) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const parent = device_by_id(pool.parent_id) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    const proof = poll_submission_fences(parent);
+    if (proof != c.VK_SUCCESS) return proof;
     if (resource_state(pool).pool_flags & 2 == 0 or
         resource_state(record).command_state == .Pending) return c.VK_ERROR_INITIALIZATION_FAILED;
     var writer = writer_t{};
@@ -4894,6 +4988,12 @@ fn queue_submit(
     const record = object(@intFromPtr(queue.?), c.VK_OBJECT_TYPE_QUEUE) orelse
         return c.VK_ERROR_INITIALIZATION_FAILED;
     if (resource_state(record).id != record.id) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (reply_profile_ready) {
+        const early_parent = object(device_cache_for_queue(record).handle, c.VK_OBJECT_TYPE_DEVICE).?;
+        if (resource_state(record).idle_refs != 0 or resource_state(early_parent).idle_refs != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        const proof = poll_submission_fences(early_parent);
+        if (proof != c.VK_SUCCESS) return proof;
+    }
     var available: ?*submission_ticket_t = null;
     for (&submission_tickets) |*ticket| if (ticket.queue == 0) {
         available = ticket;
@@ -5004,22 +5104,14 @@ fn queue_submit(
     writer.put(u64, if (fence_record) |selected| selected.id else 0);
     const mapping_result = synchronize_device_mappings(parent.id, true);
     if (mapping_result != c.VK_SUCCESS) return mapping_result;
-    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const fence_result = attach_submission_fence(parent, &staged, &fence_record);
+    if (fence_result != c.VK_SUCCESS) return fence_result;
+    std.mem.writeInt(u64, writer.bytes[writer.used - 8 ..][0..8], if (fence_record) |selected| selected.id else 0, .little);
+    const reply = transact(writer.bytes[0..writer.used]) orelse
+        return finish_submission(parent.id, target, &staged, c.VK_ERROR_DEVICE_LOST);
+
     const result = result_reply(reply, 18, 0);
-    if (result == c.VK_SUCCESS) {
-        submission_sequence += 1;
-        staged.sequence = submission_sequence;
-        target.* = staged;
-        retain_submission_mapping_spans(parent.id, staged.references);
-        for (&resource_states, 0..) |*state, index| {
-            const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
-            if (staged.references[index / 64] & bit == 0) continue;
-            std.debug.assert(state.inflight_count < submission_tickets.len);
-            state.inflight_count += 1;
-            if (slots[index].kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER) state.command_state = .Pending;
-        }
-    }
-    return result;
+    return finish_submission(parent.id, target, &staged, result);
 }
 fn device_cache_for_queue(record: *const c.venus_object_t) *device_cache_t {
     for (&device_caches) |*entry| if (entry.handle != 0) {
@@ -6301,6 +6393,12 @@ fn queue_submit2(
     const record = object(@intFromPtr(queue.?), c.VK_OBJECT_TYPE_QUEUE) orelse
         return c.VK_ERROR_INITIALIZATION_FAILED;
     if (resource_state(record).id != record.id) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (reply_profile_ready) {
+        const early_parent = object(device_cache_for_queue(record).handle, c.VK_OBJECT_TYPE_DEVICE).?;
+        if (resource_state(record).idle_refs != 0 or resource_state(early_parent).idle_refs != 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+        const proof = poll_submission_fences(early_parent);
+        if (proof != c.VK_SUCCESS) return proof;
+    }
     var available: ?*submission_ticket_t = null;
     for (&submission_tickets) |*ticket| if (ticket.queue == 0) {
         available = ticket;
@@ -6394,25 +6492,17 @@ fn queue_submit2(
         if (status == c.VK_SUCCESS) return c.VK_ERROR_INITIALIZATION_FAILED;
         if (status != c.VK_NOT_READY) return status;
     }
-    const writer = modern_sync.queue_submit2(record.id, @ptrCast(normalized[0..count]), if (fence_record) |selected| selected.id else 0) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
+    var writer = modern_sync.queue_submit2(record.id, @ptrCast(normalized[0..count]), if (fence_record) |selected| selected.id else 0) catch |err| return if (err == error.Limit) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_INITIALIZATION_FAILED;
     const mapping_result = synchronize_device_mappings(parent.id, true);
     if (mapping_result != c.VK_SUCCESS) return mapping_result;
-    const reply = transact(writer.bytes[0..writer.used]) orelse return c.VK_ERROR_DEVICE_LOST;
+    const fence_result = attach_submission_fence(parent, &staged, &fence_record);
+    if (fence_result != c.VK_SUCCESS) return fence_result;
+    std.mem.writeInt(u64, writer.bytes[writer.used - 8 ..][0..8], if (fence_record) |selected| selected.id else 0, .little);
+    const reply = transact(writer.bytes[0..writer.used]) orelse
+        return finish_submission(parent.id, target, &staged, c.VK_ERROR_DEVICE_LOST);
+
     const result = result_reply(reply, 206, 0);
-    if (result == c.VK_SUCCESS) {
-        submission_sequence += 1;
-        staged.sequence = submission_sequence;
-        target.* = staged;
-        retain_submission_mapping_spans(parent.id, staged.references);
-        for (&resource_states, 0..) |*state, index| {
-            const bit = @as(u64, 1) << @as(u6, @intCast(index % 64));
-            if (staged.references[index / 64] & bit == 0) continue;
-            std.debug.assert(state.inflight_count < submission_tickets.len);
-            state.inflight_count += 1;
-            if (slots[index].kind == c.VK_OBJECT_TYPE_COMMAND_BUFFER) state.command_state = .Pending;
-        }
-    }
-    return result;
+    return finish_submission(parent.id, target, &staged, result);
 }
 
 /// Record synchronization2 dependency with translated host resources.
@@ -6425,7 +6515,8 @@ fn queue_submit2(
 /// node. [out] owned semaphore or null. Serialized; host errors retain no output.
 
 /// [in] live device/timeline token; [out] borrowed counter, zero on failure.
-/// Mutex serialized; native counter visibility does not retire GPU owners.
+/// Mutex serialized; counter visibility alone never retires GPU owners.
+/// Independent native submission-fence polling may prove exact queue prefixes complete.
 fn get_semaphore_counter_value(device: c.VkDevice, semaphore: c.VkSemaphore, output: [*c]u64) callconv(.C) c_int {
     lock_icd();
     defer unlock_icd();
@@ -6440,6 +6531,8 @@ fn get_semaphore_counter_value(device: c.VkDevice, semaphore: c.VkSemaphore, out
     const decoded = modern_sync.decode_counter(reply) catch return failure(c.RingCorrupt);
     if (decoded.result == c.VK_ERROR_DEVICE_LOST) return failure(c.RingClosed);
     if (decoded.result != c.VK_SUCCESS) return decoded.result;
+    const proof = poll_submission_fences(parent);
+    if (proof != c.VK_SUCCESS) return proof;
     const mapping_result = synchronize_device_mappings(parent.id, false);
     if (mapping_result != c.VK_SUCCESS) return mapping_result;
     output.* = decoded.value;
@@ -6464,7 +6557,8 @@ fn signal_semaphore(device: c.VkDevice, info: [*c]const c.VkSemaphoreSignalInfo)
 }
 /// [in] live device and borrowed wait arrays1..64; timeout in nanoseconds.
 /// Retains semaphore owners during unlocked bounded polls; concurrent submission
-/// and host signal can progress. Success does not retire GPU references.
+/// and host signal can progress. Timeline success alone never retires GPU references;
+/// independently polled native submission fences provide the required GPU proof.
 fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, timeout: u64) callconv(.C) c_int {
     var timer = std.time.Timer.start() catch return c.VK_ERROR_INITIALIZATION_FAILED;
     lock_icd();
@@ -6541,7 +6635,12 @@ fn wait_semaphores(device: c.VkDevice, info: [*c]const c.VkSemaphoreWaitInfo, ti
             unlock_icd();
             return status;
         }
-        const visible_result = if (result == c.VK_SUCCESS) synchronize_device_mappings(saved_parent_id, false) else result;
+        var visible_result = result;
+        if (result == c.VK_SUCCESS) {
+            const live_parent = device_by_id(saved_parent_id) orelse { unlock_icd(); return c.VK_ERROR_DEVICE_LOST; };
+            visible_result = poll_submission_fences(live_parent);
+            if (visible_result == c.VK_SUCCESS) visible_result = synchronize_device_mappings(saved_parent_id, false);
+        }
         unlock_icd();
         if (result != c.VK_TIMEOUT) return visible_result;
         if (timeout != std.math.maxInt(u64) and timer.read() >= timeout) return c.VK_TIMEOUT;
@@ -11208,4 +11307,96 @@ test "root Submit2 preflight quotas idle lifetime native headers and ticket exha
     try std.testing.expectEqual(@as(usize, 0), fixture.calls);
     try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), root_runtime_fn(queue_submit2)(queue_handle, 0, null, null));
     try std.testing.expectEqual(@as(u64, queue.handle), submission_tickets[0].queue);
+}
+
+
+const hidden_fence_fixture_t = struct {
+    opcode: u32 = 0,
+    identity: u64 = 0,
+    fence_status: i32 = c.VK_NOT_READY,
+    submit_result: i32 = c.VK_SUCCESS,
+    corrupt_submit: bool = false,
+    creates: usize = 0,
+    destroys: usize = 0,
+    submitted_fence: u64 = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        response.* = std.mem.zeroes(c.venus_request_t);
+        response.*.kind = request.*.kind; response.*.direction = 1;
+        switch (request.*.kind) {
+            c.RequestSubmit => {
+                if (input == null or length < 44) return c.RingCorrupt;
+                const bytes = @as([*]const u8, @ptrCast(input.?))[0..length];
+                fixture.opcode = std.mem.readInt(u32, bytes[36..40], .little);
+                if (fixture.opcode == 35) {
+                    fixture.identity = std.mem.readInt(u64, bytes[length-8..][0..8], .little);
+                    fixture.creates += 1;
+                }
+                if (fixture.opcode == 36) fixture.destroys += 1;
+                if (fixture.opcode == 206) fixture.submitted_fence = std.mem.readInt(u64, bytes[length-8..][0..8], .little);
+                response.*.argument_zero = 1;
+            },
+            c.RequestPoll => {},
+            c.RequestReply => {
+                if (output == null or capacity < 24) return c.RingCorrupt;
+                const bytes = @as([*]u8, @ptrCast(output.?))[0..capacity]; @memset(bytes, 0);
+                std.mem.writeInt(u32, bytes[0..4], if(fixture.opcode == 206 and fixture.corrupt_submit) 999 else fixture.opcode, .little);
+                const result = if(fixture.opcode == 38) fixture.fence_status else if(fixture.opcode == 206) fixture.submit_result else c.VK_SUCCESS;
+                std.mem.writeInt(i32, bytes[4..8], result, .little);
+                if (fixture.opcode == 35) {
+                    std.mem.writeInt(u64, bytes[8..16], 1, .little);
+                    std.mem.writeInt(u64, bytes[16..24], fixture.identity, .little);
+                }
+                response.*.payload_bytes = @intCast(capacity);
+            },
+            else => return c.RingCorrupt,
+        }
+        return c.RingOk;
+    }
+};
+
+test "modern hidden submit fences independently prove reuse and retain uncertain GPU owners" {
+    for ([_]u32{0, 1, 2}) |scenario| {
+        var fixture = hidden_fence_fixture_t{ .submit_result = if(scenario == 1) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_SUCCESS, .corrupt_submit = scenario == 2 };
+        try std.testing.expectEqual(@as(c_int,c.RingOk), venus_icd_bind(hidden_fence_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const parent = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE,0,1);
+        const queue = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_QUEUE,parent.id,1);
+        const pool = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_POOL,parent.id,0);
+        const command_record = try root_sync_fixture_t.reserve(c.VK_OBJECT_TYPE_COMMAND_BUFFER,pool.id,1);
+        for ([_]*c.venus_object_t{parent,queue,pool,command_record}) |record| resource_state(record).id = record.id;
+        resource_state(command_record).command_state = .Executable;
+        device_caches[0].handle = parent.handle;
+        reply_profile_ready = true;
+        const command_info = c.VkCommandBufferSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = @ptrFromInt(command_record.handle) };
+        const submit = c.VkSubmitInfo2{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .commandBufferInfoCount = 1, .pCommandBufferInfos = &command_info };
+        const result = root_runtime_fn(queue_submit2)(@ptrFromInt(queue.handle),1,&submit,null);
+        try std.testing.expectEqual(@as(c_int,if(scenario == 0) c.VK_SUCCESS else if(scenario == 1) c.VK_ERROR_OUT_OF_DEVICE_MEMORY else c.VK_ERROR_DEVICE_LOST),result);
+        try std.testing.expectEqual(@as(usize,1),fixture.creates);
+        try std.testing.expect(fixture.submitted_fence != 0);
+        if (scenario == 1) {
+            try std.testing.expectEqual(@as(usize,1),fixture.destroys);
+            try std.testing.expectEqual(@as(u64,0),submission_tickets[0].queue);
+            try std.testing.expectEqual(command_state_t.Executable,resource_state(command_record).command_state);
+        } else {
+            const hidden = submission_tickets[0].fence;
+            try std.testing.expect(submission_tickets[0].fence_owned);
+            try std.testing.expect(internal_fence_record(hidden) != null);
+            try std.testing.expect(child_object(hidden,c.VK_OBJECT_TYPE_FENCE,parent.id) == null);
+            try std.testing.expectEqual(@as(u32,1),resource_state(command_record).inflight_count);
+            try std.testing.expectEqual(@as(usize,0),fixture.destroys);
+            if (scenario == 0) {
+                // A real pending native fence cannot justify command-pool reuse.
+                try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(reset_command_pool)(@ptrFromInt(parent.handle),@ptrFromInt(pool.handle),0));
+                try std.testing.expectEqual(command_state_t.Pending,resource_state(command_record).command_state);
+                fixture.fence_status = c.VK_SUCCESS;
+                try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),root_runtime_fn(reset_command_pool)(@ptrFromInt(parent.handle),@ptrFromInt(pool.handle),0));
+                try std.testing.expectEqual(command_state_t.Initial,resource_state(command_record).command_state);
+                try std.testing.expectEqual(@as(u32,0),resource_state(command_record).inflight_count);
+                try std.testing.expectEqual(@as(u64,0),submission_tickets[0].queue);
+                try std.testing.expectEqual(@as(usize,1),fixture.destroys);
+                try std.testing.expect(internal_fence_record(hidden) == null);
+            } else try std.testing.expectEqual(@as(c_int,c.RingCorrupt),lost);
+        }
+    }
 }
