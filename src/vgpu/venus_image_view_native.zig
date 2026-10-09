@@ -162,6 +162,7 @@ pub fn validate(image: *const image_t, info: *const c.VkImageViewCreateInfo, cub
     }
     return range;
 }
+// Test-only fixtures.
 fn image_info() c.VkImageCreateInfo {
     return .{ .sType = c.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .flags = c.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, .imageType = 1, .format = 37, .extent = .{ .width = 64, .height = 64, .depth = 1 }, .mipLevels = 7, .arrayLayers = 13, .samples = 1 };
 }

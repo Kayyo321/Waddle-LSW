@@ -148,3 +148,6 @@ pub fn encode_specialization(writer: anytype, pointer: [*c]const c.VkSpecializat
     var padding = (4 - data.len % 4) % 4;
     while (padding != 0) : (padding -= 1) try writer.put(u8, 0);
 }
+
+// Test-only fixtures.
+// No local fixtures; imported render/graphics tests exercise all production helpers above.

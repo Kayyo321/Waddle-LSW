@@ -19,17 +19,20 @@ import icd_owned_sanitizers as owned
 import icd_dependency_sanitizers as dependency
 
 MaxProofBytes = 256 * 1024 * 1024
+# Exact recursive production closure, including imported image-view/pipeline helpers.
+SourceNames = ('venus_device_wire.zig', 'venus_image_view_native.zig', 'venus_pipeline_wire_helpers.zig', 'venus_render_wire.zig')
 
 
 def final_access(binary, report, output):
-    """[in] Borrow immutable binary/report; [out] owned two-module resolved hook proof.
+    """[in] Borrow immutable binary/report; [out] owned four-module resolved hook proof.
 
     Require unique emitted symbols and actual owned-function calls; std/C excluded.
     Close bounded tool outputs and reap180s children; errors reject acceptance.
     No source mutation/retention; caller exclusively owns output directory.
     """
     modules = report['modules']
-    assert len(modules) == 2
+    assert len(modules) == len(SourceNames) == 4
+    assert {Path(module['source']).name for module in modules} == set(SourceNames)
     lookup = {symbol: module for module in modules for symbol in module['symbols']}
     assert len(lookup) == sum(len(module['symbols']) for module in modules)
     counts = {symbol: 0 for symbol in lookup}
@@ -82,7 +85,7 @@ def main():
     print('preserved run: ' + str(output), flush=True)
     source = Path('src/vgpu/venus_device_wire.zig').resolve()
     inventories = owned.source_inventory(source)
-    assert {path.name for path in inventories} == {'venus_device_wire.zig', 'venus_render_wire.zig'}
+    assert {path.name for path in inventories} == set(SourceNames)
     provenance = {str(path): dependency.file_hash(path) for path in inventories}
     for path in (Path(__file__).resolve(), Path(owned.__file__).resolve(), Path(dependency.__file__).resolve()):
         provenance[str(path)] = dependency.file_hash(path)

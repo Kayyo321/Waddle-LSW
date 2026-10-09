@@ -7,7 +7,7 @@ vgpu-device-native-test: $(VgpuDeviceWireNativeOracles)
 	$(ZIG) test $(VgpuDeviceNativeSource) $(VgpuDeviceWireIncludes) -lc $(VgpuDeviceWireNativeOracles)
 	$(ZIG) test $(VgpuDeviceNativeSource) $(VgpuDeviceWireIncludes) -lc -O ReleaseSafe $(VgpuDeviceWireNativeOracles)
 
-vgpu-device-native-sanitizers: scripts/device_native_sanitizers.py scripts/icd_owned_sanitizers.py scripts/icd_dependency_sanitizers.py
+vgpu-device-native-sanitizers: scripts/device_native_sanitizers.py scripts/icd_owned_sanitizers.py scripts/icd_dependency_sanitizers.py vgpu-owned-sanitizer-inventory-test
 	python3 -B scripts/device_native_sanitizers.py build/device_native_owned_safety
 
 vgpu-device-native-coverage: tests/av/coverage.py $(VgpuDeviceNativeSource)

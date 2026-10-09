@@ -26,7 +26,11 @@ vgpu-device-wire-test: $(VgpuDeviceWireNativeOracles)
 	$(ZIG) test $(VgpuDeviceWireSource) $(VgpuDeviceWireIncludes) -lc $(VgpuDeviceWireNativeOracles)
 	$(ZIG) test $(VgpuDeviceWireSource) $(VgpuDeviceWireIncludes) -lc -O ReleaseSafe $(VgpuDeviceWireNativeOracles)
 
-vgpu-device-wire-sanitizers: scripts/device_wire_sanitizers.py scripts/icd_owned_sanitizers.py scripts/icd_dependency_sanitizers.py
+.PHONY: vgpu-owned-sanitizer-inventory-test
+vgpu-owned-sanitizer-inventory-test: tests/vgpu/owned_sanitizer_inventory.py
+	python3 -B tests/vgpu/owned_sanitizer_inventory.py
+
+vgpu-device-wire-sanitizers: scripts/device_wire_sanitizers.py scripts/icd_owned_sanitizers.py scripts/icd_dependency_sanitizers.py vgpu-owned-sanitizer-inventory-test
 	python3 -B scripts/device_wire_sanitizers.py build/device_wire_sanitizers
 
 vgpu-device-wire-coverage: build/venus_device_wire_oracle.o build/venus_render_wire_oracle.o
