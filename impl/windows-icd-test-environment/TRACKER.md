@@ -12,7 +12,7 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1 | Diagnose native read/mutation contract and reproduce Windows link failure | Done | 20% | 100% | PEB reads require SetEnvironmentVariableW; full-unit baseline fails on setenv/unsetenv |
-| #2 | Implement test-only guard and lossless restoration regression | Review | 30% | 100% | No production, README, threshold, or CI-inclusion changes |
+| #2 | Implement test-only guard and lossless restoration regression | Done | 30% | 100% | No production, README, threshold, or CI-inclusion changes |
 | #3 | Pass Linux full/targeted suites, whole-ICD coverage and Windows full cross-links | Done | 25% | 100% | Final source passes all local gates; cross-link is not execution |
 | #4 | Complete independent review | Done | 10% | 100% | Final helper approved after absent-delete correction; no remaining code blockers |
 | #5 | Execute complete native Windows CI suites after publication | Pending | 15% | 0% | Parent owns authorized publication and CI monitoring |
@@ -34,6 +34,8 @@
 
 ## Commit History & Progress Log
 
-- **Implementation checkpoint (commit hash recorded in the following receipt)**: `test(vgpu): make ICD environment fixtures portable on Windows`
+- **Commit `cb0844a238570b3aa136a9c9ce7e72be52aaaf85`**: `test(vgpu): make ICD environment fixtures portable on Windows`
   - **Task Impact**: #1 +100% (+20% overall), #2 +100% (+30%), #3 +100% (+25%), #4 +100% (+10%); bounded repair is **85%** complete.
   - **Summary**: Test-only native process-environment guard, lossless restoration regression, complete unchanged Linux/coverage gates, Windows cross-link receipts, and independent review. #5 remains 0%; parent-owned native CI execution must complete before claiming runtime acceptance.
+
+This documentation-only attribution receipt records the verified implementation commit above. Task impact: **+0%**; total remains **85%**, with native Windows CI execution still pending.
