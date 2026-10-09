@@ -84,5 +84,8 @@
   ASan/UBSan with `detect_leaks=0`. Existing ptrace-blocked LSan and pending CI/native
   execution qualifications remain unchanged. No physical execution credit is taken.
 - Independent review compiled and ran the exact shared callback regression and
-  confirmed there are no production-source changes. Current fixture-correction
-  commit changes no feature progress percentage (0%).
+  confirmed there are no production-source changes. Commit `89c1da2` changes no feature progress percentage (0%).
+
+- Exact callback-correction source: `89c1da2abbd36c0da980f0e74135c1049f8bc46d`. Receipt:
+  `build/av-window-generation/platform-fix-20261009T224829Z`; manifest SHA-256
+  `69a61df35b0c359f1932e2372ea88a9dbf4c05efd56ea5d02a5d827efb616882`. Receipt-only update changes progress by 0%.
