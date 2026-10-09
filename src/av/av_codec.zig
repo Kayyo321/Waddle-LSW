@@ -9,10 +9,25 @@ fn put(comptime T: type, data: []u8, offset: usize, value: T) void {
     std.mem.writeInt(T, data[offset..][0..@sizeOf(T)], value, .little);
 }
 fn valid(message: *const c.av_message_t) bool {
-    if (message.window_id == 0 or message.type < 1 or message.type > 6 or message.flags > 3) return false;
+    if (message.window_id == 0 or message.type < 1 or message.type > 12 or message.flags > 3) return false;
     const title: []const u8 = std.mem.sliceAsBytes(&message.title);
     const end = std.mem.indexOfScalar(u8, title, 0) orelse return false;
     if (!std.unicode.utf8ValidateSlice(title[0..end])) return false;
+    if (message.type >= 7) {
+        if (message.sequence == 0 or message.buffer_index == 0 or message.height != 0 or
+            message.dpi != 0 or message.process_id != 0 or message.damage_x != 0 or
+            message.damage_y != 0 or message.damage_width != 0 or message.damage_height != 0 or
+            !std.mem.allEqual(u8, title, 0)) return false;
+        return switch (message.type) {
+            7 => message.flags <= 1 and message.x == 0 and message.y == 0 and message.width == 0,
+            8 => message.flags <= 1 and message.x == 0 and message.y == 0 and message.width >= 1 and message.width <= 127,
+            9 => message.flags == 0 and message.width == 0 and message.x >= 0 and message.x < 8192 and message.y >= 0 and message.y < 8192,
+            10 => message.flags <= 1 and message.x == 0 and message.y == 0 and message.width >= 1 and message.width <= 3,
+            11 => message.flags == 0 and message.width == 0 and message.x >= -1200 and message.x <= 1200 and message.y >= -1200 and message.y <= 1200 and (message.x != 0 or message.y != 0),
+            12 => message.flags >= 1 and message.flags <= 3 and message.x == 0 and message.y == 0 and message.width == 0,
+            else => false,
+        };
+    }
     if (message.type == 6) return message.sequence != 0 and message.sequence <= 0xffffff and message.flags <= 1;
     if (message.type == 2 or message.type == 5) return true;
     if (message.width == 0 or message.height == 0 or message.width > 8192 or message.height > 8192 or message.dpi < 48 or message.dpi > 768) return false;
@@ -159,7 +174,7 @@ test "invalid lifecycle and frame fields never alter encoded output" {
         switch (index) {
             0 => message.window_id = 0,
             1 => message.type = 0,
-            2 => message.type = 7,
+            2 => message.type = 13,
             3 => message.flags = 4,
             4 => message.height = 0,
             5 => message.height = 8193,
@@ -258,5 +273,80 @@ test "mdev UUID validation rejects path and spelling ambiguity" {
         var value = ValidUuid.*;
         value[index] = 'g';
         try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_gpu_uuid_validate, .{ &value, value.len }));
+    }
+}
+
+test "input envelopes round trip and reject every reserved byte transactionally" {
+    for (7..13) |kind| {
+        var event = std.mem.zeroes(c.av_message_t);
+        event.type = @intCast(kind);
+        event.window_id = 0x1234;
+        event.sequence = 42;
+        event.buffer_index = 10;
+        if (kind == 7 or kind == 8 or kind == 10 or kind == 12) event.flags = 1;
+        if (kind == 8 or kind == 10) event.width = 1;
+        if (kind == 11) event.y = -120;
+        var bytes: [328]u8 = undefined;
+        var decoded = std.mem.zeroes(c.av_message_t);
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_encode, .{ &event, &bytes, bytes.len }));
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_decode, .{ &bytes, bytes.len, &decoded }));
+        try std.testing.expectEqual(event.sequence, decoded.sequence);
+        for (0..bytes.len) |length|
+            try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_decode, .{ &bytes, length, &decoded }));
+        // Every byte in reserved scalar fields and title is rejected; this also
+        // exercises bytes after title's first NUL (legacy titles allow padding).
+        for ([_]usize{ 28, 36, 40, 56, 60, 64, 68 }) |offset| {
+            bytes[offset] = 1;
+            const sentinel = decoded;
+            try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_decode, .{ &bytes, bytes.len, &decoded }));
+            try std.testing.expectEqualSlices(u8, std.mem.asBytes(&sentinel), std.mem.asBytes(&decoded));
+            bytes[offset] = 0;
+        }
+        for (72..328) |offset| {
+            bytes[offset] = 1;
+            try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_decode, .{ &bytes, bytes.len, &decoded }));
+            bytes[offset] = 0;
+        }
+        for (0..22) |index| {
+            var invalid = event;
+            switch (index) {
+                0 => invalid.sequence = 0,
+                1 => invalid.buffer_index = 0,
+                2 => invalid.height = 1,
+                3 => invalid.dpi = 1,
+                4 => invalid.process_id = 1,
+                5 => invalid.damage_x = 1,
+                6 => invalid.damage_y = 1,
+                7 => invalid.damage_width = 1,
+                8 => invalid.damage_height = 1,
+                9 => invalid.title[255] = 1,
+                10 => invalid.flags = 4,
+                11 => invalid.x = -1,
+                12 => invalid.x = 8192,
+                13 => invalid.y = -1,
+                14 => invalid.y = 8192,
+                15 => invalid.width = 128,
+                16 => invalid.width = 0,
+                17 => invalid.flags = 0,
+                18 => invalid.x = -1201,
+                19 => invalid.y = -1201,
+                20 => invalid.flags = 2,
+                21 => { invalid.x = 0; invalid.y = 0; },
+                else => unreachable,
+            }
+            // Each type has different valid bounds. Only cases outside that
+            // type's exact domain belong to the rejection corpus.
+            if (valid(&invalid)) continue;
+            var unchanged = [_]u8{0xa5} ** 328;
+            try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_encode, .{ &invalid, &unchanged, unchanged.len }));
+            try std.testing.expectEqualSlices(u8, &([_]u8{0xa5} ** 328), &unchanged);
+        }
+        for ([_]i32{ -1200, -1, 0, 1, 1200, 8191 }) |coordinate| {
+            var boundary = event;
+            boundary.x = coordinate;
+            boundary.y = coordinate;
+            const expected: c_int = if (valid(&boundary)) 0 else -1;
+            try std.testing.expectEqual(expected, @call(.never_inline, av_control_encode, .{ &boundary, &bytes, bytes.len }));
+        }
     }
 }

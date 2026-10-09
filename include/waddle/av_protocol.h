@@ -23,7 +23,13 @@ typedef enum av_message_type_t {
     /** Either peer updates size/state; position remains guest metadata. */ MsgWindowGeometry = 3,
     /** Guest publishes a triple-buffer slot and one bounded damage rectangle. */ MsgFrameReady = 4,
     /** Host requests WM_CLOSE for the guest window. */ MsgWindowClose = 5,
-    /** Host-only opt-in fixture flash; sequence is RGB24 token, flags bit 0 occludes. */ MsgDiagnosticFlash = 6
+    /** Host-only opt-in fixture flash; sequence is RGB24 token, flags bit 0 occludes. */ MsgDiagnosticFlash = 6,
+    /** Host activates/releases one window incarnation; flags 1/0. */ MsgInputFocus = 7,
+    /** Physical evdev code in width, down/up in flags. */ MsgInputKey = 8,
+    /** Surface-local integer pixel x/y, bounded again against live geometry. */ MsgInputPointer = 9,
+    /** Button 1 left, 2 right, 3 middle in width; down/up flags. */ MsgInputButton = 10,
+    /** Signed Windows horizontal/vertical wheel units in x/y. */ MsgInputWheel = 11,
+    /** Release held keys (1), buttons (2), or both (3); retain focus. */ MsgInputRelease = 12
 } av_message_type_t;
 /** @brief Decoded control data, caller-owned, natural alignment, no wire casts.
  * @note Codec copies fields using explicit LE offsets; struct is not serialized
@@ -38,8 +44,8 @@ typedef struct av_message_t {
     uint32_t flags; /**< Minimized/fullscreen only; no unknown bits allowed. */
     uint32_t dpi; /**< Window DPI, 48..768 for create/geometry/frame. */
     uint32_t process_id; /**< Target process ID; nonzero for create. */
-    uint32_t buffer_index; /**< Frame slot 0..2. */
-    uint64_t sequence; /**< Nonzero frame sequence for FrameReady. */
+    uint32_t buffer_index; /**< Frame slot 0..2; input uses strictly increasing nonzero session serial. */
+    uint64_t sequence; /**< Frame sequence; Create/input use nonzero window incarnation. */
     int32_t damage_x; /**< Nonnegative surface-local damage origin. */
     int32_t damage_y; /**< Nonnegative surface-local damage origin. */
     uint32_t damage_width; /**< Bounded nonzero damage width for frames. */

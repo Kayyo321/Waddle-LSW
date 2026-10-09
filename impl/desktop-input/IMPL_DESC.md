@@ -24,7 +24,7 @@ input or elevated/secure-desktop applications.
 `av_wayland.c` owns one seat (first advertised), keyboard and pointer proxies,
 focus pointers, and an increasing input serial on its existing event thread.
 Callbacks queue canonical `av_message_t` values through the existing bounded
-64-frame peer queue. Delivery failure is terminal, never silently dropping a
+128-frame peer queue. Delivery failure is terminal, never silently dropping a
 release. Socket closure makes guest teardown release held inputs.
 
 `av_codec.zig` validates untrusted fixed-size frames without allocation and leaves
@@ -59,7 +59,9 @@ Every input message has zero height, DPI, process ID, damage fields and title.
 
 All unused bytes are rejected, including nonzero title padding. Valid input still
 must match both the live focus ID and incarnation before injection. Replayed or
-out-of-order serials, stale incarnations and unknown focus fail the connection.
+out-of-order serials fail the connection. Ordered events for an obsolete focus
+are ignored without injection; stale activation is identity-probed before releasing
+the current focus. Thus guest destruction can safely overtake queued host input.
 The window incarnation is session-owned identity, not authentication. Existing
 VSOCK control access remains the transport trust boundary.
 
