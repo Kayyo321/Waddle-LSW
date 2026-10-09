@@ -72,3 +72,23 @@
   vGPU/hardware milestones receive no completion-percentage increase.
 
 - Verification receipt commit changes documentation only (+0%); it binds implementation `e268984ec71b10e2cc848802001d5724299fd103` to the receipts above. Fresh CI sanitizer verification remains open.
+
+## Fail-closed sanitizer follow-on
+
+- 2026-10-09T23:32Z: sanitizer fixture builds now add
+  `-fno-sanitize-recover=all`; child runtime options are completely replaced with
+  leak-enabled halt/abort/nonzero-exit settings for ASan/LSan/UBSan. Inherited
+  suppression paths, disabled leak scanning and recovery/zero-exit options cannot
+  weaken the probes. Ordinary test behavior and recorder/measurement code remain
+  unchanged. This corrects recoverable UBSan's possible zero-exit false pass.
+- The suite now has8 tests: normal mode executes the original7 and skips the
+  sanitizer-only negative control; strict sanitizer mode executes all8. Normal
+  mode passes7/7. The isolated signed-overflow negative control passes1/1: exact
+  UBSan diagnosis, SIGABRT, no post-error marker, and no false success caused by
+  LeakSanitizer's unrelated ptrace failure, despite hostile inherited options.
+- Complete local strict rerun remains failed on4 positive-exit probes because
+  LeakSanitizer cannot inspect this executor under ptrace. The negative control
+  passes in that same run. No leak acceptance is claimed or suppression added.
+  CI's existing strict invocation now exercises the fail-closed options and all8
+  tests. Independent review precedes the follow-on commit; +0% qualification or
+  hardware milestone credit until supported fresh CI completes.

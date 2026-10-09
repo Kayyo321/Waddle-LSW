@@ -16,7 +16,22 @@ from coverage_recorder import prepare_recorder, RecorderBytes, clear_instrumenta
 
 Root = Path(__file__).resolve().parents[2]
 Runtime = Root / 'tests/device_branch_runtime.c'
-Sanitizers = ['-fsanitize=address,leak,undefined', '-fno-omit-frame-pointer'] if os.environ.get('WADDLE_RECORDER_SANITIZERS') == '1' else []
+Sanitizers = ['-fsanitize=address,leak,undefined', '-fno-sanitize-recover=all', '-fno-omit-frame-pointer'] if os.environ.get('WADDLE_RECORDER_SANITIZERS') == '1' else []
+
+
+def probe_environment(output):
+    """Keep ordinary probes unchanged; sanitizer probes cannot inherit suppression.
+
+    Replace the complete option strings rather than appending to potentially
+    conflicting inherited flags. Leak scanning stays enabled and reports fail.
+    """
+    environment = {**os.environ, 'WADDLE_BRANCH_OUT': str(output)}
+    if Sanitizers:
+        environment.update(
+            ASAN_OPTIONS='detect_leaks=1:halt_on_error=1:abort_on_error=1',
+            LSAN_OPTIONS='detect_leaks=1:leak_check_at_exit=1:exitcode=23',
+            UBSAN_OPTIONS='halt_on_error=1:abort_on_error=1:print_stacktrace=1')
+    return environment
 
 
 def records_for(count):
@@ -53,9 +68,38 @@ class recorder_test_t(unittest.TestCase):
 
     def run_probe(self, *arguments):
         return subprocess.run([str(self.output / 'probe'), *arguments],
-                              env={**os.environ, 'WADDLE_BRANCH_OUT': str(self.output)},
+                              env=probe_environment(self.output),
                               capture_output=True, text=True,
                               preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)), timeout=30)
+
+    @unittest.skipUnless(Sanitizers, 'sanitizer-only non-recovery qualification')
+    def test_sanitizer_violation_is_nonrecoverable(self):
+        self.assertIn('-fno-sanitize-recover=all', Sanitizers)
+        self.compile("""#include <limits.h>
+#include <stdio.h>
+int main(void) {
+    volatile int maximum = INT_MAX;
+    volatile int invalid = maximum + 1;
+    (void)invalid;
+    fputs("RECOVERED_AFTER_UBSAN\\n", stderr);
+    return 0;
+}
+""")
+        # Host settings must not disable qualification or inject suppressions.
+        with patch.dict(os.environ, {
+                'ASAN_OPTIONS': 'detect_leaks=0:halt_on_error=0:suppressions=/unusable',
+                'LSAN_OPTIONS': 'detect_leaks=0:exitcode=0:suppressions=/unusable',
+                'UBSAN_OPTIONS': 'halt_on_error=0:suppressions=/unusable'}):
+            environment = probe_environment(self.output)
+            self.assertEqual(environment['ASAN_OPTIONS'], 'detect_leaks=1:halt_on_error=1:abort_on_error=1')
+            self.assertEqual(environment['LSAN_OPTIONS'], 'detect_leaks=1:leak_check_at_exit=1:exitcode=23')
+            self.assertEqual(environment['UBSAN_OPTIONS'], 'halt_on_error=1:abort_on_error=1:print_stacktrace=1')
+            result = self.run_probe()
+        self.assertEqual(result.returncode, -signal.SIGABRT, result.stderr)
+        self.assertIn('runtime error:', result.stderr)
+        self.assertIn('signed integer overflow', result.stderr)
+        self.assertNotIn('RECOVERED_AFTER_UBSAN', result.stderr)
+        self.assertNotIn('LeakSanitizer has encountered a fatal error', result.stderr)
 
     def test_every_site_above_old_limit_and_concurrent_edge_union(self):
         count = 76512

@@ -61,3 +61,15 @@ Hit-producing threads must be joined or otherwise quiescent before exit emission
 this is the recorder's existing process-lifetime boundary. Focused compiler and
 runner subprocesses have finite timeouts. CI runs the probes both normally and
 with AddressSanitizer, LeakSanitizer and UndefinedBehaviorSanitizer enabled.
+
+## Fail-closed sanitizer qualification
+
+Sanitizer-mode fixture builds add `-fno-sanitize-recover=all`. Every probe replaces
+its complete ASAN_OPTIONS, LSAN_OPTIONS and UBSAN_OPTIONS strings, instead of
+appending to inherited options: leak detection and exit scanning stay enabled,
+ASan/UBSan halt and abort, and LSan uses a nonzero leak exit code. No inherited
+suppression file or recoverable/zero-exit setting reaches the probe. Ordinary
+probe behavior is unchanged. A sanitizer-only signed-overflow negative control
+must report the specific UBSan violation, terminate by SIGABRT before its recovery
+marker, and must not pass because of the unrelated local LeakSanitizer ptrace
+restriction. The normal suite and remaining strict sanitizer probes still apply.
