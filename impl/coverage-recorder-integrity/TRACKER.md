@@ -93,7 +93,7 @@
   tests. Independent review precedes the follow-on commit; +0% qualification or
   hardware milestone credit until supported fresh CI completes.
 
-- **Commit `9dc89c7fc048c483dd1770b46790e7feeaf3f002`**: `test: make coverage sanitizer probes fail closed`.
+- **Commit `3306f44cab1a34dc1c2c19708a6270cf71415d2e`**: `test: make coverage sanitizer probes fail closed`.
   Independent code and documentation review approved the exact test source
   SHA256 `9f1374778868ab9ab469b47cd9566636a692f797bf745dc011b39f23dec8eca7`.
   Both compiler paths use non-recovery flags; all seven existing test methods
