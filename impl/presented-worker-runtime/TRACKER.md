@@ -97,9 +97,18 @@
 
 ## Commit History & Progress Log
 
-The following source commit contains the fixture correction and these exact
-verification receipts. Its hash is recorded in a subsequent documentation-only
-attribution commit. Task impact: #1 +100% (+25% overall), #2 +100% (+25%),
-#3 +100% (+20%), #4 +100% (+15%); total **85%**. #5 remains0% pending actual
-updated native normal/sanitized worker CI. No software-vGPU milestone advance
-is claimed.
+- **Commit `2742007ad9fb88d5f8a915ea79d4537517a4964f`**:
+  `test(vgpu): enable legal KHR queries in worker acceptance`
+  - **Task Impact**: #1 +100% (+25% overall), #2 +100% (+25%), #3 +100%
+    (+20%), #4 +100% (+15%); total **85%**. #5 remains0%.
+  - **Summary**: Explicit direct-instance KHR enablement, identical KHR
+    instance/physical lookup routes with the core1.1 spelling still hidden,
+    unchanged cache/canary/ownership guards, bounded failure-stage diagnostics,
+    four exact acceptance-binary links, independently reproduced dispatch
+    failure/correction and complete C ABI/loader regressions. Local real-worker
+    and sanitizer limitations remain explicit above.
+
+This documentation-only attribution receipt changes no source and adds **+0%**
+completion. Actual updated native normal/sanitized worker CI remains pending;
+no software-vGPU milestone advance is claimed. Parent owns publication and
+remote acceptance monitoring.
