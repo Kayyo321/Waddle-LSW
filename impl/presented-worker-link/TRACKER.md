@@ -97,8 +97,16 @@ from the failed or blocked runtime checks.
 
 ## Commit History & Progress Log
 
-The implementation commit binds the one-line shared native-sink link correction
-and these verification receipts. Task impact: #1 +100% (+30% overall), #2 +100%
-(+30%), #3 +100% (+20%). Exact commit attribution follows after the commit is
-created. The exact runtime gates must run on the published revision in Linux CI
-before TODO #4 can advance. The bounded repair remains **80%** complete.
+- **Commit `18e9d57ed79775779ad4d7416b77e516adbf26fd`**:
+  `fix(vgpu): link native WSI sink into worker acceptance binaries`
+  - **Task Impact**: #1 +100% (+30% overall), #2 +100% (+30%), #3 +100%
+    (+20%); bounded repair is **80%** complete.
+  - **Summary**: One production native-sink object added to the shared worker
+    link list, four actual executable links and unique-symbol checks, unchanged
+    portable WSI/coverage verification, explicit runtime/sanitizer blockers, and
+    independent approval. TODO #4 remains 0% pending unchanged Linux CI gates.
+
+This documentation-only attribution receipt records the exact implementation
+commit above. Task impact: **+0%**; total remains **80%**. Independent production
+worker execution and leak acceptance are still pending on the published
+revision; the local link evidence cannot advance TODO #4.
