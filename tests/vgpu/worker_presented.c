@@ -736,14 +736,24 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
     VkDevice cleanup_device = NULL;
     PFN_vkDestroyInstance cleanup_destroy_instance = NULL;
     PFN_vkDestroyDevice cleanup_destroy_device = NULL;
-    const char *image_stage = NULL;
+    const char *stage = "instance creation";
     VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
-    for (unsigned iteration = 0; iteration < 8; iteration++) {
+#ifndef VgpuIcdLoader
+    /* The negotiated legacy binding exposes API1.0. Enable its guest KHR query
+     * facade explicitly; the core1.1 spelling must stay unavailable. */
+    const char *extensions[] = {VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME};
+    info.enabledExtensionCount = 1;
+    info.ppEnabledExtensionNames = extensions;
+#endif
+    unsigned iteration = 0;
+    for (; iteration < 8; iteration++) {
+        stage = "instance creation";
         VkInstance instance = NULL;
         if (!create || create(&info, NULL, &instance) != VK_SUCCESS || !instance)
             goto fail;
         cleanup_instance = instance;
         cleanup_destroy_instance = (PFN_vkDestroyInstance)icd_lookup(instance, "vkDestroyInstance");
+        stage = "physical-device enumeration";
         PFN_vkEnumeratePhysicalDevices enumerate =
             (PFN_vkEnumeratePhysicalDevices)icd_lookup(
                 instance, "vkEnumeratePhysicalDevices");
@@ -754,6 +764,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         uint32_t capacity = count;
         if (enumerate(instance, &capacity, devices) != VK_SUCCESS || capacity != count)
             goto fail;
+        stage = "physical query entry points";
         PFN_vkGetPhysicalDeviceProperties properties =
             (PFN_vkGetPhysicalDeviceProperties)icd_lookup(
                 instance, "vkGetPhysicalDeviceProperties");
@@ -765,16 +776,21 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
                 instance, "vkGetPhysicalDeviceMemoryProperties");
         if (!properties || !features || !memory) goto fail;
 #ifndef VgpuIcdLoader
+        stage = "enabled API1.0 KHR Features2 entry point";
         PFN_vkGetPhysicalDeviceFeatures2 features2 =
-            (PFN_vkGetPhysicalDeviceFeatures2)icd_lookup(instance, "vkGetPhysicalDeviceFeatures2");
-        PFN_vkGetPhysicalDeviceFeatures2 features2_alias =
             (PFN_vkGetPhysicalDeviceFeatures2)icd_lookup(instance, "vkGetPhysicalDeviceFeatures2KHR");
-        if (!features2 || features2_alias != features2) goto fail;
+        PFN_vkGetPhysicalDeviceFeatures2 features2_alias =
+            (PFN_vkGetPhysicalDeviceFeatures2)venus_icd_get_physical_proc_addr(
+                instance, "vkGetPhysicalDeviceFeatures2KHR");
+        if (!features2 || features2_alias != features2 ||
+            icd_lookup(instance, "vkGetPhysicalDeviceFeatures2")) goto fail;
 #else
+        stage = "disabled API1.0 KHR Features2 entry point";
         /* The legal loader API remains 1.0 with no enabled instance extension.
          * KHR lookup must remain hidden; the core1.1 entry is never called here. */
         if (icd_lookup(instance, "vkGetPhysicalDeviceFeatures2KHR")) goto fail;
 #endif
+        stage = "physical properties and cached features";
         for (uint32_t index = 0; index < count; index++) {
             VkPhysicalDeviceProperties property_value = {0};
             VkPhysicalDeviceFeatures feature_value = {0};
@@ -793,7 +809,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             memory(devices[index], &memory_value);
 #ifndef VgpuIcdLoader
             /* A real negotiated raw query is already cached by the core getter. Both
-             * public aliases must publish the same proven intersection without
+             * enabled KHR lookups must publish the same proven intersection without
              * overwriting unknown payloads, caller headers, links or canaries. */
             struct unknown_t { VkStructureType sType; void *pNext; uint64_t sentinel; } unknown;
             memset(&unknown, 0xa5, sizeof(unknown));
@@ -829,6 +845,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
                 fflush(stdout);
             }
         }
+        stage = "queue-family selection";
         PFN_vkGetPhysicalDeviceQueueFamilyProperties queue_properties =
             (PFN_vkGetPhysicalDeviceQueueFamilyProperties)icd_lookup(
                 instance, "vkGetPhysicalDeviceQueueFamilyProperties");
@@ -858,6 +875,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         VkDeviceCreateInfo device_info = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
                                           .queueCreateInfoCount = 1,
                                           .pQueueCreateInfos = &queue_info};
+        stage = "device creation";
         VkDevice device = NULL;
         if (create_device(devices[0], &device_info, NULL, &device) != VK_SUCCESS || !device)
             goto fail;
@@ -879,6 +897,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         if (!queue || queue != repeated || queue_idle(queue) != VK_SUCCESS ||
             device_idle(device) != VK_SUCCESS)
             goto fail;
+        stage = "core synchronization lifecycle";
         PFN_vkCreateFence create_fence = (PFN_vkCreateFence)device_proc(device, "vkCreateFence");
         PFN_vkDestroyFence destroy_fence =
             (PFN_vkDestroyFence)device_proc(device, "vkDestroyFence");
@@ -917,6 +936,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         if (!allocate || !release || !supported_memory.memoryTypeCount ||
             supported_memory.memoryTypeCount > VK_MAX_MEMORY_TYPES) goto fail;
         if (selected_workload == FullWorkload || selected_workload == MappingWorkload) {
+            stage = "mapped transfer lifecycle";
             PFN_vkCreateBuffer create_buffer = (PFN_vkCreateBuffer)device_proc(device, "vkCreateBuffer");
             PFN_vkDestroyBuffer destroy_buffer = (PFN_vkDestroyBuffer)device_proc(device, "vkDestroyBuffer");
             PFN_vkGetBufferMemoryRequirements requirements =
@@ -1095,7 +1115,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
                 (PFN_vkCreateImageView)device_proc(device, "vkCreateImageView");
             PFN_vkDestroyImageView destroy_view =
                 (PFN_vkDestroyImageView)device_proc(device, "vkDestroyImageView");
-            image_stage = "entry-point lookup";
+            stage = "image entry-point lookup";
             if (!create_image || !destroy_image || !image_requirements || !bind_image ||
                 !create_view || !destroy_view) goto fail;
             const VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1105,10 +1125,10 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
                 .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
             VkImage image = NULL;
-            image_stage = "image creation";
+            stage = "image creation";
             if (create_image(device, &image_info, NULL, &image) != VK_SUCCESS || !image) goto fail;
             VkMemoryRequirements image_memory = {0};
-            image_stage = "memory requirements";
+            stage = "image memory requirements";
             image_requirements(device, image, &image_memory);
             if (!image_memory.size || !image_memory.alignment || !image_memory.memoryTypeBits) goto fail;
             uint32_t image_type = 0;
@@ -1119,7 +1139,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             const VkMemoryAllocateInfo image_allocation_info = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                 .allocationSize = image_memory.size, .memoryTypeIndex = image_type};
             VkDeviceMemory image_allocation = NULL;
-            image_stage = "allocation and bind";
+            stage = "image allocation and bind";
             if (allocate(device, &image_allocation_info, NULL, &image_allocation) != VK_SUCCESS ||
                 !image_allocation || bind_image(device, image, image_allocation, 0) != VK_SUCCESS)
                 goto fail;
@@ -1128,13 +1148,13 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
                 .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                     .levelCount = 1, .layerCount = 1}};
             VkImageView image_view = NULL;
-            image_stage = "view creation";
+            stage = "image view creation";
             if (create_view(device, &view_info, NULL, &image_view) != VK_SUCCESS || !image_view)
                 goto fail;
 #ifdef VgpuIcdLoader
             if (getenv("WADDLE_TEST_LOADER_FAILURE")) goto fail;
 #endif
-            image_stage = "image barrier entry-point lookup";
+            stage = "image barrier entry-point lookup";
             PFN_vkCreateCommandPool create_image_pool =
                 (PFN_vkCreateCommandPool)device_proc(device, "vkCreateCommandPool");
             PFN_vkDestroyCommandPool destroy_image_pool =
@@ -1152,7 +1172,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             if (!create_image_pool || !destroy_image_pool || !allocate_image_commands ||
                 !begin_image_command || !end_image_command || !image_barrier || !submit_image)
                 goto fail;
-            image_stage = "image command acquisition";
+            stage = "image command acquisition";
             const VkCommandPoolCreateInfo image_pool_info = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                 .queueFamilyIndex = family};
             VkCommandPool image_pool = NULL;
@@ -1168,7 +1188,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             if (allocate_image_commands(device, &image_command_info, &image_command) != VK_SUCCESS ||
                 !image_command || begin_image_command(image_command, &image_begin_info) != VK_SUCCESS)
                 goto fail;
-            image_stage = "image layout transition";
+            stage = "image layout transition";
             const VkImageMemoryBarrier transition = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
                 .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
                 .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_GENERAL,
@@ -1181,7 +1201,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             VkFence image_fence = NULL;
             const VkSubmitInfo image_submit = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
                 .commandBufferCount = 1, .pCommandBuffers = &image_command};
-            image_stage = "image submission and fence retirement";
+            stage = "image submission and fence retirement";
             if (end_image_command(image_command) != VK_SUCCESS ||
                 create_fence(device, &image_fence_info, NULL, &image_fence) != VK_SUCCESS || !image_fence ||
                 submit_image(queue, 1, &image_submit, image_fence) != VK_SUCCESS ||
@@ -1193,18 +1213,21 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             destroy_view(device, image_view, NULL);
             destroy_image(device, image, NULL);
             release(device, image_allocation, NULL);
-            image_stage = "device teardown after image release";
+            stage = "device teardown after image release";
 
         }
 
+        stage = "compute workload";
         if ((selected_workload == ComputeWorkload || selected_workload == ComputePushWorkload) &&
             compute_probe(device, queue, family, &supported_memory, device_proc,
                 selected_workload == ComputePushWorkload, 37 + iteration * 19 + (uint32_t)corrupt * 257))
             goto fail;
 
+        stage = "triangle workload";
         if (selected_workload == TriangleWorkload &&
             triangle_probe(device, queue, family, &supported_memory, device_proc)) goto fail;
 
+        stage = "device and instance teardown";
         destroy_device(device, NULL);
         cleanup_device = NULL;
 #ifndef VgpuIcdLoader
@@ -1217,12 +1240,12 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             goto fail;
         destroy(instance, NULL);
         cleanup_instance = NULL;
-        image_stage = NULL;
 #ifndef VgpuIcdLoader
         if (icd_lookup(instance, "vkDestroyInstance"))
             goto fail;
 #endif
     }
+    stage = "empty ICD unbind";
     if (icd_unbind() == RingOk) {
 #ifdef VgpuIcdLoader
         loader_cleanup();
@@ -1230,7 +1253,8 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         return 0;
     }
 fail:
-    if (image_stage) fprintf(stderr, "ICD image acceptance failed: %s\n", image_stage);
+    fprintf(stderr, "ICD production acceptance failed: stage=%s, cycle=%u, mode=%d\n",
+        stage, iteration, corrupt);
     /* Release loader-owned CPU dispatch tables even when host ownership is uncertain. */
     if (cleanup_device && cleanup_destroy_device) cleanup_destroy_device(cleanup_device, NULL);
     if (cleanup_instance && cleanup_destroy_instance) cleanup_destroy_instance(cleanup_instance, NULL);
@@ -1239,6 +1263,7 @@ fail:
 }
 static int run_fixture(int corrupt) {
     int result = 1, mapping_fd = -1, streams[2] = {-1, -1}, frames[2] = {-1, -1};
+    const char *stage = "production worker executable";
     void *mapping = MAP_FAILED;
     venus_worker_t worker = {0};
     venus_session_t session = {0};
@@ -1250,6 +1275,7 @@ static int run_fixture(int corrupt) {
     const char *configured = getenv("WADDLE_PRODUCTION_WORKER");
     if (!realpath(configured ? configured : "build/waddle_vgpu_worker", executable))
         goto cleanup;
+    stage = "shared mapping acquisition";
     mapping_fd = memfd_create("presented-worker", MFD_CLOEXEC);
     if (mapping_fd < 0 || ftruncate(mapping_fd, 4096) != 0)
         goto cleanup;
@@ -1259,6 +1285,7 @@ static int run_fixture(int corrupt) {
         socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, frames) != 0 ||
         venus_frame_prepare(frames[0]) != RingOk || venus_frame_prepare(frames[1]) != RingOk)
         goto cleanup;
+    stage = "production worker exec";
     if (venus_worker_create_presented(&worker, executable, mapping_fd, streams[1], frames[1],
                                       UINT64_MAX) != RingOk)
         goto cleanup;
@@ -1266,6 +1293,7 @@ static int run_fixture(int corrupt) {
     streams[1] = -1;
     close(frames[1]);
     frames[1] = -1;
+    stage = "channel handshake and capability negotiation";
     if (venus_session_init(&session, SessionGuest, mapping, 4096, 0) != RingOk ||
         venus_channel_init(&channel, &session, streams[0], NULL) != RingOk ||
         venus_channel_deadline(&channel, 5000) != RingOk ||
@@ -1273,8 +1301,13 @@ static int run_fixture(int corrupt) {
         venus_rpc_init(&rpc, &channel, scratch, sizeof(scratch)) != RingOk ||
         venus_guest_init(&guest, &rpc, 5000) != RingOk)
         goto cleanup;
-    if (query_version(&guest) || instance_cycle(&guest) || icd_cycles(&guest, corrupt))
-        goto cleanup;
+    stage = "raw version query";
+    if (query_version(&guest)) goto cleanup;
+    stage = "raw instance lifecycle";
+    if (instance_cycle(&guest)) goto cleanup;
+    stage = "ICD lifecycle";
+    if (icd_cycles(&guest, corrupt)) goto cleanup;
+    stage = "unregistered presentation rejection";
     venus_frame_t frame = {.context = UINT64_MAX,
                            .frame = 1,
                            .layout = {.width = 32,
@@ -1302,6 +1335,7 @@ static int run_fixture(int corrupt) {
     if (venus_frame_receive(frames[0], worker.process_id, UINT64_MAX, &frame, received) !=
         RingAgain)
         goto cleanup;
+    stage = "unknown-release shutdown";
     if (corrupt) {
         const venus_release_t Unknown = {.context = UINT64_MAX, .frame = 1, .status = RingOk};
         if (venus_release_send(frames[0], &Unknown) != RingOk)
@@ -1317,6 +1351,7 @@ static int run_fixture(int corrupt) {
     venus_channel_free(&channel);
     close(streams[0]);
     streams[0] = -1;
+    stage = "production worker exit status";
     for (unsigned attempt = 0;; attempt++) {
         venus_ring_status_t status = venus_worker_poll(&worker);
         if (status == RingClosed) {
@@ -1333,8 +1368,11 @@ cleanup:
     venus_guest_free(&guest);
     venus_rpc_free(&rpc);
     venus_channel_free(&channel);
-    if (venus_worker_destroy(&worker, 1000) != RingOk)
+    if (venus_worker_destroy(&worker, 1000) != RingOk) {
+        if (!result) stage = "production worker retirement";
         result = 1;
+    }
+    if (result) fprintf(stderr, "Presented worker fixture failed: stage=%s, mode=%d\n", stage, corrupt);
     if (result) icd_abandon(); /* Receiver retired before forgetting uncertain objects. */
 #ifdef VgpuIcdLoader
     loader_cleanup();
@@ -1376,7 +1414,8 @@ int main(void) {
         unsigned after = descriptors();
         if (fixture_result || after != baseline) {
             result = after == baseline ? 1 : 2;
-            fprintf(stderr, "Presented worker binding failed: mode=%u\n", corrupt);
+            fprintf(stderr, "Presented worker binding failed: mode=%u, fixture=%d, descriptors=%u/%u\n",
+                corrupt, fixture_result, after, baseline);
             goto cleanup;
         }
     }
