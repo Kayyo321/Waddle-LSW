@@ -68,5 +68,21 @@
 - Preserved cloud receipt: `build/av-window-generation/run-20261009T222502Z`.
   `manifest.json` SHA-256: `cd7e821e292a4e5823d133fed3725f8dc3500ed1399e01ef7f7daf8b325b696d`.
   It inventories source/executable hashes, test logs and explicit pending gates.
-- Current receipt-only commit: no implementation progress change (0%). Latest CI,
+- Commit `dec6602` (receipt only): no implementation progress change (0%). Latest CI,
   native Windows execution and physical/manual acceptance remain open.
+
+## Synthetic native-platform callback correction
+
+- Review found that the modern CreateV2 native-platform fixture could receive
+  focus/input callbacks while its old Geometry/Close-only assertion rejected them.
+- The fixture now passes the same allocation-free callback tested by the CPU
+  regression. It validates the synthetic identity, canonical fields and increasing
+  input serial, records controls/input separately and rejects unexpected types.
+  It never forwards or injects input into a guest.
+- Strict callback CPU test and strict real native-platform executable link passed.
+  Full AV/input suites passed again; the focused callback regression also passed
+  ASan/UBSan with `detect_leaks=0`. Existing ptrace-blocked LSan and pending CI/native
+  execution qualifications remain unchanged. No physical execution credit is taken.
+- Independent review compiled and ran the exact shared callback regression and
+  confirmed there are no production-source changes. Current fixture-correction
+  commit changes no feature progress percentage (0%).

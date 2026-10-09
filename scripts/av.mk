@@ -21,6 +21,7 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 .PHONY: av-test av-sanitizers av-windows
 av-test: build/av_input_transport_test build/av_input_test build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test build/av_deploy_test build/av_gpu_test
 	./build/av_input_transport_test
+	./build/av_platform_requests_test
 	./build/av_identity_test
 	cd tests/av/legacy && sha256sum --check SHA256SUMS
 	./build/av_lifecycle_transport_test
@@ -115,7 +116,7 @@ build/vendor/av/ivshmem/ivshmem.inf: | build/vendor
 .PHONY: av-drivers
 av-drivers: build/vendor/av/ivshmem/ivshmem.inf
 
-build/av_platform_test: tests/av/platform.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o | build
+build/av_platform_test: tests/av/platform.c tests/av/platform_requests.h src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/platform.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
 .PHONY: av-native-platform-test
 av-native-platform-test: build/av_platform_test
@@ -157,6 +158,7 @@ build/av_input_transport_test: tests/av/input_transport.c src/av/av_input.c src/
 
 .PHONY: av-input-test
 av-input-test: build/av_input_test build/av_input_transport_test build/av_wayland_state_test
+	./build/av_platform_requests_test
 	./build/av_identity_test
 	cd tests/av/legacy && sha256sum --check SHA256SUMS
 	./build/av_lifecycle_transport_test
@@ -178,3 +180,8 @@ av-test av-input-test: build/av_lifecycle_transport_test
 
 build/av_guest_quiescence_test.exe: tests/av/guest_quiescence.c src/av/av_guest.c src/av/av_peer.c $(AvWindowsSources) build/av_audio_windows.lib build/av_codec_windows.lib build/av_layout_windows.lib | build
 	$(ZIG) cc $(AvWindowsFlags) tests/av/guest_quiescence.c src/av/av_peer.c $(AvWindowsSources) build/av_audio_windows.lib build/av_codec_windows.lib build/av_layout_windows.lib $(AvWindowsLibraries) -lws2_32 -o $@
+
+# Exercise the real synthetic native-platform request callback without a compositor.
+build/av_platform_requests_test: tests/av/platform_requests.c tests/av/platform_requests.h build/av_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av tests/av/platform_requests.c build/av_codec.o $(LDFLAGS) -o $@
+av-test av-input-test: build/av_platform_requests_test
