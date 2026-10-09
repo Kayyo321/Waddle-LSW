@@ -1,5 +1,7 @@
 # Hardware testing handoff: shared GPU Windows desktop
 
+Start with the [concise prioritized review checklist](REVIEW_CHECKLIST.md), the current pending-status index. Detailed cases and historical evidence remain below.
+
 Last reviewed: **2026-10-09 UTC**. Branch: `feature/software-vgpu-slicing`.
 
 For fresh GitHub checkouts, use the [published source checkpoint map](CLOUD_PUBLICATION_CHECKPOINT.md)

@@ -1,5 +1,7 @@
 # Shared GPU Windows desktop roadmap
 
+Start with the [concise prioritized review checklist](REVIEW_CHECKLIST.md), the current pending-status index. Detailed cases and historical evidence remain below.
+
 Evidence reviewed: **2026-10-08 UTC**. This document is a proposed implementation and acceptance roadmap for Waddle-LSW. It is self-contained for a new agent, but does not authorize implementation, dependency changes, driver installation, VM mutation, or a merge. The user controls those decisions. This publication adds only this file directly under `impl/`, as explicitly requested; it does not create a feature subfolder or alter existing trackers.
 
 Hardware testing restart point: [Hardware test handoff](HARDWARE_TEST_HANDOFF.md) provides current build/native commands, manual acceptance cases, outstanding automation gaps, and a reusable [results template](HARDWARE_TEST_RESULT_TEMPLATE.md). It preserves all unrun Windows/Wayland/RTX 5080 and integrated-product gates.
