@@ -29,6 +29,10 @@ jobs:
           echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
           tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
+      - name: Verify metadata-bound concurrent coverage recorder
+        run: |
+          python3 -B tests/av/coverage_recorder_test.py -v
+          WADDLE_RECORDER_SANITIZERS=1 python3 -B tests/av/coverage_recorder_test.py -v
       - name: Check out immutable renderer and Mesa dependencies
         run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol submodules/vulkan_loader submodules/mesa
       - name: Verify Mesa CPU topology allocation ownership
@@ -188,6 +192,22 @@ jobs:
         run: make vgpu-coverage
       - name: Cross-link Windows ABI fixture
         run: make vgpu-windows
+      - name: Preserve failed native coverage metadata and IR
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-coverage-diagnostics
+          path: |
+            build/coverage/**/recorder.json
+            build/coverage/**/recorder_metadata.h
+            build/coverage/**/branches.json
+            build/coverage/**/test.ll
+            build/coverage/**/instrumented.ll
+            build/coverage/**/*.edges
+            build/coverage/**/*_missed.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   windows_transport:
     runs-on: windows-2022
     timeout-minutes: 15

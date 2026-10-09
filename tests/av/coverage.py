@@ -9,12 +9,14 @@ responsibility; their allocation failures are exercised by the native unit tests
 """
 from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+from coverage_recorder import prepare_recorder
 ModernOracleNames = ('shader', 'modern_sync', 'extra_objects', 'requirements2_query',
                      'requirements2_reply', 'image_transfer_wire', 'dynamic_rendering_wire',
                      'graphics_general_wire', 'graphics_dynamic_wire', 'sampler_descriptor_wire',
@@ -116,10 +118,15 @@ if str(output / 'properties_render_oracle.o') in link_objects:
     link_objects = [path for path in link_objects if path != 'build/venus_render_wire_oracle.o']
 extra_args = ['-Isubmodules/venus_protocol/include', *link_objects] if oracle or mode in ModernModeOracles or mode in ('venus_transfer2_native', 'venus_wsi','venus_pipeline_wire_helpers','venus_shader_wire','venus_descriptor_template_native','venus_image_transfer_native','venus_image_view_native') else []
 test_source = 'src/vgpu/venus_graphics_general_wire.zig' if mode == 'venus_pipeline_wire_helpers' else source
-subprocess.run(['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
- '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')],check=True)
+compile_command=['zig','test',test_source,'-Iinclude',*extra_args,'-lc','-O','ReleaseSafe','--test-no-exec',
+ '-femit-llvm-ir='+str(output/'test.ll'),'-femit-bin='+str(output/'test')]
+source_hash=hashlib.sha256(Path(source).read_bytes()).hexdigest()
+subprocess.run(compile_command,check=True)
+if hashlib.sha256(Path(source).read_bytes()).hexdigest()!=source_hash:
+    raise RuntimeError('coverage source changed during native compilation')
 
 ir=(output/'test.ll').read_text()
+raw_ir=ir
 metadata={int(match[1]):match[2] for match in re.finditer(r'^!(\d+) = (.+)$',ir,re.M)}
 def scope_name(index):
     visited=set()
@@ -218,18 +225,25 @@ for line in ir.splitlines():
 # error propagation and successful returns. Token switch outcomes are checked by
 # the corpus through both opening/closing and scalar/default paths in that scanner.
 instrumented.append('declare void @waddle_branch_hit(i32, i32)')
-(output/'instrumented.ll').write_text('\n'.join(instrumented)+'\n')
 (output/'branches.json').write_text(json.dumps(records,indent=2))
-assert records,'no source branches instrumented'
-runtime_source=Path('tests/device_branch_runtime.c').read_text()
-max_branches=int(re.search(r'MaxBranches = (\d+)',runtime_source)[1])
-max_edges=int(re.search(r'MaxEdges = (\d+)',runtime_source)[1])
-assert len(records)<=max_branches, f'coverage sites {len(records)} exceed recorder {max_branches}'
-assert max(record['edges'] for record in records)<=max_edges, 'coverage switch exceeds recorder'
-print(f'{mode} instrumentation: {len(records)}/{max_branches} sites; '
-      f"{max(record['edges'] for record in records)}/{max_edges} maximum edges",flush=True)
+# Native target/optimization and the exact records stay unchanged. The runtime
+# owns one atomic mask plus arity per record within the original 512KiB budget.
+diagnostics={
+    'source_sha256': source_hash,
+    'compile_command': compile_command,
+    'zig_version': subprocess.check_output(['zig','version'],text=True).strip(),
+    'clang_version': subprocess.check_output(['clang-19','--version'],text=True).splitlines()[0],
+    'target_triple': re.search(r'^target triple = "([^"]+)"',raw_ir,re.M)[1],
+    'target_cpus': sorted(set(re.findall(r'"target-cpu"="([^"]+)"',raw_ir))),
+    'target_features': sorted(set(re.findall(r'"target-features"="([^"]+)"',raw_ir))),
+}
+instrumented_text,recorder_arg=prepare_recorder(output,raw_ir,'\n'.join(instrumented)+'\n',records,diagnostics)
+(output/'instrumented.ll').write_text(instrumented_text)
+print(f'{mode} instrumentation: {len(records)} exact metadata-bound sites; '
+      f"{max(record['edges'] for record in records)}/32 maximum edges; "
+      f"native target {diagnostics['target_triple']} CPUs {diagnostics['target_cpus']}",flush=True)
 subprocess.run(['clang-19','-Wno-override-module','-c',str(output/'instrumented.ll'),'-o',str(output/'test.o')],check=True)
-subprocess.run(['zig','cc',str(output/'test.o'),*link_objects,'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
+subprocess.run(['zig','cc',str(output/'test.o'),*link_objects,recorder_arg,'tests/device_branch_runtime.c','-o',str(output/'runner')],check=True)
 env=os.environ.copy();env['WADDLE_BRANCH_OUT']=str(output)
 subprocess.run([str(output/'runner')],env=env,check=True)
 hits=set()
