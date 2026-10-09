@@ -15275,20 +15275,102 @@ test "root final unsupported external handle queries preserve invalid outputs an
 
 extern "c" fn setenv([*:0]const u8, [*:0]const u8, c_int) c_int;
 extern "c" fn unsetenv([*:0]const u8) c_int;
+
+/// Test-only process environment guard. The key is borrowed through deinit;
+/// previous owns its testing-allocator snapshot, including a present empty value.
+/// Use only from the serial test runner: process environment mutation is global.
+const test_environment_t = struct {
+    key: [:0]const u8,
+    previous: ?[]u8,
+
+    /// [in] key is a nonempty, NUL-terminated environment name without '='.
+    /// Returns an owned snapshot or propagates allocation/encoding errors.
+    fn init(key: [:0]const u8) !test_environment_t {
+        return .{ .key = key, .previous = std.process.getEnvVarOwned(std.testing.allocator, key) catch |err| switch (err) {
+            error.EnvironmentVariableNotFound => null,
+            else => return err,
+        } };
+    }
+
+    /// [in] value is borrowed for this call; null removes the key, while "" keeps
+    /// it present. Windows values use WTF-8, matching getEnvVarOwned losslessly.
+    /// Temporary native strings are freed on success/failure. Returns allocation,
+    /// encoding or EnvironmentMutationFailed errors; owns no caller memory.
+    fn set(self: *const test_environment_t, value: ?[]const u8) !void {
+        if (builtin.os.tag == .windows) {
+            const key_w = try std.unicode.wtf8ToWtf16LeAllocZ(std.testing.allocator, self.key);
+            defer std.testing.allocator.free(key_w);
+            const value_w = if (value) |bytes| try std.unicode.wtf8ToWtf16LeAllocZ(std.testing.allocator, bytes) else null;
+            defer if (value_w) |bytes| std.testing.allocator.free(bytes);
+            // Zig 0.13 reads the PEB environment, not the CRT's _environ copy.
+            if (std.os.windows.kernel32.SetEnvironmentVariableW(key_w, if (value_w) |bytes| bytes.ptr else null) == 0) {
+                const native_error = std.os.windows.kernel32.GetLastError();
+                // Deletion is idempotent, like POSIX unsetenv; no other error is
+                // suppressed, and a failed non-null assignment is always fatal.
+                if (value == null and native_error == .ENVVAR_NOT_FOUND) return;
+                return error.EnvironmentMutationFailed;
+            }
+        } else {
+            const value_z = if (value) |bytes| try std.testing.allocator.dupeZ(u8, bytes) else null;
+            defer if (value_z) |bytes| std.testing.allocator.free(bytes);
+            const result = if (value_z) |bytes| setenv(self.key, bytes, 1) else unsetenv(self.key);
+            if (result != 0) return error.EnvironmentMutationFailed;
+        }
+    }
+
+    /// [in/out] Restores the snapshot, frees it and invalidates this guard exactly
+    /// once. Restoration failure is fatal so a contaminated suite cannot pass.
+    fn deinit(self: *test_environment_t) void {
+        self.set(self.previous) catch @panic("test environment restoration failed");
+        if (self.previous) |value| std.testing.allocator.free(value);
+        self.* = undefined;
+    }
+};
+
+/// Reads through the same Zig APIs as diagnostics; owns/frees the returned value.
+/// [in] expected distinguishes absent from empty; assertions propagate normally.
+fn expect_test_environment(comptime key: []const u8, expected: ?[]const u8) !void {
+    try std.testing.expectEqual(expected != null, std.process.hasEnvVarConstant(key));
+    if (expected) |value| {
+        const actual = try std.process.getEnvVarOwned(std.testing.allocator, key);
+        defer std.testing.allocator.free(actual);
+        try std.testing.expectEqualStrings(value, actual);
+    } else try std.testing.expectError(error.EnvironmentVariableNotFound, std.process.getEnvVarOwned(std.testing.allocator, key));
+}
+
+test "test environment mutations and restoration match diagnostic process reads" {
+    const key = "WADDLE_ICD_TEST_ENVIRONMENT_RESTORE";
+    var original = try test_environment_t.init(key);
+    defer original.deinit();
+    const values = [_]?[]const u8{
+        null,
+        "",
+        "retained ASCII",
+        "retained \xc3\xa9 \xf0\x9f\x90\xa7",
+        if (builtin.os.tag == .windows) "retained \xed\xa0\x80" else "retained \xff",
+    };
+    for (values) |previous| {
+        try original.set(previous);
+        try expect_test_environment(key, previous);
+        {
+            var changed = try test_environment_t.init(key);
+            defer changed.deinit();
+            try changed.set("1");
+            try expect_test_environment(key, "1");
+            try changed.set("");
+            try expect_test_environment(key, "");
+            try changed.set(null);
+            try expect_test_environment(key, null);
+            try changed.set(null);
+            try expect_test_environment(key, null);
+        }
+        try expect_test_environment(key, previous);
+    }
+}
 test "root final opt in diagnostics remain bounded and never mutate retained ownership or reply bytes" {
     const key = "WADDLE_ICD_DIAGNOSTICS";
-    const previous = std.process.getEnvVarOwned(std.testing.allocator, key) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    };
-    defer if (previous) |value| std.testing.allocator.free(value);
-    defer {
-        if (previous) |value| {
-            const original = std.testing.allocator.dupeZ(u8, value) catch unreachable;
-            defer std.testing.allocator.free(original);
-            std.debug.assert(setenv(key, original, 1) == 0);
-        } else std.debug.assert(unsetenv(key) == 0);
-    }
+    var environment = try test_environment_t.init(key);
+    defer environment.deinit();
     var fixture = root_sync_fixture_t{};
     try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(root_sync_fixture_t.exchange, &fixture));
     defer venus_icd_abandon();
@@ -15312,7 +15394,7 @@ test "root final opt in diagnostics remain bounded and never mutate retained own
     std.mem.writeInt(u64, reply[24..32], 32, .little);
     const original_reply = reply;
     for ([_]bool{ false, true }) |enabled| {
-        try std.testing.expectEqual(@as(c_int, 0), if (enabled) setenv(key, "1", 1) else unsetenv(key));
+        try environment.set(if (enabled) "1" else null);
         try std.testing.expectEqual(enabled, std.process.hasEnvVarConstant(key));
         root_runtime_fn(unbind_retention_diagnostic)();
         for ([_]command_state_t{ .Initial, .Recording, .Executable, .Pending, .Invalid }) |state| {
@@ -16174,20 +16256,10 @@ test "root final gap submit and timeline queries require actual pending native f
 }
 test "root final gap empty diagnostics and physical aliases preserve bindings and disabled extension admission" {
     const key = "WADDLE_ICD_DIAGNOSTICS";
-    const previous = std.process.getEnvVarOwned(std.testing.allocator, key) catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    };
-    defer if (previous) |value| std.testing.allocator.free(value);
-    defer {
-        if (previous) |value| {
-            const original = std.testing.allocator.dupeZ(u8, value) catch unreachable;
-            defer std.testing.allocator.free(original);
-            std.debug.assert(setenv(key, original, 1) == 0);
-        } else std.debug.assert(unsetenv(key) == 0);
-    }
+    var environment = try test_environment_t.init(key);
+    defer environment.deinit();
     venus_icd_abandon();
-    try std.testing.expectEqual(@as(c_int, 0), setenv(key, "1", 1));
+    try environment.set("1");
     root_runtime_fn(unbind_retention_diagnostic)();
     var fixture = feature_fixture_t{};
     const capabilities = feature_test_capabilities();
