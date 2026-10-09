@@ -26,7 +26,10 @@ No hardware/Adobe completion is claimed. Review in this order:
   and full Windows cross-links, with native execution pending. The prior
   environment-helper and extension-oracle failures are cleared.
   Linux vGPU confirmed the worker link repair, then failed real presented-worker
-  binding at mode 0; runtime diagnosis is open. Native CPU-model reproduction
+  binding at mode 0. Its API1.0 fixture omitted the KHR query extension while
+  requiring both aliases; a reviewed fixture-only repair passes the real ICD
+  admission probe and all four worker links. Full worker CI rerun is pending.
+  Native CPU-model reproduction
   explains the recorder overflow. The published all-sites-preserving repair passes
   the exact 76,512-site replay (90.30% branches) and current 394-test aggregate
   (90.32% branches, 98.53% lines); strict sanitizer CI is pending at `51583f9`. Bounded device-wire/native, WSI and ICD sanitizer
@@ -43,6 +46,7 @@ No hardware/Adobe completion is claimed. Review in this order:
   · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md)
   · [worker link repair](https://github.com/Kayyo321/Waddle-LSW/commit/37df9499f197c51443e1aca892139cf6a41a59c6)
   · [worker execution limits](presented-worker-link/TRACKER.md)
+  · [worker query-oracle repair](presented-worker-runtime/TRACKER.md)
   · [native WSI fixture repair](native-wsi-test-capabilities/TRACKER.md)
   · [all-sites recorder evidence](coverage-recorder-integrity/TRACKER.md).
 - [ ] **P1 · Physical input and cleanup.** Native `--input` fixture, then ordinary

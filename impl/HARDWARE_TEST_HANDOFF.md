@@ -223,7 +223,10 @@ for this run**; prescribed ASan/LSan/UBSan and allocator checks report zero leak
 and no errors. These include fake Wayland callbacks and fake Win32 calls on Linux.
 Do not count them as live compositor/native SDK acceptance.
 
-The recorder probes currently contain seven tests. Expected negative cases reject
+The recorder suite currently contains eight tests: ordinary mode runs seven and
+skips the sanitizer-only negative control; strict sanitizer mode runs all eight.
+The deliberate signed-overflow control must prove fatal UBSan detection, with no
+post-error marker, even when inherited options request recovery. Expected negative cases reject
 malformed metadata, invalid indices and stale linkage; the test suite itself must
 exit zero. Keep leak detection enabled. A ptrace-restricted local sanitizer abort
 is a blocked check, never a clean leak receipt. For a failed aggregate, preserve
