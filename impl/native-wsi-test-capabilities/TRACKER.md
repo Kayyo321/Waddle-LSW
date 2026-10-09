@@ -21,7 +21,11 @@
 
 ## Commit History & Progress Log
 
-The initial source/documentation commit completes tasks #1, #2, #3, and #4: +15%, +30%, +25%, and +15% overall respectively, for **85%** bounded completion. Its exact hash will be bound in the subsequent documentation receipt. Task #5 remains 0%; native runtime and leak-capable CI qualification are not inferred from local success.
+- **Commit `a085361d65460f2cee318ea0f1ebcc299e5f014e`**: `test(vgpu): opt native WSI fixtures into swapchain capability`
+  - **Task Impact**: #1 +100% (+15% overall), #2 +100% (+30%), #3 +100% (+25%), #4 +100% (+15%); **85%** bounded completion.
+  - **Summary**: Platform-exact named capability opt-in, four disabled-mask ownership/submission regressions, unchanged production and original tests, final Linux/C ABI/Windows-link verification, and independent review. Task #5 remains 0%; native runtime and leak-capable CI qualification are not inferred from local success.
+
+This documentation-only commit attribution adds **+0%** completion and changes no source.
 
 ## Verification receipts
 
@@ -31,6 +35,7 @@ All final verification applies to source SHA-256 `8324b5e62656ce9b1da076658702d3
 - `make vgpu-icd-units`: exit **0**, the complete unfiltered **394 Debug + 394 ReleaseSafe** suites. Both modes also execute the unchanged 128-cycle C native dispatch fixture. No test is skipped or conditionally returned early.
 - `make build/vgpu_icd_test build/vgpu_icd_loader_test build/vgpu_icd_mapping_fault_test`, followed by all three executables: exit **0**. Each C fixture passes 128 lifecycle cycles; the loader variant additionally verifies manifest discovery and eight instance/device/queue/fence lifecycles. All affected object/shared-library/executable dependencies were rebuilt after the final fixture refinement.
 - `bash build/native-wsi-test-capabilities/cross-link.sh`: exit **0**, complete unfiltered Windows Debug and ReleaseSafe unit executables, both PE32+ x86-64. All 23 workflow C oracle objects and renamed-main C fixture were rebuilt with Windows target, strict warnings, and assertions enabled. The established values oracle and six codec libraries are unchanged dependencies. Linux SDK `CPATH` and `LIBRARY_PATH` are cleared. Only `--test-no-exec` and dedicated output paths differ from runtime execution; these links do **not** execute Windows tests.
+- Both generated Windows unit COFF objects define exactly one `venus_win32_present_extent` and one `venus_win32_present_pixels_exact`; these come from the unchanged Zig test-only sink exports and the unit link omits the production Win32 sink object. The final PE files do not retain a COFF symbol table, so this supplemental check applies to their generated objects, not runtime execution. Receipt: `windows-object-sink-symbols.log`.
 - Exact source-boundary audit against `9762151`: restore only `wsi_status_graph_t` and remove only the new disabled-extension test; all remaining bytes are identical. Normalized SHA-256: `9e5dbf27f97937a1d5b1a186151fe6494ee349fe95dd0d11ec8f6da34b022980`. The independent reviewer separately verified all **196 preexisting test bodies** and production `create_swapchain` are byte-identical. Production function SHA-256: `bd1c1b3209ab419678268bcb88b6e97163ed52465f47fb84414531781dcaa34c`.
 - Independent source/evidence review approved the final source hash, exact Windows-only named opt-in, Linux zero requested extensions, canonical disabled features, four negative masks, acquired-image and owner conservation, native test-sink export, and every completed receipt above. `git diff --check` passes. No production, original test body, README, dependency, capability, build, coverage threshold, or exclusion-policy change belongs to this commit.
 
