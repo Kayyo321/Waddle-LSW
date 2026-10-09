@@ -14062,19 +14062,86 @@ test "root raw extension count fill failures never publish partial owned names" 
     try std.testing.expectError(error.OutOfMemory,invoke(physical));try std.testing.expectEqual(@as(usize,0),fixture.extension_calls);
 }
 test "root public extension intersection uses protocol support and preserves caller failures" {
-    for([_]u32{0,1,2,3,4,6,8}) |mode| {
-        var fixture=root_extension_fixture_t{.mode=mode};const physical=try fixture.physical();defer venus_icd_abandon();
-        var count:u32=77;var values=[_]c.VkExtensionProperties{std.mem.zeroes(c.VkExtensionProperties)} ** 4;
-        @memset(std.mem.asBytes(&values),0xa5);const before=values;
-        const expected:c_int=switch(mode){0,1=>c.VK_SUCCESS,2=>c.VK_ERROR_OUT_OF_HOST_MEMORY,4=>c.VK_ERROR_OUT_OF_DEVICE_MEMORY,6=>c.VK_ERROR_INITIALIZATION_FAILED,else=>c.VK_ERROR_DEVICE_LOST};
-        try std.testing.expectEqual(expected,root_runtime_fn(device_extensions)(physical,null,&count,&values));
-        if(mode!=0){try std.testing.expectEqualDeep(before,values);if(mode!=1)try std.testing.expectEqual(@as(u32,77),count);}else{
-            try std.testing.expectEqual(@as(u32,3),count);for(DeviceExtensionNames[1..],0..) |name,index| {try std.testing.expectEqualStrings(name,std.mem.sliceTo(&values[index].extensionName,0));try std.testing.expectEqual(@as(u32,@intCast(index+2)),values[index].specVersion);}
-            count=1;try std.testing.expectEqual(@as(c_int,c.VK_INCOMPLETE),root_runtime_fn(device_extensions)(physical,null,&count,&values));
-            negotiated_capabilities.vk_extension_mask1[287/32]&=~(@as(u32,1)<<@as(u5,287%32));
-            count=0;try std.testing.expectEqual(@as(c_int,c.VK_SUCCESS),root_runtime_fn(device_extensions)(physical,null,&count,null));try std.testing.expectEqual(@as(u32,2),count);
-            const calls=fixture.extension_calls;try std.testing.expectEqual(@as(c_int,c.VK_ERROR_LAYER_NOT_PRESENT),root_runtime_fn(device_extensions)(physical,"layer",&count,null));try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(device_extensions)(null,null,&count,null));try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(device_extensions)(@ptrFromInt(1),null,&count,null));try std.testing.expectEqual(@as(c_int,c.VK_ERROR_INITIALIZATION_FAILED),root_runtime_fn(device_extensions)(physical,null,null,null));try std.testing.expectEqual(calls,fixture.extension_calls);
+    // Independent oracle: the guest facade is local to Windows, while every host
+    // name below requires both a renderer record and its negotiated protocol bit.
+    const GuestCount: usize = if (builtin.os.tag == .windows) 1 else 0;
+    const ExpectedNames = [_][]const u8{
+        "VK_KHR_swapchain", "VK_EXT_robustness2", "VK_KHR_maintenance5", "VK_KHR_pipeline_library",
+    };
+    const ExpectedVersions = [_]u32{ 70, 2, 3, 4 };
+    const invoke = root_runtime_fn(device_extensions);
+    for ([_]u32{ 0, 1, 2, 3, 4, 6, 8 }) |mode| {
+        var fixture = root_extension_fixture_t{ .mode = mode };
+        const physical = try fixture.physical();
+        defer venus_icd_abandon();
+        var count: u32 = 77;
+        var values: [5]c.VkExtensionProperties = undefined;
+        @memset(std.mem.asBytes(&values), 0xa5);
+        const before = values;
+        const expected_result: c_int = switch (mode) {
+            0, 1 => c.VK_SUCCESS,
+            2 => c.VK_ERROR_OUT_OF_HOST_MEMORY,
+            4 => c.VK_ERROR_OUT_OF_DEVICE_MEMORY,
+            6 => c.VK_ERROR_INITIALIZATION_FAILED,
+            else => c.VK_ERROR_DEVICE_LOST,
+        };
+        if (mode != 0 and mode != 1) {
+            try std.testing.expectEqual(expected_result, invoke(physical, null, &count, &values));
+            try std.testing.expectEqualDeep(before, values);
+            try std.testing.expectEqual(@as(u32, 77), count);
+            continue;
         }
+        const total: u32 = @intCast(GuestCount + if (mode == 0) @as(usize, 3) else 0);
+        var expected_values: [4]c.VkExtensionProperties = undefined;
+        for (0..total) |index| {
+            const expected_index = index + 1 - GuestCount;
+            expected_values[index] = std.mem.zeroes(c.VkExtensionProperties);
+            const name = ExpectedNames[expected_index];
+            @memcpy(expected_values[index].extensionName[0..name.len], name);
+            expected_values[index].specVersion = ExpectedVersions[expected_index];
+        }
+        try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), invoke(physical, null, &count, null));
+        try std.testing.expectEqual(total, count);
+        const calls = fixture.extension_calls;
+        try std.testing.expectEqual(@as(usize, if (mode == 0) 2 else 1), calls);
+        for (0..total + 2) |capacity| {
+            values = before;
+            count = @intCast(capacity);
+            const copied: u32 = @min(count, total);
+            try std.testing.expectEqual(@as(c_int, if (capacity < total) c.VK_INCOMPLETE else c.VK_SUCCESS),
+                invoke(physical, null, &count, &values));
+            try std.testing.expectEqual(copied, count);
+            for (0..copied) |index| try std.testing.expectEqualDeep(expected_values[index], values[index]);
+            try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(before[copied..]), std.mem.sliceAsBytes(values[copied..]));
+        }
+        values = before;
+        count = 77;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_LAYER_NOT_PRESENT), invoke(physical, "layer", &count, &values));
+        try std.testing.expectEqualDeep(before, values);
+        try std.testing.expectEqual(@as(u32, 77), count);
+        for ([_]c.VkPhysicalDevice{ null, @ptrFromInt(1) }) |invalid| {
+            try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(invalid, null, &count, &values));
+            try std.testing.expectEqualDeep(before, values);
+            try std.testing.expectEqual(@as(u32, 77), count);
+        }
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), invoke(physical, null, null, &values));
+        try std.testing.expectEqualDeep(before, values);
+        if (mode == 0) {
+            negotiated_capabilities.vk_extension_mask1[287 / 32] &= ~(@as(u32, 1) << @as(u5, 287 % 32));
+            const filtered: u32 = @intCast(GuestCount + 2);
+            count = 77;
+            try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), invoke(physical, null, &count, null));
+            try std.testing.expectEqual(filtered, count);
+            count = @intCast(values.len);
+            try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), invoke(physical, null, &count, &values));
+            try std.testing.expectEqual(filtered, count);
+            for (0..filtered) |index| {
+                const original_index = if (index < GuestCount) index else index + 1;
+                try std.testing.expectEqualDeep(expected_values[original_index], values[index]);
+            }
+            try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(before[filtered..]), std.mem.sliceAsBytes(values[filtered..]));
+        }
+        try std.testing.expectEqual(calls, fixture.extension_calls);
     }
 }
 test "root supported device requests publish exact native feature and extension ownership" {

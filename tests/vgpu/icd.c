@@ -1100,6 +1100,54 @@ static void features2_public(void) {
     }
     assert(venus_icd_unbind() == RingOk);
 }
+/** @brief Verify the legacy binding's exact platform-local extension projection.
+ * @param[in] enumerate Nonnull borrowed public device-extension dispatch pointer.
+ * @param[in] physical Live borrowed fixture physical-device handle.
+ * @param[in] fixture Nonnull borrowed transport counters; no mutation is expected.
+ * @return None; aborts on incorrect names, versions, capacity/error semantics or traffic.
+ * @note Sole fixture thread, caller-owned bounded stack outputs, no retained pointers.
+ */
+static void legacy_device_extensions(PFN_vkEnumerateDeviceExtensionProperties enumerate,
+                                     VkPhysicalDevice physical, const fixture_t *fixture) {
+#ifdef _WIN32
+    const uint32_t ExpectedCount = 1;
+    const VkExtensionProperties Expected = {.extensionName = "VK_KHR_swapchain", .specVersion = 70};
+#else
+    const uint32_t ExpectedCount = 0;
+    const VkExtensionProperties Expected = {0};
+#endif
+    const unsigned Before = fixture->submissions;
+    uint32_t count = 99;
+    assert(enumerate && enumerate(physical, NULL, &count, NULL) == VK_SUCCESS);
+    assert(count == ExpectedCount);
+    for (uint32_t capacity = 0; capacity <= ExpectedCount + 1; capacity++) {
+        VkExtensionProperties values[2], before[2];
+        memset(values, 0xa5, sizeof(values));
+        memcpy(before, values, sizeof(before));
+        count = capacity;
+        const uint32_t Copied = capacity < ExpectedCount ? capacity : ExpectedCount;
+        assert(enumerate(physical, NULL, &count, values) ==
+               (capacity < ExpectedCount ? VK_INCOMPLETE : VK_SUCCESS));
+        assert(count == Copied);
+        if (Copied) assert(!memcmp(&values[0], &Expected, sizeof(Expected)));
+        assert(!memcmp(values + Copied, before + Copied, sizeof(values) - Copied * sizeof(values[0])));
+    }
+    VkExtensionProperties values[2], before[2];
+    memset(values, 0xa5, sizeof(values));
+    memcpy(before, values, sizeof(before));
+    count = 99;
+    assert(enumerate(physical, "missing", &count, values) == VK_ERROR_LAYER_NOT_PRESENT);
+    assert(count == 99 && !memcmp(values, before, sizeof(values)));
+    assert(enumerate(NULL, NULL, &count, values) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(count == 99 && !memcmp(values, before, sizeof(values)));
+    assert(enumerate((VkPhysicalDevice)(uintptr_t)1, NULL, &count, values) ==
+           VK_ERROR_INITIALIZATION_FAILED);
+    assert(count == 99 && !memcmp(values, before, sizeof(values)));
+    assert(enumerate(physical, NULL, NULL, values) == VK_ERROR_INITIALIZATION_FAILED);
+    assert(!memcmp(values, before, sizeof(values)));
+    assert(enumerate(physical, NULL, &count, NULL) == VK_SUCCESS && count == ExpectedCount);
+    assert(fixture->submissions == Before);
+}
 static void healthy(fixture_t *fixture) {
     assert(venus_icd_bind(exchange, fixture) == RingOk);
     assert(venus_icd_bind(exchange, fixture) == RingInvalid);
@@ -1203,10 +1251,7 @@ static void healthy(fixture_t *fixture) {
         PFN_vkEnumerateDeviceExtensionProperties device_extensions =
             (PFN_vkEnumerateDeviceExtensionProperties)lookup_external(
                 instance, "vkEnumerateDeviceExtensionProperties");
-        assert(device_extensions(devices[0], NULL, &count, NULL) == VK_SUCCESS && count == 0);
-        assert(device_extensions(NULL, NULL, &count, NULL) == VK_ERROR_INITIALIZATION_FAILED);
-        assert(device_extensions((VkPhysicalDevice)(uintptr_t)1, NULL, &count, NULL) ==
-               VK_ERROR_INITIALIZATION_FAILED);
+        legacy_device_extensions(device_extensions, devices[0], fixture);
         PFN_vkCreateDevice device_create =
             (PFN_vkCreateDevice)lookup_external(instance, "vkCreateDevice");
         VkDevice device_handle = (VkDevice)(uintptr_t)1;
