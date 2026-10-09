@@ -13,7 +13,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1 | Diagnose platform projection and audit related stale assumptions | Done | 20% | 100% | Exact guest swapchain spec70 on Windows; two affected test locations |
 | #2 | Repair exact C ABI and negotiated Zig projection expectations | Done | 30% | 100% | Production behavior and all other Zig tests unchanged |
-| #3 | Verify Linux full units/C ABI and Windows full-unit links | Done | 25% | 100% | 393 Debug + 393 ReleaseSafe; three C variants; both full Windows links |
+| #3 | Verify Linux full units/C ABI/coverage and Windows full-unit links | Done | 25% | 100% | 393 Debug + 393 ReleaseSafe; three C variants; full coverage; both Windows links |
 | #4 | Complete independent source and evidence review | Done | 10% | 100% | No source blockers; reviewed source hashes match final test evidence |
 | #5 | Observe exact-commit native Windows and leak-enabled Linux CI | Pending | 15% | 0% | No Windows runtime here; local LSan fails under tracing, including approved retry |
 
@@ -21,7 +21,11 @@
 
 ## Commit History & Progress Log
 
-The bounded repair commit carries tasks #1–#4 (+85% overall); task #5 remains pending. An immediately following documentation receipt records its exact hash without changing completion.
+- **Commit `1535600d5c5b3c72960efff6b2d3b441d8968a7d`**: `test(vgpu): verify exact native extension projections`
+  - **Task Impact**: #1 +100% (+20% overall), #2 +100% (+30%), #3 +100% (+25%), #4 +100% (+10%); bounded repair is **85%** complete.
+  - **Summary**: Exact platform-aware C and negotiated Zig extension oracles, scoped source preservation, full Linux/C ABI evidence, complete Windows links, and independent source/evidence approval. #5 remains 0% pending native Windows runtime and leak-capable Linux CI.
+
+This documentation-only attribution/coverage receipt changes no source and adds **+0%** completion. Native runtime and sanitizer limits remain explicit below.
 
 ## Verification receipts
 
@@ -37,6 +41,8 @@ Toolchain: official Zig 0.13.0 and `/workspace/shared/waddle-tools/env.sh`. Evid
 - `bash build/native-icd-extension-oracle/cross-link.sh`: exit **0**, both full Debug and ReleaseSafe Windows ICD unit executables link as PE32+ x86-64. All 23 workflow C oracle objects and the renamed-main C fixture were rebuilt with the exact Windows target, strict warning flags, assertions enabled, and workflow include paths. The existing Windows values-oracle object and six codec libraries are unchanged dependencies. The test commands add only `--test-no-exec` and dedicated output filenames. `CPATH` and `LIBRARY_PATH` are cleared for every Windows command. `windows-cross-links.log` SHA-256: `ae3b8ad9fe3e807cbf9ba50bbc02116161e551afbc520cad360c6fe818a49a73`.
 - The source boundary audit compares both the prefix and suffix outside the one approved Zig test block against `84bcb08`. Both are byte-identical: prefix SHA-256 `b26ec5c5acf7c8ef1d458809a5e909c685b9023bb5f6ce6a6dc03246efc61187`, suffix `81ca505987da2224418b11f47a80a1b27f896f22eadd0ecabffa1c992800f411`. Thus production logic, existing environment fixtures, all other tests, and prior WSI regressions are preserved. Receipt: `source-boundary-audit.txt`.
 - Independent reviewer approved the exact source hashes above, including the complete CI oracle list, unchanged native Windows runtime commands, exact guest/host projection, zero/short/exact/oversized outputs, poisoned tail/error preservation, protocol filtering, and transport/cache counts. No test filters, skips, capability inflation, README edits, dependency changes, or threshold changes were introduced.
+
+- Final unchanged whole-ICD coverage: `source /workspace/shared/waddle-tools/env.sh; make vgpu-icd-coverage` exits **0**. All prerequisite gates and **393 instrumented ICD tests** pass. Production branch coverage is **90.32% (4369/4837)**; line coverage is **98.53% (4694/4764)**; **2406** compiler panic/stack-canary guards are excluded by the unchanged harness. These values exactly match the previous receipt, including denominators and the 90% threshold. Detailed artifacts: `build/coverage/vgpu/venus_icd/run-20261009T222512848584Z-550/`. Final log: `coverage.log`, SHA-256 `f154828a96b174c46d47d12ef6b37426c0f2c8dbb7f5b39d1c978fbe014f8eb1`. Both reviewed source hashes were verified again after completion at 2026-10-09T22:27:47Z. Concurrent AV commits do not modify these sources.
 
 ### Explicit sanitizer/runtime limitations
 

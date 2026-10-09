@@ -28,6 +28,6 @@ No ABI structure, wire format, alignment, atomic primitive, storage lifetime, pr
 
 ## Verification and limits
 
-Run the full Linux ICD Debug and ReleaseSafe suites, direct C ABI fixture, loader fixture, allocation-fault variant, relevant sanitizers, and complete Windows Debug/ReleaseSafe cross-links with all current workflow oracle objects and codec libraries. Windows cross-compilation clears Linux SDK `CPATH` and `LIBRARY_PATH`; official Zig 0.13.0 and the established SDK are unchanged. Pin the two relevant source SHA-256 hashes for final evidence. Independently review the exact diff before completion.
+Run the full Linux ICD Debug and ReleaseSafe suites, unchanged whole-ICD coverage gate, direct C ABI fixture, loader fixture, allocation-fault variant, relevant sanitizers, and complete Windows Debug/ReleaseSafe cross-links with all current workflow oracle objects and codec libraries. Windows cross-compilation clears Linux SDK `CPATH` and `LIBRARY_PATH`; official Zig 0.13.0 and the established SDK are unchanged. Pin the two relevant source SHA-256 hashes for final evidence. Independently review the exact diff before completion.
 
 Linux execution establishes the exact zero/host-only projection and error/capacity semantics. Windows cross-linking compiles the exact guest-plus-host expectations but cannot establish native runtime success. Native Windows CI remains an explicit pending qualification until the parent publishes and observes the exact commit. No real GPU, guest VM, DXVK, Wayland, or hardware acceptance is inferred.
