@@ -13102,7 +13102,15 @@ const wsi_status_graph_t = struct {
         const allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, device.id, 0);
         const image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, device.id, 0);
         resource_state(image).* = .{ .id = image.id, .bound_memory = allocation.handle, .image_extent = .{ 64, 64, 1 }, .image_format = 44, .image_usage = c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT, .image_levels = 1, .image_layers = 1, .image_samples = 1 };
-        device_caches[0] = .{ .handle = device.handle, .family_count = 1, .graphics_queue_ready = true, .graphics_queue_count = 1 };
+        // This synthetic WSI device requests the guest swapchain facade only on Windows.
+        // Use the same named-request projection as device creation without enabling features.
+        const ExtensionNames = [_][]const u8{"VK_KHR_swapchain"};
+        var request = device_native.owned_request_t{ .extension_count = @intFromBool(builtin.os.tag == .windows) };
+        request.extension_ids[0] = 0;
+        const enabled = enabled_device_request(&request, &ExtensionNames);
+        try std.testing.expectEqual(@as(u32, if (builtin.os.tag == .windows) 1 else 0), enabled.extension_mask);
+        try std.testing.expectEqualDeep(disabled_device_state().features, enabled.features);
+        device_caches[0] = .{ .handle = device.handle, .enabled_state = enabled, .family_count = 1, .graphics_queue_ready = true, .graphics_queue_count = 1 };
         device_caches[0].families[0] = 0;
         device_caches[0].counts[0] = 1;
         device_caches[0].graphics_queue_flags[0] = c.VK_QUEUE_GRAPHICS_BIT;
@@ -13180,6 +13188,42 @@ test "WSI status replacement failure retires valid old chain but preserves image
         for (wsi_state.swapchains[1..]) |chain| try std.testing.expectEqual(@as(u64, 0), chain.id);
         try std.testing.expectEqual(@as(usize, 7), objects.live_count);
         try std.testing.expectEqual(if (case == 0) @as(usize, 1) else 0, fixture.base.submissions);
+    }
+}
+
+test "WSI status disabled native swapchain extension rejects before retiring owners or submitting" {
+    // Other enabled extension bits must not authorize the Windows swapchain facade.
+    // Linux retains its portable internal WSI path, including the injected backend OOM.
+    for ([_]u32{ 0, 2, 4, 8 }) |extension_mask| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        device_caches[0].enabled_state.extension_mask = extension_mask;
+        wsi_state.swapchains[0].images[0].acquired = true;
+        var expected_wsi = wsi_state;
+        const image_before = graph.image.*;
+        const allocation_before = graph.allocation.*;
+        const image_state_before = resource_state(graph.image).*;
+        const allocation_state_before = resource_state(graph.allocation).*;
+        const info = c.VkSwapchainCreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = @ptrFromInt(100), .minImageCount = 2, .imageFormat = c.VK_FORMAT_B8G8R8A8_UNORM, .imageExtent = .{ .width = 64, .height = 64 }, .imageArrayLayers = 1, .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .preTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = c.VK_PRESENT_MODE_FIFO_KHR, .oldSwapchain = @ptrFromInt(101) };
+        var output: c.VkSwapchainKHR = @ptrFromInt(8);
+        const expected: c_int = if (builtin.os.tag == .windows) c.VK_ERROR_EXTENSION_NOT_PRESENT else c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        try std.testing.expectEqual(expected, create_swapchain(@ptrFromInt(graph.device.handle), &info, null, &output));
+        try std.testing.expect(output == null);
+        if (builtin.os.tag != .windows) {
+            expected_wsi.swapchains[0].retired = true;
+            expected_wsi.next_id += 1;
+        }
+        try std.testing.expectEqualDeep(expected_wsi, wsi_state);
+        try std.testing.expectEqualDeep(image_before, graph.image.*);
+        try std.testing.expectEqualDeep(allocation_before, graph.allocation.*);
+        try std.testing.expectEqualDeep(image_state_before, resource_state(graph.image).*);
+        try std.testing.expectEqualDeep(allocation_state_before, resource_state(graph.allocation).*);
+        try std.testing.expectEqual(extension_mask, device_caches[0].enabled_state.extension_mask);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+        try std.testing.expectEqual(@as(usize, if (builtin.os.tag == .windows) 0 else 1), fixture.base.submissions);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
     }
 }
 
