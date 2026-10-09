@@ -152,3 +152,33 @@ required synthetic device capability; their repair is tracked separately. Linux
 vGPU and worker runtime qualification remain pending as of this receipt. This
 native CI evidence does not qualify physical input, Wayland/GPU integration or
 Adobe workloads. Consult the [current index](REVIEW_CHECKLIST.md) for later status.
+
+
+## Native WSI fixture and all-sites recorder repairs
+
+Verified remote `51583f927a0ba82adecaa6d48d2814ffda97bc26` matches local
+`a181bf2124b27d61989b0770c4298a4dadd7a83f`, tree
+`3c24de96dca614feaf3a7f690383b0a73bdd3f45`.
+
+| Original source checkpoint | Published commit |
+| --- | --- |
+| `a085361d65460f2cee318ea0f1ebcc299e5f014e` | `337021afc1628e80b5032c8ca29ed6e0cf987a44` |
+| `ffd5beba8b827422399b27b0e10d6d2274394fc8` | `0c65763ee5a06bdf3606a4ad82a2c6ef46fb2ea9` |
+| `110117947714e4d5d1b5d97a678a7bb977e47907` | `6f9494ce135cd88b8086a4e6edb97d627752e297` |
+| `e268984ec71b10e2cc848802001d5724299fd103` | `8d2dd4f1b24ca322e53efbb26c2bbedf992e250c` |
+| `a181bf2124b27d61989b0770c4298a4dadd7a83f` | `51583f927a0ba82adecaa6d48d2814ffda97bc26` |
+
+The WSI fixture repair passes 394 Debug and ReleaseSafe units, three C ABI
+fixtures and both complete Windows cross-links. No production or original test
+body changed. Native Windows rerun remains pending.
+
+The recorder repair retains every native raw site, source key and threshold
+within the unchanged 512KiB storage budget. Seven focused tests, exact original
+76,512-site Zen3 replay and final native aggregate passed independent review.
+Local leak detection remains ptrace-blocked; strict sanitizer CI is mandatory.
+See [the fixture receipt](native-wsi-test-capabilities/TRACKER.md) and
+[recorder receipt](coverage-recorder-integrity/TRACKER.md).
+
+The prior f04e358 Linux CI also proved the presented-worker link repair, then
+failed the real worker runtime with mode 0. This remains an open acceptance
+blocker, not an inferred pass from successful linking.

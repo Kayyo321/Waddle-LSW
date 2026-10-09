@@ -8,7 +8,7 @@ commands. A checked box requires an exact tested commit, binary hashes and logs 
 [one result receipt](HARDWARE_TEST_RESULT_TEMPLATE.md). Never inherit a pass after
 relevant source, toolchain, driver or VM changes.
 
-Recorded prior backup: [`f04e358`](https://github.com/Kayyo321/Waddle-LSW/commit/f04e3583ad2af32f28145933c2df563ee4cac295).
+Recorded prior backup: [`51583f9`](https://github.com/Kayyo321/Waddle-LSW/commit/51583f927a0ba82adecaa6d48d2814ffda97bc26).
 The source links below include the follow-on lifecycle and Windows oracle changes;
 record the exact containing commit you actually test.
 No hardware/Adobe completion is claimed. Review in this order:
@@ -25,10 +25,11 @@ No hardware/Adobe completion is claimed. Review in this order:
   repair; their independently reviewed fix passes 394/394 in both Linux modes
   and full Windows cross-links, with native execution pending. The prior
   environment-helper and extension-oracle failures are cleared.
-  Linux vGPU is still running. The presented-worker link repair cross-links all
-  four executables; real worker acceptance remains pending. Native CPU-model
-  reproduction explains the coverage recorder overflow; an all-sites-preserving
-  repair is under verification. Bounded device-wire/native, WSI and ICD sanitizer
+  Linux vGPU confirmed the worker link repair, then failed real presented-worker
+  binding at mode 0; runtime diagnosis is open. Native CPU-model reproduction
+  explains the recorder overflow. The published all-sites-preserving repair passes
+  the exact 76,512-site replay (90.30% branches) and current 394-test aggregate
+  (90.32% branches, 98.53% lines); strict sanitizer CI is pending at `51583f9`. Bounded device-wire/native, WSI and ICD sanitizer
   stages passed leak-enabled CI at `c11ce21`; local LSan remains ptrace-blocked.
   The broader 32-module ICD-owned/full-seam instrumentation migration remains a
   separate unresolved gate. Rerun affected checks on the next published source.
@@ -42,7 +43,8 @@ No hardware/Adobe completion is claimed. Review in this order:
   · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md)
   · [worker link repair](https://github.com/Kayyo321/Waddle-LSW/commit/37df9499f197c51443e1aca892139cf6a41a59c6)
   · [worker execution limits](presented-worker-link/TRACKER.md)
-  · [native WSI fixture repair](native-wsi-test-capabilities/TRACKER.md).
+  · [native WSI fixture repair](native-wsi-test-capabilities/TRACKER.md)
+  · [all-sites recorder evidence](coverage-recorder-integrity/TRACKER.md).
 - [ ] **P1 · Physical input and cleanup.** Native `--input` fixture, then ordinary
   app as a Wayland window: keyboard/mouse/wheel, focus transfer, held keys/buttons,
   disconnect, foreground denial, scaling and repeated recovery. Watch stuck input
