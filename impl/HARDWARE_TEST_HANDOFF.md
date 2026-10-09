@@ -210,6 +210,8 @@ run_gate vgpu-transport make vgpu-test vgpu-sanitizers vgpu-coverage
 run_gate wsi-lifetime make vgpu-wsi-lifecycle-test
 run_gate wsi-sanitizers make vgpu-wsi-lifecycle-sanitizers
 run_gate wsi-coverage make vgpu-wsi-lifecycle-coverage
+run_gate recorder-probes python3 -B tests/av/coverage_recorder_test.py -v
+run_gate recorder-sanitizers env WADDLE_RECORDER_SANITIZERS=1 python3 -B tests/av/coverage_recorder_test.py -v
 run_gate icd-units make vgpu-icd-units
 run_gate icd-regression make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
 run_gate windows-crossbuild make vgpu-windows build/vgpu_win32_present_test.exe
@@ -220,6 +222,17 @@ production line/branch coverage meets **90% without rounding or exclusions added
 for this run**; prescribed ASan/LSan/UBSan and allocator checks report zero leaks
 and no errors. These include fake Wayland callbacks and fake Win32 calls on Linux.
 Do not count them as live compositor/native SDK acceptance.
+
+The recorder probes currently contain seven tests. Expected negative cases reject
+malformed metadata, invalid indices and stale linkage; the test suite itself must
+exit zero. Keep leak detection enabled. A ptrace-restricted local sanitizer abort
+is a blocked check, never a clean leak receipt. For a failed aggregate, preserve
+its exact `build/coverage/**/recorder.json`, `recorder_metadata.h`, `branches.json`,
+`test.ll`, `instrumented.ll`, edge output and missed-key reports. These bind the
+native compiler target, all raw sites and arities to the tested runtime. Do not
+switch CPU targets, drop sites or relax thresholds to obtain a passing result.
+[Recorder design and receipts](coverage-recorder-integrity/TRACKER.md) explain the
+CPU-dependent historical failure and its all-sites-preserving correction.
 
 The aggregate ICD coverage gate is required even when focused WSI coverage passes.
 A historical 375-unit/90.07% receipt belongs to its old source; record current
