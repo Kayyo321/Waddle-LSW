@@ -254,8 +254,10 @@ int main(int argc, char **argv) {
         return 0;
     }
     assert(av_windows_input(NULL) == -1);
+    DPI_AWARENESS_CONTEXT original_dpi = GetThreadDpiAwarenessContext();
     assert(av_windows_start(0, notification, NULL) == -1);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
+    assert(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
     assert(creates == 0);
     assert(av_windows_refresh() == 0);
     assert(creates == 1);
@@ -327,12 +329,14 @@ int main(int argc, char **argv) {
     FreeLibrary(library);
     resize.flags = AvWindowFullscreen;
     assert(av_windows_apply(&resize) == 0);
-    av_windows_stop();
+    assert(av_windows_stop() == 0);
+    assert(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), original_dpi));
     assert(GetWindowLongPtrW(target, GWL_STYLE) == original_style);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
     assert(DestroyWindow(target)); pump();
     assert(destroys == 1);
-    av_windows_stop(); av_windows_stop();
+    assert(av_windows_stop() == 0); assert(av_windows_stop() == 0);
+    assert(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), original_dpi));
     assert(DestroyWindow(tool));
     UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
     CoUninitialize();
