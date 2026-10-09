@@ -16573,3 +16573,214 @@ test "multiple presentation rejections return surface loss ahead of out of date 
         try std.testing.expectEqual(@as(usize, 7), objects.live_count);
     }
 }
+
+// Portable queue-proof faults preserve native owners until explicit abandon.
+const wsi_wait_proof_fixture_t = struct {
+    base: wsi_status_fixture_t = .{},
+    fault_kind: u32 = 0,
+    corrupt: bool = false,
+    gpu_calls: usize = 0,
+    fn exchange(context: ?*anyopaque, request: [*c]const c.venus_request_t, input: ?*const anyopaque, length: usize, response: [*c]c.venus_request_t, output: ?*anyopaque, capacity: usize) callconv(.C) c_int {
+        const fixture: *@This() = @ptrCast(@alignCast(context.?));
+        if (request.*.kind == c.RequestGpuFence or request.*.kind == c.RequestGpuPoll) {
+            fixture.gpu_calls += 1;
+            if (request.*.kind == fixture.fault_kind and !fixture.corrupt) return c.RingClosed;
+        }
+        const status = wsi_status_fixture_t.exchange(&fixture.base, request, input, length, response, output, capacity);
+        if (request.*.kind == fixture.fault_kind and fixture.corrupt) response.*.direction = 0;
+        return status;
+    }
+};
+
+test "presentation failed shared wait proof retains acquisitions and pending semaphore without publishing results" {
+    for ([_]u32{ c.RequestGpuFence, c.RequestGpuPoll }) |fault_kind| for ([_]bool{ false, true }) |corrupt| {
+        var fixture = wsi_wait_proof_fixture_t{ .fault_kind = fault_kind, .corrupt = corrupt };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_wait_proof_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        wsi_state.swapchains[0].images[0].acquired = true;
+        const chain: c.VkSwapchainKHR = @ptrFromInt(101);
+        const index: u32 = 0;
+        const semaphore: c.VkSemaphore = @ptrFromInt(graph.semaphore.handle);
+        var result: c_int = c.VK_NOT_READY;
+        const info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1, .pWaitSemaphores = &semaphore,
+            .swapchainCount = 1, .pSwapchains = &chain, .pImageIndices = &index, .pResults = &result };
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), queue_present(@ptrFromInt(graph.queue.handle), &info));
+        try std.testing.expectEqual(@as(c_int, c.VK_NOT_READY), result);
+        try std.testing.expectEqual(@as(c_int, if (corrupt) c.RingCorrupt else c.RingClosed), lost);
+        try std.testing.expect(wsi_state.swapchains[0].images[0].acquired);
+        try std.testing.expectEqual(@as(u32, 1), resource_state(graph.semaphore).inflight_count);
+        try std.testing.expectEqual(@as(u32, 0), resource_state(graph.queue).idle_refs);
+        try std.testing.expectEqual(graph.queue.handle, submission_tickets[0].queue);
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.base.submissions);
+        try std.testing.expectEqual(@as(usize, if (fault_kind == c.RequestGpuFence) 1 else 2), fixture.gpu_calls);
+        const tickets = submission_tickets;
+        const calls = fixture.gpu_calls;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), queue_present(@ptrFromInt(graph.queue.handle), &info));
+        try std.testing.expectEqualDeep(tickets, submission_tickets);
+        try std.testing.expectEqual(@as(c_int, c.VK_NOT_READY), result);
+        try std.testing.expectEqual(calls, fixture.gpu_calls);
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.base.submissions);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+    };
+}
+
+test "presentation repeated first allocation failure preserves all batch state without a result array" {
+    var fixture = wsi_status_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const graph = try wsi_status_graph_t.init();
+    const second_allocation = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE_MEMORY, graph.device.id, 0);
+    const second_image = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_IMAGE, graph.device.id, 0);
+    resource_state(second_image).* = resource_state(graph.image).*;
+    resource_state(second_image).id = second_image.id;
+    resource_state(second_image).bound_memory = second_allocation.handle;
+    wsi_state.swapchains[0].images[0].acquired = true;
+    wsi_state.swapchains[1] = wsi_state.swapchains[0];
+    wsi_state.swapchains[1].id = 102;
+    wsi_state.swapchains[1].width = 32;
+    wsi_state.swapchains[1].images[0].image = second_image.handle;
+    wsi_state.swapchains[1].images[0].memory = second_allocation.handle;
+    const chains = [_]c.VkSwapchainKHR{ @ptrFromInt(101), @ptrFromInt(102) };
+    const indices = [_]u32{ 0, 0 };
+    const info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .swapchainCount = 2, .pSwapchains = &chains, .pImageIndices = &indices };
+    const before = wsi_state;
+    for (0..2) |_| {
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_OUT_OF_HOST_MEMORY),
+            queue_present_allocated(@ptrFromInt(graph.queue.handle), &info, std.testing.failing_allocator));
+        try std.testing.expectEqualDeep(before, wsi_state);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        try std.testing.expectEqual(@as(usize, 0), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 9), objects.live_count);
+        for (submission_tickets) |ticket| try std.testing.expectEqual(@as(u64, 0), ticket.queue);
+    }
+}
+
+test "queue idle validates sparse cache and active owners before retiring pending waits" {
+    for (0..9) |case| {
+        var fixture = wsi_wait_proof_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_wait_proof_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        const semaphore: c.VkSemaphore = @ptrFromInt(graph.semaphore.handle);
+        const stage: u32 = c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        const submit = c.VkSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = 1, .pWaitSemaphores = &semaphore, .pWaitDstStageMask = &stage };
+        try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), queue_submit(@ptrFromInt(graph.queue.handle), 1, &submit, null));
+        var queue: c.VkQueue = @ptrFromInt(graph.queue.handle);
+        // Missing/unready/unlisted cache entries model defensive registry
+        // corruption; active idle references model overlapping queue operations.
+        switch (case) {
+            0 => queue = null,
+            1 => queue = @ptrFromInt(999),
+            2 => lost = c.RingClosed,
+            3 => device_caches[0] = .{},
+            4 => { device_caches[1] = device_caches[0]; device_caches[0] = .{}; },
+            5 => device_caches[0].ready[0] = false,
+            6 => resource_state(graph.queue).idle_refs = 1,
+            7 => resource_state(graph.device).idle_refs = 1,
+            8 => device_caches[0].queues[0] = 0,
+            else => unreachable,
+        }
+        const tickets = submission_tickets;
+        const queue_refs = resource_state(graph.queue).idle_refs;
+        const device_refs = resource_state(graph.device).idle_refs;
+        try std.testing.expectEqual(@as(c_int, if (case == 4) c.VK_SUCCESS else c.VK_ERROR_DEVICE_LOST), root_runtime_fn(queue_wait_idle)(queue));
+        try std.testing.expectEqual(@as(usize, 1), fixture.base.base.submissions);
+        try std.testing.expectEqual(@as(usize, if (case == 4) 2 else 0), fixture.gpu_calls);
+        try std.testing.expectEqual(queue_refs, resource_state(graph.queue).idle_refs);
+        try std.testing.expectEqual(device_refs, resource_state(graph.device).idle_refs);
+        try std.testing.expectEqual(@as(u32, if (case == 4) 0 else 1), resource_state(graph.semaphore).inflight_count);
+        if (case == 4) {
+            for (submission_tickets) |ticket| try std.testing.expectEqual(@as(u64, 0), ticket.queue);
+        } else try std.testing.expectEqualDeep(tickets, submission_tickets);
+        try std.testing.expectEqual(@as(c_int, if (case == 2) c.RingClosed else if (case == 3 or case == 5 or case == 8) c.RingCorrupt else c.RingOk), lost);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+    }
+}
+
+test "WSI acquire missing queue cannot signal or publish image index" {
+    for ([_]bool{ false, true }) |missing_cache| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        var context = wsi_callback_context_t{ .device = graph.device.handle };
+        if (missing_cache) device_caches[0] = .{} else device_caches[0].family_count = 0;
+        var index: u32 = 0xfeed;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED),
+            acquire_next_image(@ptrFromInt(graph.device.handle), @ptrFromInt(101), 0, @ptrFromInt(graph.semaphore.handle), null, &index));
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED),
+            root_runtime_fn(wsi_acquire)(&context, graph.semaphore.handle, 0));
+        try std.testing.expectEqual(@as(u32, 0xfeed), index);
+        try std.testing.expect(!wsi_state.swapchains[0].images[0].acquired);
+        try std.testing.expectEqual(@as(u32, 0), resource_state(graph.semaphore).inflight_count);
+        try std.testing.expectEqual(@as(usize, 0), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    }
+}
+
+test "WSI image retirement rejects unknown foreign and mismatched backing owners without changing resources" {
+    for (0..4) |case| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        const foreign = try image_ownership_fixture_t.reserve(c.VK_OBJECT_TYPE_DEVICE, graph.physical.id, 1);
+        var context = wsi_callback_context_t{ .device = graph.device.handle };
+        var image = graph.image.handle;
+        var memory_handle = graph.allocation.handle;
+        switch (case) {
+            0 => context.device = 999,
+            1 => context.device = foreign.handle,
+            2 => image = 999,
+            3 => memory_handle = graph.semaphore.handle,
+            else => unreachable,
+        }
+        const before = resource_state(graph.image).*;
+        root_runtime_fn(wsi_destroy_image)(&context, image, memory_handle);
+        try std.testing.expectEqualDeep(before, resource_state(graph.image).*);
+        try std.testing.expectEqual(graph.allocation.handle, resource_state(graph.image).bound_memory);
+        try std.testing.expectEqual(@as(usize, 0), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 8), objects.live_count);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    }
+}
+
+test "WSI readback invalid wait rolls back recorded staging owners before any GPU or pixel publication" {
+    for ([_]bool{ false, true }) |null_wait| {
+        var fixture = wsi_complete_readback_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_complete_readback_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        resource_state(graph.image).image_type = c.VK_IMAGE_TYPE_2D;
+        var context = wsi_callback_context_t{ .device = graph.device.handle, .queue = @ptrFromInt(graph.queue.handle) };
+        const semaphore: c.VkSemaphore = if (null_wait) null else @ptrFromInt(graph.image.handle);
+        var pixels = [_]u8{0xa7} ** 256;
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED),
+            wsi_readback(&context, graph.image.handle, 8, 8, 44, &pixels, pixels.len, 1, &semaphore));
+        try std.testing.expectEqualSlices(u8, &([_]u8{0xa7} ** 256), &pixels);
+        try std.testing.expectEqual(@as(usize, 0), fixture.exports);
+        try std.testing.expectEqual(@as(usize, 0), fixture.reads);
+        try std.testing.expectEqual(@as(u64, 0), gpu_fences[0]);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        try std.testing.expectEqual(@as(u32, 0), resource_state(graph.image).inflight_count);
+        try std.testing.expectEqual(graph.image, owned_child_object(graph.image.handle, c.VK_OBJECT_TYPE_IMAGE, graph.device.id).?);
+        try std.testing.expectEqual(graph.allocation, child_object(graph.allocation.handle, c.VK_OBJECT_TYPE_DEVICE_MEMORY, graph.device.id).?);
+        try std.testing.expectEqual(graph.allocation.handle, resource_state(graph.image).bound_memory);
+        // Require acknowledged staging/recording before the rejected submit, then
+        // ordered command, pool, buffer and allocation retirement acknowledgements.
+        const required = [_]u32{ 50, 30, 8, 21, 28, 85, 88, 90, 91, 89, 86, 51, 22 };
+        var completed: usize = 0;
+        for (fixture.base.base.trace[0..fixture.base.base.trace_count]) |opcode| {
+            try std.testing.expect(opcode != 18);
+            if (completed < required.len and opcode == required[completed]) completed += 1;
+        }
+        try std.testing.expectEqual(required.len, completed);
+        for (submission_tickets) |ticket| try std.testing.expectEqual(@as(u64, 0), ticket.queue);
+    }
+}
