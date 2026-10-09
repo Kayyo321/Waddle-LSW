@@ -94,7 +94,7 @@ jobs:
       - name: Verify actual extension count and fill codecs and owned access
         run: make vgpu-extensions-wire-test vgpu-extensions-wire-sanitizers vgpu-extensions-wire-coverage
       - name: Verify WSI resize, retirement and native boundary ownership
-        run: make vgpu-wsi-lifecycle-test vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage
+        run: make vgpu-wsi-lifecycle-test vgpu-icd-units vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage
       - name: Verify experimental ICD loader and instance dispatch
         run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
       - name: Verify pinned native loader instance device and fence discovery
@@ -387,6 +387,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $icd_oracles = $oracle_names | ForEach-Object { "build/owned_native_oracles/$_.obj" }
           zig test src/vgpu/venus_icd.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O Debug build/owned_native_oracles/icd.obj build/venus_values_oracle.obj @icd_oracles build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_icd.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/icd.obj build/venus_values_oracle.obj @icd_oracles build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify native Windows experimental ICD dispatch and DLL exports
