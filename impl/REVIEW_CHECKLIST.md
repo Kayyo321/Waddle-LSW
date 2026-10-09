@@ -8,7 +8,7 @@ commands. A checked box requires an exact tested commit, binary hashes and logs 
 [one result receipt](HARDWARE_TEST_RESULT_TEMPLATE.md). Never inherit a pass after
 relevant source, toolchain, driver or VM changes.
 
-Recorded prior backup: [`c11ce21`](https://github.com/Kayyo321/Waddle-LSW/commit/c11ce21af9df63ab4479ae18539ce73f19000aa1).
+Recorded prior backup: [`f04e358`](https://github.com/Kayyo321/Waddle-LSW/commit/f04e3583ad2af32f28145933c2df563ee4cac295).
 The source links below include the follow-on lifecycle and Windows oracle changes;
 record the exact containing commit you actually test.
 No hardware/Adobe completion is claimed. Review in this order:
@@ -16,20 +16,22 @@ No hardware/Adobe completion is claimed. Review in this order:
 - [ ] **P0 · Source and native CI.** Fresh checkout; capture source/toolchain/binary
   versions; rerun automated gates. **Upgrade host and guest together:** old guests
   are view-only on new hosts; old hosts reject the new first-window capability.
-  Linux cloud input/WSI suites and 393-case ICD
-  Debug/ReleaseSafe runs passed. Whole-ICD coverage passed 90.32% branches after
-  six regression additions. Windows AV/guest and leak-enabled AV Linux CI passed
-  at `1de3fdd` and later AV checkpoints. Windows ICD environment-helper and exact
-  extension-oracle repairs pass cross-links; native execution remains pending. Bounded device-wire/native sanitizer inventory
-  repair passed its leak-enabled CI stages at `c11ce21`, as did scoped WSI/ICD
-  sanitizer stages. The later presented-worker link repair now cross-links all four acceptance
-  executables; real worker execution awaits CI. Divergent raw coverage-site
-  counts are being investigated with explicit CPU-model reproduction.
-  Latest-SHA CI is pending. Local LSan remains ptrace-blocked; scoped AV leak
-  acceptance is supplied by earlier CI; new lifecycle and oracle changes need
-  fresh native/CI qualification. The
-  broader 32-module ICD-owned/full-seam instrumentation migration is a separate
-  unresolved gate, not covered by the bounded device repair.
+  Linux cloud input/WSI suites and 394-case ICD Debug/ReleaseSafe runs passed;
+  whole-ICD coverage passed 90.32% branches after six regression additions.
+  At `f04e358`, both AV workflows and the native Windows guest passed, including
+  new lifecycle/quiescence fixtures and genuine leak-enabled Linux AV tests
+  ([run evidence](https://github.com/Kayyo321/Waddle-LSW/actions/runs/38002124467/job/114063342283)).
+  Windows vGPU reaches 391/393 tests: two synthetic WSI capability fixtures need
+  repair; their independently reviewed fix passes 394/394 in both Linux modes
+  and full Windows cross-links, with native execution pending. The prior
+  environment-helper and extension-oracle failures are cleared.
+  Linux vGPU is still running. The presented-worker link repair cross-links all
+  four executables; real worker acceptance remains pending. Native CPU-model
+  reproduction explains the coverage recorder overflow; an all-sites-preserving
+  repair is under verification. Bounded device-wire/native, WSI and ICD sanitizer
+  stages passed leak-enabled CI at `c11ce21`; local LSan remains ptrace-blocked.
+  The broader 32-module ICD-owned/full-seam instrumentation migration remains a
+  separate unresolved gate. Rerun affected checks on the next published source.
   [Build/log commands](HARDWARE_TEST_HANDOFF.md#4-rebuild-and-rerun-hardware-independent-gates-first)
   · [coverage source](https://github.com/Kayyo321/Waddle-LSW/commit/2d97603e3275d0c329ae81f3fe56413b641bd3d4)
   · [coverage receipt](wsi-window-lifetime/TRACKER.md)
@@ -39,7 +41,8 @@ No hardware/Adobe completion is claimed. Review in this order:
   · [extension oracle receipt](native-icd-extension-oracle/TRACKER.md)
   · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md)
   · [worker link repair](https://github.com/Kayyo321/Waddle-LSW/commit/37df9499f197c51443e1aca892139cf6a41a59c6)
-  · [worker execution limits](presented-worker-link/TRACKER.md).
+  · [worker execution limits](presented-worker-link/TRACKER.md)
+  · [native WSI fixture repair](native-wsi-test-capabilities/TRACKER.md).
 - [ ] **P1 · Physical input and cleanup.** Native `--input` fixture, then ordinary
   app as a Wayland window: keyboard/mouse/wheel, focus transfer, held keys/buttons,
   disconnect, foreground denial, scaling and repeated recovery. Watch stuck input

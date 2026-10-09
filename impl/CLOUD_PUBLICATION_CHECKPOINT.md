@@ -134,3 +134,21 @@ by missing renderer build prerequisites and awaits CI.
 
 Both trees were matched exactly. See [the receipt](presented-worker-link/TRACKER.md)
 for the actual attempted commands, missing prerequisites and unchanged LSan limits.
+
+
+## Native CI receipt at the worker-link backup
+
+Verified branch commit `f04e3583ad2af32f28145933c2df563ee4cac295` matches local
+`9762151431a3bc7b368d3fccb66a197afac52263`, tree
+`a97736e864273089ebc8b97bfb1a9bb0427af022`.
+Both AV workflows and the native guest passed at this source. Linux AV exercised
+actual leak-enabled tests, including identity coverage 25/25 lines and 58/58
+branches, and input coverage 78/78 lines and 104/104 branches. Native Windows AV
+also exercised the new lifecycle/quiescence fixtures. [AV run evidence](https://github.com/Kayyo321/Waddle-LSW/actions/runs/38002124467/job/114063342283).
+
+Native Windows vGPU cleared the prior environment and extension-oracle failures,
+then reported 391/393 unit tests passing. Its two failing WSI fixtures omit a
+required synthetic device capability; their repair is tracked separately. Linux
+vGPU and worker runtime qualification remain pending as of this receipt. This
+native CI evidence does not qualify physical input, Wayland/GPU integration or
+Adobe workloads. Consult the [current index](REVIEW_CHECKLIST.md) for later status.
