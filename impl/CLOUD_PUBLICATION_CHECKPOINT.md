@@ -36,3 +36,19 @@ The six reviewed regression additions subsequently passed the unchanged whole-IC
 The final source also passed all 392 ICD unit cases in each of Debug and ReleaseSafe, both 128-cycle native dispatch fixtures, and all 392 instrumented cases. Exact source evidence and commands are recorded in the [WSI tracker](wsi-window-lifetime/TRACKER.md). These results supersede the failed local coverage status, not the hardware or LeakSanitizer gates.
 
 CI for the initial published baseline encountered Docker Hub failures before Linux checkout, including unauthenticated image-pull rate limiting. One Linux CLI retry failed for the same external dependency. Native Windows jobs were still running when this note was written. This is neither a source failure nor a CI pass; inspect CI for the latest branch SHA before acceptance.
+
+## Follow-on published source map
+
+The coverage correction and its documentation were verified at remote
+`1de3fddf13067238ca4e428c223338ca79e37287`, identical to local `e827fde2cb3b0edfe47e858804dee2671103a372`
+with tree `62d9d5d71d14ea6d9f8a37ddcf5ba2e0019bfc88`.
+
+| Original source checkpoint | Published commit |
+| --- | --- |
+| `cce4711e1d1d3d767821c4277fdb3d1d0c76a779` | `b137f3ee008a54635d6fad382b7af37a546eb76c` |
+| `c5ea2c72aeddfd2e4a7d5897b8542f3a1254f914` | `2d97603e3275d0c329ae81f3fe56413b641bd3d4` |
+| `893ed455c0d3608a99fc24a66a3c7b0d65f842a5` | `96291c5a7ea9e26a3028c1a5b0433f4bd40e0650` |
+| `e827fde2cb3b0edfe47e858804dee2671103a372` | `1de3fddf13067238ca4e428c223338ca79e37287` |
+
+Each intermediate tree was also checked against its local counterpart before the
+non-force branch update. Native and hardware limits above remain open.
