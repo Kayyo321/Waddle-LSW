@@ -28,3 +28,11 @@ The branch update was a verified non-force fast-forward from `6eea43c743b589ab59
 - Required LeakSanitizer checks remain blocked by the cloud executor's ptrace restriction. Native Windows/Wayland/GPU, delayed HWND reuse, DXVK heap and integrated application acceptance remain open.
 - CI started for the exact published baseline; pending CI is not acceptance. Record later results against their exact resulting commit using the [run template](HARDWARE_TEST_RESULT_TEMPLATE.md).
 
+
+## Follow-on coverage correction (2026-10-09 UTC)
+
+The six reviewed regression additions subsequently passed the unchanged whole-ICD coverage gate: **4369/4837 production branches (90.32%)** and **4694/4764 production lines (98.53%)**, exit 0. The branch denominator is unchanged from the failed baseline above; the new tests exercise 16 additional production edges. No production code, threshold, coverage harness or exclusions were changed.
+
+The final source also passed all 392 ICD unit cases in each of Debug and ReleaseSafe, both 128-cycle native dispatch fixtures, and all 392 instrumented cases. Exact source evidence and commands are recorded in the [WSI tracker](wsi-window-lifetime/TRACKER.md). These results supersede the failed local coverage status, not the hardware or LeakSanitizer gates.
+
+CI for the initial published baseline encountered Docker Hub failures before Linux checkout, including unauthenticated image-pull rate limiting. One Linux CLI retry failed for the same external dependency. Native Windows jobs were still running when this note was written. This is neither a source failure nor a CI pass; inspect CI for the latest branch SHA before acceptance.

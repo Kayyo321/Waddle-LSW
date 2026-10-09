@@ -1083,3 +1083,19 @@ commands, source/binary receipts, manual native gates and unresolved blockers.
 Native Windows/Wayland/GPU execution, unobserved HWND reuse, a portable real-GPU
 supervisor, DXVK native heap qualification and integrated shared-GPU application
 workflows remain open. README and dependency pins are unchanged.
+
+### Follow-on whole-ICD coverage correction — 2026-10-09 UTC
+
+Six independently reviewed regression tests now pass the unchanged whole-ICD gate:
+4369/4837 production branches (90.32%) and 4694/4764 lines (98.53%), exit 0.
+The original 89.99% failed baseline above is retained as historical evidence.
+The production branch denominator is unchanged; 16 additional edges are exercised.
+No production code, threshold, exclusions or coverage harness changed. All 392
+unit cases passed in each of Debug and ReleaseSafe, both 128-cycle dispatch
+fixtures passed, and all 392 instrumented cases passed. See the
+[WSI evidence](../wsi-window-lifetime/TRACKER.md) for exact commands/source receipts.
+This changes the local full-coverage gate to passed, with +0% hardware/feature
+completion credit. Required LSan and native/hardware acceptance remain open.
+The initial published SHA's Linux CI was blocked before checkout by Docker Hub
+image-pull failures (including unauthenticated rate limiting after one retry);
+Windows jobs and latest-commit CI must be checked separately.
