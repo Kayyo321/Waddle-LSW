@@ -5767,7 +5767,11 @@ fn create_swapchain(device: c.VkDevice, info: [*c]const c.VkSwapchainCreateInfoK
     for (slots) |candidate| if (candidate.kind == c.VK_OBJECT_TYPE_PHYSICAL_DEVICE and candidate.id == device_record.parent_id) {
         physical = @ptrFromInt(candidate.handle); break;
     };
-    if (!surface_owned(physical, info.*.surface)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    // Native liveness must be checked by WSI after retiring a valid old chain.
+    if (physical == null or info.*.surface == null) return c.VK_ERROR_SURFACE_LOST_KHR;
+    const physical_record = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE).?;
+    if (!wsi.owns_surface(&wsi_state, physical_record.parent_id, @intFromPtr(info.*.surface.?)))
+        return c.VK_ERROR_SURFACE_LOST_KHR;
     const callback_context = wsi_callback_context_t{ .device = handle };
     const backend = wsi_backend(&callback_context);
     var id: u64 = 0;
@@ -5808,15 +5812,31 @@ fn acquire_next_image(device: c.VkDevice, chain: c.VkSwapchainKHR, timeout: u64,
 /// host-visible buffers/maps are deterministically retired on success; failed transport requires abandonment.
 fn queue_present(queue: c.VkQueue, info: [*c]const c.VkPresentInfoKHR) callconv(.C) c_int {
     lock_icd(); defer unlock_icd();
+    return queue_present_allocated(queue, info, MappingAllocator);
+}
+fn present_result_priority(result: c_int) u8 {
+    return switch (result) {
+        c.VK_ERROR_DEVICE_LOST => 6,
+        c.VK_ERROR_SURFACE_LOST_KHR => 5,
+        c.VK_ERROR_OUT_OF_DATE_KHR => 4,
+        c.VK_SUBOPTIMAL_KHR => 2,
+        c.VK_SUCCESS => 0,
+        else => 3,
+    };
+}
+// Caller holds the ICD lock; allocator injection also tests the pre-enqueue OOM boundary.
+fn queue_present_allocated(queue: c.VkQueue, info: [*c]const c.VkPresentInfoKHR, allocator: std.mem.Allocator) c_int {
     if (queue == null or info == null or info.*.sType != c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR or info.*.pNext != null or
         info.*.swapchainCount == 0 or info.*.swapchainCount > wsi.MaxSwapchains or info.*.pSwapchains == null or
         info.*.pImageIndices == null or info.*.waitSemaphoreCount > 64 or
         (info.*.waitSemaphoreCount != 0 and info.*.pWaitSemaphores == null)) return c.VK_ERROR_INITIALIZATION_FAILED;
     const owner = object(@intFromPtr(queue.?), c.VK_OBJECT_TYPE_QUEUE) orelse return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (lost != c.RingOk) return c.VK_ERROR_DEVICE_LOST;
     const device = device_cache_for_queue(owner);
     const handle = device.handle;
     const callback_context = wsi_callback_context_t{ .device = handle, .queue = queue };
     const backend = wsi_backend(&callback_context);
+    var enqueued = false;
     if (info.*.waitSemaphoreCount != 0) {
         var stages = [_]u32{c.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT} ** 64;
         const wait_submission = c.VkSubmitInfo{ .sType = c.VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -5824,16 +5844,32 @@ fn queue_present(queue: c.VkQueue, info: [*c]const c.VkPresentInfoKHR) callconv(
             .pWaitDstStageMask = &stages };
         const submitted = queue_submit(queue, 1, &wait_submission, null);
         if (submitted != c.VK_SUCCESS) return submitted;
+        enqueued = true;
         const completed = queue_wait_idle(queue);
-        if (completed != c.VK_SUCCESS) return completed;
+        if (completed != c.VK_SUCCESS) return failure(if (lost == c.RingOk) c.RingCorrupt else lost);
     }
     var overall: c_int = c.VK_SUCCESS;
     for (info.*.pSwapchains[0..info.*.swapchainCount], info.*.pImageIndices[0..info.*.swapchainCount], 0..) |chain, index, item| {
         const waits: []const c.VkSemaphore = &.{}; // Shared wait objects were consumed once above.
-        const result = if (chain != null) wsi.present(&wsi_state, &backend, MappingAllocator, handle,
+        var result = if (lost != c.RingOk) c.VK_ERROR_DEVICE_LOST else if (chain != null) wsi.present(&wsi_state, &backend, allocator, handle,
             @intFromPtr(chain.?), index, @ptrCast(waits)) else c.VK_ERROR_INITIALIZATION_FAILED;
+        if (result == c.VK_ERROR_OUT_OF_HOST_MEMORY or result == c.VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+            if (!enqueued) {
+                // Stop the batch: a later item must not invalidate this unchanged-state OOM.
+                if (info.*.pResults != null) {
+                    for (item..info.*.swapchainCount) |remaining| info.*.pResults[remaining] = result;
+                }
+                return result;
+            }
+            result = c.VK_ERROR_DEVICE_LOST;
+        }
+        if (result == c.VK_ERROR_DEVICE_LOST)
+            _ = failure(if (lost == c.RingOk) c.RingCorrupt else lost);
+        if (result == c.VK_SUCCESS or result == c.VK_SUBOPTIMAL_KHR or
+            result == c.VK_ERROR_OUT_OF_DATE_KHR or result == c.VK_ERROR_SURFACE_LOST_KHR)
+            enqueued = true;
         if (info.*.pResults != null) info.*.pResults[item] = result;
-        if (overall == c.VK_SUCCESS and result != c.VK_SUCCESS) overall = result;
+        if (present_result_priority(result) > present_result_priority(overall)) overall = result;
     }
     return overall;
 }
@@ -13101,7 +13137,7 @@ test "WSI status native acquire publishes index only after real signal ACK" {
     }
 }
 
-test "WSI status present errors preserve acquired image and publish each native result" {
+test "WSI status present rejection releases acquisition and ambiguous backend failure loses device" {
     for (0..5) |case| {
         var fixture = wsi_status_fixture_t{};
         try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
@@ -13116,17 +13152,18 @@ test "WSI status present errors preserve acquired image and publish each native 
         if (case == 3) wsi_state.swapchains[0].width = 32;
         var result: c.VkResult = c.VK_NOT_READY;
         var info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .swapchainCount = 1, .pSwapchains = &chain, .pImageIndices = &index, .pResults = &result };
-        const expected: c_int = if (case <= 1) c.VK_ERROR_INITIALIZATION_FAILED else if (case == 2) c.VK_ERROR_SURFACE_LOST_KHR else if (case == 3) c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        const expected: c_int = if (case <= 1) c.VK_ERROR_INITIALIZATION_FAILED else if (case == 2) c.VK_ERROR_SURFACE_LOST_KHR else if (case == 3) c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_ERROR_DEVICE_LOST;
         try std.testing.expectEqual(expected, queue_present(@ptrFromInt(graph.queue.handle), &info));
         try std.testing.expectEqual(expected, result);
-        try std.testing.expect(wsi_state.swapchains[0].images[0].acquired);
+        try std.testing.expectEqual(case < 2 or case == 4, wsi_state.swapchains[0].images[0].acquired);
+        try std.testing.expectEqual(case != 4, lost == c.RingOk);
         try std.testing.expectEqual(if (case == 4) @as(usize, 1) else 0, fixture.base.submissions);
         try std.testing.expectEqual(@as(usize, 7), objects.live_count);
     }
 }
 
-test "WSI status replacement failure preserves old chain generation and owners" {
-    for (0..3) |case| {
+test "WSI status replacement failure retires valid old chain but preserves image owners" {
+    for (0..4) |case| {
         var fixture = wsi_status_fixture_t{};
         try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
         defer venus_icd_abandon();
@@ -13134,11 +13171,12 @@ test "WSI status replacement failure preserves old chain generation and owners" 
         var info = c.VkSwapchainCreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = @ptrFromInt(100), .minImageCount = 2, .imageFormat = c.VK_FORMAT_B8G8R8A8_UNORM, .imageExtent = .{ .width = 64, .height = 64 }, .imageArrayLayers = 1, .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .preTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = c.VK_PRESENT_MODE_FIFO_KHR, .oldSwapchain = @ptrFromInt(101) };
         if (case == 1) info.imageUsage = c.VK_IMAGE_USAGE_STORAGE_BIT;
         if (case == 2) info.oldSwapchain = @ptrFromInt(999);
+        if (case == 3) wsi_state.surfaces[0].hwnd = 2;
         var output: c.VkSwapchainKHR = @ptrFromInt(8);
-        try std.testing.expectEqual(if (case == 0) @as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY) else @as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_swapchain(@ptrFromInt(graph.device.handle), &info, null, &output));
+        try std.testing.expectEqual(if (case == 0) @as(c_int, c.VK_ERROR_OUT_OF_DEVICE_MEMORY) else if (case == 3) @as(c_int, c.VK_ERROR_SURFACE_LOST_KHR) else @as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_swapchain(@ptrFromInt(graph.device.handle), &info, null, &output));
         try std.testing.expect(output == null);
         try std.testing.expectEqual(@as(u64, 101), wsi_state.swapchains[0].id);
-        try std.testing.expect(!wsi_state.swapchains[0].retired);
+        try std.testing.expectEqual(case == 0 or case == 3, wsi_state.swapchains[0].retired);
         for (wsi_state.swapchains[1..]) |chain| try std.testing.expectEqual(@as(u64, 0), chain.id);
         try std.testing.expectEqual(@as(usize, 7), objects.live_count);
         try std.testing.expectEqual(if (case == 0) @as(usize, 1) else 0, fixture.base.submissions);
@@ -15802,7 +15840,7 @@ test "native presentation header validation preserves per-chain results without 
         try std.testing.expectEqual(@as(usize,7),objects.live_count);
     }
 }
-test "native presentation publishes independent chain errors in order and retains first overall failure" {
+test "native presentation publishes independent chain errors and applies specified result precedence" {
     for([_]bool{false,true}) |reverse| for([_]bool{false,true}) |results| {
         var fixture=image_ownership_fixture_t{};
         try std.testing.expectEqual(@as(c_int,c.RingOk),venus_icd_bind(image_ownership_fixture_t.exchange,&fixture));defer venus_icd_abandon();
@@ -15812,7 +15850,7 @@ test "native presentation publishes independent chain errors in order and retain
         const indices=[_]u32{0,0};var statuses=[_]c_int{123,456};
         const info=c.VkPresentInfoKHR{.sType=c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,.swapchainCount=2,.pSwapchains=&chains,.pImageIndices=&indices,.pResults=if(results)&statuses else null};
         const expected=[_]c_int{if(reverse)c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_ERROR_INITIALIZATION_FAILED,if(reverse)c.VK_ERROR_INITIALIZATION_FAILED else c.VK_ERROR_OUT_OF_DATE_KHR};
-        try std.testing.expectEqual(expected[0],queue_present(@ptrFromInt(graph.queue.handle),&info));
+        try std.testing.expectEqual(@as(c_int,c.VK_ERROR_OUT_OF_DATE_KHR),queue_present(@ptrFromInt(graph.queue.handle),&info));
         try std.testing.expectEqual(if(results)expected else [_]c_int{123,456},statuses);
         try std.testing.expectEqual(@as(usize,0),fixture.submissions);
         try std.testing.expectEqual(@as(usize,7),objects.live_count);
@@ -16470,4 +16508,68 @@ test "immutable sampler remains owned through layout and copied descriptor set r
     root_runtime_fn(destroy_sampler)(device,sampler_handle,null);
     try std.testing.expectEqual(calls+3,fixture.base.submissions);try std.testing.expectEqual(@as(usize,2),objects.live_count);
     try std.testing.expectEqual(@as(c_int,c.RingOk),lost);
+}
+
+
+test "presentation result priority is order independent for every supported Vulkan outcome" {
+    const ordered = [_]c_int{ c.VK_SUCCESS, c.VK_SUBOPTIMAL_KHR, c.VK_ERROR_OUT_OF_DATE_KHR, c.VK_ERROR_SURFACE_LOST_KHR, c.VK_ERROR_DEVICE_LOST };
+    for (ordered, 0..) |left, i| for (ordered, 0..) |right, j| {
+        const combined = if (present_result_priority(left) > present_result_priority(right)) left else right;
+        try std.testing.expectEqual(ordered[@max(i, j)], combined);
+    };
+}
+
+test "presentation OOM stops an unchanged batch or loses device after waits or prior enqueue" {
+    for ([_]bool{ false, true }) |oom_first| for ([_]bool{ false, true }) |wait| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        wsi_state.swapchains[0].width = 32;
+        wsi_state.swapchains[0].images[0].acquired = true;
+        wsi_state.swapchains[1] = wsi_state.swapchains[0];
+        wsi_state.swapchains[1].id = 102;
+        wsi_state.swapchains[1].width = 64;
+        const chains = [_]c.VkSwapchainKHR{ @ptrFromInt(@as(usize, if (oom_first) 102 else 101)), @ptrFromInt(@as(usize, if (oom_first) 101 else 102)) };
+        const indices = [_]u32{ 0, 0 };
+        const semaphore: c.VkSemaphore = @ptrFromInt(graph.semaphore.handle);
+        var results = [_]c_int{ 123, 456 };
+        const info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = if (wait) 1 else 0, .pWaitSemaphores = if (wait) &semaphore else null,
+            .swapchainCount = 2, .pSwapchains = &chains, .pImageIndices = &indices, .pResults = &results };
+        const unchanged = oom_first and !wait;
+        const expected: c_int = if (unchanged) c.VK_ERROR_OUT_OF_HOST_MEMORY else c.VK_ERROR_DEVICE_LOST;
+        try std.testing.expectEqual(expected, queue_present_allocated(@ptrFromInt(graph.queue.handle), &info, std.testing.failing_allocator));
+        try std.testing.expectEqual(unchanged, lost == c.RingOk);
+        const expected_results = if (oom_first) [_]c_int{ expected, expected } else [_]c_int{ c.VK_ERROR_OUT_OF_DATE_KHR, c.VK_ERROR_DEVICE_LOST };
+        try std.testing.expectEqual(expected_results, results);
+        try std.testing.expectEqual(oom_first, wsi_state.swapchains[0].images[0].acquired);
+        try std.testing.expect(wsi_state.swapchains[1].images[0].acquired);
+        try std.testing.expectEqual(@as(usize, if (wait) 1 else 0), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+    };
+}
+
+test "multiple presentation rejections return surface loss ahead of out of date in either order" {
+    for ([_]bool{ false, true }) |reverse| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        wsi_state.swapchains[0].width = 32;
+        wsi_state.swapchains[0].images[0].acquired = true;
+        wsi_state.swapchains[1] = wsi_state.swapchains[0];
+        wsi_state.swapchains[1].id = 102;
+        wsi_state.swapchains[1].surface = 999;
+        const chains = [_]c.VkSwapchainKHR{ @ptrFromInt(@as(usize, if (reverse) 102 else 101)), @ptrFromInt(@as(usize, if (reverse) 101 else 102)) };
+        const indices = [_]u32{ 0, 0 };
+        var results = [_]c_int{ 123, 456 };
+        const info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .swapchainCount = 2, .pSwapchains = &chains, .pImageIndices = &indices, .pResults = &results };
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_SURFACE_LOST_KHR), queue_present(@ptrFromInt(graph.queue.handle), &info));
+        try std.testing.expectEqual([_]c_int{ if (reverse) c.VK_ERROR_SURFACE_LOST_KHR else c.VK_ERROR_OUT_OF_DATE_KHR, if (reverse) c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_ERROR_SURFACE_LOST_KHR }, results);
+        try std.testing.expect(!wsi_state.swapchains[0].images[0].acquired and !wsi_state.swapchains[1].images[0].acquired);
+        try std.testing.expectEqual(@as(usize, 0), fixture.base.submissions);
+        try std.testing.expectEqual(@as(usize, 7), objects.live_count);
+    }
 }

@@ -22,7 +22,7 @@ pub const backend_t = struct {
     acquire: *const fn (?*anyopaque, u64, u64) callconv(.C) c_int,
     readback: *const fn (?*anyopaque, u64, u32, u32, u32, [*]u8, usize, u32, [*c]const c.VkSemaphore) callconv(.C) c_int,
 };
-const surface_t = struct { id: u64 = 0, instance: u64 = 0, hwnd: usize = 0 };
+const surface_t = struct { id: u64 = 0, instance: u64 = 0, hwnd: usize = 0, lost: bool = false };
 const image_t = struct { image: u64 = 0, memory: u64 = 0, acquired: bool = false };
 const swapchain_t = struct {
     id: u64 = 0,
@@ -35,6 +35,7 @@ const swapchain_t = struct {
     count: u32 = 0,
     next: u32 = 0,
     retired: bool = false,
+    out_of_date: bool = false,
     images: [MaxImages]image_t = [_]image_t{.{}} ** MaxImages,
 };
 /// Caller-owned fixed registry, initialized by .{} and exclusively synchronized by ICD lock.
@@ -46,11 +47,30 @@ pub const state_t = struct {
     swapchains: [MaxSwapchains]swapchain_t = [_]swapchain_t{.{}} ** MaxSwapchains,
 };
 extern fn venus_win32_present_extent(usize, *u32, *u32) c_int;
-extern fn venus_win32_present_pixels(usize, u32, u32, [*]const u8, usize, u32) c_int;
+extern fn venus_win32_present_pixels_exact(usize, u32, u32, [*]const u8, usize, u32) c_int;
 fn surface(state: *state_t, id: u64) ?*surface_t {
     if (id == 0) return null;
     for (&state.surfaces) |*slot| if (slot.id == id) return slot;
     return null;
+}
+// Zero-area windows are valid but cannot supply a presentable image. Only native
+// loss is sticky on the surface; restore after minimize remains recoverable.
+fn surface_extent(slot: *surface_t, width: *u32, height: *u32) bool {
+    if (slot.lost) return false;
+    if (venus_win32_present_extent(slot.hwnd, width, height) == 0) {
+        slot.lost = true;
+        return false;
+    }
+    return true;
+}
+fn validate_extent(state: *state_t, slot: *swapchain_t) c_int {
+    const target = surface(state, slot.surface) orelse return c.VK_ERROR_SURFACE_LOST_KHR;
+    var width: u32 = 0;
+    var height: u32 = 0;
+    if (!surface_extent(target, &width, &height)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    if (width == 0 or height == 0 or width != slot.width or height != slot.height)
+        slot.out_of_date = true;
+    return if (slot.out_of_date) c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_SUCCESS;
 }
 fn swapchain(state: *state_t, device: u64, id: u64) ?*swapchain_t {
     if (device == 0 or id == 0) return null;
@@ -93,17 +113,30 @@ pub fn capabilities(state: *state_t, id: u64, output: *c.VkSurfaceCapabilitiesKH
     const slot = surface(state, id) orelse return c.VK_ERROR_SURFACE_LOST_KHR;
     var width: u32 = 0;
     var height: u32 = 0;
-    if (venus_win32_present_extent(slot.hwnd, &width, &height) == 0) return c.VK_ERROR_SURFACE_LOST_KHR;
-    output.* = .{ .minImageCount = 2, .maxImageCount = MaxImages, .currentExtent = .{ .width = width, .height = height }, .minImageExtent = .{ .width = 1, .height = 1 }, .maxImageExtent = .{ .width = 16384, .height = 16384 }, .maxImageArrayLayers = 1, .supportedTransforms = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .currentTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .supportedCompositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .supportedUsageFlags = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT };
+    if (!surface_extent(slot, &width, &height)) return c.VK_ERROR_SURFACE_LOST_KHR;
+    if (width == 0 or height == 0) {
+        width = 0;
+        height = 0;
+    }
+    output.* = .{ .minImageCount = 2, .maxImageCount = MaxImages, .currentExtent = .{ .width = width, .height = height }, .minImageExtent = .{ .width = width, .height = height }, .maxImageExtent = .{ .width = width, .height = height }, .maxImageArrayLayers = 1, .supportedTransforms = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .currentTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .supportedCompositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .supportedUsageFlags = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT };
     return c.VK_SUCCESS;
 }
-/// Validate a live surface owned by instance. Borrowed state; no mutation or allocation.
+/// Validate registry ownership without observing native liveness.
+/// [in] state nonnull borrowed registry; instance/id are nonzero owner/object tokens.
+/// Returns false for missing/wrong-owner IDs; no mutation/allocation/ownership transfer.
+/// Caller holds the ICD lock. Native loss cannot bypass replacement retirement.
+pub fn owns_surface(state: *state_t, instance: u64, id: u64) bool {
+    const slot = surface(state, id) orelse return false;
+    return slot.instance == instance;
+}
+/// Validate a surface owned by instance, recording observed native loss permanently.
+/// Caller holds lock; no allocation or ownership transfer.
 pub fn supports_surface(state: *state_t, instance: u64, id: u64) bool {
     const slot = surface(state, id) orelse return false;
     if (slot.instance != instance) return false;
     var width: u32 = 0;
     var height: u32 = 0;
-    return venus_win32_present_extent(slot.hwnd, &width, &height) != 0;
+    return surface_extent(slot, &width, &height);
 }
 /// Enumerate supported four-channel byte formats, count/fill with borrowed output.
 /// Caller synchronizes state and guarantees output capacity from input count.
@@ -149,22 +182,28 @@ pub fn is_present_image(state: *const state_t, device: u64, image: u64) bool {
 /// Create 2..3 real backend images transactionally. info borrowed canonical SDK record;
 /// backend/context remain borrowed during call. output changes only on success.
 /// On failure every successfully created image is deterministically destroyed.
-/// Successful oldSwapchain retirement happens after all new resources exist.
+/// A valid oldSwapchain is retired before recoverable creation failures. Acquired
+/// old images remain owned and presentable until explicit destruction or extent loss.
 pub fn create_swapchain(state: *state_t, backend: *const backend_t, device: u64, info: *const c.VkSwapchainCreateInfoKHR, output: *u64) c_int {
     if (device == 0 or info.sType != c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR or info.pNext != null or info.flags != 0 or info.surface == null) return c.VK_ERROR_INITIALIZATION_FAILED;
     const surface_id = @intFromPtr(info.surface.?);
-    var caps: c.VkSurfaceCapabilitiesKHR = undefined;
-    const result = capabilities(state, surface_id, &caps);
-    if (result != c.VK_SUCCESS) return result;
     if (info.minImageCount < 2 or info.minImageCount > MaxImages or info.imageArrayLayers != 1 or
         (info.imageFormat != c.VK_FORMAT_B8G8R8A8_UNORM and info.imageFormat != c.VK_FORMAT_B8G8R8A8_SRGB and info.imageFormat != c.VK_FORMAT_R8G8B8A8_UNORM and info.imageFormat != c.VK_FORMAT_R8G8B8A8_SRGB) or
         info.imageColorSpace != c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR or info.imageExtent.width == 0 or info.imageExtent.height == 0 or
-        info.imageExtent.width > 16384 or info.imageExtent.height > 16384 or info.imageUsage == 0 or info.imageUsage & ~caps.supportedUsageFlags != 0 or
+        info.imageExtent.width > 16384 or info.imageExtent.height > 16384 or info.imageUsage == 0 or info.imageUsage & ~@as(u32, c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_SRC_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0 or
         info.imageSharingMode != c.VK_SHARING_MODE_EXCLUSIVE or info.preTransform != c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR or
         info.compositeAlpha != c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR or
         (info.presentMode != c.VK_PRESENT_MODE_FIFO_KHR and info.presentMode != c.VK_PRESENT_MODE_IMMEDIATE_KHR)) return c.VK_ERROR_INITIALIZATION_FAILED;
     const old = if (info.oldSwapchain) |handle| swapchain(state, device, @intFromPtr(handle)) orelse return c.VK_ERROR_INITIALIZATION_FAILED else null;
-    if (old) |previous| if (previous.surface != surface_id) return c.VK_ERROR_INITIALIZATION_FAILED;
+    if (old) |previous| {
+        if (previous.surface != surface_id or previous.retired) return c.VK_ERROR_INITIALIZATION_FAILED;
+        previous.retired = true;
+    }
+    var caps: c.VkSurfaceCapabilitiesKHR = undefined;
+    const result = capabilities(state, surface_id, &caps);
+    if (result != c.VK_SUCCESS) return result;
+    if (info.imageExtent.width != caps.currentExtent.width or info.imageExtent.height != caps.currentExtent.height)
+        return c.VK_ERROR_OUT_OF_DATE_KHR;
     for (&state.swapchains) |*slot| if (slot.id == 0) {
         const id = reserve_id(state) orelse return c.VK_ERROR_TOO_MANY_OBJECTS;
         var pending = swapchain_t{ .id = id, .device = device, .surface = surface_id, .width = info.imageExtent.width, .height = info.imageExtent.height, .format = info.imageFormat, .present_mode = info.presentMode, .count = info.minImageCount };
@@ -178,7 +217,6 @@ pub fn create_swapchain(state: *state_t, backend: *const backend_t, device: u64,
             }
         }
         slot.* = pending;
-        if (old) |previous| previous.retired = true;
         output.* = id;
         return c.VK_SUCCESS;
     };
@@ -210,11 +248,14 @@ pub fn get_images(state: *state_t, device: u64, id: u64, count: *u32, output: ?[
 }
 /// Acquire an available image, signaling real host semaphore/fence via backend.
 /// output changes only after successful signaling; failed signaling preserves availability.
+/// Lost/out-of-date/retired generations fail without invoking backend signaling.
 /// No available image returns NOT_READY for timeout0 and TIMEOUT otherwise.
 pub fn acquire_next(state: *state_t, backend: *const backend_t, device: u64, id: u64, timeout: u64, semaphore: u64, fence: u64, output: *u32) c_int {
     const slot = swapchain(state, device, id) orelse return c.VK_ERROR_OUT_OF_DATE_KHR;
     if (slot.retired) return c.VK_ERROR_OUT_OF_DATE_KHR;
     if (semaphore == 0 and fence == 0) return c.VK_ERROR_INITIALIZATION_FAILED;
+    const extent_status = validate_extent(state, slot);
+    if (extent_status != c.VK_SUCCESS) return extent_status;
     var offset: u32 = 0;
     while (offset < slot.count) : (offset += 1) {
         const index = (slot.next + offset) % slot.count;
@@ -232,50 +273,93 @@ pub fn acquire_next(state: *state_t, backend: *const backend_t, device: u64, id:
 /// Synchronous real GPU readback then native HWND presentation. waits is borrowed,
 /// consumed once by backend; caller handles multi-swapchain wait distribution.
 /// Pixel storage owned temporarily by supplied allocator, always freed on every exit.
-/// Acquired image returns to availability only after successful sink completion.
+/// SUCCESS, OUT_OF_DATE and SURFACE_LOST release image acquisition, retaining the
+/// backend image/memory owners. Local pixel-allocation OOM has no enqueue effect.
+/// Every readback failure becomes DEVICE_LOST: its submission state is uncertain.
+/// ICD has already enqueued shared waits; it normalizes later local OOM separately.
 pub fn present(state: *state_t, backend: *const backend_t, allocator: std.mem.Allocator, device: u64, id: u64, index: u32, waits: []const c.VkSemaphore) c_int {
     const slot = swapchain(state, device, id) orelse return c.VK_ERROR_OUT_OF_DATE_KHR;
     if (index >= slot.count or !slot.images[index].acquired or waits.len > 64) return c.VK_ERROR_INITIALIZATION_FAILED;
-    const target = surface(state, slot.surface) orelse return c.VK_ERROR_SURFACE_LOST_KHR;
-    var width: u32 = 0;
-    var height: u32 = 0;
-    if (venus_win32_present_extent(target.hwnd, &width, &height) == 0) return c.VK_ERROR_SURFACE_LOST_KHR;
-    if (width != slot.width or height != slot.height) return c.VK_ERROR_OUT_OF_DATE_KHR;
+    const target = surface(state, slot.surface) orelse {
+        slot.images[index].acquired = false;
+        return c.VK_ERROR_SURFACE_LOST_KHR;
+    };
+    const extent_status = validate_extent(state, slot);
+    if (extent_status != c.VK_SUCCESS) {
+        slot.images[index].acquired = false;
+        return extent_status;
+    }
     const size = @as(usize, slot.width) * slot.height * 4;
     const pixels = allocator.alloc(u8, size) catch return c.VK_ERROR_OUT_OF_HOST_MEMORY;
     defer allocator.free(pixels);
     const result = backend.readback(backend.context, slot.images[index].image, slot.width, slot.height, slot.format, pixels.ptr, pixels.len, @intCast(waits.len), if (waits.len == 0) null else waits.ptr);
-    if (result != c.VK_SUCCESS) return result;
+    if (result != c.VK_SUCCESS) return c.VK_ERROR_DEVICE_LOST;
+    const completed_extent = validate_extent(state, slot);
+    if (completed_extent != c.VK_SUCCESS) {
+        slot.images[index].acquired = false;
+        return completed_extent;
+    }
     if (slot.format == c.VK_FORMAT_R8G8B8A8_UNORM or slot.format == c.VK_FORMAT_R8G8B8A8_SRGB) {
         var pixel: usize = 0;
         while (pixel < pixels.len) : (pixel += 4) std.mem.swap(u8, &pixels[pixel], &pixels[pixel + 2]);
     }
-    if (venus_win32_present_pixels(target.hwnd, slot.width, slot.height, pixels.ptr, pixels.len, slot.present_mode) == 0) return c.VK_ERROR_SURFACE_LOST_KHR;
+    const native_result = venus_win32_present_pixels_exact(target.hwnd, slot.width, slot.height, pixels.ptr, pixels.len, slot.present_mode);
+    if (native_result < 0) {
+        slot.out_of_date = true;
+        slot.images[index].acquired = false;
+        return c.VK_ERROR_OUT_OF_DATE_KHR;
+    }
+    if (native_result == 0) {
+        target.lost = true;
+        slot.images[index].acquired = false;
+        return c.VK_ERROR_SURFACE_LOST_KHR;
+    }
     slot.images[index].acquired = false;
     return c.VK_SUCCESS;
 }
 
 // Independent native sink/backend fixtures, emitted only by Zig tests.
-const fixture_t = struct { created: u32 = 0, destroyed: u32 = 0, fail_at: u32 = 0, signal_result: c_int = 0, read_result: c_int = 0, consumed_waits: u32 = 0 };
+const fixture_t = struct {
+    created: u32 = 0, destroyed: u32 = 0, fail_at: u32 = 0,
+    signal_result: c_int = 0, read_result: c_int = 0, consumed_waits: u32 = 0,
+    signals: u32 = 0, readbacks: u32 = 0,
+    live_images: [128]bool = [_]bool{false} ** 128,
+    resize_on_read: bool = false, lose_on_read: bool = false,
+};
+const native_fixture_t = struct {
+    width: u32 = 64, height: u32 = 64, alive: bool = true,
+    sink_result: c_int = 1, presents: u32 = 0,
+};
+var test_native: native_fixture_t = .{};
 fn test_create(context: ?*anyopaque, _: u32, _: u32, _: u32, _: u32, image: *u64, memory: *u64) callconv(.C) c_int {
     const fixture: *fixture_t = @ptrCast(@alignCast(context.?));
     fixture.created += 1;
     if (fixture.fail_at == fixture.created) return c.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    std.debug.assert(fixture.created < fixture.live_images.len);
+    fixture.live_images[fixture.created] = true;
     image.* = fixture.created + 100;
     memory.* = fixture.created + 200;
     return c.VK_SUCCESS;
 }
-fn test_destroy(context: ?*anyopaque, _: u64, _: u64) callconv(.C) void {
+fn test_destroy(context: ?*anyopaque, image: u64, memory: u64) callconv(.C) void {
     const fixture: *fixture_t = @ptrCast(@alignCast(context.?));
+    std.debug.assert(image > 100 and memory == image + 100);
+    const id: usize = @intCast(image - 100);
+    std.debug.assert(id < fixture.live_images.len and fixture.live_images[id]);
+    fixture.live_images[id] = false;
     fixture.destroyed += 1;
 }
 fn test_acquire(context: ?*anyopaque, _: u64, _: u64) callconv(.C) c_int {
     const fixture: *fixture_t = @ptrCast(@alignCast(context.?));
+    fixture.signals += 1;
     return fixture.signal_result;
 }
 fn test_read(context: ?*anyopaque, _: u64, width: u32, height: u32, _: u32, pixels: [*]u8, size: usize, count: u32, _: [*c]const c.VkSemaphore) callconv(.C) c_int {
     const fixture: *fixture_t = @ptrCast(@alignCast(context.?));
     fixture.consumed_waits += count;
+    fixture.readbacks += 1;
+    if (fixture.resize_on_read) test_native.width = 96;
+    if (fixture.lose_on_read) test_native.alive = false;
     if (fixture.read_result != 0) return fixture.read_result;
     std.debug.assert(size == @as(usize, width) * height * 4);
     for (pixels[0..size], 0..) |*value, index| value.* = @intCast(index % 4);
@@ -288,20 +372,21 @@ fn test_info(id: u64) c.VkSwapchainCreateInfoKHR {
     return .{ .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = @ptrFromInt(id), .minImageCount = 2, .imageFormat = c.VK_FORMAT_R8G8B8A8_UNORM, .imageColorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, .imageExtent = .{ .width = 64, .height = 64 }, .imageArrayLayers = 1, .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE, .preTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR, .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = c.VK_PRESENT_MODE_FIFO_KHR };
 }
 fn test_extent(hwnd: usize, width: *u32, height: *u32) callconv(.C) c_int {
-    if (hwnd != 1) return 0;
-    width.* = 64;
-    height.* = 64;
+    if (hwnd != 1 or !test_native.alive) return 0;
+    width.* = test_native.width;
+    height.* = test_native.height;
     return 1;
 }
 fn test_pixels(hwnd: usize, width: u32, height: u32, pixels: [*]const u8, size: usize, _: u32) callconv(.C) c_int {
     std.debug.assert(hwnd == 1 and width == 64 and height == 64 and size == 16384);
     std.debug.assert(pixels[0] == 2 and pixels[1] == 1 and pixels[2] == 0 and pixels[3] == 3);
-    return 1;
+    test_native.presents += 1;
+    return test_native.sink_result;
 }
 comptime {
     if (@import("builtin").is_test) {
         @export(test_extent, .{ .name = "venus_win32_present_extent" });
-        @export(test_pixels, .{ .name = "venus_win32_present_pixels" });
+        @export(test_pixels, .{ .name = "venus_win32_present_pixels_exact" });
     }
 }
 test "swapchain actual image owners acquire present retire and teardown" {
@@ -392,6 +477,9 @@ test "surface namespace exhaustion stale owners incomplete enumeration and inval
     state.next_id = 1;
     for (0..MaxSurfaces) |_| try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &id));
     try std.testing.expectEqual(c.VK_ERROR_OUT_OF_HOST_MEMORY, create_surface(&state, 7, 1, &id));
+    try std.testing.expect(!owns_surface(&state, 8, id));
+    try std.testing.expect(!owns_surface(&state, 7, 0));
+    try std.testing.expect(owns_surface(&state, 7, id));
     try std.testing.expect(!supports_surface(&state, 8, id));
     try std.testing.expect(!supports_surface(&state, 7, 0));
     try std.testing.expect(!destroy_surface(&state, 8, id));
@@ -477,9 +565,13 @@ test "presentation resize allocation failure and swapchain namespace quotas pres
     slot.width = 63;
     try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
     slot.width = 64;
+    slot.out_of_date = false; // Isolate the second invalid-extent branch.
+    slot.images[index].acquired = true;
     slot.height = 63;
     try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
     slot.height = 64;
+    slot.out_of_date = false; // Isolate allocation/argument failures below.
+    slot.images[index].acquired = true;
     try std.testing.expectEqual(c.VK_ERROR_OUT_OF_HOST_MEMORY, present(&state, &backend, std.testing.failing_allocator, 9, chain_id, index, &.{}));
     const waits = [_]c.VkSemaphore{@ptrFromInt(1)} ** 65;
     try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &waits));
@@ -491,4 +583,230 @@ test "presentation resize allocation failure and swapchain namespace quotas pres
     var count: u32 = 0;
     try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, formats(&state, surface_id, &count, null));
     try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, modes(&state, surface_id, &count, null));
+}
+
+
+test "minimized windows remain valid but invalidate old backing before acquire signaling" {
+    defer test_native = .{};
+    test_native = .{ .width = 0, .height = 0 };
+    var state: state_t = .{};
+    var fixture: fixture_t = .{};
+    const backend = test_backend(&fixture);
+    var surface_id: u64 = 0;
+    var chain_id: u64 = 999;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+    try std.testing.expect(supports_surface(&state, 7, surface_id));
+    var caps: c.VkSurfaceCapabilitiesKHR = undefined;
+    try std.testing.expectEqual(c.VK_SUCCESS, capabilities(&state, surface_id, &caps));
+    try std.testing.expectEqual(@as(u32, 0), caps.currentExtent.width);
+    try std.testing.expectEqual(@as(u32, 0), caps.minImageExtent.width);
+    try std.testing.expectEqual(@as(u32, 0), caps.minImageExtent.height);
+    var info = test_info(surface_id);
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    try std.testing.expectEqual(@as(u64, 999), chain_id);
+    try std.testing.expectEqual(@as(u32, 0), fixture.created);
+    test_native = .{};
+    try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    var index: u32 = 77;
+    test_native.height = 0;
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+    test_native = .{};
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+    try std.testing.expectEqual(@as(u32, 77), index);
+    try std.testing.expectEqual(@as(u32, 0), fixture.signals);
+    info.oldSwapchain = @ptrFromInt(chain_id);
+    var replacement: u64 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &replacement));
+    try std.testing.expectEqual(c.VK_SUCCESS, acquire_next(&state, &backend, 9, replacement, 0, 1, 0, &index));
+    destroy_device(&state, &backend, 9);
+    try std.testing.expectEqual(fixture.created, fixture.destroyed);
+    try std.testing.expect(destroy_surface(&state, 7, surface_id));
+}
+
+test "observed surface loss never revives through reused raw HWND and preserves query outputs" {
+    defer test_native = .{};
+    var state: state_t = .{};
+    var fixture: fixture_t = .{};
+    const backend = test_backend(&fixture);
+    var surface_id: u64 = 0;
+    var chain_id: u64 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+    const info = test_info(surface_id);
+    try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    test_native.alive = false;
+    var index: u32 = 77;
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+    test_native.alive = true; // Same bits are live again after the observed destruction.
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+    try std.testing.expectEqual(@as(u32, 0), fixture.signals);
+    try std.testing.expectEqual(@as(u32, 77), index);
+    var caps = std.mem.zeroes(c.VkSurfaceCapabilitiesKHR);
+    caps.currentExtent.width = 123;
+    try std.testing.expectEqual(c.VK_ERROR_SURFACE_LOST_KHR, capabilities(&state, surface_id, &caps));
+    try std.testing.expectEqual(@as(u32, 123), caps.currentExtent.width);
+    try std.testing.expect(!supports_surface(&state, 7, surface_id));
+    var fresh: u64 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &fresh));
+    try std.testing.expect(fresh != surface_id);
+    try std.testing.expect(supports_surface(&state, 7, fresh));
+    destroy_device(&state, &backend, 9);
+    try std.testing.expectEqual(fixture.created, fixture.destroyed);
+    try std.testing.expect(destroy_surface(&state, 7, surface_id));
+    try std.testing.expect(destroy_surface(&state, 7, fresh));
+}
+
+test "resize and loss during readback release acquisition without freeing image owners" {
+    defer test_native = .{};
+    for (0..2) |mode| {
+        test_native = .{};
+        var state: state_t = .{};
+        var fixture = fixture_t{ .resize_on_read = mode == 0, .lose_on_read = mode == 1 };
+        const backend = test_backend(&fixture);
+        var surface_id: u64 = 0;
+        var chain_id: u64 = 0;
+        try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+        const info = test_info(surface_id);
+        try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+        var index: u32 = 77;
+        try std.testing.expectEqual(c.VK_SUCCESS, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+        const expected = if (mode == 0) c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_ERROR_SURFACE_LOST_KHR;
+        try std.testing.expectEqual(expected, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
+        try std.testing.expectEqual(@as(u32, 0), test_native.presents);
+        try std.testing.expectEqual(@as(u32, 1), fixture.readbacks);
+        try std.testing.expect(!swapchain(&state, 9, chain_id).?.images[index].acquired);
+        try std.testing.expectEqual(@as(u32, 0), fixture.destroyed);
+        test_native = .{};
+        try std.testing.expectEqual(expected, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+        try std.testing.expectEqual(@as(u32, 1), fixture.readbacks);
+        destroy_device(&state, &backend, 9);
+        try std.testing.expectEqual(fixture.created, fixture.destroyed);
+    }
+}
+
+test "exact native sink outcomes invalidate generation and release acquisition while retaining backing" {
+    defer test_native = .{};
+    for ([_]c_int{ -1, 0 }) |native_result| {
+        test_native = .{ .sink_result = native_result };
+        var state: state_t = .{};
+        var fixture: fixture_t = .{};
+        const backend = test_backend(&fixture);
+        var surface_id: u64 = 0;
+        var chain_id: u64 = 0;
+        try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+        const info = test_info(surface_id);
+        try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+        var index: u32 = 77;
+        try std.testing.expectEqual(c.VK_SUCCESS, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+        const expected = if (native_result < 0) c.VK_ERROR_OUT_OF_DATE_KHR else c.VK_ERROR_SURFACE_LOST_KHR;
+        try std.testing.expectEqual(expected, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
+        try std.testing.expectEqual(@as(u32, 1), test_native.presents);
+        try std.testing.expect(!swapchain(&state, 9, chain_id).?.images[index].acquired);
+        try std.testing.expectEqual(@as(u32, 0), fixture.destroyed);
+        test_native = .{};
+        try std.testing.expectEqual(expected, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+        try std.testing.expectEqual(@as(u32, 1), fixture.signals);
+        destroy_device(&state, &backend, 9);
+        try std.testing.expectEqual(fixture.created, fixture.destroyed);
+    }
+}
+
+test "replacement failure retires old acquire eligibility but keeps acquired old images presentable" {
+    var state: state_t = .{};
+    var fixture: fixture_t = .{};
+    const backend = test_backend(&fixture);
+    var surface_id: u64 = 0;
+    var chain_id: u64 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+    var info = test_info(surface_id);
+    try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+    var index: u32 = 77;
+    try std.testing.expectEqual(c.VK_SUCCESS, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+    info.oldSwapchain = @ptrFromInt(chain_id);
+    fixture.fail_at = 4; // First replacement image exists; second allocation fails.
+    var output: u64 = 999;
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DEVICE_MEMORY, create_swapchain(&state, &backend, 9, &info, &output));
+    try std.testing.expectEqual(@as(u64, 999), output);
+    try std.testing.expectEqual(@as(u32, 1), fixture.destroyed);
+    try std.testing.expectEqual(c.VK_ERROR_OUT_OF_DATE_KHR, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+    try std.testing.expectEqual(c.VK_SUCCESS, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
+    try std.testing.expectEqual(c.VK_ERROR_INITIALIZATION_FAILED, create_swapchain(&state, &backend, 9, &info, &output));
+    try std.testing.expectEqual(@as(u32, 4), fixture.created);
+    destroy_swapchain(&state, &backend, 9, chain_id);
+    destroy_swapchain(&state, &backend, 9, chain_id);
+    try std.testing.expectEqual(fixture.created - 1, fixture.destroyed);
+    try std.testing.expect(destroy_surface(&state, 7, surface_id));
+}
+
+test "replacement retirement covers namespace exhaustion resize and surface loss" {
+    defer test_native = .{};
+    for (0..5) |mode| {
+        test_native = .{};
+        var state: state_t = .{};
+        var fixture: fixture_t = .{};
+        const backend = test_backend(&fixture);
+        var surface_id: u64 = 0;
+        var chain_id: u64 = 0;
+        try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+        var info = test_info(surface_id);
+        try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+        if (mode == 0) {
+            var extra: u64 = 0;
+            for (1..MaxSwapchains) |_| try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &extra));
+        }
+        if (mode == 1) state.next_id = std.math.maxInt(u64);
+        if (mode == 2) test_native.width = 96;
+        if (mode == 3) test_native.height = 96;
+        if (mode == 4) test_native.alive = false;
+        info.oldSwapchain = @ptrFromInt(chain_id);
+        var output: u64 = 999;
+        const expected = if (mode == 0) c.VK_ERROR_OUT_OF_HOST_MEMORY else if (mode == 1) c.VK_ERROR_TOO_MANY_OBJECTS else if (mode == 4) c.VK_ERROR_SURFACE_LOST_KHR else c.VK_ERROR_OUT_OF_DATE_KHR;
+        try std.testing.expectEqual(expected, create_swapchain(&state, &backend, 9, &info, &output));
+        try std.testing.expectEqual(@as(u64, 999), output);
+        try std.testing.expect(swapchain(&state, 9, chain_id).?.retired);
+        destroy_device(&state, &backend, 9);
+        try std.testing.expectEqual(fixture.created, fixture.destroyed);
+    }
+}
+
+
+test "Win32 capabilities expose exact extents and normalize every zero-area rectangle" {
+    defer test_native = .{};
+    var state: state_t = .{};
+    var id: u64 = 0;
+    try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &id));
+    for ([_][2]u32{ .{ 64, 96 }, .{ 0, 96 }, .{ 64, 0 }, .{ 0, 0 } }) |extent| {
+        test_native.width = extent[0];
+        test_native.height = extent[1];
+        var caps: c.VkSurfaceCapabilitiesKHR = undefined;
+        try std.testing.expectEqual(c.VK_SUCCESS, capabilities(&state, id, &caps));
+        const expected = if (extent[0] == 0 or extent[1] == 0) [_]u32{ 0, 0 } else extent;
+        try std.testing.expectEqual(expected[0], caps.currentExtent.width);
+        try std.testing.expectEqual(expected[1], caps.currentExtent.height);
+        try std.testing.expectEqual(caps.currentExtent, caps.minImageExtent);
+        try std.testing.expectEqual(caps.currentExtent, caps.maxImageExtent);
+    }
+}
+
+
+test "readback failure cannot promise unchanged queue state but local pixel OOM can" {
+    for ([_]c_int{ c.VK_ERROR_OUT_OF_HOST_MEMORY, c.VK_ERROR_OUT_OF_DEVICE_MEMORY, c.VK_ERROR_MEMORY_MAP_FAILED, c.VK_ERROR_INITIALIZATION_FAILED }) |failure_result| {
+        var state: state_t = .{};
+        var fixture = fixture_t{ .read_result = failure_result };
+        const backend = test_backend(&fixture);
+        var surface_id: u64 = 0;
+        var chain_id: u64 = 0;
+        try std.testing.expectEqual(c.VK_SUCCESS, create_surface(&state, 7, 1, &surface_id));
+        const info = test_info(surface_id);
+        try std.testing.expectEqual(c.VK_SUCCESS, create_swapchain(&state, &backend, 9, &info, &chain_id));
+        var index: u32 = 77;
+        try std.testing.expectEqual(c.VK_SUCCESS, acquire_next(&state, &backend, 9, chain_id, 0, 1, 0, &index));
+        try std.testing.expectEqual(c.VK_ERROR_OUT_OF_HOST_MEMORY, present(&state, &backend, std.testing.failing_allocator, 9, chain_id, index, &.{}));
+        try std.testing.expectEqual(@as(u32, 0), fixture.readbacks);
+        try std.testing.expect(swapchain(&state, 9, chain_id).?.images[index].acquired);
+        try std.testing.expectEqual(c.VK_ERROR_DEVICE_LOST, present(&state, &backend, std.testing.allocator, 9, chain_id, index, &.{}));
+        try std.testing.expectEqual(@as(u32, 1), fixture.readbacks);
+        try std.testing.expect(swapchain(&state, 9, chain_id).?.images[index].acquired);
+        destroy_device(&state, &backend, 9);
+        try std.testing.expectEqual(fixture.created, fixture.destroyed);
+    }
 }
