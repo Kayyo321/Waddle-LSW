@@ -19,7 +19,8 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $(AvDriverFlags) $^ $(LDFLAGS) -pthread -o $@
 
 .PHONY: av-test av-sanitizers av-windows
-av-test: build/av_input_test build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test build/av_deploy_test build/av_gpu_test
+av-test: build/av_input_transport_test build/av_input_test build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test build/av_deploy_test build/av_gpu_test
+	./build/av_input_transport_test
 	./build/av_input_test
 	./build/av_gpu_test
 	python3 tests/av/package.py
@@ -146,3 +147,13 @@ build/av_gpu_test: tests/av/gpu.c src/av/av_gpu.c build/av_codec.o | build
 # Hardware-independent bounded input state machine.
 build/av_input_test: tests/av/input.c src/av/av_input.c build/av_codec.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -o $@
+
+build/av_input_transport_test: tests/av/input_transport.c src/av/av_input.c src/av/av_peer.c build/av_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -o $@
+
+.PHONY: av-input-test
+av-input-test: build/av_input_test build/av_input_transport_test build/av_wayland_state_test
+	./build/av_input_test
+	./build/av_input_transport_test
+	./build/av_wayland_state_test
+	$(ZIG) test src/av/av_codec.zig -Iinclude

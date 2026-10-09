@@ -1,10 +1,12 @@
 #include "av_wayland.h"
 #include "av_dmabuf.h"
+#include "av_input.h"
 #include "linux_dmabuf_client.h"
 #include "xdg_shell_client.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <poll.h>
@@ -30,6 +32,8 @@ typedef struct video_window_t {
     struct wl_shm_pool *pool;
     video_buffer_t buffers[3];
     size_t capacity;
+    uint64_t incarnation;
+    uint32_t input_width, input_height;
     int configured, retired;
     int device_fd, dmabuf_failed;
 } video_window_t;
@@ -45,6 +49,14 @@ struct av_wayland_t {
     video_window_t windows[AvMaxWindows];
     av_host_request_t request;
     void *request_context;
+    struct wl_seat *seat;
+    struct wl_keyboard *keyboard;
+    struct wl_pointer *pointer;
+    video_window_t *keyboard_window, *pointer_window;
+    uint32_t seat_global, input_serial;
+    uint8_t suppressed_keys[AvInputKeys];
+    wl_fixed_t pointer_x, pointer_y;
+    int keymap_ready, shutting_down;
     int delivery_failed;
     int writable;
     uint64_t watch_window;
@@ -55,6 +67,187 @@ struct av_wayland_t {
     void *watch_context;
     struct wl_callback *watch_sync;
 };
+static video_window_t *input_surface(av_wayland_t *client, struct wl_surface *surface) {
+    if (!surface || client->shutting_down) return NULL;
+    for (unsigned i = 0; i < AvMaxWindows; ++i) {
+        video_window_t *window = &client->windows[i];
+        if (window->surface == surface && !window->retired && window->incarnation)
+            return window;
+    }
+    return NULL;
+}
+static void send_input(av_wayland_t *client, video_window_t *window, uint32_t type,
+                        uint32_t flags, uint32_t code, int32_t x, int32_t y) {
+    if (!window || !window->incarnation || window->retired || client->delivery_failed ||
+        client->shutting_down) return;
+    if (client->input_serial == UINT32_MAX) { client->delivery_failed = 1; return; }
+    av_message_t event = {.type = type, .window_id = window->geometry.window_id,
+        .sequence = window->incarnation, .buffer_index = ++client->input_serial,
+        .flags = flags, .width = code, .x = x, .y = y};
+    if (client->request(&event, client->request_context) != 0) client->delivery_failed = 1;
+}
+static void clear_keyboard_focus(av_wayland_t *client) {
+    send_input(client, client->keyboard_window, MsgInputFocus, 0, 0, 0, 0);
+    client->keyboard_window = NULL;
+    memset(client->suppressed_keys, 0, sizeof(client->suppressed_keys));
+}
+static int input_coordinates_valid(av_wayland_t *client) {
+    video_window_t *window = client->pointer_window;
+    if (!window || window != client->keyboard_window || client->pointer_x < 0 || client->pointer_y < 0)
+        return 0;
+    int32_t x = wl_fixed_to_int(client->pointer_x), y = wl_fixed_to_int(client->pointer_y);
+    return (uint32_t)x < window->input_width && (uint32_t)y < window->input_height;
+}
+static void forward_pointer(av_wayland_t *client) {
+    if (input_coordinates_valid(client))
+        send_input(client, client->pointer_window, MsgInputPointer, 0, 0,
+                   wl_fixed_to_int(client->pointer_x), wl_fixed_to_int(client->pointer_y));
+}
+static void keyboard_keymap(void *context, struct wl_keyboard *keyboard, uint32_t format,
+                            int32_t fd, uint32_t size) {
+    (void)keyboard; (void)size;
+    av_wayland_t *client = context;
+    if (fd >= 0) close(fd);
+    // Physical scan-code mode deliberately leaves text interpretation to guest.
+    if (format != WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) clear_keyboard_focus(client);
+    client->keymap_ready = format == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1;
+}
+static void keyboard_enter(void *context, struct wl_keyboard *keyboard, uint32_t serial,
+                           struct wl_surface *surface, struct wl_array *keys) {
+    (void)keyboard; (void)serial;
+    av_wayland_t *client = context;
+    clear_keyboard_focus(client);
+    video_window_t *window = input_surface(client, surface);
+    if (!window || !client->keymap_ready) return;
+    if (!keys || keys->size % sizeof(uint32_t) || keys->size > AvInputKeys * sizeof(uint32_t) ||
+        (keys->size && !keys->data)) { client->delivery_failed = 1; return; }
+    for (size_t offset = 0; offset < keys->size; offset += sizeof(uint32_t)) {
+        uint32_t key;
+        memcpy(&key, (const uint8_t *)keys->data + offset, sizeof(key));
+        if (key < AvInputKeys) client->suppressed_keys[key] = 1;
+    }
+    client->keyboard_window = window;
+    send_input(client, window, MsgInputFocus, 1, 0, 0, 0);
+    forward_pointer(client);
+}
+static void keyboard_leave(void *context, struct wl_keyboard *keyboard, uint32_t serial,
+                           struct wl_surface *surface) {
+    (void)keyboard; (void)serial;
+    av_wayland_t *client = context;
+    if (client->keyboard_window && client->keyboard_window->surface == surface)
+        clear_keyboard_focus(client);
+}
+static void keyboard_key(void *context, struct wl_keyboard *keyboard, uint32_t serial,
+                         uint32_t time, uint32_t key, uint32_t state) {
+    (void)keyboard; (void)serial; (void)time;
+    av_wayland_t *client = context;
+    if (!client->keyboard_window || key >= AvInputKeys || !av_input_scan_code(key) ||
+        state > WL_KEYBOARD_KEY_STATE_PRESSED) return;
+    if (client->suppressed_keys[key]) {
+        if (state == WL_KEYBOARD_KEY_STATE_RELEASED) client->suppressed_keys[key] = 0;
+        return;
+    }
+    send_input(client, client->keyboard_window, MsgInputKey, state, key, 0, 0);
+}
+static void keyboard_modifiers(void *context, struct wl_keyboard *keyboard, uint32_t serial,
+                               uint32_t depressed, uint32_t latched, uint32_t locked, uint32_t group) {
+    (void)context; (void)keyboard; (void)serial; (void)depressed;
+    (void)latched; (void)locked; (void)group;
+    // Modifier physical key events are forwarded; XKB state/text is not translated.
+}
+static void keyboard_repeat(void *context, struct wl_keyboard *keyboard, int32_t rate, int32_t delay) {
+    (void)context; (void)keyboard; (void)rate; (void)delay;
+}
+static const struct wl_keyboard_listener KeyboardEvents = {.keymap = keyboard_keymap,
+    .enter = keyboard_enter, .leave = keyboard_leave, .key = keyboard_key,
+    .modifiers = keyboard_modifiers, .repeat_info = keyboard_repeat};
+static void pointer_enter(void *context, struct wl_pointer *pointer, uint32_t serial,
+                          struct wl_surface *surface, wl_fixed_t x, wl_fixed_t y) {
+    (void)pointer; (void)serial;
+    av_wayland_t *client = context;
+    client->pointer_window = input_surface(client, surface);
+    client->pointer_x = x; client->pointer_y = y;
+    forward_pointer(client);
+}
+static void pointer_leave(void *context, struct wl_pointer *pointer, uint32_t serial,
+                          struct wl_surface *surface) {
+    (void)pointer; (void)serial;
+    av_wayland_t *client = context;
+    if (client->pointer_window && client->pointer_window->surface == surface) {
+        if (client->pointer_window == client->keyboard_window)
+            send_input(client, client->keyboard_window, MsgInputRelease, AvInputReleaseButtons, 0, 0, 0);
+        client->pointer_window = NULL;
+    }
+}
+static void pointer_motion(void *context, struct wl_pointer *pointer, uint32_t time,
+                           wl_fixed_t x, wl_fixed_t y) {
+    (void)pointer; (void)time;
+    av_wayland_t *client = context;
+    client->pointer_x = x; client->pointer_y = y;
+    forward_pointer(client);
+}
+static void pointer_button(void *context, struct wl_pointer *pointer, uint32_t serial,
+                           uint32_t time, uint32_t button, uint32_t state) {
+    (void)pointer; (void)serial; (void)time;
+    av_wayland_t *client = context;
+    if (!client->pointer_window || client->pointer_window != client->keyboard_window ||
+        state > WL_POINTER_BUTTON_STATE_PRESSED ||
+        (state == WL_POINTER_BUTTON_STATE_PRESSED && !input_coordinates_valid(client))) return;
+    // Linux input-event-codes BTN_LEFT/RIGHT/MIDDLE, no extra buttons guessed.
+    uint32_t code = button >= 0x110 && button <= 0x112 ? button - 0x110 + 1 : 0;
+    if (code) send_input(client, client->keyboard_window, MsgInputButton, state, code, 0, 0);
+}
+static void pointer_axis(void *context, struct wl_pointer *pointer, uint32_t time,
+                         uint32_t axis, wl_fixed_t value) {
+    (void)pointer; (void)time;
+    av_wayland_t *client = context;
+    if (!input_coordinates_valid(client)) return;
+    // Baseline continuous scrolling: ten surface units correspond to 120 wheel units.
+    int64_t units = (int64_t)value * 12 / 256;
+    if (!units || units < -1200 || units > 1200) return;
+    if (axis == WL_POINTER_AXIS_VERTICAL_SCROLL)
+        send_input(client, client->keyboard_window, MsgInputWheel, 0, 0, 0, -(int32_t)units);
+    else if (axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL)
+        send_input(client, client->keyboard_window, MsgInputWheel, 0, 0, (int32_t)units, 0);
+}
+static void pointer_frame(void *context, struct wl_pointer *pointer) { (void)context; (void)pointer; }
+static void pointer_source(void *context, struct wl_pointer *pointer, uint32_t source) {
+    (void)context; (void)pointer; (void)source;
+}
+static void pointer_stop(void *context, struct wl_pointer *pointer, uint32_t time, uint32_t axis) {
+    (void)context; (void)pointer; (void)time; (void)axis;
+}
+static void pointer_discrete(void *context, struct wl_pointer *pointer, uint32_t axis, int32_t discrete) {
+    (void)context; (void)pointer; (void)axis; (void)discrete;
+}
+static const struct wl_pointer_listener PointerEvents = {.enter = pointer_enter, .leave = pointer_leave,
+    .motion = pointer_motion, .button = pointer_button, .axis = pointer_axis, .frame = pointer_frame,
+    .axis_source = pointer_source, .axis_stop = pointer_stop, .axis_discrete = pointer_discrete};
+static void seat_capabilities(void *context, struct wl_seat *seat, uint32_t capabilities) {
+    av_wayland_t *client = context;
+    if ((capabilities & WL_SEAT_CAPABILITY_KEYBOARD) && !client->keyboard && !client->shutting_down) {
+        client->keyboard = wl_seat_get_keyboard(seat);
+        if (!client->keyboard || wl_keyboard_add_listener(client->keyboard, &KeyboardEvents, client) != 0)
+            client->delivery_failed = 1;
+    } else if (!(capabilities & WL_SEAT_CAPABILITY_KEYBOARD) && client->keyboard) {
+        clear_keyboard_focus(client);
+        wl_keyboard_release(client->keyboard); client->keyboard = NULL; client->keymap_ready = 0;
+    }
+    if ((capabilities & WL_SEAT_CAPABILITY_POINTER) && !client->pointer && !client->shutting_down) {
+        client->pointer = wl_seat_get_pointer(seat);
+        if (!client->pointer || wl_pointer_add_listener(client->pointer, &PointerEvents, client) != 0)
+            client->delivery_failed = 1;
+    } else if (!(capabilities & WL_SEAT_CAPABILITY_POINTER) && client->pointer) {
+        send_input(client, client->keyboard_window, MsgInputRelease, AvInputReleaseButtons, 0, 0, 0);
+        client->pointer_window = NULL;
+        wl_pointer_release(client->pointer); client->pointer = NULL;
+    }
+}
+static void seat_name(void *context, struct wl_seat *seat, const char *name) {
+    (void)context; (void)seat; (void)name;
+}
+static const struct wl_seat_listener SeatEvents = {.capabilities = seat_capabilities, .name = seat_name};
+
 static void buffer_release(void *context, struct wl_buffer *buffer) {
     (void)buffer;
     video_buffer_t *video = context;
@@ -88,6 +281,8 @@ int av_wayland_watch(av_wayland_t *client, uint64_t window_id, uint32_t token,
 static void attach_buffer(video_buffer_t *video) {
     video_window_t *window = video->window;
     video->busy = 1;
+    window->input_width = video->width;
+    window->input_height = video->height;
     wl_surface_attach(window->surface, video->buffer, 0, 0);
     wl_surface_damage_buffer(window->surface, 0, 0, (int32_t)video->width, (int32_t)video->height);
     xdg_surface_set_window_geometry(window->xdg_surface, 0, 0,
@@ -204,7 +399,12 @@ static const struct zwp_linux_dmabuf_v1_listener DmabufEvents = {.format = dmabu
 static void registry_global(void *context, struct wl_registry *registry, uint32_t name,
                             const char *interface_name, uint32_t version) {
     av_wayland_t *client = context;
-    if (!strcmp(interface_name, "wl_compositor") && version >= 4 && !client->compositor)
+    if (!strcmp(interface_name, "wl_seat") && version >= 5 && !client->seat && !client->shutting_down) {
+        client->seat = wl_registry_bind(registry, name, &wl_seat_interface, 5);
+        client->seat_global = name;
+        if (!client->seat || wl_seat_add_listener(client->seat, &SeatEvents, client) != 0)
+            client->delivery_failed = 1;
+    } else if (!strcmp(interface_name, "wl_compositor") && version >= 4 && !client->compositor)
         client->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 4);
     else if (!strcmp(interface_name, "wl_shm") && !client->shm)
         client->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
@@ -219,9 +419,13 @@ static void registry_global(void *context, struct wl_registry *registry, uint32_
     }
 }
 static void registry_remove(void *context, struct wl_registry *registry, uint32_t name) {
-    (void)context;
+    av_wayland_t *client = context;
     (void)registry;
-    (void)name;
+    if (client->seat && name == client->seat_global) {
+        clear_keyboard_focus(client);
+        seat_capabilities(client, client->seat, 0);
+        wl_seat_release(client->seat); client->seat = NULL; client->seat_global = 0;
+    }
 }
 static const struct wl_registry_listener RegistryEvents = {.global = registry_global,
                                                            .global_remove = registry_remove};
@@ -229,6 +433,15 @@ static int busy(video_window_t *window) {
     return window->buffers[0].busy || window->buffers[1].busy || window->buffers[2].busy;
 }
 static void retire_window(video_window_t *window) {
+    // Guest removal already releases this incarnation. Do not enqueue stale
+    // focus-clear requests while retiring or draining disconnected surfaces.
+    if (window->client) {
+        if (window->client->keyboard_window == window) {
+            window->client->keyboard_window = NULL;
+            memset(window->client->suppressed_keys, 0, sizeof(window->client->suppressed_keys));
+        }
+        if (window->client->pointer_window == window) window->client->pointer_window = NULL;
+    }
     if (window->toplevel) {
         xdg_toplevel_destroy(window->toplevel);
         window->toplevel = NULL;
@@ -271,6 +484,11 @@ void av_wayland_free(av_wayland_t **client_pointer) {
         client->watch_sync = NULL;
     }
     client->watch_window = 0;
+    client->shutting_down = 1;
+    client->keyboard_window = NULL;
+    client->pointer_window = NULL;
+    seat_capabilities(client, client->seat, 0);
+    if (client->seat) { wl_seat_release(client->seat); client->seat = NULL; }
     drain_buffers(client);
     for (unsigned i = 0; i < AvMaxWindows; ++i)
         free_window(&client->windows[i]);
@@ -308,7 +526,7 @@ int av_wayland_init(av_wayland_t **client_pointer, av_host_request_t request, vo
         wl_display_roundtrip(client->display) < 0 || !client->compositor || !client->shm ||
         !client->shell)
         goto fail;
-    if (wl_display_roundtrip(client->display) < 0)
+    if (wl_display_roundtrip(client->display) < 0 || client->delivery_failed)
         goto fail;
     return 0;
 fail:
@@ -340,6 +558,9 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
         return -1;
     window->client = client;
     window->geometry = *message;
+    window->incarnation = message->sequence;
+    if (!window->incarnation)
+        fputs("AV host: legacy zero-incarnation window is view-only; matching guest required for input\n", stderr);
     window->capacity = capacity;
     window->device_fd = fd;
     window->pool = wl_shm_create_pool(client->shm, fd, (int32_t)mapping_size);

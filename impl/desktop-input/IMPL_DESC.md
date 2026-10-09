@@ -9,9 +9,15 @@ and physical PC keyboard presses/releases. Guest keyboard layout interprets the
 scan codes. This does not implement host XKB text/layout translation, IME,
 compositor key repeat, cursor imagery, relative pointer, tablet, clipboard,
 process-family/modal-window admission, or physical acceptance. These remain
-roadmap B gates. Host and guest must be built from this protocol revision.
+roadmap B gates. Input requires host and guest from this protocol revision. A legacy Create with
+zero incarnation is accepted explicitly as view-only and logs a host diagnostic;
+this is backward display compatibility, not negotiated input support.
 
-No driver or privilege escalation is introduced. Windows foreground restrictions
+The tracker sets and retains PER_MONITOR_AWARE_V2 on its owner thread, failing
+start if Windows refuses, and restores the previous thread DPI context at stop.
+This keeps DWM capture bounds, cursor/hit-test APIs and virtual-screen metrics in
+physical coordinates. Mixed-DPI and negative-origin monitor behavior still needs
+native qualification. No driver or privilege escalation is introduced. Windows foreground restrictions
 and UIPI apply. Activation/injection failures fail the AV session and trigger
 release cleanup. `SendInput` is desktop-global: foreground and process checks
 immediately precede injection but are not an atomic OS security boundary against
@@ -42,7 +48,10 @@ The 328-byte AV envelope and legacy message layouts are unchanged. New IDs are
 window incarnation from its Create.sequence; `buffer_index` (44, u32) is a
 strictly increasing nonzero input serial across the connection. Wrapping fails
 closed. Create.sequence increases per guest tracker admission, even for a reused
-HWND. The host retains this incarnation separately from video frame sequences.
+HWND after observed retirement/readmission. Until the native WinEvent retirement
+callback runs, an HWND recycled within the same process is not distinguished by
+this user-mode registry; delayed-callback native HWND reuse remains unqualified.
+The host retains this incarnation separately from video frame sequences.
 Every input message has zero height, DPI, process ID, damage fields and title.
 
 - Focus: flags 1 activates, 0 releases/clears; x/y/width are zero.
@@ -89,7 +98,10 @@ releases and reports failures rather than claiming balanced input.
 ## 5. Concurrency and failure
 
 All input paths are synchronous on one owner thread per peer. The fixed peer
-queue bounds memory. No event pointer is retained. Serial overflow, malformed
+queue bounds memory. Native foreground loss releases held state and terminates the connection rather
+than leaving an apparently focused but unresponsive surface. New pointer downs
+and wheel events outside surface bounds are suppressed, while releases are sent.
+No event pointer is retained. Serial overflow, malformed
 input, queue exhaustion and OS errors terminate the session. A failed release
 retains its held bit for cleanup retry; other releases are still attempted.
 Disconnect does not depend on successfully transmitting a final host release.
@@ -108,3 +120,13 @@ under ASan/LSan/UBSan and record coverage honestly. Build the Windows target as
 cross-compilation evidence only. Actual Windows foreground/UIPI behavior,
 compositor lifecycle, layouts, resize/scale and saved text workflows require an
 authorized physical run and are not established by these tests.
+
+### Native input fixture (not run in cloud)
+
+`build/av_windows_test.exe --input` uses the fixture's own ordinary HWND and checks
+real key press/release, center pointer/button/wheel delivery, and release on
+foreground loss to a filtered tool window. It fails if foreground activation or
+injection is unavailable; no privilege or input workaround is attempted. The
+ordinary fixture also verifies stale incarnation and untracked HWND no-op behavior.
+This does not model delayed WinEvent callbacks with same-process HWND recycling,
+which remains an explicit native identity qualification gap.

@@ -97,6 +97,8 @@ static int host_request(const av_message_t *message, void *context) {
         return PostMessageW(window, AvDiagnosticFlashEvent, (WPARAM)message->sequence,
                             (LPARAM)message->flags) ? 0 : -1;
     }
+    if (message->type >= MsgInputFocus && message->type <= MsgInputRelease)
+        return av_windows_input(message);
     if (message->type != MsgWindowGeometry && message->type != MsgWindowClose)
         return -1;
     return av_windows_apply(message);
@@ -258,7 +260,10 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, 
     if (priority)
         AvRevertMmThreadCharacteristics(priority);
 cleanup:
-    av_windows_stop();
+    if (av_windows_stop() != 0) {
+        fputs("AV guest: held input release failed; guest desktop cleanup required\n", stderr);
+        result = -1;
+    }
     if (session.capture_tick) {
         CancelWaitableTimer(session.capture_tick);
         CloseHandle(session.capture_tick);

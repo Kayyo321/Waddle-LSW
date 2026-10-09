@@ -6,18 +6,20 @@
 /** @brief Opaque caller-owned host video client, created/freed on one event thread. */
 typedef struct av_wayland_t av_wayland_t;
 /** @brief Borrowed synchronous host request callback, no ownership transfer.
- * @param[in] request Nonnull transient validated geometry/close request.
+ * @param[in] request Nonnull transient validated geometry/close or physical-mode input request.
  * @param[in,out] context Optional retained caller context.
  * @return 0 on queued request, -1 on delivery failure.
  * @note Wayland event thread; may not retain request or destroy client recursively.
  */
 typedef int (*av_host_request_t)(const av_message_t *request, void *context);
-/** @brief Connect to default Wayland display and bind compositor/shm/xdg-shell.
+/** @brief Connect to default Wayland display and bind compositor/shm/xdg-shell and optional version-5 seat.
  * @param[out] client Nonnull result; set NULL on failure; owned until free.
  * @param[in] request Nonnull borrowed callback retained until free.
  * @param[in,out] context Optional caller-owned callback context.
  * @return 0 on success, -1 on connection/global/allocation failure.
- * @note Event thread only, all allocation owned by av_wayland_free.
+ * @note Event thread only, all allocation owned by av_wayland_free. Missing seat
+ * or legacy zero-incarnation Create leaves video view-only. Keyboard is physical
+ * PC scan forwarding interpreted with the guest layout; no XKB text/IME/repeat.
  */
 int av_wayland_init(av_wayland_t **client, av_host_request_t request, void *context);
 /** @brief Create a captured-window toplevel backed by three shared pixel regions.

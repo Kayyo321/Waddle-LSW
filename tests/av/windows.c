@@ -9,7 +9,9 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-static uint64_t target_id;
+static uint64_t target_id, target_incarnation;
+static av_message_t target_geometry;
+static unsigned input_downs, input_ups, input_clicks, input_wheels;
 static unsigned creates, geometries, destroys;
 static int defer_creation = 1;
 static unsigned captured_frames;
@@ -27,6 +29,12 @@ static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wp
         InvalidateRect(window, NULL, FALSE);
         UpdateWindow(window);
         return 0;
+    }
+    if ((uint64_t)(uintptr_t)window == target_id) {
+        if (message == WM_KEYDOWN && wparam == 'A') ++input_downs;
+        if (message == WM_KEYUP && wparam == 'A') ++input_ups;
+        if (message == WM_LBUTTONDOWN) ++input_clicks;
+        if (message == WM_MOUSEWHEEL) ++input_wheels;
     }
     if (message == WM_PAINT && (uint64_t)(uintptr_t)window == target_id) {
         PAINTSTRUCT paint;
@@ -162,8 +170,11 @@ static int notification(const av_message_t *message, void *context) {
     if (message->type == MsgWindowCreate) {
         if (defer_creation) { defer_creation = 0; return 1; }
         ++creates;
+        target_incarnation = message->sequence;
+        assert(target_incarnation);
+        target_geometry = *message;
     }
-    else if (message->type == MsgWindowGeometry) ++geometries;
+    else if (message->type == MsgWindowGeometry) { ++geometries; target_geometry = *message; }
     else if (message->type == MsgWindowDestroy) ++destroys;
     else assert(0);
     return 0;
@@ -177,6 +188,34 @@ static void pump(void) {
         }
         Sleep(1);
     } while (GetTickCount64() < deadline);
+}
+static void native_input_test(HWND target, HWND tool) {
+    // Explicit opt-in gate: requires an interactive, isolated Windows desktop.
+    assert(SetForegroundWindow(target) || GetForegroundWindow() == target);
+    assert(SetFocus(target) || GetFocus() == target);
+    av_message_t input = {.type = MsgInputFocus, .window_id = target_id,
+        .sequence = target_incarnation, .buffer_index = 10, .flags = 1};
+    assert(av_windows_input(&input) == 0);
+    input.type = MsgInputKey; input.width = 30; ++input.buffer_index;
+    assert(av_windows_input(&input) == 0);
+    input.flags = 0; ++input.buffer_index;
+    assert(av_windows_input(&input) == 0); pump();
+    assert(input_downs == 1 && input_ups == 1);
+    input.type = MsgInputPointer; input.width = 0;
+    input.x = (int32_t)target_geometry.width / 2; input.y = (int32_t)target_geometry.height / 2;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    input.type = MsgInputButton; input.x = 0; input.y = 0; input.width = 1; input.flags = 1;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0);
+    input.flags = 0; ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    input.type = MsgInputWheel; input.width = 0; input.y = 120;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    assert(input_clicks == 1 && input_wheels == 1);
+    input.type = MsgInputKey; input.y = 0; input.width = 42; input.flags = 1;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    assert(SetForegroundWindow(tool) || GetForegroundWindow() == tool);
+    assert(av_windows_refresh() == -1); pump();
+    assert(!(GetAsyncKeyState(VK_LSHIFT) & 0x8000));
+    puts("Native AV input: real key/pointer/button/wheel delivery and foreground-loss release passed");
 }
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--probe-display")) return av_guest_display_probe();
@@ -214,11 +253,23 @@ int main(int argc, char **argv) {
         CoUninitialize();
         return 0;
     }
+    assert(av_windows_input(NULL) == -1);
     assert(av_windows_start(0, notification, NULL) == -1);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
     assert(creates == 0);
     assert(av_windows_refresh() == 0);
     assert(creates == 1);
+    assert(av_windows_input(NULL) == -1);
+    av_message_t untracked_input = {.type = MsgInputFocus, .window_id = (uint64_t)(uintptr_t)tool,
+        .sequence = target_incarnation, .buffer_index = 1, .flags = 1};
+    HWND foreground_before = GetForegroundWindow();
+    assert(av_windows_input(&untracked_input) == 0); /* retired/untracked identity no-op */
+    assert(GetForegroundWindow() == foreground_before);
+    untracked_input.window_id = target_id; untracked_input.sequence = target_incarnation + 100;
+    ++untracked_input.buffer_index;
+    assert(av_windows_input(&untracked_input) == 0); /* stale incarnation never activates */
+    assert(GetForegroundWindow() == foreground_before);
+    if (argc == 2 && !strcmp(argv[1], "--input")) native_input_test(target, tool);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == -1);
     av_message_t resize = {.type = MsgWindowGeometry, .window_id = target_id,
                            .width = 500, .height = 350, .dpi = 96};
