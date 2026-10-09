@@ -1,0 +1,1 @@
+RWStructuredBuffer<uint> data : register(u0); [numthreads(8,1,1)] void main(uint3 id : SV_DispatchThreadID) { data[id.x]=id.x*3+7; }
