@@ -1,7 +1,7 @@
 name: Native AV verification
 on:
   push:
-    branches: [feature/high-perf-av-passthrough]
+    branches: [feature/high-perf-av-passthrough, feature/software-vgpu-slicing]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -84,16 +84,20 @@ jobs:
           zig build-lib src/av/av_layout.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_layout_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $flags = @('-target','x86_64-windows-gnu','-U_WIN32_WINNT','-D_WIN32_WINNT=0x0A00','-DNTDDI_VERSION=0x0A000006','-std=c11','-Wall','-Wextra','-Wpedantic','-Werror','-Iinclude','-Isrc/av','-Isubmodules/looking_glass/vendor/ivshmem')
-          $sources = @('src/av/av_deploy.c','src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
+          $sources = @('src/av/av_deploy.c','src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_input.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
           $libraries = @('build/av_audio_windows.lib','build/av_codec_windows.lib','build/av_layout_windows.lib','-luser32','-ldwmapi','-ld3d11','-ldxgi','-lmmdevapi','-lavrt','-lole32','-luuid','-lsetupapi')
           zig cc @flags tests/av/windows.c @sources @libraries -lgdi32 -lwinmm -o build/av_windows_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc @flags src/av/av_guest.c src/av/av_peer.c @sources @libraries -lws2_32 -o build/waddle-guest-av.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc @flags tests/av/input.c src/av/av_input.c build/av_codec_windows.lib -o build/av_input_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run native window lifecycle and allocator tests
         shell: pwsh
         run: |
           ./build/av_windows_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/av_input_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/av/av_audio.zig
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
