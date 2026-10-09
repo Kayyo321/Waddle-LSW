@@ -52,3 +52,24 @@ with tree `62d9d5d71d14ea6d9f8a37ddcf5ba2e0019bfc88`.
 
 Each intermediate tree was also checked against its local counterpart before the
 non-force branch update. Native and hardware limits above remain open.
+
+## Windows test portability and review-index publication
+
+Verified backup `e9b0663a961dfeaadc43dfa3ab7ce90900aed856` has the same tree
+`ccf6ee0cc4c889a3d0381f35db7e89afb69c0a78` as local `f13634a728ba9ba7fb727f1558c423673d5ea43a`.
+Every intermediate tree was also checked before the non-force update.
+
+| Original source checkpoint | Published commit |
+| --- | --- |
+| `99e1701cb40e16af93285eb4512e0d79a4194fcb` | `4e07ac8edae6187da8fc8aeaa497df29e4a4f9c5` |
+| `80762d227371aa1ce2b140c647d536a6a53469da` | `622e79e78891a639b6475a2e02d30b0e0d129583` |
+| `b36d7d26f3026d0a45018a432c0b8a9442448196` | `b7c591274e6b896bbc0dffc1ce56056911c85a7d` |
+| `cb0844a238570b3aa136a9c9ce7e72be52aaaf85` | `37970ae95d630c447c2fb108b1cef97535b9a059` |
+| `f13634a728ba9ba7fb727f1558c423673d5ea43a` | `e9b0663a961dfeaadc43dfa3ab7ce90900aed856` |
+
+The test-only Windows environment correction passed 393 Debug and ReleaseSafe
+units, both Windows full-unit cross-links and unchanged whole-ICD coverage
+(90.32% branches, 98.53% lines). Native execution of that correction is tracked
+separately. See the [current review index](REVIEW_CHECKLIST.md),
+[environment receipt](windows-icd-test-environment/TRACKER.md) and
+[scoped AV leak-enabled CI receipt](desktop-input/EVIDENCE.md).

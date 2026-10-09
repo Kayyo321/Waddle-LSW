@@ -8,7 +8,7 @@ commands. A checked box requires an exact tested commit, binary hashes and logs 
 [one result receipt](HARDWARE_TEST_RESULT_TEMPLATE.md). Never inherit a pass after
 relevant source, toolchain, driver or VM changes.
 
-Latest verified backup: [`1de3fdd`](https://github.com/Kayyo321/Waddle-LSW/commit/1de3fddf13067238ca4e428c223338ca79e37287).
+Latest verified backup: [`e9b0663`](https://github.com/Kayyo321/Waddle-LSW/commit/e9b0663a961dfeaadc43dfa3ab7ce90900aed856).
 No hardware/Adobe completion is claimed. Review in this order:
 
 - [ ] **P0 · Source and native CI.** Fresh checkout; capture source/toolchain/binary
@@ -16,13 +16,18 @@ No hardware/Adobe completion is claimed. Review in this order:
   Debug/ReleaseSafe runs passed. Whole-ICD coverage passed 90.32% branches after
   six regression additions. Windows AV/guest and leak-enabled AV Linux CI passed
   at `1de3fdd`. The Windows ICD environment-helper fix passes cross-links; native
-  execution of the fix is pending. vGPU sanitizer inventory also needs repair.
+  execution of the fix is pending. Bounded device-wire/native sanitizer inventory
+  repair is locally reviewed; its leak-enabled CI execution is pending.
   Latest-SHA CI is pending. Local LSan remains ptrace-blocked; scoped AV leak
-  acceptance is supplied by CI, while vGPU leak acceptance remains open.
+  acceptance is supplied by CI, while vGPU leak acceptance remains open. The
+  broader 32-module ICD-owned/full-seam instrumentation migration is a separate
+  unresolved gate, not covered by the bounded device repair.
   [Build/log commands](HARDWARE_TEST_HANDOFF.md#4-rebuild-and-rerun-hardware-independent-gates-first)
   · [coverage source](https://github.com/Kayyo321/Waddle-LSW/commit/2d97603e3275d0c329ae81f3fe56413b641bd3d4)
   · [coverage receipt](wsi-window-lifetime/TRACKER.md)
-  · [Windows helper receipt](windows-icd-test-environment/TRACKER.md).
+  · [Windows helper source](https://github.com/Kayyo321/Waddle-LSW/commit/37970ae95d630c447c2fb108b1cef97535b9a059)
+  · [Windows helper receipt](windows-icd-test-environment/TRACKER.md)
+  · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md).
 - [ ] **P1 · Physical input and cleanup.** Native `--input` fixture, then ordinary
   app as a Wayland window: keyboard/mouse/wheel, focus transfer, held keys/buttons,
   disconnect, foreground denial, scaling and repeated recovery. Watch stuck input
