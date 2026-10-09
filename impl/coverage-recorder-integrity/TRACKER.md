@@ -81,14 +81,29 @@
   suppression paths, disabled leak scanning and recovery/zero-exit options cannot
   weaken the probes. Ordinary test behavior and recorder/measurement code remain
   unchanged. This corrects recoverable UBSan's possible zero-exit false pass.
-- The suite now has8 tests: normal mode executes the original7 and skips the
-  sanitizer-only negative control; strict sanitizer mode executes all8. Normal
-  mode passes7/7. The isolated signed-overflow negative control passes1/1: exact
+- The suite now has 8 tests: normal mode executes the original 7 and skips the
+  sanitizer-only negative control; strict sanitizer mode executes all 8. Normal
+  mode passes 7/7. The isolated signed-overflow negative control passes 1/1: exact
   UBSan diagnosis, SIGABRT, no post-error marker, and no false success caused by
   LeakSanitizer's unrelated ptrace failure, despite hostile inherited options.
-- Complete local strict rerun remains failed on4 positive-exit probes because
+- Complete local strict rerun remains failed on 4 positive-exit probes because
   LeakSanitizer cannot inspect this executor under ptrace. The negative control
   passes in that same run. No leak acceptance is claimed or suppression added.
-  CI's existing strict invocation now exercises the fail-closed options and all8
+  CI's existing strict invocation now exercises the fail-closed options and all 8
   tests. Independent review precedes the follow-on commit; +0% qualification or
   hardware milestone credit until supported fresh CI completes.
+
+- **Commit `9dc89c7fc048c483dd1770b46790e7feeaf3f002`**: `test: make coverage sanitizer probes fail closed`.
+  Independent code and documentation review approved the exact test source
+  SHA256 `9f1374778868ab9ab469b47cd9566636a692f797bf745dc011b39f23dec8eca7`.
+  Both compiler paths use non-recovery flags; all seven existing test methods
+  remain AST-identical. Task impact: +0% overall or hardware milestone credit;
+  supported-CI sanitizer acceptance remains open. This receipt is documentation
+  only and adds no verification credit.
+- Reproduction: after `source /workspace/shared/waddle-tools/env.sh`, run
+  `python3 -B tests/av/coverage_recorder_test.py -v` for the ordinary suite; prefix
+  `WADDLE_RECORDER_SANITIZERS=1` for the strict suite. To isolate the supported
+  negative control, use that prefix and append
+  `recorder_test_t.test_sanitizer_violation_is_nonrecoverable -v` after the script.
+  Local logs and their SHA256 values are retained in
+  `/workspace/shared/waddle-tools/coverage-recorder-sanitizer-hardening-manifest.json`.
