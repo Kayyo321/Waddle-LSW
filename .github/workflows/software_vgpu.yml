@@ -93,6 +93,8 @@ jobs:
         run: make vgpu-device-native-test vgpu-device-native-sanitizers vgpu-device-native-coverage
       - name: Verify actual extension count and fill codecs and owned access
         run: make vgpu-extensions-wire-test vgpu-extensions-wire-sanitizers vgpu-extensions-wire-coverage
+      - name: Verify WSI resize, retirement and native boundary ownership
+        run: make vgpu-wsi-lifecycle-test vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage
       - name: Verify experimental ICD loader and instance dispatch
         run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
       - name: Verify pinned native loader instance device and fence discovery
@@ -352,11 +354,25 @@ jobs:
           zig test src/vgpu/venus_command.zig -Iinclude -lc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify native Windows WSI size and DC ownership
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -c src/vgpu/venus_win32_present.c -o build/venus_win32_present_windows.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/win32_present.c build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -o build/vgpu_win32_present_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_win32_present_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_wsi.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O Debug
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_wsi.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify native Windows device requests and extension codecs
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build/owned_native_oracles | Out-Null
-          $oracle_names = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply')
+          $oracle_names = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply')
           foreach ($oracle_name in $oracle_names) {
             zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -c "tests/vgpu/${oracle_name}_oracle.c" -o "build/owned_native_oracles/${oracle_name}.obj"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -369,26 +385,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=venus_icd_native_fixture -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -c tests/vgpu/icd.c -o build/owned_native_oracles/icd.obj
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
+          $icd_oracles = $oracle_names | ForEach-Object { "build/owned_native_oracles/$_.obj" }
           zig test src/vgpu/venus_icd.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O Debug build/owned_native_oracles/icd.obj build/venus_values_oracle.obj @icd_oracles build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify native Windows experimental ICD dispatch and DLL exports
         shell: pwsh
         run: |
+          $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
           zig build-lib src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/tests -c tests/vgpu/features_query_oracle.c -o build/venus_features_query_oracle.obj
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -c tests/vgpu/features_reply_oracle.c -o build/venus_features_reply_oracle.obj
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj build/venus_features_query_oracle.obj build/venus_features_reply_oracle.obj -o build/vgpu_icd_test.exe
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj @icd_oracles build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -o build/vgpu_icd_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/vgpu_icd_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig build-obj src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.obj'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -shared src/vgpu/venus_icd.def build/venus_icd_windows.obj build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib -o build/waddle_vulkan_experimental.dll
+          zig cc -target x86_64-windows-gnu -shared src/vgpu/venus_icd.def build/venus_icd_windows.obj build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -o build/waddle_vulkan_experimental.dll
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd_dll.c -o build/vgpu_icd_dll_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -425,14 +438,15 @@ jobs:
       - name: Verify native Windows pinned loader manifest and device dispatch
         shell: pwsh
         run: |
+          $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
           $loader_include = (Resolve-Path scripts/vulkan_loader.cmake).Path
           cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_windows -A x64 "-DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$loader_include" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/vendor/vulkan_loader_windows --config Release --parallel 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -c 'import json,pathlib; pathlib.Path("build/waddle_vulkan_experimental_windows.json").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("build/waddle_vulkan_experimental.dll").resolve()),"api_version":"1.0.0"}},indent=2)+"\n")'
+          python -c 'import json,pathlib; pathlib.Path("build/waddle_vulkan_experimental_windows.json").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("build/waddle_vulkan_experimental.dll").resolve()),"api_version":"1.3.0"}},indent=2)+"\n")'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj build/venus_features_query_oracle.obj build/venus_features_reply_oracle.obj -ladvapi32 -o build/vgpu_icd_loader_test.exe
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj @icd_oracles build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -ladvapi32 -o build/vgpu_icd_loader_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:WADDLE_TEST_VULKAN_LOADER = (Resolve-Path build/vendor/vulkan_loader_windows/loader/Release/vulkan-1.dll).Path
           ./build/vgpu_icd_loader_test.exe
