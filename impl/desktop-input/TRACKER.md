@@ -51,10 +51,15 @@
   - **Summary**: Parent-owned workflow wiring adds the input core to Windows
     sources/fixtures and this feature branch to AV checks. No native evidence.
 
-- **Commit `HEAD`**: `test(av): record input verification and native DPI assertions`
+- **Commit `7ac4306`**: `test(av): record input verification and native DPI assertions`
   - **Task Impact**: +80% to #5 (+12% overall).
   - **Summary**: Four of five equally weighted cloud verification parts passed:
     normal boundary/regression tests, Linux/Windows builds, source coverage,
     supplemental ASan/UBSan. The fifth, required LSan, is blocked by runtime
     ptrace restrictions and remains required. Native input and full desktop
     qualification remain blocked. Exact commands/results are in EVIDENCE.md.
+
+- **Commit `HEAD`**: `docs(av): correct measured cloud compiler version`
+  - **Task Impact**: +0%; verification status unchanged.
+  - **Summary**: Corrects the evidence compiler version to the actual `gcc
+    --version` result, Debian GCC 14.2.0. No source behavior changes.

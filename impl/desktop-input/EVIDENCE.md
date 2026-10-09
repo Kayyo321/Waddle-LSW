@@ -19,7 +19,7 @@ socket and callback tests. Native limitations below remain acceptance blockers.
 
 ## Toolchain and normal tests
 
-GCC 12.2.0; Zig 0.13.0 from the checksum-verified official distribution; a
+GCC 14.2.0; Zig 0.13.0 from the checksum-verified official distribution; a
 user-space SDK extracted from signed Debian package metadata supplied Wayland
 1.23.1, wayland-protocols 1.44, PipeWire 1.4.2 and LLVM/Clang 19. No new repository
 third-party source, dependency pin or package installation was introduced.
