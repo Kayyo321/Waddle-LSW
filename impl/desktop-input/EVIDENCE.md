@@ -114,3 +114,20 @@ They are build outputs, not permanent hardware receipts.
    assistance and verify saved bytes. Owned dialogs/process families, host layout
    translation, IME, repeat, clipboard, cursor images, relative input and tablet
    behavior remain outside this milestone and cannot be inferred from it.
+
+## Native CI follow-on: 2026-10-09 UTC
+
+At published `1de3fddf13067238ca4e428c223338ca79e37287`, both AV workflows
+completed successfully, including native Windows component jobs and full bundle
+assembly. [PR Linux job 114043280601](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37995902338/job/114043280601)
+and [push Linux job 114043284899](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37995897492/job/114043284899)
+explicitly ran `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 make -B av-test`
+with `-fsanitize=address,leak,undefined`. Logs show successful execution of
+`av_input_transport_test` (socket framing, full-queue disconnect and fresh-session
+fixtures) and `av_input_test` (ownership, replay, failure and release fixtures).
+The input coverage gate reports 78/78 lines and 104/104 branches (100%).
+
+This closes the prescribed AV leak-enabled gate at that source. It does not
+retroactively turn the blocked cloud-local LSan run into a pass. Manual Windows
+`--input`, real Wayland delivery and all physical/integrated acceptance remain
+unrun here and open. Rerun affected CI after subsequent source changes.

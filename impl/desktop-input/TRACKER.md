@@ -15,10 +15,10 @@
 | #2 | Canonical codec and portable input ownership | Done | 25% | 100% | Core line/branch coverage 100%; codec lines 100%, branches 96.64% |
 | #3 | Bind Wayland seat and host callbacks | Done | 20% | 100% | Headless callback/focus/coordinate fixtures pass; real compositor separate |
 | #4 | Connect guest tracked-window injection and cleanup | Done | 20% | 100% | Guest and native fixture cross-compile; SendInput execution unverified |
-| #5 | Boundary fixtures, sanitizers and build verification | In Progress | 15% | 80% | Normal tests, builds, coverage and ASan/UBSan passed; required LSan blocked by ptrace |
+| #5 | Boundary fixtures, sanitizers and build verification | Done | 15% | 100% | Required leak-enabled Linux CI passed at published 1de3fdd; native Windows component CI and bundle assembly also passed |
 | #6 | Real compositor/Windows workflow qualification | Blocked | 10% | 0% | No Windows, GPU or KVM in cloud |
 
-**Total Feature Completion**: `87.0%`
+**Total Feature Completion**: `90.0%`
 
 ## Commit History & Progress Log
 
@@ -63,3 +63,18 @@
   - **Task Impact**: +0%; verification status unchanged.
   - **Summary**: Corrects the evidence compiler version to the actual `gcc
     --version` result, Debian GCC 14.2.0. No source behavior changes.
+
+- **Containing receipt commit; CI source `1de3fddf13067238ca4e428c223338ca79e37287`**:
+  - **Task Impact**: +20% to #5 (+3% overall, now 90%). No #6 credit.
+  - **Summary**: Both AV workflows completed successfully. Linux jobs executed
+    `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 make -B av-test`
+    with `-fsanitize=address,leak,undefined`, including input ownership/replay/
+    failure/release and socket framing/full-queue disconnect/fresh-session tests.
+    Input coverage remained 78/78 lines and 104/104 branches (100%). Native
+    Windows component jobs and complete distribution assembly passed.
+  - **Evidence**: [PR Linux job](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37995902338/job/114043280601),
+    [push Linux job](https://github.com/Kayyo321/Waddle-LSW/actions/runs/37995897492/job/114043284899).
+    This supplies the previously missing AV LSan evidence at that exact source;
+    the cloud executor's local ptrace restriction remains true. Neither native
+    component CI nor mocks establish manual `--input`, live Wayland integration,
+    full desktop behavior, or physical RTX sharing. Those remain pending.
