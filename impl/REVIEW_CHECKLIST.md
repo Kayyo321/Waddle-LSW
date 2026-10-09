@@ -22,8 +22,9 @@ No hardware/Adobe completion is claimed. Review in this order:
   at `1de3fdd` and later AV checkpoints. Windows ICD environment-helper and exact
   extension-oracle repairs pass cross-links; native execution remains pending. Bounded device-wire/native sanitizer inventory
   repair passed its leak-enabled CI stages at `c11ce21`, as did scoped WSI/ICD
-  sanitizer stages. Later vGPU CI failures remain: a presented-worker link input
-  and divergent coverage-site counts on identical source.
+  sanitizer stages. The later presented-worker link repair now cross-links all four acceptance
+  executables; real worker execution awaits CI. Divergent raw coverage-site
+  counts are being investigated with explicit CPU-model reproduction.
   Latest-SHA CI is pending. Local LSan remains ptrace-blocked; scoped AV leak
   acceptance is supplied by earlier CI; new lifecycle and oracle changes need
   fresh native/CI qualification. The
@@ -36,7 +37,9 @@ No hardware/Adobe completion is claimed. Review in this order:
   · [Windows helper receipt](windows-icd-test-environment/TRACKER.md)
   · [extension oracle repair](https://github.com/Kayyo321/Waddle-LSW/commit/b317c0577cafb20aa16463544491449cd1c61715)
   · [extension oracle receipt](native-icd-extension-oracle/TRACKER.md)
-  · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md).
+  · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md)
+  · [worker link repair](https://github.com/Kayyo321/Waddle-LSW/commit/37df9499f197c51443e1aca892139cf6a41a59c6)
+  · [worker execution limits](presented-worker-link/TRACKER.md).
 - [ ] **P1 · Physical input and cleanup.** Native `--input` fixture, then ordinary
   app as a Wayland window: keyboard/mouse/wheel, focus transfer, held keys/buttons,
   disconnect, foreground denial, scaling and repeated recovery. Watch stuck input

@@ -113,3 +113,24 @@ failed: Windows had the now-corrected extension oracle; Linux push later missed
 a presented-worker link input, and identical-source PR coverage unexpectedly
 exceeded its site recorder. Those latter failures are being investigated, not
 hidden by threshold/exclusion changes. See the [current checklist](REVIEW_CHECKLIST.md).
+
+## Presented-worker link follow-on
+
+The lifecycle/oracle handoff was verified on branch commit
+`ec8bf07230e36c861b3efeb524b5030f6e2dd9a7`, identical to local
+`485f9662107cc3b28c2a509ae340971a67a27cca`, tree
+`5773a9f6d843d9bc7bb6122070f843c5ff23abc9`.
+
+The next bounded repair adds the existing production native sink object to the
+shared presented-worker link inputs. It does not change production code, mocks,
+assertions or acceptance criteria. Four real normal/sanitized worker binaries
+cross-link with unique resolved native symbols; full local execution is blocked
+by missing renderer build prerequisites and awaits CI.
+
+| Original source checkpoint | Published commit |
+| --- | --- |
+| `18e9d57ed79775779ad4d7416b77e516adbf26fd` | `37df9499f197c51443e1aca892139cf6a41a59c6` |
+| `449c9f72f9a0953c3d61e3f45a1aca05e7b03d4f` | `d6be1c1cf9717d08ca2ee53ca1efa25ecddeeb20` |
+
+Both trees were matched exactly. See [the receipt](presented-worker-link/TRACKER.md)
+for the actual attempted commands, missing prerequisites and unchanged LSan limits.
