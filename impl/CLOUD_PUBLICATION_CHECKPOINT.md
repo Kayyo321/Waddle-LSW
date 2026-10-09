@@ -73,3 +73,43 @@ units, both Windows full-unit cross-links and unchanged whole-ICD coverage
 separately. See the [current review index](REVIEW_CHECKLIST.md),
 [environment receipt](windows-icd-test-environment/TRACKER.md) and
 [scoped AV leak-enabled CI receipt](desktop-input/EVIDENCE.md).
+
+## Generation-safe AV lifecycle and native-oracle checkpoints
+
+The following atomic checkpoints have matching local/published Git trees. The
+source links are included in this handoff's containing publication, preserving
+all production, test and documentation changes without force-pushing.
+
+| Original source checkpoint | Published commit |
+| --- | --- |
+| `7294714487f914007411cac5c30e7baac2730806` | `3cf2faa0e7f9eccd674ae574c718e2b9c889dec2` |
+| `db6a489510641eb5a1dfd3a7350732e8e1a32f42` | `dfe7969bca9a301ca426472f7752cba09f6d35a7` |
+| `413c2c46e69d6b24d84691793e240524b011f7ef` | `cf1ca1e5c2108368742c3b5648eb5e1231662327` |
+| `4e37ef9922f7c385914a81b4a6f565abacabcc3f` | `c11ce21af9df63ab4479ae18539ce73f19000aa1` |
+| `84bcb08272a4512731d3bf34ac1cf017c9a07b2d` | `580349cda0ccebf26552ae6f8498baf48fb6fb55` |
+| `1535600d5c5b3c72960efff6b2d3b441d8968a7d` | `b317c0577cafb20aa16463544491449cd1c61715` |
+| `56b48be4d6fc1052a32b20eda5f9fbbfeb62928a` | `1337fe5a3a02695b047209b24f8474b60acfeb9c` |
+| `dec66026e79d64ad36049ab0d125fb4491142d1b` | `efc09c87a4508185ad98dff610ea34529079f6cc` |
+| `fd6092f7c016ebe732a3a46d51f60f844919b2e1` | `f8163d926b6e232660f4e6fe5dd44da64b68d430` |
+| `89c1da2abbd36c0da980f0e74135c1049f8bc46d` | `f6e5695dd4c6c365f18baeb18ffa30003c7424fc` |
+| `df5675b8ffec14ed30cbb479c8e420fe9d42f7d9` | `7c26f20d27ed1ecaeca427cef09ca2b9ba348861` |
+
+The lifecycle implementation preserves the 328-byte envelope, adds explicit
+CreateV2 admission, rejects stale identity effects and requires coordinated
+host/guest upgrades. Its compatibility, identity and callback fixtures pass;
+three Windows executables cross-link. The later platform-fixture correction
+records synthetic compositor input without claiming Windows injection.
+
+The native extension oracle repair changes tests only: Windows' exact guest
+swapchain projection and Linux's empty legacy projection are now asserted.
+393 Debug/ReleaseSafe and instrumented ICD tests pass; whole-ICD coverage stays
+90.32% branches and 98.53% lines. Native Windows execution of this repair and the
+new lifecycle fixtures remains pending on the resulting published commit.
+
+At earlier source `c11ce21af9df63ab4479ae18539ce73f19000aa1`, Linux CI verified
+leak-enabled device-wire/native, WSI and ICD sanitizer stages. This supplements
+rather than rewrites the failed local ptrace receipts. Overall vGPU CI still
+failed: Windows had the now-corrected extension oracle; Linux push later missed
+a presented-worker link input, and identical-source PR coverage unexpectedly
+exceeded its site recorder. Those latter failures are being investigated, not
+hidden by threshold/exclusion changes. See the [current checklist](REVIEW_CHECKLIST.md).

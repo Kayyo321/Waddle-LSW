@@ -42,12 +42,15 @@ physical GPU, Windows physical GPU, integrated app, shared GPU. Do not combine.
 | --- | --- | --- | --- | --- |
 | Source/dependency/build freeze | build | untested | | |
 | AV portable input/codec/Wayland callbacks | CPU/mock | untested | | |
+| Generation identity, stale lifecycle and frozen legacy compatibility | CPU/mock | untested | | |
 | AV prescribed sanitizers + >=90% coverage | CPU/mock | untested | | |
 | WSI D/RS + fake native boundary | CPU/mock | untested | | |
 | WSI prescribed sanitizers + >=90% coverage | CPU/mock | untested | | |
 | Full ICD regression/sanitizers/coverage | CPU/mock | untested | | |
 | Matching Windows/SDK/distribution build | cross-build/native build | untested | | |
-| Native AV lifecycle | native Windows component | untested | | |
+| Native AV lifecycle and observed hide/readmit controls | native Windows component | untested | | |
+| Production guest failure quiescence API-double fixture | native Windows API-double | untested | | |
+| Coordinated upgrade / approved mixed-version diagnostics | integrated compatibility | untested | | |
 | Native --input and foreground-loss release | native Windows component | untested | | |
 | WGC capture/backend | native Windows component | untested | | |
 | Win32 exact present/resize/native owners | native Windows component | untested | | |

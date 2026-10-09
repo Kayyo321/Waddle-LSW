@@ -204,7 +204,7 @@ run_gate av-input make av-input-test
 run_gate av-sanitizers make av-sanitizers
 run_gate av-coverage make av-coverage
 run_gate av-host-build make build/waddle-av-host
-run_gate av-windows-build env -u CPATH -u LIBRARY_PATH make av-windows build/av_windows_test.exe
+run_gate av-windows-build env -u CPATH -u LIBRARY_PATH make av-windows build/av_windows_test.exe build/av_guest_quiescence_test.exe
 run_gate vgpu-protocol make vgpu-protocol-test
 run_gate vgpu-transport make vgpu-test vgpu-sanitizers vgpu-coverage
 run_gate wsi-lifetime make vgpu-wsi-lifecycle-test
@@ -310,13 +310,19 @@ function run_native_gate {
     if ($status -ne 0) { throw "$gate failed with native exit $status; preserve this attempt" }
 }
 run_native_gate "av-lifecycle" ".\build\av_windows_test.exe"
+run_native_gate "av-quiescence" ".\build\av_guest_quiescence_test.exe"
 run_native_gate "av-input" ".\build\av_windows_test.exe" @("--input")
 run_native_gate "av-capture" ".\build\av_windows_test.exe" @("--capture")
 run_native_gate "win32-present" ".\build\vgpu_win32_present_test.exe"
 ```
 
 - Default AV fixture: tracked ordinary-window discovery/lifecycle and component
-  cleanup. It deliberately filters its tool window. It is not a dialog-family test.
+  cleanup, including same-numeric-HWND hide/readmit stale-control rejection. It
+  deliberately filters its tool window. It is not a dialog-family test.
+- Guest quiescence fixture: production guest callback/capture-loop API doubles on
+  Windows. It checks terminal failure suppresses later work; it does not capture
+  an application or establish physical input/graphics acceptance. Build/copy this
+  test executable explicitly; it is not a promised distribution-bundle member.
 - `--input`: opt-in real key/pointer/button/wheel injection and foreground-loss
   held-key release. A foreground/integrity restriction is a failed/blocked native
   gate, not grounds to skip the check or elevate the agent automatically.
@@ -335,15 +341,60 @@ run_gate native-platform make av-native-platform-test
 ```
 
 Expect actual attachment/release and PCM callbacks, returned video slots and no
-leaked native owners. Its zero-incarnation synthetic window is intentionally
-view-only and logs that diagnostic. It does not use a Windows app or establish
-input round trips.
+leaked native owners. Its synthetic window uses modern CreateV2 admission and can receive compositor
+focus/input requests. Those requests are fixture observations, not injection
+into a Windows guest. It does not use a Windows app or establish input round trips.
 For an exclusively leased idle `/dev/kvmfr0` only, after confirming its size and
 that no guest/other test owns it:
 
 ```bash
 run_gate native-kvmfr make av-native-kvmfr-test
 ```
+
+### Generation-safe lifecycle upgrade and regression checks
+
+**Upgrade the host and guest together.** The modern guest announces
+`MsgWindowCreateV2` in the unchanged 328-byte control envelope. This is an explicit
+first-window capability, not a negotiated fallback or pre-window handshake.
+New hosts treat both kinds of old guest (zero/nonzero old Create token) as visibly
+view-only: no input, resize or close request may reach that guest. Old hosts reject
+a new guest once its first modern window is announced. Preserve the diagnostic
+and prompt session termination; do not classify waiting before any window exists
+as protocol rejection.
+
+The normal `make av-test av-input-test` gates now include the frozen historical
+codec/peer compatibility fixture, identity effect gate, stale lifecycle/FIFO and
+Wayland buffer-retirement tests. To rerun the built compatibility fixture alone:
+
+```bash
+run_gate av-lifecycle-transport ./build/av_lifecycle_transport_test
+```
+
+On the authorized real Windows/Wayland setup, repeat these manual observations
+with logs and source/binary hashes; no complete physical automation is supplied:
+
+1. Use matching upgraded binaries. Close, resize, minimize and restore several
+   ordinary windows; confirm effects stay on the selected incarnation.
+2. Hide/readmit an owned window, then repeat destroy/recreate and reconnect.
+   The default Windows fixture covers an observed same-value handle case; actual
+   delayed WinEvent delivery and real handle recycling still require qualification.
+   Reject stale controls without changing the replacement's geometry, focus,
+   saved style or retained buffers. Preserve a trace if actual reuse cannot be
+   demonstrated rather than marking that case passed.
+3. Exercise a busy compositor buffer while its window retires; ensure the old
+   lease drains without releasing a replacement's buffer or delivering late
+   configure/close callbacks. Check terminal queue failure/disconnect stops
+   further capture and mutations and cleanup releases owned resources.
+4. If testing mixed binaries is separately approved, use isolated copies of the
+   recorded old/new builds. Verify the view-only diagnostic and absent controls
+   for new-host/old-guest, and explicit first-window rejection for old-host/new-
+   guest. Do not downgrade or overwrite an active deployment for this probe.
+
+[Implementation/coverage receipt](av-window-generation/TRACKER.md) and
+[frozen-source provenance](../tests/av/legacy/PROVENANCE.md) identify the automated
+scope. FrameReady still carries its frame counter, not an independent window
+generation. Unobserved same-process HWND reuse, frame replay safety and direct
+AV-to-WSI/GPU lifetime binding are not solved by this checkpoint.
 
 ### B. Integrated ordinary application (manual; no complete automated gate)
 

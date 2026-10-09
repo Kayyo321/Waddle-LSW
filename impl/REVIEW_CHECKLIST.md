@@ -8,18 +8,25 @@ commands. A checked box requires an exact tested commit, binary hashes and logs 
 [one result receipt](HARDWARE_TEST_RESULT_TEMPLATE.md). Never inherit a pass after
 relevant source, toolchain, driver or VM changes.
 
-Latest verified backup: [`e9b0663`](https://github.com/Kayyo321/Waddle-LSW/commit/e9b0663a961dfeaadc43dfa3ab7ce90900aed856).
+Recorded prior backup: [`c11ce21`](https://github.com/Kayyo321/Waddle-LSW/commit/c11ce21af9df63ab4479ae18539ce73f19000aa1).
+The source links below include the follow-on lifecycle and Windows oracle changes;
+record the exact containing commit you actually test.
 No hardware/Adobe completion is claimed. Review in this order:
 
 - [ ] **P0 · Source and native CI.** Fresh checkout; capture source/toolchain/binary
-  versions; rerun automated gates. Linux cloud input/WSI suites and 393-case ICD
+  versions; rerun automated gates. **Upgrade host and guest together:** old guests
+  are view-only on new hosts; old hosts reject the new first-window capability.
+  Linux cloud input/WSI suites and 393-case ICD
   Debug/ReleaseSafe runs passed. Whole-ICD coverage passed 90.32% branches after
   six regression additions. Windows AV/guest and leak-enabled AV Linux CI passed
-  at `1de3fdd`. The Windows ICD environment-helper fix passes cross-links; native
-  execution of the fix is pending. Bounded device-wire/native sanitizer inventory
-  repair is locally reviewed; its leak-enabled CI execution is pending.
+  at `1de3fdd` and later AV checkpoints. Windows ICD environment-helper and exact
+  extension-oracle repairs pass cross-links; native execution remains pending. Bounded device-wire/native sanitizer inventory
+  repair passed its leak-enabled CI stages at `c11ce21`, as did scoped WSI/ICD
+  sanitizer stages. Later vGPU CI failures remain: a presented-worker link input
+  and divergent coverage-site counts on identical source.
   Latest-SHA CI is pending. Local LSan remains ptrace-blocked; scoped AV leak
-  acceptance is supplied by CI, while vGPU leak acceptance remains open. The
+  acceptance is supplied by earlier CI; new lifecycle and oracle changes need
+  fresh native/CI qualification. The
   broader 32-module ICD-owned/full-seam instrumentation migration is a separate
   unresolved gate, not covered by the bounded device repair.
   [Build/log commands](HARDWARE_TEST_HANDOFF.md#4-rebuild-and-rerun-hardware-independent-gates-first)
@@ -27,6 +34,8 @@ No hardware/Adobe completion is claimed. Review in this order:
   · [coverage receipt](wsi-window-lifetime/TRACKER.md)
   · [Windows helper source](https://github.com/Kayyo321/Waddle-LSW/commit/37970ae95d630c447c2fb108b1cef97535b9a059)
   · [Windows helper receipt](windows-icd-test-environment/TRACKER.md)
+  · [extension oracle repair](https://github.com/Kayyo321/Waddle-LSW/commit/b317c0577cafb20aa16463544491449cd1c61715)
+  · [extension oracle receipt](native-icd-extension-oracle/TRACKER.md)
   · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md).
 - [ ] **P1 · Physical input and cleanup.** Native `--input` fixture, then ordinary
   app as a Wayland window: keyboard/mouse/wheel, focus transfer, held keys/buttons,
@@ -37,7 +46,13 @@ No hardware/Adobe completion is claimed. Review in this order:
   · [input receipts](desktop-input/EVIDENCE.md).
 - [ ] **P1 · Native window/swapchain lifetime.** Resize, minimize/zero area,
   replacement failure, destruction, stale frames, repeated recovery and memory
-  ownership under error/pressure. Unobserved same-process HWND reuse remains open.
+  ownership under error/pressure. Run new native lifecycle and guest-quiescence
+  fixtures; test observed same-HWND readmission, delayed close/resize/destroy,
+  old busy buffers and compatibility diagnostics. Unobserved reuse remains open.
+  [AV generation cases](HARDWARE_TEST_HANDOFF.md#generation-safe-lifecycle-upgrade-and-regression-checks)
+  · [generation implementation](https://github.com/Kayyo321/Waddle-LSW/commit/1337fe5a3a02695b047209b24f8474b60acfeb9c)
+  · [generation receipts](av-window-generation/TRACKER.md)
+  · [synthetic platform callback fix](https://github.com/Kayyo321/Waddle-LSW/commit/f6e5695dd4c6c365f18baeb18ffa30003c7424fc).
   [Exact/manual cases](HARDWARE_TEST_HANDOFF.md#6-real-wsi-lifecycle-acceptance)
   · [WSI implementation](https://github.com/Kayyo321/Waddle-LSW/commit/51ee17bca208db3241fefaf65fddcbc8577616dd)
   · [WSI receipts](wsi-window-lifetime/TRACKER.md).
