@@ -9,11 +9,11 @@ fn put(comptime T: type, data: []u8, offset: usize, value: T) void {
     std.mem.writeInt(T, data[offset..][0..@sizeOf(T)], value, .little);
 }
 fn valid(message: *const c.av_message_t) bool {
-    if (message.window_id == 0 or message.type < 1 or message.type > 12 or message.flags > 3) return false;
+    if (message.window_id == 0 or message.type < 1 or message.type > 13 or message.flags > 3) return false;
     const title: []const u8 = std.mem.sliceAsBytes(&message.title);
     const end = std.mem.indexOfScalar(u8, title, 0) orelse return false;
     if (!std.unicode.utf8ValidateSlice(title[0..end])) return false;
-    if (message.type >= 7) {
+    if (message.type >= 7 and message.type <= 12) {
         if (message.sequence == 0 or message.buffer_index == 0 or message.height != 0 or
             message.dpi != 0 or message.process_id != 0 or message.damage_x != 0 or
             message.damage_y != 0 or message.damage_width != 0 or message.damage_height != 0 or
@@ -31,7 +31,8 @@ fn valid(message: *const c.av_message_t) bool {
     if (message.type == 6) return message.sequence != 0 and message.sequence <= 0xffffff and message.flags <= 1;
     if (message.type == 2 or message.type == 5) return true;
     if (message.width == 0 or message.height == 0 or message.width > 8192 or message.height > 8192 or message.dpi < 48 or message.dpi > 768) return false;
-    if (message.type == 1 and (message.process_id == 0 or message.buffer_index >= 16)) return false;
+    if ((message.type == 1 or message.type == 13) and (message.process_id == 0 or message.buffer_index >= 16)) return false;
+    if (message.type == 13 and message.sequence == 0) return false;
     if (message.type == 4) {
         if (message.buffer_index >= 3 or message.sequence == 0 or message.damage_x < 0 or message.damage_y < 0 or message.damage_width == 0 or message.damage_height == 0) return false;
         if (@as(u64, @intCast(message.damage_x)) + message.damage_width > message.width or @as(u64, @intCast(message.damage_y)) + message.damage_height > message.height) return false;
@@ -174,7 +175,7 @@ test "invalid lifecycle and frame fields never alter encoded output" {
         switch (index) {
             0 => message.window_id = 0,
             1 => message.type = 0,
-            2 => message.type = 13,
+            2 => message.type = 14,
             3 => message.flags = 4,
             4 => message.height = 0,
             5 => message.height = 8193,
@@ -348,5 +349,52 @@ test "input envelopes round trip and reject every reserved byte transactionally"
             const expected: c_int = if (valid(&boundary)) 0 else -1;
             try std.testing.expectEqual(expected, @call(.never_inline, av_control_encode, .{ &boundary, &bytes, bytes.len }));
         }
+    }
+}
+
+test "CreateV2 golden bytes and lifecycle identity remain fixed and transactional" {
+    const creation: c.av_message_t = .{ .type = 13, .window_id = 0x0807060504030201,
+        .x = -2, .y = 3, .width = 640, .height = 480, .flags = 0, .dpi = 96,
+        .process_id = 123, .buffer_index = 2, .sequence = 0x1817161514131211,
+        .damage_x = 0, .damage_y = 0, .damage_width = 0, .damage_height = 0,
+        .title = .{0} ** 256 };
+    var golden = [_]u8{0} ** 328;
+    golden[0] = 0x4c; golden[1] = 0x57; golden[2] = 13;
+    golden[4] = 0x40; golden[5] = 1;
+    @memcpy(golden[8..16], &[_]u8{1,2,3,4,5,6,7,8});
+    @memcpy(golden[16..20], &[_]u8{0xfe,0xff,0xff,0xff});
+    golden[20] = 3; golden[24] = 0x80; golden[25] = 2;
+    golden[28] = 0xe0; golden[29] = 1; golden[36] = 96;
+    golden[40] = 123; golden[44] = 2;
+    @memcpy(golden[48..56], &[_]u8{0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18});
+    var bytes: [328]u8 = undefined;
+    try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_encode, .{ &creation, &bytes, bytes.len }));
+    try std.testing.expectEqualSlices(u8, &golden, &bytes);
+    var decoded = creation;
+    for (0..328) |length| {
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_decode, .{ &bytes, length, &decoded }));
+        try std.testing.expectEqualSlices(u8, std.mem.asBytes(&creation), std.mem.asBytes(&decoded));
+    }
+    for ([_]usize{ 0, 2, 4, 8, 24, 28, 36, 40, 48 }) |offset| {
+        var corrupt = golden;
+        if (offset == 48) @memset(corrupt[48..56], 0)
+        else if (offset == 8) @memset(corrupt[8..16], 0)
+        else if (offset == 24 or offset == 28) @memset(corrupt[offset..][0..4], 0)
+        else corrupt[offset] = 0;
+        try std.testing.expectEqual(@as(c_int, -1), @call(.never_inline, av_control_decode, .{ &corrupt, corrupt.len, &decoded }));
+        try std.testing.expectEqualSlices(u8, std.mem.asBytes(&creation), std.mem.asBytes(&decoded));
+    }
+    for ([_]u32{ 2, 3, 5, 13 }) |kind| {
+        var message = creation; message.type = kind;
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
+        try std.testing.expectEqualSlices(u8, golden[48..56], bytes[48..56]);
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_decode, .{ &bytes, bytes.len, &decoded }));
+        try std.testing.expectEqual(message.sequence, decoded.sequence);
+    }
+    // Zero legacy lifecycle stays decodable; modern dispatch rejects it by mode.
+    for ([_]u32{ 1, 2, 3, 5 }) |kind| {
+        var message = creation; message.type = kind; message.sequence = 0;
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_encode, .{ &message, &bytes, bytes.len }));
+        try std.testing.expectEqual(@as(c_int, 0), @call(.never_inline, av_control_decode, .{ &bytes, bytes.len, &decoded }));
     }
 }

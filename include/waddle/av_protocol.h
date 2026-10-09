@@ -29,7 +29,8 @@ typedef enum av_message_type_t {
     /** Surface-local integer pixel x/y, bounded again against live geometry. */ MsgInputPointer = 9,
     /** Button 1 left, 2 right, 3 middle in width; down/up flags. */ MsgInputButton = 10,
     /** Signed Windows horizontal/vertical wheel units in x/y. */ MsgInputWheel = 11,
-    /** Release held keys (1), buttons (2), or both (3); retain focus. */ MsgInputRelease = 12
+    /** Release held keys (1), buttons (2), or both (3); retain focus. */ MsgInputRelease = 12,
+    /** Guest announces generation-safe lifecycle support; sequence is nonzero incarnation. */ MsgWindowCreateV2 = 13
 } av_message_type_t;
 /** @brief Decoded control data, caller-owned, natural alignment, no wire casts.
  * @note Codec copies fields using explicit LE offsets; struct is not serialized
@@ -45,7 +46,7 @@ typedef struct av_message_t {
     uint32_t dpi; /**< Window DPI, 48..768 for create/geometry/frame. */
     uint32_t process_id; /**< Target process ID; nonzero for create. */
     uint32_t buffer_index; /**< Frame slot 0..2; input uses strictly increasing nonzero session serial. */
-    uint64_t sequence; /**< Frame sequence; Create/input use nonzero window incarnation. */
+    uint64_t sequence; /**< Frame counter; CreateV2/modern lifecycle/control/input use immutable incarnation. */
     int32_t damage_x; /**< Nonnegative surface-local damage origin. */
     int32_t damage_y; /**< Nonnegative surface-local damage origin. */
     uint32_t damage_width; /**< Bounded nonzero damage width for frames. */

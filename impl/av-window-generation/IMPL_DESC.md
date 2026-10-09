@@ -35,7 +35,9 @@ at 44, sequence u64 at 48, damage fields at 56..71, UTF-8 title at 72..327.
 Existing IDs 1..12 retain their wire meanings. CreateV2 is ID 13 and its sequence
 must be nonzero. CreateV2.sequence and modern lifecycle/control.sequence are the
 immutable incarnation. FrameReady.sequence and diagnostic-flash.sequence retain
-their frame-counter and RGB24 meanings respectively.
+their frame-counter and RGB24 meanings respectively. Diagnostic flash is an
+unchanged opt-in fixture exception, not generation-safe control; the new host
+suppresses it for legacy admission.
 
 The first Create fixes connection mode. CreateV2 selects modern; Create selects
 legacy regardless of whether its sequence is zero or nonzero. Mixed Create types
