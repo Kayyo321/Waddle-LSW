@@ -1050,3 +1050,36 @@ owners with bounded read-only Microsoft debugger inspection. Capture observer
 fixes publish acknowledgements atomically; failed observer/callback attempts stay
 preserved and receive no acceptance credit. Native limits remain unchanged.
 TODO#3 stays90%; no100%, native heap pass or final completion claim.
+
+### 2026-10-09 cloud desktop-input and WSI checkpoint
+
+The synced starting source was `6eea43c743b589ab59be5b594721e44f7c3ce478`.
+The ordinary-window input milestone and WSI lifetime correction are published on
+this same feature branch at `875ddc81b1316a9f48461fc431818b975e79eab3`.
+The [source map](../CLOUD_PUBLICATION_CHECKPOINT.md) attributes all eleven atomic
+local checkpoints to their published commits and verifies identical Git trees.
+Input verification is in [its evidence receipt](../desktop-input/EVIDENCE.md);
+WSI verification is in [its tracker](../wsi-window-lifetime/TRACKER.md).
+
+The implementation adds focused Wayland physical keyboard/pointer forwarding,
+bounded guest input ownership, resize/loss/replacement checks, acquisition
+retirement and queue error handling. It does not complete ordinary-application,
+shared-GPU or Adobe acceptance. Software-vGPU TODO #3 remains 90%, TODO #5 remains
+0%, and overall completion remains 77.5%; these changes receive no physical
+acceptance credit.
+
+Full ICD Debug/ReleaseSafe unit runs passed 386 cases per mode. Strict Linux host
+build, Windows guest/ICD cross-builds and focused input/WSI coverage passed.
+However, the additional whole-ICD coverage gate failed its unchanged 90% branch
+requirement: 4353/4837 branches (89.99%) and 4693/4764 lines (98.51%). Do not round
+this to a pass or reuse historical whole-core coverage as current evidence.
+Focused regression additions are being validated separately. Required local
+LeakSanitizer checks remain blocked by executor ptrace; leak-disabled ASan/UBSan
+runs are supplementary only. CI on the published SHA is pending.
+
+The [hardware restart guide](../HARDWARE_TEST_HANDOFF.md) and
+[per-run result template](../HARDWARE_TEST_RESULT_TEMPLATE.md) preserve exact
+commands, source/binary receipts, manual native gates and unresolved blockers.
+Native Windows/Wayland/GPU execution, unobserved HWND reuse, a portable real-GPU
+supervisor, DXVK native heap qualification and integrated shared-GPU application
+workflows remain open. README and dependency pins are unchanged.

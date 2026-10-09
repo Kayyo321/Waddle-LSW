@@ -2,6 +2,9 @@
 
 Last reviewed: **2026-10-09 UTC**. Branch: `feature/software-vgpu-slicing`.
 
+For fresh GitHub checkouts, use the [published source checkpoint map](CLOUD_PUBLICATION_CHECKPOINT.md)
+to translate original local commit IDs in these receipts to their byte-identical published commits.
+
 This is the restart point for testing on a compatible Linux/Windows/RTX 5080
 machine. It records runnable repository gates, missing automation, manual cases,
 and evidence requirements. **It is a test plan, not a passing hardware report or
