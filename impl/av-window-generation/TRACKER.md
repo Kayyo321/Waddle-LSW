@@ -34,10 +34,10 @@
   (+5% overall). Implements explicit CreateV2 and the production native effect
   gate; proves stale controls invoke zero callbacks.
 
-- Current integration commit: Task #2 +70% (+24.5% overall), Task #3 +80%
+- Commit `56b48be`: Task #2 +70% (+24.5% overall), Task #3 +80%
   (+20% overall), Task #4 +60% (+9% overall). Connects immutable identities to
   Windows/guest/Wayland, fixes terminal queue/EOF behavior and tests both real
-  historical/new transport directions. Exact hash is recorded in the next receipt.
+  historical/new transport directions.
 
 ## Integration verification, 2026-10-09
 
@@ -57,4 +57,16 @@
 - Native Windows CI execution of the new lifecycle/quiescence fixtures is pending.
   No physical Windows/compositor/RTX or direct GPU/WSI integration credit is taken.
 - Independent protocol/runtime reviewer approved the core and current integration;
-  exact-commit sign-off follows the atomic integration commit.
+  exact-commit sign-off confirmed `56b48be4d6fc1052a32b20eda5f9fbbfeb62928a`.
+
+## Exact-source receipt
+
+- Source: `56b48be4d6fc1052a32b20eda5f9fbbfeb62928a`; core:
+  `84bcb08272a4512731d3bf34ac1cf017c9a07b2d`. Independent correctness review
+  verified this exact owned source and reran transport/Wayland fixtures.
+- Final forced Linux host and all three Windows links passed on this source.
+- Preserved cloud receipt: `build/av-window-generation/run-20261009T222502Z`.
+  `manifest.json` SHA-256: `cd7e821e292a4e5823d133fed3725f8dc3500ed1399e01ef7f7daf8b325b696d`.
+  It inventories source/executable hashes, test logs and explicit pending gates.
+- Current receipt-only commit: no implementation progress change (0%). Latest CI,
+  native Windows execution and physical/manual acceptance remain open.
