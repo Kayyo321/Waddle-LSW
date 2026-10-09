@@ -20,7 +20,7 @@
 
 ## Commit History & Progress Log
 
-- Implementation commit: metadata-bound atomic masks and arity table, integrity checks, generated-IR summary cleanup, focused regressions and failure artifacts. Exact hash is bound in the follow-up receipt. Tasks #1/#2/#4 are100%; #3 is80% pending supported fresh-CI sanitizer acceptance. No hardware, Windows, renderer or DXVK acceptance credit.
+- **Commit `e268984ec71b10e2cc848802001d5724299fd103`**: metadata-bound atomic masks and arity table, integrity checks, generated-IR summary cleanup, focused regressions and failure artifacts. Tasks #1/#2/#4 are100%; #3 is80% pending supported fresh-CI sanitizer acceptance. No hardware, Windows, renderer or DXVK acceptance credit.
 
 ## Exact evidence and limitations
 
@@ -70,3 +70,5 @@
 - Supported CI must establish the remaining ASan/LSan/UBSan acceptance. Local
   ptrace restrictions are not suppressed or counted as a pass. Overall software
   vGPU/hardware milestones receive no completion-percentage increase.
+
+- Verification receipt commit changes documentation only (+0%); it binds implementation `e268984ec71b10e2cc848802001d5724299fd103` to the receipts above. Fresh CI sanitizer verification remains open.
