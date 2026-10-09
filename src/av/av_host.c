@@ -74,7 +74,7 @@ static int host_request(const av_message_t *message, void *context) {
 }
 static int guest_message(const av_message_t *message, void *context) {
     host_av_t *host = context;
-    if (message->type == MsgWindowCreate) {
+    if (message->type == MsgWindowCreate || message->type == MsgWindowCreateV2) {
         unsigned pool = message->buffer_index;
         if (pool >= AvMaxWindows)
             return -1;
@@ -86,7 +86,7 @@ static int guest_message(const av_message_t *message, void *context) {
         }
         int result = av_wayland_create(host->video, message, host->memory_fd, AvUsedBytes, slots, offsets,
                                         AvSlotCapacity);
-        if (!result && host->latency && !host->target_window &&
+        if (!result && message->type == MsgWindowCreateV2 && host->latency && !host->target_window &&
             !strcmp(message->title, "Waddle AV latency fixture")) {
             host->target_window = message->window_id;
             result = request_flash(host);

@@ -36,7 +36,7 @@ int main(void) {
         slots[i] = av_layout_slot(mapping, AvMappingBytes, 0, i);
         offsets[i] = av_layout_pixels(0, i);
     }
-    av_message_t message = {.type = MsgWindowCreate, .window_id = 4242, .width = 320,
+    av_message_t message = {.type = MsgWindowCreateV2, .sequence = 1, .window_id = 4242, .width = 320,
         .height = 200, .dpi = 96, .process_id = 1};
     strcpy(message.title, "Waddle AV native validation");
     assert(av_wayland_create(video, &message, memory, AvUsedBytes, slots, offsets, AvSlotCapacity) == 0);

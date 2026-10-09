@@ -1,5 +1,6 @@
 #include "av_windows.h"
 #include "av_input.h"
+#include "av_identity.h"
 #include <dwmapi.h>
 #include <string.h>
 #include <limits.h>
@@ -90,23 +91,29 @@ static int geometry(HWND handle, av_message_t *message) {
     return 0;
 }
 static int emit(av_message_t *message) {
+    if (delivery_failed || !notification) return -1;
     int result = notification(message, notification_context);
-    if (result < 0 || (result > 0 && message->type != MsgWindowCreate))
+    if (result < 0 || (result > 0 && message->type != MsgWindowCreateV2))
         delivery_failed = 1;
     return result;
 }
 static void remove_window(int index) {
+    if (delivery_failed || !notification) return;
     if (input_state.window_id == windows[index].geometry.window_id &&
         input_state.incarnation == windows[index].geometry.sequence &&
-        av_input_reset(&input_state, &InputOps, NULL) != 0)
+        av_input_reset(&input_state, &InputOps, NULL) != 0) {
         delivery_failed = 1;
+        return;
+    }
     av_message_t message = {.type = MsgWindowDestroy,
-                            .window_id = (uint64_t)(uintptr_t)windows[index].handle};
-    emit(&message);
+                            .window_id = (uint64_t)(uintptr_t)windows[index].handle,
+                            .sequence = windows[index].geometry.sequence};
     restore_window(&windows[index]);
     memset(&windows[index], 0, sizeof(windows[index]));
+    emit(&message);
 }
 static void update_window(HWND handle) {
+    if (delivery_failed || !notification) return;
     int index = find_window(handle);
     if (!eligible(handle)) {
         if (index >= 0 && !IsIconic(handle))
@@ -125,10 +132,11 @@ static void update_window(HWND handle) {
         }
         if (index < 0)
             return; /* Bounded registry: next event retries admission. */
-        if (next_incarnation == UINT64_MAX) { delivery_failed = 1; return; }
-        message.sequence = ++next_incarnation;
+        if (av_identity_next(&next_incarnation, &message.sequence) != 0) {
+            delivery_failed = 1; return;
+        }
         windows[index].handle = handle;
-        message.type = MsgWindowCreate;
+        message.type = MsgWindowCreateV2;
         windows[index].geometry = message;
         if (emit(&message) > 0) memset(&windows[index], 0, sizeof(windows[index]));
     } else {
@@ -147,7 +155,7 @@ static void CALLBACK window_event(HWINEVENTHOOK hook, DWORD event, HWND handle, 
     (void)hook;
     (void)thread_id;
     (void)event_time;
-    if (!handle || child_id != CHILDID_SELF)
+    if (delivery_failed || !notification || !handle || child_id != CHILDID_SELF)
         return;
     if (event >= EVENT_OBJECT_CREATE && object_id != OBJID_WINDOW)
         return;
@@ -163,7 +171,7 @@ static void CALLBACK window_event(HWINEVENTHOOK hook, DWORD event, HWND handle, 
 static BOOL CALLBACK enumerate_window(HWND handle, LPARAM context) {
     (void)context;
     update_window(handle);
-    return TRUE;
+    return delivery_failed ? FALSE : TRUE;
 }
 int av_windows_start(DWORD process_id, av_window_notify_t notify, void *context) {
     if (!process_id || !notify || notification || input_state.window_id)
@@ -174,6 +182,7 @@ int av_windows_start(DWORD process_id, av_window_notify_t notify, void *context)
     notification = notify;
     notification_context = context;
     delivery_failed = 0;
+    next_incarnation = 0;
     memset(&input_state, 0, sizeof(input_state));
     object_hook = SetWinEventHook(EVENT_OBJECT_CREATE, EVENT_OBJECT_LOCATIONCHANGE, NULL,
                                   window_event, process_id, 0, WINEVENT_OUTOFCONTEXT);
@@ -191,6 +200,7 @@ int av_windows_start(DWORD process_id, av_window_notify_t notify, void *context)
     return 0;
 }
 int av_windows_stop(void) {
+    delivery_failed = 1; /* Disarm reentrant/native callbacks before cleanup. */
     int released = av_input_reset(&input_state, &InputOps, NULL);
     if (released != 0) released = av_input_reset(&input_state, &InputOps, NULL);
     if (object_hook)
@@ -210,8 +220,11 @@ int av_windows_stop(void) {
     }
     return released;
 }
+int av_windows_status(void) {
+    return !target_process || !notification || delivery_failed ? -1 : 0;
+}
 int av_windows_refresh(void) {
-    if (!target_process || !notification) return -1;
+    if (av_windows_status() != 0) return -1;
     if (input_state.window_id && GetForegroundWindow() != (HWND)(uintptr_t)input_state.window_id) {
         av_input_reset(&input_state, &InputOps, NULL);
         return -1; /* Foreground loss is terminal, never a silent dead input path. */
@@ -219,13 +232,13 @@ int av_windows_refresh(void) {
     if (!EnumWindows(enumerate_window, 0)) return -1;
     return delivery_failed ? -1 : 0;
 }
-int av_windows_apply(const av_message_t *message) {
+static int apply_native(const av_message_t *message, void *context) {
+    tracked_window_t *window = context;
     HWND handle = (HWND)(uintptr_t)message->window_id;
     DWORD process_id = 0;
     GetWindowThreadProcessId(handle, &process_id);
-    int index = find_window(handle);
-    if (index < 0 || process_id != target_process || !IsWindow(handle))
-        return -1;
+    if (process_id != target_process || !IsWindow(handle))
+        return 0; /* Observed identity is no longer a live native target. */
     if (message->type == MsgWindowClose)
         return PostMessageW(handle, WM_CLOSE, 0, 0) ? 0 : -1;
     if (message->type != MsgWindowGeometry || !message->width || !message->height ||
@@ -237,7 +250,6 @@ int av_windows_apply(const av_message_t *message) {
     }
     if (IsIconic(handle))
         ShowWindow(handle, SW_RESTORE);
-    tracked_window_t *window = &windows[index];
     if (message->flags & AvWindowFullscreen) {
         MONITORINFO monitor = {.cbSize = sizeof(monitor)};
         if (!GetMonitorInfoW(MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST), &monitor))
@@ -276,6 +288,13 @@ int av_windows_apply(const av_message_t *message) {
                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)
                ? 0
                : -1;
+}
+
+int av_windows_apply(const av_message_t *message) {
+    if (av_windows_status() != 0 || !message) return -1;
+    int index = find_window((HWND)(uintptr_t)message->window_id);
+    tracked_window_t *window = index < 0 ? NULL : &windows[index];
+    return av_identity_apply(window ? &window->geometry : NULL, message, apply_native, window);
 }
 
 static int input_target(void *context, uint64_t window_id, uint64_t incarnation, int activate) {
@@ -356,6 +375,6 @@ static int input_emit(void *context, const av_message_t *event) {
 }
 static const av_input_ops_t InputOps = {.target = input_target, .emit = input_emit};
 int av_windows_input(const av_message_t *message) {
-    if (!notification || !message) return -1;
+    if (av_windows_status() != 0 || !message) return -1;
     return av_input_apply(&input_state, message, &InputOps, NULL);
 }

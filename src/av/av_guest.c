@@ -6,6 +6,7 @@
 #include "av_ivshmem.h"
 #include "av_layout.h"
 #include "av_peer.h"
+#include "av_identity.h"
 #include "av_wasapi.h"
 #include "av_windows.h"
 #include <avrt.h>
@@ -35,6 +36,10 @@ typedef struct guest_av_t {
     HRESULT audio_status;
     int failed;
 } guest_av_t;
+static void fail_session(guest_av_t *session) {
+    session->failed = 1;
+    if (session->stop) SetEvent(session->stop);
+}
 static int pool_free(guest_av_t *session, unsigned pool) {
     for (unsigned i = 0; i < AvVideoBuffers; ++i) {
         window_slot_header_t *slot =
@@ -46,6 +51,7 @@ static int pool_free(guest_av_t *session, unsigned pool) {
 }
 static int window_notification(const av_message_t *message, void *context) {
     guest_av_t *session = context;
+    if (session->failed) return -1;
     unsigned pool = AvMaxWindows;
     for (unsigned i = 0; i < AvMaxWindows; ++i)
         if (session->windows[i].active &&
@@ -53,7 +59,7 @@ static int window_notification(const av_message_t *message, void *context) {
             pool = i;
             break;
         }
-    if (message->type == MsgWindowCreate) {
+    if (message->type == MsgWindowCreateV2) {
         for (unsigned i = 0; i < AvMaxWindows; ++i)
             if (!session->windows[i].active && pool_free(session, i)) {
                 pool = i;
@@ -61,30 +67,34 @@ static int window_notification(const av_message_t *message, void *context) {
             }
     }
     if (pool == AvMaxWindows) {
-        if (message->type == MsgWindowCreate) return 1;
-        session->failed = 1;
+        if (message->type == MsgWindowCreateV2) return 1;
+        fail_session(session);
         return -1;
     }
     guest_window_t *window = &session->windows[pool];
+    if (message->type != MsgWindowCreateV2 &&
+        av_identity_match(&window->geometry, message) != 1) {
+        fail_session(session);
+        return -1;
+    }
+    av_message_t outgoing = *message;
+    if (outgoing.type == MsgWindowCreateV2) outgoing.buffer_index = pool;
+    if (av_peer_send(&session->peer, &outgoing) != 0) {
+        fail_session(session);
+        return -1;
+    }
     if (message->type == MsgWindowDestroy) {
         window->active = 0;
         av_capture_free(&window->capture);
     } else {
         window->active = 1;
-        window->geometry = *message;
-        window->geometry.buffer_index = pool;
-    }
-    av_message_t outgoing = *message;
-    if (outgoing.type == MsgWindowCreate)
-        outgoing.buffer_index = pool;
-    if (av_peer_send(&session->peer, &outgoing) != 0) {
-        session->failed = 1;
-        return -1;
+        window->geometry = outgoing;
     }
     return 0;
 }
 static int host_request(const av_message_t *message, void *context) {
     guest_av_t *session = context;
+    if (session->failed || av_windows_status() != 0) return -1;
     if (message->type == MsgDiagnosticFlash) {
         HWND window = (HWND)(uintptr_t)message->window_id;
         DWORD owner = 0;
@@ -148,6 +158,7 @@ static DWORD WINAPI audio_worker(void *context) {
     return 0;
 }
 static void capture_windows(guest_av_t *session) {
+    if (session->failed || av_windows_status() != 0) return;
     for (unsigned pool = 0; pool < AvMaxWindows; ++pool) {
         guest_window_t *window = &session->windows[pool];
         if (!window->active || (window->geometry.flags & AvWindowMinimized))
@@ -156,7 +167,7 @@ static void capture_windows(guest_av_t *session) {
             HRESULT result =
                 av_capture_init(&window->capture, (HWND)(uintptr_t)window->geometry.window_id);
             if (FAILED(result)) {
-                session->failed = 1;
+                fail_session(session);
                 return;
             }
         }
@@ -186,8 +197,10 @@ static void capture_windows(guest_av_t *session) {
                 int queued = av_peer_send(&session->peer, &frame);
                 if (queued != 0) {
                     av_video_cancel(slot);
-                    if (queued < 0)
-                        session->failed = 1;
+                    if (queued < 0) {
+                        fail_session(session);
+                        return;
+                    }
                 }
             } else if (FAILED(result)) {
                 av_capture_free(&window->capture); /* Retry device/output loss next tick. */
@@ -233,7 +246,7 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, 
             break;
         }
         MSG message;
-        while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
+        while (!session.failed && av_windows_status() == 0 && PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
             if (message.message == WM_QUIT) {
                 session.failed = 1;
                 break;
@@ -241,16 +254,20 @@ static int guest_session(SOCKET socket, av_ivshmem_t *memory, DWORD process_id, 
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+        if (session.failed || av_windows_status() != 0) break;
         int peer_status = av_peer_pump(&session.peer, host_request, &session);
         if (peer_status != 0) {
             result = peer_status == 1 ? 0 : -1;
             break;
         }
+        if (session.failed || av_windows_status() != 0) break;
         capture_windows(&session);
+        if (session.failed) break;
         if (GetTickCount64() - last_refresh >= 250) {
             if (av_windows_refresh() != 0) session.failed = 1;
             last_refresh = GetTickCount64();
         }
+        if (session.failed) break;
         HANDLE events[2] = {session.stop, session.capture_tick};
         if (MsgWaitForMultipleObjectsEx(2, events, INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE) == WAIT_FAILED) {
             session.failed = 1;

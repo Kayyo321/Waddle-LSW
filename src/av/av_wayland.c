@@ -1,6 +1,7 @@
 #include "av_wayland.h"
 #include "av_dmabuf.h"
 #include "av_input.h"
+#include "av_identity.h"
 #include "linux_dmabuf_client.h"
 #include "xdg_shell_client.h"
 #include <errno.h>
@@ -33,6 +34,7 @@ typedef struct video_window_t {
     video_buffer_t buffers[3];
     size_t capacity;
     uint64_t incarnation;
+    uint32_t pool_index;
     uint32_t input_width, input_height;
     int configured, retired;
     int device_fd, dmabuf_failed;
@@ -47,6 +49,7 @@ struct av_wayland_t {
     struct zwp_linux_dmabuf_v1 *dmabuf;
     int linear_argb;
     video_window_t windows[AvMaxWindows];
+    av_identity_session_t identity;
     av_host_request_t request;
     void *request_context;
     struct wl_seat *seat;
@@ -59,7 +62,7 @@ struct av_wayland_t {
     int keymap_ready, shutting_down;
     int delivery_failed;
     int writable;
-    uint64_t watch_window;
+    uint64_t watch_window, watch_incarnation;
     uint32_t watch_token;
     const uint8_t *watch_mapping;
     size_t watch_length;
@@ -67,19 +70,27 @@ struct av_wayland_t {
     void *watch_context;
     struct wl_callback *watch_sync;
 };
+static int controls_enabled(const video_window_t *window) {
+    return window && window->incarnation && !window->retired && window->client &&
+        !window->client->shutting_down && !window->client->delivery_failed;
+}
+static int window_active(const video_window_t *window) {
+    return window && !window->retired && window->client &&
+        !window->client->shutting_down && !window->client->delivery_failed;
+}
+static video_window_t *find_window(av_wayland_t *client, uint64_t id);
 static video_window_t *input_surface(av_wayland_t *client, struct wl_surface *surface) {
-    if (!surface || client->shutting_down) return NULL;
+    if (!surface || client->shutting_down || client->delivery_failed) return NULL;
     for (unsigned i = 0; i < AvMaxWindows; ++i) {
         video_window_t *window = &client->windows[i];
-        if (window->surface == surface && !window->retired && window->incarnation)
+        if (window->surface == surface && controls_enabled(window))
             return window;
     }
     return NULL;
 }
 static void send_input(av_wayland_t *client, video_window_t *window, uint32_t type,
                         uint32_t flags, uint32_t code, int32_t x, int32_t y) {
-    if (!window || !window->incarnation || window->retired || client->delivery_failed ||
-        client->shutting_down) return;
+    if (!controls_enabled(window)) return;
     if (client->input_serial == UINT32_MAX) { client->delivery_failed = 1; return; }
     av_message_t event = {.type = type, .window_id = window->geometry.window_id,
         .sequence = window->incarnation, .buffer_index = ++client->input_serial,
@@ -262,15 +273,19 @@ static void commit_done(void *context, struct wl_callback *callback, uint32_t se
     av_wayland_t *client = context;
     wl_callback_destroy(callback);
     client->watch_sync = NULL;
+    video_window_t *window = find_window(client, client->watch_window);
     client->watch_window = 0;
-    client->watch_done(client->watch_context);
+    if (controls_enabled(window) && window->incarnation == client->watch_incarnation)
+        client->watch_done(client->watch_context);
 }
 static const struct wl_callback_listener CommitEvents = {.done = commit_done};
 int av_wayland_watch(av_wayland_t *client, uint64_t window_id, uint32_t token,
                      const uint8_t *mapping, size_t length, av_commit_done_t done, void *context) {
-    if (client->watch_window || !window_id || !token || token > 0xffffff || !mapping || !done)
+    video_window_t *window = find_window(client, window_id);
+    if (!controls_enabled(window) || client->watch_window || !window_id || !token || token > 0xffffff || !mapping || !done)
         return -1;
     client->watch_window = window_id;
+    client->watch_incarnation = window->incarnation;
     client->watch_token = token;
     client->watch_mapping = mapping;
     client->watch_length = length;
@@ -303,7 +318,7 @@ static void imported_buffer(void *context, struct zwp_linux_buffer_params_v1 *pa
     video_buffer_t *video = context;
     zwp_linux_buffer_params_v1_destroy(params);
     video->params = NULL;
-    if (video->window->retired) {
+    if (!window_active(video->window)) {
         wl_buffer_destroy(buffer);
         av_video_release(video->slot);
         video->busy = 0;
@@ -319,7 +334,7 @@ static void rejected_buffer(void *context, struct zwp_linux_buffer_params_v1 *pa
     zwp_linux_buffer_params_v1_destroy(params);
     video->params = NULL;
     window->dmabuf_failed = 1;
-    if (!window->retired) {
+    if (window_active(window)) {
         video->buffer = wl_shm_pool_create_buffer(window->pool, (int32_t)video->offset,
             (int32_t)video->width, (int32_t)video->height, (int32_t)video->stride,
             WL_SHM_FORMAT_ARGB8888);
@@ -337,6 +352,7 @@ static const struct zwp_linux_buffer_params_v1_listener ParamsEvents = {
     .created = imported_buffer, .failed = rejected_buffer};
 static void surface_configure(void *context, struct xdg_surface *surface, uint32_t serial) {
     video_window_t *window = context;
+    if (!window_active(window)) return;
     xdg_surface_ack_configure(surface, serial);
     window->configured = 1;
 }
@@ -345,8 +361,10 @@ static void toplevel_configure(void *context, struct xdg_toplevel *toplevel, int
                                int32_t height, struct wl_array *states) {
     (void)toplevel;
     video_window_t *window = context;
+    if (!controls_enabled(window)) return;
     av_message_t request = window->geometry;
     request.type = MsgWindowGeometry;
+    request.sequence = window->incarnation;
     request.flags &= ~AvWindowFullscreen;
     uint32_t *state;
     wl_array_for_each(state, states) {
@@ -368,7 +386,9 @@ static void toplevel_configure(void *context, struct xdg_toplevel *toplevel, int
 static void toplevel_close(void *context, struct xdg_toplevel *toplevel) {
     (void)toplevel;
     video_window_t *window = context;
-    av_message_t request = {.type = MsgWindowClose, .window_id = window->geometry.window_id};
+    if (!controls_enabled(window)) return;
+    av_message_t request = {.type = MsgWindowClose, .window_id = window->geometry.window_id,
+                            .sequence = window->incarnation};
     if (window->client->request(&request, window->client->request_context) != 0)
         window->client->delivery_failed = 1;
 }
@@ -436,6 +456,12 @@ static void retire_window(video_window_t *window) {
     // Guest removal already releases this incarnation. Do not enqueue stale
     // focus-clear requests while retiring or draining disconnected surfaces.
     if (window->client) {
+        if (window->client->watch_window == window->geometry.window_id &&
+            window->client->watch_incarnation == window->incarnation) {
+            if (window->client->watch_sync) wl_callback_destroy(window->client->watch_sync);
+            window->client->watch_sync = NULL;
+            window->client->watch_window = 0;
+        }
         if (window->client->keyboard_window == window) {
             window->client->keyboard_window = NULL;
             memset(window->client->suppressed_keys, 0, sizeof(window->client->suppressed_keys));
@@ -537,13 +563,22 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
                       size_t mapping_size, window_slot_header_t *slots[3],
                       const uint64_t offsets[3], size_t capacity) {
     uint8_t check[AvControlBytes];
-    if (message->type != MsgWindowCreate || av_control_encode(message, check, sizeof(check)) != 0 ||
+    if (client->shutting_down || client->delivery_failed ||
+        (message->type != MsgWindowCreate && message->type != MsgWindowCreateV2) ||
+        av_control_encode(message, check, sizeof(check)) != 0 ||
         fd < 0 || mapping_size > INT32_MAX || !mapping_size || !capacity ||
         find_window(client, message->window_id))
         return -1;
     for (unsigned i = 0; i < 3; ++i)
         if (!slots[i] || offsets[i] > mapping_size || capacity > mapping_size - offsets[i])
             return -1;
+    /* Geometry.buffer_index may change; admission pool ownership never does. */
+    for (unsigned i = 0; i < AvMaxWindows; ++i) {
+        video_window_t *candidate = &client->windows[i];
+        if (candidate->geometry.window_id && (!candidate->retired || busy(candidate)) &&
+            candidate->pool_index == message->buffer_index) return -1;
+    }
+    if (av_identity_admit(&client->identity, message) != 0) return -1;
     video_window_t *window = NULL;
     for (unsigned i = 0; i < AvMaxWindows; ++i) {
         video_window_t *candidate = &client->windows[i];
@@ -558,9 +593,10 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
         return -1;
     window->client = client;
     window->geometry = *message;
-    window->incarnation = message->sequence;
+    window->incarnation = message->type == MsgWindowCreateV2 ? message->sequence : 0;
+    window->pool_index = message->buffer_index;
     if (!window->incarnation)
-        fputs("AV host: legacy zero-incarnation window is view-only; matching guest required for input\n", stderr);
+        fputs("AV host: legacy Create is display-only; upgrade both peers for input, resize and close\n", stderr);
     window->capacity = capacity;
     window->device_fd = fd;
     window->pool = wl_shm_create_pool(client->shm, fd, (int32_t)mapping_size);
@@ -590,16 +626,24 @@ fail:
 }
 int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
     uint8_t check[AvControlBytes];
-    if (av_control_encode(message, check, sizeof(check)) != 0)
+    if (client->shutting_down || client->delivery_failed ||
+        av_control_encode(message, check, sizeof(check)) != 0 ||
+        (message->type != MsgWindowDestroy && message->type != MsgWindowGeometry &&
+         message->type != MsgFrameReady) || client->identity.mode == AvIdentityUnknown)
         return -1;
     video_window_t *window = find_window(client, message->window_id);
-    if (!window)
-        return -1;
+    if (client->identity.mode == AvIdentityModern && message->type != MsgFrameReady) {
+        int match = av_identity_match(window ? &window->geometry : NULL, message);
+        if (match != 1) return match;
+    }
+    if (!window) return 0;
     if (message->type == MsgWindowDestroy) {
         retire_window(window);
     } else if (message->type == MsgWindowGeometry) {
         uint32_t previous_flags = window->geometry.flags;
+        uint32_t process_id = window->geometry.process_id;
         window->geometry = *message;
+        if (!window->geometry.process_id) window->geometry.process_id = process_id;
         if (message->flags & AvWindowMinimized)
             xdg_toplevel_set_minimized(window->toplevel);
         if ((previous_flags ^ message->flags) & AvWindowFullscreen) {

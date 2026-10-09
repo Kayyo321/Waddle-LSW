@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 
 Root = Path.cwd()
-Output = Root / 'build/coverage/av/input' / (
+Output = Root / 'build/coverage/av/identity' / (
     'run-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '-' + str(os.getpid()))
 Output.mkdir(parents=True, exist_ok=False)
 Flags = ['-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror', '-Iinclude', '-Isrc/av', '-O0', '-g']

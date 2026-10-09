@@ -36,7 +36,7 @@ jobs:
       - name: Gate AV protocol and memory line/branch coverage
         run: make av-coverage
       - name: Build and link Linux platform clients and Windows guest
-        run: make av build/av_windows_test.exe
+        run: make av build/av_windows_test.exe build/av_guest_quiescence_test.exe
       - name: Receive the matching native SDK-built guest bundle
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -84,11 +84,15 @@ jobs:
           zig build-lib src/av/av_layout.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_layout_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $flags = @('-target','x86_64-windows-gnu','-U_WIN32_WINNT','-D_WIN32_WINNT=0x0A00','-DNTDDI_VERSION=0x0A000006','-std=c11','-Wall','-Wextra','-Wpedantic','-Werror','-Iinclude','-Isrc/av','-Isubmodules/looking_glass/vendor/ivshmem')
-          $sources = @('src/av/av_deploy.c','src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_input.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
+          $sources = @('src/av/av_identity.c','src/av/av_deploy.c','src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_input.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')
           $libraries = @('build/av_audio_windows.lib','build/av_codec_windows.lib','build/av_layout_windows.lib','-luser32','-ldwmapi','-ld3d11','-ldxgi','-lmmdevapi','-lavrt','-lole32','-luuid','-lsetupapi')
           zig cc @flags tests/av/windows.c @sources @libraries -lgdi32 -lwinmm -o build/av_windows_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc @flags src/av/av_guest.c src/av/av_peer.c @sources @libraries -lws2_32 -o build/waddle-guest-av.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc @flags tests/av/guest_quiescence.c src/av/av_peer.c @sources @libraries -lws2_32 -o build/av_guest_quiescence_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc @flags tests/av/identity.c src/av/av_identity.c build/av_codec_windows.lib -o build/av_identity_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc @flags tests/av/input.c src/av/av_input.c build/av_codec_windows.lib -o build/av_input_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -96,6 +100,10 @@ jobs:
         shell: pwsh
         run: |
           ./build/av_windows_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/av_guest_quiescence_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/av_identity_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./build/av_input_test.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

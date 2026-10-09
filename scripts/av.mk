@@ -5,7 +5,7 @@ AvZigSources = src/av/av_audio.zig src/av/av_codec.zig src/av/av_layout.zig
 AvHostFlags = -Isrc/av -Ibuild $(shell pkg-config --cflags wayland-client libpipewire-0.3)
 AvDriverFlags = -Isubmodules/looking_glass/module
 AvWindowsFlags = $(WindowsFlags) -Isrc/av -Isubmodules/looking_glass/vendor/ivshmem
-AvWindowsSources = src/av/av_deploy.c src/av/av_guest_setup.c src/av/av_guids.c src/av/av_windows.c src/av/av_input.c src/av/av_capture.c src/av/av_wasapi.c src/av/av_ivshmem.c src/av/av_video.c
+AvWindowsSources = src/av/av_identity.c src/av/av_deploy.c src/av/av_guest_setup.c src/av/av_guids.c src/av/av_windows.c src/av/av_input.c src/av/av_capture.c src/av/av_wasapi.c src/av/av_ivshmem.c src/av/av_video.c
 AvWindowsLibraries = -luser32 -ldwmapi -ld3d11 -ldxgi -lmmdevapi -lavrt -lole32 -luuid -lsetupapi
 
 build/av_audio.o: src/av/av_audio.zig | build
@@ -21,6 +21,9 @@ build/av_transport_test: tests/av/transport.c src/av/av_video.c src/av/av_dmabuf
 .PHONY: av-test av-sanitizers av-windows
 av-test: build/av_input_transport_test build/av_input_test build/av_transport_test build/av_environment_test build/av_peer_test build/av_setup_test build/av_wayland_state_test build/av_deploy_test build/av_gpu_test
 	./build/av_input_transport_test
+	./build/av_identity_test
+	cd tests/av/legacy && sha256sum --check SHA256SUMS
+	./build/av_lifecycle_transport_test
 	./build/av_input_test
 	./build/av_gpu_test
 	python3 tests/av/package.py
@@ -40,6 +43,7 @@ av-sanitizers:
 .PHONY: av-coverage
 av-coverage: build/av_audio.o build/av_layout.o build/av_codec.o
 	python3 tests/av/input_coverage.py
+	python3 tests/av/identity_coverage.py
 	python3 tests/av/coverage.py av_audio
 	python3 tests/av/coverage.py av_codec
 	python3 tests/av/coverage.py av_layout
@@ -84,7 +88,7 @@ build/waddle-guest-av.exe: src/av/av_guest.c src/av/av_peer.c $(AvWindowsSources
 	$(ZIG) cc $(AvWindowsFlags) $^ $(AvWindowsLibraries) -lws2_32 -o $@
 av-windows: build/waddle-guest-av.exe
 
-AvHostSources = src/av/av_input.c src/av/av_host.c src/av/av_peer.c src/av/av_video.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_dmabuf.c
+AvHostSources = src/av/av_identity.c src/av/av_input.c src/av/av_host.c src/av/av_peer.c src/av/av_video.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_dmabuf.c
 build/waddle-av-host: $(AvHostSources) build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) $(AvHostSources) build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
 .PHONY: av
@@ -111,8 +115,8 @@ build/vendor/av/ivshmem/ivshmem.inf: | build/vendor
 .PHONY: av-drivers
 av-drivers: build/vendor/av/ivshmem/ivshmem.inf
 
-build/av_platform_test: tests/av/platform.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/platform.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
+build/av_platform_test: tests/av/platform.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/platform.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_pipewire.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_audio.o build/av_codec.o build/av_layout.o $(LDFLAGS) $(shell pkg-config --libs wayland-client libpipewire-0.3) -o $@
 .PHONY: av-native-platform-test
 av-native-platform-test: build/av_platform_test
 	./build/av_platform_test
@@ -133,8 +137,8 @@ build/av_setup_test.o: src/av/av_setup.c | build
 build/av_setup_test: tests/av/setup.c src/av/av_gpu.c build/av_setup_test.o build/av_codec.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -Wl,--wrap=geteuid,--wrap=open,--wrap=ioctl,--wrap=lseek,--wrap=close,--wrap=fork,--wrap=waitpid -o $@
 
-build/av_wayland_state_test: tests/av/wayland_state.c src/av/av_input.c src/av/av_wayland.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_codec.o build/av_audio.o | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/wayland_state.c src/av/av_input.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_codec.o build/av_audio.o $(LDFLAGS) $(shell pkg-config --libs wayland-client) -o $@
+build/av_wayland_state_test: tests/av/wayland_state.c src/av/av_identity.c src/av/av_input.c src/av/av_wayland.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_client.h build/linux_dmabuf_client.h build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_codec.o build/av_audio.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) tests/av/wayland_state.c src/av/av_identity.c src/av/av_input.c src/av/av_video.c src/av/av_dmabuf.c build/xdg_shell_protocol.c build/linux_dmabuf_protocol.c build/av_codec.o build/av_audio.o $(LDFLAGS) $(shell pkg-config --libs wayland-client) -Wl,--wrap=wl_proxy_marshal_flags,--wrap=wl_proxy_get_version,--wrap=wl_proxy_add_listener,--wrap=wl_display_flush -o $@
 
 build/av_deploy_test: tests/av/deploy.c src/av/av_deploy.c src/av/av_deploy.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av tests/av/deploy.c src/av/av_deploy.c $(LDFLAGS) -o $@
@@ -153,7 +157,24 @@ build/av_input_transport_test: tests/av/input_transport.c src/av/av_input.c src/
 
 .PHONY: av-input-test
 av-input-test: build/av_input_test build/av_input_transport_test build/av_wayland_state_test
+	./build/av_identity_test
+	cd tests/av/legacy && sha256sum --check SHA256SUMS
+	./build/av_lifecycle_transport_test
 	./build/av_input_test
 	./build/av_input_transport_test
 	./build/av_wayland_state_test
 	$(ZIG) test src/av/av_codec.zig -Iinclude
+
+# The same portable gate is used before native HWND mutations and in transport tests.
+build/av_identity_test: tests/av/identity.c src/av/av_identity.c build/av_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -o $@
+av-test av-input-test: build/av_identity_test
+
+build/av_legacy_codec.o: tests/av/legacy/av_codec.zig tests/av/legacy/av_protocol.h | build
+	$(ZIG) build-obj $< -Itests/av/legacy -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+build/av_lifecycle_transport_test: tests/av/lifecycle_transport.c tests/av/legacy_fixture.c tests/av/legacy/av_peer.c tests/av/legacy/av_peer.h tests/av/legacy/av_protocol.h src/av/av_identity.c src/av/av_peer.c build/av_codec.o build/av_legacy_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av tests/av/lifecycle_transport.c tests/av/legacy_fixture.c src/av/av_identity.c src/av/av_peer.c build/av_codec.o build/av_legacy_codec.o $(LDFLAGS) -o $@
+av-test av-input-test: build/av_lifecycle_transport_test
+
+build/av_guest_quiescence_test.exe: tests/av/guest_quiescence.c src/av/av_guest.c src/av/av_peer.c $(AvWindowsSources) build/av_audio_windows.lib build/av_codec_windows.lib build/av_layout_windows.lib | build
+	$(ZIG) cc $(AvWindowsFlags) tests/av/guest_quiescence.c src/av/av_peer.c $(AvWindowsSources) build/av_audio_windows.lib build/av_codec_windows.lib build/av_layout_windows.lib $(AvWindowsLibraries) -lws2_32 -o $@

@@ -18,13 +18,13 @@ typedef int (*av_host_request_t)(const av_message_t *request, void *context);
  * @param[in,out] context Optional caller-owned callback context.
  * @return 0 on success, -1 on connection/global/allocation failure.
  * @note Event thread only, all allocation owned by av_wayland_free. Missing seat
- * or legacy zero-incarnation Create leaves video view-only. Keyboard is physical
+ * or any legacy Create leaves video display-only, including resize/close. Keyboard is physical
  * PC scan forwarding interpreted with the guest layout; no XKB text/IME/repeat.
  */
 int av_wayland_init(av_wayland_t **client, av_host_request_t request, void *context);
 /** @brief Create a captured-window toplevel backed by three shared pixel regions.
  * @param[in,out] client Nonnull initialized event-thread-owned client.
- * @param[in] message Nonnull validated MsgWindowCreate metadata.
+ * @param[in] message Nonnull validated MsgWindowCreate or MsgWindowCreateV2 metadata.
  * @param[in] fd Borrowed shared-memory file FD, valid through free.
  * @param[in] mapping_size Accessible shared bytes, 1..INT32_MAX for wl_shm.
  * @param[in] slots Three nonnull aligned slot pointers retained through free.
@@ -39,7 +39,7 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
 /** @brief Apply guest lifecycle/geometry/frame to an existing toplevel.
  * @param[in,out] client Nonnull initialized event-thread-owned client.
  * @param[in] message Nonnull validated destroy/geometry/frame message.
- * @return 0 on accepted/drop-busy frame, -1 on stale id/invalid slot/resource failure.
+ * @return 0 accepted/stale lifecycle/drop-busy frame, -1 malformed/session/resource failure.
  * @note Event thread only; frames release ownership only on wl_buffer.release.
  */
 int av_wayland_message(av_wayland_t *client, const av_message_t *message);

@@ -58,7 +58,7 @@ int main(void) {
             }
             event.type = MsgInputRelease; event.flags = 3; event.x = event.y = 0;
             ++event.buffer_index;
-            assert(av_peer_send(&host, &event) == 1); /* release cannot enter a full queue */
+            assert(av_peer_send(&host, &event) == -1); /* release cannot enter a full queue */
             assert(close(sockets[0]) == 0); /* host fails closed rather than dropping it */
             assert(av_peer_pump(&guest, receive_input, &receiver) == 1);
         } else if (mode == 1) {

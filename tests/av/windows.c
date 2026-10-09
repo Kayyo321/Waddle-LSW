@@ -167,7 +167,7 @@ static int native_capture_benchmark(av_wgc_t *capture, av_wgc_read_t read_frame)
 static int notification(const av_message_t *message, void *context) {
     (void)context;
     assert(message->window_id == target_id);
-    if (message->type == MsgWindowCreate) {
+    if (message->type == MsgWindowCreateV2) {
         if (defer_creation) { defer_creation = 0; return 1; }
         ++creates;
         target_incarnation = message->sequence;
@@ -175,7 +175,7 @@ static int notification(const av_message_t *message, void *context) {
         target_geometry = *message;
     }
     else if (message->type == MsgWindowGeometry) { ++geometries; target_geometry = *message; }
-    else if (message->type == MsgWindowDestroy) ++destroys;
+    else if (message->type == MsgWindowDestroy) { assert(message->sequence == target_incarnation); ++destroys; }
     else assert(0);
     return 0;
 }
@@ -273,8 +273,26 @@ int main(int argc, char **argv) {
     assert(GetForegroundWindow() == foreground_before);
     if (argc == 2 && !strcmp(argv[1], "--input")) native_input_test(target, tool);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == -1);
+    uint64_t retired_incarnation = target_incarnation;
+    ShowWindow(target, SW_HIDE); pump();
+    assert(destroys == 1);
+    ShowWindow(target, SW_SHOW); pump();
+    assert(creates == 2 && target_incarnation > retired_incarnation);
+    RECT unchanged_bounds; assert(GetWindowRect(target, &unchanged_bounds));
+    LONG_PTR unchanged_style = GetWindowLongPtrW(target, GWL_STYLE);
+    for (unsigned flags = 0; flags <= 3; ++flags) {
+        av_message_t late = {.type = MsgWindowGeometry, .window_id = target_id,
+            .sequence = retired_incarnation, .width = 800, .height = 600, .dpi = 96, .flags = flags};
+        assert(av_windows_apply(&late) == 0);
+        late.type = MsgWindowClose;
+        assert(av_windows_apply(&late) == 0); pump();
+        RECT after; assert(IsWindow(target) && !IsIconic(target) && GetWindowRect(target, &after));
+        assert(memcmp(&after, &unchanged_bounds, sizeof(after)) == 0);
+        assert(GetWindowLongPtrW(target, GWL_STYLE) == unchanged_style);
+    }
     av_message_t resize = {.type = MsgWindowGeometry, .window_id = target_id,
                            .width = 500, .height = 350, .dpi = 96};
+    resize.sequence = target_incarnation;
     assert(av_windows_apply(&resize) == 0);
     pump();
     assert(geometries >= 1);
@@ -287,8 +305,11 @@ int main(int argc, char **argv) {
     assert(av_windows_apply(&resize) == 0);
     pump();
     assert(GetWindowLongPtrW(target, GWL_STYLE) == original_style);
-    av_message_t stale = {.type = MsgWindowClose, .window_id = 1};
-    assert(av_windows_apply(&stale) == -1);
+    av_message_t stale = {.type = MsgWindowClose, .window_id = 1, .sequence = target_incarnation};
+    assert(av_windows_apply(&stale) == 0);
+    stale.window_id = target_id; stale.sequence = target_incarnation + 1;
+    assert(av_windows_apply(&stale) == 0);
+    stale.sequence = 0; assert(av_windows_apply(&stale) == -1);
     av_wasapi_t audio = {0};
     assert(av_wasapi_init(&audio, 0) == E_INVALIDARG);
     av_wasapi_free(&audio);
@@ -334,7 +355,7 @@ int main(int argc, char **argv) {
     assert(GetWindowLongPtrW(target, GWL_STYLE) == original_style);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
     assert(DestroyWindow(target)); pump();
-    assert(destroys == 1);
+    assert(destroys == 2);
     assert(av_windows_stop() == 0); assert(av_windows_stop() == 0);
     assert(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), original_dpi));
     assert(DestroyWindow(tool));

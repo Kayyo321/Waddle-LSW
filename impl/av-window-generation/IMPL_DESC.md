@@ -59,7 +59,9 @@ The codec remains allocation-free Zig and rejects invalid length/header/field
 values transactionally. Since legacy lifecycle sequence zero is wire-compatible,
 modern direction endpoints reject zero lifecycle/control tokens before lookup.
 Zero is never a wildcard. Invalid direction/type or malformed fields fail even
-for absent IDs. A well-formed nonzero stale/absent pair is a successful no-op.
+for absent IDs. A well-formed nonzero stale/absent pair is a successful no-op. A nonzero
+process_id must match the admitted PID; zero process metadata is unspecified
+and never erases the admitted PID or acts as an incarnation wildcard.
 
 ## Execution paths
 
@@ -109,8 +111,8 @@ tests cover mode mixing, zero/regressed/duplicate/exhausted tokens and reconnect
 Wayland callback/state tests cover old busy leases, unchanged replacement focus,
 stale Destroy/Geometry, legacy controls and retired/shutdown/failed callbacks.
 Socket fixtures cover fragmentation, cross-direction FIFO races, queue overflow,
-partial EOF and both compatibility directions using the historical codec source
-extracted from a pinned repository commit at build time, never a copied dependency.
+partial EOF and both compatibility directions using a frozen historical OWN-code codec, protocol header and peer fixture
+with immutable source provenance, never a third-party copied dependency.
 Full AV/input suites, >=90% production codec and identity line/branch coverage,
 strict Linux host link and Windows guest/native fixture cross-link are required.
 ASan/UBSan and detect_leaks=1 CI remain gates. Native Windows/compositor/RTX tests

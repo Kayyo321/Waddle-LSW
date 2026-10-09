@@ -5,7 +5,7 @@
 /** @brief Borrowed synchronous window notification callback.
  * @param[in] message Nonnull transient message, valid only during callback.
  * @param[in,out] context Optional caller-owned context retained through stop.
- * @return 0 accepted, 1 defer a Create until refresh, -1 delivery failure.
+ * @return 0 accepted, 1 defer a CreateV2 until refresh, -1 delivery failure.
  * @note Runs on the start caller's message-pump thread; must not retain message.
  */
 typedef int (*av_window_notify_t)(const av_message_t *message, void *context);
@@ -25,6 +25,11 @@ int av_windows_start(DWORD process_id, av_window_notify_t notify, void *context)
  * remain those of start. Existing unchanged windows do not emit duplicate events.
  */
 int av_windows_refresh(void);
+/** @brief Query whether the tracker may still perform session work.
+ * @return 0 active and healthy, -1 inactive or latched delivery failure.
+ * @note Tracker thread only; no parameters, allocation or native API calls.
+ */
+int av_windows_status(void);
 /** @brief Remove hooks and tracked handles after stopping the message pump.
  * @return 0 all inputs released and DPI restored, -1 OS release or DPI restore failure.
  * @note Same thread as start; idempotent. No parameters or heap allocation.
@@ -32,8 +37,8 @@ int av_windows_refresh(void);
 int av_windows_stop(void);
 /** @brief Apply a host geometry/close request to a currently tracked window.
  * @param[in] message Nonnull borrowed validated control request.
- * @return 0 on success, -1 on stale handle/type/Win32 failure.
- * @note Tracker thread only; validates process ownership before using HWND.
+ * @return 0 accepted or stale no-op, -1 malformed/type/Win32/session failure.
+ * @note Tracker thread only; matches immutable identity before native calls and verifies process ownership.
  * Guest x/y remain unchanged; only size/fullscreen/minimize/WM_CLOSE supported.
  */
 int av_windows_apply(const av_message_t *message);
