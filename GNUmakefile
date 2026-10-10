@@ -86,6 +86,9 @@ build/waddle-mock-guest: src/mock/mock_guest.c src/mock/mock_process.c src/mock/
 build/integration: tests/integration/integration.c $(COMMON) include/waddle/cli_protocol.h src/common/common.h src/common/path_rules.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/integration/integration.c $(COMMON) $(LDFLAGS) -lutil -o $@
 
+build/test_session_shutdown: tests/cli/session_shutdown.c src/cli/session.c src/cli/terminal.c src/common/protocol.c src/cli/session.h src/cli/terminal.h src/common/common.h include/waddle/cli_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/cli/session_shutdown.c src/cli/session.c src/cli/terminal.c src/common/protocol.c $(LDFLAGS) -Wl,--wrap=read -Wl,--wrap=write -Wl,--wrap=poll -o $@
+
 build/terminal.o: src/cli/terminal.c src/cli/terminal.h src/common/common.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c src/cli/terminal.c -o $@
 
@@ -135,9 +138,11 @@ build/test_daemon_client: tests/daemon/test_daemon_client.c src/daemon/daemon_cl
 build/test_auto_terminal: tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
 
-test: cli build/unit build/integration build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_device build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
+test: cli build/unit build/integration build/test_session_shutdown build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_device build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
 	./build/unit
 	./build/integration
+	./build/test_session_shutdown
+	./build/test_session_shutdown --stress
 	./build/test_daemon_protocol
 	./build/test_daemon_config
 	./build/test_daemon_qemu
