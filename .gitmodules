@@ -5,3 +5,20 @@
 [submodule "submodules/looking_glass"]
 	path = submodules/looking_glass
 	url = https://github.com/gnif/LookingGlass.git
+[submodule "submodules/virglrenderer"]
+	path = submodules/virglrenderer
+	url = https://gitlab.freedesktop.org/virgl/virglrenderer.git
+	shallow = true
+[submodule "submodules/venus_protocol"]
+	path = submodules/venus_protocol
+	url = https://gitlab.freedesktop.org/virgl/venus-protocol.git
+[submodule "submodules/vulkan_loader"]
+	path = submodules/vulkan_loader
+	url = https://github.com/KhronosGroup/Vulkan-Loader.git
+	shallow = true
+[submodule "submodules/dxvk"]
+	path = submodules/dxvk
+	url = https://github.com/doitsujin/dxvk.git
+[submodule "submodules/mesa"]
+	path = submodules/mesa
+	url = https://gitlab.freedesktop.org/mesa/mesa.git

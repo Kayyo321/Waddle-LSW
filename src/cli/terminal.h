@@ -3,8 +3,8 @@
  * @brief Terminal raw mode management, dimensions querying, and asynchronous signal traps.
  */
 
-#ifndef WADDLE_TERMINAL_H
-#define WADDLE_TERMINAL_H
+#ifndef WaddleTerminalH
+#define WaddleTerminalH
 
 #include "common.h"
 
@@ -83,4 +83,4 @@ int waddle_send_pending(queue_t *tx, uint32_t *seq, int interactive);
 }
 #endif
 
-#endif /* WADDLE_TERMINAL_H */
+#endif /* WaddleTerminalH */

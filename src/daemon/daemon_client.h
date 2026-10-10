@@ -7,8 +7,8 @@
  * mounts over the local UNIX domain control socket.
  */
 
-#ifndef WADDLE_DAEMON_CLIENT_H
-#define WADDLE_DAEMON_CLIENT_H
+#ifndef WaddleDaemonClientH
+#define WaddleDaemonClientH
 
 #include "waddle/daemon_protocol.h"
 #include <stdbool.h>
@@ -264,4 +264,4 @@ int waddle_client_cmd_logs(const char *socket_path, int follow, uint32_t lines);
 }
 #endif
 
-#endif /* WADDLE_DAEMON_CLIENT_H */
+#endif /* WaddleDaemonClientH */

@@ -51,10 +51,10 @@ static void test_mount_path_translation(void) {
     free(system_path);
 }
 
-static void test_mock_guest_session(void) {
+static void test_mock_guest_session(unsigned int iteration) {
     /* Spawns mock guest on UNIX socket and executes waddle exec */
     char sock_path[96];
-    snprintf(sock_path, sizeof(sock_path), "/tmp/waddle_test_autoterm_%d.sock", (int)getpid());
+    snprintf(sock_path, sizeof(sock_path), "/tmp/waddle_test_autoterm_%d_%u.sock", (int)getpid(), iteration);
     unlink(sock_path);
 
     pid_t mock_pid = fork();
@@ -80,6 +80,10 @@ static void test_mock_guest_session(void) {
     pid_t cli_pid = fork();
     assert(cli_pid >= 0);
     if (cli_pid == 0) {
+        /* The CI fixture always presents stdin EOF, independent of its caller. */
+        int input = open("/dev/null", O_RDONLY | O_CLOEXEC);
+        assert(input >= 0 && dup2(input, STDIN_FILENO) == STDIN_FILENO);
+        close(input);
         execl("./build/waddle",
               "./build/waddle",
               "exec",
@@ -96,14 +100,22 @@ static void test_mock_guest_session(void) {
     }
 
     int cli_status = 0;
-    waitpid(cli_pid, &cli_status, 0);
+    pid_t waited;
+    do {
+        waited = waitpid(cli_pid, &cli_status, 0);
+    } while (waited < 0 && errno == EINTR);
+    assert(waited == cli_pid);
     assert(WIFEXITED(cli_status) && WEXITSTATUS(cli_status) == 0);
 
-    /* Terminate mock guest */
-    kill(mock_pid, SIGTERM);
+    /* The one-session peer owns its natural shutdown; verify it instead of killing
+     * it after host success, which could conceal a peer failure or cleanup race. */
     int mock_status = 0;
-    waitpid(mock_pid, &mock_status, 0);
-    unlink(sock_path);
+    do {
+        waited = waitpid(mock_pid, &mock_status, 0);
+    } while (waited < 0 && errno == EINTR);
+    assert(waited == mock_pid);
+    assert(WIFEXITED(mock_status) && WEXITSTATUS(mock_status) == 0);
+    assert(access(sock_path, F_OK) < 0 && errno == ENOENT);
 }
 
 static void test_cli_default_options(void) {
@@ -140,9 +152,13 @@ static void test_cli_default_options(void) {
 }
 
 int main(void) {
+    alarm(20);
     test_mount_path_translation();
-    test_mock_guest_session();
+    /* Each independent real CLI/peer session must pass; this is stress, not retry. */
+    for (unsigned int iteration = 0; iteration < 32; iteration++) {
+        test_mock_guest_session(iteration);
+    }
     test_cli_default_options();
-    printf("All test_auto_terminal tests passed successfully!\n");
+    printf("All test_auto_terminal tests passed, including 32 real CLI/peer sessions!\n");
     return 0;
 }

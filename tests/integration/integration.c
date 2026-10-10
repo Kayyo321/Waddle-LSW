@@ -60,7 +60,18 @@ static int wait_status(pid_t pid) {
     return WEXITSTATUS(status);
 }
 
-static void fake_peer(int mode) {
+enum {
+    PeerInputClosedSuccess = 6,
+    PeerInputClosedNonzero,
+    PeerInputClosedNoExit,
+    PeerInputClosedTruncatedExit,
+    PeerInputClosedEarlyExit,
+    PeerInputClosedHeldOpen,
+    PeerInputClosedFragmentedExit,
+    PeerInputEofFirst
+};
+
+static void fake_peer(int mode, int release_fd) {
     umask(077);
     int listener = socket(AF_UNIX, SOCK_STREAM, 0);
     assert(listener >= 0);
@@ -81,7 +92,12 @@ static void fake_peer(int mode) {
     decoder_t d;
     memset(&d, 0, sizeof(d));
     assert(wire_read(&d, fd) == 1);
-    wire_destroy(&d);
+    wire_consume(&d);
+
+    if (mode >= PeerInputClosedSuccess && mode != PeerInputEofFirst) {
+        /* Force EPIPE before the CLI can receive SpawnResp and enqueue stdin EOF. */
+        assert(shutdown(fd, SHUT_RD) == 0);
+    }
 
     if (mode != 1) {
         queue_t q;
@@ -108,22 +124,63 @@ static void fake_peer(int mode) {
             assert(wire_send(&q, &seq, (uint16_t)WaddleMsgSpawnResp, response, 12) == 0);
             q.len = 17; /* Truncated */
         }
-        full_write(fd, q.data, q.len);
+        if (mode >= PeerInputClosedSuccess) {
+            assert(wire_send(&q, &seq, (uint16_t)WaddleMsgSpawnResp, response, 12) == 0);
+            if (mode == PeerInputEofFirst) {
+                full_write(fd, q.data, q.len);
+                q.len = 0;
+                assert(wire_read(&d, fd) == 1);
+                assert(d.type == WaddleMsgStreamEof && d.length == 4 &&
+                       waddle_get32(d.body) == WaddleStreamStdin);
+                wire_consume(&d);
+                assert(shutdown(fd, SHUT_RD) == 0);
+            }
+            assert(wire_stream(&q, &seq, WaddleStreamStdout, "final stdout\n", 13) == 0);
+            assert(wire_stream(&q, &seq, WaddleStreamStderr, "final stderr\n", 13) == 0);
+            if (mode != PeerInputClosedEarlyExit) {
+                assert(wire_eof(&q, &seq, WaddleStreamStdout) == 0);
+                assert(wire_eof(&q, &seq, WaddleStreamStderr) == 0);
+            }
+            if (mode != PeerInputClosedNoExit && mode != PeerInputClosedHeldOpen) {
+                uint8_t exit_body[16] = {0};
+                waddle_put32(exit_body, mode == PeerInputClosedNonzero ? 42 : 0);
+                assert(wire_send(&q, &seq, (uint16_t)WaddleMsgProcessExit, exit_body, 16) == 0);
+                if (mode == PeerInputClosedTruncatedExit) {
+                    q.len -= 1;
+                }
+            }
+        }
+        if (mode == PeerInputClosedFragmentedExit) {
+            for (size_t i = 0; i < q.len; i++) {
+                full_write(fd, q.data + i, 1);
+            }
+        } else {
+            full_write(fd, q.data, q.len);
+        }
         queue_free(&q);
+        if (mode == PeerInputClosedHeldOpen) {
+            /* The parent releases us only after the CLI exits. No transport EOF can
+             * rescue an unbounded drain; the CLI must enforce its own fixed cap. */
+            char released;
+            assert(read(release_fd, &released, 1) == 0);
+        }
     }
 
+    wire_destroy(&d);
+    close(release_fd);
     close(fd);
     close(listener);
     (void)unlink(socket_path);
     _exit(0);
 }
 
-static pid_t peer(int fake) {
+static pid_t peer(int fake, int release_fd, int release_write_fd) {
     pid_t pid = fork();
     assert(pid >= 0);
     if (pid == 0) {
+        if (release_write_fd >= 0) close(release_write_fd);
         if (fake) {
-            fake_peer(fake);
+            fake_peer(fake, release_fd);
         }
         execl("./build/waddle-mock-guest", "waddle-mock-guest", "--socket-path", socket_path, (char *)NULL);
         _exit(99);
@@ -158,7 +215,10 @@ typedef struct test_case_t {
 } test_case_t;
 
 static void run_case(test_case_t *t) {
-    pid_t mock = peer(t->fake);
+    int release[2];
+    assert(pipe2(release, O_CLOEXEC) == 0);
+    pid_t mock = peer(t->fake, release[0], release[1]);
+    close(release[0]);
     int input[2], output[2], errors[2];
     assert(pipe2(input, O_CLOEXEC) == 0);
     assert(pipe2(output, O_CLOEXEC) == 0);
@@ -303,12 +363,13 @@ static void run_case(test_case_t *t) {
     }
 
     int host_status = wait_status(host);
+    close(release[1]);
     int peer_status = wait_status(mock);
     if (host_status != t->expected) {
         fprintf(stderr, "%s: host returned %d, expected %d\n", t->name, host_status, t->expected);
         exit(1);
     }
-    if (!t->fake && !t->timeout) {
+    if (!t->timeout) {
         assert(peer_status == 0);
     }
     if (t->large) {
@@ -331,7 +392,7 @@ static void run_case(test_case_t *t) {
 
 static void tty_case(int mode) {
     int disconnect = (mode == 1);
-    pid_t mock = peer(0);
+    pid_t mock = peer(0, -1, -1);
     int master, slave, errors[2];
     struct winsize size = {.ws_row = (mode == 2 ? 0 : 24), .ws_col = (mode == 2 ? 0 : 80), .ws_xpixel = 0, .ws_ypixel = 0};
 
@@ -690,6 +751,30 @@ int main(int argc, char **argv) {
             .err = NULL,
             .cwd = NULL,
             .environment = NULL
+        };
+        run_case(&t);
+    }
+
+    const char *terminal_names[] = {
+        "closed input preserves final success",
+        "closed input preserves nonzero exit",
+        "closed input rejects EOF without exit",
+        "closed input rejects truncated exit",
+        "closed input rejects exit before stream EOF",
+        "closed input drain has fixed deadline",
+        "closed input accepts fragmented final frames",
+        "stdin EOF before final frames succeeds"
+    };
+    for (int mode = PeerInputClosedSuccess; mode <= PeerInputEofFirst; mode++) {
+        int valid = mode == PeerInputClosedSuccess || mode == PeerInputClosedNonzero ||
+                    mode == PeerInputClosedFragmentedExit || mode == PeerInputEofFirst;
+        t = (test_case_t){
+            .name = terminal_names[mode - PeerInputClosedSuccess],
+            .guest = streams,
+            .expected = valid ? (mode == PeerInputClosedNonzero ? 42 : 0) : 125,
+            .fake = mode,
+            .out = "final stdout\n",
+            .err = valid ? "final stderr\n" : NULL
         };
         run_case(&t);
     }

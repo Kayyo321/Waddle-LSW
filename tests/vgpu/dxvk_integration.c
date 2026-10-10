@@ -1,0 +1,497 @@
+/** @file dxvk_integration.c @brief Native black-box DXVK device/presentation gate.
+ * All SDK identifiers below are external ABI names. This fixture owns every
+ * acquired COM reference, window and module until the single cleanup path.
+ * Build success alone does not establish ICD or DXVK compatibility.
+ */
+#define COBJMACROS
+#include <windows.h>
+#include <d3d11.h>
+#include <d3dcompiler.h>
+#include <dwmapi.h>
+#include "waddle/venus_tcp.h"
+#include <stdio.h>
+#include <wchar.h>
+#include <stdlib.h>
+#include <process.h>
+#include <string.h>
+
+/** @brief Borrowed DXVK export signature; invocation transfers output references. */
+typedef HRESULT (WINAPI *create_device_swapchain_t)(
+    IDXGIAdapter *, D3D_DRIVER_TYPE, HMODULE, UINT, const D3D_FEATURE_LEVEL *, UINT,
+    UINT, const DXGI_SWAP_CHAIN_DESC *, IDXGISwapChain **, ID3D11Device **,
+    D3D_FEATURE_LEVEL *, ID3D11DeviceContext **);
+
+/** @brief Pinned DXGI factory export; transfers one caller-owned COM reference.
+ * @param[in] iid Borrowed nonnull factory interface identity.
+ * @param[out] factory Nonnull output, released before the exporting DLL.
+ * @return S_OK or the native factory failure. Sole fixture thread.
+ */
+typedef HRESULT (WINAPI *create_factory_t)(REFIID iid,void **factory);
+
+/** @brief System compiler export; returned blobs belong to the caller. */
+typedef HRESULT (WINAPI *compile_shader_t)(const void *,SIZE_T,const char *,const D3D_SHADER_MACRO *,ID3DInclude *,const char *,const char *,UINT,UINT,ID3DBlob **,ID3DBlob **);
+/** @brief Explicit bootstrap start; path borrowed for call, session owned by DLL. */
+typedef venus_ring_status_t (*bootstrap_start_t)(const char *,size_t);
+/** @brief Quiescent stop; failed retirement retains the DLL session. */
+typedef venus_ring_status_t (*bootstrap_stop_t)(void);
+/** @brief Borrowed copied session identity; no resource transfer. */
+typedef uint64_t (*bootstrap_session_t)(void);
+/** @brief Release only after exact externally proved worker retirement. */
+typedef venus_ring_status_t (*bootstrap_abandon_t)(uint64_t);
+
+/** @brief Verify every BGRA pixel through actual GPU-to-staging copy.
+ * @param[in] device/context/backbuffer Live borrowed COM references.
+ * @return S_OK for 4096 exact pixels, failure HRESULT otherwise.
+ * @note Single caller thread. Local staging owner released on every path;
+ * mapping is borrowed from context until Unmap and never escapes this call.
+ */
+static HRESULT verify_pixels(ID3D11Device *device,ID3D11DeviceContext *context,ID3D11Texture2D *backbuffer) {
+    D3D11_TEXTURE2D_DESC description={0};ID3D11Texture2D_GetDesc(backbuffer,&description);
+    if(description.Width!=64 || description.Height!=64 || description.Format!=DXGI_FORMAT_B8G8R8A8_UNORM || description.SampleDesc.Count!=1)return E_FAIL;
+    description.Usage=D3D11_USAGE_STAGING;description.BindFlags=0;description.CPUAccessFlags=D3D11_CPU_ACCESS_READ;description.MiscFlags=0;
+    ID3D11Texture2D *staging=NULL;HRESULT status=ID3D11Device_CreateTexture2D(device,&description,NULL,&staging);
+    if(FAILED(status))return status;
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource *)staging,(ID3D11Resource *)backbuffer);
+    puts("DXVK stage: map GPU staging pixels.");fflush(stdout);
+    D3D11_MAPPED_SUBRESOURCE mapping={0};status=ID3D11DeviceContext_Map(context,(ID3D11Resource *)staging,0,D3D11_MAP_READ,0,&mapping);
+    if(SUCCEEDED(status)) {
+        if(!mapping.pData || mapping.RowPitch<256){
+            fprintf(stderr,"DXVK staging mapping invalid: present=%d row_pitch=%u depth_pitch=%u\n",
+                mapping.pData!=NULL,(unsigned)mapping.RowPitch,(unsigned)mapping.DepthPitch);status=E_FAIL;
+        }else{
+            UINT mismatches=0,first_row=0,first_column=0;unsigned char first_pixel[4]={0};
+            for(UINT row=0;row<64;row++)for(UINT column=0;column<64;column++) {
+                const unsigned char *pixel=(const unsigned char *)mapping.pData+(size_t)row*mapping.RowPitch+column*4;
+                if(pixel[0]!=128 || pixel[1]!=64 || pixel[2]!=32 || pixel[3]!=255){
+                    if(!mismatches){first_row=row;first_column=column;memcpy(first_pixel,pixel,sizeof first_pixel);}
+                    ++mismatches;
+                }
+            }
+            if(mismatches){
+                fprintf(stderr,"DXVK staging pixels mismatch: count=%u row_pitch=%u first=(%u,%u) BGRA=%u,%u,%u,%u expected=128,64,32,255\n",
+                    (unsigned)mismatches,(unsigned)mapping.RowPitch,(unsigned)first_row,(unsigned)first_column,
+                    (unsigned)first_pixel[0],(unsigned)first_pixel[1],(unsigned)first_pixel[2],(unsigned)first_pixel[3]);status=E_FAIL;
+            }
+        }
+        ID3D11DeviceContext_Unmap(context,(ID3D11Resource *)staging,0);
+    }
+    ID3D11Texture2D_Release(staging);
+    if(SUCCEEDED(status))puts("DXVK rendered 4096 exact BGRA pixels.");
+    return status;
+}
+
+/** @brief Await and verify the actual presented client area.
+ * @param[in] window Live borrowed 64 by 64 client HWND.
+ * @return S_OK for every exact presented RGB pixel; failure otherwise.
+ * @note Sole caller thread. DXVK Present queues asynchronous presentation.
+ * Repeats DwmFlush and every exact pixel comparison for at most ten seconds;
+ * owns each acquired DC until unconditional ReleaseDC. No pixel tolerance.
+ */
+static HRESULT verify_presented_pixels(HWND window) {
+    RECT client={0};
+    if(!GetClientRect(window,&client) || client.right!=64 || client.bottom!=64)return E_FAIL;
+    ULONGLONG started=GetTickCount64();int first=1;
+    for(;;){
+        if(DwmFlush()!=S_OK)return E_FAIL;
+        HDC dc=GetDC(window);if(!dc)return E_FAIL;
+        UINT mismatches=0;int first_row=0,first_column=0;COLORREF first_pixel=0;
+        for(int row=0;row<64;row++)for(int column=0;column<64;column++){
+            COLORREF pixel=GetPixel(dc,column,row);
+            if(!row && !column)first_pixel=pixel;
+            if(pixel!=RGB(32,64,128)){
+                if(!mismatches){first_row=row;first_column=column;first_pixel=pixel;}
+                ++mismatches;
+            }
+        }
+        if(!ReleaseDC(window,dc))return E_FAIL;
+        ULONGLONG elapsed=GetTickCount64()-started;
+        if(!mismatches && elapsed<=10000){puts("DXVK presented 4096 exact client RGB pixels.");return S_OK;}
+        if((first && mismatches) || elapsed>=10000){
+            fprintf(stderr,"DXVK presented pixels %s: count=%u first=(%d,%d) RGB=%u,%u,%u raw=0x%08lx expected=32,64,128 elapsed_ms=%llu\n",
+                elapsed>=10000 ? "timed out" : "pending",(unsigned)mismatches,first_row,first_column,
+                (unsigned)GetRValue(first_pixel),(unsigned)GetGValue(first_pixel),(unsigned)GetBValue(first_pixel),
+                (unsigned long)first_pixel,(unsigned long long)elapsed);fflush(stderr);
+        }
+        if(elapsed>=10000)return E_FAIL;
+        first=0;Sleep(1);
+    }
+}
+
+/** @brief Joined compiler invocation; caller owns inputs, module and returned blobs.
+ * The worker borrows this record until its thread is joined. Compiler-owned
+ * CRT thread cleanup runs on normal thread exit while the DLL is loaded.
+ */
+typedef struct compiler_call_t {
+    HMODULE compiler;
+    const char *source;
+    SIZE_T source_bytes;
+    HRESULT status;
+    ID3DBlob *code;
+    ID3DBlob *errors;
+} compiler_call_t;
+
+/** @brief Compile unchanged acceptance HLSL on a short-lived CRT thread.
+ * @param[in,out] opaque Nonnull borrowed compiler_call_t; writes status/blobs.
+ * @return Zero after compilation. Caller joins before reading or releasing.
+ * @note Sole worker; no D3D context access. Normal exit invokes CRT/FLS cleanup.
+ */
+static unsigned __stdcall compile_worker(void *opaque) {
+    compiler_call_t *call=(compiler_call_t *)opaque;
+    call->compiler=LoadLibraryExW(L"d3dcompiler_47.dll",NULL,LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!call->compiler)return 0;
+    FARPROC procedure=GetProcAddress(call->compiler,"D3DCompile");compile_shader_t compile=NULL;
+    _Static_assert(sizeof compile==sizeof procedure,"Windows function representation");memcpy(&compile,&procedure,sizeof compile);
+    if(!compile)return 0;
+    call->status=compile(call->source,call->source_bytes,"acceptance_compute",NULL,NULL,
+        "main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&call->code,&call->errors);
+    return 0;
+}
+
+/** @brief Execute real DXVK compute and verify all 64 storage-buffer words.
+ * @param[in] device/context Live borrowed COM references, held by caller.
+ * @param[out] compiler_owner Nonnull initially-null module owner; caller releases
+ * after all DXVK device threads and modules have retired, including failures.
+ * @return S_OK after exact results, failure HRESULT otherwise.
+ * @note Caller owns compiler module; local COM/blob owners released at cleanup.
+ * Compiler blobs own bytecode only until CreateComputeShader copies it.
+ */
+static HRESULT verify_compute(ID3D11Device *device,ID3D11DeviceContext *context,HMODULE *compiler_owner) {
+    static const char Shader[]="RWStructuredBuffer<uint> data : register(u0); [numthreads(8,1,1)] void main(uint3 id : SV_DispatchThreadID) { data[id.x]=id.x*3+7; }";
+    HRESULT status=E_FAIL;ID3DBlob *code=NULL,*errors=NULL;ID3D11ComputeShader *shader=NULL;
+    ID3D11Buffer *output=NULL,*staging=NULL;ID3D11UnorderedAccessView *view=NULL;
+    compiler_call_t call={.source=Shader,.source_bytes=sizeof Shader-1,.status=E_FAIL};
+    uintptr_t thread_value=_beginthreadex(NULL,0,compile_worker,&call,0,NULL);
+    if(!thread_value)goto cleanup;
+    HANDLE thread=(HANDLE)thread_value;
+    /* A live worker keeps the stack record and compiler module borrowed.
+     * Never release either owner until the kernel proves thread termination. */
+    while(WaitForSingleObject(thread,INFINITE)!=WAIT_OBJECT_0)Sleep(1);
+    int thread_closed=CloseHandle(thread)!=0;
+    *compiler_owner=call.compiler;code=call.code;errors=call.errors;status=thread_closed ? call.status : E_FAIL;
+    if(FAILED(status) || !code)goto cleanup;
+    status=ID3D11Device_CreateComputeShader(device,ID3D10Blob_GetBufferPointer(code),ID3D10Blob_GetBufferSize(code),NULL,&shader);
+    if(FAILED(status))goto cleanup;
+    D3D11_BUFFER_DESC description={.ByteWidth=256,.Usage=D3D11_USAGE_DEFAULT,.BindFlags=D3D11_BIND_UNORDERED_ACCESS,.MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,.StructureByteStride=4};
+    status=ID3D11Device_CreateBuffer(device,&description,NULL,&output);if(FAILED(status))goto cleanup;
+    D3D11_UNORDERED_ACCESS_VIEW_DESC view_description={.Format=DXGI_FORMAT_UNKNOWN,.ViewDimension=D3D11_UAV_DIMENSION_BUFFER};view_description.Buffer.NumElements=64;
+    status=ID3D11Device_CreateUnorderedAccessView(device,(ID3D11Resource *)output,&view_description,&view);if(FAILED(status))goto cleanup;
+    description.Usage=D3D11_USAGE_STAGING;description.BindFlags=0;description.CPUAccessFlags=D3D11_CPU_ACCESS_READ;description.MiscFlags=0;description.StructureByteStride=0;
+    status=ID3D11Device_CreateBuffer(device,&description,NULL,&staging);if(FAILED(status))goto cleanup;
+    ID3D11DeviceContext_CSSetShader(context,shader,NULL,0);ID3D11DeviceContext_CSSetUnorderedAccessViews(context,0,1,&view,NULL);
+    ID3D11DeviceContext_Dispatch(context,8,1,1);
+    ID3D11UnorderedAccessView *empty=NULL;ID3D11DeviceContext_CSSetUnorderedAccessViews(context,0,1,&empty,NULL);ID3D11DeviceContext_CSSetShader(context,NULL,NULL,0);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource *)staging,(ID3D11Resource *)output);
+    puts("DXVK stage: map compute storage results.");fflush(stdout);
+    D3D11_MAPPED_SUBRESOURCE mapping={0};status=ID3D11DeviceContext_Map(context,(ID3D11Resource *)staging,0,D3D11_MAP_READ,0,&mapping);
+    if(SUCCEEDED(status)) {
+        if(!mapping.pData)status=E_FAIL;
+        else for(UINT index=0;index<64;index++){UINT value=0;memcpy(&value,(const unsigned char *)mapping.pData+index*4,4);if(value!=index*3+7)status=E_FAIL;}
+        ID3D11DeviceContext_Unmap(context,(ID3D11Resource *)staging,0);
+    }
+cleanup:
+    ID3D11DeviceContext_CSSetShader(context,NULL,NULL,0);
+    ID3D11UnorderedAccessView *none=NULL;ID3D11DeviceContext_CSSetUnorderedAccessViews(context,0,1,&none,NULL);
+    if(view)ID3D11UnorderedAccessView_Release(view);
+    if(staging)ID3D11Buffer_Release(staging);
+    if(output)ID3D11Buffer_Release(output);
+    if(shader)ID3D11ComputeShader_Release(shader);
+    if(errors)ID3D10Blob_Release(errors);
+    if(code)ID3D10Blob_Release(code);
+    if(SUCCEEDED(status))puts("DXVK compute returned all 64 exact storage words.");
+    return status;
+}
+
+/** @brief Wait for the supervisor's exact session retirement record.
+ * @param[in] path Trusted fresh absolute UTF-16 receipt path, borrowed.
+ * @param[in] identity Nonzero retained session identity.
+ * @note Failure retains ownership until the supervisor proves host retirement.
+ * Sole caller thread; each transient receipt handle is closed before retry.
+ */
+static void wait_retired(const wchar_t *path,uint64_t identity) {
+    char expected[64];int length=snprintf(expected,sizeof expected,"retired_session=%016llx\n",(unsigned long long)identity);
+    if(length<=0 || (size_t)length>=sizeof expected)abort();
+    fprintf(stderr,"Retained native session=%016llx awaiting trusted actual worker retirement\n",(unsigned long long)identity);fflush(stderr);
+    for(;;) {
+        HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
+        if(file!=INVALID_HANDLE_VALUE) {
+            BY_HANDLE_FILE_INFORMATION information={0};char actual[65];DWORD count=0;int match=0;
+            if(GetFileType(file)==FILE_TYPE_DISK && GetFileInformationByHandle(file,&information) &&
+                !(information.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY)) && information.nNumberOfLinks==1 &&
+                !information.nFileSizeHigh && information.nFileSizeLow==(DWORD)length &&
+                ReadFile(file,actual,sizeof actual,&count,NULL) && count==(DWORD)length && !memcmp(actual,expected,(size_t)length))match=1;
+            while(!CloseHandle(file))Sleep(10);
+            if(match)return;
+        }
+        Sleep(10);
+    }
+}
+
+#include "dxvk_fault_windows.inc"
+
+/* Accept ordinary absolute drive/UNC paths; refuse search-path resolution. */
+static int absolute_file(const wchar_t *path, const wchar_t *basename) {
+    if (!path || !*path)
+        return 0;
+    size_t length = wcslen(path);
+    if (!((length >= 3 && path[1] == L':' && path[2] == L'\\') ||
+          (length >= 3 && path[0] == L'\\' && path[1] == L'\\')))
+        return 0;
+    const wchar_t *leaf = wcsrchr(path, L'\\');
+    if (basename && (!leaf || _wcsicmp(leaf + 1, basename)))
+        return 0;
+    DWORD attributes = GetFileAttributesW(path);
+    return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+/** @brief Run one real DXVK device/swapchain transaction on the selected ICD.
+ * @param[in] argc Exactly eight. @param[in] argv Nonnull borrowed absolute paths:
+ * executable, vulkan-1.dll, DXVK dxgi.dll, DXVK d3d11.dll, Waddle ICD manifest, bootstrap DLL, private config, fresh retirement receipt.
+ * @return Zero after normal device/results/Present/teardown; one for normal
+ * failure or completely verified optional postflush loss; two for invalid
+ * prerequisites or failed loss verification. Supervisor requires stage markers.
+ * @note Single main thread, optional joined submission-lock helper, and vendor
+ * threads. No fixture heap; modules outlive COM references and helper borrows.
+ * Modules outlive COM objects; partial acquisition uses the same cleanup path.
+ */
+static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
+    char fault_text[16];DWORD fault_length=GetEnvironmentVariableA("WADDLE_DXVK_FAULT",fault_text,sizeof fault_text);
+    int fault_case=fault_length!=0;
+    if(fault_case&&(fault_length>=sizeof fault_text||strcmp(fault_text,"postflush")||audit_enabled))return 2;
+    if (argc != 8 || !absolute_file(argv[1], L"vulkan-1.dll") ||
+        !absolute_file(argv[2], L"dxgi.dll") || !absolute_file(argv[3], L"d3d11.dll") ||
+        !absolute_file(argv[4], NULL) || wcschr(argv[4], L';') ||
+        !absolute_file(argv[5], L"waddle_tcp_bootstrap.dll") || !absolute_file(argv[6], NULL) ||
+        !argv[7] || wcslen(argv[7])<3 || argv[7][1]!=L':' || argv[7][2]!=L'\\' ||
+        GetFileAttributesW(argv[7])!=INVALID_FILE_ATTRIBUTES) {
+        fputs("usage: dxvk_integration.exe <absolute vulkan-1.dll> <absolute DXVK dxgi.dll> "
+              "<absolute DXVK d3d11.dll> <absolute Waddle ICD manifest> <absolute bootstrap DLL> <private config> <fresh retirement receipt>\n", stderr);
+        return 2;
+    }
+    /* Replace loader discovery, rather than adding the experimental driver to
+     * the installed GPU list. The manifest is a trusted acceptance input. */
+    if (!SetEnvironmentVariableW(L"VK_DRIVER_FILES", argv[4]) ||
+        !SetEnvironmentVariableW(L"VK_ICD_FILENAMES", NULL) ||
+        !SetEnvironmentVariableW(L"VK_ADD_DRIVER_FILES", NULL) ||
+        !SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~all~")) {
+        fprintf(stderr, "loader environment failed: %lu\n", (unsigned long)GetLastError());
+        return 1;
+    }
+    int result = 1;
+    int fault_verified=0;
+    HMODULE loader = NULL, dxgi = NULL, d3d11 = NULL, bootstrap=NULL, compiler=NULL;
+    bootstrap_start_t start=NULL;bootstrap_stop_t stop=NULL;bootstrap_session_t session=NULL;bootstrap_abandon_t abandon=NULL;
+    uint64_t identity=0;
+    HWND window = NULL;
+    IDXGIFactory *factory = NULL;
+    IDXGIAdapter *adapter = NULL;
+    IDXGISwapChain *swapchain = NULL;
+    ID3D11Device *device = NULL;
+    ID3D11DeviceContext *context = NULL;
+    ID3D11Texture2D *backbuffer = NULL;
+    ID3D11RenderTargetView *view = NULL;
+    ID3D11Query *completion = NULL;
+    HRESULT status = E_FAIL;
+    const char *stage="authenticated bootstrap";
+    bootstrap=LoadLibraryExW(argv[5],NULL,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if(!bootstrap)goto cleanup;
+    FARPROC bootstrap_proc=GetProcAddress(bootstrap,"venus_tcp_bootstrap_start");memcpy(&start,&bootstrap_proc,sizeof start);
+    bootstrap_proc=GetProcAddress(bootstrap,"venus_tcp_bootstrap_stop");memcpy(&stop,&bootstrap_proc,sizeof stop);
+    bootstrap_proc=GetProcAddress(bootstrap,"venus_tcp_bootstrap_session");memcpy(&session,&bootstrap_proc,sizeof session);
+    bootstrap_proc=GetProcAddress(bootstrap,"venus_tcp_bootstrap_abandon");memcpy(&abandon,&bootstrap_proc,sizeof abandon);
+    if(!start || !stop || !session || !abandon)goto cleanup;
+    char config_path[VenusTcpMaxWindowsPathBytes];
+    int path_bytes=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,argv[6],-1,config_path,sizeof config_path,NULL,NULL);
+    if(!path_bytes || start(config_path,(size_t)path_bytes)!=RingOk)goto cleanup;
+    identity=session();if(!identity)goto cleanup;
+    printf("Authenticated real DXVK session=%016llx\n",(unsigned long long)identity);fflush(stdout);
+    printf("DXVK actual ICD module base=%p\n",(void *)GetModuleHandleW(L"waddle_vulkan_experimental.dll"));fflush(stdout);
+    stage="native loader and DXVK module acquisition";
+    loader = LoadLibraryExW(argv[1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!loader)
+        goto cleanup;
+    dxgi = LoadLibraryExW(argv[2], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!dxgi)
+        goto cleanup;
+    d3d11 = LoadLibraryExW(argv[3], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!d3d11)
+        goto cleanup;
+    create_device_swapchain_t create =
+        (create_device_swapchain_t)GetProcAddress(d3d11, "D3D11CreateDeviceAndSwapChain");
+    if (!create)
+        goto cleanup;
+    if(audit_enabled){
+        printf("DXVK heap module bases loader=%p dxgi=%p d3d11=%p bootstrap=%p icd=%p\n",
+            (void *)loader,(void *)dxgi,(void *)d3d11,(void *)bootstrap,
+            (void *)GetModuleHandleW(L"waddle_vulkan_experimental.dll"));fflush(stdout);
+    }
+    /* The first lifetime can initialize resident system DXGI dependencies.
+     * Explicitly use the pinned module's factory on every lifetime, rather
+     * than relying on d3d11.dll's basename import resolution after reload.
+     * The pinned D3D11 implementation uses this adapter's actual parent.
+     */
+    stage="pinned DXVK factory and adapter acquisition";
+    create_factory_t create_factory=NULL;
+    FARPROC factory_proc=GetProcAddress(dxgi,"CreateDXGIFactory1");
+    memcpy(&create_factory,&factory_proc,sizeof create_factory);
+    if(!create_factory)goto cleanup;
+    status=create_factory(&IID_IDXGIFactory,(void **)&factory);
+    if(FAILED(status) || !factory)goto cleanup;
+    status=IDXGIFactory_EnumAdapters(factory,0,&adapter);
+    if(FAILED(status) || !adapter)goto cleanup;
+    window = CreateWindowExW(0, L"STATIC", L"Waddle DXVK acceptance",
+                             WS_POPUP | WS_VISIBLE,
+                             100, 100, 64, 64, NULL, NULL, GetModuleHandleW(NULL), NULL);
+    if (!window)
+        goto cleanup;
+    if(!UpdateWindow(window))goto cleanup;
+    DXGI_SWAP_CHAIN_DESC description = {0};
+    description.BufferDesc.Width = 64;
+    description.BufferDesc.Height = 64;
+    description.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    description.SampleDesc.Count = 1;
+    description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    description.BufferCount = 2;
+    description.OutputWindow = window;
+    description.Windowed = TRUE;
+    description.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+    const D3D_FEATURE_LEVEL Levels[] = {D3D_FEATURE_LEVEL_11_0};
+    D3D_FEATURE_LEVEL selected = 0;
+    stage="real D3D11 device and swapchain creation";
+    status = create(adapter, D3D_DRIVER_TYPE_UNKNOWN, NULL, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                    Levels, 1, D3D11_SDK_VERSION, &description, &swapchain, &device,
+                    &selected, &context);
+    if (FAILED(status) || !swapchain || !device || !context || selected != Levels[0])
+        goto cleanup;
+    puts("DXVK actual D3D11 feature level11 device and swapchain created.");fflush(stdout);
+    stage="backbuffer and render target acquisition";
+    status = IDXGISwapChain_GetBuffer(swapchain, 0, &IID_ID3D11Texture2D, (void **)&backbuffer);
+    if (FAILED(status) || !backbuffer)
+        goto cleanup;
+    status = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)backbuffer, NULL, &view);
+    if (FAILED(status) || !view)
+        goto cleanup;
+    D3D11_QUERY_DESC query_description = {.Query = D3D11_QUERY_EVENT};
+    stage="GPU completion query creation";
+    status = ID3D11Device_CreateQuery(device, &query_description, &completion);
+    if (FAILED(status) || !completion)
+        goto cleanup;
+    /* D3D11.3 section 3.2.3.6 permits 0.6 integer ULP when converting
+     * FLOAT to UNORM. Use byte centers so the exact readback oracle has
+     * one legal result; 0.5f lies between 127 and 128 in eight-bit UNORM.
+     * https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#FLOATtoUNORM
+     */
+    const FLOAT Color[] = {32.0f / 255.0f, 64.0f / 255.0f, 128.0f / 255.0f, 1.0f};
+    stage="GPU clear and completion";
+    puts("DXVK stage: record GPU clear.");fflush(stdout);
+    ID3D11DeviceContext_ClearRenderTargetView(context, view, Color);
+    puts("DXVK stage: record GPU completion event.");fflush(stdout);
+    ID3D11DeviceContext_End(context, (ID3D11Asynchronous *)completion);
+    puts("DXVK stage: flush GPU clear and event.");fflush(stdout);
+    ID3D11DeviceContext_Flush(context);
+    puts("DXVK stage: poll GPU completion event.");fflush(stdout);
+    ULONGLONG started = GetTickCount64();
+    BOOL finished = FALSE;
+    do {
+        status = ID3D11DeviceContext_GetData(context, (ID3D11Asynchronous *)completion,
+                                            &finished, sizeof(finished), 0);
+        if (FAILED(status))
+            goto cleanup;
+        if (GetTickCount64() - started >= 10000) {
+            status = HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+            goto cleanup;
+        }
+        if (status == S_OK && finished)
+            break;
+        Sleep(1);
+    } while (1);
+    stage="exact GPU staging pixels";status=verify_pixels(device,context,backbuffer);if(FAILED(status))goto cleanup;
+    stage="exact compute storage words";status=verify_compute(device,context,&compiler);if(FAILED(status))goto cleanup;
+    stage="actual swapchain presentation";
+    status = IDXGISwapChain_Present(swapchain, 0, 0);
+    if (status != S_OK)
+        goto cleanup;
+    status=verify_presented_pixels(window);if(FAILED(status))goto cleanup;
+    status = ID3D11Device_GetDeviceRemovedReason(device);
+    if (FAILED(status))
+        goto cleanup;
+    if(fault_case){
+        stage="actual transport loss after recorded GPU work";
+        status=verify_transport_loss(device,context,view,swapchain,argv[7],identity);
+        if(FAILED(status))goto cleanup;
+        fault_verified=1;
+    }
+    result = 0;
+cleanup:
+    if (result)
+        fprintf(stderr, "DXVK acceptance failed: stage=%s HRESULT=0x%08lx Win32=%lu\n",
+                stage, (unsigned long)status, (unsigned long)GetLastError());
+    if (context && !fault_verified)
+        ID3D11DeviceContext_ClearState(context);
+    if (completion)
+        ID3D11Query_Release(completion);
+    if (view)
+        ID3D11RenderTargetView_Release(view);
+    if (backbuffer)
+        ID3D11Texture2D_Release(backbuffer);
+    if (swapchain)
+        IDXGISwapChain_Release(swapchain);
+    if (context)
+        ID3D11DeviceContext_Release(context);
+    if (device)
+        ID3D11Device_Release(device);
+    if (adapter)
+        IDXGIAdapter_Release(adapter);
+    if (factory)
+        IDXGIFactory_Release(factory);
+    if (window && !DestroyWindow(window))
+        result = 1;
+    if(stop && session && abandon) {
+        venus_ring_status_t retirement=stop();uint64_t retained=session();
+        if(retirement!=RingOk && retained){if(!fault_verified)result=1;wait_retired(argv[7],retained);while(abandon(retained)!=RingOk)Sleep(10);}
+        else if(retirement!=RingOk)result=1;
+    }
+    if (d3d11 && !FreeLibrary(d3d11))
+        result = 1;
+    if (dxgi && !FreeLibrary(dxgi))
+        result = 1;
+    /* DXVK pipeline workers can receive compiler TLS initializers while the
+     * module is loaded. Retire those device/module owners before unloading
+     * the compiler, so their thread-exit destructors still have live code. */
+    if (compiler && !FreeLibrary(compiler))
+        result = 1;
+    if (loader && !FreeLibrary(loader))
+        result = 1;
+    if(bootstrap && !FreeLibrary(bootstrap))result=1;
+    if(GetModuleHandleW(argv[5]) || GetModuleHandleW(argv[1]) || GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[3]) || GetModuleHandleW(L"waddle_vulkan_experimental.dll"))result=1;
+    if (!result && fault_verified)
+        puts("DXVK actual device removal and owned native teardown verified after trusted retirement.");
+    else if (!result)
+        puts("DXVK real device, exact pixels/compute, swapchain Present and teardown succeeded on the selected ICD.");
+    return fault_case ? (fault_verified && !result ? 1 : 2) : result;
+}
+
+#include "dxvk_heap_audit_windows.inc"
+/** @brief Run the ordinary fixture or supervisor-controlled heap capture cycles.
+ * @param[in] argc/argv Borrowed immutable native fixture arguments.
+ * @return Zero only after every original GPU assertion and optional audit gate.
+ * @note Sole main thread. Auditing requires a fresh directory and independent
+ * authenticated controller/config for each cycle; no synthetic GPU result.
+ */
+int wmain(int argc,wchar_t **argv)
+{
+    wchar_t directory[512];int enabled=audit_directory(directory,512);
+    if(enabled<0)return 2;
+    if(!enabled)return run_dxvk_cycle(argc,argv,0);
+    wchar_t cycles_text[16];DWORD length=GetEnvironmentVariableW(L"WADDLE_DXVK_HEAP_CYCLES",cycles_text,16);
+    unsigned cycles=1;
+    if(length){wchar_t *end=NULL;unsigned long parsed=wcstoul(cycles_text,&end,10);
+        if(length>=16 || !parsed || parsed>8 || !end || *end)return 2;
+        cycles=(unsigned)parsed;}
+    if(audit_stage(directory,"baseline"))return 1;
+    for(unsigned cycle=0;cycle<cycles;cycle++){
+        if(run_dxvk_cycle(argc,argv,1))return 1;
+        char stage[64];int count=snprintf(stage,sizeof stage,"unloaded_%u",cycle+1);
+        if(count<=0 || (size_t)count>=sizeof stage || audit_stage(directory,stage))return 1;
+    }
+    return 0;
+}

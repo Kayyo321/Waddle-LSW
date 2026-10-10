@@ -9,15 +9,38 @@
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-static uint64_t target_id;
+static uint64_t target_id, target_incarnation;
+static av_message_t target_geometry;
+static unsigned input_downs, input_ups, input_clicks, input_wheels;
 static unsigned creates, geometries, destroys;
 static int defer_creation = 1;
 static unsigned captured_frames;
 static unsigned paint_sequence;
 static HWND occlusion_window;
 static int latency_fixture;
+static int lease_fixture;
 static COLORREF paint_color = RGB(63, 127, 191);
 static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (lease_fixture) {
+        const char *event_name = NULL;
+        switch (message) {
+            case WM_SETFOCUS: event_name = "focus-in"; break;
+            case WM_KILLFOCUS: event_name = "focus-out"; break;
+            case WM_KEYDOWN: case WM_SYSKEYDOWN: event_name = "key-down"; break;
+            case WM_KEYUP: case WM_SYSKEYUP: event_name = "key-up"; break;
+            case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: event_name = "button-down"; break;
+            case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: event_name = "button-up"; break;
+            case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: event_name = "wheel"; break;
+            case WM_CLOSE: event_name = "close"; break;
+            default: break;
+        }
+        if (event_name) {
+            fprintf(stderr, "lease-event time=%llu hwnd=%p event=%s message=0x%04x wparam=%llu lparam=%lld\n",
+                (unsigned long long)GetTickCount64(), (void *)window, event_name, (unsigned)message,
+                (unsigned long long)wparam, (long long)lparam);
+            fflush(stderr);
+        }
+    }
     if (message == AvDiagnosticFlashEvent && latency_fixture &&
         (uint64_t)(uintptr_t)window == target_id && wparam && wparam <= 0xffffff &&
         (lparam == 0 || lparam == 1)) {
@@ -27,6 +50,12 @@ static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wp
         InvalidateRect(window, NULL, FALSE);
         UpdateWindow(window);
         return 0;
+    }
+    if ((uint64_t)(uintptr_t)window == target_id) {
+        if (message == WM_KEYDOWN && wparam == 'A') ++input_downs;
+        if (message == WM_KEYUP && wparam == 'A') ++input_ups;
+        if (message == WM_LBUTTONDOWN) ++input_clicks;
+        if (message == WM_MOUSEWHEEL) ++input_wheels;
     }
     if (message == WM_PAINT && (uint64_t)(uintptr_t)window == target_id) {
         PAINTSTRUCT paint;
@@ -159,12 +188,15 @@ static int native_capture_benchmark(av_wgc_t *capture, av_wgc_read_t read_frame)
 static int notification(const av_message_t *message, void *context) {
     (void)context;
     assert(message->window_id == target_id);
-    if (message->type == MsgWindowCreate) {
+    if (message->type == MsgWindowCreateV2) {
         if (defer_creation) { defer_creation = 0; return 1; }
         ++creates;
+        target_incarnation = message->sequence;
+        assert(target_incarnation);
+        target_geometry = *message;
     }
-    else if (message->type == MsgWindowGeometry) ++geometries;
-    else if (message->type == MsgWindowDestroy) ++destroys;
+    else if (message->type == MsgWindowGeometry) { ++geometries; target_geometry = *message; }
+    else if (message->type == MsgWindowDestroy) { assert(message->sequence == target_incarnation); ++destroys; }
     else assert(0);
     return 0;
 }
@@ -178,10 +210,39 @@ static void pump(void) {
         Sleep(1);
     } while (GetTickCount64() < deadline);
 }
+static void native_input_test(HWND target, HWND tool) {
+    // Explicit opt-in gate: requires an interactive, isolated Windows desktop.
+    assert(SetForegroundWindow(target) || GetForegroundWindow() == target);
+    assert(SetFocus(target) || GetFocus() == target);
+    av_message_t input = {.type = MsgInputFocus, .window_id = target_id,
+        .sequence = target_incarnation, .buffer_index = 10, .flags = 1};
+    assert(av_windows_input(&input) == 0);
+    input.type = MsgInputKey; input.width = 30; ++input.buffer_index;
+    assert(av_windows_input(&input) == 0);
+    input.flags = 0; ++input.buffer_index;
+    assert(av_windows_input(&input) == 0); pump();
+    assert(input_downs == 1 && input_ups == 1);
+    input.type = MsgInputPointer; input.width = 0;
+    input.x = (int32_t)target_geometry.width / 2; input.y = (int32_t)target_geometry.height / 2;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    input.type = MsgInputButton; input.x = 0; input.y = 0; input.width = 1; input.flags = 1;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0);
+    input.flags = 0; ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    input.type = MsgInputWheel; input.width = 0; input.y = 120;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    assert(input_clicks == 1 && input_wheels == 1);
+    input.type = MsgInputKey; input.y = 0; input.width = 42; input.flags = 1;
+    ++input.buffer_index; assert(av_windows_input(&input) == 0); pump();
+    assert(SetForegroundWindow(tool) || GetForegroundWindow() == tool);
+    assert(av_windows_refresh() == -1); pump();
+    assert(!(GetAsyncKeyState(VK_LSHIFT) & 0x8000));
+    puts("Native AV input: real key/pointer/button/wheel delivery and foreground-loss release passed");
+}
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--probe-display")) return av_guest_display_probe();
     int benchmark_status = 0;
     latency_fixture = argc == 2 && !strcmp(argv[1], "--round-trip-fixture");
+    lease_fixture = argc == 2 && !strcmp(argv[1], "--lease-fixture");
     if ((latency_fixture || (argc == 2 && !strcmp(argv[1], "--benchmark"))) &&
         av_guest_display_probe() != 0)
         fputs("AV performance warning: 1920x1080 @ 144 Hz primary virtual display prerequisite is unmet; diagnostic may run but cannot establish high-refresh acceptance\n", stderr);
@@ -200,6 +261,25 @@ int main(int argc, char **argv) {
         WS_OVERLAPPEDWINDOW | WS_VISIBLE, 800, 100, 100, 100, NULL, NULL, window_class.hInstance, NULL);
     assert(target && tool);
     target_id = (uint64_t)(uintptr_t)target;
+    if (lease_fixture) {
+        HWND second = CreateWindowExW(0, window_class.lpszClassName, L"Waddle AV lease B",
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE, 800, 300, 640, 480, NULL, NULL, window_class.hInstance, NULL);
+        HWND owned = CreateWindowExW(WS_EX_APPWINDOW, window_class.lpszClassName, L"Owned input rejection",
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE, 1100, 50, 350, 200, target, NULL, window_class.hInstance, NULL);
+        assert(second && owned);
+        SetWindowTextW(target, L"Waddle AV lease A");
+        fprintf(stderr, "Lease fixture PID=%lu A=%p B=%p tool=%p owned=%p\n",
+            (unsigned long)GetCurrentProcessId(), (void *)target, (void *)second, (void *)tool, (void *)owned);
+        fputs("Manual isolated-desktop V3 fixture: run managed AV for this PID. "
+              "A/B are ordinary ownerless targets; tool/owned exercise rejection. "
+              "Close both A and B to exit. No input is synthesized by this fixture.\n", stderr);
+        while (IsWindow(target) || IsWindow(second)) pump();
+        if (IsWindow(owned)) DestroyWindow(owned);
+        if (IsWindow(tool)) DestroyWindow(tool);
+        UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
+        CoUninitialize();
+        return 0;
+    }
     if (latency_fixture) {
         occlusion_window = tool;
         SetWindowTextW(target, L"Waddle AV latency fixture");
@@ -214,14 +294,46 @@ int main(int argc, char **argv) {
         CoUninitialize();
         return 0;
     }
+    assert(av_windows_input(NULL) == -1);
+    DPI_AWARENESS_CONTEXT original_dpi = GetThreadDpiAwarenessContext();
     assert(av_windows_start(0, notification, NULL) == -1);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
+    assert(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2));
     assert(creates == 0);
     assert(av_windows_refresh() == 0);
     assert(creates == 1);
+    assert(av_windows_input(NULL) == -1);
+    av_message_t untracked_input = {.type = MsgInputFocus, .window_id = (uint64_t)(uintptr_t)tool,
+        .sequence = target_incarnation, .buffer_index = 1, .flags = 1};
+    HWND foreground_before = GetForegroundWindow();
+    assert(av_windows_input(&untracked_input) == 0); /* retired/untracked identity no-op */
+    assert(GetForegroundWindow() == foreground_before);
+    untracked_input.window_id = target_id; untracked_input.sequence = target_incarnation + 100;
+    ++untracked_input.buffer_index;
+    assert(av_windows_input(&untracked_input) == 0); /* stale incarnation never activates */
+    assert(GetForegroundWindow() == foreground_before);
+    if (argc == 2 && !strcmp(argv[1], "--input")) native_input_test(target, tool);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == -1);
+    uint64_t retired_incarnation = target_incarnation;
+    ShowWindow(target, SW_HIDE); pump();
+    assert(destroys == 1);
+    ShowWindow(target, SW_SHOW); pump();
+    assert(creates == 2 && target_incarnation > retired_incarnation);
+    RECT unchanged_bounds; assert(GetWindowRect(target, &unchanged_bounds));
+    LONG_PTR unchanged_style = GetWindowLongPtrW(target, GWL_STYLE);
+    for (unsigned flags = 0; flags <= 3; ++flags) {
+        av_message_t late = {.type = MsgWindowGeometry, .window_id = target_id,
+            .sequence = retired_incarnation, .width = 800, .height = 600, .dpi = 96, .flags = flags};
+        assert(av_windows_apply(&late) == 0);
+        late.type = MsgWindowClose;
+        assert(av_windows_apply(&late) == 0); pump();
+        RECT after; assert(IsWindow(target) && !IsIconic(target) && GetWindowRect(target, &after));
+        assert(memcmp(&after, &unchanged_bounds, sizeof(after)) == 0);
+        assert(GetWindowLongPtrW(target, GWL_STYLE) == unchanged_style);
+    }
     av_message_t resize = {.type = MsgWindowGeometry, .window_id = target_id,
                            .width = 500, .height = 350, .dpi = 96};
+    resize.sequence = target_incarnation;
     assert(av_windows_apply(&resize) == 0);
     pump();
     assert(geometries >= 1);
@@ -234,8 +346,11 @@ int main(int argc, char **argv) {
     assert(av_windows_apply(&resize) == 0);
     pump();
     assert(GetWindowLongPtrW(target, GWL_STYLE) == original_style);
-    av_message_t stale = {.type = MsgWindowClose, .window_id = 1};
-    assert(av_windows_apply(&stale) == -1);
+    av_message_t stale = {.type = MsgWindowClose, .window_id = 1, .sequence = target_incarnation};
+    assert(av_windows_apply(&stale) == 0);
+    stale.window_id = target_id; stale.sequence = target_incarnation + 1;
+    assert(av_windows_apply(&stale) == 0);
+    stale.sequence = 0; assert(av_windows_apply(&stale) == -1);
     av_wasapi_t audio = {0};
     assert(av_wasapi_init(&audio, 0) == E_INVALIDARG);
     av_wasapi_free(&audio);
@@ -276,12 +391,14 @@ int main(int argc, char **argv) {
     FreeLibrary(library);
     resize.flags = AvWindowFullscreen;
     assert(av_windows_apply(&resize) == 0);
-    av_windows_stop();
+    assert(av_windows_stop() == 0);
+    assert(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), original_dpi));
     assert(GetWindowLongPtrW(target, GWL_STYLE) == original_style);
     assert(av_windows_start(GetCurrentProcessId(), notification, NULL) == 0);
     assert(DestroyWindow(target)); pump();
-    assert(destroys == 1);
-    av_windows_stop(); av_windows_stop();
+    assert(destroys == 2);
+    assert(av_windows_stop() == 0); assert(av_windows_stop() == 0);
+    assert(AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), original_dpi));
     assert(DestroyWindow(tool));
     UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
     CoUninitialize();

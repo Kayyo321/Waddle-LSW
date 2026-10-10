@@ -1,0 +1,475 @@
+name: Software vGPU verification
+on:
+  push:
+    branches: [feature/software-vgpu-slicing]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  transport:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    container:
+      image: debian:trixie-slim
+      options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+    steps:
+      - name: Install transport build and coverage tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential clang-19 llvm-19 llvm-19-dev bison flex python3 python3-yaml python3-mako meson ninja-build cmake pkg-config libvulkan-dev libepoxy-dev libdrm-dev mesa-vulkan-drivers libwayland-dev wayland-protocols glslang-tools zlib1g-dev libexpat1-dev
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Install verified Zig
+        run: |
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
+      - name: Verify metadata-bound concurrent coverage recorder
+        run: |
+          python3 -B tests/av/coverage_recorder_test.py -v
+          WADDLE_RECORDER_SANITIZERS=1 python3 -B tests/av/coverage_recorder_test.py -v
+      - name: Check out immutable renderer and Mesa dependencies
+        run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol submodules/vulkan_loader submodules/mesa
+      - name: Verify Mesa CPU topology allocation ownership
+        run: |
+          case "$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)" in
+            25.0.7-*) ;;
+            *) echo "Installed Mesa version disagrees with pinned 25.0.7 repair" >&2; exit 1 ;;
+          esac
+          make mesa-cpu-cache-test mesa-cpu-cache-sanitizers
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          build = Path("build/vendor/mesa_cpu_cache_dual_owned")
+          repairs = (
+              ("radeon_icd*.json", "libvulkan_radeon", build / "src/amd/vulkan/libvulkan_radeon.so"),
+              ("lvp_icd*.json", "libvulkan_lvp", build / "src/gallium/targets/lavapipe/libvulkan_lvp.so"),
+          )
+          updates = []
+          for pattern, expected_library, output in repairs:
+              driver = output.resolve(strict=True)
+              manifests = sorted(Path("/usr/share/vulkan/icd.d").glob(pattern))
+              if not manifests:
+                  raise SystemExit("Installed " + expected_library + " manifest unavailable")
+              for manifest in manifests:
+                  data = json.loads(manifest.read_text())
+                  if expected_library not in Path(data["ICD"]["library_path"]).name:
+                      raise SystemExit("Unexpected " + expected_library + " manifest library")
+                  # Preserve every original API/version/architecture setting and every
+                  # other ICD; replace only each same-version driver's library ownership.
+                  data["ICD"]["library_path"] = str(driver)
+                  updates.append((manifest, data))
+          # Validate both driver families before modifying any installed manifest.
+          for manifest, data in updates:
+              manifest.write_text(json.dumps(data, indent=2) + "\n")
+          PY
+      - name: Build Venus renderer without dependency downloads
+        run: make vgpu-renderer
+      - name: Verify pinned guest encoder against exact receiver schema
+        run: make vgpu-protocol-test
+      - name: Verify C and Zig libc linking boundary
+        run: make vgpu-libc-test vgpu-libc-sanitizers
+      - name: Verify real Venus CPU dispatch and receiver ownership
+        run: make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage
+      - name: Verify real Venus queue protocol with software Vulkan backend
+        run: |
+          export VK_DRIVER_FILES="$(find /usr/share/vulkan/icd.d -maxdepth 1 -name 'lvp_icd*.json' -print -quit)"
+          test -n "$VK_DRIVER_FILES"
+          make vgpu-gpu-unit vgpu-gpu-test vgpu-gpu-sanitizers
+      - name: Verify pinned capability snapshots and compatibility
+        run: make vgpu-capabilities-test vgpu-capabilities-sanitizers vgpu-capabilities-coverage
+      - name: Verify image layouts and complete DMA-BUF feedback
+        run: make vgpu-dmabuf-test vgpu-dmabuf-sanitizers vgpu-dmabuf-coverage
+      - name: Verify bounded core instance wire transactions
+        run: make vgpu-instance-wire-test vgpu-instance-wire-sanitizers vgpu-instance-wire-coverage
+      - name: Verify bounded physical enumeration transactions
+        run: make vgpu-query-wire-test vgpu-query-wire-sanitizers vgpu-query-wire-coverage
+      - name: Verify bounded native Vulkan query replies
+        run: make vgpu-values-test vgpu-values-sanitizers vgpu-values-coverage
+      - name: Verify bounded device wire serialization and owned access
+        run: make vgpu-device-wire-test vgpu-device-wire-sanitizers vgpu-device-wire-coverage
+      - name: Verify complete native device preflight and owned access
+        run: make vgpu-device-native-test vgpu-device-native-sanitizers vgpu-device-native-coverage
+      - name: Verify actual extension count and fill codecs and owned access
+        run: make vgpu-extensions-wire-test vgpu-extensions-wire-sanitizers vgpu-extensions-wire-coverage
+      - name: Verify WSI resize, retirement and native boundary ownership
+        run: make vgpu-wsi-lifecycle-test vgpu-icd-units vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage
+      - name: Verify experimental ICD loader and instance dispatch
+        run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
+      - name: Verify pinned native loader instance device and fence discovery
+        run: make vgpu-native-loader-test vgpu-native-loader-sanitizers
+      - name: Verify guest Vulkan object identity and lifetime
+        run: make vgpu-objects-test vgpu-objects-sanitizers vgpu-objects-coverage
+      - name: Verify exclusive serialized guest command ownership
+        run: make vgpu-command-test vgpu-command-sanitizers vgpu-command-coverage
+      - name: Verify negotiated guest frontend ownership
+        run: make vgpu-guest-test vgpu-guest-sanitizers vgpu-guest-coverage
+      - name: Verify Wayland import pacing and release ownership
+        run: make vgpu-present-test vgpu-present-sanitizers vgpu-present-coverage
+      - name: Verify standalone render-only adapter ownership
+        run: make vgpu-wddm-test vgpu-wddm-sanitizers vgpu-wddm-coverage
+      - name: Verify credential-bound frame descriptor handoff
+        run: make vgpu-frame-test vgpu-frame-sanitizers vgpu-frame-coverage
+      - name: Verify presented production worker exec binding
+        run: |
+          if make vgpu-presented-worker-test vgpu-presented-worker-sanitizers; then
+            exit 0
+          else
+            gate_status=$?
+          fi
+          mkdir -p build/diagnostics
+          diagnostic_log=build/diagnostics/presented_worker_loader.log
+          if test -x build/vgpu_presented_worker_sanitized; then
+            # One exact existing sanitized runtime path, preserving every host ICD.
+            # A rerun result never changes the original failing acceptance status.
+            if LD_DEBUG=files ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 WADDLE_PRODUCTION_WORKER=build/waddle_vgpu_worker_sanitized RENDER_SERVER_EXEC_PATH="$PWD/build/vendor/virglrenderer/server/virgl_render_server" ./build/vgpu_presented_worker_sanitized > "$diagnostic_log" 2>&1; then
+              echo 'Diagnostic rerun passed; original gate remains failed' >> "$diagnostic_log"
+            else
+              diagnostic_status=$?
+              echo "Diagnostic rerun exited $diagnostic_status; original gate remains failed" >> "$diagnostic_log"
+            fi
+          else
+            echo 'Sanitized diagnostic binary unavailable; original gate remains failed' > "$diagnostic_log"
+          fi
+          if ! python3 - <<'PY'
+          from pathlib import Path
+          log = Path("build/diagnostics/presented_worker_loader.log")
+          max_bytes = 8 * 1024 * 1024
+          if log.stat().st_size > max_bytes:
+              marker = b"\n[Oversized diagnostic middle omitted; beginning and tail preserved]\n"
+              first_bytes = (max_bytes - len(marker)) // 2
+              last_bytes = max_bytes - len(marker) - first_bytes
+              with log.open("r+b") as stream:
+                  first = stream.read(first_bytes)
+                  stream.seek(-last_bytes, 2)
+                  last = stream.read(last_bytes)
+                  stream.seek(0)
+                  stream.write(first + marker + last)
+                  stream.truncate()
+          PY
+          then
+            echo 'Diagnostic artifact bounding failed; original gate remains failed' > "$diagnostic_log"
+          fi
+          exit "$gate_status"
+      - name: Preserve failed worker loader and sanitizer diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: presented-worker-loader-diagnostics
+          path: build/diagnostics/presented_worker_loader.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Verify pinned loader with production negotiated worker
+        run: make vgpu-loader-worker-test vgpu-loader-worker-sanitizers
+      - name: Verify bounded worker export leases
+        run: make vgpu-export-test vgpu-export-sanitizers vgpu-export-coverage
+      - name: Verify worker surface binding ownership
+        run: make vgpu-surface-test vgpu-surface-sanitizers vgpu-surface-coverage
+      - name: Verify native Wayland wire and frame FD integration
+        run: make vgpu-present-integration vgpu-present-integration-sanitizers build/vgpu_image_integration build/vgpu_remote_image_integration
+      - name: Verify portable receiver request envelopes
+        run: make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage
+      - name: Verify isolated receiver process ownership
+        run: make vgpu-worker-test vgpu-worker-sanitizers vgpu-worker-coverage
+      - name: Verify bounded isolated context ownership
+        run: make vgpu-context-test vgpu-context-sanitizers vgpu-context-coverage
+      - name: Verify isolated receiver service acquisition and cleanup
+        run: make vgpu-service-test vgpu-service-sanitizers vgpu-service-coverage
+      - name: Verify bounded receiver runtime and failure paths
+        run: make vgpu-runtime-test vgpu-runtime-sanitizers vgpu-runtime-coverage
+      - name: Verify independent mapped-file guest and real Venus replies
+        run: make vgpu-integration vgpu-integration-sanitizers
+      - name: Verify simultaneous context execution and crash isolation
+        run: make vgpu-context-integration vgpu-context-integration-sanitizers
+      - name: Verify ring safety and independent-process ordering
+        run: make vgpu-test vgpu-sanitizers
+      - name: Gate production C and Zig transport coverage
+        run: make vgpu-coverage
+      - name: Cross-link Windows ABI fixture
+        run: make vgpu-windows
+      - name: Preserve failed native coverage metadata and IR
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-coverage-diagnostics
+          path: |
+            build/coverage/**/recorder.json
+            build/coverage/**/recorder_metadata.h
+            build/coverage/**/branches.json
+            build/coverage/**/test.ll
+            build/coverage/**/instrumented.ll
+            build/coverage/**/*.edges
+            build/coverage/**/*_missed.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  windows_transport:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Install verified Zig
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip -OutFile "$env:RUNNER_TEMP/zig.zip"
+          if ((Get-FileHash "$env:RUNNER_TEMP/zig.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd859994725ef9402381e557c60bb57497215682e355204d754ee3df75ee3c158') { throw 'Zig checksum mismatch' }
+          Expand-Archive "$env:RUNNER_TEMP/zig.zip" "$env:RUNNER_TEMP/zig"
+          "$env:RUNNER_TEMP/zig/zig-windows-x86_64-0.13.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Check out pinned signed-driver declarations
+        run: |
+          git config --global core.autocrlf false
+          git submodule update --init --depth 1 submodules/looking_glass submodules/venus_protocol submodules/virglrenderer submodules/vulkan_loader
+      - name: Provision native Windows protocol generator
+        run: python -m pip install PyYAML==6.0.2 Mako==1.3.8 MarkupSafe==3.0.2
+      - name: Build and run native Windows transport and allocator tests
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          zig build-lib src/vgpu/venus_bounds.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_bounds_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/ring.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o build/vgpu_ring_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_ring_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/region.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o build/vgpu_region_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_region_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu -Isubmodules/looking_glass/vendor/ivshmem tests/vgpu/mapping_windows.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o build/vgpu_mapping_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_mapping_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/wait.c src/vgpu/venus_wait.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o build/vgpu_wait_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_wait_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_control.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_control_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/session.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c build/venus_control_windows.lib build/venus_bounds_windows.lib -o build/vgpu_session_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_session_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/channel_windows.c src/vgpu/venus_channel.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c src/vgpu/venus_stream_windows.c build/venus_bounds_windows.lib build/venus_control_windows.lib -o build/vgpu_channel_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_channel_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_control.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_bounds.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_capabilities.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_capabilities_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/capabilities.c build/venus_capabilities_windows.lib -o build/vgpu_capabilities_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_capabilities_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_capabilities.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_request.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_request_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/request.c build/venus_request_windows.lib -o build/vgpu_request_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_request_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_request.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/runtime.c src/vgpu/venus_rpc.c src/vgpu/venus_dispatch.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c build/venus_request_windows.lib build/venus_capabilities_windows.lib build/venus_bounds_windows.lib build/venus_control_windows.lib -o build/vgpu_runtime_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_runtime_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows image metadata ABI
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_dmabuf.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_dmabuf_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/dmabuf.c build/venus_dmabuf_windows.lib -o build/vgpu_dmabuf_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_dmabuf_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_dmabuf.zig
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows negotiated frontend ownership
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/guest.c src/vgpu/venus_guest.c build/venus_capabilities_windows.lib -o build/vgpu_guest_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_guest_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows bounded Vulkan replies
+        shell: pwsh
+        run: |
+          python scripts/venus_protocol.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -DVgpuValuesOracle -c tests/vgpu/values.c -o build/venus_values_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_values.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_values_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan tests/vgpu/values.c build/venus_values_windows.lib -o build/vgpu_values_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_values_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_values.zig -Iinclude -Isubmodules/venus_protocol/include -lc build/venus_values_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows physical enumeration wire ABI
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -DVgpuQueryOracle -c tests/vgpu/query_wire.c -o build/venus_query_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_query_wire.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_query_wire_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include tests/vgpu/query_wire.c build/venus_query_wire_windows.lib -o build/vgpu_query_wire_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_query_wire_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_query_wire.zig -Iinclude -Isubmodules/venus_protocol/include -lc build/venus_query_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows core instance wire ABI
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -DVgpuInstanceOracle -c tests/vgpu/instance_wire.c -o build/venus_instance_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-lib src/vgpu/venus_instance_wire.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_instance_wire_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include tests/vgpu/instance_wire.c build/venus_instance_wire_windows.lib -o build/vgpu_instance_wire_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_instance_wire_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_instance_wire.zig -Iinclude -Isubmodules/venus_protocol/include -lc build/venus_instance_oracle.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows Vulkan object storage ABI
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_objects.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_objects_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/objects.c build/venus_objects_windows.lib -o build/vgpu_objects_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_objects_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_objects.zig -Iinclude -lc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows command staging ABI
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_command.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_command_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/command.c build/venus_command_windows.lib -o build/vgpu_command_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_command_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_command.zig -Iinclude -lc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows WSI size and DC ownership
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -c src/vgpu/venus_win32_present.c -o build/venus_win32_present_windows.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/win32_present.c build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -o build/vgpu_win32_present_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_win32_present_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_wsi.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O Debug
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_wsi.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows device requests and extension codecs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/owned_native_oracles | Out-Null
+          $oracle_names = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply')
+          foreach ($oracle_name in $oracle_names) {
+            zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -c "tests/vgpu/${oracle_name}_oracle.c" -o "build/owned_native_oracles/${oracle_name}.obj"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          zig test src/vgpu/venus_device_wire.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/device_wire.obj build/owned_native_oracles/render_wire.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_device_native.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/device_wire.obj build/owned_native_oracles/render_wire.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_extensions_wire.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/extensions_wire.obj build/owned_native_oracles/extensions_reply.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=venus_icd_native_fixture -Iinclude -Itests/vgpu/encoder -Ibuild/venus_protocol -Ibuild/venus_renderer_protocol -Isubmodules/venus_protocol/tests -Isubmodules/venus_protocol/include -Isubmodules/venus_protocol/include/vulkan -c tests/vgpu/icd.c -o build/owned_native_oracles/icd.obj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $icd_oracles = $oracle_names | ForEach-Object { "build/owned_native_oracles/$_.obj" }
+          zig test src/vgpu/venus_icd.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O Debug build/owned_native_oracles/icd.obj build/venus_values_oracle.obj @icd_oracles build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_icd.zig -target x86_64-windows-gnu -Iinclude -Isubmodules/venus_protocol/include -lc -O ReleaseSafe build/owned_native_oracles/icd.obj build/venus_values_oracle.obj @icd_oracles build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows experimental ICD dispatch and DLL exports
+        shell: pwsh
+        run: |
+          $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
+          zig build-lib src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj @icd_oracles build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -o build/vgpu_icd_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_icd_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig build-obj src/vgpu/venus_icd.zig -Iinclude -Isubmodules/venus_protocol/include -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_icd_windows.obj'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -shared src/vgpu/venus_icd.def build/venus_icd_windows.obj build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -o build/waddle_vulkan_experimental.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd_dll.c -o build/vgpu_icd_dll_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_icd_dll_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows standalone adapter and DLL ABI
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/wddm.c src/vgpu/venus_wddm.c build/venus_request_windows.lib -o build/vgpu_wddm_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_wddm_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu -shared src/vgpu/venus_wddm.def src/vgpu/venus_wddm.c src/vgpu/venus_guest.c src/vgpu/venus_rpc.c src/vgpu/venus_channel.c src/vgpu/venus_session.c src/vgpu/venus_region.c src/vgpu/venus_ring.c src/vgpu/venus_wait.c src/vgpu/venus_stream_windows.c build/venus_bounds_windows.lib build/venus_control_windows.lib build/venus_request_windows.lib build/venus_capabilities_windows.lib -o build/waddle_userland_adapter.dll
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/wddm_dll.c -o build/vgpu_wddm_dll_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_wddm_dll_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows presentation frame codec ABI
+        shell: pwsh
+        run: |
+          zig build-lib src/vgpu/venus_frame.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc '-femit-bin=build/venus_frame_windows.lib'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/vgpu/frame_codec.c build/venus_frame_windows.lib -o build/vgpu_frame_codec_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_frame_codec_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig test src/vgpu/venus_frame.zig -Iinclude -lc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native Windows pinned loader manifest and device dispatch
+        shell: pwsh
+        run: |
+          $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
+          $loader_include = (Resolve-Path scripts/vulkan_loader.cmake).Path
+          cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_windows -A x64 "-DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$loader_include" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/vendor/vulkan_loader_windows --config Release --parallel 4
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -c 'import json,pathlib; pathlib.Path("build/waddle_vulkan_experimental_windows.json").write_text(json.dumps({"file_format_version":"1.0.0","ICD":{"library_path":str(pathlib.Path("build/waddle_vulkan_experimental.dll").resolve()),"api_version":"1.3.0"}},indent=2)+"\n")'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DVgpuIcdLoader -Itests/vgpu/encoder -Ibuild/venus_protocol -Isubmodules/venus_protocol/tests -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/icd.c build/venus_icd_windows.lib build/venus_capabilities_windows.lib build/venus_command_windows.lib build/venus_objects_windows.lib build/venus_instance_wire_windows.lib build/venus_query_wire_windows.lib build/venus_values_windows.lib build/venus_values_oracle.obj @icd_oracles build/venus_win32_present_windows.obj -luser32 -lgdi32 -ldwmapi -ladvapi32 -o build/vgpu_icd_loader_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:WADDLE_TEST_VULKAN_LOADER = (Resolve-Path build/vendor/vulkan_loader_windows/loader/Release/vulkan-1.dll).Path
+          ./build/vgpu_icd_loader_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
