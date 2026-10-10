@@ -369,14 +369,15 @@ run_gate native-kvmfr make av-native-kvmfr-test
 
 ### Generation-safe lifecycle upgrade and regression checks
 
-**Upgrade the host and guest together.** The modern guest announces
-`MsgWindowCreateV2` in the unchanged 328-byte control envelope. This is an explicit
-first-window capability, not a negotiated fallback or pre-window handshake.
-New hosts treat both kinds of old guest (zero/nonzero old Create token) as visibly
-view-only: no input, resize or close request may reach that guest. Old hosts reject
-a new guest once its first modern window is announced. Preserve the diagnostic
-and prompt session termination; do not classify waiting before any window exists
-as protocol rejection.
+**Upgrade the host and guest together.** The current guest announces
+`MsgWindowCreateV3` in the unchanged 328-byte control envelope. This required
+first-window capability is not negotiated fallback. V1 guests (zero/nonzero old
+Create token) remain visibly view-only on the new host: no input, resize or close
+requests. V2 guests retain their existing generation-safe, fail-closed input
+behavior without lease recovery. V2 hosts reject a V3 guest at its first window.
+Preserve the diagnostic and prompt termination; waiting before any window exists
+is not protocol rejection. The V3 epoch handshake follows the first admitted
+window and cannot silently upgrade a V1/V2 session.
 
 The normal `make av-test av-input-test` gates now include the frozen historical
 codec/peer compatibility fixture, identity effect gate, stale lifecycle/FIFO and
@@ -403,14 +404,40 @@ with logs and source/binary hashes; no complete physical automation is supplied:
    further capture and mutations and cleanup releases owned resources.
 4. If testing mixed binaries is separately approved, use isolated copies of the
    recorded old/new builds. Verify the view-only diagnostic and absent controls
-   for new-host/old-guest, and explicit first-window rejection for old-host/new-
-   guest. Do not downgrade or overwrite an active deployment for this probe.
+   for new-host/V1-guest; retain V2 generation/input behavior without lease
+   recovery; verify first-window rejection for V2-host/V3-guest. Do not downgrade
+   or overwrite an active deployment for this probe.
 
 [Implementation/coverage receipt](av-window-generation/TRACKER.md) and
 [frozen-source provenance](../tests/av/legacy/PROVENANCE.md) identify the automated
 scope. FrameReady still carries its frame counter, not an independent window
 generation. Unobserved same-process HWND reuse, frame replay safety and direct
 AV-to-WSI/GPU lifetime binding are not solved by this checkpoint.
+
+### Revocable input lease recovery (new native acceptance, still pending)
+
+Use an isolated interactive guest desktop. Foreground checks and hooks cannot
+make desktop-global `SendInput` an atomic HWND-bound operation. Unobserved
+transitions and concurrent unrelated guest input remain unqualified.
+
+The new supported fixture command is `av_windows_test.exe --lease-fixture`.
+Run it in the guest with its console output captured; it prints PID and HWNDs for
+ordinary A/B windows plus tool/owned rejection targets, and logs input receipts.
+Start the managed AV path below for that exact printed PID. Do not use unrelated
+applications as rejection targets containing real work. Close A and B to stop
+the fixture; record all session/fixture exit statuses.
+
+[Exact ten-case native trace](input-lease-recovery/NATIVE_ACCEPTANCE.md) covers
+startup without ownership, held-release and A/B recovery, same-HWND stale epochs,
+observed A→B→A, held-key/button suppression, first click/wheel coordinates,
+forbidden foreground targets, anchor destruction, timeout/disconnect and UIPI.
+Record each case separately in the result template. Debugger/transport fault
+injection is manual and separately authorized; absent evidence stays pending.
+
+Portable checks are already wired into `make av-test av-input-test av-coverage`;
+[exact source and local receipts](input-lease-recovery/EVIDENCE.md) distinguish
+real callback/API-double tests, cross-links, local LSan limits and physical
+acceptance. No Save-dialog/window-family or GPU integration is established.
 
 ### B. Integrated ordinary application (manual; no complete automated gate)
 

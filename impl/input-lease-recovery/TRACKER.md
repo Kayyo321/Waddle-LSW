@@ -30,4 +30,9 @@
 
 - Commit `4c5245a82c2e6d87e27dcd9c16bf7452ea68a7a0`: `test(av): exercise actual poll boundary across EINTR`: task #5 verification expanded, no percentage change. Extracts the existing bounded poll boundary without altering deadline policy; deterministic error/expiry tests and both full functional aggregates pass. Unsuppressed sanitizer execution remains explicitly blocked by ptrace.
 
-- Failed-cleanup correction (`fix(av): retain failed releases for bounded teardown retry`, exact receipt follows): #3 remains 100%; #5 receives independent source approval, with no percentage increase until supported CI qualifies unsuppressed sanitizers. Per-operation failure bookkeeping prevents redundant owner-end cleanup retries. Exact count regressions, full AV functional aggregates, host link and every Windows guest/fixture link pass on the final manifest. No native acceptance claim.
+- Commit `bcc1a678d6aaecd9318fb9d0ca9bf27093618ffb`: `fix(av): retain failed releases for bounded teardown retry`: #3 remains 100%; #5 receives independent source approval, with no percentage increase until supported CI qualifies unsuppressed sanitizers. Per-operation failure bookkeeping prevents redundant owner-end cleanup retries. Exact count regressions, full AV functional aggregates, host link and every Windows guest/fixture link pass on the final manifest. No native acceptance claim.
+
+Final integrated source review approved all 23 manifest files at `bcc1a67`
+(manifest SHA-256 `9734e0ef49ea71dc04c0d04580aea5d9eed1b7c83cbbfb73775dc9294bff7b20`).
+Independent strict and ASan/UBSan-only adapter, callback and actual host-poll
+fixtures passed. This is not unsuppressed LSan or physical qualification.

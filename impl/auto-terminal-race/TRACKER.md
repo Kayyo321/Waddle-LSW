@@ -1,6 +1,6 @@
 # Feature Tracker: CLI terminal-delivery race
 
-- **Contributors / Agents**: diagnose_auto_terminal_race; independent review by review_cli_shutdown_ordering
+- **Contributors / Agents**: CLI implementation contributor; independent correctness reviewer
 - **Time Started**: 2026-10-10T00:43:18Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -56,7 +56,7 @@
 
 ## Final reviewed source manifest
 
-Independent reviewer `review_cli_shutdown_ordering` approved the session, protocol
+Independent correctness review approved the session, protocol
 ordering, lifetime/error paths, fixed remote-result deadlines, preserved local
 output backpressure, and observation-only wrappers. Its final normal and UBSan
 runs passed all 15 cases and 512 stress sessions. A source-only addendum approved

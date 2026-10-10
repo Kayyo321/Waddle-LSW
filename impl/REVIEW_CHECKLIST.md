@@ -14,8 +14,9 @@ record the exact containing commit you actually test.
 No hardware/Adobe completion is claimed. Review in this order:
 
 - [ ] **P0 · Source and native CI.** Fresh checkout; capture source/toolchain/binary
-  versions; rerun automated gates. **Upgrade host and guest together:** old guests
-  are view-only on new hosts; old hosts reject the new first-window capability.
+  versions; rerun automated gates. **Upgrade host and guest together for V3
+  lease recovery:** V1 guests are view-only; V2 guests keep prior fail-closed
+  input behavior; V2 hosts reject a V3 guest at its first window.
   **All six native CI workflow runs passed at `879d0c3`.** Windows ICD passes
   394 Debug + 394 ReleaseSafe tests and native loader cycles. Linux passes all
   eight strict recorder sanitizer probes, 90.30% whole-ICD branch coverage,
@@ -23,27 +24,29 @@ No hardware/Adobe completion is claimed. Review in this order:
   and subsequent export/surface/Wayland/runtime/context gates. The prior Windows
   fixture, query-oracle and recorder failures are closed at this exact source.
   [Exact green receipt and job links](CI_GREEN_CHECKPOINT_2026-10-10.md).
+  A later documentation-only `414d7e4` run exposed an intermittent CLI terminal
+  shutdown race (success output followed by Broken pipe). A deterministic
+  production-session regression reproduces it; the reviewed correction passes
+  15 cases and bounded stress checks. Fresh native CI remains required
+  ([shutdown receipt](auto-terminal-race/TRACKER.md)).
   Local LSan remains ptrace-blocked; supported CI supplies the leak evidence.
   The broader 32-module ICD-owned/full-seam instrumentation migration remains a
   separate unresolved gate. Rerun affected checks on subsequent sources and on
   the hardware checkout; no physical GPU or application acceptance is implied.
   [Build/log commands](HARDWARE_TEST_HANDOFF.md#4-rebuild-and-rerun-hardware-independent-gates-first)
-  · [coverage source](https://github.com/Kayyo321/Waddle-LSW/commit/2d97603e3275d0c329ae81f3fe56413b641bd3d4)
-  · [coverage receipt](wsi-window-lifetime/TRACKER.md)
-  · [Windows helper source](https://github.com/Kayyo321/Waddle-LSW/commit/37970ae95d630c447c2fb108b1cef97535b9a059)
-  · [Windows helper receipt](windows-icd-test-environment/TRACKER.md)
-  · [extension oracle repair](https://github.com/Kayyo321/Waddle-LSW/commit/b317c0577cafb20aa16463544491449cd1c61715)
-  · [extension oracle receipt](native-icd-extension-oracle/TRACKER.md)
-  · [sanitizer repair/remaining limits](owned-sanitizer-inventory/TRACKER.md)
-  · [worker link repair](https://github.com/Kayyo321/Waddle-LSW/commit/37df9499f197c51443e1aca892139cf6a41a59c6)
-  · [worker execution limits](presented-worker-link/TRACKER.md)
-  · [worker query-oracle repair](presented-worker-runtime/TRACKER.md)
-  · [native WSI fixture repair](native-wsi-test-capabilities/TRACKER.md)
-  · [all-sites recorder evidence](coverage-recorder-integrity/TRACKER.md).
-- [ ] **P1 · Physical input and cleanup.** Native `--input` fixture, then ordinary
+  · [exact source mapping](CLOUD_PUBLICATION_CHECKPOINT.md)
+  · [broader sanitizer gate](owned-sanitizer-inventory/TRACKER.md).
+- [ ] **P1 · Physical input and cleanup.** Use an isolated interactive guest
+  desktop: `SendInput` is global, and foreground checks/hooks cannot atomically
+  guarantee an HWND destination or detect every unobserved transition.
+  Native `--input` fixture, then ordinary
   app as a Wayland window: keyboard/mouse/wheel, focus transfer, held keys/buttons,
   disconnect, foreground denial, scaling and repeated recovery. Watch stuck input
-  and unintended-window delivery. Guest layout only; IME/clipboard/tablet remain
+  and unintended-window delivery. Input-lease protocol and integrated host/guest source are
+  independently reviewed at local `bcc1a67`; functional/coverage gates and
+  cross-links pass. Supported sanitizer CI and physical acceptance remain pending
+  ([lease scope and progress](input-lease-recovery/TRACKER.md)).
+  Guest layout only; IME/clipboard/tablet remain
   outside this milestone. [Exact/manual cases](HARDWARE_TEST_HANDOFF.md#5-real-windows-and-wayland-input-acceptance)
   · [input integration](https://github.com/Kayyo321/Waddle-LSW/commit/388b7b35064fcd529cf5c011562ed01ac65ff80a)
   · [input receipts](desktop-input/EVIDENCE.md).
