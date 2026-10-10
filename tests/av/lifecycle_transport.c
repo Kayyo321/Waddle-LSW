@@ -9,7 +9,7 @@
 extern int legacy_av_control_encode(const av_message_t *message, uint8_t *bytes, size_t capacity);
 /** @brief Historical host pump borrowing one socket; -1 rejects an unknown type. */
 extern int av_legacy_pump(uintptr_t socket);
-_Static_assert(sizeof(av_message_t) == 328, "historical decoded message ABI");
+_Static_assert(offsetof(av_message_t, lease_generation) == 328, "historical decoded message prefix ABI");
 typedef struct endpoint_t {
     av_identity_session_t identity;
     av_message_t current;

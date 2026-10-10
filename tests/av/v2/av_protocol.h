@@ -30,17 +30,7 @@ typedef enum av_message_type_t {
     /** Button 1 left, 2 right, 3 middle in width; down/up flags. */ MsgInputButton = 10,
     /** Signed Windows horizontal/vertical wheel units in x/y. */ MsgInputWheel = 11,
     /** Release held keys (1), buttons (2), or both (3); retain focus. */ MsgInputRelease = 12,
-    /** Guest announces generation-safe lifecycle support; sequence is nonzero incarnation. */ MsgWindowCreateV2 = 13,
-    /** Guest requires revocable input epochs; no legacy fallback. */ MsgWindowCreateV3 = 14,
-    /** Guest revokes input and requests an ordered host barrier. */ MsgInputEpochRevoked = 15,
-    /** Host acknowledges the current epoch after its Wayland barrier. */ MsgInputEpochAck = 16,
-    /** Guest confirms the exact acknowledged epoch and serial. */ MsgInputEpochReady = 17,
-    /** Epoch-bound focus request, no focus-result response. */ MsgInputFocusV3 = 18,
-    /** Epoch-bound physical key event. */ MsgInputKeyV3 = 19,
-    /** Epoch-bound surface-local pointer position. */ MsgInputPointerV3 = 20,
-    /** Epoch-bound button event. */ MsgInputButtonV3 = 21,
-    /** Epoch-bound wheel event. */ MsgInputWheelV3 = 22,
-    /** Epoch-bound held-input release. */ MsgInputReleaseV3 = 23
+    /** Guest announces generation-safe lifecycle support; sequence is nonzero incarnation. */ MsgWindowCreateV2 = 13
 } av_message_type_t;
 /** @brief Decoded control data, caller-owned, natural alignment, no wire casts.
  * @note Codec copies fields using explicit LE offsets; struct is not serialized
@@ -63,7 +53,6 @@ typedef struct av_message_t {
     uint32_t damage_height; /**< Bounded nonzero damage height for frames. */
     char title[256]; /**< NUL-terminated UTF-8; unused bytes zeroed by encoder. */
     uint32_t type; /**< av_message_type_t, decoded from header. */
-    uint64_t lease_generation; /**< Independent guest epoch, nonzero only for opcodes 15..23. */
 } av_message_t;
 /** @brief Decode and validate one fixed-size AV frame.
  * @param[in] bytes Nonnull borrowed input[length], may be untrusted.

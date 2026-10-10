@@ -16,14 +16,17 @@ typedef struct av_input_ops_t {
      * @param[in] window_id Live exported ID. @param[in] incarnation Create.sequence.
      * @param[in] activate 1 request activation, 0 validate existing foreground,
      * -1 validate identity only before releasing old focus.
-     * @return 0 accepted, 1 retired identity (only identity probe), -1 denied/OS failure. No ownership transfer.
+     * @return 0 accepted, 1 retired identity for activate=-1, -1 denied/OS failure.
+     * The V3 already-admitted boundary additionally permits positive suspension
+     * for activate=0/1, with no native insertion. The V2 public entry normalizes
+     * any such suspension to terminal failure. No ownership transfer.
      */
     int (*target)(void *context, uint64_t window_id, uint64_t incarnation, int activate);
     /** Inject one event, or release a previously injected key/button.
      * @param[in,out] context Optional borrowed caller context.
      * @param[in] event Nonnull transient validated event. Synthetic releases have
      * serial zero and remain mandatory even after the original target vanishes.
-     * @return 0 successful injection, -1 failure; caller keeps held bit on failure.
+     * @return 0 inserted, 1 not inserted due to observed transition, -1 failure; caller keeps held bit on failure.
      */
     int (*emit)(void *context, const av_message_t *event);
 } av_input_ops_t;
@@ -48,6 +51,17 @@ typedef struct av_input_state_t {
  */
 int av_input_apply(av_input_state_t *state, const av_message_t *event,
                    const av_input_ops_t *ops, void *context);
+/** @brief Apply an already canonical, serial-admitted legacy-shaped event.
+ * @param[in,out] state Nonnull owned state, serial remains unchanged.
+ * @param[in] event Nonnull borrowed canonical opcode 7..12; epoch removed by lease core.
+ * @param[in] ops Nonnull complete borrowed callbacks.
+ * @param[in,out] context Optional borrowed context.
+ * @return 0 applied/no-op, 1 suspended without insertion, -1 native failure.
+ * @note Owner thread, internal authorization boundary: caller has consumed serial
+ * exactly once. Successful insertion is committed before caller reconciles observations.
+ */
+int av_input_apply_admitted(av_input_state_t *state, const av_message_t *event,
+                           const av_input_ops_t *ops, void *context);
 /** @brief Release every held key/button, clear focus only when all succeed.
  * @param[in,out] state Nonnull owned state; serial retained until session ends.
  * @param[in] ops Nonnull complete callback table.

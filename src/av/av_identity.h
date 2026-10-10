@@ -5,7 +5,8 @@
 typedef enum av_identity_mode_t {
     AvIdentityUnknown = 0, /**< No window has been announced. */
     AvIdentityLegacy = 1, /**< Old Create, always display-only. */
-    AvIdentityModern = 2 /**< CreateV2, immutable lifecycle incarnations. */
+    AvIdentityModern = 2, /**< CreateV2, immutable lifecycle incarnations. */
+    AvIdentityLease = 3 /**< CreateV3, revocable epoch-bound input. */
 } av_identity_mode_t;
 /** @brief Caller-owned connection admission state; zero-initialize on reconnect.
  * @note Event-thread-only; contains no owned resources or heap allocations.

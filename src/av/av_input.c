@@ -69,12 +69,17 @@ int av_input_apply(av_input_state_t *state, const av_message_t *event,
         av_control_encode(event, bytes, sizeof(bytes)) != 0 || event->buffer_index <= state->serial)
         return -1;
     state->serial = event->buffer_index;
+    return av_input_apply_admitted(state, event, ops, context) == 0 ? 0 : -1;
+}
+int av_input_apply_admitted(av_input_state_t *state, const av_message_t *event,
+                            const av_input_ops_t *ops, void *context) {
     if (event->type == MsgInputFocus && event->flags) {
         int status = ops->target(context, event->window_id, event->sequence, -1);
         if (status > 0) return 0; /* Retired identity: ordered no-op. */
         if (status < 0) return -1;
-        if (av_input_reset(state, ops, context) != 0 ||
-            ops->target(context, event->window_id, event->sequence, 1) != 0) return -1;
+        if (av_input_reset(state, ops, context) != 0) return -1;
+        int activated = ops->target(context, event->window_id, event->sequence, 1);
+        if (activated != 0) return activated > 0 ? 1 : -1;
         state->window_id = event->window_id;
         state->incarnation = event->sequence;
         return 0;
@@ -83,12 +88,14 @@ int av_input_apply(av_input_state_t *state, const av_message_t *event,
         return 0; /* Ordered stale focus/leave events cannot affect a new window. */
     if (event->type == MsgInputFocus) return av_input_reset(state, ops, context);
     if (event->type == MsgInputRelease) return release_held(state, event->flags, ops, context);
-    if (ops->target(context, event->window_id, event->sequence, 0) != 0) return -1;
+    int target = ops->target(context, event->window_id, event->sequence, 0);
+    if (target != 0) return target > 0 ? 1 : -1;
     if (event->type == MsgInputKey || event->type == MsgInputButton) {
         if (event->type == MsgInputKey && !av_input_scan_code(event->width)) return -1;
         uint8_t *held = event->type == MsgInputKey ? &state->keys[event->width] : &state->buttons[event->width];
         if (*held == event->flags) return 0;
-        if (ops->emit(context, event) != 0) return -1;
+        int emitted = ops->emit(context, event);
+        if (emitted != 0) return emitted > 0 ? 1 : -1;
         *held = (uint8_t)event->flags;
         return 0;
     }

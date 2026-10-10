@@ -1,13 +1,14 @@
 #include "av_identity.h"
 int av_identity_admit(av_identity_session_t *session, const av_message_t *message) {
     uint8_t check[AvControlBytes];
-    if (!session || !message || (message->type != MsgWindowCreate && message->type != MsgWindowCreateV2) ||
+    if (!session || !message || (message->type != MsgWindowCreate && message->type != MsgWindowCreateV2 && message->type != MsgWindowCreateV3) ||
         av_control_encode(message, check, sizeof(check)) != 0) return -1;
-    av_identity_mode_t mode = message->type == MsgWindowCreateV2 ? AvIdentityModern : AvIdentityLegacy;
+    av_identity_mode_t mode = message->type == MsgWindowCreateV3 ? AvIdentityLease :
+        message->type == MsgWindowCreateV2 ? AvIdentityModern : AvIdentityLegacy;
     if (session->mode != AvIdentityUnknown && session->mode != mode) return -1;
-    if (mode == AvIdentityModern && message->sequence <= session->high_water) return -1;
+    if (mode >= AvIdentityModern && message->sequence <= session->high_water) return -1;
     session->mode = mode;
-    if (mode == AvIdentityModern) session->high_water = message->sequence;
+    if (mode >= AvIdentityModern) session->high_water = message->sequence;
     return 0;
 }
 int av_identity_next(uint64_t *counter, uint64_t *token) {
