@@ -21,9 +21,16 @@
 
 ## Commit History & Progress Log
 
-- Implementation commit: pending atomic commit. Tasks #1 through #4 account for
-  +90 percentage points. The follow-up verification receipt will record its exact
-  returned commit hash and final review result.
+- **Commit `7a0dbd1d279fd5fe99bd3e520c42295162b3a38d`**:
+  `fix(cli): drain terminal frames after peer write shutdown`
+  - **Task Impact**: +100% to tasks #1, #2, #3, and #4 (+90% overall).
+  - **Summary**: Fixed bounded remote-result draining; added deterministic,
+    exact-status stress and full-CLI regressions; hardened natural peer lifecycle;
+    documented diagnosis and explicit native-runtime qualification limits.
+- **Verification receipt (this documentation-only update)**:
+  - **Task Impact**: +0%; binds the reviewed implementation hash and final source
+    manifest. Native qualification remains pending; no source or test behavior
+    changes are included.
 
 ## Verification receipts
 
@@ -46,3 +53,23 @@
   creation, both before and after requesting ordinary execution escalation. No
   further escalations or security setting changes; zero such failures are counted
   as race evidence. Real CLI fixture execution remains a native CI requirement.
+
+## Final reviewed source manifest
+
+Independent reviewer `review_cli_shutdown_ordering` approved the session, protocol
+ordering, lifetime/error paths, fixed remote-result deadlines, preserved local
+output backpressure, and observation-only wrappers. Its final normal and UBSan
+runs passed all 15 cases and 512 stress sessions. A source-only addendum approved
+the final 32-session real CLI/mock fixture, with independent strict compilation.
+The named-socket run and its 20-second aggregate budget remain native CI checks.
+
+| File | SHA-256 |
+|:-----|:--------|
+| `GNUmakefile` | `cf9c9604dcbc71ca4a8bc8759cdcbb8e0b44cbfe8dddd62254f9a469343e5eea` |
+| `src/cli/session.c` | `66ae63fbc94903cf55456822bcb0226d39a322c49770845628065effd1f3faa0` |
+| `src/cli/session.h` | `11c43300e88f70832d053c798dd68513a73eca30bc6d1a5136e599149f658ad4` |
+| `tests/cli/session_shutdown.c` | `87349148b8bd04f0fed46d88a87aed245be11088c60a28ad3c7738b1a2aeb86e` |
+| `tests/integration/integration.c` | `5d3955c6f203a9b3526d052a5de18d4db6b882ec5f116d61ac8804f3391994bd` |
+| `tests/daemon/test_auto_terminal.c` | `d3dd52803cd55ab8e2b099b53c4b64d52814f8173f28c06cfa2e171442c1b99a` |
+
+Native CI receipt: pending parent publication and exact-revision qualification.
