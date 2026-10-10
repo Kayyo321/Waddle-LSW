@@ -96,6 +96,21 @@ static int guest_message(const av_message_t *message, void *context) {
     }
     return av_wayland_message(host->video, message);
 }
+/* One production poll boundary, also driven by deterministic syscall tests.
+ * -2 is terminal deadline/flush evidence; -1 preserves the poll error, including
+ * EINTR. Keeping those outcomes distinct prevents expired EINTR from retrying. */
+static int host_poll(host_av_t *host, int peer, struct pollfd descriptors[2]) {
+    int timeout = av_wayland_timeout(host->video, 1000);
+    if (timeout < 0 || av_wayland_flush(host->video) != 0) return -2;
+    descriptors[0] = (struct pollfd){peer, POLLIN | (host->peer.head != host->peer.tail ? POLLOUT : 0), 0};
+    descriptors[1] = (struct pollfd){av_wayland_fd(host->video),
+        POLLIN | (av_wayland_writable(host->video) ? POLLOUT : 0), 0};
+    int ready = poll(descriptors, 2, timeout);
+    int poll_error = errno;
+    if (av_wayland_timeout(host->video, 0) < 0) return -2;
+    errno = poll_error;
+    return ready;
+}
 /** @brief Run native AV playback for the specified managed guest/mapping.
  * @param[in] argc CRT argument count. @param[in] argv Borrowed NUL-terminated args.
  * @return 0 peer closure/help, 2 invalid arguments, 1 startup/transport/display error.
@@ -190,18 +205,12 @@ start_clients:
         }
         /* Flush a newly created lease barrier before sleeping, including after
          * peer pumping; EAGAIN is represented by display POLLOUT below. */
-        int timeout = av_wayland_timeout(host.video, 1000);
-        if (timeout < 0 || av_wayland_flush(host.video) != 0) { result = 1; break; }
-        struct pollfd descriptors[2] = {
-            {peer, POLLIN | (host.peer.head != host.peer.tail ? POLLOUT : 0), 0},
-            {av_wayland_fd(host.video), POLLIN | (av_wayland_writable(host.video) ? POLLOUT : 0), 0}};
-        int ready = poll(descriptors, 2, timeout);
-        int poll_error = ready < 0 ? errno : 0;
-        if (av_wayland_timeout(host.video, 0) < 0) { result = 1; break; }
+        struct pollfd descriptors[2];
+        int ready = host_poll(&host, peer, descriptors);
+        if (ready == -2) { result = 1; break; }
         if (ready < 0) {
-            if (poll_error == EINTR)
+            if (errno == EINTR)
                 continue;
-            errno = poll_error;
             result = 1;
             break;
         }

@@ -28,6 +28,7 @@ av-test: build/av_input_transport_test build/av_input_test build/av_transport_te
 	./build/av_input_test
 	./build/av_lease_test
 	./build/av_windows_lease_test
+	./build/av_host_poll_test
 	cd tests/av/v2 && sha256sum --check SHA256SUMS
 	./build/av_gpu_test
 	python3 tests/av/package.py
@@ -169,6 +170,7 @@ av-input-test: build/av_input_test build/av_input_transport_test build/av_waylan
 	./build/av_input_test
 	./build/av_lease_test
 	./build/av_windows_lease_test
+	./build/av_host_poll_test
 	cd tests/av/v2 && sha256sum --check SHA256SUMS
 	./build/av_input_transport_test
 	./build/av_wayland_state_test
@@ -206,3 +208,8 @@ build/av_windows_lease_test: tests/av/windows_lease.c src/av/av_windows.c src/av
 build/av_windows_lease_test.exe: tests/av/windows_lease.c src/av/av_windows.c src/av/av_windows.h src/av/av_lease.c src/av/av_input.c src/av/av_identity.c build/av_codec_windows.lib | build
 	$(ZIG) cc $(AvWindowsFlags) tests/av/windows_lease.c src/av/av_lease.c src/av/av_input.c src/av/av_identity.c build/av_codec_windows.lib -o $@
 av-test av-input-test: build/av_windows_lease_test
+
+# Invoke the actual production poll step with deterministic descriptor/clock doubles.
+build/av_host_poll_test: tests/av/host_poll.c src/av/av_host.c src/av/av_lease.c src/av/av_input.c build/av_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wno-pedantic $(AvHostFlags) $(AvDriverFlags) -ffunction-sections -fdata-sections tests/av/host_poll.c src/av/av_lease.c src/av/av_input.c build/av_codec.o $(LDFLAGS) -Wl,--gc-sections -o $@
+av-test av-input-test: build/av_host_poll_test
