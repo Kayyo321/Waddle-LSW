@@ -37,6 +37,19 @@ int main(void) {
     session.stop = CreateEventW(NULL, TRUE, FALSE, NULL); assert(session.stop);
     av_message_t create = {.type = MsgWindowCreateV2, .window_id = 42, .sequence = 10,
         .width = 16, .height = 16, .dpi = 96, .process_id = 100};
+    av_message_t global = {.type = MsgInputEpochRevoked, .lease_generation = 1};
+    assert(window_notification(&global, &session) == 0 && session.peer.head == 1);
+    global.type = MsgInputEpochReady; global.buffer_index = 900;
+    assert(window_notification(&global, &session) == 0 && session.peer.head == 2);
+    assert(!session.windows[0].active);
+    session.peer = (av_peer_t){.head = AvPeerQueueFrames - 1};
+    create.type = MsgWindowCreateV3;
+    assert(window_notification(&create, &session) == 0 && session.windows[0].active);
+    global.type = MsgInputEpochRevoked; global.buffer_index = 0;
+    assert(window_notification(&global, &session) == -1 && session.failed && session.peer.failed);
+    session.failed = 0; session.peer = (av_peer_t){0};
+    memset(session.windows, 0, sizeof(session.windows)); assert(ResetEvent(session.stop));
+    create.type = MsgWindowCreateV2;
     session.peer.head = AvPeerQueueFrames;
     assert(window_notification(&create, &session) == -1 && session.failed && session.peer.failed);
     assert(!session.windows[0].active && !free_calls);

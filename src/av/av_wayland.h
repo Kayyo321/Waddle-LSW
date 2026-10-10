@@ -18,13 +18,14 @@ typedef int (*av_host_request_t)(const av_message_t *request, void *context);
  * @param[in,out] context Optional caller-owned callback context.
  * @return 0 on success, -1 on connection/global/allocation failure.
  * @note Event thread only, all allocation owned by av_wayland_free. Missing seat
- * or any legacy Create leaves video display-only, including resize/close. Keyboard is physical
+ * or any legacy Create leaves video display-only, including resize/close. V3
+ * input requires a completed lease barrier and fresh keyboard enter. Keyboard is physical
  * PC scan forwarding interpreted with the guest layout; no XKB text/IME/repeat.
  */
 int av_wayland_init(av_wayland_t **client, av_host_request_t request, void *context);
 /** @brief Create a captured-window toplevel backed by three shared pixel regions.
  * @param[in,out] client Nonnull initialized event-thread-owned client.
- * @param[in] message Nonnull validated MsgWindowCreate or MsgWindowCreateV2 metadata.
+ * @param[in] message Nonnull validated MsgWindowCreate, MsgWindowCreateV2 or MsgWindowCreateV3 metadata.
  * @param[in] fd Borrowed shared-memory file FD, valid through free.
  * @param[in] mapping_size Accessible shared bytes, 1..INT32_MAX for wl_shm.
  * @param[in] slots Three nonnull aligned slot pointers retained through free.
@@ -36,11 +37,12 @@ int av_wayland_init(av_wayland_t **client, av_host_request_t request, void *cont
 int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
                       size_t mapping_size, window_slot_header_t *slots[3],
                       const uint64_t offsets[3], size_t capacity);
-/** @brief Apply guest lifecycle/geometry/frame to an existing toplevel.
+/** @brief Apply guest lease controls or lifecycle/geometry/frame for a toplevel.
  * @param[in,out] client Nonnull initialized event-thread-owned client.
- * @param[in] message Nonnull validated destroy/geometry/frame message.
+ * @param[in] message Nonnull validated destroy/geometry/frame or guest lease control.
  * @return 0 accepted/stale lifecycle/drop-busy frame, -1 malformed/session/resource failure.
- * @note Event thread only; frames release ownership only on wl_buffer.release.
+ * @note Event thread only; lease controls route before window/buffer lookup.
+ * Frames release ownership only on wl_buffer.release.
  */
 int av_wayland_message(av_wayland_t *client, const av_message_t *message);
 /** @brief Dispatch pending Wayland events after display FD becomes readable.
@@ -49,6 +51,13 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message);
  * @note Event thread only; blocks unless caller poll indicates readable FD.
  */
 int av_wayland_dispatch(av_wayland_t *client);
+/** @brief Check the V3 handshake deadline and bound the next event-loop wait.
+ * @param[in,out] client Nonnull event-thread-owned initialized instance.
+ * @param[in] maximum Nonnegative requested maximum wait in milliseconds.
+ * @return 0..maximum safe wait, -1 terminal/clock/deadline failure. No allocation.
+ * @note Check before and after poll/dispatch/pump; EINTR never restarts a deadline.
+ */
+int av_wayland_timeout(av_wayland_t *client, int maximum);
 /** @brief Flush outgoing protocol bytes without blocking.
  * @param[in,out] client Nonnull event-thread-owned instance.
  * @return 0 flushed/would-block, -1 display error; no ownership transfer.
@@ -70,7 +79,8 @@ int av_wayland_fd(av_wayland_t *client);
  * @param[in,out] client Nonnull pointer to owned instance, NULL accepted as value.
  * @note Event thread only; sets *client NULL; mapping retained by caller until
  * compositor/guest are quiescent. Retires surfaces and drains releases for at most
- * two seconds. Unreleased slots remain consumed on compositor error/timeout.
+ * two seconds, after cancelling lease synchronization and disabling input.
+ * Unreleased slots remain consumed on compositor error/timeout.
  */
 void av_wayland_free(av_wayland_t **client);
 /** @brief Diagnostic commit acknowledgement callback, event thread only.

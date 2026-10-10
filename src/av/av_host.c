@@ -74,7 +74,8 @@ static int host_request(const av_message_t *message, void *context) {
 }
 static int guest_message(const av_message_t *message, void *context) {
     host_av_t *host = context;
-    if (message->type == MsgWindowCreate || message->type == MsgWindowCreateV2) {
+    if (message->type == MsgWindowCreate || message->type == MsgWindowCreateV2 ||
+        message->type == MsgWindowCreateV3) {
         unsigned pool = message->buffer_index;
         if (pool >= AvMaxWindows)
             return -1;
@@ -86,7 +87,7 @@ static int guest_message(const av_message_t *message, void *context) {
         }
         int result = av_wayland_create(host->video, message, host->memory_fd, AvUsedBytes, slots, offsets,
                                         AvSlotCapacity);
-        if (!result && message->type == MsgWindowCreateV2 && host->latency && !host->target_window &&
+        if (!result && message->type != MsgWindowCreate && host->latency && !host->target_window &&
             !strcmp(message->title, "Waddle AV latency fixture")) {
             host->target_window = message->window_id;
             result = request_flash(host);
@@ -187,13 +188,20 @@ start_clients:
             result = 1;
             break;
         }
+        /* Flush a newly created lease barrier before sleeping, including after
+         * peer pumping; EAGAIN is represented by display POLLOUT below. */
+        int timeout = av_wayland_timeout(host.video, 1000);
+        if (timeout < 0 || av_wayland_flush(host.video) != 0) { result = 1; break; }
         struct pollfd descriptors[2] = {
             {peer, POLLIN | (host.peer.head != host.peer.tail ? POLLOUT : 0), 0},
             {av_wayland_fd(host.video), POLLIN | (av_wayland_writable(host.video) ? POLLOUT : 0), 0}};
-        int ready = poll(descriptors, 2, 1000);
+        int ready = poll(descriptors, 2, timeout);
+        int poll_error = ready < 0 ? errno : 0;
+        if (av_wayland_timeout(host.video, 0) < 0) { result = 1; break; }
         if (ready < 0) {
-            if (errno == EINTR)
+            if (poll_error == EINTR)
                 continue;
+            errno = poll_error;
             result = 1;
             break;
         }
@@ -214,6 +222,10 @@ start_clients:
         int peer_status = av_peer_pump(&host.peer, guest_message, &host);
         if (peer_status != 0) {
             result = peer_status == 1 ? 0 : 1;
+            break;
+        }
+        if (av_wayland_timeout(host.video, 0) < 0 || av_wayland_flush(host.video) != 0) {
+            result = 1;
             break;
         }
     }

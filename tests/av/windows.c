@@ -18,8 +18,29 @@ static unsigned captured_frames;
 static unsigned paint_sequence;
 static HWND occlusion_window;
 static int latency_fixture;
+static int lease_fixture;
 static COLORREF paint_color = RGB(63, 127, 191);
 static LRESULT CALLBACK fixture_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (lease_fixture) {
+        const char *event_name = NULL;
+        switch (message) {
+            case WM_SETFOCUS: event_name = "focus-in"; break;
+            case WM_KILLFOCUS: event_name = "focus-out"; break;
+            case WM_KEYDOWN: case WM_SYSKEYDOWN: event_name = "key-down"; break;
+            case WM_KEYUP: case WM_SYSKEYUP: event_name = "key-up"; break;
+            case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN: event_name = "button-down"; break;
+            case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: event_name = "button-up"; break;
+            case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL: event_name = "wheel"; break;
+            case WM_CLOSE: event_name = "close"; break;
+            default: break;
+        }
+        if (event_name) {
+            fprintf(stderr, "lease-event time=%llu hwnd=%p event=%s message=0x%04x wparam=%llu lparam=%lld\n",
+                (unsigned long long)GetTickCount64(), (void *)window, event_name, (unsigned)message,
+                (unsigned long long)wparam, (long long)lparam);
+            fflush(stderr);
+        }
+    }
     if (message == AvDiagnosticFlashEvent && latency_fixture &&
         (uint64_t)(uintptr_t)window == target_id && wparam && wparam <= 0xffffff &&
         (lparam == 0 || lparam == 1)) {
@@ -221,6 +242,7 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--probe-display")) return av_guest_display_probe();
     int benchmark_status = 0;
     latency_fixture = argc == 2 && !strcmp(argv[1], "--round-trip-fixture");
+    lease_fixture = argc == 2 && !strcmp(argv[1], "--lease-fixture");
     if ((latency_fixture || (argc == 2 && !strcmp(argv[1], "--benchmark"))) &&
         av_guest_display_probe() != 0)
         fputs("AV performance warning: 1920x1080 @ 144 Hz primary virtual display prerequisite is unmet; diagnostic may run but cannot establish high-refresh acceptance\n", stderr);
@@ -239,6 +261,25 @@ int main(int argc, char **argv) {
         WS_OVERLAPPEDWINDOW | WS_VISIBLE, 800, 100, 100, 100, NULL, NULL, window_class.hInstance, NULL);
     assert(target && tool);
     target_id = (uint64_t)(uintptr_t)target;
+    if (lease_fixture) {
+        HWND second = CreateWindowExW(0, window_class.lpszClassName, L"Waddle AV lease B",
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE, 800, 300, 640, 480, NULL, NULL, window_class.hInstance, NULL);
+        HWND owned = CreateWindowExW(WS_EX_APPWINDOW, window_class.lpszClassName, L"Owned input rejection",
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE, 1100, 50, 350, 200, target, NULL, window_class.hInstance, NULL);
+        assert(second && owned);
+        SetWindowTextW(target, L"Waddle AV lease A");
+        fprintf(stderr, "Lease fixture PID=%lu A=%p B=%p tool=%p owned=%p\n",
+            (unsigned long)GetCurrentProcessId(), (void *)target, (void *)second, (void *)tool, (void *)owned);
+        fputs("Manual isolated-desktop V3 fixture: run managed AV for this PID. "
+              "A/B are ordinary ownerless targets; tool/owned exercise rejection. "
+              "Close both A and B to exit. No input is synthesized by this fixture.\n", stderr);
+        while (IsWindow(target) || IsWindow(second)) pump();
+        if (IsWindow(owned)) DestroyWindow(owned);
+        if (IsWindow(tool)) DestroyWindow(tool);
+        UnregisterClassW(window_class.lpszClassName, window_class.hInstance);
+        CoUninitialize();
+        return 0;
+    }
     if (latency_fixture) {
         occlusion_window = tool;
         SetWindowTextW(target, L"Waddle AV latency fixture");
