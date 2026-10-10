@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Presented-worker runtime repair worker; independent runtime-gate reviewer
 - **Time Started**: 2026-10-09T23:27:46Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-10T00:31:20Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -15,9 +15,9 @@
 | #2 | Correct direct-only extension setup and retain exact legal query assertions | Done | 25% | 100% | Enabled KHR instance/physical routes agree; API1.0 core remains hidden |
 | #3 | Build four actual worker binaries and verify native boundary regressions | Done | 20% | 100% | Four final-source binaries link; complete C ABI and native-loader fixtures pass |
 | #4 | Independent source/evidence review and atomic commit receipts | Done | 15% | 100% | Final exact source/binary hashes, regression logs and limits independently approved |
-| #5 | Observe updated native normal/sanitized production-worker CI | Pending | 15% | 0% | Parent owns publication; no actual renderer available locally |
+| #5 | Observe updated native normal/sanitized production-worker CI | Done | 15% | 100% | Exact 879d0c3 native CI passed; see dated receipt below |
 
-**Total Feature Completion**: `85.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Verification Receipts
 
@@ -112,3 +112,13 @@ This documentation-only attribution receipt changes no source and adds **+0%**
 completion. Actual updated native normal/sanitized worker CI remains pending;
 no software-vGPU milestone advance is claimed. Parent owns publication and
 remote acceptance monitoring.
+
+## Supported CI closure · 2026-10-10
+
+Published `879d0c38c29e22b400c29fd79236b36df6f015f3` passed all six native
+workflow runs. [Exact source, results and job links](../CI_GREEN_CHECKPOINT_2026-10-10.md)
+verify the formerly pending bounded gate. Task #5 is now 100% (+15% overall),
+bringing this scoped repair to 100%. This receipt records observed CI evidence;
+it changes no source and grants no physical GPU/Adobe acceptance. Earlier local
+LSan failures and pending statements remain historical; the
+[current review index](../REVIEW_CHECKLIST.md) is authoritative.

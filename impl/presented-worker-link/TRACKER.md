@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Presented-worker link repair worker; independent presented-worker-input reviewer
 - **Time Started**: 2026-10-09T22:49:08Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-10T00:31:20Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -14,9 +14,9 @@
 | #1 | Inspect native sink contract and add its existing shared link input | Done | 30% | 100% | No fixture stub or assertion change |
 | #2 | Reproduce old link failure and build actual corrected direct/loader executables | Done | 30% | 100% | Four executables linked; native symbols defined exactly once |
 | #3 | Independent review and exact-file atomic commit receipts | Done | 20% | 100% | Minimal source correction approved; exact implementation commit recorded below |
-| #4 | Run unchanged independent production-worker and sanitizer CI gates | Blocked | 20% | 0% | Local renderer/toolchain absent; native LSan cannot inspect process |
+| #4 | Run unchanged independent production-worker and sanitizer CI gates | Done | 20% | 100% | Exact 879d0c3 native CI passed; see dated receipt below |
 
-**Total Feature Completion**: `80.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Verification Receipts
 
@@ -110,3 +110,13 @@ This documentation-only attribution receipt records the exact implementation
 commit above. Task impact: **+0%**; total remains **80%**. Independent production
 worker execution and leak acceptance are still pending on the published
 revision; the local link evidence cannot advance TODO #4.
+
+## Supported CI closure · 2026-10-10
+
+Published `879d0c38c29e22b400c29fd79236b36df6f015f3` passed all six native
+workflow runs. [Exact source, results and job links](../CI_GREEN_CHECKPOINT_2026-10-10.md)
+verify the formerly pending bounded gate. Task #4 is now 100% (+20% overall),
+bringing this scoped repair to 100%. This receipt records observed CI evidence;
+it changes no source and grants no physical GPU/Adobe acceptance. Earlier local
+LSan failures and pending statements remain historical; the
+[current review index](../REVIEW_CHECKLIST.md) is authoritative.

@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Windows ICD test environment worker; independent reviewer
 - **Time Started**: 2026-10-09T21:51:46Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-10T00:31:20Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -15,9 +15,9 @@
 | #2 | Implement test-only guard and lossless restoration regression | Done | 30% | 100% | No production, README, threshold, or CI-inclusion changes |
 | #3 | Pass Linux full/targeted suites, whole-ICD coverage and Windows full cross-links | Done | 25% | 100% | Final source passes all local gates; cross-link is not execution |
 | #4 | Complete independent review | Done | 10% | 100% | Final helper approved after absent-delete correction; no remaining code blockers |
-| #5 | Execute complete native Windows CI suites after publication | Pending | 15% | 0% | Parent owns authorized publication and CI monitoring |
+| #5 | Execute complete native Windows CI suites after publication | Done | 15% | 100% | Exact 879d0c3 native CI passed; see dated receipt below |
 
-**Total Feature Completion**: `85.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Verification receipts
 
@@ -39,3 +39,13 @@
   - **Summary**: Test-only native process-environment guard, lossless restoration regression, complete unchanged Linux/coverage gates, Windows cross-link receipts, and independent review. #5 remains 0%; parent-owned native CI execution must complete before claiming runtime acceptance.
 
 This documentation-only attribution receipt records the verified implementation commit above. Task impact: **+0%**; total remains **85%**, with native Windows CI execution still pending.
+
+## Supported CI closure · 2026-10-10
+
+Published `879d0c38c29e22b400c29fd79236b36df6f015f3` passed all six native
+workflow runs. [Exact source, results and job links](../CI_GREEN_CHECKPOINT_2026-10-10.md)
+verify the formerly pending bounded gate. Task #5 is now 100% (+15% overall),
+bringing this scoped repair to 100%. This receipt records observed CI evidence;
+it changes no source and grants no physical GPU/Adobe acceptance. Earlier local
+LSan failures and pending statements remain historical; the
+[current review index](../REVIEW_CHECKLIST.md) is authoritative.

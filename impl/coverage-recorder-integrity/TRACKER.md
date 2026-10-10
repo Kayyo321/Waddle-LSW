@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: coverage diagnosis worker; independent coverage integrity reviewer
 - **Time Started**: 2026-10-09T22:49:49Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-10T00:31:20Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -13,10 +13,10 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1 | Reproduce native-target site divergence | Done | 25% | 100% | Exact 76,512-site Zen 3 reproduction; matching 625/706 smaller modes |
 | #2 | Implement metadata-bound atomic storage | Done | 25% | 100% | Exact native IDs, arities, digest binding and sizeof-checked 512KiB budget |
-| #3 | Verify malformed, concurrency and whole-gate behavior | In Progress | 25% | 80% | Seven focused tests, whole native aggregate and exact Zen3 replay pass; fresh CI sanitizer acceptance pending |
+| #3 | Verify malformed, concurrency and whole-gate behavior | Done | 25% | 100% | Exact 879d0c3 native CI passed; see dated receipt below |
 | #4 | Independent review and atomic commit | Done | 25% | 100% | Final code, seven tests and transformed IR independently approved; atomic implementation commit |
 
-**Total Feature Completion**: `95.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
 
@@ -107,3 +107,13 @@
   `recorder_test_t.test_sanitizer_violation_is_nonrecoverable -v` after the script.
   Local logs and their SHA256 values are retained in
   `/workspace/shared/waddle-tools/coverage-recorder-sanitizer-hardening-manifest.json`.
+
+## Supported CI closure · 2026-10-10
+
+Published `879d0c38c29e22b400c29fd79236b36df6f015f3` passed all six native
+workflow runs. [Exact source, results and job links](../CI_GREEN_CHECKPOINT_2026-10-10.md)
+verify the formerly pending bounded gate. Task #3 is now 100% (+5% overall),
+bringing this scoped repair to 100%. This receipt records observed CI evidence;
+it changes no source and grants no physical GPU/Adobe acceptance. Earlier local
+LSan failures and pending statements remain historical; the
+[current review index](../REVIEW_CHECKLIST.md) is authoritative.

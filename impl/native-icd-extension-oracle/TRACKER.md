@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Native extension oracle repair worker; independent reviewer
 - **Time Started**: 2026-10-09T22:13:29Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-10T00:31:20Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -15,9 +15,9 @@
 | #2 | Repair exact C ABI and negotiated Zig projection expectations | Done | 30% | 100% | Production behavior and all other Zig tests unchanged |
 | #3 | Verify Linux full units/C ABI/coverage and Windows full-unit links | Done | 25% | 100% | 393 Debug + 393 ReleaseSafe; three C variants; full coverage; both Windows links |
 | #4 | Complete independent source and evidence review | Done | 10% | 100% | No source blockers; reviewed source hashes match final test evidence |
-| #5 | Observe exact-commit native Windows and leak-enabled Linux CI | Pending | 15% | 0% | No Windows runtime here; local LSan fails under tracing, including approved retry |
+| #5 | Observe exact-commit native Windows and leak-enabled Linux CI | Done | 15% | 100% | Exact 879d0c3 native CI passed; see dated receipt below |
 
-**Total Feature Completion**: `85.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
 
@@ -49,3 +49,13 @@ Toolchain: official Zig 0.13.0 and `/workspace/shared/waddle-tools/env.sh`. Evid
 The ordinary C sanitizer aggregate aborted in its allocation-fault prerequisite before reaching the main recipe: `LeakSanitizer has encountered a fatal error`, with the runtime's ptrace warning. Original log: `linux-c-sanitizers.log`; unchanged in-sandbox retry: `linux-c-mapping-sanitizer-retry.log`. An approved escalated execution of that same binary with `ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1` still exited **134** with the same tracing-related LSan failure; see `linux-c-mapping-sanitizer-escalated.log`. The separately extracted, unchanged main C sanitizer compile/run recipe also built successfully and exited **134** with that same runtime failure; see `linux-c-abi-sanitizer-escalated.log` and its exact command script `c-abi-sanitizer.sh`. The loader sanitizer binary was compiled successfully, but not executed after the runtime limitation was confirmed (`linux-loader-sanitizer-build.log`). No tracing/security settings, sanitizer settings, suppressions, or instrumentation thresholds were relaxed.
 
 These failures are **not** sanitizer passes or proof of zero leaks. The local source/ABI/link checks above are complete; a leak-capable native Linux CI run and actual native Windows execution remain separate pending qualification. Parent owns publication and monitoring. No native Windows runtime or real hardware acceptance is claimed.
+
+## Supported CI closure · 2026-10-10
+
+Published `879d0c38c29e22b400c29fd79236b36df6f015f3` passed all six native
+workflow runs. [Exact source, results and job links](../CI_GREEN_CHECKPOINT_2026-10-10.md)
+verify the formerly pending bounded gate. Task #5 is now 100% (+15% overall),
+bringing this scoped repair to 100%. This receipt records observed CI evidence;
+it changes no source and grants no physical GPU/Adobe acceptance. Earlier local
+LSan failures and pending statements remain historical; the
+[current review index](../REVIEW_CHECKLIST.md) is authoritative.

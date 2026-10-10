@@ -182,3 +182,20 @@ See [the fixture receipt](native-wsi-test-capabilities/TRACKER.md) and
 The prior f04e358 Linux CI also proved the presented-worker link repair, then
 failed the real worker runtime with mode 0. This remains an open acceptance
 blocker, not an inferred pass from successful linking.
+
+
+## Green native CI and worker-query follow-on
+
+The [dated green receipt](CI_GREEN_CHECKPOINT_2026-10-10.md) records exact observed
+acceptance at `879d0c38c29e22b400c29fd79236b36df6f015f3`.
+
+| Original source checkpoint | Published commit |
+| --- | --- |
+| `e7c410b0479fa74d4cadbc7cd4ee43952f66ce6b` | `1e49a8e16be9054fa4bf586a255d95f570f56acf` |
+| `dcbb8ef878008fc37d2a7899d534409a3fc69d6a` | `f62cf520c51c85ba29cdb859160161c431b30194` |
+| `2742007ad9fb88d5f8a915ea79d4537517a4964f` | `3d3267dd3bd428cb80c40cba35400e1e3ec208c8` |
+| `e519c2ca3cfe02c1d362fca5d8eac9d12353441c` | `50ca9bd00ed7bbb21f5e5ffe9f9e2ab31fdcdb86` |
+| `3306f44cab1a34dc1c2c19708a6270cf71415d2e` | `1b7cd178d934b5a438a394286cc2994ec039dc61` |
+| `9dc89c7fc048c483dd1770b46790e7feeaf3f002` | `01c30f7d0e438fa7caa69046501a259789c8ab7a` |
+| `ff6001f96653f880c257ce26162477fa9b5fa8ef` | `34c9d3ebe85808ed2a5af24a28d0b7cbd29350da` |
+| `6c91d14e3bb0461060fd7d9889650fe27e87fed8` | `879d0c38c29e22b400c29fd79236b36df6f015f3` |

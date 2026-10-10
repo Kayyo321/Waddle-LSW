@@ -1,6 +1,6 @@
 # Return-home review checklist
 
-**Current pending-status index · 2026-10-09 UTC · `feature/software-vgpu-slicing`**
+**Current pending-status index · 2026-10-10 UTC · `feature/software-vgpu-slicing`**
 
 Start here. This is the single prioritized list of open review/acceptance work;
 linked feature receipts are historical evidence and the detailed handoff supplies
@@ -8,7 +8,7 @@ commands. A checked box requires an exact tested commit, binary hashes and logs 
 [one result receipt](HARDWARE_TEST_RESULT_TEMPLATE.md). Never inherit a pass after
 relevant source, toolchain, driver or VM changes.
 
-Recorded prior backup: [`51583f9`](https://github.com/Kayyo321/Waddle-LSW/commit/51583f927a0ba82adecaa6d48d2814ffda97bc26).
+Recorded green backup: [`879d0c3`](https://github.com/Kayyo321/Waddle-LSW/commit/879d0c38c29e22b400c29fd79236b36df6f015f3).
 The source links below include the follow-on lifecycle and Windows oracle changes;
 record the exact containing commit you actually test.
 No hardware/Adobe completion is claimed. Review in this order:
@@ -16,26 +16,17 @@ No hardware/Adobe completion is claimed. Review in this order:
 - [ ] **P0 · Source and native CI.** Fresh checkout; capture source/toolchain/binary
   versions; rerun automated gates. **Upgrade host and guest together:** old guests
   are view-only on new hosts; old hosts reject the new first-window capability.
-  Linux cloud input/WSI suites and 394-case ICD Debug/ReleaseSafe runs passed;
-  whole-ICD coverage passed 90.32% branches after six regression additions.
-  At `f04e358`, both AV workflows and the native Windows guest passed, including
-  new lifecycle/quiescence fixtures and genuine leak-enabled Linux AV tests
-  ([run evidence](https://github.com/Kayyo321/Waddle-LSW/actions/runs/38002124467/job/114063342283)).
-  Windows vGPU reaches 391/393 tests: two synthetic WSI capability fixtures need
-  repair; their independently reviewed fix passes 394/394 in both Linux modes
-  and full Windows cross-links, with native execution pending. The prior
-  environment-helper and extension-oracle failures are cleared.
-  Linux vGPU confirmed the worker link repair, then failed real presented-worker
-  binding at mode 0. Its API1.0 fixture omitted the KHR query extension while
-  requiring both aliases; a reviewed fixture-only repair passes the real ICD
-  admission probe and all four worker links. Full worker CI rerun is pending.
-  Native CPU-model reproduction
-  explains the recorder overflow. The published all-sites-preserving repair passes
-  the exact 76,512-site replay (90.30% branches) and current 394-test aggregate
-  (90.32% branches, 98.53% lines); strict sanitizer CI is pending at `51583f9`. Bounded device-wire/native, WSI and ICD sanitizer
-  stages passed leak-enabled CI at `c11ce21`; local LSan remains ptrace-blocked.
+  **All six native CI workflow runs passed at `879d0c3`.** Windows ICD passes
+  394 Debug + 394 ReleaseSafe tests and native loader cycles. Linux passes all
+  eight strict recorder sanitizer probes, 90.30% whole-ICD branch coverage,
+  direct/loader production-worker normal and leak-enabled sanitizer targets,
+  and subsequent export/surface/Wayland/runtime/context gates. The prior Windows
+  fixture, query-oracle and recorder failures are closed at this exact source.
+  [Exact green receipt and job links](CI_GREEN_CHECKPOINT_2026-10-10.md).
+  Local LSan remains ptrace-blocked; supported CI supplies the leak evidence.
   The broader 32-module ICD-owned/full-seam instrumentation migration remains a
-  separate unresolved gate. Rerun affected checks on the next published source.
+  separate unresolved gate. Rerun affected checks on subsequent sources and on
+  the hardware checkout; no physical GPU or application acceptance is implied.
   [Build/log commands](HARDWARE_TEST_HANDOFF.md#4-rebuild-and-rerun-hardware-independent-gates-first)
   · [coverage source](https://github.com/Kayyo321/Waddle-LSW/commit/2d97603e3275d0c329ae81f3fe56413b641bd3d4)
   · [coverage receipt](wsi-window-lifetime/TRACKER.md)

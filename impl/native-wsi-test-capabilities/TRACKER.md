@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Native WSI capability repair worker; independent reviewer
 - **Time Started**: 2026-10-09T23:00:34Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-10T00:31:20Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -15,9 +15,9 @@
 | #2 | Opt in test WSI device and preserve disabled-extension rejection | Done | 30% | 100% | Exact name/bit assertion and four disabled masks; production unchanged |
 | #3 | Verify Linux full suites, C fixtures, and complete Windows links | Done | 25% | 100% | 394 Debug + 394 ReleaseSafe, focused 7 + 7, three C fixtures, both full Windows links |
 | #4 | Independently review source preservation and verification evidence | Done | 15% | 100% | Independent final-source and evidence approval; all 196 original test bodies unchanged |
-| #5 | Observe exact-commit native Windows runtime and leak-capable CI | Pending | 15% | 0% | Parent owns publication and native CI |
+| #5 | Observe exact-commit native Windows runtime and leak-capable CI | Done | 15% | 100% | Exact 879d0c3 native CI passed; see dated receipt below |
 
-**Total Feature Completion**: `85.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
 
@@ -59,3 +59,13 @@ The coverage-recorder repair worker owns the full coverage validation against th
 - `linux-c-abi-sanitizer.log`: `13842ea65185acbe0307c970134b3427467564a0eb55c0484ccf751a555bb635`
 - `linux-c-mapping-sanitizer.log`: `dff10b7cd8eb2a830d246424bcf6cd6b180a3a96d503ddbe5ba4d402f7531703`
 - `linux-loader-sanitizer-build.log`: `f33c39ca3268d3088e4f80e5d0f17bf8a68421e63cd24fbc4d6340c7882b8147`
+
+## Supported CI closure · 2026-10-10
+
+Published `879d0c38c29e22b400c29fd79236b36df6f015f3` passed all six native
+workflow runs. [Exact source, results and job links](../CI_GREEN_CHECKPOINT_2026-10-10.md)
+verify the formerly pending bounded gate. Task #5 is now 100% (+15% overall),
+bringing this scoped repair to 100%. This receipt records observed CI evidence;
+it changes no source and grants no physical GPU/Adobe acceptance. Earlier local
+LSan failures and pending statements remain historical; the
+[current review index](../REVIEW_CHECKLIST.md) is authoritative.
