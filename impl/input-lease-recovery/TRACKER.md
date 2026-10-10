@@ -22,4 +22,6 @@
 
 ## Commit History & Progress Log
 
-- Protocol/core checkpoint (`feat(av): add canonical epoch protocol and portable lease authority`, exact receipt follows in the next commit): #1 +100% (+10% overall), #2 +100% (+25% overall). Nine Zig codec tests, existing input/identity/lifecycle fixtures, new portable lease fixtures, frozen V2 parser checks, and unchanged >=90% production coverage gates pass. Guest opt-in and production adapter changes are deliberately excluded from this checkpoint. Native acceptance remains pending.
+- Commit `8b5232c6c56028a5a003df9e37faddae900a4846`: `feat(av): add canonical epoch protocol and portable lease authority`: #1 +100% (+10% overall), #2 +100% (+25% overall). Nine Zig codec tests, existing input/identity/lifecycle fixtures, new portable lease fixtures, frozen V2 parser checks, and unchanged >=90% production coverage gates pass. Guest opt-in and production adapter changes are deliberately excluded from this checkpoint. Native acceptance remains pending.
+
+- Core test-wiring checkpoint (`test(av): wire lease coverage and frozen V2 compatibility gate`, exact receipt follows): #2 unchanged at 100%. Adds the production lease/frozen V2 fixture to both AV aggregates and coverage without runtime V3 opt-in; adds fragmented Ack, ordered focus/data, cross-direction stale FIFO, partial EOF, queue exhaustion and fresh-session regression evidence.

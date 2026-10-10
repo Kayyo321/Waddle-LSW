@@ -20,6 +20,7 @@ typedef struct fixture_t {
     int transition_after_emit, transition_before_effect, clock_after_publish;
     uint32_t fail_release;
     av_message_t last;
+    av_peer_t *output;
 } fixture_t;
 static const av_lease_ops_t Ops;
 static uint64_t now_ms(void *context) { return ((fixture_t *)context)->now; }
@@ -46,7 +47,8 @@ static int emit(void *context, const av_message_t *event) {
 static int publish(void *context, const av_message_t *message) {
     fixture_t *f = context; ++f->published; f->last = *message;
     if (f->clock_after_publish) f->now = 0;
-    return f->fail_publish;
+    if (f->fail_publish) return f->fail_publish;
+    return f->output ? av_peer_send(f->output, message) : 0;
 }
 static int reconcile(void *context) {
     fixture_t *f = context; ++f->reconciled;
@@ -313,9 +315,81 @@ static void compatibility(void) {
         assert(av_identity_admit(&identity, &create) == -1);
     }
 }
+static int guest_receive(const av_message_t *message, void *context) {
+    fixture_t *f = context;
+    return av_lease_guest_apply(&f->guest, message, &Ops, f);
+}
+static int host_receive(const av_message_t *message, void *context) {
+    fixture_t *f = context;
+    return av_lease_host_receive(&f->host, message, f->now) < 0 ? -1 : 0;
+}
+static void transport(void) {
+    fixture_t f = fixture();
+    int sockets[2]; assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, sockets) == 0);
+    av_peer_t guest = {.socket = (uintptr_t)sockets[0]}, host = {.socket = (uintptr_t)sockets[1]};
+    f.output = &guest;
+    assert(av_lease_guest_begin(&f.guest, &Ops, &f) == 0);
+    assert(av_peer_pump(&guest, guest_receive, &f) == 0);
+    assert(av_peer_pump(&host, host_receive, &f) == 0 && f.host.phase == AvLeaseBarrier);
+    av_message_t ack;
+    assert(av_lease_host_ack(&f.host, f.now, &ack) == 0);
+    uint8_t bytes[AvControlBytes]; assert(av_control_encode(&ack, bytes, sizeof(bytes)) == 0);
+    for (unsigned i = 0; i < AvControlBytes; ++i) {
+        assert(write(sockets[1], bytes + i, 1) == 1);
+        assert(av_peer_pump(&guest, guest_receive, &f) == 0);
+        assert(f.guest.phase == (i + 1 == AvControlBytes ? AvLeaseUnfocusedReady : AvLeaseAwaitAck));
+    }
+    assert(av_peer_pump(&guest, guest_receive, &f) == 0);
+    assert(av_peer_pump(&host, host_receive, &f) == 0 && f.host.phase == AvLeaseHostUnfocusedReady);
+    for (unsigned i = 0; i < 4; ++i) {
+        av_message_t event = input(&f, i == 0 ? MsgInputFocusV3 : i == 1 ? MsgInputPointerV3 :
+            i == 2 ? MsgInputKeyV3 : MsgInputButtonV3, i != 1, i == 2 ? 30 : i == 3 ? 1 : 0);
+        assert(av_lease_host_stamp(&f.host, &event) == 0);
+        f.host.phase = AvLeaseForwarding;
+        assert(av_peer_send(&host, &event) == 0);
+    }
+    assert(av_peer_pump(&host, host_receive, &f) == 0);
+    assert(av_peer_pump(&guest, guest_receive, &f) == 0);
+    assert(f.activations == 1 && f.emitted == 3 && f.guest.input.keys[30] && f.guest.input.buttons[1]);
+    uint64_t old_epoch = f.guest.epoch;
+    f.live_id = 8;
+    assert(av_lease_guest_transition(&f.guest, 8, 99, &Ops, &f) == 0);
+    unsigned effects = f.emitted + f.released + f.activations;
+    av_message_t stale = input(&f, MsgInputFocusV3, 1, 0); stale.lease_generation = old_epoch;
+    stale.window_id = 7; stale.buffer_index = ++f.host.serial;
+    assert(av_peer_send(&host, &stale) == 0);
+    stale.type = MsgInputKeyV3; stale.width = 30; stale.buffer_index = ++f.host.serial;
+    assert(av_peer_send(&host, &stale) == 0);
+    assert(av_peer_pump(&host, host_receive, &f) == 0);
+    assert(av_peer_pump(&guest, guest_receive, &f) == 0);
+    assert(effects == f.emitted + f.released + f.activations);
+    assert(av_peer_pump(&host, host_receive, &f) == 0 && f.host.phase == AvLeaseBarrier);
+    assert(av_lease_host_ack(&f.host, f.now, &ack) == 0 && ack.buffer_index > AvVideoBuffers);
+    assert(av_peer_send(&host, &ack) == 0 && av_peer_pump(&host, host_receive, &f) == 0);
+    assert(av_peer_pump(&guest, guest_receive, &f) == 0);
+    assert(av_peer_pump(&guest, guest_receive, &f) == 0);
+    assert(av_peer_pump(&host, host_receive, &f) == 0);
+    assert(!f.guest.input.window_id && !f.guest.input.keys[30] && !f.guest.input.buttons[1]);
+    /* Disconnect mid-frame is terminal and never dispatches an incomplete focus. */
+    av_message_t event = input(&f, MsgInputFocusV3, 1, 0);
+    assert(av_control_encode(&event, bytes, sizeof(bytes)) == 0);
+    assert(write(sockets[1], bytes, 3) == 3); assert(close(sockets[1]) == 0);
+    assert(av_peer_pump(&guest, guest_receive, &f) == -1 && guest.failed);
+    assert(close(sockets[0]) == 0);
+    assert(av_input_reset(&f.guest.input, &Ops.input, &f) == 0);
+    /* Full required-control queues terminate even after a successful Create. */
+    f = fixture(); guest = (av_peer_t){.head = AvPeerQueueFrames - 1}; f.output = &guest;
+    av_message_t create = {.type = MsgWindowCreateV3, .window_id = 7, .sequence = 99,
+        .width = 640, .height = 480, .dpi = 96, .process_id = 55};
+    assert(av_peer_send(&guest, &create) == 0);
+    assert(av_lease_guest_begin(&f.guest, &Ops, &f) == -1 && guest.failed);
+    assert(f.guest.epoch == 1 && f.guest.phase == AvLeaseGuestTerminal);
+    /* A fresh peer and zero-initialized lease must repeat the entire handshake. */
+    f = fixture(); handshake(&f); assert(f.guest.input.serial == 1 && !f.guest.ever_anchored);
+}
 int main(void) {
     startup_and_ordering(); stale_and_invalid(); releases_and_transition();
-    deadlines_and_handshakes(); host_errors(); compatibility();
+    deadlines_and_handshakes(); host_errors(); compatibility(); transport();
     puts("AV lease: authority, ordering, revocation, exact handshake, deadlines and V2 compatibility passed");
     return 0;
 }

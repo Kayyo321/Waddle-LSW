@@ -26,6 +26,8 @@ av-test: build/av_input_transport_test build/av_input_test build/av_transport_te
 	cd tests/av/legacy && sha256sum --check SHA256SUMS
 	./build/av_lifecycle_transport_test
 	./build/av_input_test
+	./build/av_lease_test
+	cd tests/av/v2 && sha256sum --check SHA256SUMS
 	./build/av_gpu_test
 	python3 tests/av/package.py
 	$(ZIG) test src/cli/av_commands.zig -Isrc/cli
@@ -42,8 +44,9 @@ av-sanitizers:
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B av-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 
 .PHONY: av-coverage
-av-coverage: build/av_audio.o build/av_layout.o build/av_codec.o
+av-coverage: build/av_audio.o build/av_layout.o build/av_codec.o build/av_v2_codec.o
 	python3 tests/av/input_coverage.py
+	python3 tests/av/lease_coverage.py
 	python3 tests/av/identity_coverage.py
 	python3 tests/av/coverage.py av_audio
 	python3 tests/av/coverage.py av_codec
@@ -163,6 +166,8 @@ av-input-test: build/av_input_test build/av_input_transport_test build/av_waylan
 	cd tests/av/legacy && sha256sum --check SHA256SUMS
 	./build/av_lifecycle_transport_test
 	./build/av_input_test
+	./build/av_lease_test
+	cd tests/av/v2 && sha256sum --check SHA256SUMS
 	./build/av_input_transport_test
 	./build/av_wayland_state_test
 	$(ZIG) test src/av/av_codec.zig -Iinclude
@@ -185,3 +190,10 @@ build/av_guest_quiescence_test.exe: tests/av/guest_quiescence.c src/av/av_guest.
 build/av_platform_requests_test: tests/av/platform_requests.c tests/av/platform_requests.h build/av_codec.o | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av tests/av/platform_requests.c build/av_codec.o $(LDFLAGS) -o $@
 av-test av-input-test: build/av_platform_requests_test
+
+# Frozen pre-lease codec: no runtime binary links this compatibility fixture.
+build/av_v2_codec.o: tests/av/v2/av_codec.zig tests/av/v2/av_protocol.h | build
+	$(ZIG) build-obj $< -Itests/av/v2 -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+build/av_lease_test: tests/av/lease.c src/av/av_lease.c src/av/av_input.c src/av/av_identity.c src/av/av_peer.c build/av_codec.o build/av_v2_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/av $^ $(LDFLAGS) -o $@
+av-test av-input-test: build/av_lease_test
