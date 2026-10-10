@@ -379,6 +379,25 @@ static void accounting_tests(void) {
     start_ready(); focus(1); send_action=5; key(30,1);
     assert(lease_state.phase==AvLeaseAwaitAck && find_window(native_handle(1))<0 && insertions==2); finish();
 }
+static void cleanup_retry_tests(void) {
+    /* The operation tries each failed release once; stop owns its two attempts.
+     * Focus-off, Release, transfer and revoke must not add an owner_end retry. */
+    for (unsigned kind = 0; kind < 4; ++kind) {
+        start_ready(); focus(1); key(30,1); fail_release = 1;
+        if (kind == 3) {
+            foreground = native_handle(2); foreground_event(foreground);
+            assert(av_windows_tick() == -1);
+        } else {
+            av_message_t event = host_message(kind == 1 ? MsgInputReleaseV3 : MsgInputFocusV3,
+                kind == 2 ? 2 : 1, 0, kind == 1 || kind == 2);
+            assert(av_windows_input(&event) == -1);
+        }
+        assert(insertions == 2 && successful_insertions == 1 && lease_state.input.keys[30]);
+        assert(av_windows_stop() == -1 && insertions == 4 && lease_state.input.keys[30]);
+        fail_release = 0;
+        assert(av_windows_stop() == 0 && insertions == 5 && !lease_state.input.keys[30]);
+    }
+}
 static void eligibility_tests(void) {
     for (unsigned kind=0; kind<7; ++kind) {
         start_ready(); focus(1); key(30,1);
@@ -448,7 +467,7 @@ static void failure_tests(void) {
     fail_unhook=0; assert(av_windows_stop()==-1); /* Permanent failed-teardown latch. */
 }
 int main(void) {
-    startup_tests(); transition_tests(); accounting_tests(); eligibility_tests(); legacy_tests(); failure_tests();
+    startup_tests(); transition_tests(); accounting_tests(); cleanup_retry_tests(); eligibility_tests(); legacy_tests(); failure_tests();
     puts("Win32 lease API doubles: startup, recovery, exact accounting, lifecycle, deadlines and teardown passed");
     return 0;
 }

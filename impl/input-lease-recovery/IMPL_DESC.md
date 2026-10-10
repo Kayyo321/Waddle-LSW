@@ -191,7 +191,7 @@ Actual foreground must equal authorized pair immediately before insertion. NULL 
 
 Check every individual SendInput. Horizontal wheel already inserted followed by vertical preparation/check/insertion failure or transition is terminal partial operation, never retried/replayed as an unissued whole event.
 
-Synthetic release is mandatory cleanup and bypasses foreground authorization; it never activates. Successful releases clear only their held bits; failed bits remain and other releases are attempted. Observation during cleanup can latch Terminal but never recursively clean up. Only existing bounded teardown release retry remains permitted after failure.
+Synthetic release is mandatory cleanup and bypasses foreground authorization; it never activates. Successful releases clear only their held bits; failed bits remain and other releases are attempted. Observation during cleanup can latch Terminal but never recursively clean up. Only existing bounded teardown release retry remains permitted after failure. A per-operation failed-cleanup latch prevents the outer terminal boundary from retrying a synthetic release that already failed; retained held bits pass to stop/reset plus its existing single retry. This latch is not set by a successful release or by ordinary input failure, so newly inserted held input still receives immediate mandatory cleanup.
 
 ## 9. Control routing, queue semantics and deadlines
 

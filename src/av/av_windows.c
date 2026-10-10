@@ -44,6 +44,7 @@ static unsigned observation_head, observation_count;
 static uint64_t observation_order, operation_order, last_clock;
 static int lease_mode, operation_guard, callback_guard, reconcile_guard, stopping;
 static int teardown_failed;
+static int operation_release_failed; /* Failed cleanup is retried only by stop. */
 static DWORD owner_thread;
 static HANDLE target_lifetime;
 static HWINEVENTHOOK foreground_hook;
@@ -58,6 +59,7 @@ static int owner_begin(void) {
     if (!notification || delivery_failed || stopping || GetCurrentThreadId() != owner_thread ||
         operation_guard || operation_order == UINT64_MAX) return fail_native();
     operation_guard = 1;
+    operation_release_failed = 0;
     ++operation_order;
     return 0;
 }
@@ -87,7 +89,8 @@ static int owner_end(int result, int reconcile) {
             lease_state.phase = AvLeaseGuestTerminal;
             lease_state.deadline = 0;
             /* Outer boundary only: successful insertions have already committed holds. */
-            av_input_reset(&lease_state.input, &LeaseOps.input, NULL);
+            if (!operation_release_failed)
+                av_input_reset(&lease_state.input, &LeaseOps.input, NULL);
         }
         result = -1;
     }
@@ -666,7 +669,9 @@ static int lease_send(const av_message_t *event, INPUT *input, int cleanup, int 
     }
     /* Return success even if SendInput reentered a callback: the caller must
      * first commit the successful held-bit change, then reconcile/clean up. */
-    return SendInput(1, input, sizeof(*input)) == 1 ? 0 : -1;
+    if (SendInput(1, input, sizeof(*input)) == 1) return 0;
+    if (cleanup) operation_release_failed = 1;
+    return -1;
 }
 static int lease_input_emit(void *context, const av_message_t *event) {
     (void)context;
