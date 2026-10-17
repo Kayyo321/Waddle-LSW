@@ -1,6 +1,6 @@
 # Feature Tracker: Software vGPU Slicing
 
-- **Contributors / Agents**: Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk)
+- **Contributors / Agents**: Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk), Claude Code (OpenCL implementation; Haiku 5.5 inventory/audit/build-spike workers)
 - **Time Started**: 2026-10-05T18:35:00Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -14,15 +14,16 @@
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Integrated implementation and real rendering/compute/presentation/loss teardown pass; whole-production coverage90.07%branch/98.50%line verified at37df8b4. NULL vertex behavior implemented. Approved repository-wide DXVK cleanup build passes at094c34c; current ICD sanitizers and12-case Windows GPU matrix/full48 WSI verified; final compiler-lifetime DXVK normal/SAN/fault and native heap acceptance pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (rusticocl over Venus) for Adobe compatibility | Pending | 20% | 0% | Required for high-perf compute |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Contract, pinned dependencies (#12) and the patch-free MinGW cross-build driver are implemented; OpenCL.dll cross-built (121 exports; imports only vulkan-1.dll and Windows system DLLs) but NEVER executed. No ICD change was found necessary by static audit. Real Windows kernel execution on the shared RTX 5080, lifetimes, heap and concurrent-Linux acceptance remain pending (60%) |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
 | #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned loader, medium-integrity bootstrap/receiver and real GPU/DXVK execution verified; final native heap teardown qualification pending |
+| #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
 
-**Total Feature Completion**: `77.5%`
+**Total Feature Completion**: `85.5%`
 
 ## Commit History & Progress Log
 
@@ -1099,3 +1100,36 @@ completion credit. Required LSan and native/hardware acceptance remain open.
 The initial published SHA's Linux CI was blocked before checkout by Docker Hub
 image-pull failures (including unauthenticated rate limiting after one retry);
 Windows jobs and latest-commit CI must be checked separately.
+
+
+### 2026-10-17 OpenCL production implementation (implemented, NOT verified)
+
+Overall moves 77.5% -> 85.5% solely from TODO #5 at 40% (20% weight). This is
+implementation credit for contract, dependencies and build tooling; every runtime
+and acceptance gate for #5, the DXVK native-heap gate for #3/#11, and all
+verification remain pending and belong to the verification owner. Feature status
+stays In Progress; Time Ended stays TBD.
+
+| Commit | Change | Task / overall impact | Evidence class |
+|:--|:--|:--|:--|
+| `96505a9` | docs(vgpu): specify OpenCL remoting contract and resolve dependency policy | #5 +0% | Specification only |
+| `f6d0708` | chore(deps): add clvk pinned to 8bd3672 | #12 (+0% weight), #5 +0% | Pin; public HTTPS; Apache-2.0 |
+| `79dc7f9` | chore(deps): add llvm-project pinned to 71a85ef | #12 | Pin from clspv deps.json |
+| `6dbf933` | chore(deps): add clspv_spirv_headers pinned to b824a46 | #12 | Pin from clspv deps.json |
+| `36e077c` | chore(deps): add clspv_spirv_tools pinned to fb74718 | #12 | Pin from clspv deps.json |
+| `93bf9d7` | feat(build): OpenCL source pin verifier and tracked export list | #5 +10% (+2.0% overall) | Static; list cross-checked against api.cpp |
+| `1886207` | feat(build): cross-build pinned clvk and clspv into OpenCL.dll without patching | #5 +30% (+6.0% overall) | Cross-compilation only: driver completed, DLL not executed |
+| `42c7ce2` | docs(vgpu): record the patch-free OpenCL build contract and exact pins | #5 +0% | Documentation |
+
+Static source audit (read-only, no execution): clvk needs only core Vulkan from the
+guest ICD to initialise. It requests API 1.3, `vkGetPhysicalDeviceProperties2KHR`
+and, at 1.1+, `vkGetPhysicalDeviceFeatures2`; every device extension it prefers is
+optional and the ICD advertises none of them, so clvk enables zero device
+extensions. It chains legacy per-feature structures (8/16-bit storage, float16/int8,
+variable pointers, buffer device address, ...). The ICD skips unknown structures
+and reports them as zero, so clvk disables fp16/int8, 8/16-bit storage and buffer
+addresses instead of failing; the OpenCL capability set is therefore honest but
+narrower. Projecting those aliased structures from the Vulkan 1.1/1.2 feature
+state the ICD already holds is an optional future enhancement, not needed to run a
+kernel, and was not done. Entry points clvk calls unconditionally are all present in
+the ICD name tables. This audit was by source reading only; it is not runtime proof.
