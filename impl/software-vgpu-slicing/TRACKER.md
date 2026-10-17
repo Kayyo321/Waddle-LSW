@@ -1133,3 +1133,19 @@ narrower. Projecting those aliased structures from the Vulkan 1.1/1.2 feature
 state the ICD already holds is an optional future enhancement, not needed to run a
 kernel, and was not done. Entry points clvk calls unconditionally are all present in
 the ICD name tables. This audit was by source reading only; it is not runtime proof.
+
+### Verification takeover: OpenCL build admission regressions, 2026-10-17
+
+- Entry commit: `7214c8e7007e7d9aa8236b90b90a98eb9f89255e`, clean tracked
+  working tree on `feature/software-vgpu-slicing`. User confirmed Claude and
+  its workers stopped editing; observed Claude process sleeping with no children
+  or open checkout files. Existing VM and artifacts preserved.
+- Test commit: identify with `git log -1 --format='%H' -- tests/vgpu/clvk_build.py`.
+  Adds ten test methods with per-export, per-pin and per-tool subcases;
+  `python3 -B tests/vgpu/clvk_build.py` exits zero. Full local log:
+  `build/qualification_20261017/clvk_build_tests.log`.
+- `make vgpu-opencl-pin vgpu-opencl-build` exits zero: existing DLL cache
+  validated against current inputs and DLL SHA-256, without recompilation.
+  Evidence class: source pins/build cache only, no execution.
+- Task impact: TODO #5 +0%, #12 +0%, overall remains 85.5%; native kernel,
+  lifetime/heap and simultaneous GPU gates remain open. Time Ended stays TBD.

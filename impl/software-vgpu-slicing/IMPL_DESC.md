@@ -6029,3 +6029,23 @@ repeated create/execute/release lifetimes with natural whole-graph retirement;
 native heap/handle baseline across lifetimes; concurrent Linux GPU work;
 mock, cross-build, real-Windows and physical-GPU results kept separate; a
 `clinfo`-style discovery run alone does not count.
+
+### OpenCL build admission regression contract (2026-10-17)
+
+`python3 -B tests/vgpu/clvk_build.py` runs serially and owns only temporary
+directories and bounded child processes. It compares the real tracked exports
+against the real pinned `api.cpp`, rejects removal of each API export and an
+invented API name, and requires uniqueness plus the mandatory entry points.
+Synthetic PE text exercises the production import/export parser: every required
+export is removed separately; case-insensitive dynamic C++ runtime imports and
+objdump failure must fail closed. This is parser evidence, not DLL execution.
+
+The shell verifier runs unchanged with a private PATH containing a deterministic
+git double. Each of nine pins separately returns missing-checkout, revision
+mismatch, and dirty-tree errors. The ordered call ledger must stop exactly at
+the failing operation; success requires both revision and cleanliness checks for
+every pin. Each required executable is then independently absent from PATH and
+must fail admission. TemporaryDirectory releases fixtures on success, assertion
+failure, or exception; no dependency checkout or artifact receipt is modified.
+These tests do not instrument third-party LLVM or establish kernel, heap, native
+Windows, concurrency, or physical GPU acceptance.

@@ -416,3 +416,14 @@ qualification and closure belong to Codex. See [CODEX_HANDOFF.md](CODEX_HANDOFF.
 for the exact state, OpenCL (TODO #5) implementation (unverified), remaining gaps,
 the DXVK heap evidence analysis, VM state and the tests still to write. TODO #3
 remains 90%, #5 is 40% (implemented, unverified), overall 85.5%, Time Ended TBD.
+
+## Codex verification takeover — 2026-10-17
+
+Entry HEAD `7214c8e7007e7d9aa8236b90b90a98eb9f89255e` and clean tracked
+checkout verified; user confirmed Claude/workers relinquished editing.
+`tests/vgpu/clvk_build.py` now checks export consistency, PE admission and all
+nine pin-verifier failure positions without changing dependency trees. Ten
+methods pass; source/build-cache evidence only. See the current tracker entry
+and implementation regression contract. OpenCL and DXVK physical/native heap
+qualification remain open; no completion or PR publication is authorized by
+these local results alone.
