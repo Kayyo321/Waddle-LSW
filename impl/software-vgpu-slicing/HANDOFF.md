@@ -500,3 +500,13 @@ The host rebooted during the interrupted review; all previous supervisors and
 VM processes ended. Existing disk/firmware/TPM files were retained, and the VM
 was restarted from these exact existing files with the prior QEMU configuration
 (no provisioning). Interrupted jobs do not count as completed verification.
+
+### Approved correction implementation checkpoint
+
+The user approved the documented clvk private-copy correction on 2026-10-17.
+The patch, private versioned export and exact cache/export admission are now
+implemented; see CLVK_LIFETIME_REVIEW.md for all ownership/preflight constraints.
+Fifteen build-admission tests pass, including actual patched refcounted owners
+under ASan/LSan/UBSan and threaded stress. Windows cross-build and native
+shutdown/kernels/heap/concurrent-GPU execution remain unverified; do not reuse
+the original unpatched OpenCL cache as acceptance for this correction.

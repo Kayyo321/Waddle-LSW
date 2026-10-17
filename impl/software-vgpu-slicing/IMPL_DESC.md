@@ -6229,3 +6229,18 @@ Adapter enumeration is bounded to 16 borrowed root devices and must select
 exactly one NVIDIA GPU matching the RTX 5080 identity, independent of order;
 CPU adapters may be enumerated but are never selected. No matching GPU or
 ambiguous matches fail closed. No deadline or result oracle is relaxed.
+
+### Approved clvk private-copy terminal retirement
+
+The user approved the private-copy correction on 2026-10-17. See
+[the full versioned owner/locking/return-code contract](CLVK_LIFETIME_REVIEW.md)
+and `include/waddle/clvk.h`. The tracked patch leaves upstream pins/trees intact.
+Count all refcounted allocations through complete base destruction, compare to
+platform root-device count, require each device's sole platform reference and
+free/idle executors, then retire in executor/platform/instance order. Serial
+initialization/shutdown uses one mutex and a sticky terminal state. Busy and
+configuration/version rejection mutate no owners. The standard CL unload
+compiler functions remain unchanged. This private embedding contract requires
+quiescent application callers and invalidates borrowed root IDs after success.
+Patch bytes, exact export list and public ABI hash participate in the build
+cache key and post-build revalidation; private exports use an exact allowlist.

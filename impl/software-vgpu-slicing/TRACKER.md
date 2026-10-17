@@ -1241,3 +1241,13 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
 - [Windows clvk retirement proposal](CLVK_LIFETIME_REVIEW.md) documents the
   upstream defect and reviewable private-copy scope. No patch applied while
   handoff-required explicit approval is pending. Time Ended remains TBD.
+
+- **Commit `7388e61`**: bound host adapter enumeration and uniquely select the
+  NVIDIA GPU; document twenty retained clvk owners and proposed private patch.
+  Eleven tests and strict fixture build pass; #5 +0%, overall +0%.
+- User explicitly approves private-copy clvk correction on 2026-10-17. Tracked
+  retirement patch/build contract added (identify through patch history).
+  Fifteen admission tests pass, including actual patched allocation accounting
+  under ASan/LSan/UBSan and 16,000 threaded lifetimes. Cross-build, actual shutdown,
+  kernels, heaps and concurrent GPU work remain required. #5/#12 +0%, overall
+  +0%; Time Ended remains TBD.

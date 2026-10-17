@@ -3,9 +3,9 @@
 
 Inputs are the clean verified submodules (scripts/verify_clvk.sh lists the pins),
 the tracked export list scripts/clvk/OpenCL.def and the MinGW-w64/Ninja/CMake
-toolchain. Nothing upstream is patched: the sources are copied to a private tree,
-and every MinGW accommodation (case-insensitive Windows.h, export list, static
-C++ runtime) is supplied from this driver through include paths and linker flags.
+toolchain. The approved tracked retirement patch is applied only to a private
+copy. MinGW accommodations use include paths and linker flags. Upstream
+submodule trees stay unmodified.
 
 Outputs: a fresh ignored private build tree under build/clvk_client/ and the
 receipt build/clvk_client.json (pins, tools, settings, driver/export-list hashes,
@@ -43,7 +43,10 @@ Tools = ('cmake', 'ninja', 'x86_64-w64-mingw32-gcc-posix', 'x86_64-w64-mingw32-g
 CopyIgnore = shutil.ignore_patterns('.git', '.github')
 ForbiddenImports = ('libgcc_s', 'libstdc++', 'libwinpthread')
 RequiredExports = ('clGetPlatformIDs', 'clBuildProgram', 'clCreateProgramWithSource',
-                   'clCreateKernel', 'clEnqueueNDRangeKernel', 'clFinish', 'clIcdGetPlatformIDsKHR')
+                   'clCreateKernel', 'clEnqueueNDRangeKernel', 'clFinish', 'clIcdGetPlatformIDsKHR',
+                   'waddle_clvk_shutdown')
+PrivateExports = ('waddle_clvk_shutdown',)
+PrivatePatches = ('patches/clvk/0001-explicit-quiescent-windows-shutdown.patch',)
 LlvmSwitches = ('-DLLVM_INCLUDE_TESTS=OFF', '-DLLVM_INCLUDE_BENCHMARKS=OFF',
                 '-DLLVM_INCLUDE_EXAMPLES=OFF', '-DLLVM_INCLUDE_DOCS=OFF',
                 '-DCLANG_INCLUDE_TESTS=OFF', '-DCLANG_INCLUDE_DOCS=OFF',
@@ -85,14 +88,15 @@ def check_export_list_against_api(root, exports):
     """Fail closed when the export list and clvk's api.cpp definitions disagree.
 
     Every `CLVK_API_CALL cl*` function defined by api.cpp must be exported, and every
-    exported cl* name must be defined there. The two clspv entry points are exempt.
+    exported name must be defined there. Only the exact clspv and private
+    retirement entry points are exempt; private exports remain mandatory.
     """
     source = (root / 'submodules/clvk/src/api.cpp').read_text()
     defined = set(re.findall(r'CLVK_API_CALL\s+(cl\w+)\s*\(', source))
-    exported = {name for name in exports if not name.startswith('clspv')}
-    missing = sorted(defined - exported)
+    exported = set(exports) - set(PrivateExports) - {'clspvCompileFromSourcesString', 'clspvFreeOutputBuildObjs'}
+    missing = sorted((defined | set(PrivateExports)) - set(exports))
     extra = sorted(exported - defined)
-    if missing or extra:
+    if missing or extra or len(exports) != len(set(exports)):
         raise SystemExit('scripts/clvk/OpenCL.def disagrees with api.cpp: missing=%s extra=%s' % (missing, extra))
 
 
@@ -115,6 +119,24 @@ def prepare_source(root, source):
             else:
                 shutil.rmtree(link)
         link.symlink_to(root / target)
+    apply_private_patches(root, source)
+
+
+def apply_private_patches(root, source):
+    """Apply exact tracked patches to a new caller-owned copy, never submodules.
+
+    [in] root repository and source private copy; both nonnull absolute paths.
+    Fail before mutation on a mismatching preimage. Git discovery is bounded to
+    the copy's parent so the enclosing checkout/index cannot become the target.
+    Single build-lock owner only; raises on any failed check/application.
+    """
+    if source.resolve() == (root / 'submodules/clvk').resolve():
+        raise SystemExit('Refusing to patch the pinned clvk submodule')
+    environment = dict(os.environ, GIT_CEILING_DIRECTORIES=str(source.parent.resolve()))
+    for relative in PrivatePatches:
+        patch = root / relative
+        run(['git', 'apply', '--no-index', '--check', str(patch)], cwd=source, env=environment)
+        run(['git', 'apply', '--no-index', str(patch)], cwd=source, env=environment)
 
 
 def build_native(root, native, libclc):
@@ -178,7 +200,7 @@ def write_toolchain(path):
         'set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)', '')))
 
 
-def inspect_dll(dll):
+def inspect_dll(dll, expected_exports):
     """Return import and export names of a PE file; fail on a forbidden runtime import."""
     dump = capture(['x86_64-w64-mingw32-objdump', '-p', dll])
     imports = re.findall(r'DLL Name:\s*(\S+)', dump)
@@ -189,6 +211,9 @@ def inspect_dll(dll):
     absent = [name for name in RequiredExports if name not in exports]
     if absent:
         raise SystemExit('OpenCL.dll is missing required exports: %s' % absent)
+    if exports != set(expected_exports):
+        raise SystemExit('OpenCL.dll export mismatch: missing=%s extra=%s' %
+                         (sorted(set(expected_exports) - exports), sorted(exports - set(expected_exports))))
     return imports, sorted(exports)
 
 
@@ -206,7 +231,9 @@ def main():
                 'clvk_clspv_online_compiler': 'ON', 'llvm_targets_to_build': 'X86',
                 'static_runtime': 'libgcc,libstdc++,winpthread', 'llvm_switches': LlvmSwitches}
     inputs = {'pins': dict(Pins), 'driver_sha256': digest(Path(__file__)),
-              'export_list_sha256': digest(export_file), 'tools': tools, 'settings': settings}
+              'export_list_sha256': digest(export_file), 'tools': tools, 'settings': settings,
+              'private_patches': {path: digest(root / path) for path in PrivatePatches},
+              'shutdown_abi_sha256': digest(root / 'include/waddle/clvk.h')}
     cache_key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     native_key = hashlib.sha256(json.dumps({'llvm': dict(Pins)['submodules/llvm_project'], 'tools': tools,
                                             'switches': LlvmSwitches}, sort_keys=True).encode()).hexdigest()
@@ -255,11 +282,21 @@ def main():
         output.mkdir()
         dll = output / 'OpenCL.dll'
         shutil.copyfile(produced[0], dll)
-        imports, built_exports = inspect_dll(dll)
+        imports, built_exports = inspect_dll(dll, exports)
+        if inputs['private_patches'] != {path: digest(root / path) for path in PrivatePatches}:
+            raise SystemExit('OpenCL private patch changed during build')
+        if inputs['export_list_sha256'] != digest(export_file) or \
+           inputs['shutdown_abi_sha256'] != digest(root / 'include/waddle/clvk.h') or \
+           inputs['driver_sha256'] != digest(Path(__file__)):
+            raise SystemExit('OpenCL build contract changed during build')
+        run(['sh', 'scripts/verify_clvk.sh'])
         record = {'cache_key': cache_key, 'inputs': inputs, 'native_dir': str(native),
                   'dll': {'path': str(dll), 'sha256': digest(dll), 'bytes': dll.stat().st_size},
                   'imports': imports, 'export_count': len(built_exports), 'executed': False,
                   'note': 'Cross-built only; runtime behavior is unverified.'}
+        (folder / 'provenance.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+        if receipt.exists():
+            shutil.copyfile(receipt, folder / 'prior_receipt.json')
         temporary = receipt.with_suffix('.json.tmp')
         temporary.write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
         os.replace(temporary, receipt)

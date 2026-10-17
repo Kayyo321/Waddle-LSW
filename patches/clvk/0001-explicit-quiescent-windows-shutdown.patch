@@ -1,0 +1,191 @@
+--- /dev/null
++++ b/src/waddle_lifetime.hpp
+@@ -0,0 +1,28 @@
++// Waddle private embedding lifetime guard; applied only to the pinned build copy.
++#pragma once
++#include <atomic>
++#include <cstddef>
++#include <mutex>
++
++/** Process-local ownership ledger. All refcounted objects contribute exactly
++ * one live allocation regardless of retained references. The embedding owner
++ * excludes concurrent API calls during terminal shutdown. Counter operations
++ * are atomic; mutex serializes lazy initialization and explicit shutdown. */
++struct waddle_lifetime_t {
++    /// Atomic allocation count; each counted owner increments/decrements once.
++    std::atomic<size_t> live_objects{0};
++    /// Serializes initialization/shutdown; borrowed only while locked.
++    std::mutex mutex;
++    /// Sticky successful terminal state, protected by mutex.
++    bool terminal = false;
++
++    /** Check the complete baseline without mutation or ownership transfer.
++     * Caller holds mutex, has excluded API callers and supplies the exact
++     * platform root-device count and a separately locked executor-idle proof. */
++    bool can_shutdown(size_t root_count, bool executors_idle) const {
++        return live_objects.load(std::memory_order_acquire) == root_count &&
++               executors_idle;
++    }
++};
++/** Inline process-local ledger; no external allocation or ownership transfer. */
++inline waddle_lifetime_t waddle_lifetime;
+--- a/src/objects.hpp
++++ b/src/objects.hpp
+@@ -32,6 +32,7 @@
+ #include "cl_headers.hpp"
+ #include "icd.hpp"
+ #include "log.hpp"
++#include "waddle_lifetime.hpp"
+ 
+ enum class object_magic : uint32_t
+ {
+@@ -57,9 +58,13 @@
+ 
+ struct refcounted {
+ 
+-    refcounted() : m_refcount(1) {}
++    refcounted() : m_refcount(1) {
++        waddle_lifetime.live_objects.fetch_add(1, std::memory_order_acq_rel);
++    }
+ 
+-    virtual ~refcounted() = default;
++    virtual ~refcounted() {
++        waddle_lifetime.live_objects.fetch_sub(1, std::memory_order_acq_rel);
++    }
+ 
+     void retain() {
+         unsigned int refcount = m_refcount.fetch_add(1);
+--- a/src/queue.hpp
++++ b/src/queue.hpp
+@@ -305,6 +305,19 @@
+ };
+ 
+ struct cvk_executor_thread_pool {
++
++    /** Nonmutating preflight after all counted API owners have retired.
++     * Locks pool then each idle candidate. No executor can return a queue here:
++     * any such queue still contributes to the live-object count checked first. */
++    bool waddle_quiescent() {
++        std::unique_lock<std::mutex> lock(m_lock);
++        for (auto& state : m_executors) {
++            if (state.second != executor_state::free || !state.first->is_idle()) {
++                return false;
++            }
++        }
++        return true;
++    }
+ 
+     ~cvk_executor_thread_pool() {
+         // Shutdown all executors
+--- a/src/init.cpp
++++ b/src/init.cpp
+@@ -323,7 +323,10 @@
+ static clvk_global_state* gGlobalState;
+ static std::once_flag gInitOnceFlag;
+ 
+-static void destroy_global_state() { delete gGlobalState; }
++static void destroy_global_state() {
++    delete gGlobalState;
++    gGlobalState = nullptr;
++}
+ 
+ static void init_global_state() {
+     gGlobalState = new clvk_global_state();
+@@ -336,6 +339,51 @@
+ }
+ 
+ clvk_global_state* get_or_init_global_state() {
++    std::lock_guard<std::mutex> lock(waddle_lifetime.mutex);
++    if (waddle_lifetime.terminal) {
++        return nullptr;
++    }
+     std::call_once(gInitOnceFlag, init_global_state);
+     return gGlobalState;
+ }
++
++/** Private C ABI version 1. Call only outside the loader lock after stopping
++ * all application CL callers, finishing queues and releasing all CL handles.
++ * No CL call may overlap shutdown or use stale platform/device IDs afterwards.
++ * Returns 0 on terminal success (including repeats), 1 for retained owners or
++ * active executors, 2 for unsupported ABI, 3 for disabled global destruction.
++ * Busy/config/version failures preserve every owner and permit later retry.
++ * Successful shutdown never reinitializes state during this DLL load. */
++extern "C" int32_t waddle_clvk_shutdown(uint32_t abi_version) {
++    if (abi_version != 1) {
++        return 2;
++    }
++    std::lock_guard<std::mutex> lock(waddle_lifetime.mutex);
++    if (waddle_lifetime.terminal) {
++        return 0;
++    }
++    if (gGlobalState != nullptr) {
++        if (!config.destroy_global_state) {
++            return 3;
++        }
++        const auto& devices = gGlobalState->platform()->devices();
++        // Check counted allocations first: executor queue destruction itself
++        // can need the global getter/pool lock. Never join with an owner live.
++        if (waddle_lifetime.live_objects.load(std::memory_order_acquire) != devices.size()) {
++            return 1;
++        }
++        for (auto device : devices) {
++            if (device->refcount() != 1) {
++                return 1;
++            }
++        }
++        if (!waddle_lifetime.can_shutdown(devices.size(), gGlobalState->thread_pool()->waddle_quiescent())) {
++            return 1;
++        }
++    } else if (!waddle_lifetime.can_shutdown(0, true)) {
++        return 1;
++    }
++    waddle_lifetime.terminal = true;
++    destroy_global_state();
++    return 0;
++}
+--- a/src/api.cpp
++++ b/src/api.cpp
+@@ -192,6 +192,10 @@
+                                       cl_platform_id* platforms,
+                                       cl_uint* num_platforms) {
+     auto state = get_or_init_global_state();
++    // Terminal private shutdown invalidates borrowed platform/device identities.
++    if (state == nullptr) {
++        return CL_INVALID_PLATFORM;
++    }
+ 
+     TRACE_FUNCTION("num_entries", num_entries);
+     LOG_API_CALL("num_entries = %u, platforms = %p, num_platforms = %p",
+@@ -206,6 +210,10 @@
+                                        void* param_value,
+                                        size_t* param_value_size_ret) {
+     auto state = get_or_init_global_state();
++    // Terminal private shutdown invalidates borrowed platform/device identities.
++    if (state == nullptr) {
++        return CL_INVALID_PLATFORM;
++    }
+ 
+     TRACE_FUNCTION("platform", (uintptr_t)platform, "param_name", param_name);
+     LOG_API_CALL("platform = %p, param_name = %u, param_value_size = %zu, "
+@@ -347,6 +355,10 @@
+                                     cl_uint* num_devices) {
+ 
+     auto state = get_or_init_global_state();
++    // Terminal private shutdown invalidates borrowed platform/device identities.
++    if (state == nullptr) {
++        return CL_INVALID_PLATFORM;
++    }
+ 
+     TRACE_FUNCTION("platform", (uintptr_t)platform, "device_type",
+                    TRACE_STRING(cl_device_type_to_string(device_type)),
+@@ -6575,6 +6587,10 @@
+                                             cl_platform_id* platforms,
+                                             cl_uint* num_platforms) {
+     auto state = get_or_init_global_state();
++    // Terminal private shutdown invalidates borrowed platform/device identities.
++    if (state == nullptr) {
++        return CL_INVALID_PLATFORM;
++    }
+ 
+     TRACE_FUNCTION("num_entries", num_entries);
+     LOG_API_CALL("num_entries = %u, platforms = %p, num_platforms = %p",

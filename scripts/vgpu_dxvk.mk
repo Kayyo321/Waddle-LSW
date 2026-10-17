@@ -33,7 +33,7 @@ vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan
 vgpu-opencl-pin:
 	sh scripts/verify_clvk.sh
 
-vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/OpenCL.def | build
+vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/OpenCL.def patches/clvk/0001-explicit-quiescent-windows-shutdown.patch include/waddle/clvk.h | build
 	python3 scripts/build_clvk_windows.py
 
 # Native execution requires a separately owned authenticated host receiver.

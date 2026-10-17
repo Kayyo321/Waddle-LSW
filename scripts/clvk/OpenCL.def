@@ -2,6 +2,7 @@
 ; MinGW has no export-all that fits the PE ordinal limit with LLVM linked statically.
 ; scripts/build_clvk_windows.py fails the build if this list and clvk src/api.cpp disagree.
 EXPORTS
+    waddle_clvk_shutdown
     clBuildProgram
     clCloneKernel
     clCompileProgram

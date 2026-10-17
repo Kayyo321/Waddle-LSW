@@ -49,7 +49,7 @@ class export_tests_t(unittest.TestCase):
     def test_system_imports(self):
         imports = ['vulkan-1.dll', 'KERNEL32.dll', 'msvcrt.dll']
         with patch.object(Driver, 'capture', return_value=self.pe_dump(Driver.RequiredExports, imports)):
-            self.assertEqual(Driver.inspect_dll(Path('fixture.dll')),
+            self.assertEqual(Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports),
                              (imports, sorted(Driver.RequiredExports)))
 
     def test_missing_pe_exports(self):
@@ -57,18 +57,72 @@ class export_tests_t(unittest.TestCase):
             exports = [item for item in Driver.RequiredExports if item != name]
             with self.subTest(name=name), patch.object(Driver, 'capture', return_value=self.pe_dump(exports, [])):
                 with self.assertRaisesRegex(SystemExit, name):
-                    Driver.inspect_dll(Path('fixture.dll'))
+                    Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports)
 
     def test_dynamic_runtime_imports(self):
         for name in ('libgcc_s_seh-1.dll', 'LIBSTDC++-6.DLL', 'libwinpthread-1.dll'):
             with self.subTest(name=name), patch.object(Driver, 'capture', return_value=self.pe_dump(Driver.RequiredExports, [name])):
                 with self.assertRaisesRegex(SystemExit, 'unbundled'):
-                    Driver.inspect_dll(Path('fixture.dll'))
+                    Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports)
+
+    def test_unknown_pe_export(self):
+        exports = (*Driver.RequiredExports, 'unexpected_private_export')
+        with patch.object(Driver, 'capture', return_value=self.pe_dump(exports, [])):
+            with self.assertRaisesRegex(SystemExit, 'unexpected_private_export'):
+                Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports)
 
     def test_tool_failure(self):
         with patch.object(Driver, 'capture', side_effect=subprocess.CalledProcessError(7, 'objdump')):
             with self.assertRaises(subprocess.CalledProcessError):
-                Driver.inspect_dll(Path('fixture.dll'))
+                Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports)
+
+
+class private_patch_tests_t(unittest.TestCase):
+    """Check exact patch preimages and compile actual patched owner accounting."""
+
+    def source_copy(self, directory):
+        source = Path(directory) / 'source'
+        source.mkdir()
+        shutil.copytree(Root / 'submodules/clvk/src', source / 'src')
+        return source
+
+    def test_patch_preimage_and_no_submodule_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source_copy(directory)
+            before = Driver.digest(Root / 'submodules/clvk/src/init.cpp')
+            Driver.apply_private_patches(Root, source)
+            self.assertEqual(before, Driver.digest(Root / 'submodules/clvk/src/init.cpp'))
+            self.assertTrue((source / 'src/waddle_lifetime.hpp').is_file())
+            with self.assertRaises(subprocess.CalledProcessError):
+                Driver.apply_private_patches(Root, source)
+        with self.assertRaisesRegex(SystemExit, 'submodule'):
+            Driver.apply_private_patches(Root, Root / 'submodules/clvk')
+
+    def test_patch_mismatch_has_no_partial_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source_copy(directory)
+            (source / 'src/init.cpp').write_text('preimage mismatch\n')
+            before = Driver.digest(source / 'src/objects.hpp')
+            with self.assertRaises(subprocess.CalledProcessError):
+                Driver.apply_private_patches(Root, source)
+            self.assertEqual(before, Driver.digest(source / 'src/objects.hpp'))
+            self.assertFalse((source / 'src/waddle_lifetime.hpp').exists())
+
+    def test_actual_owner_accounting_sanitized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source_copy(directory)
+            Driver.apply_private_patches(Root, source)
+            binary = Path(directory) / 'owners'
+            command = ['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-O1',
+                       '-fsanitize=address,leak,undefined', '-fno-omit-frame-pointer', '-pthread']
+            for include in (source / 'src', Root / 'submodules/clvk/external/OpenCL-Headers',
+                            Root / 'submodules/clvk/external/SPIRV-Headers/include',
+                            Root / 'submodules/dxvk/include/vulkan/include'):
+                command += ['-isystem', str(include)]
+            command += [str(Root / 'tests/vgpu/clvk_lifetime.cpp'), '-o', str(binary)]
+            subprocess.run(command, check=True, timeout=120)
+            subprocess.run([str(binary)], check=True, timeout=30,
+                           env=dict(os.environ, ASAN_OPTIONS='detect_leaks=1:abort_on_error=1:halt_on_error=1'))
 
 
 class verifier_tests_t(unittest.TestCase):
