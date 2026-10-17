@@ -6208,3 +6208,14 @@ reservation recovery. Full current unit/sanitizer/allocator/coverage, Windows
 cross/native, OpenCL and affected hardware reruns are required for this change.
 Previously prepared unexecuted matrix inputs bind the older ICD and cannot be
 used to qualify this source.
+
+### OpenCL fixture startup deadline ordering (2026-10-17)
+
+The native fixture loads the pinned Vulkan loader and OpenCL compiler DLL and
+resolves every borrowed API pointer before bootstrap start. clvk initializes its
+Vulkan global state lazily at platform discovery. The fixture prints measured
+module loading time, opens the authenticated session, then immediately calls
+platform discovery. This preserves the server's existing 5000 ms idle-request
+deadline rather than spending that deadline on Windows DLL initialization.
+Failure before start owns only loaded modules; failure after start uses the same
+exact-session retirement handling. No deadline or result oracle changes.

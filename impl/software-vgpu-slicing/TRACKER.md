@@ -1216,3 +1216,14 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
 - The pending ICD correction admits only the pinned loader's consumed debug
   record headers, with C ABI/generated-packet and malformed/reservation stress
   regressions. #3/#5 +0%, overall +0% until all affected checks pass.
+
+- **Commit `03caf9b`**: permit only pinned-loader-owned debug instance pNext
+  headers; reject malformed chains before dispatch, verify exact generated core
+  packet and reservation recovery. Fresh 394-test/sanitizer/allocator gates pass;
+  production coverage 90.32% branches, 98.53% lines. Native Windows Debug and
+  ReleaseSafe each pass 394 tests. #3/#5 +0%, overall +0%.
+- OpenCL startup ordering correction (identify via fixture history): load and
+  resolve the large compiler DLL before opening transport; preserve 5000 ms
+  idle deadline and all exact-result assertions. Strict Windows cross-build
+  passes. Native OpenCL attempt `dxvk_gpu_17aa5f54` still failed before kernels,
+  with RingTimeout; retained as failed evidence. #5 +0%, overall +0%.

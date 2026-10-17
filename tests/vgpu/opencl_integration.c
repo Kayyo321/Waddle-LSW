@@ -257,8 +257,8 @@ int wmain(int argc, wchar_t **argv)
     char config[VenusTcpMaxWindowsPathBytes];
     int config_bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[5], -1,
                                           config, sizeof config, NULL, NULL);
-    if (!config_bytes || start(config, (size_t)config_bytes) != RingOk) goto cleanup;
-    printf("Authenticated real OpenCL session=%016llx\n", (unsigned long long)session()); fflush(stdout);
+    if (!config_bytes) goto cleanup;
+    ULONGLONG load_started = GetTickCount64();
     loader = LoadLibraryExW(argv[1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!loader) goto cleanup;
     opencl = LoadLibraryExW(argv[2], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
@@ -272,6 +272,13 @@ int wmain(int argc, wchar_t **argv)
 } while (0);
     ApiEntries(LoadApi)
 #undef LoadApi
+    printf("OpenCL modules and dispatch ready after %llu ms\n",
+           (unsigned long long)(GetTickCount64() - load_started)); fflush(stdout);
+    /* clvk initializes Vulkan lazily at platform discovery. Load and resolve
+     * its compiler DLL before opening the bounded, authenticated transport so
+     * DLL initialization cannot consume the server's idle request deadline. */
+    if (start(config, (size_t)config_bytes) != RingOk) goto cleanup;
+    printf("Authenticated real OpenCL session=%016llx\n", (unsigned long long)session()); fflush(stdout);
     cl_platform_id platform = NULL;
     cl_device_id device = NULL;
     cl_uint count = 0;

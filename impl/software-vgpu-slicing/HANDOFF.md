@@ -474,3 +474,12 @@ Zig correction and bounded C ABI regressions are now under verification. This
 changes the ICD source: earlier native/physical receipts are historical, and
 prepared unexecuted old-ICD matrix folders cannot qualify the corrected source.
 Host retirement after the failed OpenCL attempt was independently proved empty.
+
+### OpenCL startup follow-up, 2026-10-17
+
+`dxvk_gpu_17aa5f54` failed before device/kernel discovery after the instance
+chain fix: host RingTimeout, whole owned graph retired. The fixture now resolves
+loader/OpenCL modules before bootstrap start and reports DLL load duration;
+platform discovery initializes clvk lazily. Existing idle deadline is unchanged.
+Cross-build passes (`build/qualification_20261017/opencl_startup_build.log`);
+fresh native execution remains required. No runtime/heap/concurrency credit.
