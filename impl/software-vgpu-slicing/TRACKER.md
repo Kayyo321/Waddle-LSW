@@ -1197,3 +1197,12 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   build would otherwise ingest outside its pins. Eleven methods pass, including
   real Git cleanliness regressions, and all real pins/cache validation pass.
   **Task impact**: #5/#12 +0%, overall +0%; native qualification remains open.
+
+- **Commit `aa90325`**: enforce absence of copied untracked/ignored OpenCL
+  inputs, with eleven passing build-admission methods and actual pin/cache
+  validation. #5/#12 +0%, overall +0%.
+- OpenCL path-ABI correction (identify through fixture history): pre-execution
+  review found its bootstrap path byte count omitted the required terminal NUL.
+  Pass the complete conversion count and public path bound; strict cross-build
+  passes. Earlier prepared native inputs are retained as superseded/unexecuted.
+  #5 +0%, overall +0%; no runtime acceptance claim.

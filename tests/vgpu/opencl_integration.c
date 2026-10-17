@@ -254,10 +254,10 @@ int wmain(int argc, wchar_t **argv)
     procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_abandon");
     memcpy(&abandon, &procedure, sizeof abandon);
     if (!start || !stop || !session || !abandon) goto cleanup;
-    char config[32768];
+    char config[VenusTcpMaxWindowsPathBytes];
     int config_bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[5], -1,
                                           config, sizeof config, NULL, NULL);
-    if (!config_bytes || start(config, (size_t)config_bytes - 1) != RingOk) goto cleanup;
+    if (!config_bytes || start(config, (size_t)config_bytes) != RingOk) goto cleanup;
     printf("Authenticated real OpenCL session=%016llx\n", (unsigned long long)session()); fflush(stdout);
     loader = LoadLibraryExW(argv[1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!loader) goto cleanup;

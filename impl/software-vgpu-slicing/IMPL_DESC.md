@@ -6162,3 +6162,12 @@ Temporary fixtures and commits are destroyed with their temporary directory.
 All eleven methods, the real nine-pin check, and the unchanged build-cache
 validation pass. No extra file was found in the actual dependency trees; the
 DLL input bytes/hash remain unchanged. Runtime acceptance is still separate.
+
+The OpenCL fixture's UTF-8 bootstrap path extent includes its terminal NUL, as
+required by `venus_tcp_windows_path_validate`; `WideCharToMultiByte(...,-1,...)`
+returns that complete count. Its conversion buffer uses the public
+VenusTcpMaxWindowsPathBytes bound. Pre-execution review corrected an initial
+fixture subtraction of the NUL byte. The earlier prepared native folder
+`dxvk_gpu_869aaa04` is preserved and explicitly superseded without execution.
+Existing TCP path regressions reject missing-NUL and every truncated extent;
+fresh native acceptance must use the corrected fixture binary.

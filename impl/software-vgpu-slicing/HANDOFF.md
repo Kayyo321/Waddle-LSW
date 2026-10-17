@@ -462,3 +462,8 @@ OpenCL source verification now rejects ignored and untracked inputs as well as
 tracked modifications: the copy-based driver must not ingest bytes outside its
 pins. Eleven build-admission methods pass, including real Git regressions.
 Actual dependency trees are clean; the original DLL cache still verifies.
+
+Pre-execution review corrected the OpenCL fixture bootstrap path byte count to
+include NUL and use the public bounded path capacity. Do not run the earlier
+prepared `dxvk_gpu_869aaa04` fixture: its inputs remain preserved with an explicit
+superseded/unexecuted note. Prepare a fresh run from the corrected executable.
