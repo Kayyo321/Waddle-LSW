@@ -457,3 +457,8 @@ The C fixture transfers module owners to main and retires its complete calling
 thread before unloading those modules. IMPL_DESC.md records the exact RVAs,
 provenance and ordering. Cross-build passes; fresh native audits and affected
 normal/sanitizer/fault checks are required before acceptance.
+
+OpenCL source verification now rejects ignored and untracked inputs as well as
+tracked modifications: the copy-based driver must not ingest bytes outside its
+pins. Eleven build-admission methods pass, including real Git regressions.
+Actual dependency trees are clean; the original DLL cache still verifies.

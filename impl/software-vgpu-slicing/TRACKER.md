@@ -1188,3 +1188,12 @@ remain; no baseline or threshold changes. Strict Windows cross-build passes.
 Identify the atomic fixture fix via `git log -1 --format='%H' --
 tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
 +0%, Time Ended TBD. Prior failed audits remain preserved.
+
+- **Commit `0c8d144`**: retire complete DXVK fixture calling threads with their
+  DLL TLS/FLS code still loaded; cross-build passed, fresh native audit pending.
+  **Task impact**: #3/#11 +0%, overall +0%.
+- Copied-input verifier correction (identify via `git log -1 --format='%H' --
+  scripts/verify_clvk.sh`): reject untracked/ignored inputs that the copy-based
+  build would otherwise ingest outside its pins. Eleven methods pass, including
+  real Git cleanliness regressions, and all real pins/cache validation pass.
+  **Task impact**: #5/#12 +0%, overall +0%; native qualification remains open.

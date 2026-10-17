@@ -7,6 +7,7 @@ also executed. These tests provide no Windows or GPU acceptance evidence.
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -73,7 +74,7 @@ class export_tests_t(unittest.TestCase):
 class verifier_tests_t(unittest.TestCase):
     """Inject each dependency failure into a private PATH; never mutate git trees."""
 
-    def run_verifier(self, directory, mode, selected=0, missing_tool=''):
+    def run_verifier(self, directory, mode, selected=0, missing_tool='', extra_env=None):
         directory = Path(directory)
         binary = directory / 'bin'
         binary.mkdir(exist_ok=True)
@@ -90,6 +91,19 @@ printf '%s %s\\n' "$2" "$3" >> "$CALL_LOG"
 index=0
 while read -r dependency_path dependency_sha; do
  if [ "$2" = "$dependency_path" ]; then
+  if [ "$3" = status ]; then
+   if [ "$MODE" = real_status ]; then
+    shift; shift; exec "$REAL_GIT" -C "$REAL_TREE" "$@"
+   fi
+   if [ "$index" = "$SELECTED" ]; then
+    case "$MODE" in
+     untracked) printf '%s\\n' '?? injected.c';;
+     ignored) printf '%s\\n' '!! ignored.c';;
+     status_error) exit 128;;
+    esac
+   fi
+   exit 0
+  fi
   if [ "$3" = rev-parse ]; then
    if [ "$index" = "$SELECTED" ]; then
     case "$MODE" in
@@ -116,6 +130,7 @@ exit 129
                 tool.chmod(0o700)
         environment = dict(os.environ, PATH=str(binary), CALL_LOG=str(log),
                            PIN_FILE=str(directory / 'pins'), MODE=mode, SELECTED=str(selected))
+        environment.update(extra_env or {})
         result = subprocess.run(['/bin/sh', str(Root / 'scripts/verify_clvk.sh')],
                                 cwd=directory, env=environment, capture_output=True, text=True, timeout=10)
         return result, log.read_text().splitlines()
@@ -125,16 +140,17 @@ exit 129
             result, calls = self.run_verifier(directory, 'clean')
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls, [path + ' ' + operation for path, _ in Driver.Pins
-                                     for operation in ('rev-parse', 'diff')])
+                                     for operation in ('rev-parse', 'diff', 'status')])
 
     def test_each_dependency_failure_stops(self):
         with tempfile.TemporaryDirectory() as directory:
             for selected, (path, _) in enumerate(Driver.Pins):
-                for mode in ('missing', 'mismatch', 'dirty'):
+                for mode in ('missing', 'mismatch', 'dirty', 'untracked', 'ignored', 'status_error'):
                     with self.subTest(path=path, mode=mode):
                         result, calls = self.run_verifier(directory, mode, selected)
                         self.assertNotEqual(result.returncode, 0)
-                        self.assertEqual(len(calls), selected * 2 + (2 if mode == 'dirty' else 1))
+                        operations = 2 if mode == 'dirty' else 1 if mode in ('missing', 'mismatch') else 3
+                        self.assertEqual(len(calls), selected * 3 + operations)
                         if mode == 'mismatch':
                             self.assertIn(path, result.stderr)
 
@@ -144,7 +160,32 @@ exit 129
                 with self.subTest(name=name):
                     result, calls = self.run_verifier(directory, 'clean', missing_tool=name)
                     self.assertNotEqual(result.returncode, 0)
-                    self.assertEqual(len(calls), len(Driver.Pins) * 2)
+                    self.assertEqual(len(calls), len(Driver.Pins) * 3)
+
+    def test_real_git_rejects_untracked_and_ignored_source(self):
+        real_git = shutil.which('git')
+        self.assertIsNotNone(real_git)
+        with tempfile.TemporaryDirectory() as directory:
+            tree = Path(directory) / 'source'
+            tree.mkdir()
+            for arguments in (['init', '-q'], ['config', 'user.email', 'fixture@example.invalid'],
+                              ['config', 'user.name', 'OpenCL Fixture']):
+                subprocess.run([real_git, *arguments], cwd=tree, check=True, capture_output=True)
+            (tree / '.gitignore').write_text('ignored.c\n')
+            subprocess.run([real_git, 'add', '.gitignore'], cwd=tree, check=True)
+            subprocess.run([real_git, 'commit', '-qm', 'Pin isolated fixture'], cwd=tree, check=True)
+            environment = {'REAL_GIT': real_git, 'REAL_TREE': str(tree)}
+            result, _ = self.run_verifier(directory, 'real_status', extra_env=environment)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for name in ('untracked.c', 'ignored.c'):
+                with self.subTest(name=name):
+                    injected = tree / name
+                    injected.write_text('/* must not enter a pinned build */\n')
+                    result, calls = self.run_verifier(directory, 'real_status', extra_env=environment)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(len(calls), 3)
+                    self.assertIn('source tree is not clean', result.stderr)
+                    injected.unlink()
 
 
 if __name__ == '__main__':

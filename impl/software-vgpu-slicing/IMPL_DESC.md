@@ -6141,3 +6141,24 @@ assertion removed, dependency patched, or leak suppressed.
 Strict Windows cross-build passes; fresh native normal/sanitizer/fault/heap
 verification must establish whether this ordering actually clears the owners.
 The source change alone supplies no heap acceptance or feature progress.
+
+### OpenCL copied-input cleanliness regression (2026-10-17)
+
+The build driver copies dependency directories, but `git diff --quiet HEAD`
+alone does not reject extra untracked or ignored files. Such files were outside
+the claimed source pins while still entering the private build tree. The source
+verifier now also requires an empty `git status --porcelain=v1
+--untracked-files=all --ignored=matching` result for each dependency, after its
+revision and tracked-diff checks. A status-command failure propagates through
+`set -e`; nonempty output fails with only the canonical dependency path, never
+source contents. No checkout is cleaned or changed automatically.
+
+The regression suite now injects untracked, ignored, and failed-status results
+at every pin position, asserting exact fail-fast call ordering. A temporary
+real Git repository additionally proves clean admission and rejection of an
+untracked source and a source covered by `.gitignore`. Only revision lookup is
+doubled for the repository's fixed pins; status executes the real system Git.
+Temporary fixtures and commits are destroyed with their temporary directory.
+All eleven methods, the real nine-pin check, and the unchanged build-cache
+validation pass. No extra file was found in the actual dependency trees; the
+DLL input bytes/hash remain unchanged. Runtime acceptance is still separate.

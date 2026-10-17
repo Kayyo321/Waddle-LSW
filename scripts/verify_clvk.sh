@@ -12,6 +12,13 @@ while read -r dependency_path dependency_sha; do
         exit 1
     fi
     git -C "$dependency_path" diff --quiet HEAD --
+    # The driver copies source directories, including ignored files. Neither
+    # untracked nor ignored inputs may silently enter an otherwise pinned build.
+    dependency_status=$(git -C "$dependency_path" status --porcelain=v1 --untracked-files=all --ignored=matching)
+    if [ -n "$dependency_status" ]; then
+        echo "OpenCL prerequisite source tree is not clean: $dependency_path" >&2
+        exit 1
+    fi
 done <<'Pins'
 submodules/clvk 8bd3672174764dce25ba220773e10baa752f0373
 submodules/clvk/external/clspv 7ee3a40e652b3649d175758f72d7af98b9450a68
