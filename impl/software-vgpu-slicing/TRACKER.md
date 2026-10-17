@@ -1164,3 +1164,15 @@ the ICD name tables. This audit was by source reading only; it is not runtime pr
   adds exact authenticated session output and trusted retirement receipt handling
   on failed bootstrap stop, preserving owners until external proof. Strict
   Windows cross-build passes; #5 +0%, overall +0%.
+
+## Current verification checkpoint — 2026-10-17
+
+[Qualification evidence](QUALIFICATION_2026_10_17.md) records fresh passing
+local transport, AV, ICD/WSI sanitizer/allocator/coverage gates, native Windows
+WSI state tests and three real DXVK GPU lifetimes. Native handle counts grow
+201→205→209, so heap qualification remains open and further GPU acceptance is
+paused for attribution. OpenCL is cross-built/prepared, not executed.
+Commit `fb22eee` added exact OpenCL supervisor session/retirement handling.
+This evidence documentation commit has #3/#5/#11 +0%, overall +0%; no closure,
+Time Ended or PR change. Identify it via `git log -1 --format='%H' --
+impl/software-vgpu-slicing/QUALIFICATION_2026_10_17.md`.

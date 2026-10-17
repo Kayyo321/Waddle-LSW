@@ -438,3 +438,15 @@ The OpenCL fixture takes a sixth path argument for a fresh trusted retirement
 receipt. It prints its authenticated session and retains modules on failed stop
 until the supervisor supplies exact session-bound retirement proof. Failure
 cleanup cannot count as successful acceptance.
+
+## Current verification checkpoint — 2026-10-17
+
+[Qualification evidence](QUALIFICATION_2026_10_17.md) records fresh passing
+local transport, AV, ICD/WSI sanitizer/allocator/coverage gates, native Windows
+WSI state tests and three real DXVK GPU lifetimes. Native handle counts grow
+201→205→209, so heap qualification remains open and further GPU acceptance is
+paused for attribution. OpenCL is cross-built/prepared, not executed.
+Commit `fb22eee` added exact OpenCL supervisor session/retirement handling.
+This evidence documentation commit has #3/#5/#11 +0%, overall +0%; no closure,
+Time Ended or PR change. Identify it via `git log -1 --format='%H' --
+impl/software-vgpu-slicing/QUALIFICATION_2026_10_17.md`.

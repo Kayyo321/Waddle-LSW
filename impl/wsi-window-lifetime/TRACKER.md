@@ -64,3 +64,17 @@ These are portable fixtures, not native Windows execution or real GPU proof. The
 1. Run the unchanged prescribed ASan/LSan targets in a non-ptrace environment or CI. No leak suppression or disabled detection counts as acceptance.
 2. Execute native Windows C/state fixtures and affected real Windows Vulkan/DXVK resize/minimize/replacement/loss acceptance on the final source, under the existing owner's GPU/VM lease.
 3. Complete the separate AV-window generation to WSI/Wayland integration, including destruction events and unobserved numeric HWND reuse. No property/subclass workaround is claimed here.
+
+### Local LSan blocker cleared, 2026-10-17
+
+Fresh unchanged prescribed `make vgpu-wsi-lifecycle-test
+vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage` exits zero with leak
+detection enabled, no sanitizer/allocator leaks, and unchanged 92.95% Zig /
+98.61% C branch coverage. Full current ICD aggregate also passes 394 tests and
+90.32% branches. All twelve WSI state tests execute successfully on native
+Windows using test backends. Exact logs/hashes and evidence boundaries are in
+[the current qualification checkpoint](../software-vgpu-slicing/QUALIFICATION_2026_10_17.md).
+The old ptrace limitation no longer applies to this machine. Final qualification
+accounting remains open while applicable physical/native acceptance is reviewed;
+no premature Time Ended or product acceptance is recorded. This documentation
+checkpoint changes #4 by +0% and keeps the overall tracker at 94%.
