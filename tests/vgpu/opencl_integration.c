@@ -54,6 +54,36 @@ typedef struct api_t {
 typedef venus_ring_status_t (*bootstrap_start_t)(const char *, size_t);
 /** @brief Quiescent stop; RingOk proves normal session stop. Main thread only. */
 typedef venus_ring_status_t (*bootstrap_stop_t)(void);
+/** @brief Borrowed copied session identity, no ownership transfer; main only. */
+typedef uint64_t (*bootstrap_session_t)(void);
+/** @brief Release pending session only after exact external retirement proof. */
+typedef venus_ring_status_t (*bootstrap_abandon_t)(uint64_t);
+
+/** @brief Wait for the supervisor's exact session retirement record.
+ * @param[in] path Trusted fresh absolute UTF-16 receipt path, borrowed.
+ * @param[in] identity Nonzero retained session identity.
+ * @note Failure retains ownership until the supervisor proves host retirement.
+ * Sole caller thread; each transient receipt handle is closed before retry.
+ */
+static void wait_retired(const wchar_t *path,uint64_t identity) {
+    char expected[64];int length=snprintf(expected,sizeof expected,"retired_session=%016llx\n",(unsigned long long)identity);
+    if(length<=0 || (size_t)length>=sizeof expected)abort();
+    fprintf(stderr,"Retained native session=%016llx awaiting trusted actual worker retirement\n",(unsigned long long)identity);fflush(stderr);
+    for(;;) {
+        HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,NULL,OPEN_EXISTING,FILE_FLAG_OPEN_REPARSE_POINT,NULL);
+        if(file!=INVALID_HANDLE_VALUE) {
+            BY_HANDLE_FILE_INFORMATION information={0};char actual[65];DWORD count=0;int match=0;
+            if(GetFileType(file)==FILE_TYPE_DISK && GetFileInformationByHandle(file,&information) &&
+                !(information.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY)) && information.nNumberOfLinks==1 &&
+                !information.nFileSizeHigh && information.nFileSizeLow==(DWORD)length &&
+                ReadFile(file,actual,sizeof actual,&count,NULL) && count==(DWORD)length && !memcmp(actual,expected,(size_t)length))match=1;
+            while(!CloseHandle(file))Sleep(10);
+            if(match)return;
+        }
+        Sleep(10);
+    }
+}
+
 
 /** @brief Fixed upper bound for owned CPU oracle storage; not a GPU tolerance. */
 static const size_t MaxWords = 65536;
@@ -187,8 +217,8 @@ cleanup:
 }
 
 /** @brief Execute one module graph; all paths borrowed from the supervisor.
- * @param[in] argc/argv Exactly six: executable, loader, OpenCL.dll, manifest,
- * bootstrap DLL, private config; every file must use an absolute drive path.
+ * @param[in] argc/argv Exactly seven: executable, loader, OpenCL.dll, manifest,
+ * bootstrap DLL, private config, fresh retirement receipt. Existing inputs use absolute drive paths.
  * @return Zero after eight full contexts and natural bootstrap stop, otherwise
  * failure. A failed stop retains modules/process for external owner resolution.
  * @note Main thread only. Unloads OpenCL before loader/bootstrap. Native heaps
@@ -196,18 +226,22 @@ cleanup:
  */
 int wmain(int argc, wchar_t **argv)
 {
-    if (argc != 6) return 2;
-    for (int i = 1; i < argc; ++i)
+    if (argc != 7) return 2;
+    for (int i = 1; i < 6; ++i)
         if (wcslen(argv[i]) < 3 || argv[i][1] != L':' || argv[i][2] != L'\\' ||
             GetFileAttributesW(argv[i]) == INVALID_FILE_ATTRIBUTES) return 2;
     if (!SetEnvironmentVariableW(L"VK_DRIVER_FILES", argv[3]) ||
         !SetEnvironmentVariableW(L"VK_ICD_FILENAMES", NULL) ||
         !SetEnvironmentVariableW(L"VK_ADD_DRIVER_FILES", NULL) ||
         !SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~all~")) return 2;
+    if (wcslen(argv[6]) < 3 || argv[6][1] != L':' || argv[6][2] != L'\\' ||
+        GetFileAttributesW(argv[6]) != INVALID_FILE_ATTRIBUTES) return 2;
     int result = 1;
     HMODULE bootstrap = NULL, loader = NULL, opencl = NULL;
     bootstrap_start_t start = NULL;
     bootstrap_stop_t stop = NULL;
+    bootstrap_session_t session = NULL;
+    bootstrap_abandon_t abandon = NULL;
     bootstrap = LoadLibraryExW(argv[4], NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!bootstrap) goto cleanup;
     FARPROC procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_start");
@@ -215,11 +249,16 @@ int wmain(int argc, wchar_t **argv)
     memcpy(&start, &procedure, sizeof start);
     procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_stop");
     memcpy(&stop, &procedure, sizeof stop);
-    if (!start || !stop) goto cleanup;
+    procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_session");
+    memcpy(&session, &procedure, sizeof session);
+    procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_abandon");
+    memcpy(&abandon, &procedure, sizeof abandon);
+    if (!start || !stop || !session || !abandon) goto cleanup;
     char config[32768];
     int config_bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[5], -1,
                                           config, sizeof config, NULL, NULL);
     if (!config_bytes || start(config, (size_t)config_bytes - 1) != RingOk) goto cleanup;
+    printf("Authenticated real OpenCL session=%016llx\n", (unsigned long long)session()); fflush(stdout);
     loader = LoadLibraryExW(argv[1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!loader) goto cleanup;
     opencl = LoadLibraryExW(argv[2], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
@@ -260,10 +299,13 @@ int wmain(int argc, wchar_t **argv)
 cleanup:
     if (result) fprintf(stderr, "OpenCL acceptance failed Win32=%lu\n", (unsigned long)GetLastError());
     if (opencl && !FreeLibrary(opencl)) result = 1;
-    if (stop && stop() != RingOk) {
-        fputs("OpenCL retained bootstrap: supervisor must prove retirement; modules preserved.\n", stderr);
-        fflush(stderr);
-        for (;;) Sleep(1000);
+    if (stop && session && abandon && stop() != RingOk) {
+        result = 1;
+        uint64_t retained = session();
+        if (retained) {
+            wait_retired(argv[6], retained);
+            while (abandon(retained) != RingOk) Sleep(10);
+        }
     }
     if (loader && !FreeLibrary(loader)) result = 1;
     if (bootstrap && !FreeLibrary(bootstrap)) result = 1;

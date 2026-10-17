@@ -6053,8 +6053,9 @@ Windows, concurrency, or physical GPU acceptance.
 ### Native OpenCL fixture execution contract (2026-10-17)
 
 `make vgpu-opencl-fixture` cross-links `tests/vgpu/opencl_integration.c` with
-the pinned OpenCL declarations. Its five arguments are absolute existing Windows
-paths: Vulkan loader, OpenCL DLL, ICD manifest, bootstrap DLL, private config.
+the pinned OpenCL declarations. Its six arguments are absolute Windows paths: Vulkan loader, OpenCL DLL, ICD
+manifest, bootstrap DLL, private config, and a fresh retirement-receipt path.
+The first five must exist; the receipt must not already exist.
 It clears additive/legacy ICD paths and implicit layers, starts the existing
 authenticated bootstrap, loads the exact loader and OpenCL modules, then resolves
 its dispatch from that OpenCL module without a system OpenCL import library.
@@ -6086,3 +6087,12 @@ supervisor must impose its own deadline and prove exact host process retirement.
 The fixture itself does not establish native heap baselines, concurrent Linux
 work, transport-fault recovery, or whole-graph retirement. Those remain explicit
 qualification gates; this cross-build does not close any of them.
+
+The OpenCL fixture also resolves bootstrap session/abandon exports, prints the
+authenticated nonzero session identity for correlation with host evidence, and
+uses the DXVK fixture's exact regular-file retirement protocol on failed stop.
+The receipt must contain only `retired_session=<16 hex digits>\n`, match the
+retained session, have one link and no reparse/directory attributes. The fixture
+closes each transient file handle and retains DLL ownership until that exact
+external proof arrives; then abandon must succeed before modules unload. This
+failure cleanup always returns failure, never positive acceptance.

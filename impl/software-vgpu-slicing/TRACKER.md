@@ -1157,3 +1157,10 @@ the ICD name tables. This audit was by source reading only; it is not runtime pr
   discovery, four kernel oracles, event/buffer operations and malformed/compile
   error checks. Strict C11 Windows cross-link passes. **Task impact**: #5 +0%,
   overall +0%; fixture execution, heap and concurrent Linux acceptance pending.
+
+- **Commit `72d5fae`**: native OpenCL exact-result fixture and explicit make
+  targets; strict cross-build passes. **Task impact**: #5 +0%, overall +0%.
+- OpenCL supervisor-correlation follow-up (identify through the fixture path):
+  adds exact authenticated session output and trusted retirement receipt handling
+  on failed bootstrap stop, preserving owners until external proof. Strict
+  Windows cross-build passes; #5 +0%, overall +0%.

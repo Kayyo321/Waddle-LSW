@@ -433,3 +433,8 @@ Arguments and exact assertions are specified in IMPL_DESC.md; it resolves its
 OpenCL dispatch dynamically and selects only the advertised RTX 5080 GPU.
 Execution/heap/concurrent GPU evidence remains pending. Build-tool regressions
 are available as `make vgpu-opencl-test` (commit `7347352`).
+
+The OpenCL fixture takes a sixth path argument for a fresh trusted retirement
+receipt. It prints its authenticated session and retains modules on failed stop
+until the supervisor supplies exact session-bound retirement proof. Failure
+cleanup cannot count as successful acceptance.
