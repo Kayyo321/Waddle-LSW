@@ -30,3 +30,7 @@
 	path = submodules/llvm_project
 	url = https://github.com/llvm/llvm-project.git
 	shallow = true
+[submodule "submodules/clspv_spirv_headers"]
+	path = submodules/clspv_spirv_headers
+	url = https://github.com/KhronosGroup/SPIRV-Headers.git
+	shallow = true
