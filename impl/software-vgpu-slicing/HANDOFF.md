@@ -527,3 +527,8 @@ retirement delay beyond 5000 ms marks failure; unsafe retirement retains the
 process/modules for diagnosis. Strict cross-build passes; the unchanged exact
 kernel/buffer/event/error oracles still require actual execution with the new
 DLL. Cross-build log: opencl_shutdown_fixture_final.log.
+
+The current qualification ledger now distinguishes original failed audits,
+joined-thread handle stability, independently reproduced Windows MSCTF state,
+current-ICD physical DXVK sanitizer/fault passes and pending fresh heap/OpenCL
+execution. See QUALIFICATION_2026_10_17.md; feature remains 85.5%, Time Ended TBD.

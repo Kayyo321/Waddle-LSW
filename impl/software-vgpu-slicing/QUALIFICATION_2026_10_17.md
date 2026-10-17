@@ -1,3 +1,113 @@
+# Current qualification update, 2026-10-17
+
+Qualification remains in progress, feature completion 85.5%, Time Ended TBD.
+README is unchanged. Earlier sections below are historical checkpoints; their
+unchanged-source, unexecuted-OpenCL and growing-handle statements describe their
+recorded checkpoints, not this current update.
+
+Current tested production ICD is `03caf9b` (later feature commits add the
+approved private clvk patch/build contract, tests and documentation).
+Current fixture commit is `b040fe2`; tracked feature HEAD is recorded in Git.
+
+- Full current ICD: 394 Debug and 394 ReleaseSafe tests; native C dispatch
+  128 cycles; prescribed sanitizer/allocator gates pass. Whole production
+  coverage 4,369/4,837 branches (90.32%), 4,696/4,766 lines (98.53%). Native
+  Windows 394-case Debug/ReleaseSafe execution passed before the host reboot.
+  Logs: `icd_debug_chain_final.log`, `native_icd_chain_execution.log`.
+- Nineteen additional module groups pass unit/sanitizer/coverage commands:
+  capabilities, dmabuf, instance-wire, query-wire, values, extensions-wire,
+  objects, command, guest, present, wddm, frame, export, surface, request,
+  context, service, runtime, worker. Every executed production coverage gate
+  remains at least 90% for both lines and branches, with unchanged tooling.
+  Exact commands, isolated Zig cache environment, exit codes and per-module
+  logs: `build/qualification_20261017/remaining_cpu_results.json`; extracted
+  gate summaries: `remaining_cpu_coverage_summary.json`. All nineteen exit zero.
+- `make vgpu-tcp-server-test vgpu-tcp-server-sanitizers
+  vgpu-tcp-server-coverage vgpu-tcp-bridge-test vgpu-tcp-bridge-sanitizers
+  vgpu-tcp-bootstrap-coverage vgpu-tcp-bootstrap-sanitizers` exits zero. These
+  are actual sockets/process ownership with synthetic frontend/SDK boundaries,
+  not GPU proof. Bootstrap lines 133/133, branches 174/182 (95.60%); bridge
+  lines 167/167, branches 216/234 (92.31%). All configured leak detection stays
+  enabled. Log: `tcp_ownership_gates.log`.
+- `make vgpu-libc-test vgpu-libc-sanitizers vgpu-receiver-test
+  vgpu-receiver-sanitizers vgpu-receiver-coverage vgpu-native-loader-test
+  vgpu-native-loader-sanitizers vgpu-present-integration
+  vgpu-present-integration-sanitizers` passes its checks with leak detection
+  enabled. This includes actual pinned Linux loader discovery/lifetimes and
+  synthetic presentation protocol integration, not a physical compositor run.
+  Log: `linux_receiver_loader_integration.log`.
+- Source freeze `build/wddm_dxvk_checkpoint/dxvk_source_ac95c458` binds the
+  corrected ICD and joined-caller DXVK fixture. Fresh physical GPU runs after
+  Windows startup pass: sanitized positive `dxvk_gpu_7bbd3a2f`, normal postflush
+  `dxvk_gpu_4f1be74b`, sanitized postflush `dxvk_gpu_84281cd7`. Positive requires
+  all 4,096 rendered/presented pixels and 64 compute words, natural whole-session
+  retirement and zero controller sanitizer diagnostics. Fault cases require
+  the existing recorded-submission/device-removal assertions, exact trusted
+  retirement proof and no SIGKILL. These are expected failure-cleanup tests,
+  not positive workload receipts. `dxvk_current_results.json` binds logs and
+  exit codes; each checkpoint stores its full acceptance/process journal.
+
+## Native heap status
+
+The original growing-handle audit remains failed and preserved. Exact native
+creator stacks resolve to static winpthreads attached to the fixture's calling
+thread during DXVK global logger construction. Commit `0c8d144` moves the entire
+transaction to a joined CRT thread and retains all vendor DLLs through TLS/FLS
+destruction before parent unload. It does not alter native baselines or free
+borrowed/vendor blocks. The corrected three-life historical audit
+`dxvk_heap_710ae4228123a45f` has 183/183/183 handles with exact GPU outputs and
+natural host retirement. Raw UMDH baseline-to-final delta remains +99,489 bytes;
+this is not zero-total-process-heap evidence and heap_acceptance remains false.
+
+Its recurring 880-byte allocation (0x370, not the unrelated 0x880 GDI allocation)
+has the LocalAlloc/MSCTF/IMM32/USER32 stack. The OS-only joined GUI-thread
+control `system_window_audit_bfd98078` reproduces the same stack sequence and
+one allocation per cycle without Vulkan/DXVK/Waddle runtime modules. Independent
+Luna high-effort read-only review and exact-image LLVM symbolization connect
+other large private ancestry frames to DXVK discovery and Windows loader,
+DirectXDatabaseHelper, RPC and Configuration Manager internals. No unbalanced
+project allocator was established. Process environment state (4,062 bytes) and
+CRT temporary stderr buffering (4,096 bytes) also survive snapshots. These are
+explicit attribution items; totals from unlike controls are not subtracted and
+unknown ownership is not treated as a leak pass. Fresh current-ICD audit
+`dxvk_heap_56dca3b969766ebc` is in progress with signed tools rechecked.
+
+## OpenCL status
+
+No OpenCL kernel acceptance has passed. `dxvk_gpu_14ce8bed` fails at instance
+creation; `dxvk_gpu_17aa5f54` times out before discovery; `dxvk_gpu_005527db`
+reaches platform discovery/three adapters but fails the old one-adapter fixture.
+The last run also proves twenty retained clvk-owned ICD objects; its scoped
+forced cleanup grants no natural-retirement credit. Artifacts remain preserved.
+
+The user explicitly approved the private-copy correction in
+[the versioned lifetime review](CLVK_LIFETIME_REVIEW.md). Commit `b4481b9` adds
+terminal ownership preflight/shutdown and exact patch/ABI/export cache binding;
+independent review finds an executor candidate could be stranded bound.
+`fac8c24` fixes selection ordering while preserving strict free/idle shutdown.
+Sixteen admission tests pass, including actual patched owner accounting under
+ASan/LSan/UBSan and the exact patched pool with a controlled executor boundary.
+The previous implementation fails its reuse negative control. The first owned
+cross-build was intentionally interrupted without publishing a receipt; partial
+inputs/logs are retained. `clvk_pool_cross_build.log` records the corrected build
+in progress. The new fixture requires private shutdown, rejects live owners,
+checks terminal discovery/idempotence and unloads only after caller TLS/FLS exit.
+Strict Windows cross-build passes; actual new-DLL execution remains required.
+
+## Environment and remaining qualification
+
+The host rebooted during the interruption. Existing VM disk, firmware and TPM
+files were preserved; the VM restarted with the existing QEMU configuration.
+Windows applied its pending update without intervention. Fresh OS inventory is
+`resumed_windows_inventory.json` (Windows 11 Pro 10.0.26300, UBR 9711, interactive
+explorer session 1). Later native/physical receipts must bind this environment;
+earlier results are not silently reused across the OS change. Native heap, full
+physical WSI matrix, new OpenCL DLL kernels/retirement/heaps, simultaneous Linux
+GPU workload and final source/native CI remain open. No PR, merge, feature
+completion or Time Ended is recorded.
+
+---
+
 # Verification checkpoint, 2026-10-17
 
 Qualification remains **in progress**. No PR or completion claim follows from

@@ -14,7 +14,7 @@
 | #1 | Specify bounded lifetime and native thread contracts | Done | 15% | 100% | IMPL_DESC.md; unobserved HWND reuse and full window-event integration remain separate |
 | #2 | Implement replacement retirement, resize/loss and queue ownership gates | Done | 35% | 100% | Retire on failed replacement; exact Win32 capabilities; acquire/present gates; correct acquisition release; queue result precedence and conservative loss after ambiguous failure |
 | #3 | Add exact-size native presentation with balanced DC release attempts | Done | 20% | 100% | Preserves scaled compatibility API; exact path rejects extent changes before drawing |
-| #4 | Run functional, coverage, cross-build, integrated and sanitizer gates | In Progress | 30% | 80% | Whole-ICD branch gate restored to 90.32%; 392 Debug/ReleaseSafe tests pass; full LSan gate remains blocked by executor ptrace |
+| #4 | Run functional, coverage, cross-build, integrated and sanitizer gates | In Progress | 30% | 80% | Current ICD 394 Debug/ReleaseSafe and prescribed ASan/LSan/allocator gates pass with 90.32% branch coverage; requested final native/physical requalification remains pending |
 
 **Total Feature Completion**: `94.0%`
 
@@ -78,3 +78,13 @@ The old ptrace limitation no longer applies to this machine. Final qualification
 accounting remains open while applicable physical/native acceptance is reviewed;
 no premature Time Ended or product acceptance is recorded. This documentation
 checkpoint changes #4 by +0% and keeps the overall tracker at 94%.
+
+### Resumed final qualification checkpoint, 2026-10-17
+
+Current corrected ICD `03caf9b` passes the full 394-case Debug/ReleaseSafe,
+prescribed ASan/LSan/UBSan and allocator checks, with whole production coverage
+90.32% branches and 98.53% lines. The former ptrace leak blocker is absent here.
+Native Windows state execution passed before the host reboot; Windows applied
+a pending update during resumed startup. Final physical lifecycle/Windows
+requalification remains pending; this conservative checkpoint grants no new
+completion or Time Ended credit. [Current feature evidence](../software-vgpu-slicing/QUALIFICATION_2026_10_17.md).

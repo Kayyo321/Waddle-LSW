@@ -12,9 +12,9 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Integrated implementation and real rendering/compute/presentation/loss teardown pass; whole-production coverage90.07%branch/98.50%line verified at37df8b4. NULL vertex behavior implemented. Approved repository-wide DXVK cleanup build passes at094c34c; current ICD sanitizers and12-case Windows GPU matrix/full48 WSI verified; final compiler-lifetime DXVK normal/SAN/fault and native heap acceptance pending |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD 394-case Debug/ReleaseSafe, sanitizer/allocator and 90.32% branch / 98.53% line gates pass after loader debug-chain correction. Fresh corrected-ICD DXVK sanitized positive and normal/sanitized postflush runs pass; final three-life native heap and full physical WSI matrix remain open. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Contract, pinned dependencies (#12) and the patch-free MinGW cross-build driver are implemented; OpenCL.dll cross-built (121 exports; imports only vulkan-1.dll and Windows system DLLs) but NEVER executed. Native launch exposed rejection of loader-owned debug creation records; the guest ICD correction is under verification. Real Windows kernel execution on the shared RTX 5080, lifetimes, heap and concurrent-Linux acceptance remain pending (60%) |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Platform discovery executed but no kernel passed. Native execution exposed loader-chain/startup/adapter fixture issues and retained clvk global state on Windows. User-approved private-copy retirement/pool correction and explicit shutdown fixture are committed; sixteen admission/owner/pool sanitizer tests pass. New DLL build, exact kernels, natural retirement, native heaps and concurrent Linux GPU acceptance remain open. |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -1268,3 +1268,13 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   explicit terminal cleanup, verify repeat/probe behavior, and retain modules
   through worker TLS/FLS exit before parent unload. Strict Windows fixture
   cross-build passes; actual new DLL/kernel/heap execution pending. #5 +0%.
+
+- **Commit `b040fe2`**: exercise versioned shutdown, live-context Busy, terminal
+  discovery and complete calling-thread module retirement; strict Windows
+  fixture build passes. #5 +0%, overall +0%.
+- Current source/evidence ledger update (identify through ledger history):
+  nineteen additional module unit/sanitizer/coverage groups and TCP server/bridge/
+  bootstrap ownership gates pass, each above 90% branches and lines. Current
+  corrected-ICD DXVK sanitized positive, normal postflush and sanitized postflush
+  runs pass with exact session/process retirement proof. All feature percentages
+  remain unchanged pending final native heap/OpenCL/physical acceptance.
