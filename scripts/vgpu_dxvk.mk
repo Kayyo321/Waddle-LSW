@@ -41,7 +41,7 @@ vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/Op
 vgpu-opencl-test:
 	python3 -B tests/vgpu/clvk_build.py
 
-build/vgpu_opencl_integration.exe: tests/vgpu/opencl_integration.c include/waddle/venus_tcp.h submodules/clvk/external/OpenCL-Headers/CL/cl.h | build
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_integration.c include/waddle/venus_tcp.h include/waddle/clvk.h submodules/clvk/external/OpenCL-Headers/CL/cl.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/clvk/external/OpenCL-Headers $< -municode -o $@
 
 vgpu-opencl-fixture: build/vgpu_opencl_integration.exe

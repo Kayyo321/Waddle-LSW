@@ -6253,3 +6253,21 @@ compiles the exact patched pool with an executor-state double and reproduces
 the queue-return/skip/reuse sequence; the old ordering fails and corrected
 ordering passes with sanitizers. This is a portable pool-state test, not GPU
 or real executor execution evidence.
+
+### Native OpenCL explicit shutdown fixture
+
+Every complete native transaction executes on a joined CRT worker. Loader,
+OpenCL and bootstrap references transfer to the main thread only after work;
+main joins before unloading OpenCL/loader/bootstrap so vendor thread TLS/FLS
+destructors execute with their code still mapped. Before first discovery the
+fixture requires the private shutdown export and rejects unsupported ABI without
+initialization. Every live context must make shutdown return Busy and then still
+execute the unchanged exact kernel/buffer/event/error tests. After all owners
+release, cleanup retries Busy while executor teardown settles; any delay beyond
+5000 ms marks the run failed. Unsafe/disabled retirement retains modules/process
+for diagnosis rather than unloading code with live owners. The supervisor's
+existing overall execution budget remains unchanged. Successful shutdown is
+repeated (idempotent) and a new platform probe must return CL_INVALID_PLATFORM.
+Only then may bootstrap stop; failed host stop still needs exact external
+retirement proof before abandon. Success is published after worker join and
+complete module absence, not before.

@@ -1260,3 +1260,11 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   fails the earlier implementation and passes the correction with sanitizers;
   sixteen admission tests pass. Owned superseded cross-build was interrupted
   and preserved without publishing a new DLL receipt. #5 +0%, overall +0%.
+
+- **Commit `fac8c24`**: correct private clvk executor admission ordering; actual
+  pool regression and all sixteen admission tests pass with sanitizers.
+- Native shutdown fixture follow-up (identify through fixture history): require
+  versioned private export, reject shutdown with each live context, perform
+  explicit terminal cleanup, verify repeat/probe behavior, and retain modules
+  through worker TLS/FLS exit before parent unload. Strict Windows fixture
+  cross-build passes; actual new DLL/kernel/heap execution pending. #5 +0%.

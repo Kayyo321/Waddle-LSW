@@ -7,11 +7,13 @@
 #define CL_TARGET_OPENCL_VERSION 120
 #include <CL/cl.h>
 #include <windows.h>
+#include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 #include "waddle/venus_tcp.h"
+#include "waddle/clvk.h"
 
 /** @brief External SDK functions borrowed from the loaded OpenCL module. */
 #define ApiEntries(M) \
@@ -52,7 +54,7 @@ typedef struct api_t {
 
 /** @brief Bootstrap ABI; caller owns DLL, start borrows config until return. */
 typedef venus_ring_status_t (*bootstrap_start_t)(const char *, size_t);
-/** @brief Quiescent stop; RingOk proves normal session stop. Main thread only. */
+/** @brief Quiescent stop; RingOk proves normal session stop. Serial caller. */
 typedef venus_ring_status_t (*bootstrap_stop_t)(void);
 /** @brief Borrowed copied session identity, no ownership transfer; main only. */
 typedef uint64_t (*bootstrap_session_t)(void);
@@ -100,11 +102,14 @@ static const char Kernels[] =
 /** @brief One complete OpenCL context lifetime, no owner escapes.
  * @param[in] api Nonnull borrowed dispatch; device borrowed root device.
  * @param[in] group Exact advertised maximum work-group size, 1..MaxWords.
+ * @param[in] shutdown Nonnull private dispatch; DLL outlives call. Busy while
+ * the context is live must preserve every owner for the following kernel work.
  * @return Zero only for exact kernel/buffer/event/error assertions and cleanup.
  * @note Serial caller; compiler/driver may create threads. CPU arrays remain
  * live until queue finish on every path. Mapped memory is borrowed until unmap.
  */
-static int run_lifetime(const api_t *api, cl_device_id device, size_t group)
+static int run_lifetime(const api_t *api, cl_device_id device, size_t group,
+                        clvk_shutdown_t shutdown)
 {
     int result = 1;
     cl_int status = CL_SUCCESS;
@@ -128,6 +133,8 @@ static int run_lifetime(const api_t *api, cl_device_id device, size_t group)
 } while (0)
     context = api->create_context(NULL, 1, &device, NULL, NULL, &status);
     if (!context || status != CL_SUCCESS) goto cleanup;
+    if (shutdown(ClvkShutdownAbi + 1) != ClvkShutdownVersion ||
+        shutdown(ClvkShutdownAbi) != ClvkShutdownBusy) goto cleanup;
     queue = api->create_queue(context, device, 0, &status);
     if (!queue || status != CL_SUCCESS) goto cleanup;
     const char *source = Kernels;
@@ -216,16 +223,31 @@ cleanup:
 #undef Require
 }
 
+/** @brief Joined caller-thread state; modules transfer to the joining parent.
+ * argc/argv are borrowed until join; only the worker writes module references.
+ */
+typedef struct native_work_t {
+    int argc;
+    wchar_t **argv;
+    HMODULE bootstrap;
+    HMODULE loader;
+    HMODULE opencl;
+} native_work_t;
+
 /** @brief Execute one module graph; all paths borrowed from the supervisor.
  * @param[in] argc/argv Exactly seven: executable, loader, OpenCL.dll, manifest,
  * bootstrap DLL, private config, fresh retirement receipt. Existing inputs use absolute drive paths.
  * @return Zero after eight full contexts and natural bootstrap stop, otherwise
  * failure. A failed stop retains modules/process for external owner resolution.
- * @note Main thread only. Unloads OpenCL before loader/bootstrap. Native heaps
- * require independent capture; successful process exit does not prove no leak.
+ * @note Worker thread only. Parent keeps DLLs mapped through worker TLS/FLS
+ * destruction, then unloads OpenCL before loader/bootstrap. Native heaps require
+ * independent capture; successful process exit does not prove no leak.
  */
-int wmain(int argc, wchar_t **argv)
+static unsigned __stdcall run_native_work(void *opaque)
 {
+    native_work_t *work = opaque;
+    int argc = work->argc;
+    wchar_t **argv = work->argv;
     if (argc != 7) return 2;
     for (int i = 1; i < 6; ++i)
         if (wcslen(argv[i]) < 3 || argv[i][1] != L':' || argv[i][2] != L'\\' ||
@@ -238,10 +260,13 @@ int wmain(int argc, wchar_t **argv)
         GetFileAttributesW(argv[6]) != INVALID_FILE_ATTRIBUTES) return 2;
     int result = 1;
     HMODULE bootstrap = NULL, loader = NULL, opencl = NULL;
+    api_t api = {0};
+    cl_uint count = 0;
     bootstrap_start_t start = NULL;
     bootstrap_stop_t stop = NULL;
     bootstrap_session_t session = NULL;
     bootstrap_abandon_t abandon = NULL;
+    clvk_shutdown_t shutdown = NULL;
     bootstrap = LoadLibraryExW(argv[4], NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!bootstrap) goto cleanup;
     FARPROC procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_start");
@@ -263,7 +288,10 @@ int wmain(int argc, wchar_t **argv)
     if (!loader) goto cleanup;
     opencl = LoadLibraryExW(argv[2], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!opencl) goto cleanup;
-    api_t api = {0};
+    procedure = GetProcAddress(opencl, "waddle_clvk_shutdown");
+    _Static_assert(sizeof shutdown == sizeof procedure, "Windows private C ABI");
+    memcpy(&shutdown, &procedure, sizeof shutdown);
+    if (!shutdown || shutdown(ClvkShutdownAbi + 1) != ClvkShutdownVersion) goto cleanup;
 #define LoadApi(name, symbol) do { \
     procedure = GetProcAddress(opencl, #symbol); \
     if (!procedure) goto cleanup; \
@@ -281,7 +309,6 @@ int wmain(int argc, wchar_t **argv)
     printf("Authenticated real OpenCL session=%016llx\n", (unsigned long long)session()); fflush(stdout);
     cl_platform_id platform = NULL;
     cl_device_id device = NULL;
-    cl_uint count = 0;
     cl_int status = api.get_platform_ids(1, &platform, &count);
     printf("OpenCL platform discovery status=%d count=%u\n", (int)status, (unsigned)count); fflush(stdout);
     if (status != CL_SUCCESS || count != 1 || !platform) goto cleanup;
@@ -326,11 +353,31 @@ int wmain(int argc, wchar_t **argv)
         local_bytes < group * sizeof(cl_uint)) goto cleanup;
     printf("OpenCL selected GPU=%s vendor=%x maximum_group=%llu\n", name, vendor, (unsigned long long)group); fflush(stdout);
     for (unsigned cycle = 0; cycle < 8; ++cycle)
-        if (run_lifetime(&api, device, group)) goto cleanup;
+        if (run_lifetime(&api, device, group, shutdown)) goto cleanup;
     result = 0;
 cleanup:
     if (result) fprintf(stderr, "OpenCL acceptance failed Win32=%lu\n", (unsigned long)GetLastError());
-    if (opencl && !FreeLibrary(opencl)) result = 1;
+    if (shutdown) {
+        int32_t shutdown_status;
+        ULONGLONG started = GetTickCount64();
+        int reported = 0;
+        /* Never unload code while a runtime owner remains. A stuck owner is a
+         * failed supervised run; retain modules/process for diagnosis rather
+         * than hiding it with forced destruction. No success deadline changes. */
+        while ((shutdown_status = shutdown(ClvkShutdownAbi)) == ClvkShutdownBusy) {
+            if (!reported && GetTickCount64() - started >= 5000) {
+                fputs("Retained clvk owners prevent terminal shutdown\n", stderr);
+                fflush(stderr); reported = 1; result = 1;
+            }
+            Sleep(1);
+        }
+        if (shutdown_status != ClvkShutdownOk) {
+            fprintf(stderr, "Retained clvk state status=%d\n", (int)shutdown_status); fflush(stderr);
+            for (;;) Sleep(10);
+        }
+        if (shutdown(ClvkShutdownAbi) != ClvkShutdownOk) result = 1;
+        if (api.get_platform_ids && api.get_platform_ids(0, NULL, &count) != CL_INVALID_PLATFORM) result = 1;
+    }
     if (stop && session && abandon && stop() != RingOk) {
         result = 1;
         uint64_t retained = session();
@@ -339,10 +386,32 @@ cleanup:
             while (abandon(retained) != RingOk) Sleep(10);
         }
     }
-    if (loader && !FreeLibrary(loader)) result = 1;
-    if (bootstrap && !FreeLibrary(bootstrap)) result = 1;
+    work->opencl = opencl;
+    work->loader = loader;
+    work->bootstrap = bootstrap;
+    return (unsigned)result;
+}
+
+/** @brief Keep vendor DLLs mapped until calling-thread TLS/FLS has retired.
+ * @param[in] argc/argv Borrowed Windows command line, as documented above.
+ * @return Zero only after exact kernels, terminal shutdown, natural host stop,
+ * joined worker and complete module retirement. Main thread owns the thread
+ * handle and transferred module references and closes/releases each once.
+ */
+int wmain(int argc, wchar_t **argv) {
+    if (argc != 7) return 2;
+    native_work_t work = {argc, argv, NULL, NULL, NULL};
+    uintptr_t thread = _beginthreadex(NULL, 0, run_native_work, &work, 0, NULL);
+    if (!thread) return 1;
+    DWORD result = 1;
+    if (WaitForSingleObject((HANDLE)thread, INFINITE) != WAIT_OBJECT_0 ||
+        !GetExitCodeThread((HANDLE)thread, &result)) abort();
+    if (!CloseHandle((HANDLE)thread)) abort();
+    if (work.opencl && !FreeLibrary(work.opencl)) result = 1;
+    if (work.loader && !FreeLibrary(work.loader)) result = 1;
+    if (work.bootstrap && !FreeLibrary(work.bootstrap)) result = 1;
     if (GetModuleHandleW(argv[1]) || GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[4]) ||
         GetModuleHandleW(L"waddle_vulkan_experimental.dll")) result = 1;
     if (!result) puts("OpenCL eight exact context lifetimes and native module retirement passed.");
-    return result;
+    return (int)result;
 }

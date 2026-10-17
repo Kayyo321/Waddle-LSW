@@ -517,3 +517,13 @@ check. Sixteen admission tests pass, including an actual pool deterministic
 regression with a failing previous-code negative control. The first owned
 cross-build was interrupted and preserved; rerun with corrected patch bytes
 before deploying any new OpenCL DLL. No successful runtime credit yet.
+
+The OpenCL fixture now requires the approved private shutdown export, checks
+version rejection and Busy for each live context, retires global state before
+bootstrap stop, checks idempotence and terminal discovery rejection, and runs
+on a joined CRT worker whose DLLs remain mapped through TLS/FLS destruction.
+The parent unloads and verifies module absence before publishing success. A
+retirement delay beyond 5000 ms marks failure; unsafe retirement retains the
+process/modules for diagnosis. Strict cross-build passes; the unchanged exact
+kernel/buffer/event/error oracles still require actual execution with the new
+DLL. Cross-build log: opencl_shutdown_fixture_final.log.
