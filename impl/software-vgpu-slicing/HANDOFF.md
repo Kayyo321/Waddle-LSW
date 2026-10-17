@@ -407,3 +407,12 @@ and all prepared receivers retained. Correct/validate guard before fresh run;
 never alter a running frozen helper. Original60s audit handshake stays unchanged.
 TODO#3 remains90%, overall77.5%, Time Ended TBD. All history, VM, artifacts, old
 native PIDs4296/1404, known untracked files and README remain preserved.
+
+
+### 2026-10-17 implementation-to-verification handoff
+
+Production implementation by Claude Code is complete for this phase; verification,
+qualification and closure belong to Codex. See [CODEX_HANDOFF.md](CODEX_HANDOFF.md)
+for the exact state, OpenCL (TODO #5) implementation (unverified), remaining gaps,
+the DXVK heap evidence analysis, VM state and the tests still to write. TODO #3
+remains 90%, #5 is 40% (implemented, unverified), overall 85.5%, Time Ended TBD.
