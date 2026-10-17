@@ -450,3 +450,10 @@ Commit `fb22eee` added exact OpenCL supervisor session/retirement handling.
 This evidence documentation commit has #3/#5/#11 +0%, overall +0%; no closure,
 Time Ended or PR change. Identify it via `git log -1 --format='%H' --
 impl/software-vgpu-slicing/QUALIFICATION_2026_10_17.md`.
+
+The four persistent DXVK native handles are now traced to statically linked
+winpthreads foreign-thread registration during both DLLs' logger constructors.
+The C fixture transfers module owners to main and retires its complete calling
+thread before unloading those modules. IMPL_DESC.md records the exact RVAs,
+provenance and ordering. Cross-build passes; fresh native audits and affected
+normal/sanitizer/fault checks are required before acceptance.

@@ -1176,3 +1176,15 @@ Commit `fb22eee` added exact OpenCL supervisor session/retirement handling.
 This evidence documentation commit has #3/#5/#11 +0%, overall +0%; no closure,
 Time Ended or PR change. Identify it via `git log -1 --format='%H' --
 impl/software-vgpu-slicing/QUALIFICATION_2026_10_17.md`.
+
+### DXVK native handle ownership correction, 2026-10-17
+
+Creator stacks from the exact observed native PID show the persistent two
+thread/event pairs allocated by static winpthreads in DXVK's DLL-global logger
+initialization. The C fixture now runs each entire transaction on a joined CRT
+thread and retains every client/compiler/loader/bootstrap DLL until that
+thread's TLS/FLS teardown finishes. All original GPU/fault/module assertions
+remain; no baseline or threshold changes. Strict Windows cross-build passes.
+Identify the atomic fixture fix via `git log -1 --format='%H' --
+tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
++0%, Time Ended TBD. Prior failed audits remain preserved.

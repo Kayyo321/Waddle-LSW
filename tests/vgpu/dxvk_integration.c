@@ -243,17 +243,28 @@ static int absolute_file(const wchar_t *path, const wchar_t *basename) {
     return attributes != INVALID_FILE_ATTRIBUTES && !(attributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+/** @brief Main-owned module references transferred by the joined fixture worker.
+ * Initialize to zero; worker writes exclusively until join, then main releases
+ * every nonnull reference. No copy or concurrent access. SDK/thread TLS cleanup
+ * must finish while these modules remain loaded. fault_verified owns no memory.
+ */
+typedef struct module_owners_t {
+    HMODULE loader, dxgi, d3d11, bootstrap, compiler;
+    int fault_verified;
+} module_owners_t;
+
 /** @brief Run one real DXVK device/swapchain transaction on the selected ICD.
  * @param[in] argc Exactly eight. @param[in] argv Nonnull borrowed absolute paths:
  * executable, vulkan-1.dll, DXVK dxgi.dll, DXVK d3d11.dll, Waddle ICD manifest, bootstrap DLL, private config, fresh retirement receipt.
  * @return Zero after normal device/results/Present/teardown; one for normal
  * failure or completely verified optional postflush loss; two for invalid
  * prerequisites or failed loss verification. Supervisor requires stage markers.
- * @note Single main thread, optional joined submission-lock helper, and vendor
+ * @param[out] modules Nonnull zero-initialized main owner, borrowed until join.
+ * @note Single fixture worker, optional joined submission-lock helper, and vendor
  * threads. No fixture heap; modules outlive COM references and helper borrows.
  * Modules outlive COM objects; partial acquisition uses the same cleanup path.
  */
-static int run_dxvk_cycle(int argc, wchar_t **argv, int audit_enabled) {
+static int run_dxvk_work(int argc, wchar_t **argv, int audit_enabled, module_owners_t *modules) {
     char fault_text[16];DWORD fault_length=GetEnvironmentVariableA("WADDLE_DXVK_FAULT",fault_text,sizeof fault_text);
     int fault_case=fault_length!=0;
     if(fault_case&&(fault_length>=sizeof fault_text||strcmp(fault_text,"postflush")||audit_enabled))return 2;
@@ -450,24 +461,69 @@ cleanup:
         if(retirement!=RingOk && retained){if(!fault_verified)result=1;wait_retired(argv[7],retained);while(abandon(retained)!=RingOk)Sleep(10);}
         else if(retirement!=RingOk)result=1;
     }
-    if (d3d11 && !FreeLibrary(d3d11))
-        result = 1;
-    if (dxgi && !FreeLibrary(dxgi))
-        result = 1;
-    /* DXVK pipeline workers can receive compiler TLS initializers while the
-     * module is loaded. Retire those device/module owners before unloading
-     * the compiler, so their thread-exit destructors still have live code. */
-    if (compiler && !FreeLibrary(compiler))
-        result = 1;
-    if (loader && !FreeLibrary(loader))
-        result = 1;
-    if(bootstrap && !FreeLibrary(bootstrap))result=1;
-    if(GetModuleHandleW(argv[5]) || GetModuleHandleW(argv[1]) || GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[3]) || GetModuleHandleW(L"waddle_vulkan_experimental.dll"))result=1;
-    if (!result && fault_verified)
-        puts("DXVK actual device removal and owned native teardown verified after trusted retirement.");
-    else if (!result)
-        puts("DXVK real device, exact pixels/compute, swapchain Present and teardown succeeded on the selected ICD.");
+    /* Transfer module owners without unloading. The worker must exit normally
+     * with DLL TLS/FLS destructors still mapped before main releases them. */
+    modules->loader=loader;modules->dxgi=dxgi;modules->d3d11=d3d11;
+    modules->bootstrap=bootstrap;modules->compiler=compiler;
+    modules->fault_verified=fault_verified;
     return fault_case ? (fault_verified && !result ? 1 : 2) : result;
+}
+
+/** @brief Main-owned invocation borrowed exclusively by the worker until join. */
+typedef struct cycle_call_t {
+    int argc;
+    wchar_t **argv;
+    int audit_enabled;
+    int result;
+    module_owners_t modules;
+} cycle_call_t;
+
+/** @brief Run the complete window/COM/host transaction on one retiring thread.
+ * @param[in,out] opaque Nonnull borrowed cycle_call_t, owned by main until join.
+ * @return Zero; operation status and transferred modules live in the record.
+ * @note Normal CRT thread return invokes TLS/FLS cleanup while modules are live.
+ * No HWND, COM owner, borrowed callback, or running helper may escape this call.
+ */
+static unsigned __stdcall cycle_worker(void *opaque) {
+    cycle_call_t *call=opaque;
+    call->result=run_dxvk_work(call->argc,call->argv,call->audit_enabled,&call->modules);
+    return 0;
+}
+
+/** @brief Join all fixture-thread TLS owners before releasing their DLLs.
+ * @param[in] argc/argv Borrowed original arguments, stable until joined return.
+ * @param[in] audit_enabled Nonzero only inside the supervisor's audit stages.
+ * @return Original normal/fault status unless thread/module cleanup fails.
+ * @note Sole main caller. Owns/closes one CRT thread HANDLE and all transferred
+ * DLL references. Never frees borrowed vendor TLS or warms a handle baseline.
+ * A failed wait retains the record/modules and retries; no unjoined stack escape.
+ */
+static int run_dxvk_cycle(int argc,wchar_t **argv,int audit_enabled) {
+    cycle_call_t call={.argc=argc,.argv=argv,.audit_enabled=audit_enabled,.result=2};
+    HANDLE thread=(HANDLE)_beginthreadex(NULL,0,cycle_worker,&call,0,NULL);
+    if(!thread)return 1;
+    while(WaitForSingleObject(thread,INFINITE)!=WAIT_OBJECT_0)Sleep(10);
+    DWORD exit_code=1;int cleanup_failed=!GetExitCodeThread(thread,&exit_code)||exit_code!=0;
+    if(!CloseHandle(thread))cleanup_failed=1;
+    /* Device and helper threads already retired inside the worker. Compiler
+     * code remains mapped through both their exit and the fixture worker exit. */
+    HMODULE *owners[]={&call.modules.d3d11,&call.modules.dxgi,&call.modules.compiler,
+                       &call.modules.loader,&call.modules.bootstrap};
+    for(size_t i=0;i<sizeof owners/sizeof owners[0];i++){
+        if(*owners[i]){
+            if(!FreeLibrary(*owners[i]))cleanup_failed=1;
+            else *owners[i]=NULL;
+        }
+    }
+    if(argc==8 && (GetModuleHandleW(argv[5]) || GetModuleHandleW(argv[1]) ||
+       GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[3]) ||
+       GetModuleHandleW(L"waddle_vulkan_experimental.dll")))cleanup_failed=1;
+    if(cleanup_failed)return call.modules.fault_verified ? 2 : 1;
+    if(call.modules.fault_verified && call.result==1)
+        puts("DXVK actual device removal and owned native teardown verified after trusted retirement.");
+    else if(!call.result)
+        puts("DXVK real device, exact pixels/compute, swapchain Present and teardown succeeded on the selected ICD.");
+    return call.result;
 }
 
 #include "dxvk_heap_audit_windows.inc"

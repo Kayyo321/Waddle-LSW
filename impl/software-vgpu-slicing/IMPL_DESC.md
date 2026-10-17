@@ -6096,3 +6096,48 @@ retained session, have one link and no reparse/directory attributes. The fixture
 closes each transient file handle and retains DLL ownership until that exact
 external proof arrives; then abandon must succeed before modules unload. This
 failure cleanup always returns failure, never positive acceptance.
+
+### DXVK foreign-thread runtime retirement correction (2026-10-17)
+
+Fresh original-source audit `dxvk_heap_dea02b8aca67b7f1` reproduces native
+handle counts 201/205/209 after three lifetimes. Separate diagnostic-only
+`dxvk_heap_000dd3c104642f18` queries the exact owned PID/creation time from an
+elevated read-only inspector: medium-integrity self-queries return creation
+records with empty stacks on this OS; external queries return the creator
+frames. A CPU same-slot create/close/recreate control independently establishes
+newest-first record ordering; current live handles use their newest create
+record, never a recycled slot's older history. Four persistent per-lifetime
+handles resolve into the exact deployed DLLs: d3d11 RVA 0x1b38b6 (thread),
+0x1b383c (event), and dxgi RVA 0x129b16 (thread), 0x129a9c (event).
+`llvm-symbolizer-19 --relative-address` resolves these to statically linked
+winpthreads `__pthread_self_lite.part.0`, via `pthread_once`, `std::locale`,
+DXVK Logger's global constructor, `__do_global_ctors`, and DLL CRT startup.
+They belong to DLL runtime registration of the fixture's long-lived thread.
+System-only compiler and system-DXGI reproductions do not reproduce this
+four-handle-per-lifetime growth; no OS-cache exclusion is justified by them.
+
+The C fixture now creates one `_beginthreadex` worker per complete native
+lifetime. That worker alone loads modules, creates/destroys the HWND, owns all
+COM references, runs every original GPU/pixel/compute/Present/fault assertion,
+joins compiler/submission helpers, and stops or externally retires the exact
+bootstrap session. Its zero-initialized main-owned call record contains only
+immutable borrowed arguments, status, and five transferred DLL references.
+No HWND/COM/callback borrow escapes. On every partial-acquisition error the
+same cleanup releases operation owners and transfers every acquired module.
+
+The worker returns through the CRT while all DLLs remain loaded, allowing
+Windows thread TLS/FLS detach callbacks to release foreign-thread runtime
+owners normally. Main waits for thread termination before reading the record,
+checks the thread exit status, closes the thread HANDLE, then unloads D3D11,
+DXGI, compiler, loader and bootstrap in that order. It NULLs successfully
+released module references and still requires every project/client module to
+be absent. Only then does it publish the original positive teardown marker.
+The existing audit markers/cycle bounds, exact data assertions, 10-second GPU
+budget, trusted failure-retirement file protocol and return-code distinction
+for successful fault injection are unchanged. Main never invokes DXVK code or
+frees borrowed CRT/TLS memory. No heap baseline is increased, native handle
+assertion removed, dependency patched, or leak suppressed.
+
+Strict Windows cross-build passes; fresh native normal/sanitizer/fault/heap
+verification must establish whether this ordering actually clears the owners.
+The source change alone supplies no heap acceptance or feature progress.
