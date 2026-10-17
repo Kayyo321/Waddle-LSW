@@ -6219,3 +6219,13 @@ platform discovery. This preserves the server's existing 5000 ms idle-request
 deadline rather than spending that deadline on Windows DLL initialization.
 Failure before start owns only loaded modules; failure after start uses the same
 exact-session retirement handling. No deadline or result oracle changes.
+
+### OpenCL Windows retirement review
+
+[The source/native review and proposed correction](CLVK_LIFETIME_REVIEW.md)
+records the confirmed pinned clvk Windows global-state ownership gap. The
+private-copy patch is not applied pending the handoff's explicit approval rule.
+Adapter enumeration is bounded to 16 borrowed root devices and must select
+exactly one NVIDIA GPU matching the RTX 5080 identity, independent of order;
+CPU adapters may be enumerated but are never selected. No matching GPU or
+ambiguous matches fail closed. No deadline or result oracle is relaxed.

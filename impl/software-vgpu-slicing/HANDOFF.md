@@ -483,3 +483,20 @@ loader/OpenCL modules before bootstrap start and reports DLL load duration;
 platform discovery initializes clvk lazily. Existing idle deadline is unchanged.
 Cross-build passes (`build/qualification_20261017/opencl_startup_build.log`);
 fresh native execution remains required. No runtime/heap/concurrency credit.
+
+### Confirmed clvk Windows lifetime gap
+
+Native attempt `dxvk_gpu_005527db` reaches platform discovery and initializes
+three adapters, then fails the fixture's one-adapter assumption before kernels.
+The corrected fixture bounds enumeration and uniquely selects the actual NVIDIA
+GPU. The native failure also proves retained internal owners on DLL unload,
+consistent with the WIN32-excluded global-state destruction registration.
+See [the exact evidence/proposed patch scope](CLVK_LIFETIME_REVIEW.md). No
+upstream patch is applied before the explicit approval requested in the original
+handoff. The supervisor's forced exact-session cleanup is preserved as failure
+evidence and grants no runtime acceptance.
+
+The host rebooted during the interrupted review; all previous supervisors and
+VM processes ended. Existing disk/firmware/TPM files were retained, and the VM
+was restarted from these exact existing files with the prior QEMU configuration
+(no provisioning). Interrupted jobs do not count as completed verification.

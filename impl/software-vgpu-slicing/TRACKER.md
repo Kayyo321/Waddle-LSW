@@ -1227,3 +1227,17 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   idle deadline and all exact-result assertions. Strict Windows cross-build
   passes. Native OpenCL attempt `dxvk_gpu_17aa5f54` still failed before kernels,
   with RingTimeout; retained as failed evidence. #5 +0%, overall +0%.
+
+- **Commit `b758c9c`**: load/resolve OpenCL DLL before authenticated transport
+  start, preserving idle deadline; strict fixture cross-build passes. #5 +0%.
+- Native `dxvk_gpu_005527db`: platform discovery succeeds, three adapters are
+  initialized, no kernel executes because the fixture required one adapter.
+  Cleanup exposes 20 retained clvk-owned ICD objects; exact-session forced
+  cleanup is proved, never counted as normal retirement.
+- Adapter selection correction (identify via fixture history): bounded
+  enumeration and exactly one matching RTX 5080 GPU; reject CPU fallback and
+  ambiguous identity. Eleven build-admission tests and strict cross-build are
+  the portable gate; native rerun remains required. #5 +0%, overall +0%.
+- [Windows clvk retirement proposal](CLVK_LIFETIME_REVIEW.md) documents the
+  upstream defect and reviewable private-copy scope. No patch applied while
+  handoff-required explicit approval is pending. Time Ended remains TBD.

@@ -285,10 +285,35 @@ int wmain(int argc, wchar_t **argv)
     cl_int status = api.get_platform_ids(1, &platform, &count);
     printf("OpenCL platform discovery status=%d count=%u\n", (int)status, (unsigned)count); fflush(stdout);
     if (status != CL_SUCCESS || count != 1 || !platform) goto cleanup;
-    if (api.get_device_ids(platform, CL_DEVICE_TYPE_ALL, 1, &device, &count) != CL_SUCCESS || count != 1) goto cleanup;
+    /* A real host may expose several adapters. Select exactly one matching GPU
+     * without accepting a CPU renderer or depending on enumeration order. */
+    cl_device_id devices[16] = {NULL};
+    count = 0;
+    if (api.get_device_ids(platform, CL_DEVICE_TYPE_ALL, 0, NULL, &count) != CL_SUCCESS ||
+        !count || count > sizeof devices / sizeof devices[0]) goto cleanup;
+    cl_uint device_count = count;
+    if (api.get_device_ids(platform, CL_DEVICE_TYPE_ALL, device_count, devices, &count) != CL_SUCCESS ||
+        count != device_count) goto cleanup;
     char name[512] = {0};
     cl_device_type type = 0;
     cl_uint vendor = 0;
+    cl_uint matches = 0;
+    for (cl_uint i = 0; i < device_count; ++i) {
+        memset(name, 0, sizeof name);
+        if (!devices[i] ||
+            api.get_device_info(devices[i], CL_DEVICE_NAME, sizeof name, name, NULL) != CL_SUCCESS ||
+            api.get_device_info(devices[i], CL_DEVICE_TYPE, sizeof type, &type, NULL) != CL_SUCCESS ||
+            api.get_device_info(devices[i], CL_DEVICE_VENDOR_ID, sizeof vendor, &vendor, NULL) != CL_SUCCESS ||
+            !memchr(name, 0, sizeof name)) goto cleanup;
+        printf("OpenCL discovered adapter=%s vendor=%x type=%llu\n", name, vendor,
+               (unsigned long long)type); fflush(stdout);
+        if (strstr(name, "RTX 5080") && vendor == 0x10de &&
+            (type & CL_DEVICE_TYPE_GPU) && !(type & CL_DEVICE_TYPE_CPU)) {
+            device = devices[i];
+            ++matches;
+        }
+    }
+    if (matches != 1) goto cleanup;
     size_t group = 0;
     cl_ulong local_bytes = 0;
     if (api.get_device_info(device, CL_DEVICE_NAME, sizeof name, name, NULL) != CL_SUCCESS ||
