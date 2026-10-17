@@ -22,3 +22,7 @@
 [submodule "submodules/mesa"]
 	path = submodules/mesa
 	url = https://gitlab.freedesktop.org/mesa/mesa.git
+[submodule "submodules/clvk"]
+	path = submodules/clvk
+	url = https://github.com/kpet/clvk.git
+	shallow = true
