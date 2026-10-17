@@ -35,3 +35,13 @@ vgpu-opencl-pin:
 
 vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/OpenCL.def | build
 	python3 scripts/build_clvk_windows.py
+
+# Native execution requires a separately owned authenticated host receiver.
+.PHONY: vgpu-opencl-test vgpu-opencl-fixture
+vgpu-opencl-test:
+	python3 -B tests/vgpu/clvk_build.py
+
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_integration.c include/waddle/venus_tcp.h submodules/clvk/external/OpenCL-Headers/CL/cl.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/clvk/external/OpenCL-Headers $< -municode -o $@
+
+vgpu-opencl-fixture: build/vgpu_opencl_integration.exe

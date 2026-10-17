@@ -427,3 +427,9 @@ methods pass; source/build-cache evidence only. See the current tracker entry
 and implementation regression contract. OpenCL and DXVK physical/native heap
 qualification remain open; no completion or PR publication is authorized by
 these local results alone.
+
+The native OpenCL fixture now cross-links with `make vgpu-opencl-fixture`.
+Arguments and exact assertions are specified in IMPL_DESC.md; it resolves its
+OpenCL dispatch dynamically and selects only the advertised RTX 5080 GPU.
+Execution/heap/concurrent GPU evidence remains pending. Build-tool regressions
+are available as `make vgpu-opencl-test` (commit `7347352`).

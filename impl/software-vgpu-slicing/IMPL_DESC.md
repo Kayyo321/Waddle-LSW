@@ -6049,3 +6049,40 @@ must fail admission. TemporaryDirectory releases fixtures on success, assertion
 failure, or exception; no dependency checkout or artifact receipt is modified.
 These tests do not instrument third-party LLVM or establish kernel, heap, native
 Windows, concurrency, or physical GPU acceptance.
+
+### Native OpenCL fixture execution contract (2026-10-17)
+
+`make vgpu-opencl-fixture` cross-links `tests/vgpu/opencl_integration.c` with
+the pinned OpenCL declarations. Its five arguments are absolute existing Windows
+paths: Vulkan loader, OpenCL DLL, ICD manifest, bootstrap DLL, private config.
+It clears additive/legacy ICD paths and implicit layers, starts the existing
+authenticated bootstrap, loads the exact loader and OpenCL modules, then resolves
+its dispatch from that OpenCL module without a system OpenCL import library.
+No fallback platform/device is selected: exactly one device must identify NVIDIA
+(vendor 0x10de), RTX 5080, GPU type with no CPU bit. Physical adapter identity
+and host execution still require the independent receiver/driver receipt.
+
+The fixture requires a positive advertised maximum work-group no greater than
+65536 and enough advertised local memory for that many uints. Exceeding the
+fixture's storage bound fails rather than truncating or skipping the case. Eight
+contexts each own one in-order queue, two programs (valid/invalid), four kernels,
+three buffers, four events and one CPU allocation. Nonblocking writes preserve
+their CPU sources through completion; explicit event dependencies order vector
+addition and readback. All events must reach CL_COMPLETE. Buffer copy/map checks
+every word, writes zeros through the mapping, and enqueues unmap before atomics.
+A barrier kernel sums local IDs; atomic increments must equal the full group
+size; the largest-group kernel checks every `3*i+7` word. Each oracle is exact.
+An out-of-range read and incorrect memory-argument size require the specified
+OpenCL errors. Invalid source must return CL_BUILD_PROGRAM_FAILURE and a bounded,
+nonempty, NUL-terminated log. Nothing accepts mere discovery as a kernel pass.
+
+Each failure takes the same cleanup: unmap, finish queue, release events/kernels,
+buffers, programs, queue/context, free and NULL the CPU allocation. The queue
+finish precedes CPU-source deallocation. All release results affect the final
+status. Modules unload in OpenCL, natural bootstrap stop, loader, bootstrap
+order; module absence is checked. A failed bootstrap stop retains process and
+modules for external owner resolution, never fabricates retirement. The
+supervisor must impose its own deadline and prove exact host process retirement.
+The fixture itself does not establish native heap baselines, concurrent Linux
+work, transport-fault recovery, or whole-graph retirement. Those remain explicit
+qualification gates; this cross-build does not close any of them.

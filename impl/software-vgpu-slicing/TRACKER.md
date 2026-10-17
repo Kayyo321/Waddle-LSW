@@ -1149,3 +1149,11 @@ the ICD name tables. This audit was by source reading only; it is not runtime pr
   Evidence class: source pins/build cache only, no execution.
 - Task impact: TODO #5 +0%, #12 +0%, overall remains 85.5%; native kernel,
   lifetime/heap and simultaneous GPU gates remain open. Time Ended stays TBD.
+
+- **Commit `7347352`**: OpenCL build admission regression coverage.
+  **Task impact**: #5 +0%, #12 +0%, overall +0%. All ten test methods pass.
+- Native fixture checkpoint (identify via `git log -1 --format='%H' --
+  tests/vgpu/opencl_integration.c`): adds eight exact-context lifetimes, GPU-only
+  discovery, four kernel oracles, event/buffer operations and malformed/compile
+  error checks. Strict C11 Windows cross-link passes. **Task impact**: #5 +0%,
+  overall +0%; fixture execution, heap and concurrent Linux acceptance pending.
