@@ -34,3 +34,7 @@
 	path = submodules/clspv_spirv_headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers.git
 	shallow = true
+[submodule "submodules/clspv_spirv_tools"]
+	path = submodules/clspv_spirv_tools
+	url = https://github.com/KhronosGroup/SPIRV-Tools.git
+	shallow = true
