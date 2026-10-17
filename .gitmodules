@@ -26,3 +26,7 @@
 	path = submodules/clvk
 	url = https://github.com/kpet/clvk.git
 	shallow = true
+[submodule "submodules/llvm_project"]
+	path = submodules/llvm_project
+	url = https://github.com/llvm/llvm-project.git
+	shallow = true
