@@ -5865,3 +5865,140 @@ With robustness2 nullDescriptor enabled, vertex binding accepts a NULL buffer
 only at offset0 and sends native identity0. Mixed bindings retain only real
 buffer/allocation owners after native ACK. Disabled support or a nonzero NULL
 offset fails before transmission; loss preserves uncertainty for real owners.
+
+
+## Task #5 — OpenCL compute remoting (clvk + clspv over the guest Vulkan ICD)
+
+This section is the implementation contract for TODO #5. It supersedes the
+historical label "rusticocl over Venus" used in the original scope text above.
+Implementation status is tracked in TRACKER.md; nothing here claims runtime
+verification.
+
+### 5.1 Decision record and policy resolution
+
+- "rusticocl" is a historical project label. It does **not** authorize Rust. Mesa
+  Rusticl needs rustc and bindgen and is excluded by AGENTS.md (Rust and Go are
+  disallowed). No Rust or Go is added by this task, directly or in a build step.
+- Adopted route: **clvk**, a C++17 OpenCL runtime that implements OpenCL on
+  Vulkan compute, with its in-process **clspv** compiler (OpenCL C to Vulkan
+  SPIR-V, built on LLVM). The Windows artifact is clvk's own `OpenCL.dll`, loaded
+  by the application as the OpenCL implementation. It reaches the GPU only through
+  the Vulkan loader and the existing guest ICD; **no new wire message, ring record
+  or host receiver code is introduced for OpenCL.**
+- Language policy: all Waddle-authored code stays C/Zig/Python build glue. clvk,
+  clspv and LLVM are third-party C++ consumed as unmodified black boxes through
+  pinned submodules, the same posture as DXVK (C++) and Mesa. AGENTS.md section 1
+  item 4 restricts *Waddle-authored* C++ to vendor-SDK compatibility boundaries;
+  it permits third-party submodules (section 2.3). This is therefore not a policy
+  exception and needs no human exception. If an upstream defect ever forces a
+  downstream patch, it follows the DXVK precedent: a tracked patch under
+  `patches/clvk/` applied only to a private build copy, recorded in the receipt,
+  and requiring explicit human approval first. No such patch exists today.
+- Licensing audited: clvk Apache-2.0; clspv Apache-2.0; LLVM Apache-2.0 with LLVM
+  exceptions; SPIRV-Tools, SPIRV-Headers, OpenCL-Headers, SPIRV-LLVM-Translator
+  permissive Khronos/Apache/NCSA-style licenses. All are compatible with
+  Waddle-LSW. Each submodule keeps its LICENSE file in-tree.
+
+### 5.2 Pinned dependencies (all public HTTPS, immutable SHAs)
+
+| Submodule path | Upstream | Pin |
+|:--|:--|:--|
+| `submodules/clvk` | https://github.com/kpet/clvk.git | `8bd3672174764dce25ba220773e10baa752f0373` |
+| `submodules/clvk/external/clspv` | https://github.com/google/clspv.git | `7ee3a40e652b3649d175758f72d7af98b9450a68` (clvk gitlink) |
+| `submodules/clvk/external/OpenCL-Headers` | https://github.com/KhronosGroup/OpenCL-Headers.git | `386ca390b2f52efeb3e1a55a500690eb8013f60e` (clvk gitlink) |
+| `submodules/clvk/external/SPIRV-Headers` | https://github.com/KhronosGroup/SPIRV-Headers.git | `2b7475f6d664efbad4d4315c94ecec9640831e5b` (clvk gitlink) |
+| `submodules/clvk/external/SPIRV-Tools` | https://github.com/KhronosGroup/SPIRV-Tools.git | `ba9a9e32160e2500ce1e48cc563a8fedaf596e6e` (clvk gitlink) |
+| `submodules/clvk/external/SPIRV-LLVM-Translator` | https://github.com/KhronosGroup/SPIRV-LLVM-Translator.git | `c4a6b42303c6b45a64ede3d1c0399dce2d90f3fc` (clvk gitlink) |
+| `submodules/llvm_project` | https://github.com/llvm/llvm-project.git | `71a85ef89fc1997205104b72447e0dc2c4ad83da` (clspv `deps.json`) |
+| clspv-private SPIRV-Headers / SPIRV-Tools | same upstreams | `b824a462d4256d720bebb40e78b9eb8f78bbb305` / `fb7471844504abb16b732dc4fc0837119a32ec24` (clspv `deps.json`) |
+
+clspv's own `third_party/` checkout (normally produced by its
+`utils/fetch_sources.py`) is replaced by submodules so that no build step performs
+network access. The build driver (section 5.5) links the submodule checkouts into
+a private source copy at the exact paths clspv expects and verifies every pin
+before building.
+
+### 5.3 Architecture and interaction
+
+```
+OpenCL application (Windows guest)
+  -> OpenCL.dll            (clvk + clspv, unmodified, private build)
+  -> vulkan-1.dll          (pinned Khronos loader, existing build)
+  -> waddle_vulkan_experimental.dll   (guest ICD, existing)
+  -> Venus ring / authenticated TCP   (existing, unchanged wire)
+  -> host receiver + worker contexts  (existing, unchanged)
+  -> Linux Vulkan driver -> shared RTX 5080 (Linux keeps physical ownership)
+```
+
+Capability honesty: clvk enumerates Vulkan features and extensions at device
+initialization and *derives* its OpenCL capabilities (fp64, int64, 8/16-bit
+storage, subgroup, images) and clspv compile options from them. The OpenCL
+capability set is therefore the intersection of clvk's needs and what the guest
+ICD genuinely advertises, itself the intersection with the host. This task must
+not advertise a Vulkan feature to satisfy clvk that the ICD cannot execute.
+Any ICD change made for OpenCL is a genuine implementation of an already
+host-supported Vulkan feature, with its own sType allow-list entries.
+
+### 5.4 Ownership, lifetimes and teardown
+
+- clvk owns its `VkInstance`, `VkDevice`, queues, command pools, descriptor pools,
+  pipeline cache and every OpenCL object. The application owns OpenCL handles and
+  must release them in OpenCL order; clvk reference-counts them.
+- Device teardown: `VkDevice`/`VkInstance` destruction reaches the existing ICD
+  teardown, which already retires native allocations, fences and worker contexts.
+  Required teardown order for acceptance: release all OpenCL objects, `clReleaseDevice`/
+  context release, process unload of `OpenCL.dll` before `vulkan-1.dll` and the
+  bootstrap DLL. clvk may defer Vulkan teardown to a static destructor; whether this
+  is acceptable is an acceptance question (section 5.8), not assumed here.
+- clspv/LLVM allocate with the C++ heap and CRT of the mingw toolchain. The
+  Windows artifact links libgcc/libstdc++/winpthread statically so the guest
+  needs no extra runtime DLL. Native heap and handle baselines across repeated
+  lifetimes are an acceptance gate; sanitizers do not cover the third-party DLL.
+- No Waddle-owned allocation is introduced by this task (no Waddle C/Zig code
+  links into `OpenCL.dll`).
+
+### 5.5 Build contract (production tooling only)
+
+- `scripts/build_clvk_windows.py` (snake_case, documented) builds `OpenCL.dll`
+  from the pinned submodules with the repository MinGW-w64 toolchain, with
+  Ninja, Release, no Rust, offline (all sources are submodules). Native LLVM
+  TableGen tools are built first in a private native build directory.
+- Output: `build/clvk_client.json` receipt (pins, tool versions, cmake settings,
+  driver hash, DLL hashes and import list), published atomically under a process
+  lock, and the DLL in a fresh private directory; previous builds are preserved.
+- `make vgpu-opencl-pin` verifies pins (`scripts/verify_clvk.sh`);
+  `make vgpu-opencl-build` runs the driver. Neither is part of the default
+  `vgpu-windows` aggregate because the LLVM build is long; CI wiring is a
+  separate decision recorded in TRACKER.md.
+- Cross-compilation is not execution. A built DLL is not evidence of OpenCL
+  behavior.
+
+### 5.6 Required guest ICD surface (source-audited; execution unverified)
+
+clvk's Vulkan usage was statically audited against the guest ICD entry-point
+and sType allow-lists (results recorded in TRACKER.md under TODO #5). Any
+missing entry point or rejected sType that clvk calls unconditionally is
+implemented in the ICD in the same pattern as existing forwarded commands
+(bounded private staging, validation before reservation, ownership published
+only after ACK). The audit is static; whether the full path works is an
+acceptance fact.
+
+### 5.7 Error handling
+
+- Unsupported OpenCL features report the standard OpenCL error (for example
+  `CL_DEVICE_NOT_FOUND` when no conforming Vulkan device exists,
+  `CL_BUILD_PROGRAM_FAILURE` with the clspv log for kernel compile errors).
+- Transport loss or device loss in the Vulkan layer surfaces through clvk as an
+  OpenCL error or process failure; the existing ICD loss-preservation rules (no
+  release of uncertain native owners) apply unchanged.
+
+### 5.8 Verification criteria (owned by the verification worker)
+
+Not performed by the implementation author. Required: real Windows guest
+OpenCL kernel execution on the shared RTX 5080 with exact result comparison
+(integer vector add, local-memory reduction with barrier, atomics, a kernel
+using the largest supported work-group, a deliberate compile error with log);
+repeated create/execute/release lifetimes with natural whole-graph retirement;
+native heap/handle baseline across lifetimes; concurrent Linux GPU work;
+mock, cross-build, real-Windows and physical-GPU results kept separate; a
+`clinfo`-style discovery run alone does not count.
