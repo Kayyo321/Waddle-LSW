@@ -14,7 +14,7 @@
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Integrated implementation and real rendering/compute/presentation/loss teardown pass; whole-production coverage90.07%branch/98.50%line verified at37df8b4. NULL vertex behavior implemented. Approved repository-wide DXVK cleanup build passes at094c34c; current ICD sanitizers and12-case Windows GPU matrix/full48 WSI verified; final compiler-lifetime DXVK normal/SAN/fault and native heap acceptance pending |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Contract, pinned dependencies (#12) and the patch-free MinGW cross-build driver are implemented; OpenCL.dll cross-built (121 exports; imports only vulkan-1.dll and Windows system DLLs) but NEVER executed. No ICD change was found necessary by static audit. Real Windows kernel execution on the shared RTX 5080, lifetimes, heap and concurrent-Linux acceptance remain pending (60%) |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Contract, pinned dependencies (#12) and the patch-free MinGW cross-build driver are implemented; OpenCL.dll cross-built (121 exports; imports only vulkan-1.dll and Windows system DLLs) but NEVER executed. Native launch exposed rejection of loader-owned debug creation records; the guest ICD correction is under verification. Real Windows kernel execution on the shared RTX 5080, lifetimes, heap and concurrent-Linux acceptance remain pending (60%) |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -1206,3 +1206,13 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   Pass the complete conversion count and public path bound; strict cross-build
   passes. Earlier prepared native inputs are retained as superseded/unexecuted.
   #5 +0%, overall +0%; no runtime acceptance claim.
+
+- **Commit `33904ca`**: correct OpenCL fixture path ABI before execution;
+  strict cross-link and subsequent thirteen-case TCP wire/sanitizer/coverage
+  gate pass (97.42% branches, 99.20% lines). #5 +0%, overall +0%.
+- Native OpenCL attempt `dxvk_gpu_14ce8bed`: fails before VkInstance/device or
+  kernels; exact authenticated host graph is empty after failure. Loader-owned
+  debug pNext records were rejected by the ICD. No OpenCL runtime credit.
+- The pending ICD correction admits only the pinned loader's consumed debug
+  record headers, with C ABI/generated-packet and malformed/reservation stress
+  regressions. #3/#5 +0%, overall +0% until all affected checks pass.

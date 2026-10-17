@@ -646,14 +646,22 @@ fn create_instance(
     var instance: [*c]c.venus_object_t = null;
     if (c.venus_objects_reserve(&objects, c.VK_OBJECT_TYPE_INSTANCE, 0, 1, &instance) != c.RingOk)
         return c.VK_ERROR_OUT_OF_HOST_MEMORY;
-    // The loader supplies private link/callback records in the instance chain.
-    // Strip only its known ABI tag; application extension chains remain unsupported.
+    // The pinned loader owns instance debug callbacks and passes their creation
+    // records alongside its private links. Strip only those consumed records;
+    // no callback address/user data crosses the host wire or survives this call.
     var native_info = info.*;
     var next = native_info.pNext;
     var links: usize = 0;
     while (next != null) {
+        if (links == 32 or @intFromPtr(next.?) % @alignOf(c.VkBaseInStructure) != 0) {
+            _ = c.venus_objects_release(&objects, instance.*.handle, c.VK_OBJECT_TYPE_INSTANCE, 1);
+            return c.VK_ERROR_INITIALIZATION_FAILED;
+        }
         const link: *const c.VkBaseInStructure = @ptrCast(@alignCast(next.?));
-        if (links == 32 or link.sType != c.VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO) {
+        if (link.sType != c.VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO and
+            link.sType != c.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT and
+            link.sType != c.VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT)
+        {
             _ = c.venus_objects_release(&objects, instance.*.handle, c.VK_OBJECT_TYPE_INSTANCE, 1);
             return c.VK_ERROR_INITIALIZATION_FAILED;
         }

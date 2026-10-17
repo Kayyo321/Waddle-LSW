@@ -6171,3 +6171,40 @@ fixture subtraction of the NUL byte. The earlier prepared native folder
 `dxvk_gpu_869aaa04` is preserved and explicitly superseded without execution.
 Existing TCP path regressions reject missing-NUL and every truncated extent;
 fresh native acceptance must use the corrected fixture binary.
+
+### Loader-owned debug records during instance creation (2026-10-17)
+
+The first native clvk launch (`dxvk_gpu_14ce8bed`) fails before device/kernel
+creation: loader diagnostics report guest `vkCreateInstance` returning
+VK_ERROR_INITIALIZATION_FAILED, followed by clvk's incompatible-driver fatal
+exit. Its authenticated host session retires completely, but this is failed
+OpenCL evidence. Source audit establishes clvk always chains a debug-utils
+messenger (or debug-report callback) when the pinned loader advertises it.
+Pinned loader `loader/trampoline.c` creates temporary callbacks from the chain;
+`loader/debug_utils.c` owns them and conditionally forwards debug operations
+only when an ICD implements those optional entry points. The loader passes
+the creation chain onward. The ICD previously rejected every tag except the
+loader-private instance link, contradicting this supported loader path.
+
+The Zig ICD now strips exactly three local record tags before encoding: loader
+instance links, debug-utils messenger creation, and debug-report callback
+creation. It reads only each record's common header; never reads, invokes,
+serializes, allocates for, or retains a callback/user-data pointer. No instance
+extension advertisement, debug dispatch, device feature, host protocol, or wire
+format changes. Loader-owned callback behavior remains in the loader. All other
+application chain tags still fail. A maximum of 32 aligned headers is accepted;
+33 nodes, cycles, unknown tags and misaligned nodes return initialization failure
+with null output, release the provisional object reservation, and submit no
+host work. Failure after reservation keeps the existing rollback path.
+
+`loader_instance_chain_contract` runs inside the existing real C ABI fixture in
+all aggregate modes. It creates/destroys 1..32 mixed chains, verifies immutable
+caller records and an untouched callback counter, and compares every successful
+packet against the independent pinned generated core-instance serializer after
+removing the existing 36-byte transport prefix. It rejects each malformed shape
+before any backend submission, repeats 4097 overlong chains (beyond the maximum
+registry capacity), then requires successful creation/destruction to prove
+reservation recovery. Full current unit/sanitizer/allocator/coverage, Windows
+cross/native, OpenCL and affected hardware reruns are required for this change.
+Previously prepared unexecuted matrix inputs bind the older ICD and cannot be
+used to qualify this source.

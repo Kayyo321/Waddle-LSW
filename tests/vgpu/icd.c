@@ -2,6 +2,7 @@
  */
 #include "vn_cs.h"
 #include "waddle/venus_icd.h"
+#include "waddle/venus_objects.h"
 #include "shaders/compute_shader.h"
 #include "shaders/triangle_vertex_shader.h"
 #include "shaders/triangle_fragment_shader.h"
@@ -26,6 +27,7 @@
 #include "vn_protocol_driver_fence.h"
 #include "vn_protocol_driver_semaphore.h"
 #include "vn_protocol_driver_queue.h"
+#include "vn_protocol_driver_instance.h"
 #pragma GCC diagnostic pop
 #include <assert.h>
 #include <stdio.h>
@@ -105,6 +107,7 @@ extern PFN_vkVoidFunction lookup_external(VkInstance instance,
 typedef struct fixture_t {
     unsigned char reply[4096];
     uint32_t submissions;
+    int verify_instance_packet; /**< Require independent core-only instance bytes. */
     uint32_t feature_queries;
     uint32_t enumerations;
     uint32_t command;
@@ -273,6 +276,14 @@ static venus_ring_status_t exchange(void *context, const venus_request_t *reques
         memset(fixture->reply, 0, sizeof(fixture->reply));
         put_u32(fixture->reply, fixture->command);
         if (fixture->command == 0) {
+            if (fixture->verify_instance_packet) {
+                unsigned char expected[4096];
+                struct instance_encoder_t encoder = {.bytes = expected, .capacity = sizeof expected};
+                VkInstanceCreateInfo core = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
+                VkInstance instance = (VkInstance)(uintptr_t)read_u64((const unsigned char *)input + length - 8);
+                vn_encode_vkCreateInstance(&encoder, 1, &core, NULL, &instance);
+                assert(encoder.used == length - 36 && !memcmp(expected, bytes, encoder.used));
+            }
             put_u32(fixture->reply + 4, (uint32_t)fixture->create_result);
             put_u64(fixture->reply + 8, 1);
             put_u64(fixture->reply + 16, read_u64((const unsigned char *)input + length - 8));
@@ -5897,6 +5908,92 @@ static void version_contract(void) {
     venus_icd_abandon();
   }
 }
+/** @brief Detect an ICD improperly invoking a loader-owned debug callback.
+ * @param[in] severity/types/data Borrowed SDK diagnostic inputs, unused.
+ * @param[in,out] context Nonnull caller-owned counter, live through destruction.
+ * @return VK_FALSE. Serial fixture; counter must remain zero for direct ICD use.
+ */
+static VKAPI_ATTR VkBool32 VKAPI_CALL instance_debug_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT types,
+    const VkDebugUtilsMessengerCallbackDataEXT *data, void *context) {
+    (void)severity; (void)types; (void)data;
+    ++*(unsigned *)context;
+    return VK_FALSE;
+}
+
+/** @brief Native storage for complete loader/debug creation records.
+ * Caller owns the array and all links until synchronous instance creation ends.
+ * No field or callback may be retained by the ICD or encoded for the receiver.
+ */
+typedef union instance_chain_node_t {
+    VkBaseInStructure header;
+    VkDebugUtilsMessengerCreateInfoEXT utils;
+    VkDebugReportCallbackCreateInfoEXT report;
+} instance_chain_node_t;
+
+/** @brief Reproduce clvk's loader-consumed instance chain without a GPU.
+ * @note Serial fixture owns all records/callback context and fake backend.
+ * Verifies exact generated core packet bytes, immutable borrowed records,
+ * 1..32 mixed nodes, cycles/33 nodes/unknown/misaligned rejection before submit,
+ * and failed-reservation rollback beyond the entire object-registry ceiling.
+ */
+static void loader_instance_chain_contract(void) {
+    assert(venus_icd_unbind() == RingOk);
+    fixture_t fixture = fresh();
+    fixture.verify_instance_packet = 1;
+    assert(venus_icd_bind(exchange, &fixture) == RingOk);
+    unsigned callbacks = 0;
+    instance_chain_node_t nodes[33] = {0}, saved[33];
+    for (unsigned i = 0; i < 33; ++i) {
+        if (i % 3 == 0)
+            nodes[i].header.sType = VK_STRUCTURE_TYPE_LOADER_INSTANCE_CREATE_INFO;
+        else if (i % 3 == 1)
+            nodes[i].utils = (VkDebugUtilsMessengerCreateInfoEXT){
+                .sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
+                .pfnUserCallback = instance_debug_callback, .pUserData = &callbacks};
+        else
+            nodes[i].report = (VkDebugReportCallbackCreateInfoEXT){
+                .sType = VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT,
+                .pUserData = &callbacks};
+        nodes[i].header.pNext = i < 32 ? &nodes[i + 1].header : NULL;
+    }
+    VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+                                .pNext = &nodes[0]};
+    for (unsigned count = 1; count <= 32; ++count) {
+        nodes[count - 1].header.pNext = NULL;
+        memcpy(saved, nodes, sizeof nodes);
+        VkInstance instance = NULL;
+        unsigned before = fixture.submissions;
+        assert(create_function()(&info, NULL, &instance) == VK_SUCCESS && instance);
+        destroy(instance);
+        assert(fixture.submissions == before + 2 && !callbacks);
+        assert(!memcmp(saved, nodes, sizeof nodes));
+        nodes[count - 1].header.pNext = &nodes[count].header;
+    }
+    unsigned before = fixture.submissions;
+    /* Full 33-node chain: failed creates cannot consume even one object slot. */
+    for (unsigned attempt = 0; attempt <= VenusObjectsMaxCapacity; ++attempt) {
+        VkInstance instance = (VkInstance)(uintptr_t)1;
+        assert(create_function()(&info, NULL, &instance) == VK_ERROR_INITIALIZATION_FAILED);
+        assert(!instance && fixture.submissions == before);
+    }
+    nodes[0].header.pNext = &nodes[0].header;
+    VkInstance instance = (VkInstance)(uintptr_t)1;
+    assert(create_function()(&info, NULL, &instance) == VK_ERROR_INITIALIZATION_FAILED && !instance);
+    nodes[0].header.pNext = NULL;
+    nodes[0].header.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    assert(create_function()(&info, NULL, &instance) == VK_ERROR_INITIALIZATION_FAILED && !instance);
+    _Alignas(VkBaseInStructure) unsigned char misaligned[sizeof(VkBaseInStructure) + 1] = {0};
+    info.pNext = misaligned + 1;
+    assert(create_function()(&info, NULL, &instance) == VK_ERROR_INITIALIZATION_FAILED && !instance);
+    assert(fixture.submissions == before && !callbacks);
+    info.pNext = NULL;
+    assert(create_function()(&info, NULL, &instance) == VK_SUCCESS && instance);
+    destroy(instance);
+    assert(fixture.submissions == before + 2);
+    assert(venus_icd_unbind() == RingOk);
+}
+
 static void failures(void) {
     VkInstanceCreateInfo info = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     VkInstance instance = (VkInstance)(uintptr_t)1;
@@ -6489,6 +6586,7 @@ int main(void) {
     idle_concurrency_contract();
     device_failures();
     failures();
+    loader_instance_chain_contract();
     version_contract();
     buffer_contract();
     image_contract();

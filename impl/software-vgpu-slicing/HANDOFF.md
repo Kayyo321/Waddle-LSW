@@ -467,3 +467,10 @@ Pre-execution review corrected the OpenCL fixture bootstrap path byte count to
 include NUL and use the public bounded path capacity. Do not run the earlier
 prepared `dxvk_gpu_869aaa04` fixture: its inputs remain preserved with an explicit
 superseded/unexecuted note. Prepare a fresh run from the corrected executable.
+
+First genuine OpenCL attempt `dxvk_gpu_14ce8bed` fails before instance creation.
+The loader's debug callback creation chain is rejected by the guest ICD; the
+Zig correction and bounded C ABI regressions are now under verification. This
+changes the ICD source: earlier native/physical receipts are historical, and
+prepared unexecuted old-ICD matrix folders cannot qualify the corrected source.
+Host retirement after the failed OpenCL attempt was independently proved empty.
