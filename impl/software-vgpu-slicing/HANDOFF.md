@@ -532,3 +532,11 @@ The current qualification ledger now distinguishes original failed audits,
 joined-thread handle stability, independently reproduced Windows MSCTF state,
 current-ICD physical DXVK sanitizer/fault passes and pending fresh heap/OpenCL
 execution. See QUALIFICATION_2026_10_17.md; feature remains 85.5%, Time Ended TBD.
+
+Fresh audit `dxvk_heap_56dca3b969766ebc` is FAILED/incomplete after its first
+exact GPU lifetime; native exit 1 before cycle two, with no timeout message.
+Baseline and first unload captures, exact process identities, journals and
+signed-tool checks are retained; original absent per-image UST key is restored.
+Do not count its 185 first-unload handles as a multi-life pass. Native fixture
+now logs acknowledgement metadata/open/close rejection and thread-creation
+errors to diagnose a fresh run, without changing checks/deadlines.

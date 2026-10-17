@@ -501,7 +501,9 @@ static unsigned __stdcall cycle_worker(void *opaque) {
 static int run_dxvk_cycle(int argc,wchar_t **argv,int audit_enabled) {
     cycle_call_t call={.argc=argc,.argv=argv,.audit_enabled=audit_enabled,.result=2};
     HANDLE thread=(HANDLE)_beginthreadex(NULL,0,cycle_worker,&call,0,NULL);
-    if(!thread)return 1;
+    if(!thread){
+        fprintf(stderr,"DXVK caller thread creation failed: %lu\n",(unsigned long)GetLastError());return 1;
+    }
     while(WaitForSingleObject(thread,INFINITE)!=WAIT_OBJECT_0)Sleep(10);
     DWORD exit_code=1;int cleanup_failed=!GetExitCodeThread(thread,&exit_code)||exit_code!=0;
     if(!CloseHandle(thread))cleanup_failed=1;

@@ -1278,3 +1278,12 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   corrected-ICD DXVK sanitized positive, normal postflush and sanitized postflush
   runs pass with exact session/process retirement proof. All feature percentages
   remain unchanged pending final native heap/OpenCL/physical acceptance.
+
+- **Commit `63a99ff`**: reconcile current safety and native evidence; no task
+  percentage or Time Ended change.
+- Heap diagnostic checkpoint (identify through fixture history): fresh audit
+  `dxvk_heap_56dca3b969766ebc` stops after one successful GPU lifetime and first
+  capture acknowledgement; no heap acceptance. Add exact native rejection/thread
+  error diagnostics, preserving all checks and deadlines. Strict Windows fixture
+  build passes. Signed tools before/after verify; per-image UST restored absent.
+  #3/#11 +0%, overall +0%.

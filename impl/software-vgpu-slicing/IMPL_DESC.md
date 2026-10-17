@@ -6271,3 +6271,14 @@ repeated (idempotent) and a new platform probe must return CL_INVALID_PLATFORM.
 Only then may bootstrap stop; failed host stop still needs exact external
 retirement proof before abandon. Success is published after worker join and
 complete module absence, not before.
+
+### Native heap handshake diagnostics
+
+Capture acknowledgements retain the same exact regular-file, one-link, bounded
+length/content checks and 60-second deadline. On rejection the fixture now logs
+open/close error or observed metadata/count fields and stage. Thread creation
+failure also logs the Windows error. This changes only diagnostic visibility;
+no failure is accepted or silently retried. The fresh current-ICD audit stopped
+after one exact successful GPU lifetime; its incomplete capture cannot qualify
+heap stability. All artifacts and the restored originally absent image UST key
+remain preserved.

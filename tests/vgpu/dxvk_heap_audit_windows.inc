@@ -32,7 +32,9 @@ static int audit_stage(const wchar_t *directory,const char *stage)
     if(!MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,stage,-1,wide_stage,64))return 1;
     if(swprintf(ready,1024,L"%ls\\%ls.ready",directory,wide_stage)<0 ||
        swprintf(ack,1024,L"%ls\\%ls.continue",directory,wide_stage)<0)return 1;
-    if(GetFileAttributesW(ack)!=INVALID_FILE_ATTRIBUTES)return 1;
+    if(GetFileAttributesW(ack)!=INVALID_FILE_ATTRIBUTES){
+        fprintf(stderr,"Native heap stage %s acknowledgement already exists\n",stage);return 1;
+    }
     FILETIME created,exited,kernel,user;DWORD handles=0;
     if(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user) ||
        !GetProcessHandleCount(GetCurrentProcess(),&handles))return 1;
@@ -58,10 +60,22 @@ static int audit_stage(const wchar_t *directory,const char *stage)
                 !(information.dwFileAttributes&(FILE_ATTRIBUTE_REPARSE_POINT|FILE_ATTRIBUTE_DIRECTORY)) &&
                 information.nNumberOfLinks==1 && !information.nFileSizeHigh && information.nFileSizeLow==(DWORD)length &&
                 ReadFile(file,actual,sizeof actual,&count,NULL) && count==(DWORD)length && !memcmp(actual,expected,(size_t)length);
-            if(!CloseHandle(file))return 1;
+            if(!CloseHandle(file)){
+                fprintf(stderr,"Native heap stage %s acknowledgement close failed: %lu\n",stage,
+                    (unsigned long)GetLastError());return 1;
+            }
+            if(!match)fprintf(stderr,
+                "Native heap stage %s acknowledgement mismatch: links=%lu attributes=%lu size=%lu:%lu read=%lu expected=%d\n",
+                stage,(unsigned long)information.nNumberOfLinks,(unsigned long)information.dwFileAttributes,
+                (unsigned long)information.nFileSizeHigh,(unsigned long)information.nFileSizeLow,
+                (unsigned long)count,length);
             return match ? 0 : 1;
         }
-        if(GetLastError()!=ERROR_FILE_NOT_FOUND)return 1;
+        DWORD error=GetLastError();
+        if(error!=ERROR_FILE_NOT_FOUND){
+            fprintf(stderr,"Native heap stage %s acknowledgement open failed: %lu\n",stage,(unsigned long)error);
+            return 1;
+        }
         Sleep(10);
     }while(GetTickCount64()-started<60000);
     fputs("Native heap stage acknowledgement timed out.\n",stderr);return 1;
