@@ -25,3 +25,13 @@ vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan
 	test -s build/vendor/vulkan_loader_win64/loader/vulkan-1.dll
 	x86_64-w64-mingw32-objdump -f build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'file format pei-x86-64'
 	x86_64-w64-mingw32-objdump -p build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'DLL Name:'
+
+# OpenCL (TODO #5): pinned clvk + clspv/LLVM cross-built for Windows. Not part of the
+# default vgpu-windows aggregate because the LLVM build is long; cross-compilation is
+# not execution. Submodules: clvk (nested), llvm_project, clspv_spirv_{headers,tools}.
+.PHONY: vgpu-opencl-pin vgpu-opencl-build
+vgpu-opencl-pin:
+	sh scripts/verify_clvk.sh
+
+vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/OpenCL.def | build
+	python3 scripts/build_clvk_windows.py
