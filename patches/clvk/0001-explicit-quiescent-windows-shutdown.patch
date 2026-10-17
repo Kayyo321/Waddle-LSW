@@ -57,11 +57,10 @@
          unsigned int refcount = m_refcount.fetch_add(1);
 --- a/src/queue.hpp
 +++ b/src/queue.hpp
-@@ -305,6 +305,19 @@
- };
+@@ -306,6 +306,19 @@
  
  struct cvk_executor_thread_pool {
-+
+ 
 +    /** Nonmutating preflight after all counted API owners have retired.
 +     * Locks pool then each idle candidate. No executor can return a queue here:
 +     * any such queue still contributes to the live-object count checked first. */
@@ -74,9 +73,24 @@
 +        }
 +        return true;
 +    }
- 
++
      ~cvk_executor_thread_pool() {
          // Shutdown all executors
+         for (auto& exec_state : m_executors) {
+@@ -322,11 +335,12 @@
+         // Try to find a free executor
+         for (auto& exec_state : m_executors) {
+             if (exec_state.second == executor_state::free) {
+-                exec_state.second = executor_state::bound;
+                 auto exec = exec_state.first;
+                 if (!exec->is_idle()) {
+                     continue;
+                 }
++                // Commit ownership only after the idle candidate is usable.
++                exec_state.second = executor_state::bound;
+                 return exec;
+             }
+         }
 --- a/src/init.cpp
 +++ b/src/init.cpp
 @@ -323,7 +323,10 @@

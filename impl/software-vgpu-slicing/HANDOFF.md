@@ -510,3 +510,10 @@ Fifteen build-admission tests pass, including actual patched refcounted owners
 under ASan/LSan/UBSan and threaded stress. Windows cross-build and native
 shutdown/kernels/heap/concurrent-GPU execution remain unverified; do not reuse
 the original unpatched OpenCL cache as acceptance for this correction.
+
+Independent Luna review found `get_executor` could strand a skipped nonidle
+executor as bound. The private patch now commits binding only after the idle
+check. Sixteen admission tests pass, including an actual pool deterministic
+regression with a failing previous-code negative control. The first owned
+cross-build was interrupted and preserved; rerun with corrected patch bytes
+before deploying any new OpenCL DLL. No successful runtime credit yet.

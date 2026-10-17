@@ -108,6 +108,24 @@ class private_patch_tests_t(unittest.TestCase):
             self.assertEqual(before, Driver.digest(source / 'src/objects.hpp'))
             self.assertFalse((source / 'src/waddle_lifetime.hpp').exists())
 
+    def test_actual_pool_retirement_interleaving(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source_copy(directory)
+            Driver.apply_private_patches(Root, source)
+            text = (source / 'src/queue.hpp').read_text()
+            begin = text.index('struct cvk_executor_thread_pool {')
+            end = text.index('struct cvk_command_buffer {', begin)
+            pool = text[begin:end]
+            self.assertIn('bool waddle_quiescent()', pool)
+            (Path(directory) / 'clvk_pool_under_test.hpp').write_text(pool)
+            binary = Path(directory) / 'pool'
+            command = ['g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-g', '-O1',
+                       '-fsanitize=address,leak,undefined', '-fno-omit-frame-pointer', '-pthread',
+                       '-I', directory, str(Root / 'tests/vgpu/clvk_pool_lifetime.cpp'), '-o', str(binary)]
+            subprocess.run(command, check=True, timeout=120)
+            subprocess.run([str(binary)], check=True, timeout=30,
+                           env=dict(os.environ, ASAN_OPTIONS='detect_leaks=1:abort_on_error=1:halt_on_error=1'))
+
     def test_actual_owner_accounting_sanitized(self):
         with tempfile.TemporaryDirectory() as directory:
             source = self.source_copy(directory)

@@ -1251,3 +1251,12 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   under ASan/LSan/UBSan and 16,000 threaded lifetimes. Cross-build, actual shutdown,
   kernels, heaps and concurrent GPU work remain required. #5/#12 +0%, overall
   +0%; Time Ended remains TBD.
+
+- **Commit `b4481b9`**: approved private-copy terminal retirement and versioned
+  export/cache contract; fifteen admission/actual owner stress tests pass.
+  Independent review then finds an upstream executor selection state bug.
+- Pool correction (identify through patch history): mark candidate bound only
+  after idle admission; preserve strict shutdown checks. Actual pool regression
+  fails the earlier implementation and passes the correction with sanitizers;
+  sixteen admission tests pass. Owned superseded cross-build was interrupted
+  and preserved without publishing a new DLL receipt. #5 +0%, overall +0%.

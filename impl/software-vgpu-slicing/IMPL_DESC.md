@@ -6244,3 +6244,12 @@ compiler functions remain unchanged. This private embedding contract requires
 quiescent application callers and invalidates borrowed root IDs after success.
 Patch bytes, exact export list and public ABI hash participate in the build
 cache key and post-build revalidation; private exports use an exact allowlist.
+
+The private clvk patch also fixes executor selection's ownership transition:
+`free` becomes `bound` only after `is_idle` succeeds. A candidate still unwinding
+a retired queue stays available for later selection when skipped. The strict
+shutdown predicate continues requiring every entry free and idle. A regression
+compiles the exact patched pool with an executor-state double and reproduces
+the queue-return/skip/reuse sequence; the old ordering fails and corrected
+ordering passes with sanitizers. This is a portable pool-state test, not GPU
+or real executor execution evidence.

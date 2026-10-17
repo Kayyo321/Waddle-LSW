@@ -101,3 +101,21 @@ submodule-write rejection, unexpected PE export rejection, and actual patched
 refcount owners under ASan/LSan/UBSan with 16,000 threaded owner lifetimes. This
 portable vendor-boundary test uses a logging double; it is not native GPU or
 shutdown execution evidence.
+
+## Pool selection correction found during independent review
+
+The existing `get_executor` marked a free candidate bound before testing idle.
+An executor can be returned while its last command group is still unwinding;
+if another queue skipped it in that interval, its map state stayed bound with
+no queue owner. This could make the strict shutdown preflight busy forever.
+The private patch now changes the state only after a usable idle candidate is
+found. All free/idle shutdown assertions remain in force. The exact patched
+pool is compiled with a controlled executor boundary; a deterministic sequence
+returns an executor before it is idle, forces a skip, then verifies reuse and
+strict final quiescence. The previous private-copy implementation fails that
+regression at `reused == first` (SIGABRT); the correction passes under
+ASan/LSan/UBSan. Sixteen admission tests now pass.
+
+The owned first cross-build was interrupted after this source defect was found;
+its log and partial tree remain preserved, and it published no new receipt. A
+fresh build with the corrected patch is required. No other process was stopped.
