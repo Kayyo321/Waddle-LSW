@@ -15,6 +15,7 @@
 #include <wchar.h>
 #include "waddle/venus_tcp.h"
 #include "waddle/clvk.h"
+#include "loader_environment_windows.h"
 
 /** @brief External SDK functions borrowed from the loaded OpenCL module. */
 #define ApiEntries(M) \
@@ -477,10 +478,6 @@ static unsigned __stdcall run_native_work(void *opaque)
     for (int i = 1; i < 6; ++i)
         if (wcslen(argv[i]) < 3 || argv[i][1] != L':' || argv[i][2] != L'\\' ||
             GetFileAttributesW(argv[i]) == INVALID_FILE_ATTRIBUTES) return 2;
-    if (!SetEnvironmentVariableW(L"VK_DRIVER_FILES", argv[3]) ||
-        !SetEnvironmentVariableW(L"VK_ICD_FILENAMES", NULL) ||
-        !SetEnvironmentVariableW(L"VK_ADD_DRIVER_FILES", NULL) ||
-        !SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~all~")) return 2;
     if (wcslen(argv[6]) < 3 || argv[6][1] != L':' || argv[6][2] != L'\\' ||
         GetFileAttributesW(argv[6]) != INVALID_FILE_ATTRIBUTES) return 2;
     int result = 1;
@@ -634,17 +631,66 @@ cleanup:
     return (unsigned)result;
 }
 
+/** @brief Retry exact process-environment restoration while retaining snapshots.
+ * @param[in,out] guard Active owner returned by the loader environment guard.
+ * @return One if any restoration attempt failed, zero otherwise; returns only
+ * after every original value is restored. A retry cannot erase a failed cycle.
+ * @note Sole parent thread, after every OpenCL/loader/bootstrap/ICD module is gone.
+ */
+static int restore_loader_environment(waddle_loader_environment_guard_t *guard)
+{
+    int failed = 0;
+    waddle_loader_environment_status_t status = WaddleLoaderEnvironmentRestoreFailed;
+    do {
+        status = waddle_loader_environment_restore(guard);
+        if (status != WaddleLoaderEnvironmentOk) {
+            failed = 1;
+            fprintf(stderr, "Retained OpenCL loader environment awaiting restoration mask=%lu error=%lu\n",
+                    (unsigned long)guard->restore_failed_mask, (unsigned long)GetLastError());
+            fflush(stderr);
+            Sleep(10);
+        }
+    } while (status != WaddleLoaderEnvironmentOk);
+    return failed;
+}
+
 /** @brief Keep vendor DLLs mapped until calling-thread TLS/FLS has retired.
  * @param[in] argc/argv Borrowed Windows command line, as documented above.
  * @return Zero only after exact kernels, terminal shutdown, natural host stop,
  * joined worker and complete module retirement. Main thread owns the thread
  * handle and transferred module references and closes/releases each once.
+ * The parent-owned loader snapshot remains active until all vendor modules exit.
  */
-int wmain(int argc, wchar_t **argv) {
+static int run_opencl_cycle(int argc, wchar_t **argv) {
     if (argc != 7) return 2;
+    for (int i = 1; i < 6; ++i)
+        if (wcslen(argv[i]) < 3 || argv[i][1] != L':' || argv[i][2] != L'\\' ||
+            GetFileAttributesW(argv[i]) == INVALID_FILE_ATTRIBUTES) return 2;
+    if (wcslen(argv[6]) < 3 || argv[6][1] != L':' || argv[6][2] != L'\\' ||
+        GetFileAttributesW(argv[6]) != INVALID_FILE_ATTRIBUTES) return 2;
+
+    waddle_loader_environment_guard_t environment;
+    waddle_loader_environment_guard_init(&environment);
+    const waddle_loader_environment_override_t overrides[WaddleLoaderEnvironmentVariableCount] = {
+        {TRUE, argv[3]}, {FALSE, NULL}, {FALSE, NULL}, {TRUE, L"~all~"}
+    };
+    const waddle_loader_environment_api_t environment_api = waddle_loader_environment_windows_api();
+    waddle_loader_environment_status_t environment_status =
+        waddle_loader_environment_begin(&environment, overrides, &environment_api);
+    if (environment_status != WaddleLoaderEnvironmentOk) {
+        fprintf(stderr, "OpenCL loader environment setup failed status=%d mask=%lu\n",
+                (int)environment_status, (unsigned long)environment.restore_failed_mask);
+        if (environment.active) restore_loader_environment(&environment);
+        return 1;
+    }
+
     native_work_t work = {argc, argv, NULL, NULL, NULL};
     uintptr_t thread = _beginthreadex(NULL, 0, run_native_work, &work, 0, NULL);
-    if (!thread) return 1;
+    if (!thread) {
+        fprintf(stderr, "OpenCL caller thread creation failed: %lu\n", (unsigned long)GetLastError());
+        restore_loader_environment(&environment);
+        return 1;
+    }
     DWORD result = 1;
     if (WaitForSingleObject((HANDLE)thread, INFINITE) != WAIT_OBJECT_0 ||
         !GetExitCodeThread((HANDLE)thread, &result)) abort();
@@ -652,8 +698,48 @@ int wmain(int argc, wchar_t **argv) {
     if (work.opencl && !FreeLibrary(work.opencl)) result = 1;
     if (work.loader && !FreeLibrary(work.loader)) result = 1;
     if (work.bootstrap && !FreeLibrary(work.bootstrap)) result = 1;
-    if (GetModuleHandleW(argv[1]) || GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[4]) ||
-        GetModuleHandleW(L"waddle_vulkan_experimental.dll")) result = 1;
+    while (GetModuleHandleW(argv[1]) || GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[4]) ||
+           GetModuleHandleW(L"waddle_vulkan_experimental.dll")) {
+        result = 1;
+        fputs("OpenCL loader environment retained until vendor module retirement\n", stderr);
+        fflush(stderr);
+        Sleep(10);
+    }
+    if (restore_loader_environment(&environment)) result = 1;
     if (!result) puts("OpenCL eight exact context lifetimes and native module retirement passed.");
     return (int)result;
+}
+
+#include "dxvk_heap_audit_windows.inc"
+
+/** @brief Run the ordinary OpenCL fixture or supervisor-controlled heap cycles.
+ * @param[in] argc/argv Borrowed immutable native fixture arguments.
+ * @return Zero only after every original OpenCL assertion and optional audit gate.
+ * @note Sole main thread. Heap markers bracket fully joined, unloaded cycles.
+ */
+int wmain(int argc, wchar_t **argv)
+{
+    if (setvbuf(stdout, NULL, _IONBF, 0) || setvbuf(stderr, NULL, _IONBF, 0)) return 2;
+    wchar_t directory[512];
+    int enabled = audit_directory(directory, 512);
+    if (enabled < 0) return 2;
+    if (!enabled) return run_opencl_cycle(argc, argv);
+
+    wchar_t cycles_text[16];
+    DWORD length = GetEnvironmentVariableW(L"WADDLE_DXVK_HEAP_CYCLES", cycles_text, 16);
+    unsigned cycles = 1;
+    if (length) {
+        wchar_t *end = NULL;
+        unsigned long parsed = wcstoul(cycles_text, &end, 10);
+        if (length >= 16 || !parsed || parsed > 8 || !end || *end) return 2;
+        cycles = (unsigned)parsed;
+    }
+    if (audit_stage(directory, "baseline")) return 1;
+    for (unsigned cycle = 0; cycle < cycles; ++cycle) {
+        if (run_opencl_cycle(argc, argv)) return 1;
+        char stage[64];
+        int count = snprintf(stage, sizeof stage, "unloaded_%u", cycle + 1);
+        if (count <= 0 || (size_t)count >= sizeof stage || audit_stage(directory, stage)) return 1;
+    }
+    return 0;
 }

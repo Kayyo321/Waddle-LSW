@@ -6474,3 +6474,21 @@ negative controls fail as required. All19 admission tests pass. Full final DLL,
 actual native eight-primary-context execution, simultaneous GPU and heap gates
 remain required. The two-patch cross-build passed; the final three-patch build
 is in progress. No completion credit or Time Ended change is claimed.
+
+
+OpenCL fixture transaction ownership now also restores the exact four-key loader
+environment through the already-tested bounded guard. The parent snapshots before
+its worker starts and restores only after callers join, private global shutdown
+finishes, TLS/FLS retires, DLL references unload and module absence is verified.
+Any restore failure marks the cycle failed while retaining/retrying its snapshot;
+retry success cannot erase that failure. A retained vendor module likewise fails
+and holds the snapshot rather than emitting an unloaded marker.
+
+Optional native UMDH mode reuses the existing audit-stage protocol: capture one
+baseline before the first transaction, then unloaded_N after each complete cycle,
+with1..8 cycles and no moved baseline or altered deadline. Its compatibility
+messages/environment keys retain the existing DXVK audit names; they do not
+identify a DXVK workload. Every OpenCL cycle still runs all eight primary contexts
+plus temporary validation scopes. Both diagnostic streams are unbuffered before
+first use. Strict cross-build passes (`opencl_environment_audit_build.log`);
+actual native restoration, UMDH and concurrent GPU evidence remain required.

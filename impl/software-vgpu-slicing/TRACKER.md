@@ -1392,3 +1392,11 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   subtraction bounds, alias overlap and pre-enqueue map failure destruction.
   All19 admission tests pass under San3 with original-source and missing-delete
   negative controls. Final DLL build/native/heap gates pending. #5/#12 +0%.
+
+- **Commit `3282871`**: approved private1D buffer validation and failed-map
+  ownership corrections;19 San3 admission tests pass, final DLL/native pending.
+  #5/#12 +0%, overall +0%.
+- OpenCL transaction audit (identify through fixture history): restore the exact
+  loader environment after joined TLS/module retirement; preserve failure across
+  retry and optional unchanged-baseline UMDH cycle markers. Strict Windows build
+  passes; native restoration/heap/concurrent GPU pending. #5 +0%, overall +0%.
