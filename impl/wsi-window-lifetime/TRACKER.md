@@ -14,11 +14,11 @@
 | #1 | Specify bounded lifetime and native thread contracts | Done | 15% | 100% | IMPL_DESC.md; unobserved HWND reuse and full window-event integration remain separate |
 | #2 | Implement replacement retirement, resize/loss and queue ownership gates | Done | 35% | 100% | Retire on failed replacement; exact Win32 capabilities; acquire/present gates; correct acquisition release; queue result precedence and conservative loss after ambiguous failure |
 | #3 | Add exact-size native presentation with balanced DC release attempts | Done | 20% | 100% | Preserves scaled compatibility API; exact path rejects extent changes before drawing |
-| #4 | Run functional, coverage, cross-build, integrated and sanitizer gates | In Progress | 30% | 80% | Current ICD 394 Debug/ReleaseSafe and prescribed ASan/LSan/allocator gates pass with 90.32% branch coverage; requested final native/physical requalification remains pending |
+| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Current ICD 394 Debug/ReleaseSafe and prescribed ASan/LSan/allocator gates pass with 90.32% branch coverage; native WSI transitions and two full48-frame runs pass, but strict native handle-count gate remains externally blocked by Windows RPC; see M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json |
 
 **Total Feature Completion**: `94.0%`
 
-Task #4 has five equally weighted gates: portable functional tests, production coverage, Windows cross-builds, complete ICD Debug/ReleaseSafe aggregate, prescribed ASan/LSan. Supplemental leak-disabled runs do not close the final gate. This bounded tracker does not increase software-vGPU TODO #3, close roadmap D, or permit feature merge.
+Task #4 has five equally weighted gates: portable functional tests, production coverage, native Windows qualification (cross-build plus the applicable native/physical acceptance already required below), complete ICD Debug/ReleaseSafe aggregate, and prescribed ASan/LSan. Four gates pass and contribute80% of this task. The native Windows gate contributes0% until all of its existing acceptance requirements pass; successful compilation alone cannot close it. Earlier “Windows cross-builds” wording omitted the native acceptance requirement from this accounting sentence, while the same tracker explicitly retained it under “Still required.” This clarification preserves the existing94% total and strengthens no claim or threshold. Supplemental leak-disabled runs never close the prescribed leak gate. This bounded tracker does not increase software-vGPU TODO #3, close roadmap D, or permit feature merge.
 
 ## Verification receipts
 
@@ -200,3 +200,10 @@ and all coverage/leak thresholds remain unchanged. Healthy OpenCL native-heap
 qualification proceeds independently; it cannot close this M2 gate.
 
 Task #4 +0%; total94%; no Time Ended or native acceptance waiver.
+
+
+Accounting clarification (this documentation commit): #4 +0%; four of five
+verification gates pass. The Windows gate includes its already-required native
+acceptance and remains unpassed due the unchanged global handle oracle. The
+prior cross-build-only wording did not explain the retained80% task value.
+No task weights, totals, assertions, thresholds or scope boundaries change.

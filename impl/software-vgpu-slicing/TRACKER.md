@@ -1447,3 +1447,12 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   fails. Current OS traces identify RPC garbage-collection paths. M2 native
   global-count gate externally blocked; no progress/waiver. Overall85.5%,
   M2 94%, Time Ended TBD; healthy feature heap work remains independent.
+
+
+M2 accounting clarification: the WSI tracker retains five equal verification
+gates; its Windows gate requires both compilation and the already-required
+native/physical acceptance. The prior cross-build-only label omitted that
+requirement from the accounting sentence. Four gates pass; native qualification
+remains blocked by the strict count failure, so #4 stays80% and M2 stays94%.
+No new completion credit, waiver or feature progress. Evidence commit db40b19
+records the system-only reproduction; software-vGPU #3/#5/#11 +0%, total85.5%.

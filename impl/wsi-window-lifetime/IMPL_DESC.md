@@ -73,3 +73,14 @@ Strict integrated Windows cross-build passes (`native_wsi_lifetime_build.log`);
 this is compilation only, and actual native/physical execution remains required.
 
 Task #4 +0%; overall remains94%, Time Ended TBD.
+
+
+Current qualification accounting: portable functional, production coverage,
+complete ICD Debug/ReleaseSafe and prescribed ASan/LSan gates pass. The fifth
+equal gate is native Windows qualification: compilation plus the applicable
+physical/native acceptance already required above. Native WSI transition
+matrix and two unmodified full48-frame runs pass, but the prior strict count
+failure remains open. A no-Vulkan/no-Waddle system control fails167→168 through
+Windows RPC garbage collection. Do not replace the exact assertion with a
+count waiver. See ../software-vgpu-slicing/M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json.
+The Windows gate remains unpassed; task #4 stays80%, overall94%, Time Ended TBD.
