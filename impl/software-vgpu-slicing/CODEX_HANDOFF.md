@@ -314,3 +314,18 @@ acceptance. The executed supervisor and ten-test source are archived with
 hashes equal to the successful run's original manifest before later private
 polling changes. See the OpenCL receipt. Evidence commit80cf470 updated
 #3/#5/#11 +0%; this preservation/review also adds0%, total85.5%.
+
+
+The separate24-primary-lifetime diagnostic ca77f1b6a9915205 completes native0,
+all bounded trace queries0, explicit trace-disable0 and UST restoration. It
+reproduces six retained OpenCL runtime handles per reload; exact creator
+chains and the pending isolated runtime/toolchain comparison are documented
+in [CLVK_RUNTIME_LIFETIME_REVIEW.md](CLVK_RUNTIME_LIFETIME_REVIEW.md) and
+[OPENCL_HANDLE_RECEIPT_2026_10_17.json](OPENCL_HANDLE_RECEIPT_2026_10_17.json).
+This is diagnostic evidence, not heap acceptance. The preceding8ce239cc4db15dd2
+attempt failed before any OpenCL cycle because of a private prelaunch token-file
+race; native baseline timed out naturally with exit1 and UST was restored.
+The race correction retains strict token admission and passes11 private tests.
+Evidence commit031c665 preserves the successful prior supervisor source and
+repeat-cycle heap review; #3/#5/#11 +0%, total85.5%. No production correction,
+threshold change, feature push, Time Ended or PR readiness is claimed.
