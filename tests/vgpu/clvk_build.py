@@ -5,6 +5,7 @@ git responses test shell control flow only; the real pinned export comparison is
 also executed. These tests provide no Windows or GPU acceptance evidence.
 """
 import importlib.util
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +18,78 @@ Root = Path(__file__).resolve().parents[2]
 Spec = importlib.util.spec_from_file_location('clvk_build', Root / 'scripts/build_clvk_windows.py')
 Driver = importlib.util.module_from_spec(Spec)
 Spec.loader.exec_module(Driver)
+
+BufferApiDefinitions = (
+    'bool is_valid_command_queue(cl_command_queue queue)',
+    'bool is_valid_mem_object(cl_mem mem)',
+    'bool is_valid_buffer(cl_mem mem)',
+    'bool is_valid_event(cl_event event)',
+    'bool is_valid_event_wait_list(cl_uint num_events_in_wait_list,',
+    'bool is_same_context(cl_command_queue queue, cl_mem mem)',
+    'bool is_same_context(cl_command_queue queue, cl_uint num_events,',
+    'bool map_flags_are_valid(cl_map_flags flags)',
+    'void* cvk_enqueue_map_buffer(cvk_command_queue* cq, cvk_buffer* buffer,',
+    'cl_int CLVK_API_CALL clEnqueueReadBuffer(',
+    'cl_int CLVK_API_CALL clEnqueueWriteBuffer(',
+    'cl_int CLVK_API_CALL clEnqueueCopyBuffer(',
+    'void* CLVK_API_CALL clEnqueueMapBuffer(',
+)
+
+
+def extract_cpp_definition(source, signature):
+    """Return one complete C++ definition beginning at its unique signature."""
+    if source.count(signature) != 1:
+        raise AssertionError('expected one definition for %r' % signature)
+    start = source.index(signature)
+    depth = 0
+    opening_seen = False
+    state = 'code'
+    escaped = False
+    index = start
+    while index < len(source):
+        character = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ''
+        if state == 'line_comment':
+            if character == '\n':
+                state = 'code'
+        elif state == 'block_comment':
+            if character == '*' and following == '/':
+                state = 'code'
+                index += 1
+        elif state in ('string', 'character'):
+            delimiter = '"' if state == 'string' else "'"
+            if escaped:
+                escaped = False
+            elif character == '\\':
+                escaped = True
+            elif character == delimiter:
+                state = 'code'
+        elif character == '/' and following == '/':
+            state = 'line_comment'
+            index += 1
+        elif character == '/' and following == '*':
+            state = 'block_comment'
+            index += 1
+        elif character == '"':
+            state = 'string'
+        elif character == "'":
+            state = 'character'
+        elif character == '{':
+            opening_seen = True
+            depth += 1
+        elif character == '}':
+            depth -= 1
+            if opening_seen and depth == 0:
+                return source[start:index + 1]
+        index += 1
+    raise AssertionError('unterminated C++ definition for %r' % signature)
+
+
+def extract_buffer_api_header(api_source):
+    """Extract exact production helpers and the four 1D API bodies under test."""
+    definitions = [extract_cpp_definition(api_source, signature)
+                   for signature in BufferApiDefinitions]
+    return '\n\n\n'.join(definitions) + '\n'
 
 
 class export_tests_t(unittest.TestCase):
@@ -173,6 +246,84 @@ class private_patch_tests_t(unittest.TestCase):
             subprocess.run(command, check=True, timeout=120)
             subprocess.run([str(binary)], check=True, timeout=30,
                            env=dict(os.environ, ASAN_OPTIONS='detect_leaks=1:abort_on_error=1:halt_on_error=1'))
+
+    def test_actual_buffer_api_bodies_sanitized_and_original_negative_control(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = self.source_copy(directory)
+            Driver.apply_private_patches(Root, source)
+            original_api = (Root / 'submodules/clvk/src/api.cpp').read_text()
+            patched_api = (source / 'src/api.cpp').read_text()
+            original_header = extract_buffer_api_header(original_api)
+            patched_header = extract_buffer_api_header(patched_api)
+            map_helper_signature = 'void* cvk_enqueue_map_buffer(cvk_command_queue* cq, cvk_buffer* buffer,'
+            patched_map_helper = extract_cpp_definition(patched_api, map_helper_signature)
+            self.assertEqual(patched_map_helper.count('delete cmd;'), 1,
+                             'patched map build failure must delete its command')
+            self.assertNotEqual(hashlib.sha256(original_api.encode()).digest(),
+                                hashlib.sha256(patched_api.encode()).digest())
+            self.assertNotEqual(hashlib.sha256(original_header.encode()).digest(),
+                                hashlib.sha256(patched_header.encode()).digest())
+
+            opencl_headers = Root / 'submodules/clvk/external/OpenCL-Headers'
+            binary = Path(directory) / 'buffer_api_test'
+            compile_flags = [
+                'g++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-Wconversion',
+                '-Wshadow', '-fsanitize=address,leak,undefined',
+                '-fno-omit-frame-pointer', '-DCL_TARGET_OPENCL_VERSION=300',
+            ]
+            test_source = str(Root / 'tests/vgpu/clvk_buffer_api.cpp')
+            environment = dict(os.environ,
+                               ASAN_OPTIONS='detect_leaks=1:abort_on_error=1:halt_on_error=1',
+                               LSAN_OPTIONS='exitcode=23:report_objects=1',
+                               UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1')
+
+            patched_include = Path(directory) / 'patched'
+            patched_include.mkdir()
+            (patched_include / 'clvk_buffer_api_under_test.hpp').write_text(patched_header)
+            patched_command = [*compile_flags, '-I', str(patched_include), '-I',
+                               str(opencl_headers), test_source, '-o', str(binary)]
+            subprocess.run(patched_command, check=True, timeout=120)
+            patched_result = subprocess.run([str(binary)], capture_output=True, text=True,
+                                            env=environment, timeout=30)
+            self.assertEqual(patched_result.returncode, 0, patched_result.stderr)
+            self.assertIn('clvk extracted buffer API tests passed', patched_result.stdout)
+
+            # Removing only the production cleanup must fail this same test at
+            # the build-error ownership assertion, before any counter reset.
+            unclean_map_helper = patched_map_helper.replace('        delete cmd;\n', '', 1)
+            self.assertNotEqual(unclean_map_helper, patched_map_helper)
+            unclean_header = patched_header.replace(patched_map_helper,
+                                                     unclean_map_helper, 1)
+            self.assertNotEqual(unclean_header, patched_header)
+            unclean_include = Path(directory) / 'unclean'
+            unclean_include.mkdir()
+            (unclean_include / 'clvk_buffer_api_under_test.hpp').write_text(unclean_header)
+            unclean_command = [*compile_flags, '-I', str(unclean_include), '-I',
+                               str(opencl_headers), test_source, '-o', str(binary)]
+            subprocess.run(unclean_command, check=True, timeout=120)
+            unclean_result = subprocess.run([str(binary)], capture_output=True,
+                                             text=True, env=environment, timeout=30)
+            self.assertNotEqual(unclean_result.returncode, 0,
+                                'map helper without failure cleanup unexpectedly passed')
+            self.assertRegex(
+                unclean_result.stderr,
+                r'check failed at .*clvk_buffer_api\.cpp:\d+: map_command_allocations == 1 && map_command_destructions == 1',
+            )
+
+            original_include = Path(directory) / 'original'
+            original_include.mkdir()
+            (original_include / 'clvk_buffer_api_under_test.hpp').write_text(original_header)
+            original_command = [*compile_flags, '-I', str(original_include), '-I',
+                                str(opencl_headers), test_source, '-o', str(binary)]
+            subprocess.run(original_command, check=True, timeout=120)
+            original_result = subprocess.run([str(binary)], capture_output=True, text=True,
+                                             env=environment, timeout=30)
+            self.assertNotEqual(original_result.returncode, 0,
+                                'unpatched original API unexpectedly passed the regression')
+            self.assertRegex(
+                original_result.stderr,
+                r'check failed at .*clvk_buffer_api\.cpp:\d+: clEnqueueReadBuffer.*CL_INVALID_VALUE',
+            )
 
 
 class verifier_tests_t(unittest.TestCase):

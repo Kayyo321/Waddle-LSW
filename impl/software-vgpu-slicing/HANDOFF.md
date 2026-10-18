@@ -614,3 +614,17 @@ new temporary owner is released and every unexpected mapping is tracked for
 cleanup. Stage/status diagnostics identify the failing oracle. Strict Windows
 cross-build passes in `opencl_buffer_oracles_build.log`; these are unexecuted
 native assertions until the fresh actual DLL/GPU run, not acceptance evidence.
+
+
+The user-approved private clvk buffer correction is recorded in
+CLVK_BUFFER_REVIEW.md. Patch0002 rejects malformed logical ranges by subtraction,
+checks contexts/events before effects, and resolves same-root sibling aliases
+before copy overlap admission. Patch0003 releases a map command when its build
+fails before queue ownership; no queue-owned command is freed twice. Every patch
+digest participates in driver cache/publication admission, and pinned upstream
+checkouts remain unchanged. Thirteen actual API/helper bodies pass controlled
+ASan/LSan/UBSan regressions; both original-source range and missing-delete
+negative controls fail as required. All19 admission tests pass. Full final DLL,
+actual native eight-primary-context execution, simultaneous GPU and heap gates
+remain required. The two-patch cross-build passed; the final three-patch build
+is in progress. No completion credit or Time Ended change is claimed.

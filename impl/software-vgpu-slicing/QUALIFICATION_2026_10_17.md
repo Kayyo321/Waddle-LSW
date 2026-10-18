@@ -5,15 +5,19 @@ README is unchanged. Earlier sections below are historical checkpoints; their
 unchanged-source, unexecuted-OpenCL and growing-handle statements describe their
 recorded checkpoints, not this current update.
 
-Current tested production ICD is `03caf9b` (later feature commits add the
-approved private clvk patch/build contract, tests and documentation).
-Current fixture commit is `b040fe2`; tracked feature HEAD is recorded in Git.
+Current tested production ICD is `df5f5b9` (the03caf9b loader-chain correction
+plus removal of three never-emitted declarations). Current DXVK stream/environment
+fixture is8f2732e; native WSI fixture iseb1ff4c; OpenCL malformed-input fixture
+is64910b4. Git records the exact current feature HEAD. Required GPU/heap gates
+below are still open; no feature readiness or completion is claimed.
 
 - Full current ICD: 394 Debug and 394 ReleaseSafe tests; native C dispatch
   128 cycles; prescribed sanitizer/allocator gates pass. Whole production
   coverage 4,369/4,837 branches (90.32%), 4,696/4,766 lines (98.53%). Native
-  Windows 394-case Debug/ReleaseSafe execution passed before the host reboot.
-  Logs: `icd_debug_chain_final.log`, `native_icd_chain_execution.log`.
+  Windows394-case Debug/ReleaseSafe and12-case WSI Debug/ReleaseSafe execution
+  also pass after the Windows update and dead-declaration cleanup. Current logs:
+  `icd_current_qualification.log`, `native_cpu_cleanup_run.log`; earlier
+  `icd_debug_chain_final.log` and `native_icd_chain_execution.log` are historical.
 - Nineteen additional module groups pass unit/sanitizer/coverage commands:
   capabilities, dmabuf, instance-wire, query-wire, values, extensions-wire,
   objects, command, guest, present, wddm, frame, export, surface, request,
@@ -257,3 +261,17 @@ new temporary owner is released and every unexpected mapping is tracked for
 cleanup. Stage/status diagnostics identify the failing oracle. Strict Windows
 cross-build passes in `opencl_buffer_oracles_build.log`; these are unexecuted
 native assertions until the fresh actual DLL/GPU run, not acceptance evidence.
+
+
+The user-approved private clvk buffer correction is recorded in
+CLVK_BUFFER_REVIEW.md. Patch0002 rejects malformed logical ranges by subtraction,
+checks contexts/events before effects, and resolves same-root sibling aliases
+before copy overlap admission. Patch0003 releases a map command when its build
+fails before queue ownership; no queue-owned command is freed twice. Every patch
+digest participates in driver cache/publication admission, and pinned upstream
+checkouts remain unchanged. Thirteen actual API/helper bodies pass controlled
+ASan/LSan/UBSan regressions; both original-source range and missing-delete
+negative controls fail as required. All19 admission tests pass. Full final DLL,
+actual native eight-primary-context execution, simultaneous GPU and heap gates
+remain required. The two-patch cross-build passed; the final three-patch build
+is in progress. No completion credit or Time Ended change is claimed.

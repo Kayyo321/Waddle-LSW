@@ -46,7 +46,9 @@ RequiredExports = ('clGetPlatformIDs', 'clBuildProgram', 'clCreateProgramWithSou
                    'clCreateKernel', 'clEnqueueNDRangeKernel', 'clFinish', 'clIcdGetPlatformIDsKHR',
                    'waddle_clvk_shutdown')
 PrivateExports = ('waddle_clvk_shutdown',)
-PrivatePatches = ('patches/clvk/0001-explicit-quiescent-windows-shutdown.patch',)
+PrivatePatches = ('patches/clvk/0001-explicit-quiescent-windows-shutdown.patch',
+                  'patches/clvk/0002-validate-one-dimensional-buffer-commands.patch',
+                  'patches/clvk/0003-release-failed-buffer-map-command.patch')
 LlvmSwitches = ('-DLLVM_INCLUDE_TESTS=OFF', '-DLLVM_INCLUDE_BENCHMARKS=OFF',
                 '-DLLVM_INCLUDE_EXAMPLES=OFF', '-DLLVM_INCLUDE_DOCS=OFF',
                 '-DCLANG_INCLUDE_TESTS=OFF', '-DCLANG_INCLUDE_DOCS=OFF',

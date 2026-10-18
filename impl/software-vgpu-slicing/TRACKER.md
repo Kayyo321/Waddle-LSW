@@ -1384,3 +1384,11 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   exact-end success, zero/past-end/wrap/null/alias/context/event rejection with
   output ownership and actual temporary context cleanup. Strict cross-build
   passes; real-DLL execution remains pending. #5 +0%, overall +0%.
+
+- **Commit `64910b4`**: native OpenCL buffer success/rejection oracles; strict
+  cross-build passes, real execution pending. #5 +0%, overall +0%.
+- Approved private buffer admission/lifetime fix (identify through clvk history):
+  patches0002/0003,13 exact API/helper bodies, zero malformed-call effects,
+  subtraction bounds, alias overlap and pre-enqueue map failure destruction.
+  All19 admission tests pass under San3 with original-source and missing-delete
+  negative controls. Final DLL build/native/heap gates pending. #5/#12 +0%.
