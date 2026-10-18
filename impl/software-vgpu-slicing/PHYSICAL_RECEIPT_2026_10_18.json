@@ -1,0 +1,8 @@
+{
+  "receipt": "build/icd_physical_coherent_owned_safety_37/run-20261018T004547289903Z-148584/physical_report.json",
+  "sha256": "261a8d12b3a159447349df579e60889729e5e3654f8646033993aefef4fc9ed4",
+  "positive_lifetimes": 144,
+  "expected_failure_runs": 6,
+  "scope": "owned37 ICD accesses plus C fixture/worker; other transport Zig ReleaseSafe and host/vendor code excluded",
+  "memory_profile": "coherent"
+}

@@ -664,3 +664,28 @@ under `build/clvk_buffer_coverage/run-20261018T010722656693Z-201377`.
 All19 ASan/LSan/UBSan admission tests pass again in
 `clvk_buffer_coverage_sanitizers.log`. Initial lower coverage and script diagnostics
 are preserved; this is not actual Windows/DLL/GPU or native heap proof.
+
+
+Current Linux physical memory profile: c839945 already restricts public mapped
+memory to actual HOST_VISIBLE|HOST_COHERENT types and merges coherent dirty data.
+The legacy strict noncoherent triangle probe cannot select a public type under
+that contract and its failed run remains failed/preserved. A separate
+triangle_coherent mode rejects every public host-visible noncoherent type,
+selects a compatible actual coherent type and preserves mapped poison, flush,
+invalidate, exact pixels, fences and teardown. The legacy mode/default target and
+assertions are unchanged. Graphics queue selection is required in both modes.
+
+The full current37-source owned-access proof passes on RTX5080 using the new
+coherent profile:9 positive16-lifetime cases (144 lifetimes) and6 exact exit1
+postflush cleanup cases, across direct, normal shared-loader and ASan shared-loader
+paths. Prescribed ASan/LSan/UBSan remains enabled with zero diagnostics; every
+case revalidates all frozen inputs and proves owned session/process/FD cleanup.
+The receipt does not claim Windows or vendor-driver access instrumentation.
+Command: `python3 -B scripts/icd_physical_sanitizers.py
+build/icd_physical_coherent_owned_safety_37 --seam-record
+build/icd_complete_seam_safety_37/latest.json --memory-profile coherent
+--expected-device 'NVIDIA GeForce RTX 5080'`, exit0.
+Receipt: `build/icd_physical_coherent_owned_safety_37/
+run-20261018T004547289903Z-148584/physical_report.json`.
+Log: `physical_coherent_owned37.log`. Native Windows WSI, fresh DXVK heap,
+OpenCL final DLL/native/concurrent GPU/heap gates remain open.

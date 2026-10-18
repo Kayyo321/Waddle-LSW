@@ -1407,3 +1407,11 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   initial77.83% outcome failure; add meaningful malformed/valid cases to reach
   161/161 lines and200/212 directional edges (94.34%), no exclusions. All19
   San3 admission tests pass. Make/CI requires>=90% for both. #5 +0%, overall +0%.
+
+- **Commit `04381bd`**: exact private buffer memory coverage161/161 lines,
+  200/212 directional outcomes and19 San3 admission tests pass. #5 +0%.
+- Coherent physical profile (identify through hardware-test history): preserve
+  legacy noncoherent failure/default and add strict current coherent profile.
+  Full37-source owned matrix exits0:144 positive GPU lifetimes and6 expected
+  exit1 cleanup runs onRTX5080, zero configured sanitizer/leak errors.
+  Native/heap/OpenCL gates remain open; #3/#11 +0%, overall +0%.

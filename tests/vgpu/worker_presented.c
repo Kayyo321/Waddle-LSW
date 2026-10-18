@@ -30,7 +30,8 @@ typedef enum fixture_workload_t {
     ImageWorkload, /**< Native image/view lifecycle and subsequent image commands. */
     ComputeWorkload, /**< Actual shader dispatch and exact mapped output comparison. */
     ComputePushWorkload, /**< Actual distinct runtime push bias and shader result proof. */
-    TriangleWorkload /**< Real graphics rendering and noncoherent RGBA readback. */
+    TriangleWorkload, /**< Real graphics rendering and noncoherent RGBA readback. */
+    TriangleCoherentWorkload /**< Real graphics rendering and coherent RGBA readback. */
 } fixture_workload_t;
 static fixture_workload_t selected_workload = FullWorkload;
 static venus_ring_status_t (*icd_bind)(venus_command_exchange_t, void *, const venus_capabilities_t *) = venus_icd_bind_capabilities;
@@ -437,19 +438,23 @@ cleanup:
     return result;
 }
 
-/** @brief Render owned red triangle over blue and verify noncoherent readback.
+/** @brief Render owned red triangle over blue and verify mapped RGBA readback.
  * @param[in] device Borrowed live device, retained by caller through return.
  * @param[in] queue Borrowed graphics-capable queue belonging to family.
  * @param[in] family Existing graphics queue family index.
  * @param[in] supported_memory Nonnull borrowed queried properties with validated counts.
  * @param[in] device_proc Nonnull borrowed live device dispatch lookup.
+ * @param[in] coherent_readback Require host-visible, host-coherent readback memory
+ *        and reject any advertised host-visible noncoherent type when nonzero;
+ *        require host-visible, host-noncoherent readback memory when zero.
  * @return 0 on exact center/corner RGBA bytes, 1 on acquisition or GPU failure.
  * @details Single-threaded. This function owns every acquired local resource;
  * cleanup waits submitted work then releases dependencies before their owners.
  * No borrowed arrays survive the synchronous recording calls.
  */
 static int triangle_probe(VkDevice device, VkQueue queue, uint32_t family,
-    const VkPhysicalDeviceMemoryProperties *supported_memory, PFN_vkGetDeviceProcAddr device_proc) {
+    const VkPhysicalDeviceMemoryProperties *supported_memory, PFN_vkGetDeviceProcAddr device_proc,
+    int coherent_readback) {
     PFN_vkCreateImage create_image = (PFN_vkCreateImage)compute_proc(device, device_proc, "vkCreateImage");
     if (!create_image) return 1;
     PFN_vkDestroyImage destroy_image = (PFN_vkDestroyImage)compute_proc(device, device_proc, "vkDestroyImage");
@@ -568,21 +573,39 @@ static int triangle_probe(VkDevice device, VkQueue queue, uint32_t family,
         .image = image, .viewType = VK_IMAGE_VIEW_TYPE_2D, .format = VK_FORMAT_R8G8B8A8_UNORM,
         .subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .levelCount = 1, .layerCount = 1}};
     if (create_image_view(device, &view_info, NULL, &view) != VK_SUCCESS || !view) goto cleanup;
-    stage = "noncoherent readback buffer acquisition";
+    stage = coherent_readback ? "coherent readback buffer acquisition" :
+        "noncoherent readback buffer acquisition";
     const VkBufferCreateInfo buffer_info = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 16384, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
     if (create_buffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS || !buffer) goto cleanup;
     VkMemoryRequirements buffer_requirements = {0};
     get_buffer_memory_requirements(device, buffer, &buffer_requirements);
     uint32_t buffer_type = VK_MAX_MEMORY_TYPES;
+    if (coherent_readback) {
+        for (uint32_t index = 0; index < supported_memory->memoryTypeCount; index++) {
+            const VkMemoryPropertyFlags flags = supported_memory->memoryTypes[index].propertyFlags;
+            if ((flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
+                !(flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+                fprintf(stderr, "ICD coherent triangle advertised host-visible noncoherent memory type %u (flags=0x%08x)\n",
+                    index, flags);
+                goto cleanup;
+            }
+        }
+    }
     for (uint32_t index = 0; index < supported_memory->memoryTypeCount; index++) {
         const VkMemoryPropertyFlags flags = supported_memory->memoryTypes[index].propertyFlags;
-        if ((buffer_requirements.memoryTypeBits & (UINT32_C(1) << index)) &&
-            (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && !(flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+        const int eligible = (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) &&
+            (coherent_readback ? (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0 :
+                (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0);
+        if ((buffer_requirements.memoryTypeBits & (UINT32_C(1) << index)) && eligible) {
             buffer_type = index; break;
         }
     }
     if (buffer_requirements.size < 16384 || buffer_type == VK_MAX_MEMORY_TYPES) goto cleanup;
+    if (coherent_readback) {
+        fprintf(stderr, "ICD coherent triangle selected memory type %u (flags=0x%08x)\n",
+            buffer_type, supported_memory->memoryTypes[buffer_type].propertyFlags);
+    }
     const VkMemoryAllocateInfo buffer_allocation = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .allocationSize = buffer_requirements.size, .memoryTypeIndex = buffer_type};
     if (allocate_memory(device, &buffer_allocation, NULL, &buffer_memory) != VK_SUCCESS || !buffer_memory ||
@@ -864,7 +887,7 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
         while (family < family_count && (!families[family].queueCount ||
             ((selected_workload == ComputeWorkload || selected_workload == ComputePushWorkload) &&
              !(families[family].queueFlags & VK_QUEUE_COMPUTE_BIT)) ||
-            (selected_workload == TriangleWorkload && !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))))
+            ((selected_workload == TriangleWorkload || selected_workload == TriangleCoherentWorkload) && !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT))))
             family++;
         if (family == family_count) goto fail;
         float priority = 0.5f;
@@ -1224,8 +1247,9 @@ static int icd_cycles(venus_guest_t *guest, int corrupt) {
             goto fail;
 
         stage = "triangle workload";
-        if (selected_workload == TriangleWorkload &&
-            triangle_probe(device, queue, family, &supported_memory, device_proc)) goto fail;
+        if ((selected_workload == TriangleWorkload || selected_workload == TriangleCoherentWorkload) &&
+            triangle_probe(device, queue, family, &supported_memory, device_proc,
+                selected_workload == TriangleCoherentWorkload)) goto fail;
 
         stage = "device and instance teardown";
         destroy_device(device, NULL);
@@ -1398,8 +1422,9 @@ int main(void) {
         else if (!strcmp(workload, "compute")) selected_workload = ComputeWorkload;
         else if (!strcmp(workload, "compute_push")) selected_workload = ComputePushWorkload;
         else if (!strcmp(workload, "triangle")) selected_workload = TriangleWorkload;
+        else if (!strcmp(workload, "triangle_coherent")) selected_workload = TriangleCoherentWorkload;
         else {
-            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping, image, compute, compute_push or triangle\n", stderr);
+            fputs("Unknown WADDLE_TEST_WORKLOAD; expected full, mapping, image, compute, compute_push, triangle or triangle_coherent\n", stderr);
             return 2;
         }
     }

@@ -54,3 +54,9 @@ vgpu-icd-complete-seam-sanitizers: vgpu-owned-sanitizer-inventory-test scripts/i
 .PHONY: vgpu-icd-physical-owned-sanitizers
 vgpu-icd-physical-owned-sanitizers: vgpu-icd-complete-seam-sanitizers scripts/icd_physical_sanitizers.py scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
 	python3 scripts/icd_physical_sanitizers.py build/icd_physical_owned_safety_37 --seam-record build/icd_complete_seam_safety_37/latest.json --expected-device "NVIDIA GeForce RTX 5080"
+
+# Current ICD profile exposes mapping only for actual host-coherent visible types.
+# The legacy noncoherent physical target above remains a separate strict contract.
+.PHONY: vgpu-icd-physical-coherent-owned-sanitizers
+vgpu-icd-physical-coherent-owned-sanitizers: vgpu-icd-complete-seam-sanitizers scripts/icd_physical_sanitizers.py
+	python3 scripts/icd_physical_sanitizers.py build/icd_physical_coherent_owned_safety_37 --seam-record build/icd_complete_seam_safety_37/latest.json --memory-profile coherent --expected-device "NVIDIA GeForce RTX 5080"

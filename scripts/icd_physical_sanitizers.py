@@ -28,7 +28,7 @@ import icd_seam_sanitizers as seam
 SourceHashes = {
     'src/vgpu/venus_icd.zig': '7cf58eefde08348512f6890338c106e5f81c3d5f352f034a86b18b8a2a1832ff',
     'tests/vgpu/icd.c': '24dfb9a259ef60955259e3e874d4795e1c73413ba4b5c2435cbc0c950b97ae54',
-    'tests/vgpu/worker_presented.c': '46cf1d6951fec19b67fe3fe408721a1719d460e43745847c3cc5803aec081146',
+    'tests/vgpu/worker_presented.c': 'fda7e83c207564f8c4c9e69d580abf773f3aecacc89482d833c1485714671541',
 }
 ManifestNames = ('gfxstream_vk_icd.json', 'intel_hasvk_icd.json', 'intel_icd.json',
                  'lvp_icd.json', 'nouveau_icd.json', 'nvidia_icd.json', 'radeon_icd.json', 'virtio_icd.json')
@@ -633,9 +633,9 @@ def physical_run(binary, profile, workload, forced, environment, expected_device
     observed = re.findall(r'^ICD production acceptance device: (.+)$', text, re.M)
     marker = 'Presented production worker negotiation, isolation and unknown-release shutdown passed'
     if forced:
-        stage = ('triangle' if workload == 'triangle' else 'compute') + ' mapped poison and flush'
+        stage = ('triangle' if workload in ('triangle', 'triangle_coherent') else 'compute') + ' mapped poison and flush'
         assert status == 1 and marker not in text and observed == [expected_device]
-        assert 'ICD ' + ('triangle' if workload == 'triangle' else 'compute') + ' acceptance failed: ' + stage in text
+        assert 'ICD ' + ('triangle' if workload in ('triangle', 'triangle_coherent') else 'compute') + ' acceptance failed: ' + stage in text
         assert 'Presented worker binding failed: mode=0' in text
     else:
         assert status == 0 and text.count(marker) == 1 and observed == [expected_device, expected_device]
@@ -660,6 +660,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output', type=Path)
     parser.add_argument('--expected-device')
+    parser.add_argument('--memory-profile', choices=('noncoherent', 'coherent'), default='noncoherent')
     parser.add_argument('--process-owner-selftest', action='store_true')
     seam_arguments = parser.add_mutually_exclusive_group()
     seam_arguments.add_argument('--seam-output', type=Path)
@@ -763,6 +764,8 @@ def main():
               'runs': []}
     report_path = output / 'physical_report.json'
     report_path.write_text(json.dumps(report, indent=2) + '\n')
+    workloads = ('triangle_coherent', *Workloads[1:]) if arguments.memory_profile == 'coherent' else Workloads
+    report['memory_profile'] = arguments.memory_profile
     profiles = (('direct', binaries['direct'], None), ('shared_normal_loader', binaries['shared'], runtime['loader_normal']),
                 ('shared_asan_loader', binaries['shared'], runtime['loader_asan']))
     for forced in (False, True):
@@ -770,7 +773,7 @@ def main():
         # Failure receipts require the actual shared fixture branch, never status0.
         selected_profiles = profiles[1:] if forced else profiles
         for profile, binary, loader in selected_profiles:
-            for workload in Workloads:
+            for workload in workloads:
                 environment = dict(os.environ, ASAN_OPTIONS='detect_leaks=1:abort_on_error=1:halt_on_error=1',
                                    LSAN_OPTIONS='exitcode=23', UBSAN_OPTIONS='halt_on_error=1:print_stacktrace=1',
                                    VK_DRIVER_FILES=drivers, WADDLE_TEST_WORKLOAD=workload,
