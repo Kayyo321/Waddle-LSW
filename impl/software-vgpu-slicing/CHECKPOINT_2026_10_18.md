@@ -101,3 +101,56 @@ Time Ended fields remain TBD. README is unchanged. Do not merge or mark the PR r
   guest39085527458, AV39085528946. Last saved observation: guest/AV success,
   CLI/software still running (software OpenCL admission success). Leave remote
   CI running; inspect once on resume. No follow-up automation was created.
+
+
+## Resumed qualification blocker checkpoint, 2026-10-17 America/New_York
+
+The earlier user-requested stop was superseded by the subsequent request to
+continue toward M2. This resumed work is now recorded at concrete qualification
+blockers, not feature completion or a new user-requested pause.
+
+- Branch `feature/software-vgpu-slicing`; implementation/evidence head
+  `07923b46c9abcfe8d9883bb9aa040236073ee12e`. M2 remains94%/Review;
+  software-vGPU85.5%/In Progress; Time Ended TBD.
+- M2's unchanged global native handle-count gate fails independently in a
+  Windows-only control without Vulkan or Waddle. Two fresh unmodified full48
+  frame positives do not waive the retained199→200 failure.
+- The approved OpenCL DLL still points to exact hash
+  `a8fd9d7a4f979ca4534e26d789025cf9f7c7affd84b46726eeee28f40d83c54d`.
+  Three native cycles complete24 primary lifetimes; repeat heap bytes are
+  stable but six runtime handles per reload require attribution/closure.
+- Exact tracing and a new isolated native regression identify current POSIX
+  runtime loss of6handles/1TLS slot per unload. Candidate Win32 balances
+  handles but loses2TLS slots and stalls after543 handle-balanced reloads.
+  Both final TLS regressions exit1. The original19 admission tests pass;
+  cross-compilation/collection are not native acceptance.
+- The pending Win32 build switch was preserved as a rejected private patch
+  and withdrawn. No new upstream patch or production runtime change is applied.
+  SDK lifetime corrections need a separately reviewed private-copy proposal
+  and explicit approval under CODEX_HANDOFF.md section4. Do not destroy TLS
+  state early, call speculative LLVMshutdown, close borrowed handles, relax
+  assertions or reinterpret a short positive as final qualification.
+- Owned stalled process5888/creation01dd5ea9f4e6eede was identity-checked and
+  forcibly retired after two frozen-progress/increasing-CPU observations.
+  Guest exit marker is-1; this is failed stress evidence. All exact owned
+  native jobs are now absent. Unique UST keys were restored to original absence.
+- Task-only binary/PDB publishers257264/257274 were identity/socket checked
+  and stopped with pidfds. Their loopback ports are closed. Restart only the
+  documented scripts if more transfers are needed; update PDB server record
+  through its script before preparing new immutable audits.
+- Original VM10895/start19105 remains running. No host packages were installed
+  or upgraded; the optional matching SDK was only extracted in build/. README
+  matches the original task-start bytes. Artifacts and unrelated processes remain.
+- Separate CI-only head1e91c4833a285c7978afa0d50eaa4035f983cce7 passes all four
+  workflows. No feature push, PR readiness update or merge was performed.
+
+Canonical evidence: [runtime review](CLVK_RUNTIME_LIFETIME_REVIEW.md),
+[runtime receipt](CLVK_RUNTIME_RECEIPT_2026_10_17.json),
+[OpenCL heap receipt](OPENCL_HEAP_RECEIPT_2026_10_17.json),
+[OpenCL handle receipt](OPENCL_HANDLE_RECEIPT_2026_10_17.json), and
+[M2 system control](M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json).
+The durable runner/README/DLL identity checkpoint is
+`build/qualification_20261017/runtime_blocker_checkpoint.json`.
+Commit07923b4 adds the regression and synchronized evidence with0% task impact.
+No qualification credit or thresholds changed. Remaining actual-DLL heap,
+transport-loss cancellation and Linux-GPU/OpenCL overlap acceptance stays open.
