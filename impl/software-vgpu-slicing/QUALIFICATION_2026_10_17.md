@@ -204,3 +204,16 @@ it cannot receive qualification credit or silently replace the original audit.
 WSI tracker stays open pending final qualification accounting; software-vGPU
 stays 85.5%, Time Ended TBD. No assertions, coverage thresholds, suppressions,
 production exclusions or workload acceptance budgets were weakened.
+
+
+Loader guard production coverage is now an independent >=90% line-and-branch
+Make/CI gate. It compiles the unchanged production prefix and counts only its
+seven exact functions, never the injected tests. Fresh mock ASan/LSan/UBSan,
+coverage and strict Windows cross-build pass in
+`build/qualification_20261017/environment_guard_complete_gates.log`:
+84/84 lines and74/74 branches (100%). Additional regressions cover malformed
+GetEnvironmentVariable lengths/NUL, every absent API member, invalid active
+restore with retained snapshot, and retry. Actual Windows round-trip passes in
+`loader_environment_native_42ea77cc/record.json`, with matching executable hashes
+before and after. This fixture-only change does not establish native heap or GPU
+acceptance; the guard production prefix is unchanged from ef77895.

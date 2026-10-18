@@ -174,6 +174,8 @@ static DWORD mock_last_error;
 static DWORD mock_get_calls;
 static DWORD mock_set_calls;
 static DWORD mock_fail_get_call;
+static DWORD mock_oversized_get_call;
+static DWORD mock_missing_nul_get_call;
 static DWORD mock_fail_set_calls[2];
 static DWORD mock_mutate_failed_set_call;
 
@@ -190,6 +192,22 @@ static DWORD WINAPI mock_get(LPCWSTR name, LPWSTR value, DWORD capacity)
     if (mock_fail_get_call == mock_get_calls) {
         mock_last_error = ERROR_ACCESS_DENIED;
         return 0;
+    }
+    if (mock_oversized_get_call == mock_get_calls) {
+        mock_last_error = ERROR_SUCCESS;
+        return capacity;
+    }
+    if (mock_missing_nul_get_call == mock_get_calls) {
+        if (capacity < 4) {
+            mock_last_error = ERROR_ACCESS_DENIED;
+            return capacity + 1;
+        }
+        value[0] = L'b';
+        value[1] = L'a';
+        value[2] = L'd';
+        value[3] = L'!';
+        mock_last_error = ERROR_SUCCESS;
+        return 3;
     }
     int index = name_index(name);
     if (index < 0) {
@@ -266,6 +284,8 @@ static void reset_mock(void)
     mock_get_calls = 0;
     mock_set_calls = 0;
     mock_fail_get_call = 0;
+    mock_oversized_get_call = 0;
+    mock_missing_nul_get_call = 0;
     mock_fail_set_calls[0] = 0;
     mock_fail_set_calls[1] = 0;
     mock_mutate_failed_set_call = 0;
@@ -296,6 +316,122 @@ static int test_mock_capture_failure(void)
     if (mock_set_calls != 0 || guard.active) return 1;
     return mock_equal(0, TRUE, L"original-driver") && mock_equal(1, FALSE, NULL) &&
         mock_equal(2, TRUE, L"") && mock_equal(3, TRUE, L"original-layers") ? 0 : 1;
+}
+
+static int test_mock_malformed_capture(void)
+{
+    const waddle_loader_environment_override_t overrides[WaddleLoaderEnvironmentVariableCount] = {
+        {TRUE, L"replacement"}, {FALSE, NULL}, {FALSE, NULL}, {FALSE, NULL}
+    };
+    const waddle_loader_environment_api_t api = {mock_get, mock_set, mock_get_last_error, mock_set_last_error};
+    waddle_loader_environment_guard_t guard = {0};
+
+    reset_mock();
+    (void)mock_store(0, L"original-driver");
+    (void)mock_store(1, L"");
+    (void)mock_store(3, L"original-layers");
+    mock_oversized_get_call = 2;
+    if (waddle_loader_environment_begin(&guard, overrides, &api) != WaddleLoaderEnvironmentValueTooLong ||
+        guard.active || mock_set_calls != 0 ||
+        !mock_equal(0, TRUE, L"original-driver") || !mock_equal(1, TRUE, L"") ||
+        !mock_equal(2, FALSE, NULL) || !mock_equal(3, TRUE, L"original-layers")) return 1;
+
+    mock_oversized_get_call = 0;
+    mock_missing_nul_get_call = 3;
+    mock_get_calls = 0;
+    if (waddle_loader_environment_begin(&guard, overrides, &api) != WaddleLoaderEnvironmentCaptureFailed ||
+        guard.active || mock_set_calls != 0 ||
+        !mock_equal(0, TRUE, L"original-driver") || !mock_equal(1, TRUE, L"") ||
+        !mock_equal(2, FALSE, NULL) || !mock_equal(3, TRUE, L"original-layers")) return 1;
+    return 0;
+}
+
+static int test_mock_api_and_guard_edges(void)
+{
+    const waddle_loader_environment_override_t overrides[WaddleLoaderEnvironmentVariableCount] = {
+        {TRUE, L"new-driver"}, {FALSE, NULL}, {FALSE, NULL}, {FALSE, NULL}
+    };
+    const waddle_loader_environment_api_t complete = {mock_get, mock_set, mock_get_last_error, mock_set_last_error};
+    waddle_loader_environment_guard_t guard;
+
+    reset_mock();
+    memset(&guard, 0xa5, sizeof guard);
+    waddle_loader_environment_guard_init(&guard);
+    if (guard.active || guard.restore_failed_mask != 0 || guard.api.get || guard.api.set ||
+        guard.api.get_last_error || guard.api.set_last_error) return 1;
+    waddle_loader_environment_guard_init(NULL);
+    if (waddle_loader_environment_restore(NULL) != WaddleLoaderEnvironmentInvalidArgument ||
+        waddle_loader_environment_restore(&guard) != WaddleLoaderEnvironmentOk) return 1;
+
+    waddle_loader_environment_api_t invalid = complete;
+    invalid.get = NULL;
+    if (waddle_loader_environment_begin(&guard, overrides, &invalid) != WaddleLoaderEnvironmentInvalidArgument)
+        return 1;
+    invalid = complete; invalid.set = NULL;
+    if (waddle_loader_environment_begin(&guard, overrides, &invalid) != WaddleLoaderEnvironmentInvalidArgument)
+        return 1;
+    invalid = complete; invalid.get_last_error = NULL;
+    if (waddle_loader_environment_begin(&guard, overrides, &invalid) != WaddleLoaderEnvironmentInvalidArgument)
+        return 1;
+    invalid = complete; invalid.set_last_error = NULL;
+    if (waddle_loader_environment_begin(&guard, overrides, &invalid) != WaddleLoaderEnvironmentInvalidArgument)
+        return 1;
+    if (waddle_loader_environment_begin(NULL, overrides, &complete) != WaddleLoaderEnvironmentInvalidArgument ||
+        waddle_loader_environment_begin(&guard, NULL, &complete) != WaddleLoaderEnvironmentInvalidArgument)
+        return 1;
+
+    waddle_loader_environment_override_t invalid_override[WaddleLoaderEnvironmentVariableCount] = {
+        {2, L"invalid-bool"}, {FALSE, NULL}, {FALSE, NULL}, {FALSE, NULL}
+    };
+    if (waddle_loader_environment_begin(&guard, invalid_override, &complete) !=
+        WaddleLoaderEnvironmentInvalidArgument) return 1;
+
+    const waddle_loader_environment_api_t native = waddle_loader_environment_windows_api();
+    if (!native.get || !native.set || !native.get_last_error || !native.set_last_error) return 1;
+#if defined(WaddleLoaderEnvironmentFakeWindows)
+    native.set_last_error(123u);
+    if (native.get_last_error() != 123u) return 1;
+#endif
+    if (mock_get_calls != 0 || mock_set_calls != 0) return 1;
+    return 0;
+}
+
+static int test_mock_invalid_active_api_retry(void)
+{
+    reset_mock();
+    (void)mock_store(0, L"original-driver");
+    (void)mock_store(1, L"");
+    mock_values[2].present = FALSE;
+    (void)mock_store(3, L"original-layers");
+    const waddle_loader_environment_override_t overrides[WaddleLoaderEnvironmentVariableCount] = {
+        {TRUE, L"replacement"}, {FALSE, NULL}, {TRUE, L"added"}, {FALSE, NULL}
+    };
+    const waddle_loader_environment_api_t api = {mock_get, mock_set, mock_get_last_error, mock_set_last_error};
+    waddle_loader_environment_guard_t guard = {0};
+    if (waddle_loader_environment_begin(&guard, overrides, &api) != WaddleLoaderEnvironmentOk) return 1;
+
+    const waddle_loader_environment_value_t saved_before = guard.saved[0];
+    DWORD writes_before = mock_set_calls;
+    guard.api.set_last_error = NULL;
+    if (waddle_loader_environment_restore(&guard) != WaddleLoaderEnvironmentInvalidArgument ||
+        !guard.active || guard.restore_failed_mask != 0 || mock_set_calls != writes_before ||
+        guard.saved[0].present != saved_before.present || guard.saved[0].length != saved_before.length ||
+        wcscmp(guard.saved[0].value, saved_before.value) != 0 ||
+        !mock_equal(0, TRUE, L"replacement") || !mock_equal(1, FALSE, NULL) ||
+        !mock_equal(2, TRUE, L"added") || !mock_equal(3, FALSE, NULL)) return 1;
+
+    guard.api = api;
+    if (waddle_loader_environment_restore(&guard) != WaddleLoaderEnvironmentOk || guard.active) return 1;
+    return mock_equal(0, TRUE, L"original-driver") && mock_equal(1, TRUE, L"") &&
+        mock_equal(2, FALSE, NULL) && mock_equal(3, TRUE, L"original-layers") ? 0 : 1;
+}
+
+static int test_mock_bounded_length_arguments(void)
+{
+    DWORD length = 99;
+    if (bounded_value_length(L"x", &length) != WaddleLoaderEnvironmentOk || length != 1) return 1;
+    if (bounded_value_length(NULL, &length) != WaddleLoaderEnvironmentInvalidArgument) return 1;
+    return bounded_value_length(L"x", NULL) == WaddleLoaderEnvironmentInvalidArgument ? 0 : 1;
 }
 
 static int test_mock_oversize_before_capture(void)
@@ -553,9 +689,13 @@ int main(void)
 {
 #define RunCase(function) do { if(function()) {fprintf(stderr,"loader environment case failed: %s\n",#function);return 1;} } while(0)
     RunCase(test_mock_capture_failure);
+    RunCase(test_mock_malformed_capture);
     RunCase(test_mock_oversize_before_capture);
     RunCase(test_mock_maximum_value_and_api_alias);
     RunCase(test_mock_invalid_and_active);
+    RunCase(test_mock_api_and_guard_edges);
+    RunCase(test_mock_invalid_active_api_retry);
+    RunCase(test_mock_bounded_length_arguments);
     RunCase(test_mock_apply_rollback);
     RunCase(test_mock_apply_rollback_retry);
     RunCase(test_mock_restore_retry);

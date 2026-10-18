@@ -48,7 +48,7 @@ vgpu-opencl-fixture: build/vgpu_opencl_integration.exe
 
 # Actual guard implementation under a mock-only Linux Win32 boundary. This does
 # not replace the native Windows environment round-trip target below.
-.PHONY: vgpu-loader-environment-test vgpu-loader-environment-sanitizers
+.PHONY: vgpu-loader-environment-test vgpu-loader-environment-sanitizers vgpu-loader-environment-coverage
 vgpu-loader-environment-test: | build
 	$(CC) $(CFLAGS) -DWaddleLoaderEnvironmentTest -DWaddleLoaderEnvironmentFakeWindows -Itests/vgpu/loader_environment_fake -Itests/vgpu tests/vgpu/loader_environment_windows.c -o build/vgpu_loader_environment_mock
 	./build/vgpu_loader_environment_mock
@@ -61,3 +61,6 @@ build/vgpu_loader_environment_test.exe: tests/vgpu/loader_environment_windows.c 
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DWaddleLoaderEnvironmentTest -Itests/vgpu $< -o $@
 
 vgpu-windows: build/vgpu_loader_environment_test.exe
+
+vgpu-loader-environment-coverage: | build
+	python3 -B scripts/loader_environment_coverage.py build/loader_environment_coverage

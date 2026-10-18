@@ -1355,3 +1355,11 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   verifies all177 retained hashes. Eleven separate inventory regressions pass
   and are now Make prerequisites. Physical gate also checks the actual11-export
   ABI including timed bind; its fresh hardware run remains required. #3/#11 +0%.
+
+- **Commit `ccef081`**: complete37-source owned ICD seam qualification,
+  394 integrated and29 standalone cases,23 C oracles and six native codecs;
+  zero configured sanitizer/leak errors. #3/#11 +0%, overall +0%.
+- Loader guard coverage (identify through environment-test history): test-only
+  malformed API regressions and exact seven-function production coverage gate.
+  ASan/LSan/UBSan pass;84/84 lines and74/74 branches. Actual native Windows
+  round-trip42ea77cc passes. #3/#11 +0%, overall +0%; Time Ended TBD.

@@ -570,3 +570,7 @@ Export rejection. Direct inspection of the preserved candidate
 `clvk_aa223aba8c29_gdygl53q/out/OpenCL.dll` succeeds with 121 true exports; its
 SHA is recorded in clvk_actual_pe_inspection.log. It remains an unadmitted
 candidate until a fresh corrected-driver build publishes a complete receipt.
+
+Current qualification: loader guard test/ASan/LSan/UBSan/coverage and actual
+Windows round-trip pass; see QUALIFICATION_2026_10_17.md. Production prefix is
+unchanged; native heap/GPU qualification remains open.

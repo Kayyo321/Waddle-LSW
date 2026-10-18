@@ -49,7 +49,7 @@ jobs:
           tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Verify loader environment rollback with mock-only sanitizers
-        run: make vgpu-loader-environment-test vgpu-loader-environment-sanitizers
+        run: make vgpu-loader-environment-test vgpu-loader-environment-sanitizers vgpu-loader-environment-coverage
       - name: Verify metadata-bound concurrent coverage recorder
         run: |
           python3 -B tests/av/coverage_recorder_test.py -v
