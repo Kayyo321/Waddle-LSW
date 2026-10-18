@@ -26,6 +26,9 @@
     "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/diff_baseline_unloaded_3.umdh.txt": "2b75e53f7f71b9e41981eb6e5ae43b97685693a9ea26f3473697d715fcd5b403",
     "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/diff_unloaded_1_unloaded_2.umdh.txt": "f7edd940b249777987353dbc16792cf18697985ed1cb17ff03bee14df532af91",
     "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/diff_unloaded_2_unloaded_3.umdh.txt": "15a5ac60c236d98b8a93e296c5bde0735b3e4d373a42f736b5265beb9663433f",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/executed_opencl_heap_audit.py": "95454a28a1b22fb21a1c740a56d56957910e0732dea5c8ac855d6a99a3d37164",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/executed_supervisor_archive.json": "95787a5812f7dae4fd2a2919acc10e0f015e4a43247f8dd831489050af02b2f2",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/executed_test_opencl_heap_audit.py": "20e88c5954719a5f44fb0435e362b69722fb3259549922550e5e3a94721a9a34",
     "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/extra_live_module_inventory_2.json": "3332f2002ad4450c07f3df387fcafb74b667da65f3f2e828efc1b4fafad10607",
     "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/extra_live_module_inventory_3.json": "5133f68432e43afd821f590ec8056405cf8365e25a3b21fe7f34ac7eb0e21d25",
     "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/guest_hashes_after_run.json": "3b29a68ae4faff42a75fe87cd3181a4884c649faa0ce3a5ff5f9776857ea1a8f",
@@ -54,6 +57,7 @@
     "atomics",
     "maximum group"
   ],
+  "executed_supervisor_preservation": "Archived source and ten-test suite each match exact executed input-manifest hash. Later startup polling correction does not modify this run or its evidence.",
   "failed_attempts": [
     {
       "acceptance": false,
@@ -105,6 +109,39 @@
   ],
   "primary_lifetimes": 24,
   "recorded_utc": "2026-10-18T02:22:54.977492+00:00",
+  "repeat_cycle_heap_review": {
+    "module_rebasing_accounted_for": true,
+    "ownership_acceptance": false,
+    "unloaded_1": {
+      "blocks_hex": "ED",
+      "overhead_hex": "2A14",
+      "requested_hex": "1ACAC"
+    },
+    "unloaded_1_to_2": {
+      "combined_signed_hex": "-F70",
+      "overhead_signed_hex": "+8",
+      "requested_signed_hex": "-F78"
+    },
+    "unloaded_2": {
+      "blocks_hex": "ED",
+      "overhead_hex": "2A1C",
+      "requested_hex": "19D34"
+    },
+    "unloaded_2_to_3_address_turnover": {
+      "backtrace": "888E775D",
+      "new_address": "23D88910640",
+      "old_address": "23D88928740",
+      "overhead_hex": "2C",
+      "requested_hex": "F84",
+      "same_size_and_stack": true
+    },
+    "unloaded_2_to_3_positive_stack_groups": 0,
+    "unloaded_3": {
+      "blocks_hex": "ED",
+      "overhead_hex": "2A1C",
+      "requested_hex": "19D34"
+    }
+  },
   "source_commit": "eb1ff4cc50094d411f9ac6061e45360f14d1a7c9",
   "temporary_foreign_contexts": 6,
   "ust_original_absence_restored": true

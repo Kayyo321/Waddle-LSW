@@ -6700,3 +6700,14 @@ raw captures, differences, identities and checksums. #3/#5/#11 +0%; total85.5%.
 M2 remains94%/Review, feature In Progress, Time Ended TBD. Real cancellation,
 simultaneous Linux-GPU/OpenCL execution and DXVK heap ownership remain open;
 no feature push, PR readiness or merge follows from this evidence.
+
+
+Offline repeat-cycle review accounts for verified per-cycle OpenCL/Vulkan
+rebasing. Unloaded1→2 requested bytes decrease0xF78, overhead increases0x8,
+net decrease0xF70; unloaded2→3 has zero positive stack groups and zero net
+bytes/count. One same-size Windows stack allocation changes address, so the
+captures are not byte-identical. These are allocation deltas, not ownership
+acceptance. The executed supervisor and ten-test source are archived with
+hashes equal to the successful run's original manifest before later private
+polling changes. See the OpenCL receipt. Evidence commit80cf470 updated
+#3/#5/#11 +0%; this preservation/review also adds0%, total85.5%.
