@@ -1,0 +1,111 @@
+{
+  "additional_checks": [
+    "malformed buffer inputs",
+    "event/context validation in two serial primary lifetimes per cycle",
+    "six concurrent primary callers per cycle (range/pointer/overlap and exact outputs)",
+    "build error",
+    "joined callers",
+    "explicit shutdown",
+    "module absence",
+    "loader environment restoration"
+  ],
+  "ci": {
+    "all_three_jobs_passed": true,
+    "conclusion": "success",
+    "head": "1e91c4833a285c7978afa0d50eaa4035f983cce7",
+    "scope": "separate CI-only ref, not current feature HEAD",
+    "software_vgpu_run": 39085524347
+  },
+  "cycles": 3,
+  "evidence_class": "native execution and raw UMDH captures; ownership attribution incomplete",
+  "evidence_sha256": {
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/baseline.target.json": "a149d90214b43d28cc81b0f8b04c23e5712b44667b89e4f4173cc881ceaea818",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/baseline.umdh.txt": "d17ce29526e4a617f6a3d23013e001d30ee0ba498869ba6b678c937294327ff5",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/baseline_receipt.json": "06cbc739f4af0bad9933ff35d5bfeb7e64a9f0d8310186bd1eeb3c6f16456eb9",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/diff_baseline_unloaded_1.umdh.txt": "462e4598396eeacfe9a0a08e3cdf2646180e7ef3474e0d7b1bb378824fab04dc",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/diff_baseline_unloaded_3.umdh.txt": "2b75e53f7f71b9e41981eb6e5ae43b97685693a9ea26f3473697d715fcd5b403",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/diff_unloaded_1_unloaded_2.umdh.txt": "f7edd940b249777987353dbc16792cf18697985ed1cb17ff03bee14df532af91",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/diff_unloaded_2_unloaded_3.umdh.txt": "15a5ac60c236d98b8a93e296c5bde0735b3e4d373a42f736b5265beb9663433f",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/extra_live_module_inventory_2.json": "3332f2002ad4450c07f3df387fcafb74b667da65f3f2e828efc1b4fafad10607",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/extra_live_module_inventory_3.json": "5133f68432e43afd821f590ec8056405cf8365e25a3b21fe7f34ac7eb0e21d25",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/guest_hashes_after_run.json": "3b29a68ae4faff42a75fe87cd3181a4884c649faa0ce3a5ff5f9776857ea1a8f",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/guest_hashes_before_run.json": "3b29a68ae4faff42a75fe87cd3181a4884c649faa0ce3a5ff5f9776857ea1a8f",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/guest_status.json": "a7a181b4697ff3ddd8837c12a142576ebd779752efac9e93e04a68dd43e92f78",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/inputs_after.json": "52e6c733a91468b6483c32abd6e64ba9545c6bef367bce1ea2f153e7d6a36eda",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/inputs_before.json": "52e6c733a91468b6483c32abd6e64ba9545c6bef367bce1ea2f153e7d6a36eda",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/life_receipts.json": "2b962bd257efdfa20c23a0a2d18f5ef528f2a1c9159d43c974f510ce8c51bdbf",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/live_module_inventory.json": "82492e48d44ab1dc5597551f3cb13b47ca561802b07882158fe7fb0c789679d3",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/opencl_heap_audit.json": "98a20ad047a5d7d4cc8dfb97a26d62631dd3ee5d8e36dfb7a5757604583a4f8e",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/registry_before.json": "a73db11009650f9a6b012a158ff147c2c3ed4b8c8ae49ed009a5e0943c9bf4ed",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/registry_restored.json": "00a9177821d15aadd89d0015eee82b5dbc6b7067bc1084af71ebf8f137e0d86c",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/source_provenance.json": "54e51ac609041587b836777c261ad9c1cd7a9af913c23daaf6a265961a478f1d",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/tools_verified_after.json": "4161524feca71494fb3f59503a86178542c1e82417c976699d4fdd48f710fca9",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/tools_verified_before.json": "4161524feca71494fb3f59503a86178542c1e82417c976699d4fdd48f710fca9",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/unloaded_1.target.json": "a149d90214b43d28cc81b0f8b04c23e5712b44667b89e4f4173cc881ceaea818",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/unloaded_1.umdh.txt": "410e85c262ebe4f2f24d391f5f188a1bb1114ce642bd7f72b3897d1acf92acb7",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/unloaded_2.target.json": "a149d90214b43d28cc81b0f8b04c23e5712b44667b89e4f4173cc881ceaea818",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/unloaded_2.umdh.txt": "3f35529be3ede22c49eb038c0c135a6640b5ddeda5c957829743819f6ea76609",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/unloaded_3.target.json": "a149d90214b43d28cc81b0f8b04c23e5712b44667b89e4f4173cc881ceaea818",
+    "build/windows11_vm/dxvk_opencl_heap_edf760f119a1747c/unloaded_3.umdh.txt": "2bac064abd6107f91440d60b17073c2dd87881eb7a1a33cbaec3ea419de71f74"
+  },
+  "exact_kernels": [
+    "add",
+    "local reduction/barrier",
+    "atomics",
+    "maximum group"
+  ],
+  "failed_attempts": [
+    {
+      "acceptance": false,
+      "failure": "private CMD emitted literal CRLF text; interrupted owned controller only; independent fresh WinRM restored originally absent image key",
+      "folder": "build/windows11_vm/dxvk_opencl_heap_76683d1e59a91796",
+      "native_fixture_launched": false
+    },
+    {
+      "acceptance": false,
+      "cycles_completed": 0,
+      "failure": "private supervisor used missing actual.validate_target reference; baseline fixture naturally timed out with exit1; unique UST key restored",
+      "folder": "build/windows11_vm/dxvk_opencl_heap_acb28b83e56ef2e0",
+      "native_fixture_launched": true
+    }
+  ],
+  "five_signed_microsoft_tools_verified_before_after": true,
+  "gpu_final_acceptance": false,
+  "guest_input_hashes_verified_before_after": true,
+  "handles": [
+    53,
+    142,
+    148,
+    154
+  ],
+  "heap_delta_unloaded_2_to_3": {
+    "does_not_prove_zero_owned_leaks": true,
+    "overhead_bytes": 0,
+    "requested_bytes": 0
+  },
+  "host_retirement": {
+    "controller_and_waddle_worker_exit": 0,
+    "owned_sessions_empty": true,
+    "qualification": "Pinned virgl worker teardown explicitly SIGKILLs its worker; receipts do not identify the signal sender or prove graceful/LSan-clean vendor-child exit.",
+    "supervisor_signals": [],
+    "vendor_renderer_child_raw_wait_status": 9
+  },
+  "medium_integrity": true,
+  "native_exit": 0,
+  "native_fixture_sha256": "59722473f33ba7d91648c315bd50df267b98aaa3d1438e7bdf0e2c2666da8339",
+  "native_heap_acceptance": false,
+  "native_opencl_sha256": "a8fd9d7a4f979ca4534e26d789025cf9f7c7affd84b46726eeee28f40d83c54d",
+  "pending": [
+    "first-cycle residual heap ownership attribution",
+    "six additional process handles per later cycle",
+    "real transport-loss cancellation",
+    "simultaneous real Linux GPU and OpenCL acceptance",
+    "DXVK native heap ownership",
+    "M2 strict native absolute handle-count gate"
+  ],
+  "primary_lifetimes": 24,
+  "recorded_utc": "2026-10-18T02:22:54.977492+00:00",
+  "source_commit": "eb1ff4cc50094d411f9ac6061e45360f14d1a7c9",
+  "temporary_foreign_contexts": 6,
+  "ust_original_absence_restored": true
+}

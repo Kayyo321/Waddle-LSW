@@ -258,3 +258,48 @@ requirement from the accounting sentence. Four gates pass; native qualification
 remains blocked by the strict count failure, so #4 stays80% and M2 stays94%.
 No new completion credit, waiver or feature progress. Evidence commit db40b19
 records the system-only reproduction; software-vGPU #3/#5/#11 +0%, total85.5%.
+
+
+### OpenCL three-cycle native heap capture, resumed 2026-10-17
+
+The unchanged approved DLL and native fixture completed three native cycles in
+`dxvk_opencl_heap_edf760f119a1747c`: 24 primary lifetimes plus six temporary
+foreign contexts, all four exact kernels, malformed inputs, build errors,
+joined concurrent callers, explicit shutdown, module absence and loader
+environment restoration. Native exit0, exact guest inputs and five signed
+Microsoft tools were verified before/after, and the unique originally absent
+UST image key was restored. The context/event mismatch oracle runs in two
+serial primary lifetimes per cycle; the other six exercise concurrent exact
+results and range/pointer/overlap checks. No broader oracle scope is claimed.
+
+UMDH unloaded2→unloaded3 has zero requested/overhead delta. Baseline53 process
+handles become142,148,154 after the three unloads. Heap stability does not
+prove zero owned leaks or clear the six-handle increase per later cycle.
+First-cycle retained stacks include Windows graphics/loader calls reached
+through clvk initialization; caller frames alone do not establish allocator
+ownership. No LLVM compiler leak or system-cache exemption is inferred.
+Native heap and final GPU acceptance remain false pending exact attribution.
+
+Controller and Waddle worker exit0 with no supervisor-directed signals and
+empty owned sessions. An adopted vendor renderer child has raw wait status9;
+pinned virgl teardown contains its own SIGKILL path, but these receipts do not
+identify the signal sender or prove graceful vendor-child exit/LSan coverage.
+
+Two failed private-supervisor attempts are preserved separately:76683d1e59a91796
+never launched the native fixture because of a malformed private CMD; its
+unique UST key was restored through an independently recorded fresh session.
+The corrected staging attempt acb28b83e56ef2e0 reached baseline, then a wrong
+Python helper reference aborted supervision; no OpenCL cycle ran, the native
+fixture naturally timed out with exit1, and UST was restored. Neither failure
+is reused as positive evidence. Ten private supervisor regression tests pass.
+
+The separate CI-only head1e91c4833a285c7978afa0d50eaa4035f983cce7 now passes all
+four workflows, including software-vGPU run39085524347 (OpenCL admission,
+Linux transport and native Windows transport). This is CI evidence for that
+source/configuration, not native heap or current feature-HEAD acceptance.
+
+[OPENCL_HEAP_RECEIPT_2026_10_17.json](OPENCL_HEAP_RECEIPT_2026_10_17.json) binds
+raw captures, differences, identities and checksums. #3/#5/#11 +0%; total85.5%.
+M2 remains94%/Review, feature In Progress, Time Ended TBD. Real cancellation,
+simultaneous Linux-GPU/OpenCL execution and DXVK heap ownership remain open;
+no feature push, PR readiness or merge follows from this evidence.
