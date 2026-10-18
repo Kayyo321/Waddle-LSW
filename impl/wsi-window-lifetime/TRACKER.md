@@ -108,3 +108,11 @@ Strict integrated Windows cross-build passes (`native_wsi_lifetime_build.log`);
 this is compilation only, and actual native/physical execution remains required.
 
 Task #4 +0%; overall remains94%, Time Ended TBD.
+
+
+Current actual native checkpoint683c0ee2 passes8 device lifetimes,32 native
+replacement/extent/loss cases,24 exact GPU/client presentations and existing
+handle199/GDI/USER equality. Separate unchanged48-frame presentation checkpoint
+7adb6000 fails after42 exact frames at handle199→200; retained as failed evidence.
+Four guest binary hashes match after both runs. Final qualification remains open;
+Task #4 +0%, total94%, Time Ended TBD. See current software-vGPU qualification.

@@ -1415,3 +1415,11 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   Full37-source owned matrix exits0:144 positive GPU lifetimes and6 expected
   exit1 cleanup runs onRTX5080, zero configured sanitizer/leak errors.
   Native/heap/OpenCL gates remain open; #3/#11 +0%, overall +0%.
+
+- **Commit `1e91c48`**: coherent37-source physical matrix passes144 positive
+  GPU lifetimes and6 exact cleanup failures. #3/#11 +0%, overall +0%.
+- Native qualification evidence (identify through qualification-doc history):
+  current WSI8lifetimes/32cases pass; unchanged48-framecase failsafter42 at
+  handle199→200. FinalthreepatchOpenCL8primary lifetimes/concurrent callers
+  and allmalformed oracles passnative; freshDXVK3lifeheap stillunclassified.
+  Requiredheap/concurrentGPU/legacyacceptance remainsopen; #3/#5/#11 +0%.

@@ -689,3 +689,40 @@ Receipt: `build/icd_physical_coherent_owned_safety_37/
 run-20261018T004547289903Z-148584/physical_report.json`.
 Log: `physical_coherent_owned37.log`. Native Windows WSI, fresh DXVK heap,
 OpenCL final DLL/native/concurrent GPU/heap gates remain open.
+
+
+Current native Windows results (not final global qualification):
+- `tcp_gpu_683c0ee2` passes all8 actual WSI device lifetimes and32 labeled native
+  cases. Every case retains the original process-handle baseline199 and exact
+  GDI/USER equality, with24 GPU-rendered64x64 presentations compared across all
+ 4096 client RGB pixels to independent GPU readback. Replacement/acquired-image,
+  zero-area, resize and observed HWND loss behaviors pass. Medium integrity,
+  exact host-session retirement and four unchanged deployed binaries are proved.
+- The unchanged48-frame presentation workload `tcp_gpu_7adb6000` fails after42
+  exact frames at lifetime7 retirement: baseline199, actual200. Native exit1;
+  host session and worker exit0 naturally with no remaining owned process. Four
+  deployed input hashes still match. It is failed evidence and not replaced by
+  the WSI result or earlier diagnostic-only runs. Current-source handle tracing
+  is prepared; prior different-fixture traces cannot attribute this new delta.
+- `dxvk_gpu_d0fc65d0` passes actual final-three-patch OpenCL execution on uniquely
+  selected NVIDIA RTX5080 (maximum group1024): all8 primary kernel lifetimes,
+  temporary context/alias/event rejection scopes, deliberate compile error with
+  log, both joined concurrent callers, terminal shutdown and complete native
+  module retirement. The authenticated host graph retires naturally with no
+  signals and exact status0. All six deployed artifacts and all fixture inputs
+  still match after execution. This is functional native GPU proof; native heap
+  and simultaneous Linux GPU acceptance remain open.
+- Fresh post-stdio DXVK UMDH audit `dxvk_heap_d79f3c51503adc22` verifies3 actual
+  GPU lifetimes/native exit0 with exact before/after tool, image and PDB hashes
+  and originally absent image flags restored. The old4096-byte stderr bucket is
+  absent. Remaining positive allocations require attribution, so heap_acceptance
+  stays false. Four additional system-only native UMDH controls each complete
+  three joined lifetimes (window/factory, compiler, environment, network); their
+  successful execution alone is not a leak waiver. Comparisons remain pending.
+
+Exact commands/logs: `native_wsi_lifetime_run.log`,
+`native_wsi_lifetime_inputs_after.log`, `clvk_buffer_map_final_cross_build.log`,
+`opencl_buffer_final_native_run.log`, `stdio_heap_run.log`,
+`system_heap_controls_run.log`, under build/qualification_20261017.
+All fourCI workflows atddc7926 passed. FreshCI is dispatched at1e91c48 on the
+separate verification-only ref; the feature PR is not updated or marked ready.
