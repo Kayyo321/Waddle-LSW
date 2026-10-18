@@ -154,3 +154,12 @@ The durable runner/README/DLL identity checkpoint is
 Commit07923b4 adds the regression and synchronized evidence with0% task impact.
 No qualification credit or thresholds changed. Remaining actual-DLL heap,
 transport-loss cancellation and Linux-GPU/OpenCL overlap acceptance stays open.
+
+
+Final recursive inventory retains five uninitialized nested Looking Glass
+checkouts (`repos/LGMP`, `PureSpice`, `cimgui`, `nanosvg`, `wayland-protocols`).
+The initial overbroad assertion that every recursive checkout was initialized
+failed and is not acceptance evidence. No checkout/pin was changed to hide it.
+Required feature top-level checkouts are initialized at their pins; the
+inventory has no advanced/conflicted entries. Raw inventory and corrected
+non-acceptance report remain in `build/qualification_20261017/runtime_final_git_state.json`.
