@@ -161,3 +161,42 @@ signal sender; `signals=[]` covers only the supervisor's own signal journal.
 Earlier “natural graph” wording must not be read as every vendor descendant
 exiting gracefully or as vendor-child LeakSanitizer proof. No new leak waiver
 or change to the acceptance assertions is made.
+
+
+### M2 external handle-counter blocker, 2026-10-17 (America/New_York)
+
+The standalone native system control `wsi_idle_system_only_b460c22e` reproduces
+the strict count failure without creating any Vulkan instance or Waddle
+session. It calls the unchanged Windows graphics/presentation initialization
+helpers, records baseline167, idles65s with100ms raw count sampling, then runs
+the original100×10ms equality check. At59766ms the count changes to168 and
+stays there through that check. Native/control exit1 is retained as failed
+diagnostic evidence; the supervisor exits0 only after collecting it. No Vulkan
+or Waddle DLL is present in the captured live module inventory.
+
+The count-change snapshot records three removed ALPC handles and four added
+Thread/Event handles. Read-only external tracing, tied to PID/creation identity
+and the current matched system DLL/PDBs, resolves creation frames to
+`RPCRT4!ThreadSelf`, `RpcpSetThreadpoolCallbackInstance`,
+`PerformGarbageCollection`, and the Windows threadpool timer. Trace histories
+may reuse handle values, so do not infer object identity from a value alone or
+attribute every historical allocation from these records. This demonstrates
+that the absolute process-count oracle can fail independently of Waddle GPU
+ownership; it does not retrospectively identify the exact handle in7adb6000.
+
+Three further current-source48-frame diagnostics (400a228b,ed3d992a,6290e08c)
+all return original exit0; they remain diagnostic-only. Together with the two
+unmodified native positives, they establish repeatable functional output,
+not a waiver of the preserved199→200 failure. The exact controls, source and
+binary hashes, native logs and module/trace receipts are bound in
+[M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json](../software-vgpu-slicing/M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json).
+
+No production fix is justified by these OS-owned callback frames. Closing
+borrowed RPC handles, prewarming an elevated baseline, reducing frames or
+widening the equality budget would conceal the issue and is not done. M2's
+strict native count gate is externally blocked by the current Windows runtime
+behavior; M2 remains94%/Review, Time Ended TBD. The original tracked assertion
+and all coverage/leak thresholds remain unchanged. Healthy OpenCL native-heap
+qualification proceeds independently; it cannot close this M2 gate.
+
+Task #4 +0%; total94%; no Time Ended or native acceptance waiver.

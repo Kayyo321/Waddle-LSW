@@ -1,0 +1,109 @@
+{
+  "m2_qualified": false,
+  "source_head": "1c3e1f6205e94466c06c01f40e6a17a67d0f1eaa",
+  "system_control_record": {
+    "diagnostic_only": true,
+    "acceptance": false,
+    "purpose": "Isolate OS/DXGI/presentation initialization and idle process-handle churn without starting Waddle transport or creating a Vulkan instance.",
+    "source": "/home/dev/Waddle-LSW/build/qualification_20261017/wsi_idle_system_only_b460c22e/diagnostic.c",
+    "source_sha256": "0709b8f4fba9e374b18223650f7d1ada27c3ec6c567eb1e17bd97b71e541c8eb",
+    "base_wrapper": "/home/dev/Waddle-LSW/build/qualification_20261017/wsi_handle_diagnostic_7adb_9bd62e9f/diagnostic.c",
+    "base_wrapper_sha256": "76e3b3871f69d1753fc00aa45a0e569f833e72ff66131d048c987e82eaa32818",
+    "included_fixture": "/home/dev/Waddle-LSW/build/wddm_dxvk_checkpoint/dxvk_source_9bd62e9f/source/tests/vgpu/tcp_gpu_windows.c",
+    "included_fixture_sha256": "b97fd1c6e4cd202007755b45a7c2c6d2ad64f5368a13a689f8672ae8696f4005",
+    "system_control": {
+      "calls_medium_integrity": true,
+      "calls_existing_initialize_system_graphics": true,
+      "calls_existing_initialize_presentation_windows": true,
+      "calls_original_fixture_main": false,
+      "calls_bootstrap_or_waddle_transport": false,
+      "calls_vulkan": false,
+      "captures_baseline_before_idle": true,
+      "idle_duration_ms": 65000,
+      "raw_count_poll_interval_ms": 100,
+      "captures_full_snapshot_on_sampled_count_change": true,
+      "calls_existing_handle_baseline_after_idle": true,
+      "retained_dxgi_module_held_through_observation_then_exact_own_reference_freed": true,
+      "post_result_external_trace_hold_seconds": 60,
+      "creation_time_identity_marker": true
+    },
+    "execution_status": "executed diagnostic only; no acceptance",
+    "binary": "/home/dev/Waddle-LSW/build/qualification_20261017/wsi_idle_system_only_b460c22e/vgpu_system_idle_diagnostic.exe",
+    "binary_sha256": "07b5ac7a91773f1cc5f630577158edcca89c004becd919b212fc6be6b1109e5b",
+    "compile_command": "zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include build/qualification_20261017/wsi_idle_system_only_b460c22e/diagnostic.c -luser32 -lgdi32 -ldwmapi -ldxguid -ladvapi32 -o build/qualification_20261017/wsi_idle_system_only_b460c22e/vgpu_system_idle_diagnostic.exe",
+    "compile_exit_status": 0,
+    "root_review": "Marker newlines corrected; poll/snapshot failures fail closed; control_exit labels the standalone control, not original fixture exit.",
+    "root_reviewed_source_sha256": "0709b8f4fba9e374b18223650f7d1ada27c3ec6c567eb1e17bd97b71e541c8eb",
+    "root_reviewed_binary_sha256": "07b5ac7a91773f1cc5f630577158edcca89c004becd919b212fc6be6b1109e5b",
+    "root_compile_status": "strict host rebuild exit0",
+    "guest": "C:\\waddle_system_idle_1aafa9c1",
+    "control_exit": 1,
+    "queried_handles": [
+      "0000000000000184",
+      "00000000000001F8",
+      "0000000000000254",
+      "0000000000000258",
+      "00000000000003F4",
+      "00000000000003F8",
+      "00000000000003FC"
+    ],
+    "native_exit": 1,
+    "medium_integrity": true,
+    "guest_exe_hash_after_verified": true,
+    "evidence": {
+      "guest_status.json": "958f6b713bcf2ca88e82b724bd8d0945c4be0d0a8e4005c0c50d63e3fd238482",
+      "module_map_live.json": "ddc3466fc57a9b1d48647923cf7fefcacf5af18b91cfd87efcb49a91b9ec15fc",
+      "module_map_after.json": "242e6ad7cb4f30a88fab4f06461d1d64c23aad3fa2efe00d9a0946aaf4704882",
+      "closed_traces.log": "445201c84f41955ecd05430cc7651b07ca829608f62494b6d22e0392b94f42ec",
+      "resolved_traces.txt": "635a0805f8f4cdd0482c70a9f09599cc2f5d113ed9cddd09e0c4ea1ca1f49493"
+    },
+    "initial_worker_compile": {
+      "source_sha256": "b44bb8aaead7a841fc74bb224b2d55f03ef4a3a5e7a38e954e8b881098680918",
+      "binary_sha256": "3dc9384b2b7abb137a2fa92ffaa18325cd6ff19f67719aea7bc611de1b808220"
+    },
+    "sandbox_compile_attempt": "failed Unexpected; not executed until strict host compile exit0",
+    "observed_baseline": 167,
+    "observed_post_idle_count": 168,
+    "first_sampled_change_ms": 59766,
+    "scope": "No Vulkan instance, Waddle DLL, bootstrap or transport; Windows system initialization and idle callbacks only"
+  },
+  "artifacts": {
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/record.json": "1651304cb2e83a7efcaf7d309931038298e9d82b6e6dbb55fbd539905fcd525f",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/guest_status.json": "958f6b713bcf2ca88e82b724bd8d0945c4be0d0a8e4005c0c50d63e3fd238482",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/closed_traces.log": "445201c84f41955ecd05430cc7651b07ca829608f62494b6d22e0392b94f42ec",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/module_map_live.json": "ddc3466fc57a9b1d48647923cf7fefcacf5af18b91cfd87efcb49a91b9ec15fc",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/resolved_traces.txt": "635a0805f8f4cdd0482c70a9f09599cc2f5d113ed9cddd09e0c4ea1ca1f49493",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/module_map_after.json": "242e6ad7cb4f30a88fab4f06461d1d64c23aad3fa2efe00d9a0946aaf4704882",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/root_compile.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/diagnostic.c": "0709b8f4fba9e374b18223650f7d1ada27c3ec6c567eb1e17bd97b71e541c8eb",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/vgpu_system_idle_diagnostic.pdb": "c4031f4a89f181f606901e9a8cffbf79edc1bdb8007c6e39f93ad8282f720206",
+    "build/qualification_20261017/wsi_idle_system_only_b460c22e/vgpu_system_idle_diagnostic.exe": "07b5ac7a91773f1cc5f630577158edcca89c004becd919b212fc6be6b1109e5b"
+  },
+  "repeated_gpu_diagnostics": [
+    {
+      "folder": "/home/dev/Waddle-LSW/build/qualification_20261017/wsi_handle_resumed_f7b32b19",
+      "checkpoint": "/home/dev/Waddle-LSW/build/windows11_vm/tcp_gpu_400a228b",
+      "runner_exit": 0,
+      "original_exit": 0,
+      "frames": 48,
+      "acceptance": false
+    },
+    {
+      "folder": "/home/dev/Waddle-LSW/build/qualification_20261017/wsi_handle_resumed_7530aa70",
+      "checkpoint": "/home/dev/Waddle-LSW/build/windows11_vm/tcp_gpu_ed3d992a",
+      "runner_exit": 0,
+      "original_exit": 0,
+      "frames": 48,
+      "acceptance": false
+    },
+    {
+      "folder": "/home/dev/Waddle-LSW/build/qualification_20261017/wsi_handle_resumed_62cbcd05",
+      "checkpoint": "/home/dev/Waddle-LSW/build/windows11_vm/tcp_gpu_6290e08c",
+      "runner_exit": 0,
+      "original_exit": 0,
+      "frames": 48,
+      "acceptance": false
+    }
+  ],
+  "blocker": "Unchanged global native handle equality fails without Vulkan/Waddle:167->168 after~60s; original199->200 remains historical failure. Currentmatched RPC GC creator frames identify external Windows ownership paths. No assertion/baseline/budget change or manual borrowed-handle cleanup permitted."
+}

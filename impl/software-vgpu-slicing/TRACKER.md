@@ -1438,3 +1438,12 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   diagnostic passes but does not explain prior199→200 failure. Exact receipts
   in M2_NATIVE_RECEIPT_2026_10_17.json; vendor child reap status9 retained.
   #3/#5/#11 +0%, overall85.5%; M2 remains94%, Time Ended TBD.
+
+
+- **Commit `1c3e1f6`**: preserve two unchanged full48-frame positives and
+  current-source successful diagnostic, without waiving old failure. #3/#5/#11 +0%.
+- M2 system-control evidence (identify through this documentation commit):
+  no Vulkan/Waddle session, baseline167→168 at59.766s; unchanged exact check
+  fails. Current OS traces identify RPC garbage-collection paths. M2 native
+  global-count gate externally blocked; no progress/waiver. Overall85.5%,
+  M2 94%, Time Ended TBD; healthy feature heap work remains independent.

@@ -62,6 +62,11 @@ No hardware/Adobe completion is claimed. Review in this order:
   [Exact/manual cases](HARDWARE_TEST_HANDOFF.md#6-real-wsi-lifecycle-acceptance)
   · [WSI implementation](https://github.com/Kayyo321/Waddle-LSW/commit/51ee17bca208db3241fefaf65fddcbc8577616dd)
   · [WSI receipts](wsi-window-lifetime/TRACKER.md).
+  Current qualification (2026-10-17): native WSI transition matrix passes;
+  two unchanged48-frame runs pass, but a prior199→200 failure remains open. A
+  system-only control reproduces167→168 through Windows RPC garbage collection
+  without Vulkan/Waddle, failing the unchanged count check. No counter waiver
+  or milestone closure. [Exact external-blocker receipt](software-vgpu-slicing/M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json).
 - [ ] **P1 · Real vGPU/DXVK and native heap.** Prove real cross-VM mapping and GPU
   backend; execute native loader/direct oracles and pinned DXVK workload; complete
   heap/TLS qualification. Portable real-Windows supervisor automation is still
