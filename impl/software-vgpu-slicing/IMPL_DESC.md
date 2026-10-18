@@ -6317,3 +6317,51 @@ and any unexpected named export fail closed. A real MinGW-built PE regression
 checks both exact admission and rejection of a genuine extra export actually
 named Export; the synthetic header cannot substitute for this format test.
 CI installs the corresponding base-package C cross compiler and binutils.
+
+### Expanded owned-access qualification contract
+
+The integrated ICD now recursively embeds exactly31 owned Zig modules, plus six
+separately linked codecs:37 distinct source owners. `icd_owned_sanitizers.py`
+requires their exact canonical names and every runtime declaration by source line.
+Two same-named declarations in general graphics (`packet_t.put` and module `put`)
+retain separate line identities; neither can satisfy the other's emission proof.
+The image-transfer native file declares production format validation after test
+blocks, so its entire non-test function inventory remains required. Audited exact
+fixture separators exclude only test helpers, including WSI test-native exports.
+The exact native/test declaration distinction is audited below.
+
+The complete seam rebuilds every codec and all23 independent C request/reply
+oracles privately with ASan/LSan/UBSan. The Linux unsupported-platform native sink
+is a separate fresh sanitized C object, linked only into the native dispatch image;
+the Zig test image supplies its existing sink fixtures. This does not instrument
+or exercise the real Windows sink branch. Exact original LLVM reverse proof,
+guard/panic/lifetime preservation, per-source access hooks, unique final symbols,
+input hashes, allocator execution and zero-leak exit requirements remain intact.
+The current completion contract requires394 integrated Debug tests and29 named
+standalone codec tests (3/9/4/6/3/4), with an immutable version2 receipt and a new
+`build/icd_complete_seam_safety_37` lineage. Earlier20-source receipts remain
+historical and cannot establish safety for the expanded implementation.
+
+
+The initial literal32-module inventory exposed an unused graphics-pipeline import
+and two private dead functions (`enumerate_extensions`, `descriptor_span`) that
+had no caller or address-taken reference and no definition in either fresh native
+or allocator IR. Remove those three dead declarations; retain the real extension
+dispatch, sparse descriptor validation and independently tested legacy module.
+Both integrated Debug/ReleaseSafe suites still execute394 tests and128 C ABI cycles.
+
+Eighteen exact named declarations have test callers but no native definitions:
+`encode_device`; the three uncached render creation wrappers; uncached general
+graphics creation; the narrow graphics-command image-copy encoder; two dense
+profile helpers; four legacy descriptor encoders; three modern-sync test packet
+helpers; the unvalidated image-copy test wrapper; legacy extra-object destruction;
+and `publish_batch`. Native uses the separately inventoried cached/validated/live
+handlers. Their exact signatures are frozen in `NativeTestSignatures`; native
+missing names outside that table fail. Every listed helper must emit and receive
+ASan annotation in the allocator image, with exact name/line/source hashes and
+same-final-image access proof. `publish_batch` retains its mandatory actual hook.
+The descriptor module contributes type layouts natively but emits no functions:
+only that exact source may report zero native definitions/hooks, requiring all
+four helpers to be absent there and present/instrumented in the allocator image.
+No native machine access is exempted from instrumentation. `boolean_mask` and
+`slot_type` are compile-time constructors; any runtime emission fails the gate.

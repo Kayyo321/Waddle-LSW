@@ -41,7 +41,6 @@ const render_wire = @import("venus_render_wire.zig");
 const graphics_wire = @import("venus_graphics_wire.zig");
 const graphics_state = @import("venus_graphics_state.zig");
 var graphics_recordings = [_]graphics_state.recording_t{.{}} ** 64;
-const graphics_pipeline_wire = @import("venus_graphics_pipeline_wire.zig");
 const graphics_command_wire = @import("venus_graphics_command_wire.zig");
 const builtin = @import("builtin");
 const MappingAllocator = if (builtin.is_test) std.testing.allocator else std.heap.c_allocator;
@@ -1781,18 +1780,6 @@ fn enumerate_instance_extensions(layer: [*c]const u8, count: [*c]u32, output: [*
     count.* = copied;
     return if (copied < total) c.VK_INCOMPLETE else c.VK_SUCCESS;
 }
-/// Enumerate empty supported instance extensions; borrowed output, no allocation or transport.
-fn enumerate_extensions(
-    layer: [*c]const u8,
-    count: [*c]u32,
-    output: [*c]c.VkExtensionProperties,
-) callconv(.C) c_int {
-    _ = output;
-    if (count == null) return c.VK_ERROR_INITIALIZATION_FAILED;
-    if (layer != null) return c.VK_ERROR_LAYER_NOT_PRESENT;
-    count.* = 0;
-    return c.VK_SUCCESS;
-}
 /// Report the implemented API ceiling; no ownership or transport, thread-safe.
 fn enumerate_version(version: [*c]u32) callconv(.C) c_int {
     if (version == null) return c.VK_ERROR_INITIALIZATION_FAILED;
@@ -2901,16 +2888,6 @@ fn descriptor_buffer_valid(parent: *const c.venus_object_t, descriptor: *const p
     const entry = device_cache(parent.handle).?;
     std.debug.assert(entry.descriptor_limits_ready);
     return descriptor.offset % entry.descriptor_alignments[kind] == 0 and extent <= state.buffer_size - descriptor.offset and extent <= entry.descriptor_ranges[kind];
-}
-fn descriptor_span(profile: *profiles.descriptor_set_t, binding: u32, first: u32, count: u32) ?[]profiles.descriptor_t {
-    if (count == 0 or count > 64) return null;
-    for (profile.descriptors[0..profile.descriptor_count], 0..) |descriptor, index| if (descriptor.binding == binding and descriptor.array_element == first) {
-        if (count > profile.descriptor_count - index) return null;
-        const span = profile.descriptors[index..][0..count];
-        for (span, 0..) |element, offset| if (element.binding != binding or element.array_element != @as(u64, first) + offset) return null;
-        return span;
-    };
-    return null;
 }
 /// Transactionally update buffer descriptors/copies. [in] nullable device, bounded borrowed immutable arrays.
 /// counts0 permit null; maximum64 operations,64 elements/write. Void; malformed/unsupported calls ignored.

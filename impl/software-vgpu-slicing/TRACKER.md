@@ -1315,3 +1315,21 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   Eighteen admission tests pass; candidate inspection finds exactly 121 named
   exports including private shutdown. Fresh build/publication remains required.
   #5/#12 +0%, overall +0%.
+
+- **Commit `ddc7926`**: decode actual GNU PE name tables and require121 exact
+  named OpenCL exports; eighteen admission tests pass, including real MinGW PE
+  acceptance and unexpected-export rejection. #5/#12 +0%, overall +0%.
+- Expanded owned sanitizer qualification (identify through sanitizer history):
+  migrate the stale14-embedded/20-total source contract to exact31/37 sources,
+  preserve interleaved production declarations and same-named member/module
+  functions, rebuild all23 C oracles and the Linux native sink, and require394
+  integrated/29 standalone units. Nine inventory regressions pass. Full fresh
+  instrumentation/execution is required before any expanded safety claim.
+  #3/#11 +0%, overall +0%; Time Ended remains TBD.
+
+- Dead declaration cleanup (identify through ICD history): remove one unreferenced
+  legacy pipeline import and two private helpers with no caller or native/test
+  definition. Keep real extension dispatch and descriptor validation unchanged.
+  Debug394 and ReleaseSafe394 plus128 C ABI cycles pass in
+  `icd_dead_declaration_cleanup.log`. Native/test IR and independent source-call
+  review establish the distinction from active production code. #3/#11 +0%.
