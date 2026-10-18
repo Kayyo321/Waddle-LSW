@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run isolated hardware workloads with all twenty owned ICD sources instrumented.
+"""Run isolated hardware workloads with all thirty-seven owned ICD sources instrumented.
 
 Borrow frozen seam objects and production runtime graph read-only; compile private
 C frontends and a version-mapped shared ICD. Full driver inventory, exact existing
@@ -26,9 +26,9 @@ import icd_seam_sanitizers as seam
 
 # Frozen immutable source receipts; changed fixtures need a new audited contract.
 SourceHashes = {
-    'src/vgpu/venus_icd.zig': '7f78e3ce9f1c09bd3d07563b03d2b36f92aaf7dae6c4348985708bcb74a291da',
-    'tests/vgpu/icd.c': '16cafa228d68b2f89d8c18e744ad2e2431edbdd0b3c800ba788ce099859f0221',
-    'tests/vgpu/worker_presented.c': 'a68383c92faad311bdbe885fbb7da57622144d08164553469322a63fce953968',
+    'src/vgpu/venus_icd.zig': '7cf58eefde08348512f6890338c106e5f81c3d5f352f034a86b18b8a2a1832ff',
+    'tests/vgpu/icd.c': '24dfb9a259ef60955259e3e874d4795e1c73413ba4b5c2435cbc0c950b97ae54',
+    'tests/vgpu/worker_presented.c': '46cf1d6951fec19b67fe3fe408721a1719d460e43745847c3cc5803aec081146',
 }
 ManifestNames = ('gfxstream_vk_icd.json', 'intel_hasvk_icd.json', 'intel_icd.json',
                  'lvp_icd.json', 'nouveau_icd.json', 'nvidia_icd.json', 'radeon_icd.json', 'virtio_icd.json')
@@ -48,7 +48,7 @@ CppFlags = ('-D_GNU_SOURCE', '-Iinclude', '-Isrc', '-Isrc/common', '-Isrc/cli', 
             '-Isrc/guest', '-Isrc/mock', '-Isrc/vgpu', '-Isubmodules/venus_protocol/include')
 CFlags = ('-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror', '-O1', '-g',
           '-fsanitize=address,leak,undefined', '-fno-omit-frame-pointer')
-PublicExports = ('venus_icd_bind', 'venus_icd_bind_capabilities', 'venus_icd_unbind',
+PublicExports = ('venus_icd_bind', 'venus_icd_bind_capabilities', 'venus_icd_bind_timed', 'venus_icd_unbind',
                  'venus_icd_abandon', 'venus_icd_negotiate_loader', 'venus_icd_get_instance_proc_addr',
                  'venus_icd_get_physical_proc_addr', 'vk_icdNegotiateLoaderICDInterfaceVersion',
                  'vk_icdGetInstanceProcAddr', 'vk_icdGetPhysicalDeviceProcAddr')
@@ -150,7 +150,7 @@ def completed_seam(provenance, seam_output, seam_record):
     record = json.loads(reference.read_text())
     assert set(record) == {'schema', 'complete', 'output', 'completion_record', 'source_manifest',
                            'reports', 'expected_icd_debug_units', 'retained_artifacts'}
-    assert record['schema'] == 'waddle_owned_icd_complete_seam_v1' and record['complete'] is True
+    assert record['schema'] == 'waddle_owned_icd_complete_seam_v2' and record['complete'] is True
     folder = Path(record['output']).resolve(strict=True)
     assert folder.is_dir() and str(folder) == record['output']
     if seam_output is not None:
@@ -159,8 +159,8 @@ def completed_seam(provenance, seam_output, seam_record):
     assert record['completion_record'] == str(completion)
     assert completion.read_bytes() == reference.read_bytes(), 'reference differs from immutable run receipt'
     expected_sources = {str((Path('src/vgpu') / name).resolve()) for name in seam.CompleteSourceNames}
-    assert set(record['source_manifest']) == expected_sources and len(expected_sources) == 20
-    assert record['expected_icd_debug_units'] == 117
+    assert set(record['source_manifest']) == expected_sources and len(expected_sources) == 37
+    assert record['expected_icd_debug_units'] == 394
     seam.merge_inputs(provenance, record['source_manifest'])
     retained = record['retained_artifacts']
     assert 0 < len(retained) <= seam.MaxRetainedArtifacts
@@ -182,7 +182,7 @@ def completed_seam(provenance, seam_output, seam_record):
         assert report['mode'] == 'Debug' and report['emission_mode'] == ('native' if kind == 'native' else 'tests')
         assert report['entire_module_reverse_proof'] is True and not report['uncovered_owned_functions']
         modules = report['modules']
-        assert len(modules) == 20
+        assert len(modules) == 37
         assert {module['source']: module['source_sha256'] for module in modules} == record['source_manifest']
         assert report['linked_instrumented_definitions'] == sum(module['instrumented_definitions'] for module in modules)
         assert report['linked_guard_stores_preserved'] > 0
@@ -190,26 +190,30 @@ def completed_seam(provenance, seam_output, seam_record):
         assert len(symbols) == len(set(symbols)), 'duplicate final owned declaration'
         for module in modules:
             assert not module['uncovered_owned_functions']
-            assert module['instrumented_definitions'] == module['final_defined_symbols'] == len(module['symbols']) > 0
-            assert module['asan_access_hook_relocations'] > 0 and module['final_executable_access_hooks'] > 0
+            if owned.native_type_only(module):
+                assert module['instrumented_definitions'] == module['final_defined_symbols'] == len(module['symbols']) == 0
+                assert module['asan_access_hook_relocations'] == module['final_executable_access_hooks'] == 0
+            else:
+                assert module['instrumented_definitions'] == module['final_defined_symbols'] == len(module['symbols']) > 0
+                assert module['asan_access_hook_relocations'] > 0 and module['final_executable_access_hooks'] > 0
             assert all(module['required_symbol_access_hooks'].values())
             assert all(module['final_required_symbol_access_hooks'].values())
-            if kind == 'test' or Path(module['source']) != owned.NativeBatchSource:
+            if kind == 'test':
                 assert not module['non_reachable_runtime_declarations']
             else:
-                lazy = module['non_reachable_runtime_declarations']
-                assert set(lazy) == {'publish_batch'}
-                assert lazy['publish_batch']['declaration'] == owned.NativeBatchSignature
+                permitted = owned.NativeTestSignatures.get(Path(module['source']).name, {})
+                for name, declaration in module['non_reachable_runtime_declarations'].items():
+                    assert declaration['declaration'] == permitted[name]
         helper = next(module for module in modules if Path(module['source']) == owned.NativeBatchSource)
         if kind == 'test':
             assert helper['final_required_symbol_access_hooks']['venus_features_native.publish_batch'] > 0
-        assert report['standalone_native_suites'] == 6 and report['standalone_debug_units'] == 25
+        assert report['standalone_native_suites'] == 6 and report['standalone_debug_units'] == 29
         assert report['icd_native_suites'] == (1 if kind == 'native' else 0)
-        assert report['icd_debug_units'] == (0 if kind == 'native' else 117)
+        assert report['icd_debug_units'] == (0 if kind == 'native' else 394)
         assert dependency.file_hash(folder / (kind + '_runner')) == report['executable_sha256']
         links = report['ordered_link_manifest']
         assert len({entry['path'] for entry in links}) == len(links)
-        expected_oracles = set(seam.NativeOracleNames if kind == 'native' else (*seam.GuestOracles, 'features_reply'))
+        expected_oracles = set(seam.NativeOracleNames if kind == 'native' else (*seam.GuestOracles, *seam.RendererOracles))
         oracle_paths = {str(folder / 'oracles' / name / 'oracle.o') for name in expected_oracles}
         assert {entry['path'] for entry in links if '/oracles/' in entry['path']} == oracle_paths
         for entry in links:
@@ -228,15 +232,15 @@ def reprove_seam(provenance, output, folder):
     """
     report_path = add_file(provenance, folder / 'native_sanitized.json')
     completed = json.loads(report_path.read_text())
-    assert completed['icd_native_suites'] == 1 and completed['standalone_debug_units'] == 25
-    assert len(completed['modules']) == 20 and completed['entire_module_reverse_proof'] is True
+    assert completed['icd_native_suites'] == 1 and completed['standalone_debug_units'] == 29
+    assert len(completed['modules']) == 37 and completed['entire_module_reverse_proof'] is True
     seam.merge_inputs(provenance, completed['input_manifest'])
     seam.merge_inputs(provenance, {entry['path']: entry['sha256'] for entry in completed['ordered_link_manifest']})
     assert dependency.file_hash(folder / 'native_runner') == completed['executable_sha256']
     add_file(provenance, folder / 'native_runner')
     test_path = add_file(provenance, folder / 'test_sanitized.json')
     completed_test = json.loads(test_path.read_text())
-    assert completed_test['icd_debug_units'] == 117
+    assert completed_test['icd_debug_units'] == 394
     assert dependency.file_hash(folder / 'test_runner') == completed_test['executable_sha256']
     add_file(provenance, folder / 'test_runner')
     helper_module = next(module for module in completed_test['modules']
@@ -269,8 +273,9 @@ def reprove_seam(provenance, output, folder):
         reports.append(report)
         objects.append(copy_input(provenance, old_object, output / 'icd' / (source.stem + '.o')))
     assert sum(report['guard_stores_preserved'] for report in reports) == completed['linked_guard_stores_preserved']
+    objects.append(copy_input(provenance, folder / 'native_sink.o', output / 'icd' / 'native_sink.o'))
     dependency.verify_inputs(provenance)
-    print('Native seam reproof: 20 unchanged sources, original guards/reverse bytes and actual object hooks passed', flush=True)
+    print('Native seam reproof: 37 unchanged sources, original guards/reverse bytes and actual object hooks passed', flush=True)
     return reports, objects
 
 
@@ -746,7 +751,7 @@ def main():
         add_file(provenance, path)
     assert all(path in provenance for path in transport_manifest['c_import_headers']), 'transport C header absent from compiler closure'
     dependency.verify_inputs(provenance)
-    report = {'scope': 'owned20 ICD accesses plus C fixture/worker; other transport Zig ReleaseSafe and host/vendor code excluded',
+    report = {'scope': 'owned37 ICD accesses plus C fixture/worker; other transport Zig ReleaseSafe and host/vendor code excluded',
               'seam_output': str(seam_folder),
               'source_hashes': SourceHashes, 'pins': PinHashes, 'expected_device': arguments.expected_device,
               'cpp_flags': CppFlags, 'c_flags': CFlags, 'driver_policy': policy, 'owner_tests': ownership,

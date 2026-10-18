@@ -1,17 +1,17 @@
 # Genuine owned Zig ICD and embedded-import access instrumentation, separate from public ICD artifacts.
 # Read-only native/pinned-oracle dependencies; the Python tool owns only the
-# exclusive new20 run directory under build/icd_closure_safety_20. No suppression or fault variants.
+# exclusive new37 run directory under build/icd_closure_safety_37. No suppression or fault variants.
 # UBSan applies to the strict C frontend; Zig Debug runtime checks remain enabled.
 IcdOwnedSafetyObjects = build/venus_capabilities.o build/venus_command.o build/venus_objects.o build/venus_instance_wire.o build/venus_query_wire.o build/venus_values.o build/venus_values_oracle.o
 IcdOwnedSafetyOracles = build/venus_features_query_oracle.o build/venus_features_reply_oracle.o build/venus_render_wire_oracle.o build/venus_descriptor_wire_oracle.o build/venus_compute_wire_oracle.o build/venus_graphics_wire_oracle.o build/venus_graphics_pipeline_wire_oracle.o build/venus_graphics_command_wire_oracle.o build/venus_device_wire_oracle.o
 
-IcdOwnedSafetySources = src/vgpu/venus_icd.zig src/vgpu/venus_features_native.zig src/vgpu/venus_features_wire.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_compute_state.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_graphics_state.zig src/vgpu/venus_graphics_pipeline_wire.zig src/vgpu/venus_graphics_command_wire.zig src/vgpu/venus_device_native.zig src/vgpu/venus_device_wire.zig
+IcdOwnedSafetySources = src/vgpu/venus_compute_state.zig src/vgpu/venus_compute_wire.zig src/vgpu/venus_descriptor_template_native.zig src/vgpu/venus_descriptor_wire.zig src/vgpu/venus_device_native.zig src/vgpu/venus_device_wire.zig src/vgpu/venus_dynamic_rendering_wire.zig src/vgpu/venus_extensions_wire.zig src/vgpu/venus_extra_objects_wire.zig src/vgpu/venus_features_native.zig src/vgpu/venus_features_wire.zig src/vgpu/venus_graphics_command_wire.zig src/vgpu/venus_graphics_dynamic_wire.zig src/vgpu/venus_graphics_general_wire.zig src/vgpu/venus_graphics_state.zig src/vgpu/venus_graphics_wire.zig src/vgpu/venus_icd.zig src/vgpu/venus_icd_profiles.zig src/vgpu/venus_image_transfer_native.zig src/vgpu/venus_image_transfer_wire.zig src/vgpu/venus_image_view_native.zig src/vgpu/venus_modern_sync_wire.zig src/vgpu/venus_pipeline_wire_helpers.zig src/vgpu/venus_properties_native.zig src/vgpu/venus_properties_wire.zig src/vgpu/venus_render_wire.zig src/vgpu/venus_requirements2_wire.zig src/vgpu/venus_sampler_descriptor_wire.zig src/vgpu/venus_shader_wire.zig src/vgpu/venus_transfer2_native.zig src/vgpu/venus_wsi.zig
 
 .PHONY: vgpu-icd-owned-sanitizers
 # Synchronous exclusive artifact owner. All selected production definitions must
 # be accounted for and the entire LLVM module must pass exact reverse proof.
-vgpu-icd-owned-sanitizers: scripts/icd_owned_sanitizers.py $(IcdOwnedSafetySources) $(VgpuIcdHeaders) $(IcdOwnedSafetyObjects) $(IcdOwnedSafetyOracles)
-	python3 scripts/icd_owned_sanitizers.py src/vgpu/venus_icd.zig build/icd_closure_safety_20
+vgpu-icd-owned-sanitizers: vgpu-owned-sanitizer-inventory-test scripts/icd_owned_sanitizers.py $(IcdOwnedSafetySources) $(VgpuIcdHeaders) $(IcdOwnedSafetyObjects) $(IcdOwnedSafetyOracles)
+	python3 scripts/icd_owned_sanitizers.py src/vgpu/venus_icd.zig build/icd_closure_safety_37
 
 # Separately linked codec access instrumentation; private native/allocator suites.
 .PHONY: vgpu-capabilities-owned-sanitizers
@@ -46,11 +46,11 @@ vgpu-icd-dependency-sanitizers: vgpu-capabilities-owned-sanitizers vgpu-command-
 # Full private owned seam: nested codec rebuilds, fresh C oracles and final-binary
 # access proof. Header discovery is read-only; no generated/shared prerequisite.
 .PHONY: vgpu-icd-complete-seam-sanitizers
-vgpu-icd-complete-seam-sanitizers: scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
-	python3 scripts/icd_seam_sanitizers.py build/icd_complete_seam_safety_20 --expected-icd-units 117 --latest-record build/icd_complete_seam_safety_20/latest.json
+vgpu-icd-complete-seam-sanitizers: vgpu-owned-sanitizer-inventory-test scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
+	python3 scripts/icd_seam_sanitizers.py build/icd_complete_seam_safety_37 --expected-icd-units 394 --latest-record build/icd_complete_seam_safety_37/latest.json
 
 # Serial isolated GPU matrix; every invocation retains a unique artifact receipt.
 # Frozen production runtime and all eight driver manifests remain read-only.
 .PHONY: vgpu-icd-physical-owned-sanitizers
 vgpu-icd-physical-owned-sanitizers: vgpu-icd-complete-seam-sanitizers scripts/icd_physical_sanitizers.py scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
-	python3 scripts/icd_physical_sanitizers.py build/icd_physical_owned_safety_20 --seam-record build/icd_complete_seam_safety_20/latest.json --expected-device "NVIDIA GeForce RTX 5080"
+	python3 scripts/icd_physical_sanitizers.py build/icd_physical_owned_safety_37 --seam-record build/icd_complete_seam_safety_37/latest.json --expected-device "NVIDIA GeForce RTX 5080"

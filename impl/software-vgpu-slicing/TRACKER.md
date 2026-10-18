@@ -1323,7 +1323,7 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   migrate the stale14-embedded/20-total source contract to exact31/37 sources,
   preserve interleaved production declarations and same-named member/module
   functions, rebuild all23 C oracles and the Linux native sink, and require394
-  integrated/29 standalone units. Nine inventory regressions pass. Full fresh
+  integrated/29 standalone units. Eleven inventory regressions pass. Full fresh
   instrumentation/execution is required before any expanded safety claim.
   #3/#11 +0%, overall +0%; Time Ended remains TBD.
 
@@ -1342,3 +1342,16 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   retirement, plus mock sanitizer and actual Windows round-trip regressions.
   Preserve every GPU/heap assertion, deadline and baseline; fresh GPU/heap audit
   remains required. #3/#11 +0%, overall +0%.
+
+- **Commit `ef77895`**: restore loader environment only after joined DXVK
+  caller/module retirement. Mock ASan/LSan/UBSan and actual native Windows
+  round-trip pass; strict DXVK cross-build passes. #3/#11 +0%, overall +0%.
+- Full owned-access gate migration (identify through sanitizer history):
+  `full_owned_seam_37.log` exits0 with all394 allocator tests, six native codec
+  suites and29 standalone codec tests,23 fresh sanitized C oracles and native
+  sink. Receipt `build/icd_complete_seam_safety_37/latest.json` is version2,
+ 37-source exact proof with no unknown declaration holes, full LLVM reverse
+  proof and zero configured sanitizer/leak errors. Independent read-only review
+  verifies all177 retained hashes. Eleven separate inventory regressions pass
+  and are now Make prerequisites. Physical gate also checks the actual11-export
+  ABI including timed bind; its fresh hardware run remains required. #3/#11 +0%.

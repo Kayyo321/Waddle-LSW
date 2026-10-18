@@ -6397,3 +6397,13 @@ test cleanup helper returning failure for an already inactive guard; the helper
 now preserves the guard's idempotent success, with a mock regression. Cross-build,
 mock safety and native execution are distinct receipts; native heap acceptance
 still requires a fresh complete GPU audit.
+
+
+Current complete-seam execution publishes version2 receipt
+`build/icd_complete_seam_safety_37/run-20261018T002803469715Z-114553/completion.json`:
+394 integrated allocator cases,29 standalone cases, six native codec suites and
+native dispatch all pass with leak detection enabled. All177 retained artifact
+hashes independently match. Eleven parser inventory regressions are a separate
+Make prerequisite; the seam receipt does not imply their execution itself.
+The physical consumer requires the current11 public version-map exports,
+including `venus_icd_bind_timed`; it does not admit an arbitrary extra export.

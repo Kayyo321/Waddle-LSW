@@ -24,22 +24,26 @@ import icd_owned_sanitizers as owned
 CodecNames = ('capabilities', 'command', 'objects', 'instance_wire', 'query_wire', 'values')
 # Exact named allocator-suite inventory; totals alone cannot admit missing units.
 CodecDebugUnitCounts = {'capabilities': 3, 'command': 9, 'objects': 4,
-                       'instance_wire': 5, 'query_wire': 3, 'values': 4}
+                       'instance_wire': 6, 'query_wire': 3, 'values': 4}
 assert set(CodecDebugUnitCounts) == set(CodecNames)
 # Independent pinned C encoder/receiver oracle sources and include boundaries.
 GuestOracles = ('render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire',
-                'graphics_pipeline_wire', 'graphics_command_wire', 'features_query', 'device_wire')
+                'graphics_pipeline_wire', 'graphics_command_wire', 'features_query', 'device_wire',
+                'shader', 'extra_objects', 'requirements2_query', 'sampler_descriptor_wire',
+                'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire',
+                'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'extensions_wire')
 GuestIncludes = ('-Iinclude', '-Itests/vgpu/encoder', '-Ibuild/venus_protocol',
                  '-Isubmodules/venus_protocol/tests', '-Isubmodules/venus_protocol/include')
 RendererIncludes = ('-Itests/vgpu/encoder', '-Ibuild/venus_renderer_protocol', '-Iinclude',
                     '-Isubmodules/venus_protocol/include', '-Isubmodules/venus_protocol/include/vulkan')
+RendererOracles = ('features_reply', 'requirements2_reply', 'properties_reply', 'extensions_reply')
 # Bound tool-generated text before streaming; no unbounded retained subprocess output.
 MaxProofBytes = 256 * 1024 * 1024
 MaxRetainedArtifacts = 512
 CompleteSourceNames = (*owned.IcdEmbeddedSourceNames, *(f'venus_{name}.zig' for name in CodecNames))
-assert len(set(CompleteSourceNames)) == len(CompleteSourceNames) == 20
+assert len(set(CompleteSourceNames)) == len(CompleteSourceNames) == 37
 # Freeze receipt must confirm whether the C frontend also needs device_wire.
-NativeOracleNames = ('features_query', 'features_reply', 'device_wire')
+NativeOracleNames = (*GuestOracles, *RendererOracles)
 
 
 def merge_inputs(provenance, additions):
@@ -69,8 +73,11 @@ def validate_report(report, mode, sources):
     for module in modules:
         assert module['uncovered_owned_functions'] == []
         assert module['source_sha256'] == dependency.file_hash(Path(module['source']))
-        assert module['asan_access_hook_relocations'] > 0
-        assert module['instrumented_definitions'] == len(module['symbols']) > 0
+        if owned.native_type_only(module):
+            assert module['asan_access_hook_relocations'] == module['instrumented_definitions'] == 0
+        else:
+            assert module['asan_access_hook_relocations'] > 0
+            assert module['instrumented_definitions'] == len(module['symbols']) > 0
         assert all(module['required_symbol_access_hooks'].values())
         if mode == 'tests':
             assert not module['non_reachable_runtime_declarations']
@@ -88,7 +95,7 @@ def final_access_proof(binary, reports, output):
     modules = [dict(module) for report in reports for module in report['modules']]
     expected_sources = {str((Path('src/vgpu') / name).resolve()) for name in CompleteSourceNames}
     assert {module['source'] for module in modules} == expected_sources
-    assert len(modules) == len(expected_sources) == 20
+    assert len(modules) == len(expected_sources) == 37
     definitions = {}
     for module in modules:
         module['final_executable_access_hooks'] = 0
@@ -127,7 +134,10 @@ def final_access_proof(binary, reports, output):
                 hooks[symbol] += 1
     assert all(count == 1 for count in boundaries.values()), 'ambiguous final function interval'
     for module in modules:
-        assert module['final_executable_access_hooks'] > 0, 'no final owned ASan hooks: ' + module['source']
+        if owned.native_type_only(module):
+            assert module['final_executable_access_hooks'] == 0
+        else:
+            assert module['final_executable_access_hooks'] > 0, 'no final owned ASan hooks: ' + module['source']
         module['final_required_symbol_access_hooks'] = {
             symbol: hooks[symbol] for symbol in module['required_access_hook_symbols']}
         assert all(module['final_required_symbol_access_hooks'].values()), 'required final helper lacks ASan hooks'
@@ -168,7 +178,7 @@ def object_manifest(paths):
 def publish_completion(output, latest_record, expected_units):
     """[in] Borrow exclusive run/latest path/count; [out] own immutable receipt.
 
-    Require both complete same-binary proofs, exact current twenty-source identity
+    Require both complete same-binary proofs, exact current thirty-seven-source identity
     and unit count. Hash every retained regular artifact and all borrowed inputs;
     no completion publication on failure. Per-run record is created exclusively.
     Optional caller-owned latest bytes are fsynced then atomically replaced; every
@@ -179,12 +189,19 @@ def publish_completion(output, latest_record, expected_units):
     native, tests = reports['native'], reports['test']
     source_manifest = {module['source']: module['source_sha256'] for module in native['modules']}
     expected_sources = {str((Path('src/vgpu') / name).resolve()) for name in CompleteSourceNames}
-    assert set(source_manifest) == expected_sources and len(source_manifest) == 20
+    assert set(source_manifest) == expected_sources and len(source_manifest) == 37
     assert {module['source']: module['source_sha256'] for module in tests['modules']} == source_manifest
     assert native['icd_native_suites'] == 1 and tests['icd_debug_units'] == expected_units > 0
     assert native['standalone_native_suites'] == tests['standalone_native_suites'] == 6
     assert native['standalone_debug_unit_counts'] == tests['standalone_debug_unit_counts'] == CodecDebugUnitCounts
-    assert native['standalone_debug_units'] == tests['standalone_debug_units'] == sum(CodecDebugUnitCounts.values()) == 28
+    assert native['standalone_debug_units'] == tests['standalone_debug_units'] == sum(CodecDebugUnitCounts.values()) == 29
+    test_modules = {module['source']: module for module in tests['modules']}
+    for module in native['modules']:
+        paired = test_modules[module['source']]
+        for name, declaration in module['non_reachable_runtime_declarations'].items():
+            assert paired['runtime_functions'][name] == declaration['line']
+            assert paired['non_reachable_runtime_declarations'] == {}
+            assert paired['instrumented_definitions'] > 0 and paired['final_executable_access_hooks'] > 0
     assert native['input_manifest'] == tests['input_manifest']
     dependency.verify_inputs(source_manifest)
     dependency.verify_inputs(native['input_manifest'])
@@ -204,7 +221,7 @@ def publish_completion(output, latest_record, expected_units):
             retained[str(path.resolve())] = dependency.file_hash(path)
     dependency.verify_inputs(retained)
     completion = output / 'completion.json'
-    record = {'schema': 'waddle_owned_icd_complete_seam_v1', 'complete': True,
+    record = {'schema': 'waddle_owned_icd_complete_seam_v2', 'complete': True,
               'output': str(output), 'completion_record': str(completion),
               'source_manifest': source_manifest, 'reports': report_references,
               'expected_icd_debug_units': expected_units, 'retained_artifacts': retained}
@@ -255,7 +272,7 @@ def main():
     source = Path('src/vgpu/venus_icd.zig')
     frontend = Path('tests/vgpu/icd.c')
     inventories = owned.icd_source_inventory(source)
-    assert len(inventories) == 14 and set(dependency.ModuleConfigs) == set(CodecNames)
+    assert len(inventories) == 31 and set(dependency.ModuleConfigs) == set(CodecNames)
     provenance = {str(path): dependency.file_hash(path) for path in inventories}
     merge_inputs(provenance, {str(Path(__file__).resolve()): dependency.file_hash(Path(__file__).resolve()),
                              str(Path(dependency.__file__).resolve()): dependency.file_hash(Path(dependency.__file__).resolve()),
@@ -289,8 +306,8 @@ def main():
     c_flags = ['-std=c11', '-D_GNU_SOURCE', '-O1', '-g', *warnings, *safety]
     zig_flags = ['-Iinclude', '-Isubmodules/venus_protocol/include', '-O', 'Debug', '-lc']
     oracle_objects = {}
-    for name in (*GuestOracles, 'features_reply'):
-        includes = RendererIncludes if name == 'features_reply' else GuestIncludes
+    for name in (*GuestOracles, *RendererOracles):
+        includes = RendererIncludes if name in RendererOracles else GuestIncludes
         oracle_source = Path('tests/vgpu') / (name + '_oracle.c')
         folder = output / 'oracles' / name
         folder.mkdir(parents=True, exist_ok=True)
@@ -313,12 +330,18 @@ def main():
     test_frontend = output / 'native_oracle.o'
     owned.run(['cc', *c_flags, *GuestIncludes, '-c', str(frontend), '-o', str(native_frontend)])
     owned.run(['cc', *c_flags, *GuestIncludes, '-Dmain=venus_icd_native_fixture', '-c', str(frontend), '-o', str(test_frontend)])
+    sink_source = Path('src/vgpu/venus_win32_present.c')
+    sink_object = output / 'native_sink.o'
+    (output / 'sink_inputs').mkdir()
+    merge_inputs(provenance, dependency.input_provenance(source, sink_source, GuestIncludes, output / 'sink_inputs'))
+    owned.run(['cc', *c_flags, *GuestIncludes, '-c', str(sink_source), '-o', str(sink_object)])
+    (output / 'inputs.json').write_text(json.dumps(provenance, indent=2) + '\n')
     values_oracle = output / 'dependencies' / 'values' / 'oracle.o'
-    assert set(oracle_objects) == {*GuestOracles, 'features_reply'}
-    assert len(oracle_objects) == 9 and len(set(oracle_objects.values())) == 9
-    native_dependencies = [*codec_objects, values_oracle, *(oracle_objects[name] for name in NativeOracleNames)]
+    assert set(oracle_objects) == {*GuestOracles, *RendererOracles}
+    assert len(oracle_objects) == 23 and len(set(oracle_objects.values())) == 23
+    native_dependencies = [sink_object, *codec_objects, values_oracle, *(oracle_objects[name] for name in NativeOracleNames)]
     test_dependencies = [test_frontend, *codec_objects, values_oracle, *oracle_objects.values()]
-    immutable_objects = object_manifest([native_frontend, *test_dependencies])
+    immutable_objects = object_manifest([native_frontend, sink_object, *test_dependencies])
     object_inputs = {entry['path']: entry['sha256'] for entry in immutable_objects}
     reports = {}
     for kind in ('native', 'test'):
