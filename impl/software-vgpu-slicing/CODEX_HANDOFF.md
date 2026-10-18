@@ -204,3 +204,11 @@ no model-ID control): an OpenCL repository inventory (low effort), a clvk-versus
 output: the inventory against `.gitmodules`/`git submodule status`; the gap audit's critical claim by reading
 `venus_device_native.zig` `copy_chain`/`preflight`; the build result by re-running the build through my own
 driver without their patch, which also exposed three missing exports in their list.
+
+
+Resumed M2 verification: see M2_NATIVE_RECEIPT_2026_10_17.json and the latest
+qualification section. Two unchanged native full48-frame repetitions pass;
+the earlier199→200 failure remains unexplained and unqualified. Current-source
+tracing identifies balanced RPC garbage-collection handle churn in a successful
+diagnostic, which cannot retrospectively attribute the failed run. No M2
+closure, Time Ended, feature push or PR readiness is authorized by these results.

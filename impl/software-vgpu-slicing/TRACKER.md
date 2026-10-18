@@ -1430,3 +1430,11 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   sanitized-host OpenCL8primary lifetimes also pass; all local jobs ended,
   publishers stopped, VM preserved. Remaining native heap/concurrent GPU and
   handle-count failure remain open. #3/#5/#11 +0%, overall85.5%; Time Ended TBD.
+
+
+- **Commit `8a316fb`**: preserve user-pause checkpoint; #3/#5/#11 +0%.
+- Resumed M2 evidence (identify through this documentation commit): two fresh
+  unchanged48-frame native runs pass96 frames/16 lifetime checks; current-source
+  diagnostic passes but does not explain prior199→200 failure. Exact receipts
+  in M2_NATIVE_RECEIPT_2026_10_17.json; vendor child reap status9 retained.
+  #3/#5/#11 +0%, overall85.5%; M2 remains94%, Time Ended TBD.

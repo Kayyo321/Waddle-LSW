@@ -382,3 +382,40 @@ Normal and sanitized-host OpenCL functional execution both pass; native heap,
 simultaneous Linux GPU and unchanged48-frame presentation remain unqualified.
 Local jobs finished, our HTTP publishers stopped, VM preserved running. No PR
 readiness/closure or Time Ended change.
+
+
+### Resumed M2 native evidence, 2026-10-17 (America/New_York)
+
+On clean `8a316fb`, the unchanged source snapshot `eb1ff4c` passes two fresh
+full48-frame/eight-lifetime native runs: `tcp_gpu_41308226` and
+`tcp_gpu_df62f140`. All96 exact frames,16 lifetime handle checks and both native
+exits pass; before/after guest binary hashes match. Controllers/workers exit0,
+owned host sessions empty and no supervisor signals are recorded. Vendor
+descendant reap status9 remains explicit evidence, not a claim every child
+exited normally. Source/input/log hashes and all evidence limits are in
+[M2_NATIVE_RECEIPT_2026_10_17.json](M2_NATIVE_RECEIPT_2026_10_17.json).
+
+The current-source diagnostic `tcp_gpu_fe13e873` also reaches48 frames and
+original exit0; it is diagnostic-only. At sequence8 two ALPC handles close and
+a thread/event pair appears, keeping count199. Exact current OS DLL hashes and
+Microsoft public PDBs identify the additions as `RPCRT4!ThreadSelf` from
+`PerformGarbageCollection`. Initial Info-stream-age-only symbol admission
+failed and is retained. The final admission follows Microsoft's GUID and
+DBI/image-age validation (InfoAge>=ImageAge, DBIAge==ImageAge, no legacy-zero
+exception), verified against every current copied system image. This
+background churn does not attribute the prior failed199→200 run.
+
+`tcp_gpu_7adb6000` remains failed and unexplained. Bounded further diagnostics
+are separate from acceptance; no baseline, assertion, frame count, retry budget
+or source workload is changed. M2 remains94%, software-vGPU85.5%, Time Ended
+TBD. This checkpoint grants no progress or PR readiness. OpenCL, DXVK heap and
+simultaneous physical GPU gates remain separate pending feature work.
+
+The host-retirement wording is deliberately narrow: this pinned process-worker
+configuration lets virglrenderer destroy its nested renderer with SIGKILL
+(`server/render_worker.c:406–424`, connection cleanup via render_client). The
+receipts record one adopted vendor child with wait status9. They identify no
+signal sender; `signals=[]` covers only the supervisor's own signal journal.
+Earlier “natural graph” wording must not be read as every vendor descendant
+exiting gracefully or as vendor-child LeakSanitizer proof. No new leak waiver
+or change to the acceptance assertions is made.
