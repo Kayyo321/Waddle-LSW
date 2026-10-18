@@ -1377,3 +1377,10 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   actual device lifetimes with failed replacement/acquired-image retention,
   zero/nonzero extent changes, explicit replacements and observed HWND loss.
   Strict integrated Windows cross-build passes; execution pending. #3/#11 +0%.
+
+- **Commit `eb1ff4c`**: add separate actual native WSI lifecycle workload;
+  integrated Windows cross-build passes, native execution pending. #3/#11 +0%.
+- Native OpenCL malformed admission oracles (identify through fixture history):
+  exact-end success, zero/past-end/wrap/null/alias/context/event rejection with
+  output ownership and actual temporary context cleanup. Strict cross-build
+  passes; real-DLL execution remains pending. #5 +0%, overall +0%.

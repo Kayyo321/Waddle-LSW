@@ -243,3 +243,17 @@ All owners are released before starting the next case. The original48-frame
 presentation workload, retry bounds and native assertions are unchanged.
 Strict integrated Windows cross-build passes (`native_wsi_lifetime_build.log`);
 this is compilation only, and actual native/physical execution remains required.
+
+
+The native OpenCL fixture now checks exact-end read/write/copy/map/unmap results
+and rejects zero-length, offset/span past-end and SIZE_MAX-wrap inputs for all
+four1D APIs, null read/write host pointers and same-buffer/sibling alias overlap.
+Two serial validation scopes additionally own a second context, buffer, queue and
+event to require CL_INVALID_CONTEXT for foreign buffer and event inputs. Those
+scopes add temporary validation contexts to the unchanged eight primary kernel
+lifetimes; concurrent primary callers remain disjoint. Rejections require null
+event output, and map rejection requires null pointer plus exact error. Every
+new temporary owner is released and every unexpected mapping is tracked for
+cleanup. Stage/status diagnostics identify the failing oracle. Strict Windows
+cross-build passes in `opencl_buffer_oracles_build.log`; these are unexecuted
+native assertions until the fresh actual DLL/GPU run, not acceptance evidence.

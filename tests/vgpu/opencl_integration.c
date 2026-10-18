@@ -10,6 +10,7 @@
 #include <process.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <wchar.h>
 #include "waddle/venus_tcp.h"
@@ -33,6 +34,7 @@
     M(set_arg, clSetKernelArg) \
     M(release_kernel, clReleaseKernel) \
     M(create_buffer, clCreateBuffer) \
+    M(create_sub_buffer, clCreateSubBuffer) \
     M(release_buffer, clReleaseMemObject) \
     M(write_buffer, clEnqueueWriteBuffer) \
     M(read_buffer, clEnqueueReadBuffer) \
@@ -115,12 +117,19 @@ static int run_lifetime(const api_t *api, cl_device_id device, size_t group,
     int result = 1;
     cl_int status = CL_SUCCESS;
     cl_context context = NULL;
+    cl_context foreign_context = NULL;
     cl_command_queue queue = NULL;
+    cl_command_queue foreign_queue = NULL;
     cl_program program = NULL, invalid = NULL;
     cl_kernel kernels[4] = {NULL};
     cl_mem buffers[3] = {NULL};
+    cl_mem foreign_buffer = NULL, alias_root = NULL, alias_source = NULL, alias_destination = NULL;
     cl_event events[4] = {NULL};
+    cl_event foreign_event = NULL, rejected_event = NULL;
     void *mapped = NULL;
+    void *probe_mapped = NULL;
+    cl_command_queue probe_map_queue = NULL;
+    cl_mem probe_map_buffer = NULL;
     cl_uint *words = calloc(MaxWords * 3, sizeof *words);
     if (!words) goto cleanup;
     cl_uint *left = words, *right = words + MaxWords, *output = words + MaxWords * 2;
@@ -131,6 +140,41 @@ static int run_lifetime(const api_t *api, cl_device_id device, size_t group,
         fprintf(stderr, "OpenCL line %d status %d\n", __LINE__, (int)status); \
         goto cleanup; \
     } \
+} while (0)
+#define RequireOracleSuccess(label, expression) do { \
+    status = (expression); \
+    if (status != CL_SUCCESS) { \
+        fprintf(stderr, "OpenCL buffer oracle %s expected status %d, got %d\n", \
+                label, (int)CL_SUCCESS, (int)status); \
+        goto cleanup; \
+    } \
+} while (0)
+#define RequireOracleError(label, expected, expression) do { \
+    rejected_event = NULL; \
+    status = (expression); \
+    if (status != (expected) || rejected_event != NULL) { \
+        fprintf(stderr, "OpenCL buffer oracle %s expected status %d and null event, got status %d event %p\n", \
+                label, (int)(expected), (int)status, (void *)rejected_event); \
+        if (rejected_event) (void)api->release_event(rejected_event); \
+        rejected_event = NULL; \
+        goto cleanup; \
+    } \
+    rejected_event = NULL; \
+} while (0)
+#define RequireMapError(label, expected, map_queue, map_object, map_offset, map_size, wait_count, wait_list) do { \
+    cl_int map_status = CL_SUCCESS; \
+    rejected_event = NULL; \
+    probe_mapped = api->map_buffer(map_queue, map_object, CL_TRUE, CL_MAP_READ, \
+        map_offset, map_size, wait_count, wait_list, &rejected_event, &map_status); \
+    if (probe_mapped || map_status != (expected) || rejected_event != NULL) { \
+        fprintf(stderr, "OpenCL buffer map oracle %s expected status %d, null mapping and null event, got status %d pointer %p event %p\n", \
+                label, (int)(expected), (int)map_status, probe_mapped, (void *)rejected_event); \
+        if (probe_mapped) { probe_map_queue = map_queue; probe_map_buffer = map_object; } \
+        if (rejected_event) (void)api->release_event(rejected_event); \
+        rejected_event = NULL; \
+        goto cleanup; \
+    } \
+    rejected_event = NULL; \
 } while (0)
     context = api->create_context(NULL, 1, &device, NULL, NULL, &status);
     if (!context || status != CL_SUCCESS) goto cleanup;
@@ -190,8 +234,155 @@ static int run_lifetime(const api_t *api, cl_device_id device, size_t group,
     Require(api->enqueue_kernel(queue, kernels[3], 1, NULL, &group, &group, 0, NULL, NULL));
     Require(api->read_buffer(queue, buffers[2], CL_TRUE, 0, bytes, output, 0, NULL, NULL));
     for (size_t i = 0; i < group; ++i) if (output[i] != (cl_uint)i * 3 + 7) goto cleanup;
-    /* Invalid ranges and argument sizes must not turn into GPU memory access. */
-    if (api->read_buffer(queue, buffers[0], CL_TRUE, bytes, 1, output, 0, NULL, NULL) != CL_INVALID_VALUE) goto cleanup;
+    /* Exercise accepted exact-end spans before rejecting malformed inputs. */
+    const size_t end_offset = bytes - sizeof(cl_uint);
+    const cl_uint end_value = left[group - 1];
+    RequireOracleSuccess("exact-end write", api->write_buffer(queue, buffers[0], CL_TRUE,
+        end_offset, sizeof end_value, &end_value, 0, NULL, NULL));
+    cl_uint end_readback = 0;
+    RequireOracleSuccess("exact-end read", api->read_buffer(queue, buffers[0], CL_TRUE,
+        end_offset, sizeof end_readback, &end_readback, 0, NULL, NULL));
+    if (end_readback != end_value) {
+        fprintf(stderr, "OpenCL buffer oracle exact-end readback mismatch: got %u expected %u\n",
+                end_readback, end_value);
+        goto cleanup;
+    }
+    RequireOracleSuccess("exact-end copy", api->copy_buffer(queue, buffers[0], buffers[1],
+        end_offset, end_offset, sizeof end_value, 0, NULL, NULL));
+    cl_int map_status = CL_SUCCESS;
+    probe_mapped = api->map_buffer(queue, buffers[1], CL_TRUE, CL_MAP_READ,
+        end_offset, sizeof end_value, 0, NULL, NULL, &map_status);
+    if (probe_mapped) { probe_map_queue = queue; probe_map_buffer = buffers[1]; }
+    if (!probe_mapped || map_status != CL_SUCCESS ||
+        *(const cl_uint *)probe_mapped != end_value) {
+        fprintf(stderr, "OpenCL buffer oracle exact-end map expected status %d/value %u, got status %d pointer %p\n",
+                (int)CL_SUCCESS, end_value, (int)map_status, probe_mapped);
+        goto cleanup;
+    }
+    RequireOracleSuccess("exact-end unmap", api->unmap_buffer(queue, buffers[1], probe_mapped,
+        0, NULL, NULL));
+    probe_mapped = NULL;
+
+    /* Invalid ranges and arguments must reject before event creation or host access. */
+    RequireOracleError("read zero length", CL_INVALID_VALUE,
+        api->read_buffer(queue, buffers[0], CL_TRUE, 0, 0, output, 0, NULL, &rejected_event));
+    RequireOracleError("write zero length", CL_INVALID_VALUE,
+        api->write_buffer(queue, buffers[0], CL_TRUE, 0, 0, left, 0, NULL, &rejected_event));
+    RequireOracleError("copy zero length", CL_INVALID_VALUE,
+        api->copy_buffer(queue, buffers[0], buffers[1], 0, 0, 0, 0, NULL, &rejected_event));
+    RequireMapError("map zero length", CL_INVALID_VALUE, queue, buffers[0], 0, 0, 0, NULL);
+
+    RequireOracleError("read offset past end", CL_INVALID_VALUE,
+        api->read_buffer(queue, buffers[0], CL_TRUE, bytes + 1, 1, output, 0, NULL, &rejected_event));
+    RequireOracleError("write offset past end", CL_INVALID_VALUE,
+        api->write_buffer(queue, buffers[0], CL_TRUE, bytes + 1, 1, left, 0, NULL, &rejected_event));
+    RequireOracleError("copy source offset past end", CL_INVALID_VALUE,
+        api->copy_buffer(queue, buffers[0], buffers[1], bytes + 1, 0, 1, 0, NULL, &rejected_event));
+    RequireOracleError("copy destination offset past end", CL_INVALID_VALUE,
+        api->copy_buffer(queue, buffers[0], buffers[1], 0, bytes + 1, 1, 0, NULL, &rejected_event));
+    RequireMapError("map offset past end", CL_INVALID_VALUE, queue, buffers[0], bytes + 1, 1, 0, NULL);
+
+    RequireOracleError("read size past end", CL_INVALID_VALUE,
+        api->read_buffer(queue, buffers[0], CL_TRUE, bytes - 1, 2, output, 0, NULL, &rejected_event));
+    RequireOracleError("write size past end", CL_INVALID_VALUE,
+        api->write_buffer(queue, buffers[0], CL_TRUE, bytes - 1, 2, left, 0, NULL, &rejected_event));
+    RequireOracleError("copy source size past end", CL_INVALID_VALUE,
+        api->copy_buffer(queue, buffers[0], buffers[1], bytes - 1, 0, 2, 0, NULL, &rejected_event));
+    RequireOracleError("copy destination size past end", CL_INVALID_VALUE,
+        api->copy_buffer(queue, buffers[0], buffers[1], 0, bytes - 1, 2, 0, NULL, &rejected_event));
+    RequireMapError("map size past end", CL_INVALID_VALUE, queue, buffers[0], bytes - 1, 2, 0, NULL);
+
+    RequireOracleError("read SIZE_MAX wrap", CL_INVALID_VALUE,
+        api->read_buffer(queue, buffers[0], CL_TRUE, SIZE_MAX - 3, 8, output, 0, NULL, &rejected_event));
+    RequireOracleError("write SIZE_MAX wrap", CL_INVALID_VALUE,
+        api->write_buffer(queue, buffers[0], CL_TRUE, SIZE_MAX - 3, 8, left, 0, NULL, &rejected_event));
+    RequireOracleError("copy source SIZE_MAX wrap", CL_INVALID_VALUE,
+        api->copy_buffer(queue, buffers[0], buffers[1], SIZE_MAX - 3, 0, 8, 0, NULL, &rejected_event));
+    RequireOracleError("copy destination SIZE_MAX wrap", CL_INVALID_VALUE,
+        api->copy_buffer(queue, buffers[0], buffers[1], 0, SIZE_MAX - 3, 8, 0, NULL, &rejected_event));
+    RequireMapError("map SIZE_MAX wrap", CL_INVALID_VALUE, queue, buffers[0], SIZE_MAX - 3, 8, 0, NULL);
+
+    RequireOracleError("read null host pointer", CL_INVALID_VALUE,
+        api->read_buffer(queue, buffers[0], CL_TRUE, 0, sizeof *output, NULL, 0, NULL, &rejected_event));
+    RequireOracleError("write null host pointer", CL_INVALID_VALUE,
+        api->write_buffer(queue, buffers[0], CL_TRUE, 0, sizeof *left, NULL, 0, NULL, &rejected_event));
+    RequireOracleError("same-buffer overlap", CL_MEM_COPY_OVERLAP,
+        api->copy_buffer(queue, buffers[0], buffers[0], 0, 1, 2, 0, NULL, &rejected_event));
+
+    /* The serial lifetimes own a real second context for context/event mismatch oracles. */
+    if (shutdown) {
+        cl_uint alignment_bits = 0;
+        Require(api->get_device_info(device, CL_DEVICE_MEM_BASE_ADDR_ALIGN,
+            sizeof alignment_bits, &alignment_bits, NULL));
+        cl_uint divisor_left = alignment_bits, divisor_right = 8;
+        while (divisor_right) {
+            cl_uint remainder = divisor_left % divisor_right;
+            divisor_left = divisor_right;
+            divisor_right = remainder;
+        }
+        if (!alignment_bits || !divisor_left) {
+            fprintf(stderr, "OpenCL alias oracle requires nonzero base alignment, got %u bits\n",
+                    alignment_bits);
+            goto cleanup;
+        }
+        const size_t alignment_bytes = alignment_bits / divisor_left;
+        if (!alignment_bytes || alignment_bytes > MaxWords * sizeof(cl_uint) / 4) {
+            fprintf(stderr, "OpenCL alias oracle alignment out of bound: %llu bytes\n",
+                    (unsigned long long)alignment_bytes);
+            goto cleanup;
+        }
+        const size_t alias_root_bytes = alignment_bytes * 4;
+        const cl_buffer_region source_region = {0, alignment_bytes * 3};
+        const cl_buffer_region destination_region = {alignment_bytes, alignment_bytes * 3};
+        alias_root = api->create_buffer(context, CL_MEM_READ_WRITE, alias_root_bytes, NULL, &status);
+        if (!alias_root || status != CL_SUCCESS) goto cleanup;
+        alias_source = api->create_sub_buffer(alias_root, CL_MEM_READ_WRITE,
+            CL_BUFFER_CREATE_TYPE_REGION, &source_region, &status);
+        if (!alias_source || status != CL_SUCCESS) goto cleanup;
+        alias_destination = api->create_sub_buffer(alias_root, CL_MEM_READ_WRITE,
+            CL_BUFFER_CREATE_TYPE_REGION, &destination_region, &status);
+        if (!alias_destination || status != CL_SUCCESS) goto cleanup;
+        RequireOracleError("overlapping sibling sub-buffers", CL_MEM_COPY_OVERLAP,
+            api->copy_buffer(queue, alias_source, alias_destination, 0, 0,
+                alignment_bytes * 2, 0, NULL, &rejected_event));
+
+        foreign_context = api->create_context(NULL, 1, &device, NULL, NULL, &status);
+        if (!foreign_context || status != CL_SUCCESS) goto cleanup;
+        foreign_queue = api->create_queue(foreign_context, device, 0, &status);
+        if (!foreign_queue || status != CL_SUCCESS) goto cleanup;
+        foreign_buffer = api->create_buffer(foreign_context, CL_MEM_READ_WRITE, bytes, NULL, &status);
+        if (!foreign_buffer || status != CL_SUCCESS) goto cleanup;
+        cl_uint foreign_word = 0x12345678u;
+        Require(api->write_buffer(foreign_queue, foreign_buffer, CL_TRUE, 0,
+            sizeof foreign_word, &foreign_word, 0, NULL, &foreign_event));
+        if (!foreign_event) goto cleanup;
+        RequireOracleError("read foreign-context buffer", CL_INVALID_CONTEXT,
+            api->read_buffer(queue, foreign_buffer, CL_TRUE, 0, sizeof *output,
+                output, 0, NULL, &rejected_event));
+        RequireOracleError("write foreign-context buffer", CL_INVALID_CONTEXT,
+            api->write_buffer(queue, foreign_buffer, CL_TRUE, 0, sizeof *left,
+                left, 0, NULL, &rejected_event));
+        RequireOracleError("copy foreign-context source", CL_INVALID_CONTEXT,
+            api->copy_buffer(queue, foreign_buffer, buffers[0], 0, 0,
+                sizeof *output, 0, NULL, &rejected_event));
+        RequireOracleError("copy foreign-context destination", CL_INVALID_CONTEXT,
+            api->copy_buffer(queue, buffers[0], foreign_buffer, 0, 0,
+                sizeof *output, 0, NULL, &rejected_event));
+        RequireMapError("map foreign-context buffer", CL_INVALID_CONTEXT,
+            queue, foreign_buffer, 0, sizeof *output, 0, NULL);
+        RequireOracleError("read foreign-context wait event", CL_INVALID_CONTEXT,
+            api->read_buffer(queue, buffers[0], CL_TRUE, 0, sizeof *output,
+                output, 1, &foreign_event, &rejected_event));
+        RequireOracleError("write foreign-context wait event", CL_INVALID_CONTEXT,
+            api->write_buffer(queue, buffers[0], CL_TRUE, 0, sizeof *left,
+                left, 1, &foreign_event, &rejected_event));
+        RequireOracleError("copy foreign-context wait event", CL_INVALID_CONTEXT,
+            api->copy_buffer(queue, buffers[0], buffers[1], 0, 0,
+                sizeof *output, 1, &foreign_event, &rejected_event));
+        RequireMapError("map foreign-context wait event", CL_INVALID_CONTEXT,
+            queue, buffers[0], 0, sizeof *output, 1, &foreign_event);
+    }
+    puts("OpenCL malformed buffer range, pointer, overlap, context and event oracles passed.");
     if (api->set_arg(kernels[3], 0, 1, &buffers[2]) != CL_INVALID_ARG_SIZE) goto cleanup;
     source = "__kernel void deliberately_invalid( {";
     invalid = api->create_program(context, 1, &source, NULL, &status);
@@ -205,7 +396,17 @@ static int run_lifetime(const api_t *api, cl_device_id device, size_t group,
     result = 0;
 cleanup:
     if (mapped && api->unmap_buffer(queue, buffers[0], mapped, 0, NULL, NULL) != CL_SUCCESS) result = 1;
+    if (probe_mapped && probe_map_queue && probe_map_buffer &&
+        api->unmap_buffer(probe_map_queue, probe_map_buffer, probe_mapped, 0, NULL, NULL) != CL_SUCCESS) result = 1;
     if (queue && api->finish(queue) != CL_SUCCESS) result = 1;
+    if (foreign_queue && api->finish(foreign_queue) != CL_SUCCESS) result = 1;
+    if (foreign_event && api->release_event(foreign_event) != CL_SUCCESS) result = 1;
+    if (foreign_buffer && api->release_buffer(foreign_buffer) != CL_SUCCESS) result = 1;
+    if (foreign_queue && api->release_queue(foreign_queue) != CL_SUCCESS) result = 1;
+    if (foreign_context && api->release_context(foreign_context) != CL_SUCCESS) result = 1;
+    if (alias_source && api->release_buffer(alias_source) != CL_SUCCESS) result = 1;
+    if (alias_destination && api->release_buffer(alias_destination) != CL_SUCCESS) result = 1;
+    if (alias_root && api->release_buffer(alias_root) != CL_SUCCESS) result = 1;
     for (size_t i = 0; i < 4; ++i) {
         if (events[i] && api->release_event(events[i]) != CL_SUCCESS) result = 1;
         if (kernels[i] && api->release_kernel(kernels[i]) != CL_SUCCESS) result = 1;
@@ -222,6 +423,9 @@ cleanup:
     fflush(stdout);
     return result;
 #undef Require
+#undef RequireOracleSuccess
+#undef RequireOracleError
+#undef RequireMapError
 }
 
 /** @brief Parent-owned concurrent context runner; all borrows outlive join. */
