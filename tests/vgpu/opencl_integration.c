@@ -102,8 +102,9 @@ static const char Kernels[] =
 /** @brief One complete OpenCL context lifetime, no owner escapes.
  * @param[in] api Nonnull borrowed dispatch; device borrowed root device.
  * @param[in] group Exact advertised maximum work-group size, 1..MaxWords.
- * @param[in] shutdown Nonnull private dispatch; DLL outlives call. Busy while
- * the context is live must preserve every owner for the following kernel work.
+ * @param[in] shutdown Optional private dispatch; null for concurrent workers.
+ * Busy probes run only with exclusive CL caller ownership. The DLL outlives
+ * every call and every context and nested caller thread.
  * @return Zero only for exact kernel/buffer/event/error assertions and cleanup.
  * @note Serial caller; compiler/driver may create threads. CPU arrays remain
  * live until queue finish on every path. Mapped memory is borrowed until unmap.
@@ -133,8 +134,8 @@ static int run_lifetime(const api_t *api, cl_device_id device, size_t group,
 } while (0)
     context = api->create_context(NULL, 1, &device, NULL, NULL, &status);
     if (!context || status != CL_SUCCESS) goto cleanup;
-    if (shutdown(ClvkShutdownAbi + 1) != ClvkShutdownVersion ||
-        shutdown(ClvkShutdownAbi) != ClvkShutdownBusy) goto cleanup;
+    if (shutdown && (shutdown(ClvkShutdownAbi + 1) != ClvkShutdownVersion ||
+        shutdown(ClvkShutdownAbi) != ClvkShutdownBusy)) goto cleanup;
     queue = api->create_queue(context, device, 0, &status);
     if (!queue || status != CL_SUCCESS) goto cleanup;
     const char *source = Kernels;
@@ -221,6 +222,26 @@ cleanup:
     fflush(stdout);
     return result;
 #undef Require
+}
+
+/** @brief Parent-owned concurrent context runner; all borrows outlive join. */
+typedef struct context_call_t {
+    const api_t *api;
+    cl_device_id device;
+    size_t group;
+} context_call_t;
+
+/** @brief Run three disjoint context/queue/buffer graphs on the shared device.
+ * @param[in] opaque Nonnull parent-owned context_call_t, borrowed until return.
+ * @return Zero only when all exact lifetime oracles and cleanup pass.
+ * @note Shutdown is excluded until both application callers join; no callback
+ * or context escapes. DLLs remain mapped through this CRT thread's TLS exit.
+ */
+static unsigned __stdcall run_contexts(void *opaque) {
+    const context_call_t *call = opaque;
+    for (unsigned cycle = 0; cycle < 3; ++cycle)
+        if (run_lifetime(call->api, call->device, call->group, NULL)) return 1;
+    return 0;
 }
 
 /** @brief Joined caller-thread state; modules transfer to the joining parent.
@@ -352,8 +373,25 @@ static unsigned __stdcall run_native_work(void *opaque)
         !(type & CL_DEVICE_TYPE_GPU) || (type & CL_DEVICE_TYPE_CPU) || !group || group > MaxWords ||
         local_bytes < group * sizeof(cl_uint)) goto cleanup;
     printf("OpenCL selected GPU=%s vendor=%x maximum_group=%llu\n", name, vendor, (unsigned long long)group); fflush(stdout);
-    for (unsigned cycle = 0; cycle < 8; ++cycle)
+    for (unsigned cycle = 0; cycle < 2; ++cycle)
         if (run_lifetime(&api, device, group, shutdown)) goto cleanup;
+    context_call_t calls[2] = {{&api, device, group}, {&api, device, group}};
+    HANDLE threads[2] = {NULL, NULL};
+    int concurrent_failed = 0;
+    for (size_t i = 0; i < 2; ++i) {
+        threads[i] = (HANDLE)_beginthreadex(NULL, 0, run_contexts, &calls[i], 0, NULL);
+        if (!threads[i]) { concurrent_failed = 1; break; }
+    }
+    for (size_t i = 0; i < 2; ++i) {
+        if (!threads[i]) continue;
+        DWORD code = 1;
+        if (WaitForSingleObject(threads[i], INFINITE) != WAIT_OBJECT_0 ||
+            !GetExitCodeThread(threads[i], &code)) abort();
+        if (!CloseHandle(threads[i])) abort();
+        if (code != 0) concurrent_failed = 1;
+    }
+    if (concurrent_failed) goto cleanup;
+    puts("OpenCL concurrent independent context callers joined with exact results."); fflush(stdout);
     result = 0;
 cleanup:
     if (result) fprintf(stderr, "OpenCL acceptance failed Win32=%lu\n", (unsigned long)GetLastError());

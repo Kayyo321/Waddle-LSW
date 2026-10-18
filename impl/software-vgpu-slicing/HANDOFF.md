@@ -546,3 +546,17 @@ clvk/DXVK source and required nested headers are initialized there; no LLVM
 build or runtime acceptance is implied. Existing Linux/native Windows jobs
 remain unchanged and required. A feature-branch push will run these jobs; no
 PR may be opened/updated until all requested qualification gates pass.
+
+The OpenCL fixture's eight contexts now include two serial ownership/shutdown
+checks and six lifetimes across two concurrent, joined application callers.
+No CL object or CPU oracle buffer is shared; shutdown begins only after both
+callers join. Require the explicit concurrent-join marker in addition to eight
+exact lifetime markers and natural retirement. Cross-build passes; no native
+new-DLL result is claimed yet.
+
+CI was launched by a fast-forward feature push at `12b30ee`. An existing draft
+PR #6 was discovered afterwards: the push automatically updated its diff before
+the requested final gate. This was acknowledged to the user; no PR description
+or readiness was changed. Keep it draft and do not publish further feature
+branch changes until qualification passes. Future CI can use a separate
+verification ref if new source needs remote checks before then.

@@ -6291,3 +6291,17 @@ tests. It runs all sixteen build-admission tests with C++ sanitizers and does
 not build LLVM or claim Windows/GPU execution. The existing complete Linux and
 native Windows jobs remain required. The optional full OpenCL cross-build and
 physical/native acceptance remain separate gates.
+
+### Concurrent OpenCL application callers
+
+The eight-lifetime native fixture now runs two serial lifetimes with live-owner
+shutdown rejection, followed by two joined CRT application callers with three
+independent context/queue/program/buffer/event lifetimes each. Both callers use
+the same borrowed root GPU but no CL handle or oracle storage is shared. All
+exact add/local barrier/atomic/max-group/buffer/event/build-error assertions
+remain. Neither concurrent caller probes shutdown: the embedding exclusion
+contract forbids overlapping shutdown and CL calls. A partial thread-creation
+failure still joins every started caller before cleanup. Parent borrows remain
+live until join and all DLL code remains mapped through each thread's TLS exit.
+Only after both joins can terminal global retirement begin. Eight total success
+markers plus the explicit concurrent-join marker are required for native proof.

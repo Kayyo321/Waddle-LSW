@@ -1294,3 +1294,13 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   minimal-source/header job for all sixteen OpenCL admission and actual owner/
   pool sanitizer tests. Workflow YAML parses locally; execution remains pending.
   Existing full Linux/native Windows jobs remain required. #5/#12 +0%.
+
+- **Commit `12b30ee`**: add independent CI admission/sanitizer job; branch
+  pushed for fresh CI. Existing draft PR #6 was discovered afterwards, so that
+  push automatically updated its diff before the requested qualification gate.
+  This is acknowledged; it remains draft and no PR metadata/readiness is changed.
+- Concurrent OpenCL fixture (identify through fixture history): two serial
+  lifetimes with Busy probes, then two joined callers with three disjoint
+  lifetimes each. Preserve all eight exact-result oracles, exclude shutdown
+  until joins, and retain borrows/modules on partial thread creation. Strict
+  Windows cross-build passes; native execution remains pending. #5 +0%.
