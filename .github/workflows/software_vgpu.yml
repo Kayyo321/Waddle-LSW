@@ -26,6 +26,8 @@ jobs:
           git -C submodules/dxvk submodule update --init --depth 1 include/vulkan
       - name: Verify exact exports, private patch and sanitizer-backed owners
         run: python3 -B tests/vgpu/clvk_build.py
+      - name: Require buffer production line and directional branch coverage
+        run: python3 -B scripts/clvk_buffer_coverage.py build/clvk_buffer_coverage
   transport:
     runs-on: ubuntu-22.04
     timeout-minutes: 60

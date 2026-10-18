@@ -6492,3 +6492,21 @@ identify a DXVK workload. Every OpenCL cycle still runs all eight primary contex
 plus temporary validation scopes. Both diagnostic streams are unbuffered before
 first use. Strict cross-build passes (`opencl_environment_audit_build.log`);
 actual native restoration, UMDH and concurrent GPU evidence remain required.
+
+
+Private buffer memory admission has its own exact production coverage gate:
+`make vgpu-opencl-buffer-coverage`, also required by the OpenCL admission CI job.
+The first measurement was152/161 lines (94.41%) and165/212 directional outcomes
+(77.83%);97.17% merely reached a condition and did not meet the branch gate.
+Added cases exercise host map access restrictions, nullable error outputs,
+allocated invalid object identity/type, nonfirst foreign events, independent
+logical/backing-span boundaries and valid controls without changing production.
+The final gate counts161/161 lines (100%) and200/212 directional outcomes
+(94.34%), including both untaken compiler throw edges with no exclusions.
+All13 definitions execute and have100% individual line coverage. The generated
+header contains exact freshly patched API/helper bytes; object/command boundaries
+remain CPU doubles. Immutable input/tool hashes, raw gcov and commands are retained
+under `build/clvk_buffer_coverage/run-20261018T010722656693Z-201377`.
+All19 ASan/LSan/UBSan admission tests pass again in
+`clvk_buffer_coverage_sanitizers.log`. Initial lower coverage and script diagnostics
+are preserved; this is not actual Windows/DLL/GPU or native heap proof.

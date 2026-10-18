@@ -266,8 +266,22 @@ static bool test_read_write_validation(cvk_command_queue &queue,
                     reinterpret_cast<cl_event>(&foreign_event)));
 
     reset_activity();
+    Check(clEnqueueReadBuffer(&queue, &buffer, CL_FALSE, 7, 2, host, 0, nullptr,
+                              &event_out) == CL_INVALID_VALUE);
+    Check(unchanged(queue, buffer, buffer, queue_owners, buffer_owners,
+                    buffer_owners, event_out,
+                    reinterpret_cast<cl_event>(&foreign_event)));
+
+    reset_activity();
     Check(clEnqueueWriteBuffer(&queue, &buffer, CL_FALSE,
                                std::numeric_limits<size_t>::max(), 1, host, 0,
+                               nullptr, &event_out) == CL_INVALID_VALUE);
+    Check(unchanged(queue, buffer, buffer, queue_owners, buffer_owners,
+                    buffer_owners, event_out,
+                    reinterpret_cast<cl_event>(&foreign_event)));
+
+    reset_activity();
+    Check(clEnqueueWriteBuffer(&queue, &buffer, CL_FALSE, 7, 2, host, 0,
                                nullptr, &event_out) == CL_INVALID_VALUE);
     Check(unchanged(queue, buffer, buffer, queue_owners, buffer_owners,
                     buffer_owners, event_out,
@@ -319,6 +333,34 @@ static bool test_read_write_validation(cvk_command_queue &queue,
                     buffer_owners, event_out,
                     reinterpret_cast<cl_event>(&foreign_event)));
 
+    cvk_event local_event(buffer.context());
+    cl_event local_then_foreign[2] = {&local_event, &foreign_event};
+    reset_activity();
+    Check(clEnqueueReadBuffer(&queue, &buffer, CL_FALSE, 0, 1, host, 2,
+                              local_then_foreign, &event_out) == CL_INVALID_CONTEXT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          queue.owners == queue_owners && buffer.owners == buffer_owners);
+
+    cl_event local_list[2] = {&local_event, &local_event};
+    reset_activity();
+    Check(clEnqueueReadBuffer(&queue, &buffer, CL_FALSE, 0, 1, host, 2,
+                              local_list, &event_out) == CL_SUCCESS);
+    Check(command_allocations == 1 && queue_enqueues == 1 &&
+          queue.owners == queue_owners && buffer.owners == buffer_owners);
+
+    reset_activity();
+    Check(clEnqueueWriteBuffer(&queue, &buffer, CL_FALSE, 0, 1, host, 2,
+                               local_then_foreign, &event_out) == CL_INVALID_CONTEXT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          queue.owners == queue_owners && buffer.owners == buffer_owners);
+
+    cvk_buffer foreign_buffer(&other_context, 8);
+    reset_activity();
+    Check(clEnqueueWriteBuffer(&queue, &foreign_buffer, CL_FALSE, 0, 1, host, 0,
+                               nullptr, &event_out) == CL_INVALID_CONTEXT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          foreign_buffer.owners == 1);
+
     reset_activity();
     Check(clEnqueueReadBuffer(&queue, &buffer, CL_FALSE, 7, 1, host, 0, nullptr,
                               &event_out) == CL_SUCCESS);
@@ -333,11 +375,40 @@ static bool test_read_write_validation(cvk_command_queue &queue,
     Check(command_allocations == 1 && command_live == 0 && queue_enqueues == 1 &&
           map_command_allocations == 0 && queue.owners == queue_owners &&
           buffer.owners == buffer_owners && event_out == returned_event);
+
+    cvk_mem non_buffer(buffer.context(), 8);
+    non_buffer.buffer_type = false;
+    reset_activity();
+    Check(clEnqueueReadBuffer(&queue, &non_buffer, CL_FALSE, 0, 1, host, 0,
+                              nullptr, &event_out) == CL_INVALID_MEM_OBJECT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          queue.owners == queue_owners && non_buffer.owners == 1);
+
+    reset_activity();
+    Check(clEnqueueWriteBuffer(&queue, &non_buffer, CL_FALSE, 0, 1, host, 0,
+                               nullptr, &event_out) == CL_INVALID_MEM_OBJECT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          queue.owners == queue_owners && non_buffer.owners == 1);
+
+    queue.valid = false;
+    reset_activity();
+    Check(clEnqueueReadBuffer(&queue, &buffer, CL_FALSE, 0, 1, host, 0, nullptr,
+                              &event_out) == CL_INVALID_COMMAND_QUEUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          queue.owners == queue_owners && buffer.owners == buffer_owners);
+
+    reset_activity();
+    Check(clEnqueueWriteBuffer(&queue, &buffer, CL_FALSE, 0, 1, host, 0,
+                               nullptr, &event_out) == CL_INVALID_COMMAND_QUEUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          queue.owners == queue_owners && buffer.owners == buffer_owners);
+    queue.valid = true;
     return true;
 }
 
 static bool test_invalid_handles_and_wait_lists(cvk_command_queue &queue,
-                                                cvk_buffer &buffer) {
+                                                cvk_buffer &buffer,
+                                                cvk_context &other_context) {
     unsigned char host[8] = {};
     cl_event event_out = returned_event;
     cvk_buffer invalid_buffer(queue.context(), 8);
@@ -399,6 +470,55 @@ static bool test_invalid_handles_and_wait_lists(cvk_command_queue &queue,
                              nullptr, &event_out, &map_error) == nullptr);
     Check(map_error == CL_INVALID_MEM_OBJECT && command_allocations == 0 &&
           queue_enqueues == 0 && map_command_allocations == 0);
+
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, nullptr, CL_FALSE, CL_MAP_READ, 0, 1, 0,
+                             nullptr, &event_out, nullptr) == nullptr);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          map_command_allocations == 0 && event_out == returned_event);
+
+    cvk_mem non_buffer(buffer.context(), 8);
+    non_buffer.buffer_type = false;
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &non_buffer, CL_FALSE, CL_MAP_READ, 0, 1,
+                             0, nullptr, &event_out, &map_error) == nullptr);
+    Check(map_error == CL_INVALID_MEM_OBJECT && queue_enqueues == 0 &&
+          map_command_allocations == 0 && non_buffer.owners == 1);
+
+    queue.valid = false;
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 0,
+                             nullptr, &event_out, nullptr) == nullptr);
+    Check(queue_enqueues == 0 && map_command_allocations == 0 &&
+          queue.owners == queue_owners && buffer.owners == buffer_owners);
+    queue.valid = true;
+
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 1,
+                             nullptr, &event_out, nullptr) == nullptr);
+    Check(queue_enqueues == 0 && map_command_allocations == 0 &&
+          buffer.owners == buffer_owners);
+
+    cvk_buffer invalid_context_buffer(&other_context, 8);
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &invalid_context_buffer, CL_FALSE,
+                             CL_MAP_READ, 0, 1, 0, nullptr, &event_out,
+                             nullptr) == nullptr);
+    Check(queue_enqueues == 0 && map_command_allocations == 0 &&
+          invalid_context_buffer.owners == 1);
+
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 0, 0,
+                             nullptr, &event_out, nullptr) == nullptr);
+    Check(queue_enqueues == 0 && map_command_allocations == 0 &&
+          buffer.owners == buffer_owners);
+
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE,
+                             CL_MAP_READ | CL_MAP_WRITE_INVALIDATE_REGION, 0,
+                             1, 0, nullptr, &event_out, nullptr) == nullptr);
+    Check(queue_enqueues == 0 && map_command_allocations == 0 &&
+          buffer.owners == buffer_owners);
     return true;
 }
 
@@ -441,6 +561,25 @@ static bool test_copy_ranges_and_aliases(cvk_command_queue &queue,
           queue.owners == queue_owners && root.owners == root_owners &&
           left.owners == left_owners && right.owners == right_owners);
 
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &right, &left, 0, 0, 16, 0, nullptr,
+                              &event_out) == CL_SUCCESS);
+    Check(command_allocations == 1 && queue_enqueues == 1 &&
+          right.owners == right_owners && left.owners == left_owners);
+
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &left, &right, 12, 0, 8, 0, nullptr,
+                              &event_out) == CL_MEM_COPY_OVERLAP);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_owners && left.owners == left_owners &&
+          right.owners == right_owners);
+
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &other_root, 0, 0, 8, 0, nullptr,
+                              &event_out) == CL_SUCCESS);
+    Check(command_allocations == 1 && queue_enqueues == 1 &&
+          root.owners == root_owners && other_root.owners == other_root_owners);
+
     event_out = nullptr;
     reset_activity();
     Check(clEnqueueCopyBuffer(&queue, &root, &root, 0, 8, 0, 0, nullptr,
@@ -457,6 +596,24 @@ static bool test_copy_ranges_and_aliases(cvk_command_queue &queue,
           event_out == nullptr && queue.owners == queue_owners &&
           root.owners == root_owners && other_root.owners == other_root_owners);
 
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &other_root, 63, 0, 2, 0,
+                              nullptr, &event_out) == CL_INVALID_VALUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_owners && other_root.owners == other_root_owners);
+
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &other_root, 0, 63, 2, 0,
+                              nullptr, &event_out) == CL_INVALID_VALUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_owners && other_root.owners == other_root_owners);
+
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &other_root, 0, 64, 1, 0,
+                              nullptr, &event_out) == CL_INVALID_VALUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_owners && other_root.owners == other_root_owners);
+
     cvk_buffer malformed_subbuffer(&context, 8, &root, 60);
     const unsigned int root_with_malformed = root.owners;
     reset_activity();
@@ -467,12 +624,37 @@ static bool test_copy_ranges_and_aliases(cvk_command_queue &queue,
           root.owners == root_with_malformed &&
           other_root.owners == other_root_owners);
 
+    cvk_buffer past_root_subbuffer(&context, 1, &root, 65);
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &past_root_subbuffer, &other_root, 0, 0,
+                              1, 0, nullptr, &event_out) == CL_INVALID_VALUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_with_malformed + 1 &&
+          other_root.owners == other_root_owners);
+
+    cvk_buffer root_edge_subbuffer(&context, 8, &root, 60);
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root_edge_subbuffer, &other_root, 5, 0,
+                              1, 0, nullptr, &event_out) == CL_INVALID_VALUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_with_malformed + 2 &&
+          other_root.owners == other_root_owners);
+
+    cvk_buffer dst_past_root_subbuffer(&context, 1, &root, 65);
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &other_root, &dst_past_root_subbuffer,
+                              0, 0, 1, 0, nullptr, &event_out) == CL_INVALID_VALUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_with_malformed + 3 &&
+          other_root.owners == other_root_owners);
+    const unsigned int root_with_extra_subbuffers = root.owners;
+
     reset_activity();
     Check(clEnqueueCopyBuffer(nullptr, &root, &other_root, 0, 0, 1, 0, nullptr,
                               &event_out) == CL_INVALID_COMMAND_QUEUE);
     Check(command_allocations == 0 && queue_enqueues == 0 && map_command_allocations == 0 &&
           event_out == nullptr && queue.owners == queue_owners &&
-          root.owners == root_with_malformed);
+          root.owners == root_with_extra_subbuffers);
 
     reset_activity();
     Check(clEnqueueCopyBuffer(&queue, nullptr, &other_root, 0, 0, 1, 0, nullptr,
@@ -486,14 +668,14 @@ static bool test_copy_ranges_and_aliases(cvk_command_queue &queue,
                               &event_out) == CL_INVALID_MEM_OBJECT);
     Check(command_allocations == 0 && queue_enqueues == 0 && map_command_allocations == 0 &&
           event_out == nullptr && queue.owners == queue_owners &&
-          root.owners == root_with_malformed);
+          root.owners == root_with_extra_subbuffers);
 
     reset_activity();
     Check(clEnqueueCopyBuffer(&queue, &foreign_buffer, &root, 0, 0, 1, 0,
                               nullptr, &event_out) == CL_INVALID_CONTEXT);
     Check(command_allocations == 0 && queue_enqueues == 0 && map_command_allocations == 0 &&
           event_out == nullptr && queue.owners == queue_owners &&
-          root.owners == root_with_malformed);
+          root.owners == root_with_extra_subbuffers);
 
     cl_event malformed_events[1] = {nullptr};
     reset_activity();
@@ -502,7 +684,7 @@ static bool test_copy_ranges_and_aliases(cvk_command_queue &queue,
           CL_INVALID_EVENT_WAIT_LIST);
     Check(command_allocations == 0 && queue_enqueues == 0 && map_command_allocations == 0 &&
           event_out == nullptr && queue.owners == queue_owners &&
-          root.owners == root_with_malformed);
+          root.owners == root_with_extra_subbuffers);
 
     cl_event foreign_events[1] = {&foreign_event};
     reset_activity();
@@ -510,8 +692,47 @@ static bool test_copy_ranges_and_aliases(cvk_command_queue &queue,
                               foreign_events, &event_out) == CL_INVALID_CONTEXT);
     Check(command_allocations == 0 && queue_enqueues == 0 && map_command_allocations == 0 &&
           event_out == nullptr && queue.owners == queue_owners &&
-          root.owners == root_with_malformed &&
+          root.owners == root_with_extra_subbuffers &&
           other_root.owners == other_root_owners);
+
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &foreign_buffer, 0, 0, 1, 0,
+                              nullptr, &event_out) == CL_INVALID_CONTEXT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_with_extra_subbuffers && foreign_buffer.owners == 1);
+
+    cvk_event local_event(&context);
+    cl_event local_then_foreign[2] = {&local_event, &foreign_event};
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &other_root, 0, 0, 1, 2,
+                              local_then_foreign, &event_out) == CL_INVALID_CONTEXT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          root.owners == root_with_extra_subbuffers &&
+          other_root.owners == other_root_owners);
+
+    cl_event local_list[2] = {&local_event, &local_event};
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &other_root, 0, 0, 1, 2,
+                              local_list, &event_out) == CL_SUCCESS);
+    Check(command_allocations == 1 && queue_enqueues == 1 &&
+          root.owners == root_with_extra_subbuffers &&
+          other_root.owners == other_root_owners);
+
+    cvk_mem non_buffer(&context, 8);
+    non_buffer.buffer_type = false;
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &non_buffer, &other_root, 0, 0, 1, 0,
+                              nullptr, &event_out) == CL_INVALID_MEM_OBJECT);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          non_buffer.owners == 1 && other_root.owners == other_root_owners);
+
+    queue.valid = false;
+    reset_activity();
+    Check(clEnqueueCopyBuffer(&queue, &root, &other_root, 0, 0, 1, 0,
+                              nullptr, &event_out) == CL_INVALID_COMMAND_QUEUE);
+    Check(command_allocations == 0 && queue_enqueues == 0 &&
+          queue.owners == queue_owners && root.owners == root_with_extra_subbuffers);
+    queue.valid = true;
 
     return true;
 }
@@ -576,7 +797,32 @@ static bool test_map_validation(cvk_command_queue &queue, cvk_buffer &buffer,
                     buffer_owners, event_out,
                     reinterpret_cast<cl_event>(&foreign_event)));
 
+    cvk_event local_event(queue.context());
+    cl_event late_foreign_list[2] = {&local_event, &foreign_event};
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 2,
+                             late_foreign_list, &event_out, &map_error) == nullptr);
+    Check(map_error == CL_INVALID_CONTEXT && queue_enqueues == 0 &&
+          map_command_allocations == 0 && buffer.owners == buffer_owners &&
+          event_out == reinterpret_cast<cl_event>(&foreign_event));
+
+    cl_event local_list[2] = {&local_event, &local_event};
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 2,
+                             local_list, &event_out, &map_error) == &mapped_byte);
+    Check(map_error == CL_SUCCESS && queue_enqueues == 1 && event_outputs == 1 &&
+          map_command_allocations == 1 && map_command_destructions == 1 &&
+          buffer.owners == buffer_owners && event_out == returned_event);
+
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 1,
+                             local_list, &event_out, nullptr) == &mapped_byte);
+    Check(queue_enqueues == 1 && event_outputs == 1 &&
+          map_command_allocations == 1 && map_command_destructions == 1 &&
+          buffer.owners == buffer_owners && event_out == returned_event);
+
     cl_event malformed_list[1] = {nullptr};
+    event_out = reinterpret_cast<cl_event>(&foreign_event);
     reset_activity();
     Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 1,
                              malformed_list, &event_out, &map_error) == nullptr);
@@ -594,6 +840,57 @@ static bool test_map_validation(cvk_command_queue &queue, cvk_buffer &buffer,
           queue_enqueues == 1 &&
           queue.owners == queue_owners && buffer.owners == buffer_owners &&
           event_out == returned_event && event_outputs == 1);
+
+    reset_activity();
+    buffer.flags = CL_MEM_HOST_WRITE_ONLY;
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 0,
+                             nullptr, &event_out, &map_error) == nullptr);
+    Check(map_error == CL_INVALID_OPERATION && queue_enqueues == 0 &&
+          map_command_allocations == 0 && buffer.owners == buffer_owners &&
+          event_out == returned_event);
+
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 0,
+                             nullptr, &event_out, nullptr) == nullptr);
+    Check(queue_enqueues == 0 && map_command_allocations == 0 &&
+          buffer.owners == buffer_owners && event_out == returned_event);
+
+    buffer.flags = CL_MEM_HOST_NO_ACCESS;
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_READ, 0, 1, 0,
+                             nullptr, &event_out, &map_error) == nullptr);
+    Check(map_error == CL_INVALID_OPERATION && queue_enqueues == 0 &&
+          map_command_allocations == 0 && buffer.owners == buffer_owners);
+
+    buffer.flags = CL_MEM_HOST_READ_ONLY;
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_WRITE, 0, 1, 0,
+                             nullptr, &event_out, &map_error) == nullptr);
+    Check(map_error == CL_INVALID_OPERATION && queue_enqueues == 0 &&
+          map_command_allocations == 0 && buffer.owners == buffer_owners);
+
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE, CL_MAP_WRITE, 0, 1, 0,
+                             nullptr, &event_out, nullptr) == nullptr);
+    Check(queue_enqueues == 0 && map_command_allocations == 0 &&
+          buffer.owners == buffer_owners);
+
+    buffer.flags = CL_MEM_HOST_NO_ACCESS;
+    reset_activity();
+    Check(clEnqueueMapBuffer(&queue, &buffer, CL_FALSE,
+                             CL_MAP_WRITE_INVALIDATE_REGION, 0, 1, 0,
+                             nullptr, &event_out, &map_error) == nullptr);
+    Check(map_error == CL_INVALID_OPERATION && queue_enqueues == 0 &&
+          map_command_allocations == 0 && buffer.owners == buffer_owners);
+    buffer.flags = 0;
+
+    reset_activity();
+    mapped = clEnqueueMapBuffer(&queue, &buffer, CL_FALSE,
+                                CL_MAP_WRITE_INVALIDATE_REGION, 0, 1, 0,
+                                nullptr, &event_out, &map_error);
+    Check(mapped == &mapped_byte && map_error == CL_SUCCESS &&
+          queue_enqueues == 1 && map_command_allocations == 1 &&
+          map_command_destructions == 1 && buffer.owners == buffer_owners);
     return true;
 }
 
@@ -638,7 +935,7 @@ int main() {
     cvk_event foreign_event(&other_context);
 
     if (!test_read_write_validation(queue, buffer, other_context, foreign_event) ||
-        !test_invalid_handles_and_wait_lists(queue, buffer) ||
+        !test_invalid_handles_and_wait_lists(queue, buffer, other_context) ||
         !test_copy_ranges_and_aliases(queue, context) ||
         !test_map_validation(queue, buffer, other_context, foreign_event) ||
         !test_map_build_failure_releases_command(queue, buffer, foreign_event)) {

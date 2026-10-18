@@ -1400,3 +1400,10 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   loader environment after joined TLS/module retirement; preserve failure across
   retry and optional unchanged-baseline UMDH cycle markers. Strict Windows build
   passes; native restoration/heap/concurrent GPU pending. #5 +0%, overall +0%.
+
+- **Commit `c9471c9`**: parent-owned OpenCL loader environment and optional
+  native heap cycle markers; strict cross-build passes. #5 +0%, overall +0%.
+- Exact buffer coverage gate (identify through coverage history): preserve the
+  initial77.83% outcome failure; add meaningful malformed/valid cases to reach
+  161/161 lines and200/212 directional edges (94.34%), no exclusions. All19
+  San3 admission tests pass. Make/CI requires>=90% for both. #5 +0%, overall +0%.

@@ -64,3 +64,8 @@ vgpu-windows: build/vgpu_loader_environment_test.exe
 
 vgpu-loader-environment-coverage: | build
 	python3 -B scripts/loader_environment_coverage.py build/loader_environment_coverage
+
+# Exact vendor API/helper bodies with CPU doubles; no native/GPU substitution.
+.PHONY: vgpu-opencl-buffer-coverage
+vgpu-opencl-buffer-coverage: | build
+	python3 -B scripts/clvk_buffer_coverage.py build/clvk_buffer_coverage
