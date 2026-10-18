@@ -207,7 +207,18 @@ def inspect_dll(dll, expected_exports):
     for name in imports:
         if name.lower().startswith(ForbiddenImports):
             raise SystemExit('OpenCL.dll imports an unbundled C++ runtime DLL: ' + name)
-    exports = set(re.findall(r'\[\s*\d+\]\s+\+base\[\s*\d+\]\s+[0-9a-f]+\s+(\S+)', dump))
+    # The address table contains rows ending in "Export RVA"; these are not
+    # symbol names. Restrict parsing to the separately labeled name table.
+    table = re.search(r'(?ms)^\[Ordinal/Name Pointer\] Table[^\n]*\n(.*?)(?:\n\s*\n|\Z)', dump)
+    counts = re.search(r'Number in:\s*\n\s*Export Address Table\s+([0-9a-fA-F]+)\s*\n\s*'
+                       r'\[Name Pointer/Ordinal\] Table\s+([0-9a-fA-F]+)', dump)
+    if not table or not counts:
+        raise SystemExit('OpenCL.dll is missing the PE export name table/counts')
+    names = re.findall(r'^\s*\[\s*\d+\]\s+(?:\+base\[\s*\d+\]\s+[0-9a-fA-F]+\s+)?(\S+)\s*$',
+                       table[1], flags=re.MULTILINE)
+    exports = set(names)
+    if int(counts[1], 16) != len(names) or int(counts[2], 16) != len(names) or len(names) != len(exports):
+        raise SystemExit('OpenCL.dll PE export count mismatch or duplicate names')
     absent = [name for name in RequiredExports if name not in exports]
     if absent:
         raise SystemExit('OpenCL.dll is missing required exports: %s' % absent)

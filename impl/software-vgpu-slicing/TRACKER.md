@@ -1304,3 +1304,14 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   lifetimes each. Preserve all eight exact-result oracles, exclude shutdown
   until joins, and retain borrows/modules on partial thread creation. Strict
   Windows cross-build passes; native execution remains pending. #5 +0%.
+
+- **Commit `f77ad49`**: eight exact contexts include concurrent callers, with
+  all callers joined before global shutdown; strict Windows fixture build passes.
+- PE decoder correction (identify through driver history): corrected DLL links
+  successfully but exact inspection fails because an address-table metadata
+  label is parsed as a symbol. Original failed build is preserved without a new
+  receipt. Parse only named exports and validate all counts; real MinGW PE
+  regression admits the exact table and rejects a genuine extra Export symbol.
+  Eighteen admission tests pass; candidate inspection finds exactly 121 named
+  exports including private shutdown. Fresh build/publication remains required.
+  #5/#12 +0%, overall +0%.

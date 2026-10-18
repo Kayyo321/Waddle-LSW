@@ -18,7 +18,7 @@ jobs:
       - name: Install vendor-boundary test tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends git g++ python3
+          sudo apt-get install -y --no-install-recommends git g++ python3 gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
       - name: Check out only pinned admission-test source and headers
         run: |
           git submodule update --init --depth 1 submodules/clvk submodules/dxvk

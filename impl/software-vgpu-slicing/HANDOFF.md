@@ -560,3 +560,13 @@ the requested final gate. This was acknowledged to the user; no PR description
 or readiness was changed. Keep it draft and do not publish further feature
 branch changes until qualification passes. Future CI can use a separate
 verification ref if new source needs remote checks before then.
+
+`clvk_pool_cross_build.log` completes all 2,738 compile/link steps, then FAILS
+exact PE inspection because its old regex sees the address-table label Export
+RVA as a symbol. No patched receipt was published. The corrected verifier parses
+only the name table, checks all PE counts and retains exact export equality.
+Eighteen admission tests pass, including a real MinGW PE and genuine extra
+Export rejection. Direct inspection of the preserved candidate
+`clvk_aa223aba8c29_gdygl53q/out/OpenCL.dll` succeeds with 121 true exports; its
+SHA is recorded in clvk_actual_pe_inspection.log. It remains an unadmitted
+candidate until a fresh corrected-driver build publishes a complete receipt.

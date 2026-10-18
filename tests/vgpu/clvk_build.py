@@ -43,8 +43,40 @@ class export_tests_t(unittest.TestCase):
 
     def pe_dump(self, exports, imports):
         return '\n'.join(['DLL Name: ' + name for name in imports] + [
+            'Number in:', ' Export Address Table %08x' % len(exports),
+            ' [Name Pointer/Ordinal] Table %08x' % len(exports),
+            'Export Address Table -- Ordinal Base 1',
+            '[ 0] +base[ 1] abcdef Export RVA', '',
+            '[Ordinal/Name Pointer] Table -- Ordinal Base 1'] + [
             '[ %d] +base[ %d] abcdef %s' % (index, index, name)
             for index, name in enumerate(exports)])
+
+    def test_actual_pe_name_table_and_export_named_export(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'exports.c'
+            definition = Path(directory) / 'exports.def'
+            dll = Path(directory) / 'exports.dll'
+            for extra in ((), ('Export',)):
+                exports = (*Driver.RequiredExports, *extra)
+                source.write_text('\n'.join('void %s(void) {}' % name for name in exports))
+                definition.write_text('EXPORTS\n' + '\n'.join('    ' + name for name in exports) + '\n')
+                subprocess.run(['x86_64-w64-mingw32-gcc-posix', '-shared', str(source),
+                                str(definition), '-o', str(dll)], check=True, timeout=60)
+                if extra:
+                    with self.assertRaisesRegex(SystemExit, 'Export'):
+                        Driver.inspect_dll(dll, Driver.RequiredExports)
+                else:
+                    _, names = Driver.inspect_dll(dll, Driver.RequiredExports)
+                    self.assertEqual(names, sorted(Driver.RequiredExports))
+
+    def test_missing_table_and_unnamed_export_fail_closed(self):
+        good = self.pe_dump(Driver.RequiredExports, [])
+        for bad in (good.replace('[Ordinal/Name Pointer] Table', 'Wrong table'),
+                    good.replace('Export Address Table %08x' % len(Driver.RequiredExports),
+                                 'Export Address Table %08x' % (len(Driver.RequiredExports) + 1))):
+            with self.subTest(dump=bad), patch.object(Driver, 'capture', return_value=bad):
+                with self.assertRaisesRegex(SystemExit, 'PE export'):
+                    Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports)
 
     def test_system_imports(self):
         imports = ['vulkan-1.dll', 'KERNEL32.dll', 'msvcrt.dll']

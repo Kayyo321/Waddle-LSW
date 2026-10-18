@@ -6305,3 +6305,15 @@ failure still joins every started caller before cleanup. Parent borrows remain
 live until join and all DLL code remains mapped through each thread's TLS exit.
 Only after both joins can terminal global retirement begin. Eight total success
 markers plus the explicit concurrent-join marker are required for native proof.
+
+### Exact PE export decoding correction
+
+GNU objdump prints separate address and name tables. Address rows ending in
+`Export RVA` are metadata, not a public symbol named Export. The verifier now
+parses only the labeled ordinal/name table, supports both GNU row forms and
+requires the address count, name count, parsed names and unique-name count to
+agree. Missing tables, ordinal-only exports, duplicates, missing required names
+and any unexpected named export fail closed. A real MinGW-built PE regression
+checks both exact admission and rejection of a genuine extra export actually
+named Export; the synthetic header cannot substitute for this format test.
+CI installs the corresponding base-package C cross compiler and binutils.
