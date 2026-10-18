@@ -39,6 +39,9 @@
     "primary_lifetimes": 8,
     "functional_native_gpu": true,
     "native_heap_acceptance": false,
-    "simultaneous_linux_gpu_acceptance": false
+    "simultaneous_linux_gpu_acceptance": false,
+    "sanitized_host_checkpoint": "build/windows11_vm/dxvk_gpu_ff4d1413",
+    "sanitized_host_functional_native_gpu": true,
+    "sanitized_host_primary_lifetimes": 8
   }
 }

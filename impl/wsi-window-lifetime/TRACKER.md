@@ -116,3 +116,9 @@ handle199/GDI/USER equality. Separate unchanged48-frame presentation checkpoint
 7adb6000 fails after42 exact frames at handle199→200; retained as failed evidence.
 Four guest binary hashes match after both runs. Final qualification remains open;
 Task #4 +0%, total94%, Time Ended TBD. See current software-vGPU qualification.
+
+
+At the user's stopping request, all local verification jobs finished and state
+was preserved. See software-vGPU CHECKPOINT_2026_10_18.md. The unchanged48-frame
+handle-count failure remains open; no assertion or deadline was weakened.
+Task #4 +0%, total94%, Time Ended TBD.

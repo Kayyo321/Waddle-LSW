@@ -1423,3 +1423,10 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   handle199→200. FinalthreepatchOpenCL8primary lifetimes/concurrent callers
   and allmalformed oracles passnative; freshDXVK3lifeheap stillunclassified.
   Requiredheap/concurrentGPU/legacyacceptance remainsopen; #3/#5/#11 +0%.
+
+- **Commit `50d5da2`**: record current native WSI/OpenCL functional receipts,
+  failed unchanged48-frame case and open native heap gate. #3/#5/#11 +0%.
+- User-pause checkpoint (identify through checkpoint documentation history):
+  sanitized-host OpenCL8primary lifetimes also pass; all local jobs ended,
+  publishers stopped, VM preserved. Remaining native heap/concurrent GPU and
+  handle-count failure remain open. #3/#5/#11 +0%, overall85.5%; Time Ended TBD.

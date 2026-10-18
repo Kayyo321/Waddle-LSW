@@ -6572,3 +6572,12 @@ Exact commands/logs: `native_wsi_lifetime_run.log`,
 `system_heap_controls_run.log`, under build/qualification_20261017.
 All fourCI workflows atddc7926 passed. FreshCI is dispatched at1e91c48 on the
 separate verification-only ref; the feature PR is not updated or marked ready.
+
+
+User-requested stopping checkpoint (2026-10-18T01:25:19Z): see
+[CHECKPOINT_2026_10_18.md](CHECKPOINT_2026_10_18.md) for completed evidence,
+remaining gates, exact prepared-but-unexecuted tooling and safe resumption.
+Normal and sanitized-host OpenCL functional execution both pass; native heap,
+simultaneous Linux GPU and unchanged48-frame presentation remain unqualified.
+Local jobs finished, our HTTP publishers stopped, VM preserved running. No PR
+readiness/closure or Time Ended change.
