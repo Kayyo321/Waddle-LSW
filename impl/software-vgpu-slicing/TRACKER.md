@@ -1370,3 +1370,10 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   unbuffered before use to avoid acquiring process-lifetime stdio buffers during
   measured cycles. Strict cross-build passes; native heap rerun required.
   #3/#11 +0%, overall +0%; Time Ended TBD.
+
+- **Commit `8f2732e`**: configure diagnostics unbuffered before first use;
+  strict Windows cross-build passes, fresh heap audit pending. #3/#11 +0%.
+- Native WSI lifecycle fixture (identify through native-test history): eight
+  actual device lifetimes with failed replacement/acquired-image retention,
+  zero/nonzero extent changes, explicit replacements and observed HWND loss.
+  Strict integrated Windows cross-build passes; execution pending. #3/#11 +0%.

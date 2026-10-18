@@ -88,3 +88,23 @@ Native Windows state execution passed before the host reboot; Windows applied
 a pending update during resumed startup. Final physical lifecycle/Windows
 requalification remains pending; this conservative checkpoint grants no new
 completion or Time Ended credit. [Current feature evidence](../software-vgpu-slicing/QUALIFICATION_2026_10_17.md).
+
+
+Native lifetime verification fixture (qualification addition): the separate
+`wsi_lifetime` workload repeats eight actual device lifetimes. Each owns its
+popup HWND, surface, chains, binary semaphores and temporary DCs, with exact
+GDI/USER equality and the existing exact process-handle baseline. It renders to
+an acquired image before a valid failed extent-mismatch replacement, requires
+that replacement to retire the old chain while preserving that acquired image
+for presentation, and compares all4096 client pixels against GPU readback.
+It checks paired zero capabilities, sticky OUT_OF_DATE with unchanged index,
+fresh replacement and exact rendering after restore;80x64 resize capabilities,
+old acquire rejection and64x64 replacement/rendering; actual HWND destruction,
+SURFACE_LOST before replacement, and retired-chain OUT_OF_DATE precedence after
+a valid lost-surface replacement attempt. It claims no unobserved HWND reuse.
+All owners are released before starting the next case. The original48-frame
+presentation workload, retry bounds and native assertions are unchanged.
+Strict integrated Windows cross-build passes (`native_wsi_lifetime_build.log`);
+this is compilation only, and actual native/physical execution remains required.
+
+Task #4 +0%; overall remains94%, Time Ended TBD.

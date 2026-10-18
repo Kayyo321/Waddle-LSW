@@ -53,3 +53,23 @@ Defensive queue-idle lookup tests cover absent, unready, unlisted and already-id
 Reviewed 2026-10-09: [VkSwapchainCreateInfoKHR](https://docs.vulkan.org/refpages/latest/refpages/source/VkSwapchainCreateInfoKHR.html) specifies old-swapchain retirement even when replacement fails and permits presentation of already acquired old images. [SetPropW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setpropw) requires explicit property removal before WM_NCDESTROY; therefore this milestone deliberately does not introduce a property scheme lacking window-event cleanup.
 
 The [vkQueuePresentKHR reference](https://docs.vulkan.org/refpages/latest/refpages/source/vkQueuePresentKHR.html), reviewed 2026-10-09, defines result precedence, unchanged resource/synchronization guarantees for retryable OOM, DEVICE_LOST when that cannot be guaranteed, semaphore execution on presentation rejection, and release of image acquisition. The [Win32 WSI capability rules](https://docs.vulkan.org/spec/latest/chapters/VK_KHR_surface/wsi.html) require exact minimum/current/maximum extents and paired zero axes.
+
+
+Native lifetime verification fixture (qualification addition): the separate
+`wsi_lifetime` workload repeats eight actual device lifetimes. Each owns its
+popup HWND, surface, chains, binary semaphores and temporary DCs, with exact
+GDI/USER equality and the existing exact process-handle baseline. It renders to
+an acquired image before a valid failed extent-mismatch replacement, requires
+that replacement to retire the old chain while preserving that acquired image
+for presentation, and compares all4096 client pixels against GPU readback.
+It checks paired zero capabilities, sticky OUT_OF_DATE with unchanged index,
+fresh replacement and exact rendering after restore;80x64 resize capabilities,
+old acquire rejection and64x64 replacement/rendering; actual HWND destruction,
+SURFACE_LOST before replacement, and retired-chain OUT_OF_DATE precedence after
+a valid lost-surface replacement attempt. It claims no unobserved HWND reuse.
+All owners are released before starting the next case. The original48-frame
+presentation workload, retry bounds and native assertions are unchanged.
+Strict integrated Windows cross-build passes (`native_wsi_lifetime_build.log`);
+this is compilation only, and actual native/physical execution remains required.
+
+Task #4 +0%; overall remains94%, Time Ended TBD.

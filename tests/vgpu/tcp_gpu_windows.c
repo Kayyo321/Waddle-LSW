@@ -670,6 +670,7 @@ cleanup:
 }
 
 #include "tcp_gpu_present_windows.inc"
+#include "tcp_gpu_wsi_lifetime_windows.inc"
 
 /** @brief Query actual modern physical wire paths without enabling unimplemented features.
  * @param[in] physical Live borrowed device, lookup Live borrowed instance dispatcher,
@@ -746,10 +747,11 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
  */
 int main(int argc,char **argv)
 {
-    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries") && strcmp(argv[6],"triangle_present") && strcmp(argv[6],"triangle_present_smoke")))return 2;
+    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries") && strcmp(argv[6],"triangle_present") && strcmp(argv[6],"triangle_present_smoke") && strcmp(argv[6],"wsi_lifetime")))return 2;
     int modern_queries=!strcmp(argv[6],"triangle_queries");
     int presentation_smoke=!strcmp(argv[6],"triangle_present_smoke");
-    int presentation=!strcmp(argv[6],"triangle_present") || presentation_smoke;
+    int lifetime_workload=!strcmp(argv[6],"wsi_lifetime");
+    int presentation=!strcmp(argv[6],"triangle_present") || presentation_smoke || lifetime_workload;
     int graphics_workload=!strcmp(argv[6],"triangle") || modern_queries || presentation;
     if(!medium_integrity()){fputs("Native GPU fixture requires medium integrity\n",stderr);return 2;}
     if(GetFileAttributesA(argv[5])!=INVALID_FILE_ATTRIBUTES){fputs("Retirement receipt must be fresh\n",stderr);return 2;}
@@ -852,7 +854,8 @@ int main(int argc,char **argv)
         cleanup_idle=device_idle;
         VkQueue queue=NULL,repeated=NULL;get_queue(device,family,0,&queue);get_queue(device,family,0,&repeated);if(!queue || repeated!=queue)goto cleanup;
         stage="exact hardware workload output";
-        if(presentation){if(native_swapchain_probe(instance,selected,device,queue,family,&supported_memory,lookup,device_proc,presentation_smoke))goto cleanup;}
+        if(lifetime_workload){if(native_wsi_lifetime_probe(instance,selected,device,queue,family,&supported_memory,lookup,device_proc))goto cleanup;}
+        else if(presentation){if(native_swapchain_probe(instance,selected,device,queue,family,&supported_memory,lookup,device_proc,presentation_smoke))goto cleanup;}
         else if(graphics_workload){if(triangle_probe(device,queue,family,&supported_memory,device_proc))goto cleanup;}
         else if(compute_probe(device,queue,family,&supported_memory,device_proc,!strcmp(argv[6],"compute_push"),37+iteration*19))goto cleanup;
         stage="application teardown before matching actual retirement Ack";
