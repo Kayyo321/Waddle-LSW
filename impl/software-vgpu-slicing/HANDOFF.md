@@ -574,3 +574,11 @@ candidate until a fresh corrected-driver build publishes a complete receipt.
 Current qualification: loader guard test/ASan/LSan/UBSan/coverage and actual
 Windows round-trip pass; see QUALIFICATION_2026_10_17.md. Production prefix is
 unchanged; native heap/GPU qualification remains open.
+
+
+Native heap follow-up: configure both borrowed CRT diagnostic streams unbuffered
+in wmain before any use. The prior audit's stderr-triggered4096-byte UCRT stdio
+buffer survives cycle snapshots. Explicit _IONBF configuration avoids acquiring
+that buffer during measured work; no borrowed stream is closed, no snapshot or
+baseline is moved, and no leak is suppressed. Strict DXVK fixture cross-build
+passes (`dxvk_unbuffered_build.log`); fresh native GPU/heap evidence is required.

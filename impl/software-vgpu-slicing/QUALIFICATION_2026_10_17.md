@@ -217,3 +217,11 @@ restore with retained snapshot, and retry. Actual Windows round-trip passes in
 `loader_environment_native_42ea77cc/record.json`, with matching executable hashes
 before and after. This fixture-only change does not establish native heap or GPU
 acceptance; the guard production prefix is unchanged from ef77895.
+
+
+Native heap follow-up: configure both borrowed CRT diagnostic streams unbuffered
+in wmain before any use. The prior audit's stderr-triggered4096-byte UCRT stdio
+buffer survives cycle snapshots. Explicit _IONBF configuration avoids acquiring
+that buffer during measured work; no borrowed stream is closed, no snapshot or
+baseline is moved, and no leak is suppressed. Strict DXVK fixture cross-build
+passes (`dxvk_unbuffered_build.log`); fresh native GPU/heap evidence is required.

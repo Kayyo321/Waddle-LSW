@@ -551,6 +551,9 @@ static int run_dxvk_cycle(int argc,wchar_t **argv,int audit_enabled) {
  */
 int wmain(int argc,wchar_t **argv)
 {
+    /* Configure borrowed CRT streams before their first use. Diagnostics must
+     * not create a process-lifetime stdio buffer during a measured GPU cycle. */
+    if(setvbuf(stdout,NULL,_IONBF,0) || setvbuf(stderr,NULL,_IONBF,0))return 2;
     wchar_t directory[512];int enabled=audit_directory(directory,512);
     if(enabled<0)return 2;
     if(!enabled)return run_dxvk_cycle(argc,argv,0);

@@ -1363,3 +1363,10 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   malformed API regressions and exact seven-function production coverage gate.
   ASan/LSan/UBSan pass;84/84 lines and74/74 branches. Actual native Windows
   round-trip42ea77cc passes. #3/#11 +0%, overall +0%; Time Ended TBD.
+
+- **Commit `12385fa`**: add the exact loader guard production coverage gate;
+  mock sanitizer and native42ea77cc round-trip pass. #3/#11 +0%, overall +0%.
+- CRT stream ownership (identify through fixture history): set diagnostic streams
+  unbuffered before use to avoid acquiring process-lifetime stdio buffers during
+  measured cycles. Strict cross-build passes; native heap rerun required.
+  #3/#11 +0%, overall +0%; Time Ended TBD.
