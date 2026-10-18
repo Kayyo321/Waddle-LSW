@@ -1,6 +1,6 @@
 # Cross-compilation is distinct from native execution/compatibility acceptance.
-build/vgpu_dxvk_integration.exe: tests/vgpu/dxvk_integration.c tests/vgpu/dxvk_heap_audit_windows.inc tests/vgpu/dxvk_fault_windows.inc | build
-	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< -municode -luser32 -lgdi32 -ldwmapi -ldxguid -o $@
+build/vgpu_dxvk_integration.exe: tests/vgpu/dxvk_integration.c tests/vgpu/dxvk_heap_audit_windows.inc tests/vgpu/dxvk_fault_windows.inc tests/vgpu/loader_environment_windows.h tests/vgpu/loader_environment_windows.c | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< tests/vgpu/loader_environment_windows.c -municode -luser32 -lgdi32 -ldwmapi -ldxguid -o $@
 
 .PHONY: vgpu-dxvk-build
 vgpu-dxvk-build: build/vgpu_dxvk_integration.exe
@@ -45,3 +45,19 @@ build/vgpu_opencl_integration.exe: tests/vgpu/opencl_integration.c include/waddl
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/clvk/external/OpenCL-Headers $< -municode -o $@
 
 vgpu-opencl-fixture: build/vgpu_opencl_integration.exe
+
+# Actual guard implementation under a mock-only Linux Win32 boundary. This does
+# not replace the native Windows environment round-trip target below.
+.PHONY: vgpu-loader-environment-test vgpu-loader-environment-sanitizers
+vgpu-loader-environment-test: | build
+	$(CC) $(CFLAGS) -DWaddleLoaderEnvironmentTest -DWaddleLoaderEnvironmentFakeWindows -Itests/vgpu/loader_environment_fake -Itests/vgpu tests/vgpu/loader_environment_windows.c -o build/vgpu_loader_environment_mock
+	./build/vgpu_loader_environment_mock
+
+vgpu-loader-environment-sanitizers: | build
+	$(CC) $(CFLAGS) -O1 -fsanitize=address,leak,undefined -fno-omit-frame-pointer -DWaddleLoaderEnvironmentTest -DWaddleLoaderEnvironmentFakeWindows -Itests/vgpu/loader_environment_fake -Itests/vgpu tests/vgpu/loader_environment_windows.c -o build/vgpu_loader_environment_mock_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/vgpu_loader_environment_mock_sanitized
+
+build/vgpu_loader_environment_test.exe: tests/vgpu/loader_environment_windows.c tests/vgpu/loader_environment_windows.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DWaddleLoaderEnvironmentTest -Itests/vgpu $< -o $@
+
+vgpu-windows: build/vgpu_loader_environment_test.exe

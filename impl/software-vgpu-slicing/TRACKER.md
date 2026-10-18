@@ -1333,3 +1333,12 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   Debug394 and ReleaseSafe394 plus128 C ABI cycles pass in
   `icd_dead_declaration_cleanup.log`. Native/test IR and independent source-call
   review establish the distinction from active production code. #3/#11 +0%.
+
+- **Commit `df5f5b9`**: remove never-emitted ICD declarations; Debug394,
+  ReleaseSafe394 and128 C ABI cycles pass. #3/#11 +0%, overall +0%.
+- Loader environment ownership (identify through fixture history): fresh native
+  heap attribution finds fixture-modified loader environment retained through
+  captures. Add bounded transactional capture/restore after joined TLS and module
+  retirement, plus mock sanitizer and actual Windows round-trip regressions.
+  Preserve every GPU/heap assertion, deadline and baseline; fresh GPU/heap audit
+  remains required. #3/#11 +0%, overall +0%.

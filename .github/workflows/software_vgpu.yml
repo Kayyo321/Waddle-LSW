@@ -48,6 +48,8 @@ jobs:
           echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
           tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
+      - name: Verify loader environment rollback with mock-only sanitizers
+        run: make vgpu-loader-environment-test vgpu-loader-environment-sanitizers
       - name: Verify metadata-bound concurrent coverage recorder
         run: |
           python3 -B tests/av/coverage_recorder_test.py -v
@@ -252,6 +254,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build | Out-Null
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DWaddleLoaderEnvironmentTest -Itests/vgpu tests/vgpu/loader_environment_windows.c -o build/vgpu_loader_environment_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./build/vgpu_loader_environment_test.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig build-lib src/vgpu/venus_bounds.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/venus_bounds_windows.lib'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/vgpu tests/vgpu/ring.c src/vgpu/venus_ring.c build/venus_bounds_windows.lib -o build/vgpu_ring_test.exe

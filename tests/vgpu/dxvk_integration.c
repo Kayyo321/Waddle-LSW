@@ -9,6 +9,7 @@
 #include <d3dcompiler.h>
 #include <dwmapi.h>
 #include "waddle/venus_tcp.h"
+#include "loader_environment_windows.h"
 #include <stdio.h>
 #include <wchar.h>
 #include <stdlib.h>
@@ -251,6 +252,8 @@ static int absolute_file(const wchar_t *path, const wchar_t *basename) {
 typedef struct module_owners_t {
     HMODULE loader, dxgi, d3d11, bootstrap, compiler;
     int fault_verified;
+    /** Main-owned inline environment snapshot; worker mutates until join. */
+    waddle_loader_environment_guard_t environment;
 } module_owners_t;
 
 /** @brief Run one real DXVK device/swapchain transaction on the selected ICD.
@@ -278,14 +281,17 @@ static int run_dxvk_work(int argc, wchar_t **argv, int audit_enabled, module_own
               "<absolute DXVK d3d11.dll> <absolute Waddle ICD manifest> <absolute bootstrap DLL> <private config> <fresh retirement receipt>\n", stderr);
         return 2;
     }
-    /* Replace loader discovery, rather than adding the experimental driver to
-     * the installed GPU list. The manifest is a trusted acceptance input. */
-    if (!SetEnvironmentVariableW(L"VK_DRIVER_FILES", argv[4]) ||
-        !SetEnvironmentVariableW(L"VK_ICD_FILENAMES", NULL) ||
-        !SetEnvironmentVariableW(L"VK_ADD_DRIVER_FILES", NULL) ||
-        !SetEnvironmentVariableW(L"VK_LOADER_LAYERS_DISABLE", L"~all~")) {
-        fprintf(stderr, "loader environment failed: %lu\n", (unsigned long)GetLastError());
-        return 1;
+    /* Capture every prior loader key before mutation. The parent restores only
+     * after join/TLS destruction and unloading every acquired vendor module. */
+    const waddle_loader_environment_override_t overrides[WaddleLoaderEnvironmentVariableCount] = {
+        {TRUE,argv[4]}, {FALSE,NULL}, {FALSE,NULL}, {TRUE,L"~all~"}
+    };
+    const waddle_loader_environment_api_t environment_api=waddle_loader_environment_windows_api();
+    waddle_loader_environment_status_t environment_status=
+        waddle_loader_environment_begin(&modules->environment,overrides,&environment_api);
+    if(environment_status!=WaddleLoaderEnvironmentOk){
+        fprintf(stderr,"loader environment admission failed: %d Win32=%lu\n",
+                (int)environment_status,(unsigned long)GetLastError());return 1;
     }
     int result = 1;
     int fault_verified=0;
@@ -520,6 +526,14 @@ static int run_dxvk_cycle(int argc,wchar_t **argv,int audit_enabled) {
     if(argc==8 && (GetModuleHandleW(argv[5]) || GetModuleHandleW(argv[1]) ||
        GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[3]) ||
        GetModuleHandleW(L"waddle_vulkan_experimental.dll")))cleanup_failed=1;
+    waddle_loader_environment_status_t restored=waddle_loader_environment_restore(&call.modules.environment);
+    if(restored!=WaddleLoaderEnvironmentOk){
+        cleanup_failed=1;
+        fprintf(stderr,"Retained loader environment awaiting restoration mask=%lu\n",
+                (unsigned long)call.modules.environment.restore_failed_mask);fflush(stderr);
+        do{Sleep(10);restored=waddle_loader_environment_restore(&call.modules.environment);}
+        while(restored!=WaddleLoaderEnvironmentOk);
+    }
     if(cleanup_failed)return call.modules.fault_verified ? 2 : 1;
     if(call.modules.fault_verified && call.result==1)
         puts("DXVK actual device removal and owned native teardown verified after trusted retirement.");

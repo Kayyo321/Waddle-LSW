@@ -6365,3 +6365,35 @@ only that exact source may report zero native definitions/hooks, requiring all
 four helpers to be absent there and present/instrumented in the allocator image.
 No native machine access is exempted from instrumentation. `boolean_mask` and
 `slot_type` are compile-time constructors; any runtime emission fails the gate.
+
+### DXVK fixture loader environment retirement
+
+The joined fixture owns an inline four-key snapshot in its parent invocation,
+not on the vendor worker's stack. Capture the exact absent/empty/UTF-16 values of
+VK_DRIVER_FILES, VK_ICD_FILENAMES, VK_ADD_DRIVER_FILES and
+VK_LOADER_LAYERS_DISABLE before any mutation. Preserve unrelated keys. Admit all
+replacement lengths and capture every original value before applying the trusted
+manifest/layer policy. Any apply failure restores every original key; a failed
+restore retains all snapshots and its failed-key mask for retry. API callbacks
+are copied before guard clearing, including the supported guard.api alias;
+override records/strings must remain immutable, accessible and disjoint from guard.
+Each value has32768 UTF-16 units including NUL; oversized capture/override fails
+before application. Inline storage allocates no application heap.
+
+After COM/HWND/host cleanup, the parent joins the calling thread, closes its
+HANDLE, unloads vendor DLLs through their TLS/FLS destruction, verifies module
+absence, and only then restores the exact environment. Any restoration failure
+makes the cycle fail and retains its snapshot until restoration succeeds. No
+owned snapshot can escape its stack lifetime; no manual Windows cache free or
+native heap baseline adjustment is introduced.
+
+The actual guard source has separate mock-only Linux ASan/LSan/UBSan tests and
+real Windows tests. Mocks cover32767/32768 boundaries, invalid/API/active state,
+failed capture with zero mutation, failed apply after mutation, failed rollback,
+all-key retry, API aliasing and inactive idempotent cleanup. Native Windows tests
+require nested actual absent/empty/Unicode round trips, unrelated-key preservation,
+and equality with every initial value after cleanup. Native execution exposed a
+test cleanup helper returning failure for an already inactive guard; the helper
+now preserves the guard's idempotent success, with a mock regression. Cross-build,
+mock safety and native execution are distinct receipts; native heap acceptance
+still requires a fresh complete GPU audit.
