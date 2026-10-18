@@ -1,6 +1,6 @@
 # OpenCL MinGW runtime lifetime investigation
 
-Status: native defect isolated; correction comparison pending. No upstream
+Status: native runtime defects isolated; both compared configurations fail. No upstream
 source correction, new DLL, acceptance waiver or completed qualification.
 The approved shutdown/buffer patches and all pinned submodules stay unchanged.
 
@@ -88,3 +88,73 @@ a rebuilt DLL. Keep native heap and final GPU acceptance false until complete.
 M2 remains94%/Review because its independent absolute Windows count gate can
 fail in a system-only control. This runtime defect is additional work and
 cannot waive that preserved failure. Feature progress stays85.5%, Time Ended TBD.
+
+
+## Runtime comparison rejected; no production build change
+
+The short handle-only comparison reproduced POSIX53→59/native1; Win32 with
+`-mthreads` completed eight exact47→47 cycles/native0. Both imports contain
+KERNEL32 and msvcrt only. The first collector hit a live stdout-sharing error;
+native processes completed without interruption. A read-only completed-marker
+collector recovered the results and verified the original hashes. That short
+result is retained, not promoted to overall runtime acceptance.
+
+The2048-reload Win32 stress test stopped making progress after543 successful
+handle-balanced reloads. Its60s collector failed; later identity-matched
+observations show identical output, one live thread and increasing CPU.
+Only owned PID5888/creation01dd5ea9f4e6eede was terminated after rechecking its
+exact unique image path. This is forced retirement of a failed test, not natural
+teardown or a positive native result. No instruction stack was captured.
+
+The final tracked regression also counts free TLS capacity by allocating up to
+2048 probe-owned indices, observing exhaustion, then freeing every index it
+allocated. It never reads/frees borrowed TLS indices. Before/after exact capacity
+is compared only with DLL callers and joined test threads quiescent. This finds
+the problem after one unload, without waiting for a stalled stress run:
+
+| Runtime | Native exit | Handles before→after | Free TLS before→after |
+|:--|:--:|:--:|:--:|
+| Current POSIX/static winpthread |1|53→59|1086→1085|
+| Candidate Win32/static runtimes +mthreads |1|47→47|1086→1084|
+
+Both functional calls return0 and modules/exports retire, but resource assertions
+fail. Win32 loses two slots per load;1086 initial free slots are consistent with
+the543-reload stall. That arithmetic is not a captured instruction-stack proof.
+The earlier handle-only8-life pass does not clear TLS or heap ownership.
+
+The uncommitted build-driver, admission and CI candidate edits were preserved
+as `build/qualification_20261017/rejected_win32_configuration.patch`, then only
+those owned changes were restored. No candidate DLL replaced the approved
+OpenCL artifact, and no upstream source changed. The22 candidate admission
+checks had passed but could not establish native runtime safety; the restored
+original19-test admission suite passes. No assertion/budget was weakened.
+
+The tracked `tests/vgpu/clvk_runtime_windows.*` regression and
+`make vgpu-opencl-runtime-fixture` retain both runtime DLL variants and8/2048-life
+loaders. The lifetime count alone changes for stress; exact handles, TLS
+capacity, module/export absence and100×10ms handle budget remain. These are
+currently failing native regressions, not an accepted runtime configuration.
+The optional Win32 compiler is available through the verified private SDK PATH;
+no host package was installed/upgraded. The original production POSIX compiler
+and three approved clvk patches remain unchanged.
+
+[CLVK_RUNTIME_RECEIPT_2026_10_17.json](CLVK_RUNTIME_RECEIPT_2026_10_17.json) binds
+final source/binary identities, native failures, package provenance, candidate
+withdrawal and forced owned-process retirement. A safe upstream SDK lifetime
+correction must separately resolve global locks, emulated TLS, caller-thread
+ownership and late CRT finalizers, with regression/heap proof. It needs its own
+reviewed private-copy patch and the explicit human approval required by
+CODEX_HANDOFF.md section4; the approved global-state/buffer corrections do not
+cover these SDK changes. No speculative LLVMshutdown/early TLS destruction or
+loader-lock cleanup has been applied.
+
+M2's separate system-only Windows counter blocker remains. M2 stays94%/Review;
+feature85.5%/In Progress, Time Ended TBD. No feature push or PR readiness.
+
+
+Primary source references supporting the source review are the [exact pinned
+PassRegistry](https://github.com/llvm/llvm-project/blob/71a85ef89fc1997205104b72447e0dc2c4ad83da/llvm/lib/IR/PassRegistry.cpp#L23),
+[GCC14.2 shared mutex implementation](https://github.com/gcc-mirror/gcc/blob/releases/gcc-14.2.0/libstdc%2B%2B-v3/include/std/shared_mutex),
+and [MinGW v12 thread implementation](https://github.com/mingw-w64/mingw-w64/blob/v12.0.0/mingw-w64-libraries/winpthreads/src/thread.c).
+The MinGW link supports the design analysis; the local package and native
+receipts, not that upstream file's line numbers, identify the executed SDK.

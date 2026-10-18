@@ -69,3 +69,23 @@ vgpu-loader-environment-coverage: | build
 .PHONY: vgpu-opencl-buffer-coverage
 vgpu-opencl-buffer-coverage: | build
 	python3 -B scripts/clvk_buffer_coverage.py build/clvk_buffer_coverage
+
+
+# Vendor C++ runtime ownership regression. These targets only cross-compile;
+# execute the C loader against this exact DLL in native Windows for acceptance.
+# Compare the current POSIX runtime and candidate Win32 runtime; neither is
+# accepted by compilation. Native handles, TLS slots and module retirement gate it.
+.PHONY: vgpu-opencl-runtime-fixture
+build/vgpu_clvk_runtime_posix.dll: tests/vgpu/clvk_runtime_windows.cpp | build
+	x86_64-w64-mingw32-g++-posix -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -shared $< -o $@ -static-libgcc -static-libstdc++ -Wl,--whole-archive -Wl,-Bstatic -lwinpthread -Wl,--no-whole-archive -Wl,-Bdynamic
+
+build/vgpu_clvk_runtime_win32.dll: tests/vgpu/clvk_runtime_windows.cpp | build
+	x86_64-w64-mingw32-g++-win32 -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -shared -mthreads $< -o $@ -static-libgcc -static-libstdc++
+
+build/vgpu_clvk_runtime_test.exe: tests/vgpu/clvk_runtime_windows.c | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $< -o $@
+
+build/vgpu_clvk_runtime_stress.exe: tests/vgpu/clvk_runtime_windows.c | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DWaddleRuntimeLifetimeCount=2048 $< -o $@
+
+vgpu-opencl-runtime-fixture: build/vgpu_clvk_runtime_posix.dll build/vgpu_clvk_runtime_win32.dll build/vgpu_clvk_runtime_test.exe build/vgpu_clvk_runtime_stress.exe

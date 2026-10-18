@@ -329,3 +329,19 @@ The race correction retains strict token admission and passes11 private tests.
 Evidence commit031c665 preserves the successful prior supervisor source and
 repeat-cycle heap review; #3/#5/#11 +0%, total85.5%. No production correction,
 threshold change, feature push, Time Ended or PR readiness is claimed.
+
+
+### Runtime reload regression: both toolchains fail, 2026-10-17
+
+Tracked Windows compatibility tests now cover exact handle/TLS-slot return,
+module/export absence, joined threads, once initialization, shared mutex and
+stream teardown. Both strict cross-builds pass; native POSIX loses6handles and
+1TLS slot on first unload, while candidate Win32 keeps handles balanced but
+loses2TLS slots. The Win32 handle-only stress stalls after543 reloads; its failed
+collector and exact owned forced retirement are preserved. The candidate build
+configuration is withdrawn, not qualified. Original19 admission tests pass.
+See [CLVK_RUNTIME_LIFETIME_REVIEW.md](CLVK_RUNTIME_LIFETIME_REVIEW.md) and
+[CLVK_RUNTIME_RECEIPT_2026_10_17.json](CLVK_RUNTIME_RECEIPT_2026_10_17.json).
+Evidence commit0a2eec0 records the preceding trace isolation. New regression
+coverage adds0% to #3/#5/#11; total85.5%. M2 remains94%/Review and Time Ended TBD.
+No new upstream SDK patch, feature push, PR readiness or assertion waiver.

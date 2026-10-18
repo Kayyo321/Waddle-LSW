@@ -14,7 +14,7 @@
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD 394-case Debug/ReleaseSafe, sanitizer/allocator and 90.32% branch / 98.53% line gates pass after loader debug-chain correction. Fresh corrected-ICD DXVK sanitized positive and normal/sanitized postflush runs pass; final three-life native heap and full physical WSI matrix remain open. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Approved final DLL completes 24 primary lifetimes over three native cycles with exact kernels, malformed inputs, joined callers and module retirement. UST restored; unloaded2→3 heap delta zero. First-cycle heap ownership and +6 process handles per later reload remain unclassified; native heap, cancellation and simultaneous Linux GPU acceptance remain open. |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Exact native kernels and24-primary-lifetime captures pass, but current runtime retains6handles/1TLS slot per isolated unload. Candidate Win32 runtime loses2TLS slots and stalls after543 reloads; switch withdrawn. SDK lifetime correction, heap ownership, cancellation and simultaneous Linux GPU acceptance remain open. |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -1527,3 +1527,19 @@ The race correction retains strict token admission and passes11 private tests.
 Evidence commit031c665 preserves the successful prior supervisor source and
 repeat-cycle heap review; #3/#5/#11 +0%, total85.5%. No production correction,
 threshold change, feature push, Time Ended or PR readiness is claimed.
+
+
+### Runtime reload regression: both toolchains fail, 2026-10-17
+
+Tracked Windows compatibility tests now cover exact handle/TLS-slot return,
+module/export absence, joined threads, once initialization, shared mutex and
+stream teardown. Both strict cross-builds pass; native POSIX loses6handles and
+1TLS slot on first unload, while candidate Win32 keeps handles balanced but
+loses2TLS slots. The Win32 handle-only stress stalls after543 reloads; its failed
+collector and exact owned forced retirement are preserved. The candidate build
+configuration is withdrawn, not qualified. Original19 admission tests pass.
+See [CLVK_RUNTIME_LIFETIME_REVIEW.md](CLVK_RUNTIME_LIFETIME_REVIEW.md) and
+[CLVK_RUNTIME_RECEIPT_2026_10_17.json](CLVK_RUNTIME_RECEIPT_2026_10_17.json).
+Evidence commit0a2eec0 records the preceding trace isolation. New regression
+coverage adds0% to #3/#5/#11; total85.5%. M2 remains94%/Review and Time Ended TBD.
+No new upstream SDK patch, feature push, PR readiness or assertion waiver.
