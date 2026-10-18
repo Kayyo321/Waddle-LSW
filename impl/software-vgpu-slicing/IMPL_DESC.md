@@ -6282,3 +6282,12 @@ no failure is accepted or silently retried. The fresh current-ICD audit stopped
 after one exact successful GPU lifetime; its incomplete capture cannot qualify
 heap stability. All artifacts and the restored originally absent image UST key
 remain preserved.
+
+### Continuous OpenCL admission verification
+
+The feature workflow adds an independent Ubuntu admission job using the pinned
+clvk source plus OpenCL/SPIR-V/Vulkan headers needed by the actual owner/pool
+tests. It runs all sixteen build-admission tests with C++ sanitizers and does
+not build LLVM or claim Windows/GPU execution. The existing complete Linux and
+native Windows jobs remain required. The optional full OpenCL cross-build and
+physical/native acceptance remain separate gates.

@@ -1287,3 +1287,10 @@ tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
   error diagnostics, preserving all checks and deadlines. Strict Windows fixture
   build passes. Signed tools before/after verify; per-image UST restored absent.
   #3/#11 +0%, overall +0%.
+
+- **Commit `a158fff`**: add exact native heap handshake/thread failure
+  diagnostics; strict Windows cross-build passes, no acceptance relaxation.
+- CI admission follow-up (identify through workflow history): add a pinned
+  minimal-source/header job for all sixteen OpenCL admission and actual owner/
+  pool sanitizer tests. Workflow YAML parses locally; execution remains pending.
+  Existing full Linux/native Windows jobs remain required. #5/#12 +0%.

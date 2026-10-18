@@ -7,6 +7,25 @@ on:
 permissions:
   contents: read
 jobs:
+  opencl_admission:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Install vendor-boundary test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends git g++ python3
+      - name: Check out only pinned admission-test source and headers
+        run: |
+          git submodule update --init --depth 1 submodules/clvk submodules/dxvk
+          git -C submodules/clvk submodule update --init --depth 1 external/OpenCL-Headers external/SPIRV-Headers
+          git -C submodules/dxvk submodule update --init --depth 1 include/vulkan
+      - name: Verify exact exports, private patch and sanitizer-backed owners
+        run: python3 -B tests/vgpu/clvk_build.py
   transport:
     runs-on: ubuntu-22.04
     timeout-minutes: 60

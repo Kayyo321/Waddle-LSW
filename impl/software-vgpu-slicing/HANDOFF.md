@@ -540,3 +540,9 @@ signed-tool checks are retained; original absent per-image UST key is restored.
 Do not count its 185 first-unload handles as a multi-life pass. Native fixture
 now logs acknowledgement metadata/open/close rejection and thread-creation
 errors to diagnose a fresh run, without changing checks/deadlines.
+
+OpenCL admission tests now have their own feature-workflow job. Only pinned
+clvk/DXVK source and required nested headers are initialized there; no LLVM
+build or runtime acceptance is implied. Existing Linux/native Windows jobs
+remain unchanged and required. A feature-branch push will run these jobs; no
+PR may be opened/updated until all requested qualification gates pass.
