@@ -515,7 +515,7 @@ static void test_capture_attempt_cap(void)
     handle_diag_free(&diag);
 }
 
-/** @brief Size cap: a required size above 8 MiB is refused, exactly 8 MiB doubles to the 16 MiB limit. */
+/** @brief Honor required sizes through 16 MiB, cap doubling there, and reject larger or still-growing snapshots. */
 static void test_capture_size_cap(void)
 {
     handle_diag_t diag;
@@ -525,10 +525,32 @@ static void test_capture_size_cap(void)
     expect_u(kernel.last_length,16777216);expect(diag.baseline.unavailable[0]==0);expect_u(diag.baseline.count,5);
     handle_diag_free(&diag);
 
-    next_case("capture_size_cap_exceeded");
+    next_case("capture_size_above_half_cap");
     kernel_fill(5);kernel.mismatch_remaining=1;kernel.hint_mode=HintFixed;kernel.hint_value=8388609;
-    begin_diag(&diag);                                  /* one byte over: refused before any larger allocation */
+    begin_diag(&diag);                                  /* doubling would overshoot; try the real cap */
+    expect_u(kernel.process_calls,2);expect_u(handle_diag_fake.realloc_sizes[1],16777216);
+    expect_u(kernel.last_length,16777216);expect(diag.baseline.unavailable[0]==0);expect_u(diag.baseline.count,5);
+    handle_diag_free(&diag);
+
+    next_case("capture_size_exact_cap");
+    kernel_fill(5);kernel.mismatch_remaining=1;kernel.hint_mode=HintFixed;kernel.hint_value=16777216;
+    begin_diag(&diag);
+    expect_u(kernel.process_calls,2);expect_u(handle_diag_fake.realloc_sizes[1],16777216);
+    expect(diag.baseline.unavailable[0]==0);expect_u(diag.baseline.count,5);
+    handle_diag_free(&diag);
+
+    next_case("capture_size_cap_exceeded");
+    kernel_fill(5);kernel.mismatch_remaining=1;kernel.hint_mode=HintFixed;kernel.hint_value=16777217;
+    begin_diag(&diag);
     expect_u(kernel.process_calls,1);expect_u(handle_diag_fake.realloc_calls,1);
+    expect_text(diag.baseline.unavailable,"snapshot exceeds 16777216 bytes");
+    handle_diag_free(&diag);
+
+    next_case("capture_size_cap_still_mismatched");
+    kernel_fill(5);kernel.mismatch_remaining=2;kernel.hint_mode=HintFixed;kernel.hint_value=16777216;
+    begin_diag(&diag);                                  /* the maximum buffer was actually tried; never loop on it */
+    expect_u(kernel.process_calls,2);expect_u(handle_diag_fake.realloc_calls,2);
+    expect_u(handle_diag_fake.realloc_sizes[1],16777216);
     expect_text(diag.baseline.unavailable,"snapshot exceeds 16777216 bytes");
     handle_diag_free(&diag);
 

@@ -18,6 +18,8 @@
 
 **Total Feature Completion**: `94.0%`
 
+Independent Codex review, 2026-10-21: correct diagnostic snapshot growth to try the documented 16 MiB capacity when doubling a valid hint would exceed that capacity. Add exact-boundary and repeated-mismatch regressions; retain the six-query bound, ownership cleanup and strict native gate. This discrete correction's commit is identified by `fix(vgpu-tests): honor the full handle snapshot capacity`; its exact hash and verification receipt are recorded in the subsequent independent review checkpoint. TODO #4 +0%; overall remains 94%; Time Ended TBD.
+
 Task #4 has five equally weighted gates: portable functional tests, production coverage, native Windows qualification (cross-build plus the applicable native/physical acceptance already required below), complete ICD Debug/ReleaseSafe aggregate, and prescribed ASan/LSan. Four gates pass and contribute80% of this task. The native Windows gate contributes0% until all of its existing acceptance requirements pass; successful compilation alone cannot close it. Earlier “Windows cross-builds” wording omitted the native acceptance requirement from this accounting sentence, while the same tracker explicitly retained it under “Still required.” This clarification preserves the existing94% total and strengthens no claim or threshold. Supplemental leak-disabled runs never close the prescribed leak gate. This bounded tracker does not increase software-vGPU TODO #3, close roadmap D, or permit feature merge.
 
 ## Verification receipts

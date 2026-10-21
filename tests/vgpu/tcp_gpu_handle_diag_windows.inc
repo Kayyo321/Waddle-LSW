@@ -155,8 +155,8 @@ static int handle_diag_capture(const handle_diag_t *diag,handle_diag_set_t *set)
             snprintf(set->unavailable,sizeof set->unavailable,"NtQueryInformationProcess status=0x%08lx",(unsigned long)(ULONG)status);goto done;
         }
         size_t wanted=needed>bytes ? (size_t)needed : bytes;
-        if(wanted>(size_t)HandleDiagMaxBytes/2){snprintf(set->unavailable,sizeof set->unavailable,"snapshot exceeds %d bytes",(int)HandleDiagMaxBytes);goto done;}
-        bytes=wanted*2;
+        if(wanted>(size_t)HandleDiagMaxBytes || bytes==(size_t)HandleDiagMaxBytes){snprintf(set->unavailable,sizeof set->unavailable,"snapshot exceeds %d bytes",(int)HandleDiagMaxBytes);goto done;}
+        bytes=wanted>(size_t)HandleDiagMaxBytes/2 ? (size_t)HandleDiagMaxBytes : wanted*2;
     }
     memcpy(&header,raw,sizeof header);
     if(header.number_of_handles>(bytes-sizeof header)/sizeof(handle_diag_wire_entry_t)){
