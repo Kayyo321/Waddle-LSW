@@ -16,7 +16,7 @@ Full candidate DLL remains`70ca4fdbc2ca54954b7879f28f11e013c63a0a660cca718815abc
 its production/build inputs are unchanged.
 
 Root reviews R7's1100 unique receiver slots, ports/tokens, exact five deployed
-assets, current213 production files and pre-run planSHA
+assets, current212 production files and pre-run planSHA
 `73ebc365a78e04400df1ef6f6bb702816100f6823d76aae3b6641735cb8d1d2e`.
 Artifact root:
 `build/qualification_feature_20261021/opencl_reload_final_7d5c6bb_revision7/`.

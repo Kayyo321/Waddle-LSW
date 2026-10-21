@@ -2152,3 +2152,9 @@ fully return after each unload, and a +7handle delta remains unattributed.
 reproduce or waive the active GPU workload's +83handles/threeTLS/threeFLS.
 No parent progress changes:85.5% / In Progress, Time Ended TBD. M2 is100% /
 Completed in commit `54ee9c4` (+6 M2 points; +0 parent points).
+
+Evidence count correction (`docs(opencl): correct source inventory cardinality`):
+R6/R7 root plan reviews each bind212 src/include files, not213. Correct only
+the prose cardinality; raw hashes, source equality, native failure and all
+acceptance statuses are unchanged. All tasks +0%. Commit `d050394` records
+the load-only diagnostic and M2 closure attribution (+0% all tasks).
