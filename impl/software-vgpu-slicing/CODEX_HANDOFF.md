@@ -427,3 +427,8 @@ Codex completed the independent review of candidate `8810544`, corrected a diagn
 
 - **Commit containing `chore(vgpu): bind OpenCL builds to reviewed Win32 runtime admission`**: +0% to #5/all tasks; overall85.5% / In Progress, Time Ended TBD. Adds explicit reviewed compiler/package/member provenance, independent production/probe API policies, Waddle runtime objects and mandatory link fences, fail-closed map/PE admission before publication and during cache reuse. Preserves the canonical old receipt until success. Source contract: [CLVK_RUNTIME_DRIVER_V2.md](CLVK_RUNTIME_DRIVER_V2.md).
 - Root independently ran all34 driver tests normally/optimized outside ptrace; both pass. Real preflight caught and fixed Python3.13 import registration; fresh probe compilation/admission passes. Raw root evidence `build/qualification_feature_20261021/root_tls/driver_root_review_v2/`; worker failures preserved. No full new OpenCL DLL/native/heap/GPU acceptance yet.
+
+### Runtime CI and Make entry point (2026-10-21)
+
+- **Commit `f314d95`** records bounded native heap attribution fixtures; **`524fefb`** records reviewed OpenCL driver integration, each +0% to all tasks.
+- **Commit containing `ci(vgpu): enforce runtime ownership and image admission gates`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds actual TLS/EH plain/sanitizer/coverage, probe build boundaries, and optimized/adversarial admission checks to OpenCL CI; Make now requires explicit reviewed build arguments. Root exact Make group passes, missing arguments reject, explicit forwarding and workflow YAML parse pass. Raw `build/qualification_feature_20261021/root_tls/ci_gate_wiring/receipt.json`; remote candidate CI/native/full-DLL acceptance remain pending.

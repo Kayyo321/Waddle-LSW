@@ -224,3 +224,18 @@ three-cycle executable and2048-cycle executable builds all pass. Evidence is in
 `build/qualification_feature_20261021/root_tls/driver_root_review_v2/` (full
 test logs/receipt and `probe_v2/probe_preflight/probe_preflight.json`). This is
 static evidence only: no candidate OpenCL native qualification or acceptance.
+
+### Build entry point and CI integration
+
+`make vgpu-opencl-build ClvkBuildArgs='COMPLETE REVIEWED ARGUMENTS'` forwards
+all explicit selectors to the driver. An empty argument set is a Make error;
+there is no ambient compiler/policy fallback. The target names all three approved
+patches, both Waddle C objects, the audit helper and linker supplement as inputs.
+The OpenCL CI job runs optimized build-driver tests, both modes of adversarial
+runtime-image tests, real-source TLS/EH plain and sanitizer/coverage gates, and
+the actual native-probe cross-build matrix. This job does not build or execute
+the final OpenCL runtime and earns no native/physical acceptance credit.
+Root reran this exact new Make gate group successfully outside ptrace, verified
+empty-selector rejection and explicit forwarding, and parsed workflow YAML.
+Receipt: `build/qualification_feature_20261021/root_tls/ci_gate_wiring/receipt.json`.
+Remote CI for the current candidate remains outstanding.

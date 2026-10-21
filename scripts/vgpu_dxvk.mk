@@ -30,11 +30,15 @@ vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan
 # default vgpu-windows aggregate because the LLVM build is long; cross-compilation is
 # not execution. Submodules: clvk (nested), llvm_project, clspv_spirv_{headers,tools}.
 .PHONY: vgpu-opencl-pin vgpu-opencl-build
+# All compiler, provenance and independent policy selectors are explicit.
+# See impl/software-vgpu-slicing/CLVK_RUNTIME_DRIVER_V2.md for the complete argv.
+ClvkBuildArgs ?=
 vgpu-opencl-pin:
 	sh scripts/verify_clvk.sh
 
-vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/OpenCL.def patches/clvk/0001-explicit-quiescent-windows-shutdown.patch include/waddle/clvk.h | build
-	python3 scripts/build_clvk_windows.py
+vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk_runtime_audit.py scripts/clvk/runtime_sections.ld scripts/clvk/OpenCL.def src/vgpu/clvk_runtime_tls.c src/vgpu/clvk_runtime_eh_pool.c patches/clvk/0001-explicit-quiescent-windows-shutdown.patch patches/clvk/0002-validate-one-dimensional-buffer-commands.patch patches/clvk/0003-release-failed-buffer-map-command.patch include/waddle/clvk.h | build
+	$(if $(strip $(ClvkBuildArgs)),,$(error ClvkBuildArgs must name the reviewed compiler, provenance and policy selectors))
+	python3 -B scripts/build_clvk_windows.py $(ClvkBuildArgs)
 
 # Native execution requires a separately owned authenticated host receiver.
 .PHONY: vgpu-opencl-test vgpu-opencl-fixture
