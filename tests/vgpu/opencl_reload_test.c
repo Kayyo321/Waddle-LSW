@@ -12,6 +12,7 @@
 #include <time.h>
 #include <stdatomic.h>
 #include <setjmp.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,8 @@ static jmp_buf fake_fatal_target;
 static int fake_fatal_expected,fake_fatal_seen;
 static unsigned checks,groups;
 static FILE *fake_output;
+static char fake_diagnostics[8192];
+static unsigned fake_diagnostic_count;
 #define Check(value) do { ++checks;assert(value); } while(0)
 static int fake_fault(unsigned kind) {
     unsigned call=atomic_fetch_add(&fake_calls[kind],1)+1;
@@ -171,7 +174,22 @@ static _Noreturn void fail_closed(const char *message) {
     assert(fake_fatal_expected);assert(strstr(message,"OpenCL reload fatal:"));fake_fatal_seen=1;
     fake_cleanup();if(fake_output){fclose(fake_output);fake_output=NULL;}longjmp(fake_fatal_target,1);
 }
+/* Copy only the new failure record while retaining ordinary FILE output. No
+ * Win32 ownership/count/query behavior is replaced by this observer. */
+static int fake_fprintf(FILE *output,const char *format,...) {
+    va_list arguments;va_start(arguments,format);
+    if(output==stderr && !strncmp(format,"OPENCL_RELOAD_DIAG ",19)) {
+        va_list copy;va_copy(copy,arguments);
+        size_t used=strlen(fake_diagnostics);
+        int size=vsnprintf(fake_diagnostics+used,sizeof fake_diagnostics-used,format,copy);
+        va_end(copy);assert(size>=0 && (size_t)size<sizeof fake_diagnostics-used);
+        ++fake_diagnostic_count;
+    }
+    int result=vfprintf(output,format,arguments);va_end(arguments);return result;
+}
+#define fprintf fake_fprintf
 #include "opencl_reload_windows.inc"
+#undef fprintf
 
 static void reset(void) {
     Check(fake_live()==0);Check(fake_module_live==0);
@@ -181,6 +199,7 @@ static void reset(void) {
     fake_tls_limit=8;fake_fls_limit=12;fake_duplicate_tid=fake_zero_tid=fake_module_mode=fake_handle_delta=0;
     fake_alloc_count=fake_close_count=0;fake_fatal_seen=fake_fatal_expected=0;
     fake_allocation_error=ERROR_NOT_ENOUGH_MEMORY;SetLastError(ERROR_SUCCESS);
+    fake_diagnostics[0]='\0';fake_diagnostic_count=0;
 }
 static void fault(unsigned kind,unsigned ordinal) { atomic_store(&fake_kind,kind);atomic_store(&fake_ordinal,ordinal); }
 static int callback(void *opaque) { return *(int *)opaque; }
@@ -281,7 +300,50 @@ static void test_fatal(void) {
         Check(fake_fatal_seen);Check(!fake_live());
     }
 }
+static void test_failure_diagnostics(void) {
+    ++groups;reset();run_state_t state={0};
+    Check(!run_case(&state,L"C:\\candidate\\OpenCL.dll"));
+    Check(!fake_diagnostic_count);Check(!fake_diagnostics[0]);
+    const char *predicates[]={"api->cycle(api->context,&result)","!result.session",
+        "!result.foreign[0]","!result.foreign[1]","result.foreign[0]==result.foreign[1]",
+        "result.module_exact!=1","result.modules_absent!=1",
+        "!reload_equal(&baseline,&observed)","!reload_equal(&baseline,&observed)",
+        "!reload_equal(&baseline,&observed)"};
+    for(int bad=1;bad<=10;++bad) {
+        reset();state=(run_state_t){.bad_cycle=bad};
+        Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+        Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=cycle cycle=1 predicate="));
+        Check(strstr(fake_diagnostics,predicates[bad-1]));
+        Check(strstr(fake_diagnostics,"raw_snapshots=1 entry=[50,8,12] baseline=[62,8,12]"));
+        if(bad==8)Check(strstr(fake_diagnostics,"observed=[63,8,12]"));
+        if(bad==9)Check(strstr(fake_diagnostics,"observed=[62,7,12]"));
+        if(bad==10)Check(strstr(fake_diagnostics,"observed=[62,8,11]"));
+        if(bad>=8)Check(strstr(fake_diagnostics,"session=00000000000003e9 foreign=[501,502] module_exact=1 modules_absent=1"));
+        Check(state.cycles==1);Check(state.stage_calls==1);Check(!fake_live());fake_cleanup();
+    }
+    reset();state=(run_state_t){.bad_stage=1};
+    Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+    Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=cycle cycle=1 predicate=api->stage(api->context,stage)"));
+    Check(strstr(fake_diagnostics,"session=0000000000000000 foreign=[0,0] module_exact=0 modules_absent=0"));
+    Check(state.cycles==0);Check(atomic_load(&fake_calls[FakeHandles])==3);
+    reset();state=(run_state_t){.bad_absent=3};
+    Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+    Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=cycle cycle=1 predicate=!api->absent(api->context)"));
+    Check(atomic_load(&fake_calls[FakeHandles])==3);
+    reset();state=(run_state_t){0};fault(FakeHandles,4);
+    Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+    Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=cycle cycle=1 predicate=reload_measure(&observed)"));
+    Check(strstr(fake_diagnostics,"observed=[62,8,12]"));
+    reset();state=(run_state_t){0};fault(FakeTime,1);
+    Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+    Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=entry cycle=0 predicate=!GetProcessTimes"));
+    Check(atomic_load(&fake_calls[FakeHandles])==0);
+    reset();state=(run_state_t){.bad_stage=2201};
+    Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+    Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=cleanup_final cycle=1100 predicate=api->stage(api->context,\"reload_cleanup\")"));
+    Check(!fake_live());Check(!fake_module_live);
+}
 int main(void) {
-    test_pools();test_probes();test_run();test_fatal();reset();
+    test_pools();test_probes();test_run();test_fatal();test_failure_diagnostics();reset();
     printf("OPENCL_RELOAD_HOST groups=%u checks=%u PASS (API doubles only)\n",groups,checks);return 0;
 }

@@ -203,6 +203,19 @@ static int reload_module_exact(HMODULE module,const wchar_t *expected) {
 static void reload_path(FILE *output,const wchar_t *path) {
     for(;*path;++path)fprintf(output,"%04x",(unsigned)*path);
 }
+/** Failure-only diagnostics: condition is evaluated exactly once in its original
+ * short-circuit position. All snapshots are borrowed raw copies, potentially
+ * partial/stale after a failed measurement; no API is called or owner changed.
+ * The sole orchestrator owns the context locals and stderr publication.
+ */
+#define ReloadRejected(condition) ((condition) ? \
+    (fprintf(stderr,"OPENCL_RELOAD_DIAG stage=%s cycle=%u predicate=%s raw_snapshots=1 entry=[%lu,%u,%u] baseline=[%lu,%u,%u] observed=[%lu,%u,%u] session=%016llx foreign=[%lu,%lu] module_exact=%u modules_absent=%u\n", \
+        diagnostic_stage,diagnostic_cycle,#condition, \
+        (unsigned long)entry.handles,entry.tls,entry.fls, \
+        (unsigned long)baseline.handles,baseline.tls,baseline.fls, \
+        (unsigned long)observed.handles,observed.tls,observed.fls, \
+        (unsigned long long)result.session,(unsigned long)result.foreign[0], \
+        (unsigned long)result.foreign[1],result.module_exact,result.modules_absent),1) : 0)
 /** @brief Execute1100 real module graphs in one process with exact retirement.
  * @param[in] api Nonnull immutable callbacks and borrowed state.
  * @param[in] module_path Exact absolute candidate path; max32767 UTF16 units.
@@ -214,39 +227,55 @@ static int reload_run(const reload_api_t *api,const wchar_t *module_path,FILE *o
     reload_counts_t entry={0},baseline={0},observed={0};
     reload_pool_t idle={0};HMODULE crt=NULL;int failed=1;
     FILETIME created,exited,kernel,user;
+    const char *diagnostic_stage="entry";unsigned diagnostic_cycle=0;
+    reload_cycle_result_t result={0};
     size_t path_length=0;while(path_length<ReloadPathCapacity && module_path[path_length])++path_length;
-    if(path_length<3 || path_length>=ReloadPathCapacity || module_path[1]!=L':' || module_path[2]!=L'\\' ||
-       !api->absent(api->context) || !GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user) || reload_measure(&entry))goto cleanup;
+    if(ReloadRejected(path_length<3) || ReloadRejected(path_length>=ReloadPathCapacity) ||
+       ReloadRejected(module_path[1]!=L':') || ReloadRejected(module_path[2]!=L'\\') ||
+       ReloadRejected(!api->absent(api->context)) ||
+       ReloadRejected(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)) ||
+       ReloadRejected(reload_measure(&entry)))goto cleanup;
     uint64_t creation=((uint64_t)created.dwHighDateTime<<32)|created.dwLowDateTime;
     DWORD pid=GetCurrentProcessId();
     crt=LoadLibraryW(L"msvcrt.dll");
-    if(!crt || reload_pool_start(&idle,ReloadIdleThreads) || reload_measure(&baseline))goto cleanup;
+    diagnostic_stage="baseline";
+    if(ReloadRejected(!crt) || ReloadRejected(reload_pool_start(&idle,ReloadIdleThreads)) ||
+       ReloadRejected(reload_measure(&baseline)))goto cleanup;
     fprintf(output,"OPENCL_RELOAD_V1 {\"event\":\"baseline\",\"pid\":%lu,\"creation\":\"%016llx\",\"cycles\":%u,\"contexts_per_cycle\":3,\"idle_threads\":4,\"handles\":%lu,\"tls\":%u,\"fls\":%u,\"heap_acceptance\":false,\"entry\":[%lu,%u,%u],\"module_utf16\":\"",
         (unsigned long)pid,(unsigned long long)creation,ReloadCycles,(unsigned long)baseline.handles,baseline.tls,baseline.fls,(unsigned long)entry.handles,entry.tls,entry.fls);
     reload_path(output,module_path);fputs("\"}\n",output);fflush(output);
     for(unsigned cycle=1;cycle<=ReloadCycles;++cycle) {
-        char stage[40];reload_cycle_result_t result={0};
-        if(!api->absent(api->context) || reload_measure(&observed) || !reload_equal(&baseline,&observed))goto cleanup;
+        char stage[40];result=(reload_cycle_result_t){0};
+        diagnostic_cycle=cycle;diagnostic_stage="cycle_preflight";
+        if(ReloadRejected(!api->absent(api->context)) || ReloadRejected(reload_measure(&observed)) ||
+           ReloadRejected(!reload_equal(&baseline,&observed)))goto cleanup;
         snprintf(stage,sizeof stage,"reload_before_%u",cycle);
-        if(api->stage(api->context,stage) || api->cycle(api->context,&result) ||
-           !result.session || !result.foreign[0] || !result.foreign[1] || result.foreign[0]==result.foreign[1] ||
-           result.module_exact!=1 || result.modules_absent!=1 || !api->absent(api->context) ||
-           reload_measure(&observed) || !reload_equal(&baseline,&observed))goto cleanup;
+        diagnostic_stage="cycle";
+        if(ReloadRejected(api->stage(api->context,stage)) || ReloadRejected(api->cycle(api->context,&result)) ||
+           ReloadRejected(!result.session) || ReloadRejected(!result.foreign[0]) || ReloadRejected(!result.foreign[1]) ||
+           ReloadRejected(result.foreign[0]==result.foreign[1]) || ReloadRejected(result.module_exact!=1) ||
+           ReloadRejected(result.modules_absent!=1) || ReloadRejected(!api->absent(api->context)) ||
+           ReloadRejected(reload_measure(&observed)) || ReloadRejected(!reload_equal(&baseline,&observed)))goto cleanup;
         fprintf(output,"OPENCL_RELOAD_V1 {\"event\":\"cycle\",\"cycle\":%u,\"pid\":%lu,\"creation\":\"%016llx\",\"session\":\"%016llx\",\"foreign\":[%lu,%lu],\"contexts\":3,\"module_exact\":1,\"modules_absent\":1,\"handles\":%lu,\"tls\":%u,\"fls\":%u}\n",
             cycle,(unsigned long)pid,(unsigned long long)creation,(unsigned long long)result.session,
             (unsigned long)result.foreign[0],(unsigned long)result.foreign[1],(unsigned long)observed.handles,observed.tls,observed.fls);fflush(output);
         snprintf(stage,sizeof stage,"reload_after_%u",cycle);
-        if(api->stage(api->context,stage))goto cleanup;
+        diagnostic_stage="cycle_after_stage";
+        if(ReloadRejected(api->stage(api->context,stage)))goto cleanup;
     }
     failed=0;
 cleanup:
-    if(reload_pool_finish(&idle))failed=1;
+    diagnostic_stage="cleanup_idle";
+    if(ReloadRejected(reload_pool_finish(&idle)))failed=1;
     if(crt && !FreeLibrary(crt))fail_closed("OpenCL reload fatal: CRT reference retirement failed");
-    if(!failed && (reload_measure(&observed) || !reload_equal(&entry,&observed) || api->stage(api->context,"reload_cleanup")))failed=1;
+    diagnostic_stage="cleanup_final";
+    if(!failed && (ReloadRejected(reload_measure(&observed)) || ReloadRejected(!reload_equal(&entry,&observed)) ||
+                  ReloadRejected(api->stage(api->context,"reload_cleanup"))))failed=1;
     if(failed)fputs("OpenCL reload FAILED\n",output);
     else fprintf(output,"OPENCL_RELOAD_V1 {\"event\":\"complete\",\"cycles\":%u,\"contexts\":%u,\"cleanup\":true,\"heap_acceptance\":false,\"entry\":[%lu,%u,%u]}\n",ReloadCycles,ReloadCycles*3,(unsigned long)observed.handles,observed.tls,observed.fls);
     fflush(output);return failed;
 }
+#undef ReloadRejected
 /** @brief Native index leak control, using the actual positive-run equality.
  * @param[in] fls Select one explicitly owned TLS/FLS index; no candidate loads.
  * @return0 only when retention rejects and exact cleanup restores every field.

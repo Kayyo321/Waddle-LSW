@@ -55,3 +55,60 @@ or acceptance allowance is authorized by these failures.
 Heap qualification remains separate. Overall85.5%, M2 94% Review, all task
 deltas0, Time Ended TBD. CI adds all three portable reload gates; Windows
 cross-build is not native execution.
+
+
+## First real full-candidate execution and failure diagnostics, 2026-10-21
+
+The native TLS/FLS controls were subsequently qualified by exact target-specific
+structural certificates: see [TLS](OPENCL_SLOT_CERTIFICATE.md) and
+[FLS](OPENCL_FLS_CERTIFICATE.md). Both controls and ten malformed CLI cases pass
+with fixture65846c143675b32c884494e2278a9c079c32903a679b14cc5a00215e960e17bd,
+complete300-input/two-TU receiptfb37aef4cbf631c9435f52a05393f7fc018d8868d00c4bd8a1e6c3b96891fe09.
+These results supersede the earlier failed error8 assumption only; they do not
+supply a full-candidate reload or heap pass.
+
+Root run `build/qualification_feature_20261021/opencl_reload_final_4688cf8_revision6`
+uses that fixture and full OpenCL DLL70ca4fdbc2ca54954b7879f28f11e013c63a0a660cca718815abc24e98d5887a.
+It executes three exact GPU context lifetimes on RTX5080, including malformed
+buffer and event oracles, joins the two pre-load foreign callers, and prints
+successful shutdown/session-stop/module-retirement witnesses. Its first
+post-cycle check then rejects before the cycle record or after-stage. Native
+PID4656/creation01dd61a72d95f06d and its exact signed console naturally exit1;
+no process is forced to retire. The one host sessiond137330910f87f4f naturally
+returns controller0/worker0, with no supervisor signals, an empty owned graph
+and all four pidfds closed. Raw stdout/stderr, exact native identity, failed
+owner graph, final closed journal and root retirement review remain preserved.
+**Zero completed strict reload cycles are credited.** The original combined
+predicate omitted its failure reason; this evidence does not establish which
+count/result field caused rejection. A fixture/CRT initialization explanation
+is a hypothesis requiring a separate native control, not a finding or waiver.
+
+Earlier exact CLI/OS preflight failures are preserved in the revision4/5
+folders. Runner corrections bind actual numeric version resources, use one
+absolute canonical argument generator, retain coalesced stage output across
+polls, compare exactly eight tokens with only ASCII separator flexibility,
+and retain native/signed-parent identity checks. They grant no acceptance.
+
+The diagnostic unit changes only the reload support include and its API-double
+test. `ReloadRejected` evaluates each original condition exactly once and emits
+`OPENCL_RELOAD_DIAG` to stderr only on that existing rejection. Records identify
+stage/cycle/predicate, raw entry/baseline/observed handles/TLS/FLS, and the existing
+session, caller IDs and module-result fields. Raw observations may be partial
+or stale if their query failed; consumers must not treat them as a fresh
+measurement. No condition is waived, no successful path prints a diagnostic,
+and no diagnostic introduces a resource owner or vendor call.
+
+Frozen review artifact: `build/qualification_feature_20261021/opencl_reload_failure_diagnostic/`,
+receiptSHA9fc9bb7864c3d853ba27aa471bb6a422c58e4bbdfbf8a0dd769a9fd84ea5cfe2.
+Root verifies all345 bindings, including300 Windows compiler dependencies,
+reviews the two-file patch and source inverse proof, and reruns its exact
+sanitized binary with leak detection enabled outside worker ptrace. Both that
+run and `make vgpu-opencl-reload-test vgpu-opencl-reload-sanitizers vgpu-opencl-reload-coverage`
+pass. Five groups/9291 checks include exact failure predicates and separate
+handle/TLS/FLS deltas; the unchanged12-function coverage inventory reaches
+142/142 lines and188/202 branches (93.07%, minimum90). The inverse proof
+recovers every original predicate/token and exact original include bytes.
+Worker ptrace/cross-build setup failures remain failed records. Cross-compiling
+the diagnostic fixture is not a native rerun. The full DLL/build receipt and
+production inputs are unchanged. Fresh native diagnostics, full1100-cycle
+qualification, heap ownership, final CI and independent review remain open.

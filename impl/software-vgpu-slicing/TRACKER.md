@@ -2100,3 +2100,17 @@ API completion and exact guest/host/module retirement pass;41rawfiles rehashed.
 and exact final CI/review remain required. All tasks +0%; total85.5%, M2 94%,
 Time Ended TBD. Commit `4688cf8` records complete API-heap snapshots, all tasks
 +0%, overall +0%.
+
+### Failure-only full reload diagnostics (2026-10-21)
+
+Atomic `test(opencl): report exact rejected reload predicates` adds diagnostic
+output for each of the29 existing rejection predicates, at the original
+short-circuit position. It does not resample counts, change an owner, alter
+1100 cycles/3300 contexts, or change any deadline, equality, certificate,
+module or retirement requirement. [Contract and failed native evidence](OPENCL_RELOAD_CONTRACT.md).
+Root leak-enabled sanitizer and integrated tests pass5groups/9291checks;
+all12 functions execute with142/142lines and188/202branches (93.07%, minimum90).
+The previous worker LSan ptrace failure remains preserved. Exact inverse source
+proof recovers all original predicates/tokens and original include bytes.
+All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `8d71d8a` records
+the complete-input cancellation qualification, all tasks +0%, overall +0%.
