@@ -217,3 +217,14 @@ freed CSR control and exact API rows pass; current San3 and94.53%branch gates
 pass. [Contract, preserved failure and inverse proof](NATIVE_CSR_HEAP_CONTRACT.md).
 All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `f873b18` records
 Astra FLS certificate/gates and native controls; all tasks +0%, overall +0%.
+
+### Complete-input OpenCL fault rerun (2026-10-21)
+
+Atomic `docs(opencl): record complete-input cancellation qualification` binds
+fresh native tcp_gpu_d62ddee8/session2112ca43451ab2a1 to the300-input/two-TU
+fixture and current fullDLL70ca4fdb. Intentional authenticated host cancellation,
+API completion and exact guest/host/module retirement pass;41rawfiles rehashed.
+[Evidence/applicability](OPENCL_CANCELLATION_CONTRACT.md). Full reload/heap/overlap
+and exact final CI/review remain required. All tasks +0%; total85.5%, M2 94%,
+Time Ended TBD. Commit `4688cf8` records complete API-heap snapshots, all tasks
++0%, overall +0%.

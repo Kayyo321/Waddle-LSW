@@ -12,9 +12,9 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD399-case aggregate and90.42% branch /98.56% line gates pass; current37-module ASan/LSan seam and15-case Linux physical matrix pass. Final DXVK native heap, Windows physical/WSI, exact-head CI and final review remain open; see QUALIFICATION_CONTINUATION_2026_10_21.md. |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD399-case aggregate and90.42% branch /98.56% line gates pass; current37-module ASan/LSan seam and15-case Linux physical matrix pass. Final DXVK native heap, exact-head CI and final review remain open; final Windows physical and M2 owned/WSI workloads pass; see QUALIFICATION_CONTINUATION_2026_10_21.md. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Historical exact native GPU kernels pass. Approved owned Win32 TLS/EH correction passes isolated2048-reload measurement; new full DLL static build/admission passes, but its final native heap/TLS/FLS/reload, actual cancellation and Linux GPU overlap remain open. Earlier leaking candidates are preserved failures; see current qualification checkpoint. |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Historical exact native GPU kernels pass. Approved owned Win32 TLS/EH correction passes isolated2048-reload measurement; new full DLL static build/admission and native TLS/FLS controls pass; complete-input actual cancellation passes. Final native heap/full reload and Linux GPU overlap remain open. Earlier leaking candidates are preserved failures; see current qualification checkpoint. |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -2089,3 +2089,14 @@ freed CSR control and exact API rows pass; current San3 and94.53%branch gates
 pass. [Contract, preserved failure and inverse proof](NATIVE_CSR_HEAP_CONTRACT.md).
 All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `f873b18` records
 Astra FLS certificate/gates and native controls; all tasks +0%, overall +0%.
+
+### Complete-input OpenCL fault rerun (2026-10-21)
+
+Atomic `docs(opencl): record complete-input cancellation qualification` binds
+fresh native tcp_gpu_d62ddee8/session2112ca43451ab2a1 to the300-input/two-TU
+fixture and current fullDLL70ca4fdb. Intentional authenticated host cancellation,
+API completion and exact guest/host/module retirement pass;41rawfiles rehashed.
+[Evidence/applicability](OPENCL_CANCELLATION_CONTRACT.md). Full reload/heap/overlap
+and exact final CI/review remain required. All tasks +0%; total85.5%, M2 94%,
+Time Ended TBD. Commit `4688cf8` records complete API-heap snapshots, all tasks
++0%, overall +0%.

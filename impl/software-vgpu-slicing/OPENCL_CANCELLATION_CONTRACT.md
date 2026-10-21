@@ -217,3 +217,26 @@ manual logical source/tool bindings were reviewed, but this receipt is not
 complete dependency-closure evidence. Final qualification requires the fresh
 per-TU-union builder and rerun after fixture integration. This result awards no
 heap, full reload, overlap or final feature completion credit.
+
+## Complete-input final orchestration rerun
+
+Root fresh `tcp_gpu_d62ddee8`, session2112ca43451ab2a1, passes the authenticated
+transport-loss scenario with candidate70ca4fdb and fixture4979abb2.
+The fixture receipt ad96b21f binds300preprocessing inputs across two separately
+captured translation units. It closes the old incomplete multi-TU receipt gap.
+Native enqueue0/read-5 occurs after the exact validated RequestSubmit witness;
+scoped host cancellation returns expected status-4/worker0. The API thread joins,
+reverse owners release before shutdown/abandon, and all modules retire.
+The guest returns0 and its exact process/owned command console are absent;
+the complete host graph is empty and root's observer closes its pidfds.
+The supervisor returns0. This intentional cancellation includes one scoped
+SIGTERM and must not be mistaken for a normal zero-signal positive GPU case.
+
+Root recomputation binds41raw files in
+`build/qualification_feature_20261021/opencl_cancellation_full_root/final_complete_native_review.json`;
+its repeatable script is adjacent. Native medium-integrity and failure/sanitizer
+checks remain active. No heap or full reload acceptance is claimed.
+The later CSR API-array addition changes only the audit snapshot/emit helper;
+the complete OpenCL orchestration source is byte-identical to this run's source.
+Its inverse proof and fresh300-input fixture65846c14 are recorded separately,
+with fresh native TLS/FLS/malformed controls `opencl_reload_controls_native_1fbe51f7`.
