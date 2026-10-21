@@ -1,8 +1,9 @@
 # M2 current-source loaded-host native qualification, 2026-10-21
 
-Result: both complete `m2_owned_v1` workloads pass. M2 remains94% / Review
-until applicable exact-candidate CI and final review complete. Parent feature
-acceptance remains separate. No merge and no Time Ended recorded.
+Result: both complete `m2_owned_v1` workloads pass. Subsequent applicable CI
+and independent final review close M2 at100% / Completed; see
+[closure and Time Ended](M2_CLOSURE_2026_10_21.md). This file preserves the
+native evidence checkpoint. Parent feature acceptance remains separate; no merge.
 
 ## Frozen inputs and execution
 

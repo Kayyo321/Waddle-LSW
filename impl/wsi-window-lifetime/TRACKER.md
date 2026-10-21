@@ -2,10 +2,12 @@
 
 - **Contributors / Agents**: Codex Astra isolated readiness implementer; Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex independent qualification lead with read-only Luna source/evidence reviewers; Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
 - **Time Started**: 2026-10-09T19:59:10Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-21T22:36:09Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
+
+Current qualification: [M2 closure](M2_CLOSURE_2026_10_21.md) and [receipt](M2_CLOSURE_RECEIPT_2026_10_21.json). Earlier percentages, pending statements and failed results below are historical checkpoints, superseded only for current M2 status. Parent software-vGPU qualification and PR readiness remain separate.
 
 ## Tasks & Progress
 
@@ -14,9 +16,9 @@
 | #1 | Specify bounded lifetime and native thread contracts | Done | 15% | 100% | IMPL_DESC.md; unobserved HWND reuse and full window-event integration remain separate |
 | #2 | Implement replacement retirement, resize/loss and queue ownership gates | Done | 35% | 100% | Retire on failed replacement; exact Win32 capabilities; acquire/present gates; correct acquisition release; queue result precedence and conservative loss after ambiguous failure |
 | #3 | Add exact-size native presentation with balanced DC release attempts | Done | 20% | 100% | Preserves scaled compatibility API; exact path rejects extent changes before drawing |
-| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Independent Codex portable gates pass: 394 ICD cases, 90.32% branches, prescribed ASan/LSan/allocator checks; corrected diagnostics 18 cases / 6,779 checks, native diagnostics 8/8 and both fresh physical GPU workloads pass. The preserved 199-to-200 failure remains failed/unattributed. The acceptance owner approved the prospective owned-resource contract; its implementation, fresh qualification, exact-candidate CI and final review remain open. See M2_OWNERSHIP_QUALIFICATION_2026_10_21.md. |
+| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | Done | 30% | 100% | Applicable full CI39679035088 passes on identical M2 sources/config; fresh loaded-host native workloads and independent 433-artifact review pass. Historical failures remain failed/unattributed. See M2_CLOSURE_2026_10_21.md. |
 
-**Total Feature Completion**: `94.0%`
+**Total Feature Completion**: `100.0%`
 
 Independent Codex review, 2026-10-21: correct diagnostic snapshot growth to try the documented 16 MiB capacity when doubling a valid hint would exceed that capacity. Add exact-boundary and repeated-mismatch regressions; retain the six-query bound, ownership cleanup and strict native gate. This discrete correction's commit is identified by `fix(vgpu-tests): honor the full handle snapshot capacity`; its exact hash and verification receipt are recorded in the subsequent independent review checkpoint. TODO #4 +0%; overall remains 94%; Time Ended TBD.
 
@@ -542,3 +544,18 @@ package, session, file manifest and root review bindings. Historical failures
 remain preserved; no new attribution or waiver. Documentation unit
 `docs(vgpu): record loaded-host M2 ownership qualification`, #4 +0%, M2 remains
 94% / Review pending exact-candidate CI and final review; Time Ended TBD.
+
+### Final independent M2 closure (2026-10-21)
+
+Atomic unit `docs(m2): close independently qualified ownership milestone`
+closes task#4 at100% (+20 task points, +6 milestone points), overall94%→100%,
+Completed, Time Ended 2026-10-21T22:36:09Z. Tasks#1–#3 stay100%.
+[Closure evidence and source-applicable green CI](M2_CLOSURE_2026_10_21.md).
+The independent refresh rehashes433 artifacts with zero mismatches and finds
+no M2 source/evidence defects. All19 reviewed sources and all production,
+build and CI configuration match the full passing8d71d8a candidate. Only
+separate OpenCL diagnostics/docs changed afterward. Historical strict-count
+and USER failures remain failed/unattributed; no threshold is lowered.
+Parent feature85.5%, Time Ended TBD; exact final PR CI and separate OpenCL/
+DXVK qualification remain pending. Commit `fdf2038` records the strict native
+OpenCL failure and independently passing functional overlap (+0% to all tasks).

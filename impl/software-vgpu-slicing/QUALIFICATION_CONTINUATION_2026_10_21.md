@@ -1,7 +1,7 @@
 # Independent qualification continuation, 2026-10-21
 
-Status: **not ready for merge**. M2 remains94% / Review; parent85.5% /
-In Progress; Time Ended TBD. This checkpoint supersedes same-day earlier
+Status: **not ready for merge**. M2 is100% / Completed; its Time Ended is
+2026-10-21T22:36:09Z. Parent85.5% / In Progress, Time Ended TBD. This checkpoint supersedes same-day earlier
 current-state claims, while preserving their historical results. No merge.
 README, dependency pins and upstream sources remain unchanged.
 
@@ -254,3 +254,18 @@ The15-case Linux physical matrix and source-bound functional GPU overlap pass;
 reload and heap acceptance remain open. All tasks +0%; total85.5%, M2 94%,
 Time Ended TBD. Commit `7d5c6bb` records failure-only reload diagnostics,
 all tasks +0%, overall +0%.
+
+### M2 completed; parent qualification remains open (2026-10-21)
+
+Atomic unit `docs(m2): close independently qualified ownership milestone`
+records M2 task#4 +20points and milestone94%→100%, Completed, Time Ended
+2026-10-21T22:36:09Z. [Closure](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md)
+and [receipt](../wsi-window-lifetime/M2_CLOSURE_RECEIPT_2026_10_21.json).
+Full CI39679035088 passes on identical M2 code/build/workflow configuration;
+independent review rehashes433 artifacts and19 sources without mismatch or
+M2 findings. Current whole-PR exact-HEAD CI remains a separate gate.
+Historical199→200 and USER4→9 failures remain failed/unattributed, and GDI/
+USER equality stays strict under the human-approved explicit ownership mode.
+All parent tasks +0%; parent85.5% / In Progress, Time Ended TBD. Final OpenCL
+heap/reload and DXVK heap qualification remain open; PR#6 stays draft.
+Commit `fdf2038` records OpenCL native retention/physical overlap (+0% all tasks).

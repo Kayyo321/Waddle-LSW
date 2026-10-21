@@ -1,5 +1,7 @@
 # Guest WSI resize and retirement lifetime
 
+Current qualification: **M2 completed at100%**, 2026-10-21T22:36:09Z. [Closure and limits](M2_CLOSURE_2026_10_21.md). Historical pending/percentage statements below describe their dated checkpoints; the ownership contract is implemented and qualified. Parent software-vGPU acceptance remains separate.
+
 ## Scope and boundaries
 
 This bounded production change repairs the existing synchronous guest Win32 WSI path. It does not connect the AV HWND registry to host Wayland presentation, create direct guest DMA-BUF presentation, or qualify Windows/GPU behavior in a Linux-only test environment. The original surface and swapchain numeric identities remain monotonically allocated for each ICD binding. Reuse of an HWND without an intervening observed loss remains an open integration problem requiring window-destruction events; raw IsWindow checks cannot prove a window generation.

@@ -614,3 +614,18 @@ for the new real OpenCL GPU pass, preserved fresh M2 USER-count failure and
 remaining gates. Commits5260170 and01702c5 add strict sanitizer inventory and
 bounded native audit regressions, respectively; +0% to every task. Parent85.5%,
 M2 94%, Time Ended TBD. No final acceptance or merge readiness claimed.
+
+### M2 completed; parent qualification remains open (2026-10-21)
+
+Atomic unit `docs(m2): close independently qualified ownership milestone`
+records M2 task#4 +20points and milestone94%→100%, Completed, Time Ended
+2026-10-21T22:36:09Z. [Closure](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md)
+and [receipt](../wsi-window-lifetime/M2_CLOSURE_RECEIPT_2026_10_21.json).
+Full CI39679035088 passes on identical M2 code/build/workflow configuration;
+independent review rehashes433 artifacts and19 sources without mismatch or
+M2 findings. Current whole-PR exact-HEAD CI remains a separate gate.
+Historical199→200 and USER4→9 failures remain failed/unattributed, and GDI/
+USER equality stays strict under the human-approved explicit ownership mode.
+All parent tasks +0%; parent85.5% / In Progress, Time Ended TBD. Final OpenCL
+heap/reload and DXVK heap qualification remain open; PR#6 stays draft.
+Commit `fdf2038` records OpenCL native retention/physical overlap (+0% all tasks).

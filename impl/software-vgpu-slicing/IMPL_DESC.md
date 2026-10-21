@@ -1,5 +1,7 @@
 # Implementation Description: Software vGPU Slicing
 
+M2 WSI/window ownership is qualified at100%; [closure and boundaries](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md). This does not complete the parent OpenCL/DXVK gates or make PR#6 merge-ready.
+
 ## 1. Title & High-Level Scope
 - **Title**: Software vGPU Slicing for Non-MDEV Hosts
 - **Scope**: Provide GPU paravirtualization (GPU-PV/vGPU slicing) for hosts that lack native mediated device (mdev) support. We will achieve this using the **Venus** protocol (Vulkan remoting) across IVSHMEM. In the Windows guest, DXVK/VKD3D will translate DirectX 11/12 workloads to Vulkan, which are then remoted via Venus to the Linux host. The host executes the Vulkan commands and exports the rendered surfaces as DMA-BUFs for zero-copy Wayland compositing. **Additionally, to support compute-heavy workloads like Adobe Premiere Pro, we will implement Compute API remoting (OpenCL translation via rusticocl over Venus) to ensure hardware-accelerated compute.**

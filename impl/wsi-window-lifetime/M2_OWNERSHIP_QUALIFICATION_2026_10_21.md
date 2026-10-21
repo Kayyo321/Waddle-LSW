@@ -10,10 +10,12 @@ identity evidence is absent. Existing raw receipts, reviews and runners remain
 unchanged. The prior proposed attribution-aware classification scheme is not
 adopted; this contract observes explicit Waddle owners instead.
 
-**Implementation and qualification are pending. M2 remains 94% / Review, M2 task
-#4 remains 80%, software-vGPU remains 85.5%, and Time Ended remains TBD.** The
-strict fixture mode remains the only currently implemented mode at this document's
-initial commit. No old count-only output satisfies the new ownership contract.
+**Current status: implemented and qualified; M2 is100% / Completed.**
+See [final closure](M2_CLOSURE_2026_10_21.md) for Time Ended, applicable green
+CI, fresh native evidence and independent final review. At this document's
+initial commit, implementation and qualification were pending and only strict
+fixture mode existed. No old count-only output satisfies the ownership contract.
+Later pending/percentage statements below retain their historical checkpoint scope.
 The completion gate is passing applicable CI on the integrated candidate, fresh
 native/physical qualification and one independent final review, with linked evidence.
 
