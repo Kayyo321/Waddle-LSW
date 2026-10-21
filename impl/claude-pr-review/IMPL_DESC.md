@@ -158,7 +158,9 @@ or GitHub write is permitted. Cover owner ready and comment requests, strangers,
 collaborators, spoofed sender IDs, wrong repository, reruns, edited comments,
 ordinary issues, drafts, closed PRs, hostile PR source, source omissions, stale
 head/base/target branch, invalid model results, CLI failure, and publication.
-Repeat the matrix to stress isolation. Run Bash syntax and ShellCheck on both
+Repeat the matrix to stress isolation. The accompanying credential-free
+`claude_pr_review_checks.yml` workflow runs these tests and ShellCheck on the
+feature branch and on PRs changing this feature; it never receives an API key. Run Bash syntax and ShellCheck on both
 scripts and validate workflow structure, triggers, permissions, secret separation,
 and the pre-run authorization gate. ASan/LSan and Zig allocator runs do not apply
 to shell orchestration; no C/Zig memory or protocol code changes.
