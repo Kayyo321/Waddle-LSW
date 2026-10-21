@@ -47,13 +47,31 @@ static int medium_integrity(void)
     }
     memset(bytes,0,sizeof bytes);while(!CloseHandle(token))Sleep(10);return valid;
 }
+/** @brief Read the process-wide kernel handle count.
+ * @return Current nonzero count, or zero if GetProcessHandleCount fails; the failure is
+ * first reported on stderr together with GetLastError().
+ * @details Passive read of the calling process; opens, duplicates and closes nothing.
+ * Single fixture thread.
+ */
 static DWORD native_handles(void)
 {
-    DWORD count=0;if(!GetProcessHandleCount(GetCurrentProcess(),&count))return 0;return count;
+    DWORD count=0;
+    if(!GetProcessHandleCount(GetCurrentProcess(),&count)){DWORD error=GetLastError();fprintf(stderr,"handle_diag: GetProcessHandleCount failed error=%lu\n",(unsigned long)error);return 0;}
+    return count;
 }
-static int handle_baseline(DWORD baseline)
+#include "tcp_gpu_handle_diag_windows.inc"
+/** @brief Require the process handle count to return to the exact baseline.
+ * @param[in] baseline Nonzero count sampled once before the first lifetime.
+ * @param[out] check Nonnull caller-owned statistics, reset here and filled with every compared sample.
+ * @return Zero on the first sample equal to baseline; one if a sample cannot be read or none
+ * of the 100 samples (10 ms apart) matches; the latter prints the baseline/actual line first.
+ * @details The sampling rule is the acceptance criterion and must not change. Statistics
+ * are passive. Single fixture thread.
+ */
+static int handle_baseline(DWORD baseline,handle_check_t *check)
 {
-    for(unsigned attempt=0;attempt<100;attempt++){DWORD count=native_handles();if(!count)return 1;if(count==baseline)return 0;Sleep(10);}
+    *check=(handle_check_t){0};
+    for(unsigned attempt=0;attempt<100;attempt++){DWORD count=native_handles();if(!count)return 1;handle_check_record(check,count);if(count==baseline)return 0;Sleep(10);}
     fprintf(stderr,"Native GPU handle baseline=%lu actual=%lu\n",(unsigned long)baseline,(unsigned long)native_handles());return 1;
 }
 /** @brief Initialize independent Windows process-lifetime graphics dependencies.
@@ -761,6 +779,7 @@ int main(int argc,char **argv)
     PFN_vkDestroyInstance destroy_instance=NULL;PFN_vkDestroyDevice destroy_device=NULL;
     PFN_vkDeviceWaitIdle cleanup_idle=NULL;
     const char *stage="bootstrap module acquisition";int result=1;uint64_t identity=0;
+    handle_diag_t diag={0};
     bootstrap_module=LoadLibraryExA(argv[1],NULL,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     if(!bootstrap_module)goto cleanup;
     if(symbol(bootstrap_module,"venus_tcp_bootstrap_start",&start,sizeof start) ||
@@ -783,8 +802,11 @@ int main(int argc,char **argv)
     if(initialize_system_graphics(&system_dxgi_module))goto cleanup;
     if(presentation && initialize_presentation_windows())goto cleanup;
     DWORD baseline=native_handles();if(!baseline)goto cleanup;
+    handle_diag_begin(&diag);
     printf("Native repeated application handle baseline=%lu\n",(unsigned long)baseline);fflush(stdout);
+    handle_diag_describe_baseline(&diag,baseline);
     for(unsigned iteration=0;iteration<(presentation_smoke ? 2u : 8u);iteration++) {
+        const unsigned long long iteration_start_ms=handle_diag_now_ms(&diag);
         stage="Vulkan1.0 instance creation";
         VkApplicationInfo application={.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO,.apiVersion=VK_API_VERSION_1_0};
         const char *query_extension=VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
@@ -861,13 +883,18 @@ int main(int argc,char **argv)
         stage="application teardown before matching actual retirement Ack";
         if(device_idle(device)!=VK_SUCCESS)goto cleanup;
         destroy_device(device,NULL);device=NULL;destroy_device=NULL;cleanup_idle=NULL;destroy_instance(instance,NULL);instance=NULL;destroy_instance=NULL;
-        stage="exact native application handle retirement";if(handle_baseline(baseline))goto cleanup;
+        stage="exact native application handle retirement";
+        const unsigned long long check_start_ms=handle_diag_now_ms(&diag);handle_check_t check={0};
+        if(handle_baseline(baseline,&check)){handle_diag_report(&diag,baseline,&check,iteration,check_start_ms);goto cleanup;}
+        const unsigned long long check_done_ms=handle_diag_now_ms(&diag);
         printf("Native actual %s lifetime=%u device=%s exact-output PASS\n",argv[6],iteration+1,argv[7]);fflush(stdout);
+        handle_diag_iteration(iteration,&check,iteration_start_ms,check_start_ms,check_done_ms);
     }
     if(stop()!=RingOk || session())goto cleanup;
     result=0;
 cleanup:
     if(result)fprintf(stderr,"Native actual GPU fixture failed: %s\n",stage);
+    handle_diag_free(&diag);
     /* A healthy validation failure can retire its ordinary application owners
      * before Stop. Unknown GPU completion retains them until trusted host reap. */
     if(device && destroy_device && cleanup_idle && cleanup_idle(device)==VK_SUCCESS){destroy_device(device,NULL);device=NULL;destroy_device=NULL;cleanup_idle=NULL;}
