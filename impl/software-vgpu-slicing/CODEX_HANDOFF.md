@@ -417,3 +417,23 @@ The M2 section above predates the work of 2026-10-21. The current M2 state, evid
 ## Independent M2 review continuation, 2026-10-21
 
 Codex completed the independent review of candidate `8810544`, corrected a diagnostic capacity defect, added and executed a native growth regression, and reran all prescribed portable M2 gates plus both physical GPU workloads. See [the independent review](../wsi-window-lifetime/M2_CODEX_REVIEW_2026_10_21.md) and [receipt](../wsi-window-lifetime/M2_CODEX_RECEIPT_2026_10_21.json) for exact bindings and limits. The historical 199-to-200 failure is still unattributed; M2 remains 94%, feature progress 85.5%, Time Ended TBD. The documented attribution-aware oracle is an unapproved proposal. No PR-readiness change, push or merge occurred. The OpenCL work is not accepted by this M2 review.
+
+
+## M2 ownership contract approved, implementation pending (2026-10-21)
+
+The direct human answer **“Approve M2-specific ownership gate (Recommended)”**
+adopts the [bounded owned-resource contract and source-audited owner
+map](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md). It prospectively
+requires exact native DC retirement and per-lifetime ICD/WSI quiescence rather
+than process-wide count equality, while retaining legacy strict mode and process
+count/snapshot diagnostics. Historical failed runs retain their failed status and
+missing attribution. This supersedes only the earlier “decision unapproved”
+status, not any recorded result.
+
+Readiness commits `17dc2d0`, `e17425b`, and `3736237` are complete and reviewed;
+their source-bound receipts and direct approval are archived read-only under
+`build/qualification_m2_astra_20261021/pre_ownership/`. The ownership observer,
+controls, protocol, fresh qualification and exact-candidate CI are still pending.
+Codex Astra implements in the isolated M2 checkout; the lead retains all Git and
+native/physical runner ownership. M2 stays 94%, software-vGPU 85.5%, Time Ended
+TBD. This M2 unit does not close separate OpenCL/DXVK tasks.

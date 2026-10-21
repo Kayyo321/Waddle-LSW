@@ -302,3 +302,21 @@ the generated evidence. CI runs the gate alongside the existing diagnostics
 functional/sanitizer gates and always uploads available coverage evidence using
 the same pinned artifact action and seven-day retention. It neither changes
 native acceptance nor replaces Windows execution, sanitizer or allocator checks.
+
+
+## Approved prospective M2 ownership contract (2026-10-21)
+
+The acceptance owner approved the bounded [M2 owned-resource qualification
+contract](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md). Its complete source-audited
+owner table and implementation boundaries supersede process-wide kernel-count
+equality only for the forthcoming explicit `m2_owned_v1` protocol. The old strict
+mode and every historical result retain their original semantics. This does not
+adopt automatic OS-module attribution or resolve the original missing identity.
+
+The new protocol requires exact native DC ownership, per-lifetime quiescence of
+the real ICD/WSI owner tables, unchanged allocator/sanitizer/backend assertions,
+GDI/USER and exact-output checks, passive process counts/snapshot deltas, native
+leak/cleanup-failure/masked-release controls, and missing-evidence rejection. The
+conditional observer may not change default DLL behavior or ownership transitions.
+Implementation, fresh native/physical qualification, exact-candidate CI and an
+independent final review remain pending; no completion credit is granted.

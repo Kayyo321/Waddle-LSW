@@ -1,6 +1,6 @@
 # Feature Tracker: Software vGPU Slicing
 
-- **Contributors / Agents**: Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk), Claude Code (OpenCL implementation; Haiku 5.5 inventory/audit/build-spike workers)
+- **Contributors / Agents**: Codex Astra (isolated M2 readiness and ownership qualification), Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk), Claude Code (OpenCL implementation; Haiku 5.5 inventory/audit/build-spike workers)
 - **Time Started**: 2026-10-05T18:35:00Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -1689,3 +1689,20 @@ are in [the M2 tracker](../wsi-window-lifetime/TRACKER.md) and
 - **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
   **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. No historical
   result is reclassified and no native execution is claimed by this change.
+
+
+### M2 ownership contract adoption, 2026-10-21
+
+- **Commit `3736237`**: `test(vgpu): gate real handle diagnostic coverage`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Reproducible diagnostic
+  coverage passes 108/108 lines and 100/100 branch outcomes without exclusions.
+- Current atomic unit: `docs(wsi): adopt bounded M2 ownership qualification`
+  (exact hash recorded in the next checkpoint). Direct acceptance-owner approval
+  adopts the prospective [M2 ownership contract and complete owner
+  inventory](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md).
+  This records the authorized implementation boundary, not passing qualification.
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
+  **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. The strict historical
+  failures remain failed/unattributed; the new protocol still requires its code,
+  controls, fresh native/physical evidence, exact-candidate CI and final review.
+  Separate OpenCL/DXVK tasks receive no credit from this amendment.

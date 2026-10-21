@@ -14,7 +14,7 @@
 | #1 | Specify bounded lifetime and native thread contracts | Done | 15% | 100% | IMPL_DESC.md; unobserved HWND reuse and full window-event integration remain separate |
 | #2 | Implement replacement retirement, resize/loss and queue ownership gates | Done | 35% | 100% | Retire on failed replacement; exact Win32 capabilities; acquire/present gates; correct acquisition release; queue result precedence and conservative loss after ambiguous failure |
 | #3 | Add exact-size native presentation with balanced DC release attempts | Done | 20% | 100% | Preserves scaled compatibility API; exact path rejects extent changes before drawing |
-| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Independent Codex portable gates pass: 394 ICD cases, 90.32% branches, prescribed ASan/LSan/allocator checks; corrected diagnostics 18 cases / 6,779 checks, native diagnostics 8/8 and both fresh physical GPU workloads pass. The preserved 199-to-200 failure remains unattributed and unwaived; CI and an acceptance-owner decision remain open. See M2_CODEX_REVIEW_2026_10_21.md. |
+| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Independent Codex portable gates pass: 394 ICD cases, 90.32% branches, prescribed ASan/LSan/allocator checks; corrected diagnostics 18 cases / 6,779 checks, native diagnostics 8/8 and both fresh physical GPU workloads pass. The preserved 199-to-200 failure remains failed/unattributed. The acceptance owner approved the prospective owned-resource contract; its implementation, fresh qualification, exact-candidate CI and final review remain open. See M2_OWNERSHIP_QUALIFICATION_2026_10_21.md. |
 
 **Total Feature Completion**: `94.0%`
 
@@ -391,3 +391,23 @@ coverage exclusions/thresholds, historical evidence or dependency pins changed.
 - **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
   Time Ended **TBD**; software-vGPU remains **85.5%**. Hosted CI and the final
   native/physical qualification are **NOT RUN** by this isolated worker.
+
+
+### Approved ownership qualification contract, 2026-10-21
+
+- **Commit `3736237`**: `test(vgpu): gate real handle diagnostic coverage`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. The reproduced real-source gate
+  reports 108/108 lines and 100/100 directional branch outcomes; it retains all
+  thresholds and raw evidence. Prior reviewed receipts are archived under
+  `build/qualification_m2_astra_20261021/pre_ownership/` with a manifest.
+- Current atomic unit: `docs(wsi): adopt bounded M2 ownership qualification`
+  (exact hash recorded in the next checkpoint). The direct human answer
+  **“Approve M2-specific ownership gate (Recommended)”** adopts the prospective
+  contract and complete [owner inventory](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md).
+  Conditional native identity observation and read-only ICD/WSI quiescence checks
+  are authorized; no ownership code is implemented by this documentation unit.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**, task
+  #4 **80%**, Time Ended **TBD**. Historical failures stay failed/unattributed.
+  The remaining blocker is implementation and fresh qualification under the
+  approved contract, including controls, exact-candidate CI and independent final
+  review; approval itself provides no acceptance evidence.

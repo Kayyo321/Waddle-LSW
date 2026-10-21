@@ -6769,3 +6769,17 @@ and supersedes the "Win32 configuration rejected" paragraph only once v2 passes 
 **Verification criteria.** Isolated native regression (strengthened): handles, TLS and FLS exact every cycle; HeapWalk busy bytes exact from cycle 3 (msvcrt pinned, 4 pre-existing idle threads, foreign-thread exercise); 8 and 2048 cycles natural exit 0; the approved POSIX build and the shim-less Win32 build still fail on the same image. Real DLL: native exit 0 on the full qualification, constant post-unload handle count (approved DLL: 142 -> 148 -> 154), UMDH zero positive groups unloaded2 -> 3, a new exact per-unload TLS/FLS check on the real DLL, a 1100+ reload loop. Prior executions of `a8fd9d7a...` do not qualify a rebuilt DLL.
 
 **Evidence so far.** Isolated native proof of the v1 mechanism (8 and 2048 reloads, exact handles and free TLS, controls fail); candidate DLL built (2b04fb74...), not executed. The eh-pool leak, loader retention and heap behaviour are unmeasured.
+
+
+## Prospective M2 ownership qualification amendment (2026-10-21)
+
+The acceptance owner explicitly approved the bounded [M2 owned-resource
+contract](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md), including
+the complete resource-owner table. The forthcoming explicit protocol replaces
+process-wide handle equality with exact M2-owned retirement checks while keeping
+counts/snapshot deltas diagnostic, the legacy strict mode intact, and every
+historical failure preserved. Native DC identity checks and per-lifetime actual
+ICD/WSI quiescence must be backed by leak/cleanup-failure/masked-release controls;
+all allocator, sanitizer, coverage, functional and host retirement gates remain.
+Implementation and final qualification are pending. This amendment grants no
+progress and does not qualify separate OpenCL or DXVK feature requirements.
