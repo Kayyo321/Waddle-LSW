@@ -169,3 +169,42 @@ vgpu-native-heap-stage-coverage:
 	python3 -B tests/vgpu/dxvk_heap_audit_coverage_test.py
 	python3 -O -B tests/vgpu/dxvk_heap_audit_coverage_test.py
 	python3 -B scripts/dxvk_heap_audit_coverage.py
+
+# Separate actual-DLL1100-reload stress. Native execution is root-supervised.
+VgpuOpenclReloadFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -pthread
+VgpuOpenclReloadSources = tests/vgpu/opencl_reload_test.c
+VgpuOpenclReloadHeaders = tests/vgpu/opencl_reload_windows.inc tests/vgpu/win32_fake/opencl_reload_fake.h
+build/opencl-reload: | build
+	mkdir -p $@
+
+build/opencl-reload/host: $(VgpuOpenclReloadSources) $(VgpuOpenclReloadHeaders) | build/opencl-reload
+	$(CC) $(VgpuOpenclReloadFlags) -O2 $< -o $@
+
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_reload_windows.inc
+
+.PHONY: vgpu-opencl-reload-test vgpu-opencl-reload-sanitizers vgpu-opencl-reload-coverage vgpu-opencl-reload-native-build vgpu-opencl-reload-verify
+vgpu-opencl-reload-test: build/opencl-reload/host
+	./build/opencl-reload/host
+	python3 -B tests/vgpu/opencl_reload_output_test.py
+	python3 -B -O tests/vgpu/opencl_reload_output_test.py
+
+vgpu-opencl-reload-sanitizers: | build/opencl-reload
+	$(CC) $(VgpuOpenclReloadFlags) -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuOpenclReloadSources) -o build/opencl-reload/host_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./build/opencl-reload/host_sanitized
+
+vgpu-opencl-reload-coverage:
+	python3 -B tests/vgpu/opencl_reload_coverage.py
+
+vgpu-opencl-reload-native-build: build/vgpu_opencl_integration.exe
+
+# Required fresh frozen inputs; this gate confers lifecycle stress credit only.
+vgpu-opencl-reload-verify:
+	$(if $(strip $(VgpuOpenclReloadStdout)),,$(error VgpuOpenclReloadStdout is required))
+	$(if $(strip $(VgpuOpenclReloadStderr)),,$(error VgpuOpenclReloadStderr is required))
+	$(if $(strip $(VgpuOpenclReloadManifest)),,$(error VgpuOpenclReloadManifest is required))
+	$(if $(strip $(VgpuOpenclReloadDll)),,$(error VgpuOpenclReloadDll is required))
+	$(if $(strip $(VgpuOpenclReloadFixture)),,$(error VgpuOpenclReloadFixture is required))
+	$(if $(strip $(VgpuOpenclReloadExit)),,$(error VgpuOpenclReloadExit must contain the actual native exit status))
+	$(if $(strip $(VgpuOpenclReloadExpectedCandidateSha256)),,$(error VgpuOpenclReloadExpectedCandidateSha256 is required))
+	$(if $(strip $(VgpuOpenclReloadExpectedFixtureSha256)),,$(error VgpuOpenclReloadExpectedFixtureSha256 is required))
+	python3 -B scripts/opencl_reload_output.py --stdout "$(VgpuOpenclReloadStdout)" --stderr "$(VgpuOpenclReloadStderr)" --manifest "$(VgpuOpenclReloadManifest)" --dll "$(VgpuOpenclReloadDll)" --fixture "$(VgpuOpenclReloadFixture)" --exit-code "$(VgpuOpenclReloadExit)" --expected-candidate-sha256 "$(VgpuOpenclReloadExpectedCandidateSha256)" --expected-fixture-sha256 "$(VgpuOpenclReloadExpectedFixtureSha256)"

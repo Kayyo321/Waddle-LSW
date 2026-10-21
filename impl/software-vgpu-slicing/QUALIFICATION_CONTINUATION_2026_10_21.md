@@ -159,3 +159,14 @@ manual logical source/tool bindings were reviewed, but this receipt is not
 complete dependency-closure evidence. Final qualification requires the fresh
 per-TU-union builder and rerun after fixture integration. This result awards no
 heap, full reload, overlap or final feature completion credit.
+
+## Full reload integration, unresolved native exhaustion calibration
+
+Astra revision3 is integrated with independently reviewed receipt, inverse
+preservation and root portable/sanitizer/coverage pass. A fresh per-TU-union
+Windows cross-build binds297 dependencies. Native TLS/FLS controls fail closed
+on status8 at1086 TLS acquisitions; FLS itself and full1100-cycle stress are
+not run. Status8 cannot alone distinguish exhausted slots from allocation
+failure. See [the exact contract and preserved evidence](OPENCL_RELOAD_CONTRACT.md).
+This supersedes the earlier statement that Astra implementation is still open;
+actual native calibration/qualification remains open. +0% progress.

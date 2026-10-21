@@ -7015,3 +7015,13 @@ deadline and module-retirement requirements remain. The actual extracted
 helpers have100% line/directional-branch portable coverage with ASan/LSan/UBSan;
 native rerun is pending. This correction touches the qualification fixture,
 not upstream SDK sources, dependency pins or the production OpenCL image.
+
+### Separate full OpenCL reload stress (2026-10-21)
+
+[The reload contract](OPENCL_RELOAD_CONTRACT.md) specifies the additive
+1100-reload/3300-primary-context mode, pre-load raw callers, persistent idle
+threads, exact resource comparisons, independent binary/host receipts and
+mandatory separate native heap acceptance. Ordinary and transport-loss paths
+are inverse-checked unchanged. Portable support ownership gates pass; the
+actual Windows exhaustion calibration rejects status8 and remains unresolved.
+No full native reload acceptance or feature progress is inferred.

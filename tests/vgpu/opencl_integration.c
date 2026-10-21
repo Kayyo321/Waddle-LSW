@@ -508,6 +508,14 @@ static unsigned __stdcall run_contexts(void *opaque) {
     return 0;
 }
 
+#include "opencl_reload_windows.inc"
+
+/** @brief One complete exact lifetime on a pre-load raw caller; borrows until join. */
+static int run_reload_context(void *opaque) {
+    const context_call_t *call=opaque;
+    return run_lifetime(call->api,call->device,call->group,NULL);
+}
+
 /** @brief Caller-owned state for one blocking OpenCL transport-loss operation.
  * The API thread writes status and event fields; the parent reads them only
  * after WaitForSingleObject and GetExitCodeThread prove natural thread exit.
@@ -727,6 +735,7 @@ typedef struct native_work_t {
     int argc;
     wchar_t **argv;
     int transport_loss;
+    reload_cycle_result_t *reload; /* Optional parent-owned output; survives worker join. */
     HMODULE bootstrap;
     HMODULE loader;
     HMODULE opencl;
@@ -735,7 +744,8 @@ typedef struct native_work_t {
 /** @brief Execute one module graph; all paths borrowed from the supervisor.
  * @param[in] argc/argv Exactly seven: executable, loader, OpenCL.dll, manifest,
  * bootstrap DLL, private config, fresh retirement receipt. Existing inputs use absolute drive paths.
- * @return Zero after eight full contexts and natural bootstrap stop, otherwise
+ * @return Zero after eight ordinary contexts or three reload contexts and
+ * natural bootstrap stop, otherwise
  * failure. A failed stop retains modules/process for external owner resolution.
  * @note Worker thread only. Parent keeps DLLs mapped through worker TLS/FLS
  * destruction, then unloads OpenCL before loader/bootstrap. Native heaps require
@@ -763,6 +773,8 @@ static unsigned __stdcall run_native_work(void *opaque)
     bootstrap_session_t session = NULL;
     bootstrap_abandon_t abandon = NULL;
     clvk_shutdown_t shutdown = NULL;
+    reload_pool_t foreign={0};
+    if(work->reload && reload_pool_start(&foreign,ReloadForeignThreads))goto cleanup;
     bootstrap = LoadLibraryExW(argv[base + 3], NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!bootstrap) goto cleanup;
     FARPROC procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_start");
@@ -784,6 +796,11 @@ static unsigned __stdcall run_native_work(void *opaque)
     if (!loader) goto cleanup;
     opencl = LoadLibraryExW(argv[base + 1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!opencl) goto cleanup;
+    if(work->reload) {
+        if(!reload_module_exact(opencl,argv[base+1]) || !reload_module_exact(loader,argv[base]) ||
+           !reload_module_exact(bootstrap,argv[base+3]))goto cleanup;
+        work->reload->module_exact=1;
+    }
     procedure = GetProcAddress(opencl, "waddle_clvk_shutdown");
     _Static_assert(sizeof shutdown == sizeof procedure, "Windows private C ABI");
     memcpy(&shutdown, &procedure, sizeof shutdown);
@@ -803,6 +820,7 @@ static unsigned __stdcall run_native_work(void *opaque)
      * DLL initialization cannot consume the server's idle request deadline. */
     if (start(config, (size_t)config_bytes) != RingOk) goto cleanup;
     printf("Authenticated real OpenCL session=%016llx\n", (unsigned long long)session()); fflush(stdout);
+    if(work->reload)work->reload->session=session();
     cl_platform_id platform = NULL;
     cl_device_id device = NULL;
     cl_int status = api.get_platform_ids(1, &platform, &count);
@@ -856,6 +874,14 @@ static unsigned __stdcall run_native_work(void *opaque)
         work->bootstrap = bootstrap;
         return (unsigned)result;
     }
+    if(work->reload) {
+        if(run_lifetime(&api,device,group,shutdown))goto cleanup;
+        context_call_t call={&api,device,group};
+        for(unsigned i=0;i<ReloadForeignThreads;++i)work->reload->foreign[i]=foreign.slots[i].tid;
+        if(reload_pool_call(&foreign,run_reload_context,&call))goto cleanup;
+        puts("OpenCL reload three exact context lifetimes and raw pre-load callers joined.");fflush(stdout);
+        goto workload_done;
+    }
     for (unsigned cycle = 0; cycle < 2; ++cycle)
         if (run_lifetime(&api, device, group, shutdown)) goto cleanup;
     context_call_t calls[2] = {{&api, device, group}, {&api, device, group}};
@@ -875,8 +901,10 @@ static unsigned __stdcall run_native_work(void *opaque)
     }
     if (concurrent_failed) goto cleanup;
     puts("OpenCL concurrent independent context callers joined with exact results."); fflush(stdout);
+workload_done:
     result = 0;
 cleanup:
+    if(work->reload && reload_pool_finish(&foreign))result=1;
     if (result) fprintf(stderr, "OpenCL acceptance failed Win32=%lu\n", (unsigned long)GetLastError());
     if (shutdown) {
         int32_t shutdown_status;
@@ -938,12 +966,14 @@ static int restore_loader_environment(waddle_loader_environment_guard_t *guard)
 
 /** @brief Keep vendor DLLs mapped until calling-thread TLS/FLS has retired.
  * @param[in] argc/argv Borrowed Windows command line, as documented above.
+ * @param[out] reload Optional caller-owned result, valid only on success;
+ * storage remains live until the joined worker and module graph retire.
  * @return Zero only after exact kernels, terminal shutdown, natural host stop,
  * joined worker and complete module retirement. Main thread owns the thread
  * handle and transferred module references and closes/releases each once.
  * The parent-owned loader snapshot remains active until all vendor modules exit.
  */
-static int run_opencl_cycle(int argc, wchar_t **argv) {
+static int run_opencl_cycle_mode(int argc, wchar_t **argv,reload_cycle_result_t *reload) {
     const int transport_loss = argc > 1 && !wcscmp(argv[1], L"--transport-loss");
     const int base = transport_loss ? 2 : 1;
     if ((!transport_loss && argc != 7) || (transport_loss && argc != 8)) return 2;
@@ -968,7 +998,7 @@ static int run_opencl_cycle(int argc, wchar_t **argv) {
         return 1;
     }
 
-    native_work_t work = {argc, argv, transport_loss, NULL, NULL, NULL};
+    native_work_t work = {argc, argv, transport_loss, reload, NULL, NULL, NULL};
     uintptr_t thread = _beginthreadex(NULL, 0, run_native_work, &work, 0, NULL);
     if (!thread) {
         fprintf(stderr, "OpenCL caller thread creation failed: %lu\n", (unsigned long)GetLastError());
@@ -977,8 +1007,9 @@ static int run_opencl_cycle(int argc, wchar_t **argv) {
     }
     DWORD result = 1;
     DWORD thread_wait = WaitForSingleObject((HANDLE)thread,
-        transport_loss ? 180000 : INFINITE);
+        transport_loss ? 180000 : reload ? ReloadCycleMs : INFINITE);
     if (thread_wait != WAIT_OBJECT_0 || !GetExitCodeThread((HANDLE)thread, &result)) {
+        if(reload)fail_closed("OpenCL reload fatal: outer caller did not join within its deadline");
         if (transport_loss)
             fail_closed("OpenCL transport-loss outer worker did not join within its deadline");
         abort();
@@ -990,6 +1021,8 @@ static int run_opencl_cycle(int argc, wchar_t **argv) {
     ULONGLONG module_wait_started = GetTickCount64();
     while (GetModuleHandleW(argv[base]) || GetModuleHandleW(argv[base + 1]) || GetModuleHandleW(argv[base + 3]) ||
            GetModuleHandleW(L"waddle_vulkan_experimental.dll")) {
+        if(reload && GetTickCount64()-module_wait_started>=10000)
+            fail_closed("OpenCL reload fatal: module retirement timed out");
         if (transport_loss && GetTickCount64() - module_wait_started >= 10000)
             fail_closed("OpenCL transport-loss module retirement timed out");
         result = 1;
@@ -997,14 +1030,39 @@ static int run_opencl_cycle(int argc, wchar_t **argv) {
         fflush(stderr);
         Sleep(10);
     }
+    if(reload)reload->modules_absent=1;
     if (restore_loader_environment(&environment)) result = 1;
-    if (!result) puts(transport_loss ?
+    if (!result && reload)puts("OpenCL reload shutdown, session stop and module retirement passed.");
+    if (!result && !reload) puts(transport_loss ?
         "OpenCL transport-loss result, retirement, shutdown, and module retirement passed." :
         "OpenCL eight exact context lifetimes and native module retirement passed.");
     return (int)result;
 }
 
+/** @brief Existing ordinary/cancellation entry, with reload observation disabled. */
+static int run_opencl_cycle(int argc,wchar_t **argv) {
+    return run_opencl_cycle_mode(argc,argv,NULL);
+}
+
 #include "dxvk_heap_audit_windows.inc"
+
+/** @brief Parent-owned stress inputs; all borrowed arguments survive the run. */
+typedef struct reload_fixture_t { int argc;wchar_t **argv;const wchar_t *directory; } reload_fixture_t;
+/** @brief Invoke one fully joined/unloaded real module lifetime. */
+static int reload_fixture_cycle(void *opaque,reload_cycle_result_t *result) {
+    reload_fixture_t *fixture=opaque;
+    return run_opencl_cycle_mode(fixture->argc,fixture->argv,result);
+}
+/** @brief Read-only graph absence check; returned module handles are borrowed. */
+static int reload_fixture_absent(void *opaque) {
+    reload_fixture_t *fixture=opaque;wchar_t **argv=fixture->argv;
+    return !GetModuleHandleW(argv[1]) && !GetModuleHandleW(argv[2]) && !GetModuleHandleW(argv[4]) &&
+        !GetModuleHandleW(L"waddle_vulkan_experimental.dll");
+}
+/** @brief Existing exact PID/creation/stage handshake; no process owner transfer. */
+static int reload_fixture_stage(void *opaque,const char *stage) {
+    return audit_stage(((reload_fixture_t *)opaque)->directory,stage);
+}
 
 /** @brief Run the ordinary OpenCL fixture or supervisor-controlled heap cycles.
  * @param[in] argc/argv Borrowed immutable native fixture arguments.
@@ -1014,9 +1072,20 @@ static int run_opencl_cycle(int argc, wchar_t **argv) {
 int wmain(int argc, wchar_t **argv)
 {
     if (setvbuf(stdout, NULL, _IONBF, 0) || setvbuf(stderr, NULL, _IONBF, 0)) return 2;
+    if(argc==2 && !wcscmp(argv[1],L"--runtime-control-tls"))return reload_control(0);
+    if(argc==2 && !wcscmp(argv[1],L"--runtime-control-fls"))return reload_control(1);
     wchar_t directory[512];
     int enabled = audit_directory(directory, 512);
     if (enabled < 0) return 2;
+    if(argc>1 && !wcscmp(argv[1],L"--runtime-reload")) {
+        if(argc!=8 || enabled!=1)return 2;
+        wchar_t legacy[2];SetLastError(ERROR_SUCCESS);
+        if(GetEnvironmentVariableW(L"WADDLE_DXVK_HEAP_CYCLES",legacy,2) || GetLastError()!=ERROR_ENVVAR_NOT_FOUND)return 2;
+        wchar_t *cycle_argv[7]={argv[0],argv[2],argv[3],argv[4],argv[5],argv[6],argv[7]};
+        reload_fixture_t fixture={7,cycle_argv,directory};
+        const reload_api_t api={reload_fixture_cycle,reload_fixture_absent,reload_fixture_stage,&fixture};
+        return reload_run(&api,cycle_argv[2],stdout);
+    }
     if (enabled && argc > 1 && !wcscmp(argv[1], L"--transport-loss")) return 2;
     if (!enabled) return run_opencl_cycle(argc, argv);
 

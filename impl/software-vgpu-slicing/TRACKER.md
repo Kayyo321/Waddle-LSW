@@ -2013,3 +2013,15 @@ outcomes with root O0/O2 ASan/LSan/UBSan pass. Fresh native
 full dependency closure/final-source rerun remains required.
 [Evidence and limitations](OPENCL_CANCELLATION_CONTRACT.md).
 #5/all tasks +0%, total85.5%, M2 94%, Time Ended TBD.
+
+### Integrated source-bound full reload harness (2026-10-21)
+
+Commit `1a08805` records full cancellation regression and native scoped result:
+#5/all tasks +0%, overall +0%.
+Atomic unit `test(vgpu): add full OpenCL runtime reload qualification` integrates
+Astra revision3 with strict1100-cycle/3300-context ownership and output gates.
+Root portable, ASan/LSan/UBSan and support coverage pass; fresh297-input private
+Windows cross-build passes. Native controls reject error8 at TLS exhaustion;
+no successful controls receipt or full native stress is claimed.
+[Contract/evidence](OPENCL_RELOAD_CONTRACT.md).
+#5/all tasks +0%; total85.5%, M2 94%, Time Ended TBD.
