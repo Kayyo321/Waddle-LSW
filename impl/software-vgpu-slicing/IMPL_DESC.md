@@ -6806,3 +6806,8 @@ The final-image TEB check covers the actual reviewed compiler's outlined C helpe
 
 - **Commit `ae444ac`** records runtime CI/Make gates, +0% to all tasks.
 - **Commit containing `test(vgpu): witness actual OpenCL submits before supervised cancellation`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds a separately compiled authenticated opcode18 gate without changing default preprocessed code, plus malformed/I/O/deadline/threaded-cancel/fd controls. Root exact Make plain+ASan/LSan/UBSan passes with leak detection enabled; real helper47/47lines,63/66branches95.45%, all3functions, unchanged90% floor. [Contract](OPENCL_TRANSPORT_GATE.md); evidence `build/qualification_feature_20261021/opencl_gate_root/`. Native OpenCL cancellation/GPU/worker-retirement evidence remains pending.
+
+### Separate strict runtime startup gate (2026-10-21)
+
+- **Commit `82d17cb`** records the qualification-only OpenCL submit witness, +0% to all tasks.
+- **Commit containing `test(vgpu): stabilize runtime stress with observed startup retirement`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds a separate thin native stress wrapper that waits before any runtime load for externally proven startup-pool retirement; original2048 assertions/budgets remain unchanged. Strict cross-build and independent source/receipt review pass. [Exact protocol](CLVK_RUNTIME_PROBE_V2.md). Native2048 completion is not claimed; original381 failure and first-load/full-DLL gates remain open.

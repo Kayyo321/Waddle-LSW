@@ -111,3 +111,40 @@ passing stress run or zero-owned-leak proof. It is preserved without widening
 the strict equality oracle. The source/executable hashes bind that earlier
 fixture, not the newly added audit variants. First-load UMDH and stress-delta
 attribution remain required before final runtime acceptance.
+
+### Separate strict stress after positively observed startup retirement
+
+`clvk_runtime_quiescent_windows.c` includes the unchanged base fixture with only
+its entry point and process-count call sites aliased. Windows declarations are
+included before the alias; the existing stage helper is included after undoing
+it. The first count call occurs after original stream-buffer initialization,
+msvcrt pinning, idle-thread setup and TLS/FLS baseline probes, but before the
+original count/heap baselines and before any candidate load. This avoids a
+stdio/setvbuf ordering change and warms the index-probe storage before capture.
+The one-shot gate uses existing exact closed-marker/60-second handshake at
+startup_quiescence; on failure the original main takes its ordinary cleanup.
+All subsequent count calls forward directly to the original Win32 API. No
+original cycle assertion, limit, reference calculation or watchdog is changed.
+
+The supervisor first requires both exact stack-tracked startup allocations,
+912bytes at TppWorkerThread+0xd03 and136bytes at
+TppAllocThreadData+0x41/TppWorkerThread+0xd8. It binds the current native ntdll
+image hash651ac9041af8e6b5ebd331d53163244c0a27d36d1433f0f15cac1f28c5f2e82c
+to the preserved matching PDB before resolving those frames. Both allocation
+addresses must then disappear from complete raw UMDH records, with no new
+matching startup groups, in two consecutive captures within the existing
+60-second stage deadline. Missing initial owners, missing stacks, a loaded
+candidate before the gate, changed process identity, unretired startup owners
+or deadline failure rejects the run. No fixed sleep/count allowance substitutes
+for that proof. Only then may the supervisor acknowledge and let the original
+strict2048-cycle fixture start. Each configured cycle and full natural teardown
+must still pass. First-load attribution and full-DLL qualification remain
+separate gates; the original failed381-cycle run remains a failure.
+
+Source-bound strict cross-build and an independent read-only source/receipt
+review pass (`root_tls/probe_quiescent_stress/inputs.json`). This section records
+the prospective native protocol; no successful2048 native run is claimed here.
+The three prior K={0,4,16} audits collected all8stages, exited0 and restored UST;
+their raw inventories independently reproduce the OS startup -912/-136 groups.
+UMDH omits allocations without collected stacks, so it supplies attribution,
+not a replacement for the unchanged all-process-heaps HeapWalk oracle.
