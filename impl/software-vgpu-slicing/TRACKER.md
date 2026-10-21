@@ -1959,3 +1959,13 @@ for the new real OpenCL GPU pass, preserved fresh M2 USER-count failure and
 remaining gates. Commits5260170 and01702c5 add strict sanitizer inventory and
 bounded native audit regressions, respectively; +0% to every task. Parent85.5%,
 M2 94%, Time Ended TBD. No final acceptance or merge readiness claimed.
+
+### M2 GUI failure diagnostics integration (2026-10-21)
+
+Atomic unit `test(vgpu): capture bounded GUI ownership failure identities` adds
+passive bounded HWND and raw owner snapshots only around the unchanged GUI
+failure gate. Root reviewed99 bindings, portable sanitizers/coverage and strict
+cross-build pass; native controls and full WSI remain pending. See
+[the detailed contract](../wsi-window-lifetime/IMPL_DESC.md). +0% all parent
+tasks; total85.5%, M2 94%, Time Ended TBD. Commits5260170,01702c5 ande895d9d
+retain their +0% task impacts.

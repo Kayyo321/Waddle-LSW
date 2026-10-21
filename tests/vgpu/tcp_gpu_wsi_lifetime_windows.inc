@@ -182,6 +182,8 @@ static int native_wsi_lifetime_probe(VkInstance instance, VkPhysicalDevice physi
     };
     DWORD gdi_before = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
     DWORD user_before = GetGuiResources(GetCurrentProcess(), GR_USEROBJECTS);
+    gui_diag_snapshot_t gui_before;
+    gui_diag_capture(&gui_before);
     HWND window = NULL;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkSwapchainKHR chain = VK_NULL_HANDLE;
@@ -447,6 +449,8 @@ cleanup:
             (unsigned long)gdi_before, (unsigned long)gdi_after,
             (unsigned long)user_before, (unsigned long)user_after);
         result = 1;
+        m2_owned_gui_failure(stderr);
+        gui_diag_report(&gui_before,gdi_before,gdi_after,user_before,user_after);
     }
     return result;
 }

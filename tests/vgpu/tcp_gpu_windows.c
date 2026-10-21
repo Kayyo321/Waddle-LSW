@@ -688,6 +688,7 @@ cleanup:
 }
 
 #include "tcp_gpu_m2_owned_windows.inc"
+#include "tcp_gpu_gui_diag_windows.inc"
 /* Only these fixture bodies own HWND/pixel-read DCs. The qualification sink's
  * borrowed HWND and its own DC ledger remain independent inside the DLL. */
 #define CreateWindowExA m2_owned_create_window

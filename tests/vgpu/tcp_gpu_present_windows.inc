@@ -320,6 +320,7 @@ static int native_swapchain_probe(VkInstance instance,VkPhysicalDevice physical,
     PFN_vkDeviceWaitIdle idle=(PFN_vkDeviceWaitIdle)compute_proc(device,device_proc,"vkDeviceWaitIdle");
     if(!create_surface || !destroy_surface || !surface_support || !capabilities || !create_swapchain || !destroy_swapchain || !images || !acquire || !present || !create_semaphore || !destroy_semaphore || !idle)return 1;
     DWORD gdi=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS),user=GetGuiResources(GetCurrentProcess(),GR_USEROBJECTS);
+    gui_diag_snapshot_t gui_before;gui_diag_capture(&gui_before);
     HWND window=NULL;HDC dc=NULL;VkSurfaceKHR surface=NULL;VkSwapchainKHR chain=NULL,old_chain=NULL;VkSemaphore acquired=NULL,rendered=NULL;
     int result=1;const char *stage="native window acquisition";
     window=CreateWindowExA(0,"STATIC","Waddle actual Vulkan presentation",WS_POPUP|WS_VISIBLE,100,100,64,64,NULL,NULL,GetModuleHandleA(NULL),NULL);
@@ -375,5 +376,6 @@ cleanup:
     if(window){if(!DestroyWindow(window))result=1;window=NULL;}
     DWORD gdi_after=GetGuiResources(GetCurrentProcess(),GR_GDIOBJECTS),user_after=GetGuiResources(GetCurrentProcess(),GR_USEROBJECTS);
     if(gdi_after!=gdi || user_after!=user){fprintf(stderr,"Native Vulkan swapchain retained GDI/USER owner: gdi=%lu->%lu user=%lu->%lu\n",(unsigned long)gdi,(unsigned long)gdi_after,(unsigned long)user,(unsigned long)user_after);result=1;}
+    if(gdi_after!=gdi || user_after!=user){m2_owned_gui_failure(stderr);gui_diag_report(&gui_before,gdi,gdi_after,user,user_after);}
     return result;
 }

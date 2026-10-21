@@ -73,6 +73,8 @@ jobs:
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Verify loader environment rollback with mock-only sanitizers
         run: make vgpu-loader-environment-test vgpu-loader-environment-sanitizers vgpu-loader-environment-coverage
+      - name: Verify bounded failure-only GUI identities with portable doubles
+        run: make vgpu-gui-diag-test vgpu-gui-diag-sanitizers vgpu-gui-diag-coverage
       - name: Verify native fixture handle diagnostics with mock-only sanitizers
         run: make vgpu-handle-diag-test vgpu-handle-diag-sanitizers vgpu-handle-diag-coverage
       - name: Preserve real-source handle diagnostic coverage
@@ -349,6 +351,32 @@ jobs:
               raise SystemExit("Native diagnostics did not report all eight ordered cases")
           '@ | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify native GUI diagnostic identities and owned cleanup
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu tests/vgpu/tcp_gpu_gui_diag_windows.c -luser32 -o build/vgpu_gui_diag_native.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          import subprocess
+          from pathlib import Path
+          result = subprocess.run(['build/vgpu_gui_diag_native.exe'], capture_output=True, timeout=60)
+          Path('build/gui_diag_native_stdout.log').write_bytes(result.stdout)
+          Path('build/gui_diag_native_stderr.log').write_bytes(result.stderr)
+          Path('build/gui_diag_native_exit.txt').write_text(str(result.returncode) + '\n')
+          expected = ['GUI_DIAG_NATIVE case=retained_top_child_message PASS',
+                      'GUI_DIAG_NATIVE case=exact_owned_cleanup PASS']
+          if result.returncode or result.stdout.decode().splitlines() != expected:
+              raise SystemExit('Native GUI diagnostic controls failed; inspect preserved streams')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve native GUI diagnostic results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-gui-diagnostic-results
+          path: build/gui_diag_native_*
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Preserve native handle diagnostic results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

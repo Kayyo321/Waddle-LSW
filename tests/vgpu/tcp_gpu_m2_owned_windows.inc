@@ -199,3 +199,41 @@ static int m2_owned_boundary(uint64_t session, const char *workload, unsigned li
     m2_owned.initialized=1; m2_owned.lifetime=lifetime;
     return 1;
 }
+
+/** @brief Print a raw failure-time owner query, never an acceptance boundary.
+ * @param[in] stream Borrowed nonnull stderr/test stream. @param[in] name Static
+ * owner group. @param[in] ok Query status. @param[in] value Borrowed copied data;
+ * not interpreted when the query failed. Sole fixture thread, no owner mutation.
+ */
+static inline void m2_owned_gui_print_snapshot(FILE *stream, const char *name, int ok,
+                                              const m2_owner_snapshot_t *value)
+{
+    fprintf(stream,"gui_diag: owner_group=%s query=%d",name,ok);
+    if (ok) fprintf(stream," version=%u bytes=%u next_id=%llu acquired=%llu retired=%llu first_live_id=%llu parent=%llx value=%llx live=%u pending=%u failures=%u reserved=%u",
+        value->version,value->bytes,(unsigned long long)value->next_id,
+        (unsigned long long)value->acquired,(unsigned long long)value->retired,
+        (unsigned long long)value->first_live_id,(unsigned long long)value->first_live_parent,
+        (unsigned long long)value->first_live_value,value->live,value->pending,value->failures,value->reserved);
+    else fputs(" unavailable=1",stream);
+    fputc('\n',stream);
+}
+/** @brief Read exactly three native-owner ledgers only after an existing GUI failure.
+ * @param[in] stream Borrowed output; NULL is ignored. No acceptance evaluation,
+ * previous-boundary update, reset, cleanup or extra native owner acquisition.
+ * Disabled legacy mode reports that these ledgers are unavailable. Sole thread.
+ */
+static inline void m2_owned_gui_failure(FILE *stream)
+{
+    if (!stream) return;
+    if (!m2_owned.enabled) { fputs("gui_diag: ownership_mode=0 ledgers_unavailable=1\n",stream); return; }
+    m2_owner_snapshot_t sink={0},dcs={0},windows={0};
+    const int sink_ok=m2_owned.dc_query(M2OwnerVersion,&sink,sizeof sink);
+    const int dc_ok=m2_owner_snapshot(&m2_owned.dcs,M2OwnerVersion,&dcs,sizeof dcs);
+    const int window_ok=m2_owner_snapshot(&m2_owned.windows,M2OwnerVersion,&windows,sizeof windows);
+    fprintf(stream,"gui_diag: session=%016llx last_accepted_lifetime=%u failure_observation_only=1\n",
+        (unsigned long long)m2_owned.session,m2_owned.lifetime);
+    m2_owned_gui_print_snapshot(stream,"sink_dc",sink_ok,&sink);
+    m2_owned_gui_print_snapshot(stream,"fixture_dc",dc_ok,&dcs);
+    m2_owned_gui_print_snapshot(stream,"fixture_window",window_ok,&windows);
+    fflush(stream);
+}

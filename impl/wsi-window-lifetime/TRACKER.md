@@ -485,3 +485,34 @@ coverage exclusions/thresholds, historical evidence or dependency pins changed.
   task #4 **80%**, parent **85.5%**, Time Ended **TBD**. Require root-owned fresh
   complete workloads, native controls/diagnostics, loaded-host qualification,
   matching independent host retirement, exact integrated CI and final review.
+
+### Failure-only native GUI identity diagnostics (2026-10-21)
+
+Fresh owned-protocol candidate `tcp_gpu_78129871` failed the unchanged USER
+count check4->9 (GDI7->7), after18 exact frames. This is distinct from the
+historical kernel-handle failure. The ownership amendment retains GDI/USER
+equality; the new failure remains failed and unattributed.
+
+The collector snapshots current-process HWND identities after the existing
+baseline sample and emits before/after identities only on the existing failure.
+It uses fixed128 records,4096 visits and32 depth; enumeration/query/race or
+truncation faults are explicit. It borrows HWNDs, sends no messages, creates no
+owners, preserves last-error, and does not pump messages, retry, wait or change
+UI state. Class names are hex-encoded. Raw fixture HWND/DC and sink DC queries
+are labeled failure observations and never advance/reset acceptance state.
+This inventories windows, not all USER objects or creator attribution.
+
+Astra's inverse-source proof removes only added diagnostic statements and
+obtains byte-identical baseline samples, comparison, workload and timing. Root
+verified all99 receipt copies and independently ran portable18groups/5314checks,
+ASan/LSan/UBSan,100% included-source lines,98.39% GUI and96.71% owner branches,
+and strict Windows cross-build. Native execution is still pending.
+Receipts: isolated `gui_failure_diagnostics_measured_samples/receipt.json`
+SHA256 a57639510dbcfc693bb709acd4cd6896b26d99e78cab185fb6aa3c11179cd06a;
+root `build/qualification_feature_20261021/gui_diagnostics_root.log`.
+
+Atomic unit `test(vgpu): capture bounded GUI ownership failure identities`
+(hash recorded next checkpoint), task#4 +0%, M2 remains94% / Review.
+CI now executes portable gates and a real Windows retained-top/child/message
+control plus exact owned cleanup. Neither cross-build nor CI HWND controls
+substitute for fresh full physical WSI qualification.
