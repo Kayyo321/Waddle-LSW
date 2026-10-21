@@ -1,5 +1,6 @@
 #ifdef _WIN32
 #include "opencl_slot_certificate_windows.inc"
+#include "opencl_fls_certificate_windows.inc"
 #endif
 /** @file opencl_reload_windows.inc
  * @brief Qualification-only exact full-DLL reload ownership checks.
@@ -122,12 +123,24 @@ static int reload_pool_call(reload_pool_t *pool,reload_call_t call,void *argumen
  * @param[in] fls0 selects TLS,1 selects FLS. Sole quiescent caller.
  * @param[out] count Nonnull count; invalid unless return0.
  * @return1 on missing bounded exhaustion or unexpected allocation error.
- * Only ERROR_NO_MORE_ITEMS qualifies this target: Win32 does not guarantee
- * that every allocation failure means exhaustion. Native calibration is required.
- * A failed free is fatal after all possible owned indices have been freed.
+ * Native TLS/FLS require exact admitted structural certificates; the portable
+ * API-double path retains ERROR_NO_MORE_ITEMS controls. Error8 alone never
+ * qualifies. Native calibration is required. Failed ownership/retirement is fatal.
  */
 static int reload_indices(int fls,unsigned *count) {
 #ifdef _WIN32
+    if(fls) {
+        /* Sole reload orchestrator owns fixed storage; never foreign callbacks. */
+        static fls_certificate_t certificate;
+        slot_status_t status=fls_certificate_probe(&certificate);
+        *count=certificate.count;
+        if(status!=SlotOk || certificate.fatal)
+            fprintf(stderr,"OpenCL reload probe allocation failed kind=fls certificate_status=%u fatal=%u acquired=%u freed=%u errors=%lu,%lu\n",
+                (unsigned)status,certificate.fatal,certificate.acquired,certificate.freed,
+                (unsigned long)certificate.first_error,(unsigned long)certificate.refill_error);
+        if(certificate.fatal)fail_closed("OpenCL reload fatal: FLS certificate ownership/retirement failed");
+        return status!=SlotOk;
+    }
     if(!fls) {
         slot_certificate_t certificate;
         slot_status_t status=slot_certificate_probe(&certificate);

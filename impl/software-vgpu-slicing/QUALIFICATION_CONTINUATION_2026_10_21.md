@@ -194,3 +194,16 @@ prospective ownership contract passes, while historical kernel/USER failures
 remain failed/unattributed. Exact current CI remains pending. Review artifacts
 are preserved under `build/qualification_feature_20261021/final_scope_reviews`.
 All tasks +0%; total85.5%, M2 94%, Time Ended TBD.
+
+### Native FLS certificate and combined fixture controls (2026-10-21)
+
+Atomic unit `test(opencl): gate exact native FLS exhaustion and retirement`
+integrates Astra's fixed-storage certificate and native reload branch with
+required portable/sanitizer/coverage/CI gates. Root270-case ASan/LSan/UBSan and
+100%line/branch gates pass. Native four-case calibration passes4078→4077→4078,
+with independent raw-marker review; the final300-input fixture passes both
+slot controls and ten malformed CLI regressions. [Evidence](OPENCL_FLS_CERTIFICATE.md).
+All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Full candidate stress/heap/
+overlap and final CI/review remain open. Commit `a845098` records CSR inventory
+and native calibration, all tasks +0%; `7db0909` consolidates documentation,
+all tasks +0%.

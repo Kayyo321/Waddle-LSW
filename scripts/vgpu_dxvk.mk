@@ -262,3 +262,25 @@ build/vgpu_native_csr_heap_control.exe: $(VgpuNativeCsrSources) $(VgpuNativeCsrH
 	$(VgpuNativeCsrWindowsCC) $(VgpuNativeCsrFlags) $< -o $@
 
 vgpu-native-csr-heap-native-build: build/vgpu_native_csr_heap_control.exe
+
+# Exact-target FLS certificate: portable gates do not confer native qualification.
+VgpuOpenclFlsSources = tests/vgpu/opencl_fls_certificate_test.c
+VgpuOpenclFlsHeaders = tests/vgpu/opencl_fls_certificate_windows.inc tests/vgpu/opencl_slot_certificate_windows.inc tests/vgpu/win32_fake/opencl_fls_certificate_fake.h tests/vgpu/win32_fake/opencl_slot_certificate_fake.h
+VgpuOpenclFlsFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_fls_certificate_windows.inc
+build/opencl_fls: | build
+	mkdir -p $@
+build/opencl_fls/host: $(VgpuOpenclFlsSources) $(VgpuOpenclFlsHeaders) | build/opencl_fls
+	$(CC) $(VgpuOpenclFlsFlags) -O2 $(VgpuOpenclFlsSources) -o $@
+.PHONY: vgpu-opencl-fls-test vgpu-opencl-fls-sanitizers vgpu-opencl-fls-coverage vgpu-opencl-fls-native-build
+vgpu-opencl-fls-test: build/opencl_fls/host
+	./build/opencl_fls/host
+vgpu-opencl-fls-sanitizers: | build/opencl_fls
+	$(CC) $(VgpuOpenclFlsFlags) -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuOpenclFlsSources) -o build/opencl_fls/sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/opencl_fls/sanitized
+vgpu-opencl-fls-coverage:
+	python3 -B tests/vgpu/opencl_fls_certificate_coverage.py
+	python3 -O -B tests/vgpu/opencl_fls_certificate_coverage.py
+build/vgpu_opencl_fls_certificate.exe: $(VgpuOpenclFlsSources) tests/vgpu/opencl_fls_certificate_windows.inc tests/vgpu/opencl_slot_certificate_windows.inc | build
+	$(ZIG) cc -target x86_64-windows-gnu $(VgpuOpenclFlsFlags) -O2 $(VgpuOpenclFlsSources) -o $@
+vgpu-opencl-fls-native-build: build/vgpu_opencl_fls_certificate.exe
