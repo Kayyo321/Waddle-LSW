@@ -4,12 +4,15 @@ All temporary files and child processes belong to this serial test runner. Fake
 git responses test shell control flow only; the real pinned export comparison is
 also executed. These tests provide no Windows or GPU acceptance evidence.
 """
+import dataclasses
 import importlib.util
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -180,6 +183,326 @@ class export_tests_t(unittest.TestCase):
         with patch.object(Driver, 'capture', side_effect=subprocess.CalledProcessError(7, 'objdump')):
             with self.assertRaises(subprocess.CalledProcessError):
                 Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports)
+
+
+class runtime_driver_tests_t(unittest.TestCase):
+    """Exercise source/tool binding, cache admission, and receipt publication."""
+
+    def test_capture_only_writes_identity_and_skips_build(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'toolchain.json'
+            identity = {'target': 'captured-only'}
+            provenance_path = Path(directory) / 'provenance.json'
+            provenance_path.write_text('{}')
+            with patch.object(Driver, 'capture_toolchain_identity', return_value=identity), \
+                 patch.object(Driver, 'verify_package_provenance', return_value={'verified': True}), \
+                 patch.object(Driver, 'build_native', side_effect=AssertionError('build started')):
+                result = Driver.main(['--cc', '/compiler/c', '--cxx', '/compiler/cxx',
+                                      '--dlltool', '/tool/dlltool', '--objdump', '/tool/objdump',
+                                      '--nm', '/tool/nm', '--windres', '/tool/windres',
+                                      '--ar', '/tool/ar', '--ranlib', '/tool/ranlib',
+                                      '--toolchain-provenance', str(provenance_path),
+                                      '--capture-toolchain', str(output)])
+            self.assertEqual(result, 0)
+            self.assertEqual(json.loads(output.read_text()), identity)
+            self.assertFalse(output.with_name(output.name + '.tmp').exists())
+
+    def test_build_requires_reviewed_identity_before_preflight(self):
+        arguments = ['--cc', '/compiler/c', '--cxx', '/compiler/cxx',
+                     '--dlltool', '/tool/dlltool', '--objdump', '/tool/objdump',
+                     '--nm', '/tool/nm', '--windres', '/tool/windres',
+                     '--ar', '/tool/ar', '--ranlib', '/tool/ranlib',
+                     '--toolchain-provenance', '/fixture/provenance.json']
+        with patch.object(Driver, '_preflight', side_effect=AssertionError('preflight started')):
+            with self.assertRaisesRegex(SystemExit, '--reviewed-toolchain'):
+                Driver.main(arguments)
+
+    def test_real_auditor_load_registers_dataclass_module(self):
+        auditor = Driver.load_auditor(Root)
+        self.assertIs(sys.modules.get(auditor.__name__), auditor)
+        self.assertTrue(dataclasses.is_dataclass(auditor.section_t))
+
+    def test_real_reviewed_preflight_stops_before_any_build(self):
+        private = Root / 'build/qualification_20261017/mingw_win32_private_1402/extracted/usr/bin'
+        evidence = Root / 'build/qualification_feature_20261021/root_tls'
+        args = type('Args', (), {
+            'cc': str(private / 'x86_64-w64-mingw32-gcc-win32'),
+            'cxx': str(private / 'x86_64-w64-mingw32-g++-win32'),
+            'dlltool': '/usr/bin/x86_64-w64-mingw32-dlltool',
+            'objdump': '/usr/bin/x86_64-w64-mingw32-objdump',
+            'nm': '/usr/bin/x86_64-w64-mingw32-nm',
+            'windres': '/usr/bin/x86_64-w64-mingw32-windres',
+            'ar': str(private / 'x86_64-w64-mingw32-gcc-ar-win32'),
+            'ranlib': str(private / 'x86_64-w64-mingw32-gcc-ranlib-win32'),
+            'reviewed_toolchain': str(evidence / 'reviewed_toolchain.json'),
+            'toolchain_provenance': str(evidence / 'toolchain_provenance.json'),
+            'runtime_policy': str(evidence / 'production_runtime_policy.json'),
+            'probe_runtime_policy': str(evidence / 'probe_runtime_policy.json')})()
+        selected = Driver._preflight(Root, args)
+        self.assertEqual(selected['runtime_policy'],
+                         json.loads(Path(args.runtime_policy).read_text()))
+        self.assertEqual(selected['probe_runtime_policy'],
+                         json.loads(Path(args.probe_runtime_policy).read_text()))
+        self.assertEqual(selected['inputs']['toolchain_identity']['identity'],
+                         json.loads(Path(args.reviewed_toolchain).read_text()))
+        self.assertIn('toolchain_provenance', selected['inputs'])
+        self.assertIn('host_cc', selected['inputs']['build_tools'])
+
+    def test_package_provenance_rejects_archive_hash_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / 'package.deb'
+            archive.write_bytes(b'not a Debian archive')
+            receipt = root / 'receipt.json'
+            receipt.write_text(json.dumps([{'package': 'reviewed-package',
+                                            'version': '1.0', 'sha256': '0' * 64,
+                                            'matched_apt_metadata': True,
+                                            'host_installed': False}]))
+            provenance = root / 'provenance.json'
+            provenance.write_text(json.dumps({'schema': 1,
+                                              'package_receipt_path': str(receipt),
+                                              'extracted_root': str(root),
+                                              'packages': [{'name': 'reviewed-package',
+                                                            'version': '1.0',
+                                                            'deb_path': str(archive),
+                                                            'sha256': '0' * 64}]}))
+            with self.assertRaisesRegex(SystemExit, 'does not match receipt/archive'):
+                Driver.verify_package_provenance({}, provenance)
+
+    def test_preflight_uses_explicit_compiler_selectors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Root
+            paths = {}
+            for key in ('cc', 'cxx', 'dlltool', 'objdump', 'nm', 'windres', 'ar', 'ranlib'):
+                path = Path(directory) / key
+                path.write_text('fixture')
+                path.chmod(0o700)
+                paths[key] = str(path)
+            manifest = Path(directory) / 'reviewed.json'
+            manifest.write_text('{"reviewed": true}')
+            policy_path = Path(directory) / 'policy.json'
+            policy = {'allowed_api_callers': {'TlsAlloc': ['key_create'],
+                                               'FlsAlloc': [], 'DuplicateHandle': []},
+                      'tls_pairs': {'key_create': 'key_delete'},
+                      'dynamic_lookup_callers': []}
+            policy_path.write_text(json.dumps(policy))
+            probe_policy_path = Path(directory) / 'probe-policy.json'
+            probe_policy = {'allowed_api_callers': {'TlsAlloc': [], 'FlsAlloc': ['probe_fls'],
+                                                     'DuplicateHandle': []},
+                            'tls_pairs': {}, 'dynamic_lookup_callers': ['probe_lookup']}
+            probe_policy_path.write_text(json.dumps(probe_policy))
+            args = type('Args', (), {**paths, 'reviewed_toolchain': str(manifest),
+                                     'runtime_policy': str(policy_path),
+                                     'probe_runtime_policy': str(probe_policy_path),
+                                     'toolchain_provenance': str(Path(directory) / 'provenance.json')})()
+            Path(args.toolchain_provenance).write_text('{}')
+            expected_capture = {'target': 'x86_64-w64-mingw32',
+                                'cc': {'thread_model': 'win32', 'dumpmachine': 'x86_64-w64-mingw32',
+                                       'dumpfullversion': '14-win32'},
+                                'cxx': {'thread_model': 'win32', 'dumpmachine': 'x86_64-w64-mingw32',
+                                        'dumpfullversion': '14-win32'}}
+            package_provenance = {'verified': True}
+            expected_capture['package_provenance'] = package_provenance
+
+            class fake_auditor_t:
+                def verify_toolchain_identity(self, actual, expected):
+                    if actual != expected_capture or expected != {'reviewed': True}:
+                        raise AssertionError('identity arguments were not source-bound')
+                    return {'identity': actual, 'reviewed_identity': expected}
+
+            with patch.object(Driver, 'capture_toolchain_identity', return_value=expected_capture) as capture_call, \
+                 patch.object(Driver, 'verify_package_provenance', return_value=package_provenance), \
+                 patch.object(Driver, 'load_auditor', return_value=fake_auditor_t()), \
+                 patch.object(Driver, '_tool_record', return_value={'fixture': True}), \
+                 patch.object(Driver, '_required_tool', side_effect=lambda name: Path(directory) / name):
+                for name in ('cmake', 'ninja', 'cc', 'c++'):
+                    (Path(directory) / name).write_text('fixture')
+                selected = Driver._preflight(root, args)
+            self.assertEqual(Path(selected['cc']), Path(paths['cc']).resolve())
+            self.assertEqual(Path(selected['cxx']), Path(paths['cxx']).resolve())
+            self.assertEqual(selected['runtime_policy'], policy)
+            self.assertEqual(selected['probe_runtime_policy'], probe_policy)
+            capture_call.assert_called_once_with(Path(paths['cc']).resolve(),
+                                                 Path(paths['cxx']).resolve())
+
+    def test_toolchain_file_uses_only_selected_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'toolchain.cmake'
+            values = [Path(directory) / name for name in
+                      ('gcc-win32', 'gxx-win32', 'windres-win32', 'ar-win32',
+                       'ranlib-win32', 'sysroot')]
+            Driver.write_toolchain(path, *values)
+            text = path.read_text()
+            for value in values[:5]:
+                self.assertIn(str(value), text)
+            self.assertIn('CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER', text)
+            self.assertNotIn('-posix', text)
+            self.assertNotIn('winpthread', text.lower())
+
+    def test_runtime_objects_precede_runtime_archives_in_link_flags(self):
+        text = Driver.linker_flags(('runtime/clvk_runtime_tls.o',
+                                    'runtime/clvk_runtime_eh_pool.o'),
+                                   'scripts/clvk/OpenCL.def', 'cross/OpenCL.map')
+        self.assertLess(text.index('clvk_runtime_tls.o'), text.index('clvk_runtime_eh_pool.o'))
+        self.assertLess(text.index('clvk_runtime_eh_pool.o'), text.index('OpenCL.def'))
+        self.assertLess(text.index('OpenCL.def'), text.index('-static-libgcc'))
+        self.assertIn('-mthreads', text)
+        self.assertNotIn('winpthread', text.lower())
+        for flag in ('--gc-sections', '--undefined=waddle_clvk_runtime_tls_limits',
+                     '-T,' + str(Root / 'scripts/clvk/runtime_sections.ld'),
+                     '--wrap=__gthr_win32_equal',
+                     '--wrap=_ZSt16__at_thread_exitPSt20__at_thread_exit_elt',
+                     '--wrap=_ZSt25notify_all_at_thread_exitRSt18condition_variableSt11unique_lockISt5mutexE'):
+            self.assertIn(flag, text)
+
+    def test_runtime_objects_compile_as_c_with_win32_model_and_limits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            calls = []
+            with patch.object(Driver, 'run', side_effect=lambda command, **kwargs: calls.append(command)):
+                objects = Driver.build_runtime_objects(Root, '/private/gcc-win32', Path(directory))
+            self.assertEqual([item.name for item in objects],
+                             ['clvk_runtime_tls.o', 'clvk_runtime_eh_pool.o'])
+            self.assertEqual(len(calls), 2)
+            for command, source in zip(calls, Driver.ShimSources):
+                self.assertIn('-std=c11', command)
+                self.assertIn('-mthreads', command)
+                self.assertIn('-Wpedantic', command)
+                self.assertIn('-DWaddleRuntimeTlsArenaBytes=192', command)
+                self.assertIn('-DWaddleRuntimeTlsSlotCapacity=32', command)
+                self.assertEqual(command[command.index('-c') + 1], Root / source)
+
+    def test_cached_runtime_is_reaudited_against_exact_linked_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            linked = Path(directory) / 'libOpenCL.dll'
+            link_map = Path(directory) / 'OpenCL.map'
+            published = Path(directory) / 'OpenCL-copy.dll'
+            linked.write_bytes(b'linked')
+            link_map.write_bytes(b'map')
+            shutil.copyfile(linked, published)
+            record = {'linked_dll': {'path': str(linked), 'sha256': Driver.digest(linked)},
+                      'link_map': {'path': str(link_map), 'sha256': Driver.digest(link_map),
+                                   'working_directory': directory},
+                      'dll': {'path': str(published), 'sha256': Driver.digest(published)}}
+            policy = {'reviewed': True}
+            with patch.object(Driver, 'build_admission', return_value={'fresh': True}) as admit:
+                self.assertEqual(Driver._admit_recorded_runtime(Root, record, nm='/private/nm',
+                                                                runtime_policy=policy),
+                                 {'fresh': True})
+            admit.assert_called_once_with(Root, linked, link_map, nm='/private/nm',
+                                          map_working_directory=directory, runtime_policy=policy)
+            link_map.write_bytes(b'tampered map')
+            with self.assertRaisesRegex(SystemExit, 'link map hash'):
+                Driver._admit_recorded_runtime(Root, record, nm='/private/nm', runtime_policy=policy)
+
+    def test_failed_admission_preserves_previous_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / 'receipt.json'
+            receipt.write_text('{"previous": true}\n')
+            linked = Path(directory) / 'libOpenCL.dll'
+            link_map = Path(directory) / 'OpenCL.map'
+            published = Path(directory) / 'OpenCL-copy.dll'
+            for path in (linked, link_map, published):
+                path.write_bytes(path.name.encode())
+            shutil.copyfile(linked, published)
+            record = {'linked_dll': {'path': str(linked), 'sha256': Driver.digest(linked)},
+                      'link_map': {'path': str(link_map), 'sha256': Driver.digest(link_map),
+                                   'working_directory': directory},
+                      'dll': {'path': str(published), 'sha256': Driver.digest(published)}}
+            inputs = {'source_hashes': Driver.source_identity(Root),
+                      'export_list_sha256': Driver.digest(Root / 'scripts/clvk/OpenCL.def'),
+                      'shutdown_abi_sha256': Driver.digest(Root / 'include/waddle/clvk.h'),
+                      'private_patches': {name: Driver.digest(Root / name)
+                                          for name in Driver.PrivatePatches}}
+            before = receipt.read_bytes()
+            with patch.object(Driver, '_verify_inputs_unchanged'), \
+                 patch.object(Driver, 'build_admission', side_effect=SystemExit('rejected image')):
+                with self.assertRaisesRegex(SystemExit, 'rejected image'):
+                    Driver.publish_admitted_record(Root, receipt, record, inputs, nm='/private/nm',
+                                                    runtime_policy={'reviewed': True})
+            self.assertEqual(receipt.read_bytes(), before)
+
+    def test_probe_preflight_reports_rejection_and_never_calls_build_gate(self):
+        class fake_auditor_t:
+            def __init__(self):
+                self.link_args = None
+
+            def verify_runtime_link(self, *args, **kwargs):
+                self.link_args = (args, kwargs)
+                return {'link_checked': True}
+
+            def audit_runtime_tls(self, dll_path, **kwargs):
+                raise ValueError('forbidden __at_thread_exit symbol')
+
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            selected = {'cc': '/private/gcc-win32', 'cxx': '/private/gxx-win32',
+                        'nm': '/private/nm', 'runtime_policy': {'production': True},
+                        'probe_runtime_policy': {'probe': 'separate policy'}}
+            commands = []
+
+            def fake_run(command, **kwargs):
+                commands.append(command)
+                output = Path(command[command.index('-o') + 1])
+                output.write_bytes(b'compiled probe fixture')
+                for argument in command:
+                    if str(argument).startswith('-Wl,-Map='):
+                        map_name = str(argument).split('=', 1)[1].split(',', 1)[0]
+                        Path(map_name).write_bytes(b'probe map fixture')
+
+            auditor = fake_auditor_t()
+            with patch.object(Driver, 'build_runtime_objects',
+                              return_value=(folder / 'tls.o', folder / 'eh.o')), \
+                 patch.object(Driver, 'run', side_effect=fake_run), \
+                 patch.object(Driver, 'load_auditor', return_value=auditor), \
+                 patch.object(Driver, 'build_native', side_effect=AssertionError('LLVM build started')):
+                with self.assertRaisesRegex(SystemExit, 'strict Win32 runtime probe admission rejected'):
+                    Driver.preflight_runtime_probe(Root, selected, folder)
+            report = json.loads((folder / 'probe_preflight/probe_preflight.json').read_text())
+            self.assertEqual(report['status'], 'rejected')
+            self.assertFalse(report['native_acceptance'])
+            self.assertIn('__at_thread_exit', report['rejection'])
+            self.assertEqual(auditor.link_args[1]['runtime_policy'], selected['probe_runtime_policy'])
+            self.assertEqual(auditor.link_args[1]['expected_output_name'], 'runtime_v2_probe.dll')
+            dll_command = next(command for command in commands if str(command[0]).endswith('gxx-win32'))
+            for flag in ('-Wpedantic', '-Wl,--gc-sections',
+                         '-Wl,--undefined=waddle_clvk_runtime_tls_limits',
+                         '-Wl,-T,' + str(Root / 'scripts/clvk/runtime_sections.ld'),
+                         '-Wl,--wrap=__gthr_win32_equal',
+                         '-Wl,--wrap=_ZSt16__at_thread_exitPSt20__at_thread_exit_elt',
+                         '-Wl,--wrap=_ZSt25notify_all_at_thread_exitRSt18condition_variableSt11unique_lockISt5mutexE'):
+                self.assertIn(flag, dll_command)
+
+    def test_native_llvm_key_excludes_mingw_but_binds_host_tools(self):
+        build_tools = {name: {'sha256': name + '-hash'}
+                       for name in ('host_cc', 'host_cxx', 'cmake', 'ninja', 'cc', 'cxx', 'ar')}
+        inputs = {'build_tools': build_tools, 'toolchain_identity': {'mingw': 'first'},
+                  'pins': {'llvm': 'pin'}, 'settings': {'switches': 'first'}}
+        first = Driver._native_cache_key(inputs)
+        inputs['toolchain_identity'] = {'mingw': 'changed'}
+        inputs['build_tools']['cc'] = {'sha256': 'different-cross-tool'}
+        inputs['settings'] = {'switches': 'changed'}
+        self.assertEqual(Driver._native_cache_key(inputs), first)
+        inputs['build_tools']['host_cc'] = {'sha256': 'different-host-compiler'}
+        self.assertNotEqual(Driver._native_cache_key(inputs), first)
+        inputs['build_tools']['host_cc'] = build_tools['host_cc']
+        changed_pin = tuple((name, 'different-llvm-pin' if name == 'submodules/llvm_project' else value)
+                            for name, value in Driver.Pins)
+        with patch.object(Driver, 'Pins', changed_pin):
+            self.assertNotEqual(Driver._native_cache_key(inputs), first)
+        with patch.object(Driver, 'LlvmSwitches', (*Driver.LlvmSwitches, '-DTEST_SWITCH=ON')):
+            self.assertNotEqual(Driver._native_cache_key(inputs), first)
+
+    def test_source_identity_binds_linker_fences_and_negative_controls(self):
+        identity = Driver.source_identity(Root)
+        self.assertIn('scripts/clvk/runtime_sections.ld', identity)
+        self.assertIn('tests/vgpu/clvk_runtime_link_test.py', identity)
+
+    def test_default_and_custom_receipt_paths(self):
+        self.assertEqual(Driver._receipt_path(Root, 'build/clvk_client'),
+                         Root / 'build/clvk_client.json')
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(Driver._receipt_path(Path(directory), 'custom-build'),
+                             Path(directory) / 'custom-build/clvk_client.json')
 
 
 class private_patch_tests_t(unittest.TestCase):
