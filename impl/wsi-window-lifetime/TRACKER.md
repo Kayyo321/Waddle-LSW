@@ -207,3 +207,36 @@ verification gates pass. The Windows gate includes its already-required native
 acceptance and remains unpassed due the unchanged global handle oracle. The
 prior cross-build-only wording did not explain the retained80% task value.
 No task weights, totals, assertions, thresholds or scope boundaries change.
+
+
+## 2026-10-21 checkpoint (user-requested stopping point)
+
+Independent ownership audit of the strict native handle gate, passive failure-attribution diagnostics, two fixture defect fixes
+and a native proof of the diagnostics. The strict gate, baseline, frame/lifetime counts, retry budget and every threshold are
+unchanged. **Task #4 +0%; overall remains 94%; Time Ended TBD; not ready for closure.**
+
+- Audit verdict: no Waddle-owned code path explains the preserved 199->200 failure; the process-global count is sensitive to OS-owned RPC
+  garbage-collection churn and can hide an offsetting Waddle leak. No production fix is justified. The acceptance-owner decision (keep as
+  written / recorded criteria amendment to an attribution-aware strict oracle / change platform) is recorded in
+  [M2_HANDLE_GATE_AUDIT_2026_10_21.md](M2_HANDLE_GATE_AUDIT_2026_10_21.md). The native `StretchDIBits` right-to-left probe did not reproduce the audit's
+  inferred defect (positive scanline counts everywhere; sink succeeds); no change was made.
+- Native evidence: the diagnostics test passes 7/7 in the Windows 11 guest over WinRM and on the interactive desktop
+  (class-51 snapshot equals `GetProcessHandleCount`, exact type names and access masks, passive: 50 captures leave the count unchanged).
+  The existing native presentation fixture passes on the interactive desktop. **No instrumented 48-frame workload was run**; the repeat runner is
+  prepared (`build/qualification_20261020/m2_runner/`, dry-run only) and will need the rebuilt `gpu.exe`.
+- The committed fixture sources change the fixture hashes; M2 receipts that pin the old hashes (`M2_NATIVE_RECEIPT_2026_10_17.json`,
+  `NATIVE_RECEIPTS_2026_10_18.json`, `M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json`) describe the old fixture only.
+- Machine-readable receipt: [../software-vgpu-slicing/M2_DIAGNOSTICS_RECEIPT_2026_10_21.json](../software-vgpu-slicing/M2_DIAGNOSTICS_RECEIPT_2026_10_21.json).
+
+### Commit history (2026-10-21)
+
+- **Commit `7b6c9d5`**: `fix(vgpu-tests): release each native probe DC exactly once on ReleaseDC failure`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Fixture ownership defect found by the audit; unchanged success path.
+- **Commit `6faf4ed`**: `fix(vgpu-tests): clear the destroyed HWND owner before post-destroy checks`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Fixture ownership defect found by the audit.
+- **Commit `faf9d19`**: `test(vgpu): add failure-only handle attribution diagnostics to the native fixture`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Passive diagnostics, host test (18 cases, 6724 checks, ASan/LSan/UBSan, LSan self-control) and acceptance-rule source pin.
+- **Commit `44d69c2`**: `test(vgpu): add native Windows test for the handle attribution diagnostics`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Native 7/7 PASS in the guest.
+- **Commit `56b89a9`**: `test(vgpu): apply independent-review fixes to the handle diagnostics`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Review fixes, CI step for the host tests; native test re-run 7/7.

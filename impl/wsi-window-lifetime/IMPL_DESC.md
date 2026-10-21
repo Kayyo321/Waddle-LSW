@@ -84,3 +84,39 @@ failure remains open. A no-Vulkan/no-Waddle system control fails167→168 throug
 Windows RPC garbage collection. Do not replace the exact assertion with a
 count waiver. See ../software-vgpu-slicing/M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json.
 The Windows gate remains unpassed; task #4 stays80%, overall94%, Time Ended TBD.
+
+
+## Native handle-gate attribution diagnostics (2026-10-21)
+
+This section specifies the passive failure-attribution code added to the native fixture. It adds no acceptance criterion and removes none.
+
+**Scope.** Inside: reporting which kernel handles were added or removed when the exact process handle-count check fails; timing of the
+check; reporting a `GetProcessHandleCount` failure. Outside: changing the baseline, the 100 x 10 ms retry rule, the equality test, the
+8 lifetimes (2 in smoke mode), the workload, the failure result, or closing/duplicating any handle.
+
+**Architecture.** `tests/vgpu/tcp_gpu_handle_diag_windows.inc` is textually included by `tests/vgpu/tcp_gpu_windows.c` after `native_handles()` and before
+`handle_baseline()`. It needs the includer's `symbol()` helper (pinned by the native test's make recipe to be byte-identical). Host test:
+`tests/vgpu/tcp_gpu_handle_diag_host.c` over `tests/vgpu/win32_fake/handle_diag_fake.h`. Native test: `tests/vgpu/tcp_gpu_handle_diag_native.c`.
+
+**Data structures.** `handle_check_t {samples, minimum, maximum, last}` passive statistics of the compared samples. `handle_diag_entry_t {handle_value,
+type_index, granted_access}`; `handle_diag_set_t {entries (owned malloc array), count, unavailable[96]}`; `handle_diag_t {frequency, start, query_process,
+query_object (borrowed ntdll exports), baseline (owned snapshot)}`. Wire mirrors (x64, `_Static_assert`ed): `PROCESS_HANDLE_SNAPSHOT_INFORMATION` header
+(2 x `ULONG_PTR`) followed by 40-byte `PROCESS_HANDLE_TABLE_ENTRY_INFO` entries. Information classes: `ProcessHandleInformation = 51`,
+`ObjectTypeInformation = 2`. Capacities: initial buffer 32 KiB, maximum 16 MiB, 6 attempts, 1 KiB type buffer, 48-character type name.
+
+**Sequence.** (1) `main()` takes the unchanged baseline sample. (2) `handle_diag_begin()` records the QPC origin, resolves `NtQueryInformationProcess` and
+`NtQueryObject` from the already-loaded ntdll (`GetModuleHandleA` + `GetProcAddress`, no new link dependency) and copies the process handle table. (3) Each
+lifetime runs the unchanged workload and teardown; then the unchanged `handle_baseline()` runs, additionally recording each compared sample. (4) On success one
+`handle_diag:` timeline line is printed after the existing PASS line. (5) On failure the legacy line `Native GPU handle baseline=%lu actual=%lu` is printed first
+(unchanged), then `handle_diag_report()` prints samples/min/max/last and elapsed time, takes a second private snapshot, and lists every handle present in one
+snapshot and absent in the other with value, type index, type name and access, then a summary line. (6) `handle_diag_free()` releases the baseline snapshot on every exit path.
+
+**Concurrency.** Single fixture thread; no shared state beyond the caller-owned `handle_diag_t`. The queries read kernel state and open, duplicate and close nothing.
+
+**Failure handling.** Any unavailable step prints `handle_diag: snapshot unavailable (<reason>)` and continues; no diagnostic path changes the exit status. A handle closing
+between snapshot and type lookup only yields type `unknown`. Object names are never queried (name queries can block on pipes).
+
+**Verification.** Host: 18 cases / 6724 checks, plain and ASan+LSan+UBSan, LeakSanitizer self-control exits 23, gcov 100% lines and branches of the `.inc`, mutation testing, exact-text
+pin of the acceptance rule. Native (Windows 11 build 26300 guest, WinRM and interactive): 7/7 cases (layout, passivity, added types
+Event/Semaphore/Mutant/Timer/File/Section/Job/Thread with exact names, removed handle, report shape, unknown type, timing). **Evidence limit:** the diagnostics have not yet
+been run inside a full 48-frame native workload, and earlier native receipts describe the old fixture hashes. Audit, decisions and the `StretchDIBits` probe: [M2_HANDLE_GATE_AUDIT_2026_10_21.md](M2_HANDLE_GATE_AUDIT_2026_10_21.md).

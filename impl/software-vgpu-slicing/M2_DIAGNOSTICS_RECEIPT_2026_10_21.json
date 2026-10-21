@@ -1,0 +1,116 @@
+{
+ "recorded_utc": "2026-10-21T03:20:47Z (user-requested stopping point)",
+ "m2_qualified": false,
+ "acceptance": false,
+ "scope": "M2 (impl/wsi-window-lifetime) native handle-count gate: independent ownership audit, passive failure-attribution diagnostics, two fixture defect fixes, native proof of the diagnostics. The strict gate and all thresholds are unchanged. M2 remains 94% / Review, Time Ended TBD.",
+ "base_head": "52a1a2970c2a182c155c718432a9dee520b0ca72",
+ "commits": {
+  "7b6c9d52165b733ce13fcfc4f11888d6b9e1437b": "fix(vgpu-tests): release each native probe DC exactly once on ReleaseDC failure",
+  "6faf4ed24b6fd6650fb9cbfbbc6f8df87935df15": "fix(vgpu-tests): clear the destroyed HWND owner before post-destroy checks",
+  "faf9d19df962a23cc53111fc7571da3cf01c993e": "test(vgpu): add failure-only handle attribution diagnostics to the native fixture",
+  "44d69c27ccef447d5d8769a73b227478178600b6": "test(vgpu): add native Windows test for the handle attribution diagnostics",
+  "56b89a95fbe7d259029056cc1472dfb57025335e": "test(vgpu): apply independent-review fixes to the handle diagnostics"
+ },
+ "source_sha256_at_final_commit": {
+  "tests/vgpu/tcp_gpu_windows.c": "ef51e3d6006fadd4006d6ce67d4ca81520c3c3d275abefa4efd57ae3fc1fc17d",
+  "tests/vgpu/tcp_gpu_present_windows.inc": "61b8189e388496a9fcfe4068a9e5635abf3c54a9353ff19eacdd564591e857bb",
+  "tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": "dcb3a630ff3b6f955169268e68647304edec046304ce327b67bc202b90156595",
+  "tests/vgpu/tcp_gpu_handle_diag_windows.inc": "09a88a42e183695fe17afb5490525f9311021060ecdaa45ea4bf6a0349503eb9",
+  "tests/vgpu/tcp_gpu_handle_diag_host.c": "fd7a029b88da719d4aa6a2e0bb6a24cb285235801ded99df01b55c2534aa2d5f",
+  "tests/vgpu/tcp_gpu_handle_diag_native.c": "07c13b9dc2fe200f9b1f627cf8947454f246d10791b08f861d3bca66852184ef",
+  "tests/vgpu/win32_fake/handle_diag_fake.h": "6d4eddfd645272f2b93e9d7b1eb58e37dd7eac786802a6470df09fe27d2cfe75",
+  "scripts/vgpu_tcp.mk": "a77f02131c63b0e9621356b2249990d4f1e87ce9de22f43ff6c6c4e0027a5388",
+  ".github/workflows/software_vgpu.yml": "f050190edb6fb5764e95b6e4398af494500f7a5c92faf47edcf4e1d3b72c4435"
+ },
+ "audit": {
+  "report": "impl/wsi-window-lifetime/M2_HANDLE_GATE_AUDIT_2026_10_21.md",
+  "verdict": "no Waddle-owned path explains tcp_gpu_7adb6000 (199->200); oracle sensitive to OS-owned RPC garbage-collection churn; no production fix justified",
+  "decision_owner": "M2 acceptance owner (options A keep as written / B recorded criteria amendment to an attribution-aware strict oracle / C change platform)"
+ },
+ "baseline_portable_gates_unchanged_head_52a1a29": {
+  "summary": "build/qualification_20261020/baseline/SUMMARY.md",
+  "wsi_zig_tests": "12/12 Debug+ReleaseSafe",
+  "wsi_sanitizers": "LSan enabled, zero leaks",
+  "wsi_coverage": "Zig branches 145/156=92.95%, native C branches 71/72=98.61%",
+  "icd_units": "394/394 Debug+ReleaseSafe",
+  "icd_coverage": "branches 4369/4837=90.32%, lines 4696/4766=98.53%",
+  "opencl_admission": "19 tests OK",
+  "limit": "incremental builds; opencl runtime fixture steps were up-to-date no-ops; no native or GPU result"
+ },
+ "diagnostics_verification": {
+  "host_test": {
+   "target": "make vgpu-handle-diag-test vgpu-handle-diag-sanitizers",
+   "exit": 0,
+   "cases": 18,
+   "checks": 6724,
+   "sanitizers": "ASan+LSan+UBSan clean; LSan self-control exits 23",
+   "gcov_inc": "100% lines (108), 100% branches (96/96)",
+   "mutants_inc": "30/31 killed by the author, 35/38 by the independent reviewer; survivors equivalent or untested fallback",
+   "acceptance_pin": "handle_baseline/native_handles/begin-after-baseline text pinned; 10/10 mutants of the acceptance lines killed"
+  },
+  "strict_cross_compile": {
+   "fixture": "zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror ... tests/vgpu/tcp_gpu_windows.c exit 0",
+   "native_test": "make build/vgpu_handle_diag_native.exe exit 0"
+  },
+  "native_test": {
+   "binary_sha256": "6e3cd574ebad6980f241ae55ee61b6cc23d1f9870cc0c49406a3380c2ccea403",
+   "guest": "Windows 11 build 26300 (qemu/KVM, preserved disk)",
+   "winrm": {
+    "exit": 0,
+    "cases": "7/7 PASS"
+   },
+   "interactive_console": {
+    "exit": 0,
+    "cases": "7/7 PASS"
+   },
+   "layout": "class-51 snapshot count equals GetProcessHandleCount in 5/5 runs, worst difference 0",
+   "type_names_verified": [
+    "Event",
+    "Semaphore",
+    "Mutant",
+    "Timer",
+    "File",
+    "Section",
+    "Job",
+    "Thread"
+   ],
+   "evidence": [
+    "build/qualification_20261020/m2_native/handle_diag_native_20261021.json (first binary 748f7a98...)",
+    "build/qualification_20261020/m2_native/handle_diag_native_final_20261021.json"
+   ]
+  },
+  "rtl_stretchdibits_probe": {
+   "source": "build/qualification_20261020/vm/rtl_probe.c",
+   "exe_sha256": "6b06e5ab65ab4261cb31af89d295203b70071b6ee62e971734685872f23185e0",
+   "result": "StretchDIBits 89 (and 44 half height) for LTR, LAYOUTRTL, LAYOUTRTL|NOINHERITLAYOUT and DC LAYOUT_RTL; sink_exact=1 sink_scaled=1 everywhere; interactive and WinRM",
+   "conclusion": "audit item 5.1 not reproduced; no production change"
+  },
+  "present_fixture_native": {
+   "exe": "build/vgpu_win32_present_test.exe sha256 24de2e7c...",
+   "interactive": "exit 0 (128 scaled/exact cycles; GDI/USER stable)",
+   "winrm_noninteractive": "fails at GetPixel (needs a real desktop) - expected, not a defect"
+  }
+ },
+ "not_done": [
+  "No instrumented 48-frame native run was executed (runner prepared and dry-run only; see build/qualification_20261020/m2_runner/README.txt).",
+  "The committed fixture sources change the fixture hashes: M2_NATIVE_RECEIPT_2026_10_17.json, NATIVE_RECEIPTS_2026_10_18.json and M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json still describe the OLD fixture hashes (b97fd1c6... / 169ba63d... / fe304e5b...) and remain valid only for those sources.",
+  "The strict native gate has not passed on the changed fixture; the historic 199->200 failure remains unattributed."
+ ],
+ "vm_state_at_stop": {
+  "qemu_pid_file": "build/windows11_vm/qemu.pid",
+  "swtpm_pid_file": "build/windows11_vm/tpm.pid",
+  "started_utc": "2026-10-21T02:10:12Z",
+  "backup": "build/vm_backup_20261021 (sha256-identical to the originals before boot; qcow2 0c7e5d6a...)",
+  "console": "user waddle_test signed in by the user; auto-logon remains off"
+ },
+ "evidence_sha256": {
+  "build/qualification_20261020/m2_native/handle_diag_native_20261021.json": "9d834a565fe187b9815a5e13767c98beec0f46f517e6f54069778e8fb3e0ce88",
+  "build/qualification_20261020/m2_native/handle_diag_native_final_20261021.json": "c8b27d3c6c54072b8b223b6d12f4ca3842e8812c6b196cf0ad957e07e07a8117",
+  "build/qualification_20261020/vm/interactive_validation_20261021.json": "2da5737ebb7d05d923a827b2a3f65b1f6a78f0b5ef4e9dddbfad000f7f712042",
+  "build/qualification_20261020/vm/rtl_probe_winrm_session_20261021.json": "fb8787723d24c99f7dd75038cc672e73e6157b6ac4e3f206f59460640829748b",
+  "build/qualification_20261020/vm/present_fixture_winrm_20261021.json": "566b44cd952c87389cd11ed35f950a27579483a4484529f06d41f169e9647097",
+  "build/qualification_20261020/vm/rtl_probe.c": "cc58ad4d84f83eaaf9ea6c86cfaa80c0db11a949bfa81a454359a07e008fbb97",
+  "build/qualification_20261020/baseline/SUMMARY.md": "8d3e5f07d0a8d834a0ea01978ead151eef0cb2130e20741e462fe7ba431a352d",
+  "build/qualification_20261020/m2_fixture/FINAL_SHA256SUMS": "6777b3fcfc1fa0215c80114440be98f808d1a748e112b7458cb0d453a819e817"
+ }
+}
