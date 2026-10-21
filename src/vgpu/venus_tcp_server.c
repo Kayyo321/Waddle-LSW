@@ -1,6 +1,9 @@
 /** @file venus_tcp_server.c @brief Token admission and bounded real receiver forwarding. */
 #include "waddle/venus_tcp.h"
 #include "waddle/venus_guest.h"
+#if defined(WaddleOpenclTransportGate)
+#include "opencl_transport_gate.h"
+#endif
 #include <string.h>
 static int overlaps(const void *first,size_t first_bytes,const void *second,size_t second_bytes)
 {
@@ -136,6 +139,16 @@ venus_ring_status_t venus_tcp_server_step(venus_tcp_server_t *server,
             (uint32_t)server->tx[38]<<16 | (uint32_t)server->tx[39]<<24;
     uint64_t outer_sequence=request.sequence; request.sequence=0;
     size_t capacity=(request.kind==RequestReply || request.kind==RequestRead) ? (size_t)request.argument_one : 0;
+#if defined(WaddleOpenclTransportGate)
+    if (request.kind==RequestSubmit && request.payload_bytes>=44 &&
+        server->tx[0]==178 && server->tx[1]==0 && server->tx[2]==0 && server->tx[3]==0 &&
+        server->last_opcode==18) {
+        status=venus_opencl_transport_gate_wait(server->session,outer_sequence,server->last_opcode,
+            deadline,cancel);
+        if (status!=RingCancelled) return poison(server,status==RingOk ? RingCorrupt : status);
+        return poison(server,RingCancelled);
+    }
+#endif
     status=venus_guest_exchange_timeout(guest,&request,server->tx,request.payload_bytes,
         &response,server->rx,capacity,(uint32_t)(deadline-now));
     /* An unacknowledged frontend failure has no actual response to forward. */

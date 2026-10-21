@@ -6801,3 +6801,8 @@ The final-image TEB check covers the actual reviewed compiler's outlined C helpe
 
 - **Commit `f314d95`** records bounded native heap attribution fixtures; **`524fefb`** records reviewed OpenCL driver integration, each +0% to all tasks.
 - **Commit containing `ci(vgpu): enforce runtime ownership and image admission gates`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds actual TLS/EH plain/sanitizer/coverage, probe build boundaries, and optimized/adversarial admission checks to OpenCL CI; Make now requires explicit reviewed build arguments. Root exact Make group passes, missing arguments reject, explicit forwarding and workflow YAML parse pass. Raw `build/qualification_feature_20261021/root_tls/ci_gate_wiring/receipt.json`; remote candidate CI/native/full-DLL acceptance remain pending.
+
+### Qualification-only OpenCL cancellation witness (2026-10-21)
+
+- **Commit `ae444ac`** records runtime CI/Make gates, +0% to all tasks.
+- **Commit containing `test(vgpu): witness actual OpenCL submits before supervised cancellation`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds a separately compiled authenticated opcode18 gate without changing default preprocessed code, plus malformed/I/O/deadline/threaded-cancel/fd controls. Root exact Make plain+ASan/LSan/UBSan passes with leak detection enabled; real helper47/47lines,63/66branches95.45%, all3functions, unchanged90% floor. [Contract](OPENCL_TRANSPORT_GATE.md); evidence `build/qualification_feature_20261021/opencl_gate_root/`. Native OpenCL cancellation/GPU/worker-retirement evidence remains pending.

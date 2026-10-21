@@ -37,6 +37,8 @@ jobs:
           make vgpu-opencl-runtime-eh-test vgpu-opencl-runtime-eh-sanitizers vgpu-opencl-runtime-eh-coverage
       - name: Verify actual native probe build boundaries without execution
         run: make vgpu-opencl-runtime-probe-build-test
+      - name: Verify qualification-only OpenCL submit witness ownership
+        run: make vgpu-opencl-transport-gate-test vgpu-opencl-transport-gate-sanitizers vgpu-opencl-transport-gate-coverage
       - name: Require buffer production line and directional branch coverage
         run: python3 -B scripts/clvk_buffer_coverage.py build/clvk_buffer_coverage
   transport:

@@ -138,3 +138,19 @@ vgpu-opencl-runtime-eh-coverage: | build
 .PHONY: vgpu-opencl-runtime-link-test
 vgpu-opencl-runtime-link-test:
 	python3 -B tests/vgpu/clvk_runtime_link_test.py
+
+# Qualification-only authenticated submit witness; never a production bridge flag.
+OpenclGateSources = tests/vgpu/opencl_transport_gate_test.c tests/vgpu/opencl_transport_gate.c src/vgpu/venus_tcp_socket.c
+OpenclGateWrap = -Wl,--wrap=fchmod -Wl,--wrap=fstat -Wl,--wrap=write -Wl,--wrap=close -Wl,--wrap=poll -Wl,--wrap=venus_tcp_now_ms
+.PHONY: vgpu-opencl-transport-gate-test vgpu-opencl-transport-gate-sanitizers vgpu-opencl-transport-gate-coverage
+vgpu-opencl-transport-gate-test: | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DWaddleOpenclTransportGate -Itests/vgpu -pthread $(OpenclGateSources) $(OpenclGateWrap) -o build/vgpu_opencl_transport_gate_test
+	./build/vgpu_opencl_transport_gate_test
+
+vgpu-opencl-transport-gate-sanitizers: | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer -DWaddleOpenclTransportGate -Itests/vgpu -pthread $(OpenclGateSources) $(OpenclGateWrap) -o build/vgpu_opencl_transport_gate_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/vgpu_opencl_transport_gate_sanitized
+
+vgpu-opencl-transport-gate-coverage: | build
+	python3 -B tests/vgpu/opencl_transport_gate_coverage.py
+	python3 -O -B tests/vgpu/opencl_transport_gate_coverage.py
