@@ -1,6 +1,6 @@
 # Feature Tracker: Guest WSI resize and retirement lifetime
 
-- **Contributors / Agents**: Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex independent qualification lead with read-only Luna source/evidence reviewers; Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
+- **Contributors / Agents**: Codex Astra isolated readiness implementer; Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex independent qualification lead with read-only Luna source/evidence reviewers; Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
 - **Time Started**: 2026-10-09T19:59:10Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -299,3 +299,29 @@ Full review: [M2_CODEX_REVIEW_2026_10_21.md](M2_CODEX_REVIEW_2026_10_21.md). Sou
 All six prescribed portable target groups pass independently. WSI branches are 92.95% Zig and 98.61% native C; the full ICD has 394 Debug/ReleaseSafe cases and 90.32% branches. Diagnostics have 18 cases / 6,779 checks under ASan/LSan/UBSan, with the intentional-leak self-control detected. Native Windows diagnostics pass 8/8. Fresh corrected-fixture `triangle_present` and `wsi_lifetime` runs pass on the actual RTX 5080 route; all 16 exact handle checks equal 199 on sample 1. Both the 1,020 historical and 68 new manifest-bound files re-hash successfully; an independent verifier additionally requires lifetime markers 1 through 8 in order.
 
 The historical `tcp_gpu_7adb6000` 199-to-200 failure remains unattributed and unwaived. CI has not run for these commits. The unchanged native qualification gate remains open; the proposed fail-closed attribution protocol is documented for an explicit owner decision, not implemented or adopted. **TODO #4 remains 80%, overall remains 94%, Time Ended TBD.** Software-vGPU remains 85.5%, with its separate OpenCL and other feature gates open. No PR-readiness update, push or merge occurred. The preserved VM is running; all owned native/GPU jobs and the temporary publisher have retired.
+
+
+### Isolated M2 readiness: ordered output gate, 2026-10-21
+
+- Implementer: Codex Astra readiness worker, isolated branch
+  `feature/m2-astra-readiness`, base `ca00ad7396ad42e6cdacc6fbe7b15f4fd53cd3a4`.
+  Shared native jobs, VM/GPU state, runners and historical receipts stayed read-only.
+- Commit subject: `test(vgpu): reject unordered M2 qualification output`
+  (exact hash is recorded by the lead in the subsequent commit checkpoint).
+  **Task impact: +0% to TODO #4 (+0% overall); M2 remains 94% / Review,
+  Time Ended TBD; software-vGPU remains 85.5%.**
+- Added `scripts/vgpu_m2_output.py` and `tests/vgpu/m2_output_test.py`, exposed by
+  `make vgpu-m2-output-test`. Future final qualification must invoke the tracked
+  verifier for every collected run in addition to the native supervisor/host
+  checks. It enforces ordered lifetimes 1..8 and each workload's ordered events,
+  rejects contradictory failures and malformed evidence, and records hashes.
+- `TMPDIR=/tmp/waddle_m2_astra_readiness/tmp make vgpu-m2-output-test`:
+  **PASS**, exit 0, nine regression groups including normal and optimized CLI.
+  Log: `/tmp/waddle_m2_astra_readiness/logs/unit1_output_test.log`.
+- Read-only compatibility controls: existing `tcp_gpu_8cbf89ac` triangle and
+  `tcp_gpu_72dc797c` WSI output shapes **PASS**; original failed
+  `tcp_gpu_7adb6000` **REJECTED** as required. No native jobs ran and these checks
+  add no acceptance credit or new historical attribution. Input hashes and
+  results: `/tmp/waddle_m2_astra_readiness/logs/unit1_historical_readonly.log`.
+- CI wiring and final native/physical verification of the integrated candidate
+  remain pending. The strict native handle oracle remains unchanged.

@@ -160,3 +160,69 @@ The native diagnostics test additionally creates 1,024 private manual-reset even
 
 
 The independent verification of the capacity correction and native growth regression is recorded in [M2_CODEX_REVIEW_2026_10_21.md](M2_CODEX_REVIEW_2026_10_21.md) and its [machine-readable receipt](M2_CODEX_RECEIPT_2026_10_21.json). All prescribed portable gates, eight native Windows diagnostics cases and both fresh physical GPU workloads pass. The historical count failure remains open; the alternative attribution protocol described there is an unapproved proposal and changes no current acceptance criterion. M2 remains 94%, Time Ended TBD.
+
+
+## Prospective ordered guest-output qualification gate (2026-10-21)
+
+`scripts/vgpu_m2_output.py` is the tracked, read-only final guest-output gate for
+new full `triangle_present` and `wsi_lifetime` qualifications. Every final native
+repetition must pass this command in addition to the existing supervisor and
+independent host/source/binary/process-owner verification:
+
+```sh
+python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload triangle_present --device 'NVIDIA GeForce RTX 5080'
+python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload wsi_lifetime --device 'NVIDIA GeForce RTX 5080'
+```
+
+Use the corresponding workload command on each run's final collected status.
+Save its JSON stdout and exit code in new qualification evidence, bind the
+reported status/verifier SHA-256 hashes in the final review receipt, and require
+exit zero. A previous ignored replay driver's pass alone cannot close this
+check. The command never starts a guest, accesses the VM, changes a receipt,
+modifies historical runners, or accepts M2. Synthetic regression success and
+read-only checks of historical outputs do not qualify a new binary.
+
+**Input and ownership.** The input is the supervisor's UTF-8 JSON object with
+string `exit`, `stdout` and `stderr` fields. Duplicate JSON keys, invalid JSON,
+non-string or missing output, NUL output, and any exit other than the literal
+string `0` fail. The caller supplies the exact workload and device name. The
+verifier reads the file once, hashes those same bytes, and owns only ordinary
+Python parsing/storage objects until process exit. It has no subprocess,
+network, device, persistent state, output-file or native resource ownership.
+Parallel invocations have independent local state. Python is existing test and
+qualification tooling; no runtime dependency or production parser is added.
+
+**Sequence.** The verifier requires exactly one nonzero authenticated session
+header for the selected workload/API 1.0 and one positive handle baseline before
+workload events. It then requires lifetimes 1 through 8 in order, with the exact
+requested device on every lifetime line. Before each triangle lifetime line,
+exactly FIFO frames 1, 2, 3 then IMMEDIATE frames 1, 2, 3 must appear. Before each
+WSI lifetime line, the four existing case labels must appear exactly once in
+the fixture's order (failed replacement, zero area/restore, resize, destroyed
+HWND). The final retirement-Ack PASS must occur exactly once and be the last
+nonempty stdout line. CRLF, LF and CR line endings are supported. Unknown
+ordinary informational lines are allowed between required events. Recognizable
+but malformed/embedded acceptance markers, missing/extra events, wrong labels,
+reordered frames, wrong workload, duplicate lifetime numbers and acceptance
+markers on stderr fail. Known fixture failure markers in either stream fail,
+including markers embedded in loader output. Native snapshot availability and
+timing remain passive diagnostics and do not become new native acceptance
+criteria; no count rule, baseline, retry budget, workload or threshold changes.
+
+**Errors and verification.** Exit 0 means only the guest-output shape passed;
+exit 1 means input/read/validation failure; invalid command arguments exit 2.
+The JSON result explicitly limits its scope to guest output. Validation uses
+explicit exceptions, not Python assertions, so `python -O` does not bypass it.
+`make vgpu-m2-output-test` runs nine test groups: exact valid workloads, every
+required event's deletion/duplication/adjacent swap, count-preserving lifetime
+and frame mutations, cross-workload contamination, malformed markers,
+contradictory failures in both streams, schema/header/final-line errors, passive
+diagnostics, and the real CLI under normal/optimized Python with malformed and
+duplicate-key JSON. Temporary test files have a scoped owner and are removed
+on every test exit. These are output-verifier tests, separate from production
+memory sanitizer and coverage gates.
+
+Historical review already verified all actual 32 outputs had the correct
+ordered lifetime sequence. This prospective gate closes future false acceptance
+in count-only replay checks; it does not invalidate or rewrite those receipts,
+attribute the historical failure, or award the remaining M2 qualification weight.

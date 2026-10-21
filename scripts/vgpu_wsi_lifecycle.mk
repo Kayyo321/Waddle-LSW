@@ -25,3 +25,10 @@ vgpu-wsi-lifecycle-sanitizers: | build/wsi-lifecycle
 vgpu-wsi-lifecycle-coverage: vgpu-protocol
 	python3 tests/av/coverage.py venus_wsi
 	python3 tests/vgpu/wsi_lifecycle_coverage.py
+
+# This portable gate validates the final native-output verifier with malformed logs.
+# Qualification must additionally run scripts/vgpu_m2_output.py on every final
+# guest_status.json; these synthetic tests cannot accept a native run.
+.PHONY: vgpu-m2-output-test
+vgpu-m2-output-test:
+	python3 -B tests/vgpu/m2_output_test.py -v

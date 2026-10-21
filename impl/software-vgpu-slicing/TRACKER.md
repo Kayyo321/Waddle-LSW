@@ -1639,3 +1639,22 @@ unchanged strict handle gate on the committed fixture, all passing; portable gat
 [M2_CODEX_REVIEW_2026_10_21.md](../wsi-window-lifetime/M2_CODEX_REVIEW_2026_10_21.md) and its [receipt](../wsi-window-lifetime/M2_CODEX_RECEIPT_2026_10_21.json) record the independent review of `8810544`. Commits `c650401` (snapshot-capacity correction), `ff66d04` (native 1,024-event growth regression) and `bc89bb0` (provenance/duration correction) each affect bounded M2 TODO #4 by +0%; every software-vGPU task remains +0%. The commit containing this checkpoint, `docs(wsi): record independent Codex review and qualification blocker`, likewise changes every task by +0%.
 
 All prescribed M2 portable gates pass independently, including 394 ICD cases and 90.32% ICD branch coverage. The corrected diagnostics pass 18 cases / 6,779 checks with ASan/LSan/UBSan; native Windows diagnostics pass 8/8. Fresh corrected-fixture triangle and WSI workloads pass through the physical RTX 5080, with all 16 checks exactly at 199 handles. The original 199-to-200 failure remains unattributed and unwaived, so M2 stays 94% / Review. CI is not run for these commits, no criteria amendment is approved, no acceptance credit is granted, and no push, PR-readiness update or merge occurs. Software-vGPU remains **85.5%**, Time Ended TBD; OpenCL runtime-unload, DXVK heap and other separate feature gates remain open.
+
+
+### M2 ordered guest-output readiness gate, 2026-10-21
+
+Codex Astra implemented the isolated `feature/m2-astra-readiness` unit with
+subject `test(vgpu): reject unordered M2 qualification output` (exact hash
+recorded by the lead in the following commit checkpoint). The tracked final
+output verifier enforces lifetimes 1..8 and each workload's ordered frame/case
+sequence, rejects malformed/contradictory evidence, and is covered by nine
+portable regression groups through `make vgpu-m2-output-test` (PASS). Every
+future final native qualification must additionally run this verifier against
+each collected status; existing supervisor/host/source/owner checks remain
+required. Historical receipts and the strict count oracle are unchanged.
+
+**Task impact: +0% to TODO #3 and #11 (+0% overall). Software-vGPU remains
+85.5%; M2 TODO #4 remains 80%, M2 overall 94% / Review, Time Ended TBD.**
+Native/physical acceptance and CI are pending. Details and validation evidence
+are in [the M2 tracker](../wsi-window-lifetime/TRACKER.md) and
+[implementation contract](../wsi-window-lifetime/IMPL_DESC.md).
