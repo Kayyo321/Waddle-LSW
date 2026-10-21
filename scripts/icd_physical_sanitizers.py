@@ -26,7 +26,7 @@ import icd_seam_sanitizers as seam
 
 # Frozen immutable source receipts; changed fixtures need a new audited contract.
 SourceHashes = {
-    'src/vgpu/venus_icd.zig': '7cf58eefde08348512f6890338c106e5f81c3d5f352f034a86b18b8a2a1832ff',
+    'src/vgpu/venus_icd.zig': '3b419a9e76cae858a3c78a8a5ab305bef206f7750e056c11daf23732b18cf0d7',
     'tests/vgpu/icd.c': '24dfb9a259ef60955259e3e874d4795e1c73413ba4b5c2435cbc0c950b97ae54',
     'tests/vgpu/worker_presented.c': 'fda7e83c207564f8c4c9e69d580abf773f3aecacc89482d833c1485714671541',
 }
@@ -160,7 +160,7 @@ def completed_seam(provenance, seam_output, seam_record):
     assert completion.read_bytes() == reference.read_bytes(), 'reference differs from immutable run receipt'
     expected_sources = {str((Path('src/vgpu') / name).resolve()) for name in seam.CompleteSourceNames}
     assert set(record['source_manifest']) == expected_sources and len(expected_sources) == 37
-    assert record['expected_icd_debug_units'] == 394
+    assert record['expected_icd_debug_units'] == 399
     seam.merge_inputs(provenance, record['source_manifest'])
     retained = record['retained_artifacts']
     assert 0 < len(retained) <= seam.MaxRetainedArtifacts
@@ -209,7 +209,7 @@ def completed_seam(provenance, seam_output, seam_record):
             assert helper['final_required_symbol_access_hooks']['venus_features_native.publish_batch'] > 0
         assert report['standalone_native_suites'] == 6 and report['standalone_debug_units'] == 29
         assert report['icd_native_suites'] == (1 if kind == 'native' else 0)
-        assert report['icd_debug_units'] == (0 if kind == 'native' else 394)
+        assert report['icd_debug_units'] == (0 if kind == 'native' else 399)
         assert dependency.file_hash(folder / (kind + '_runner')) == report['executable_sha256']
         links = report['ordered_link_manifest']
         assert len({entry['path'] for entry in links}) == len(links)
@@ -240,7 +240,7 @@ def reprove_seam(provenance, output, folder):
     add_file(provenance, folder / 'native_runner')
     test_path = add_file(provenance, folder / 'test_sanitized.json')
     completed_test = json.loads(test_path.read_text())
-    assert completed_test['icd_debug_units'] == 394
+    assert completed_test['icd_debug_units'] == 399
     assert dependency.file_hash(folder / 'test_runner') == completed_test['executable_sha256']
     add_file(provenance, folder / 'test_runner')
     helper_module = next(module for module in completed_test['modules']

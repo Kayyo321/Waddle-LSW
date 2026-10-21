@@ -6,6 +6,7 @@ No production changes, compiled fault variants, suppression, or runtime gate byp
 Run from the repository root. Each failure exits nonzero before sanitizer emission.
 """
 from pathlib import Path
+import hashlib
 import re
 import sys
 import tempfile
@@ -28,6 +29,7 @@ HelperFunctions = {
 }
 HelperFixtures = {'venus_pipeline_wire_helpers.zig': set(),
                   'venus_image_view_native.zig': {'image_info', 'view_info'}}
+M2OwnershipFunctions = {'m2_note_id', 'm2_snapshot'}
 
 
 class inventory_tests_t(unittest.TestCase):
@@ -76,7 +78,10 @@ class inventory_tests_t(unittest.TestCase):
         inventory = owned.icd_source_inventory(SourceRoot / 'venus_icd.zig')
         self.assertEqual(len(inventory), 31)
         self.assertEqual({path.name for path in inventory}, set(owned.IcdEmbeddedSourceNames))
-        self.assertEqual(sum(len(item['functions']) for item in inventory.values()), 660)
+        self.assertEqual(sum(len(item['functions']) for item in inventory.values()), 662)
+        icd = inventory[(SourceRoot / 'venus_icd.zig').resolve()]
+        self.assertTrue(M2OwnershipFunctions <= set(icd['functions']))
+        self.assertTrue(M2OwnershipFunctions.isdisjoint(icd['excluded']))
         self.assertTrue({'venus_wsi.zig', 'venus_transfer2_native.zig',
                          'venus_descriptor_template_native.zig', 'venus_shader_wire.zig',
                          'venus_image_transfer_native.zig'} <= {path.name for path in inventory})
@@ -85,7 +90,7 @@ class inventory_tests_t(unittest.TestCase):
                          'venus_values.zig'}.isdisjoint(path.name for path in inventory))
 
     def test_exact_native_test_helper_signatures(self):
-        """Native absence is limited to audited helpers required by the test image."""
+        """Only exact audited lazy helpers may be absent natively; tests must emit them."""
         inventory = owned.icd_source_inventory(SourceRoot / 'venus_icd.zig')
         observed = 0
         for source, item in inventory.items():
@@ -95,8 +100,51 @@ class inventory_tests_t(unittest.TestCase):
                 self.assertEqual(declaration['declaration'], expected[name])
                 self.assertEqual(declaration['line'], item['functions'][name])
                 self.assertEqual(source.read_text().count(expected[name]), 1)
+                if name in M2OwnershipFunctions:
+                    self.assertTrue(declaration['require_access_hooks'])
                 observed += 1
-        self.assertEqual(observed, 18)
+        self.assertEqual(observed, 20)
+        self.assertEqual(owned.NativeTestAccessHooks['venus_icd.zig'], M2OwnershipFunctions)
+
+    def test_m2_probe_import_export_guards_preserve_public_abi(self):
+        """Qualification ABI stays macro-gated; ordinary eleven exports stay exact."""
+        code = (SourceRoot / 'venus_icd.zig').read_text()
+        self.assertEqual(code.count('const m2_c = if (builtin.is_test or @hasDecl(c, "WaddleM2OwnershipProbe")) @cImport({'), 1)
+        self.assertEqual(code.count('@cInclude("../tests/vgpu/m2_ownership_probe.h");'), 1)
+        self.assertRegex(code, r'comptime \{\n\s+if \(@hasDecl\(c, "WaddleM2OwnershipProbe"\)\)\n\s+@export\(m2_snapshot, \.\{ \.name = "venus_icd_m2_snapshot" \}\);\n\}')
+        ordinary_functions = set(re.findall(r'^export fn (\w+)\(', code, re.M))
+        self.assertEqual(ordinary_functions, {
+            'venus_icd_bind', 'venus_icd_bind_capabilities', 'venus_icd_bind_timed',
+            'venus_icd_unbind', 'venus_icd_abandon', 'venus_icd_negotiate_loader',
+            'venus_icd_get_instance_proc_addr', 'venus_icd_get_physical_proc_addr'})
+        ordinary_aliases = set(re.findall(r'\.name = "(vk_[^"]+)"', code))
+        self.assertEqual(ordinary_aliases, {
+            'vk_icdNegotiateLoaderICDInterfaceVersion', 'vk_icdGetInstanceProcAddr',
+            'vk_icdGetPhysicalDeviceProcAddr'})
+
+    def test_test_image_rejects_missing_m2_and_unknown_owned_functions(self):
+        """Neither lazy M2 helpers nor any other inventory entry can disappear in tests."""
+        with tempfile.TemporaryDirectory(prefix='waddle-owned-missing-') as folder:
+            root = Path(folder)
+            source = root / 'venus_icd.zig'
+            source.write_text('fn retained() void {}\n')
+            source = source.resolve()
+            original = root / 'module.ll'
+            original.write_text(
+                'define void @retained() #0 !dbg !3 {\n ret void\n}\n'
+                '!2 = !DIFile(filename: "venus_icd.zig", directory: "' + str(root) + '")\n'
+                '!3 = !DISubprogram(name: "retained", file: !2, line: 1)\n')
+            base = {'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+                    'excluded': {}, 'test_lines': set(), 'fixture_boundary': 2}
+            output = root / 'instrumented.ll'
+            for missing_functions, lazy, expected_error in (
+                    ({'retained': 1, 'm2_snapshot': 2},
+                     {'m2_snapshot': {'require_access_hooks': True}}, 'required helper missing from Zig tests'),
+                    ({'retained': 1, 'unknown_owner': 2}, {}, 'unaccounted owned functions')):
+                inventory = dict(base, functions=missing_functions, lazy_native_declarations=lazy)
+                with self.subTest(missing=tuple(missing_functions)):
+                    with self.assertRaisesRegex(AssertionError, expected_error):
+                        owned.instrument(source, original, output, {source: inventory}, mode='tests')
 
     def test_native_layout_only_contract_fails_on_runtime_emission(self):
         """Only the exact four layout-source helpers may have zero native code."""

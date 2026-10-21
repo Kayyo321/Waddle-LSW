@@ -66,7 +66,9 @@ NativeTestSignatures = {'venus_descriptor_wire.zig': {'allocate_sets': 'pub fn a
                                                                  'shader_ids: []const u64, layout: u64, '
                                                                  'pass: u64, output: u64) !writer_t {'},
  'venus_icd.zig': {'encode_device': 'fn encode_device(request: *const device_native.owned_request_t, '
-                                    'physical_id: u64, id: u64) !render_wire.writer_t {'},
+                                    'physical_id: u64, id: u64) !render_wire.writer_t {',
+                  'm2_note_id': 'fn m2_note_id(snapshot: *m2_c.m2_icd_snapshot_t, id: u64) void {',
+                  'm2_snapshot': 'fn m2_snapshot(version: u32, output: ?*m2_c.m2_icd_snapshot_t, bytes: usize) callconv(.C) c_int {'},
  'venus_icd_profiles.zig': {'create_set_profile': 'pub fn create_set_profile(layout: *const '
                                                   'descriptor_layout_t) !descriptor_set_t {',
                             'normalize_bindings': 'pub fn normalize_bindings(bindings: []const binding_t) '
@@ -97,6 +99,8 @@ ComptimeMaskSignature = 'fn boolean_mask(comptime native_t: type, comptime first
 # Exact non-C helper; only an absent native definition can be reported unreachable.
 NativeBatchSource = Path("src/vgpu/venus_features_native.zig").resolve()
 NativeBatchSignature = "pub fn publish_batch(chain: *const chain_t, nodes: []const node_t) !void {"
+NativeTestAccessHooks = {'venus_features_native.zig': {'publish_batch'},
+                         'venus_icd.zig': {'m2_note_id', 'm2_snapshot'}}
 
 
 def run(arguments, **kwargs):
@@ -163,7 +167,7 @@ def source_inventory(source):
             assert production.count(signature) == 1 and name in functions
             lazy_native[name] = {'line': functions[name], 'declaration': signature,
                                  'reason': 'audited test-only caller; native uses separate production path',
-                                 'require_access_hooks': current == NativeBatchSource and name == 'publish_batch'}
+                                 'require_access_hooks': name in NativeTestAccessHooks.get(current.name, set())}
         test_lines = {line for line, text in enumerate(code.splitlines(), 1)
                       if re.match(r'\s*test "', text)}
         inventories[current] = {'functions': functions, 'excluded': excluded, 'test_lines': test_lines,

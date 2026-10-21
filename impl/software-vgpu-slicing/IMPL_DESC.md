@@ -6952,3 +6952,27 @@ PASS normally and optimized outside ptrace, including ASan/LSan boundaries.
 Receipt `build/qualification_feature_20261021/ci_preflight_root/receipt.json`.
 This is a test portability fix, not production/native acceptance. +0% to every
 task; parent85.5%, M2 94%, Time Ended TBD. CI must rerun at the corrected head.
+
+### Complete ICD seam refresh (2026-10-21)
+
+Current qualified ICD source adds exactly two macro-gated ownership helpers,
+`m2_note_id` and `m2_snapshot`: the embedded inventory is now662 functions
+across the same31 sources. Ordinary native emission may omit only their exact
+audited lazy declarations; the399-test image must emit both and prove actual
+ASan access-hook relocations in each function and the final executable. Neither
+helper is excluded from ownership instrumentation. Missing helpers or unknown
+owned functions fail synthetic rejection controls. The ordinary11-export ABI
+remains separately asserted. Physical proof now requires the current exact ICD
+SHA and399 units rather than the obsolete394-case baseline. No workload,
+coverage floor, sanitizer or cleanup requirement changes.
+
+Root's strict complete37-module seam passes with zero sanitizer diagnostics at
+`build/icd_complete_seam_safety_37/run-20261021T193122717034Z-341004/completion.json`.
+The earlier660-count and native-emission failures remain in the qualification
+logs. All13 inventory controls pass with assertions enabled; optimized Python
+is intentionally rejected by the existing preservation gate. Physical Windows
+and Linux GPU acceptance remain separate.
+
+Atomic unit: `test(vgpu): account for qualified ownership sanitizer helpers`
+(hash recorded next checkpoint). Task impact +0% to every task; parent85.5%,
+M2 94% / Review, Time Ended TBD.
