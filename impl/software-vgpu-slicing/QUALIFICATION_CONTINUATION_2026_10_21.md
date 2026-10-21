@@ -280,3 +280,16 @@ fully return after each unload, and a +7handle delta remains unattributed.
 reproduce or waive the active GPU workload's +83handles/threeTLS/threeFLS.
 No parent progress changes:85.5% / In Progress, Time Ended TBD. M2 is100% /
 Completed in commit `54ee9c4` (+6 M2 points; +0 parent points).
+
+### Recoverable Fable continuation (2026-10-21)
+
+The user requested a safe stopping point and transfer.
+[Authoritative Fable handoff](FABLE_HANDOFF_2026_10_21.md) records sole VM lease
+relinquishment, all three workers stopped, active signed-in console, zero owned
+candidate survivors and three frozen tooling packages. Root verified1221 census
+bindings and35 guard receipt inputs; actual new native work is NOT RUN.
+R14 is offline-ready/not native-calibrated; native guard fixture is partial.
+M2 stays100% / Completed in54ee9c4; parent85.5% / In Progress, Time Ended TBD.
+Final OpenCL reload/native heap, DXVK heap, final review and exact-head CI remain.
+Atomic unit `docs(vgpu): preserve recoverable Fable qualification handoff`: all
+tasks +0%, overall +0%. Commit `cbae0a9` corrects the212-file source count (+0%).

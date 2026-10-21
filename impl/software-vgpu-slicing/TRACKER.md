@@ -2158,3 +2158,16 @@ R6/R7 root plan reviews each bind212 src/include files, not213. Correct only
 the prose cardinality; raw hashes, source equality, native failure and all
 acceptance statuses are unchanged. All tasks +0%. Commit `d050394` records
 the load-only diagnostic and M2 closure attribution (+0% all tasks).
+
+### Recoverable Fable continuation (2026-10-21)
+
+The user requested a safe stopping point and transfer.
+[Authoritative Fable handoff](FABLE_HANDOFF_2026_10_21.md) records sole VM lease
+relinquishment, all three workers stopped, active signed-in console, zero owned
+candidate survivors and three frozen tooling packages. Root verified1221 census
+bindings and35 guard receipt inputs; actual new native work is NOT RUN.
+R14 is offline-ready/not native-calibrated; native guard fixture is partial.
+M2 stays100% / Completed in54ee9c4; parent85.5% / In Progress, Time Ended TBD.
+Final OpenCL reload/native heap, DXVK heap, final review and exact-head CI remain.
+Atomic unit `docs(vgpu): preserve recoverable Fable qualification handoff`: all
+tasks +0%, overall +0%. Commit `cbae0a9` corrects the212-file source count (+0%).
