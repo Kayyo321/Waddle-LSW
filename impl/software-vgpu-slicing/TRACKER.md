@@ -1674,3 +1674,18 @@ are in [the M2 tracker](../wsi-window-lifetime/TRACKER.md) and
 - **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
   **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. Original native
   strict-count failure and final qualification remain open.
+
+
+### M2 diagnostic coverage readiness, 2026-10-21
+
+- **Commit `e17425b`**: `ci(vgpu): enforce M2 output and native diagnostic gates`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**.
+- Current isolated unit: `test(vgpu): gate real handle diagnostic coverage`
+  (exact hash recorded by the lead in the next checkpoint). Adds a reproducible
+  >=90% production line/branch gate over the real diagnostic include, retained
+  gcov evidence and CI wiring. Five malformed-evidence/floor control groups
+  PASS; the existing 18 cases/6,779 checks yield 108/108 lines and 100/100
+  branch outcomes, with no exclusions. See the [M2 tracker](../wsi-window-lifetime/TRACKER.md).
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
+  **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. No historical
+  result is reclassified and no native execution is claimed by this change.

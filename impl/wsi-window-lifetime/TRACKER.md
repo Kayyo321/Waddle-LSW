@@ -370,3 +370,24 @@ Exact commands, environment, UTC start/end times, exits and log SHA-256 hashes:
 and configuration-control results are in the sibling `unit2_receipt.json`.
 No production sources, existing native workloads, strict acceptance rule,
 coverage exclusions/thresholds, historical evidence or dependency pins changed.
+
+
+### Isolated diagnostic coverage gate, 2026-10-21
+
+- **Commit `e17425b`**: `ci(vgpu): enforce M2 output and native diagnostic gates`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. Lead review independently
+  rehashed all nine bound logs and source/config records before committing.
+- Current unit subject: `test(vgpu): gate real handle diagnostic coverage`
+  (exact hash recorded by the lead in the next checkpoint). Add the reproducible
+  real-include gcov gate, five fail-closed evidence controls, make target and CI
+  artifact retention. No production or acceptance rule changes in this unit.
+- `TMPDIR=/tmp/waddle_m2_astra_readiness/tmp PYTHONDONTWRITEBYTECODE=1 make
+  vgpu-handle-diag-coverage`: **PASS**, exit 0; five evidence-control groups,
+  existing 18 diagnostic cases/6,779 checks and source pin; real-include coverage
+  **108/108 lines (100%) and 100/100 branch outcomes (100%)**, no exclusions.
+  Log: `/tmp/waddle_m2_astra_readiness/logs/unit3_coverage.log`.
+  Raw report/summary directory:
+  `build/coverage/vgpu/handle_diag/run-20261021T172335548961Z-178883/`.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  Time Ended **TBD**; software-vGPU remains **85.5%**. Hosted CI and the final
+  native/physical qualification are **NOT RUN** by this isolated worker.

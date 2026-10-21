@@ -267,3 +267,38 @@ hosted job does not establish WOW64, interactive-console pixels, physical GPU
 retirement, whole-process Windows heap ownership or historical handle attribution.
 The existing final independent qualification still requires the actual guest/
 physical runs and the new ordered output gate on the integrated candidate.
+
+
+## Reproducible real-source handle diagnostic coverage (2026-10-21)
+
+`make vgpu-handle-diag-coverage` replaces the need for a manual diagnostic gcov
+invocation. It first runs malformed-evidence/floor controls, then compiles the
+normal `tcp_gpu_handle_diag_host.c` translation unit with GCC coverage, strict
+warnings, `-O0` and absolute source paths. The unchanged real
+`tcp_gpu_handle_diag_windows.inc` is included normally, with the existing
+scripted kernel and allocator hooks; no implementation is copied or sliced.
+The normal 18-case fixture runs with the acceptance-source pin. The report
+counts every recorded line and directional branch outcome of the real include,
+requiring at least 90% for each using an exact integer comparison. Host fixture
+and fake-header counters remain in the raw report and do not contribute to the
+native diagnostic implementation's denominator. There are no implementation
+line/branch exclusions or threshold overrides.
+
+The gate requires exactly one gcov file record for each of the three actual
+translation-unit sources (host fixture, real include, fake API header). It
+rejects missing/duplicate/unexpected file records, absent or empty production
+lines/branch outcomes, duplicate/invalid line numbers and non-integer or
+negative counters. Five test groups exercise those fail-closed boundaries,
+independent line/branch failures and the exact inclusive 90% floor. All parsing
+is ordinary test tooling with owned local Python objects and explicit failures;
+no assertion setting can disable the production coverage decision.
+
+Each invocation owns a fresh `build/coverage/vgpu/handle_diag/run-<UTC>-<PID>/`
+directory and retains its runner, object, raw gcno/gcda, compressed gcov JSON
+and successful summary. The summary binds the real source and raw JSON hashes
+and records actual line/outcome numerators and denominators. Tool errors,
+fixture failures and malformed/insufficient coverage return nonzero and retain
+the generated evidence. CI runs the gate alongside the existing diagnostics
+functional/sanitizer gates and always uploads available coverage evidence using
+the same pinned artifact action and seven-day retention. It neither changes
+native acceptance nor replaces Windows execution, sanitizer or allocator checks.

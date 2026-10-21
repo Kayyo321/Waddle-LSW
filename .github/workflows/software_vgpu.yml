@@ -53,7 +53,15 @@ jobs:
       - name: Verify loader environment rollback with mock-only sanitizers
         run: make vgpu-loader-environment-test vgpu-loader-environment-sanitizers vgpu-loader-environment-coverage
       - name: Verify native fixture handle diagnostics with mock-only sanitizers
-        run: make vgpu-handle-diag-test vgpu-handle-diag-sanitizers
+        run: make vgpu-handle-diag-test vgpu-handle-diag-sanitizers vgpu-handle-diag-coverage
+      - name: Preserve real-source handle diagnostic coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: handle-diagnostic-coverage
+          path: build/coverage/vgpu/handle_diag/**
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Reject malformed and unordered M2 qualification output
         run: make vgpu-m2-output-test
       - name: Verify metadata-bound concurrent coverage recorder

@@ -187,3 +187,10 @@ build/vgpu_handle_diag_native.exe: tests/vgpu/tcp_gpu_handle_diag_native.c tests
 
 .PHONY: vgpu-handle-diag-native-build
 vgpu-handle-diag-native-build: build/vgpu_handle_diag_native.exe
+
+# Measure the real included diagnostic source; retain raw gcov data and enforce
+# the unchanged 90% line/branch floor without any source/branch exclusions.
+.PHONY: vgpu-handle-diag-coverage
+vgpu-handle-diag-coverage:
+	python3 -B tests/vgpu/handle_diag_coverage_test.py -v
+	python3 -B tests/vgpu/handle_diag_coverage.py
