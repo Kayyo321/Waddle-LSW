@@ -2003,3 +2003,13 @@ directional branches. Independent source review finds no additional issue.
 The failed native process/owned console/host retire; raw failure is preserved.
 [Contract and evidence](OPENCL_CANCELLATION_CONTRACT.md). Native rerun pending;
 #5/all parent tasks +0%, total85.5%, M2 94%, Time Ended TBD.
+
+### Full cancellation regression and witnessed native result (2026-10-21)
+
+Atomic unit `test(vgpu): exercise full OpenCL cancellation orchestration`
+extends the actual five-function regression to108/108lines and92/92branch
+outcomes with root O0/O2 ASan/LSan/UBSan pass. Fresh native
+`tcp_gpu_d5dbcc4f` passes the intentional authenticated transport-loss scope;
+full dependency closure/final-source rerun remains required.
+[Evidence and limitations](OPENCL_CANCELLATION_CONTRACT.md).
+#5/all tasks +0%, total85.5%, M2 94%, Time Ended TBD.

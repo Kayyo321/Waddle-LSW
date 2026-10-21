@@ -2,6 +2,7 @@
 """Portable source-extracted test of OpenCL transport-loss teardown ordering."""
 import ast
 import hashlib
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -33,8 +34,12 @@ def make_header(source):
         'static int release_transport_loss_owners(const api_t *api, cl_event *event,',
         'static void shutdown_transport_loss(const api_t *api, clvk_shutdown_t shutdown)',
         'static int release_transport_loss_after_retirement(const api_t *api,',
+        'static int run_transport_loss(const api_t *api, cl_device_id device,',
     )
-    parts = []
+    kernel = re.search(r'static const char TransportLossKernel\[\]\s*=\s*(?:"(?:[^"\\]|\\.)*"\s*)+;', source)
+    if kernel is None:
+        raise ValueError('actual transport-loss kernel constant missing')
+    parts = [kernel.group()]
     for signature in signatures:
         definition = extract_function(source, signature)
         if signature.startswith('typedef struct'):
@@ -55,9 +60,13 @@ def make_header(source):
 #include <stddef.h>
 #include <stdint.h>
 typedef uint64_t ULONGLONG;
+typedef uint32_t DWORD;
+typedef int BOOL;
+typedef struct fake_handle_t *HANDLE;
 typedef int32_t cl_int;
 typedef uint32_t cl_uint;
 typedef struct platform_t *cl_platform_id;
+typedef struct fake_handle_t *cl_device_id;
 typedef struct fake_handle_t *cl_command_queue;
 typedef struct fake_handle_t *cl_kernel;
 typedef struct fake_handle_t *cl_mem;
@@ -65,6 +74,13 @@ typedef struct fake_handle_t *cl_program;
 typedef struct fake_handle_t *cl_context;
 typedef struct fake_handle_t *cl_event;
 typedef struct api_t {
+ cl_context (*create_context)(const void *,cl_uint,const cl_device_id *,void *,void *,cl_int *);
+ cl_command_queue (*create_queue)(cl_context,cl_device_id,uint64_t,cl_int *);
+ cl_program (*create_program)(cl_context,cl_uint,const char **,const size_t *,cl_int *);
+ cl_int (*build_program)(cl_program,cl_uint,const cl_device_id *,const char *,void *,void *);
+ cl_kernel (*create_kernel)(cl_program,const char *,cl_int *);
+ cl_mem (*create_buffer)(cl_context,uint64_t,size_t,void *,cl_int *);
+ cl_int (*set_arg)(cl_kernel,cl_uint,size_t,const void *);
  cl_int (*enqueue_kernel)(cl_command_queue,cl_kernel,cl_uint,const size_t *,const size_t *,const size_t *,cl_uint,const cl_event *,cl_event *);
  cl_int (*read_buffer)(cl_command_queue,cl_mem,uint32_t,size_t,size_t,void *,cl_uint,const cl_event *,cl_event *);
  cl_int (*release_event)(cl_event); cl_int (*release_kernel)(cl_kernel);
@@ -75,22 +91,29 @@ typedef struct api_t {
 typedef int32_t (*clvk_shutdown_t)(uint32_t);
 typedef int32_t venus_ring_status_t;
 typedef venus_ring_status_t (*bootstrap_abandon_t)(uint64_t);
+typedef venus_ring_status_t (*bootstrap_stop_t)(void);
+typedef uint64_t (*bootstrap_session_t)(void);
 enum { CL_SUCCESS=0, CL_INVALID_OPERATION=-59, CL_OUT_OF_RESOURCES=-5,
  CL_INVALID_PLATFORM=-32, CL_TRUE=1, RingOk=0, ClvkShutdownAbi=1,
- ClvkShutdownVersion=2, ClvkShutdownBusy=3, ClvkShutdownOk=0 };
+ ClvkShutdownVersion=2, ClvkShutdownBusy=1, ClvkShutdownOk=0,
+ CL_MEM_READ_WRITE=1, WAIT_OBJECT_0=0 };
 #define ActualIntegrationSourceSha256 "''' + source_digest + '''"
 #define ActualExtractionSha256 "''' + extraction_digest + '''"
 static void fail_closed(const char *message);
 static void fake_wait_retired_bounded(const wchar_t *path,uint64_t identity,ULONGLONG timeout_ms);
 static ULONGLONG GetTickCount64(void);
 static void Sleep(unsigned long milliseconds);
+static uintptr_t _beginthreadex(void *,unsigned,unsigned (*)(void *),void *,unsigned,unsigned *);
+static DWORD WaitForSingleObject(HANDLE,DWORD);
+static BOOL GetExitCodeThread(HANDLE,DWORD *);
+static BOOL CloseHandle(HANDLE);
 #define wait_retired_bounded fake_wait_retired_bounded
 ''' + extracted + '''\n#endif\n'''
     return content, extracted
 
 
 def main():
-    """Own fresh evidence; require sanitizers and >=90% actual helper coverage."""
+    """Own fresh evidence; require sanitizers and >=90% actual full-path coverage."""
     import gzip
     import json
     import os
@@ -145,7 +168,7 @@ def main():
         summary = gate.coverage_summary(report, Root)
         actual = next(item for item in report['files'] if item['file']==str(header))
         expected = {'run_transport_loss_call','release_transport_loss_owners',
-                    'shutdown_transport_loss','release_transport_loss_after_retirement'}
+                    'shutdown_transport_loss','release_transport_loss_after_retirement','run_transport_loss'}
         functions = actual.get('functions', [])
         if len(functions)!=len(expected) or {f.get('name') for f in functions}!=expected or any(
                 type(f.get('execution_count')) is not int or f['execution_count']<=0 for f in functions):

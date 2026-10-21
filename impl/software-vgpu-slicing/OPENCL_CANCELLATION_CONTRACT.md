@@ -185,3 +185,35 @@ regressions also pass unchanged. Evidence:
 `run-_f0idmkv/receipt.json`. Independent source review finds no additional
 issue; fresh native cancellation remains mandatory. Production DLL inputs
 are unchanged, so the current full image remains the native candidate.
+
+## Complete cancellation orchestration and fresh native pass (2026-10-21)
+
+The extended source-extracted regression executes the exact `run_transport_loss`
+and its four helpers, including all SDK acquisition variants, thread setup/join
+errors, Busy ownership checks, real call-result mapping and every cleanup edge.
+Root normal/optimized runs pass O0/O2 and ASan/LSan/UBSan with108/108 executable
+lines and92/92 directional branch outcomes, all five functions executed. No
+coverage exclusion or threshold change. Receipts are
+`build/coverage/vgpu/opencl_cancellation_order/run-3rf7398o/receipt.json` and
+`run-p00vgs7j/receipt.json`; root logs are under
+`build/qualification_feature_20261021/opencl_cancellation_full_root/`.
+
+Fresh actual native run `build/windows11_vm/tcp_gpu_d5dbcc4f/`, authenticated
+session4996ced9f2449702, passes the witnessed transport-loss scope. The actual
+submit gate triggers intentional cancellation of only its exact host graph;
+the joined API returns enqueue0/read-5. Exact receiver reaping precedes the
+trusted receipt, reverse CL release, terminal SDK shutdown and ICD abandonment.
+The native fixture exits0 naturally; module absence and exact native/batch
+console absence pass. The host graph is empty; reviewed supervisor finally
+closes its pidfds and the supervisor exits0. Cancellation signals and nonzero
+host status are expected fault actions, not normal-exit evidence. Full DLL
+SHA256 is70ca4fdbc2ca54954b7879f28f11e013c63a0a660cca718815abc24e98d5887a.
+
+Root binds the complete raw run in
+`build/qualification_feature_20261021/opencl_cancellation_full_root/native_root_review.json`.
+The earlier invalid-device run remains failed. The older fixture builder's
+single multi-TU dependency invocation omitted one preprocessing closure; its
+manual logical source/tool bindings were reviewed, but this receipt is not
+complete dependency-closure evidence. Final qualification requires the fresh
+per-TU-union builder and rerun after fixture integration. This result awards no
+heap, full reload, overlap or final feature completion credit.
