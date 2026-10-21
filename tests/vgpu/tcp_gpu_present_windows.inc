@@ -356,7 +356,8 @@ static int native_swapchain_probe(VkInstance instance,VkPhysicalDevice physical,
                 COLORREF expected=RGB(pixel[2],pixel[1],pixel[0]),actual=GetPixel(dc,(int)x,(int)y);
                 if(pixel[3]!=255 || actual!=expected){fprintf(stderr,"Native Vulkan present pixel(%u,%u): actual=%08lx expected=%08lx alpha=%u\n",x,y,(unsigned long)actual,(unsigned long)expected,pixel[3]);goto cleanup;}
             }
-            if(!ReleaseDC(window,dc))goto cleanup;dc=NULL;
+            /* One ReleaseDC attempt per GetDC: clear the owner first so cleanup never repeats it. */
+            {HDC released=dc;dc=NULL;if(!ReleaseDC(window,released))goto cleanup;}
             printf("Native Vulkan actual swapchain mode=%s frame=%u exact4096RGB/BGRA PASS\n",mode ? "IMMEDIATE" : "FIFO",frame+1);fflush(stdout);
         }
         old_chain=chain;chain=NULL;
