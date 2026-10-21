@@ -382,10 +382,14 @@ static int native_wsi_lifetime_probe(VkInstance instance, VkPhysicalDevice physi
     if (create_swapchain(device, &chain_info, NULL, &chain) != VK_SUCCESS ||
         chain == VK_NULL_HANDLE) goto cleanup;
     stage = "native HWND destruction before querying surface";
-    if (!DestroyWindow(window)) goto cleanup;
-    RECT lost_client = {0};
-    if (IsWindow(window) || GetClientRect(window, &lost_client)) goto cleanup;
+    /* A failed DestroyWindow keeps the owner so cleanup retries it. After success the owner
+     * is cleared at once, so cleanup can never destroy a stale or reused HWND value; the old
+     * value survives only in destroyed_window for the existing invalidity checks below. */
+    const HWND destroyed_window = window;
+    if (!DestroyWindow(destroyed_window)) goto cleanup;
     window = NULL;
+    RECT lost_client = {0};
+    if (IsWindow(destroyed_window) || GetClientRect(destroyed_window, &lost_client)) goto cleanup;
     stage = "lost-surface acquire result and unchanged output index";
     unchanged_index = UINT32_C(0x5a5a5a5a);
     if (acquire(device, chain, 0, acquired, VK_NULL_HANDLE, &unchanged_index) !=
