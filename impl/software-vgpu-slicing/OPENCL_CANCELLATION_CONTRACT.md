@@ -93,25 +93,31 @@ separate ten-second bound.
 
 For a completed API call, the process retains all CL owners and module
 references until `wait_retired_bounded()` validates the exact matching session receipt.
-It then calls bootstrap `abandon(session)` exactly for that session. Only after
-successful abandonment does it release local OpenCL owners in reverse order:
-event, kernel, buffer, program, queue, context. The selected fixture uses only
-buffers and no context destructor callback or mapped memory. The server has
-already reaped the actual receiver, so clvk destructors may release local C++
-state while ICD destroy entrypoints see cleared device/resource tables and do
-not send stale resource IDs.
+It releases local OpenCL owners in reverse order while the loader's ICD
+Vulkan dispatch objects remain valid: event, kernel, buffer, program, queue,
+context. It then requires terminal `waddle_clvk_shutdown()` success within
+five seconds, verifies idempotent success and `CL_INVALID_PLATFORM`, and only
+then calls bootstrap `abandon(session)` exactly for the captured session.
+The selected fixture uses only buffers and no context destructor callback or
+mapped memory. Exact host reap permits SDK cleanup after transport failure;
+it does not permit clearing the loader's device table before SDK destructors.
+The ICD's sticky loss prevents stale transport work while local destruction
+and SDK executor retirement complete. Abandon subsequently clears any
+remaining poisoned local ICD records and releases the bootstrap module owner.
 
 If the API worker started but failed before the blocking read returned, the
-same exact receipt and abandon ordering is required before any OpenCL
-destructor runs: the enqueue may already have issued a submit request. The
-process then requires terminal `waddle_clvk_shutdown()` success, verifies the
-post-shutdown platform query returns `CL_INVALID_PLATFORM`, and returns
-retained module references to the parent. The parent joins the outer worker
-with a finite deadline, unloads OpenCL before loader/bootstrap, checks module
-absence with a finite deadline, and restores the original environment.
-Missing retirement proof never authorizes abandonment or graceful module
-unload; the process terminates fail-closed after its bounded wait, without
-claiming success.
+same exact receiver-reap proof precedes all CL destructors: enqueue may already
+have issued a submit. For a setup failure before any API worker starts, local
+CL owners and the SDK retire first, followed by normal bootstrap stop; a failed
+stop still needs the exact original session receipt before abandon. Failed
+CL releases remain failures. Missing receipt or failed/Busy shutdown never
+authorizes abandon or graceful module unload.
+
+After successful SDK retirement and abandonment, the process returns retained
+module references to the parent. The parent joins the outer worker with its
+existing finite deadline, unloads OpenCL before loader/bootstrap, checks module
+absence within ten seconds, and restores the original environment. No API call
+or SDK executor may survive into module unload.
 
 ## Source basis and limits
 
@@ -120,7 +126,8 @@ submit-and-wait and command execution paths. The private shutdown ledger counts
 all `refcounted` allocations and permits terminal teardown only when only root
 devices remain and the executor pool is idle. The ICD's post-reap `abandon`
 clears guest object tables; it does not release clvk C++ owners, which is why the
-OpenCL release calls must precede shutdown.
+OpenCL release calls must precede shutdown, and shutdown must precede
+bootstrap abandonment.
 
 This mode is limited to one buffer-backed kernel submission and a transport
 loss at the host bridge's actual submit request. It does not prove cancellation
@@ -153,3 +160,28 @@ bindings. Make/CI run `vgpu-opencl-cancellation-test`; CI also cross-builds both
 fixture configurations. These checks do not qualify native in-flight cancellation,
 receiver retirement, CL owner release or physical GPU behavior. That supervised
 fault run remains pending with the final admitted runtime.
+
+## Actual native teardown defect and regression (2026-10-21)
+
+Native `build/windows11_vm/tcp_gpu_7359408c/` witnessed authenticated opcode18,
+joined the actual API caller with enqueue0/read-5 and proved exact host reaping.
+The prior fixture then abandoned the ICD before CL release, so the Vulkan
+loader rejected `vkDestroyBuffer` with an invalid device and the native process
+exited3. This is a failed qualification run, preserved with its complete raw
+logs. Root separately proves the native process, its owned cmd/c batch console
+and host graph retired; the existing VM is preserved.
+
+The correction retains ICD dispatch through reverse CL release and terminal
+SDK shutdown. New source-extracted tests execute the actual four helper bodies
+against ownership-sensitive doubles; the old abandon-first sequence is a
+negative control. Missing receipt, every release failure, Busy retry/timeout,
+non-Ok/non-idempotent shutdown, valid post-shutdown platform and abandon failure
+are covered. Root normal/optimized Python runs compile O0/O2, run ASan/LSan/UBSan
+and gate all36 actual helper lines and38 directional branch outcomes at100%,
+with all four functions executed and no exclusions. The existing call/release
+regressions also pass unchanged. Evidence:
+`build/qualification_feature_20261021/opencl_cancellation_order_root.log`,
+`build/coverage/vgpu/opencl_cancellation_order/run-jg9plsi2/receipt.json` and
+`run-_f0idmkv/receipt.json`. Independent source review finds no additional
+issue; fresh native cancellation remains mandatory. Production DLL inputs
+are unchanged, so the current full image remains the native candidate.

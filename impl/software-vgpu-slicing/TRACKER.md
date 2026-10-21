@@ -1990,3 +1990,16 @@ See [the source-bound native evidence](../wsi-window-lifetime/M2_OWNED_NATIVE_20
 Atomic unit `docs(vgpu): record loaded-host M2 ownership qualification`, all
 parent tasks +0%, parent85.5%, M2 94%, Time Ended TBD. Separate DXVK/OpenCL
 native gates and final CI/review remain open.
+
+### Preserve dispatch through OpenCL fault teardown (2026-10-21)
+
+Atomic unit `fix(vgpu-tests): retire OpenCL owners before ICD abandonment`
+corrects the actual native invalid-device failure in tcp_gpu_7359408c: exact
+receiver reap, reverse CL release, bounded terminal SDK shutdown, then exact
+bootstrap abandonment. Source-extracted order/error controls, old-order
+negative control and unchanged call/release controls pass in both Python
+modes with ASan/LSan/UBSan; actual four helpers cover36/36lines and38/38
+directional branches. Independent source review finds no additional issue.
+The failed native process/owned console/host retire; raw failure is preserved.
+[Contract and evidence](OPENCL_CANCELLATION_CONTRACT.md). Native rerun pending;
+#5/all parent tasks +0%, total85.5%, M2 94%, Time Ended TBD.

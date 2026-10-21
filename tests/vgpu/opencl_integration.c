@@ -549,7 +549,8 @@ static unsigned __stdcall run_transport_loss_call(void *opaque)
  * @param[in,out] event, kernel, buffer, program, queue, context Owned handles;
  * each is nulled after its release call even when the API reports an error.
  * @return Zero only if every release returned CL_SUCCESS.
- * @note Call after transport receipt and ICD abandon in the fault case. The
+ * @note Call after transport receipt but before ICD abandon in the fault case.
+ * Vulkan dispatch must remain live through SDK destructors and shutdown. The
  * queue must have no outstanding API caller or command group.
  */
 static int release_transport_loss_owners(const api_t *api, cl_event *event,
@@ -566,6 +567,55 @@ static int release_transport_loss_owners(const api_t *api, cl_event *event,
     return failed;
 }
 
+/** @brief Shut down clvk while the loader's Vulkan dispatch objects remain live.
+ * @param[in] api Borrowed live dispatch, including get_platform_ids.
+ * @param[in] shutdown Borrowed private shutdown function; module remains mapped.
+ * @note Serial caller after all CL owners retire. Failure terminates without
+ * abandoning the ICD or unloading beneath retained SDK state. Five-second bound.
+ */
+static void shutdown_transport_loss(const api_t *api, clvk_shutdown_t shutdown)
+{
+    ULONGLONG started = GetTickCount64();
+    int32_t status;
+    while ((status = shutdown(ClvkShutdownAbi)) == ClvkShutdownBusy) {
+        if (GetTickCount64() - started >= 5000)
+            fail_closed("OpenCL transport-loss shutdown remained Busy after owner release");
+        Sleep(1);
+    }
+    if (status != ClvkShutdownOk || shutdown(ClvkShutdownAbi) != ClvkShutdownOk)
+        fail_closed("OpenCL transport-loss terminal shutdown failed");
+    cl_uint count = 0;
+    if (api->get_platform_ids(0, NULL, &count) != CL_INVALID_PLATFORM)
+        fail_closed("OpenCL transport-loss shutdown did not invalidate platform");
+}
+
+/** @brief Release the CL graph after exact receiver reap, before ICD abandonment.
+ * @param[in] api/shutdown Borrowed SDK dispatch and shutdown; modules stay mapped.
+ * @param[in] receipt Nonnull trusted fresh exact-session receiver-reap receipt.
+ * @param[in] identity Nonzero retained bootstrap session; never substituted.
+ * @param[in] abandon Borrowed bootstrap call, invoked only after SDK shutdown.
+ * @param[in,out] event/kernel/buffer/program/queue/context Owned handles, nulled
+ * by reverse release. Their Vulkan dispatch objects must remain valid through
+ * every destructor and terminal SDK shutdown; abandon clears those objects.
+ * @return One if any CL release failed, zero otherwise. Receipt/shutdown/abandon
+ * failure terminates fail-closed without claiming graceful module retirement.
+ * @note Sole joined caller. No application API call can overlap this sequence.
+ */
+static int release_transport_loss_after_retirement(const api_t *api,
+    clvk_shutdown_t shutdown, const wchar_t *receipt, uint64_t identity,
+    bootstrap_abandon_t abandon, cl_event *event, cl_kernel *kernel,
+    cl_mem *buffer, cl_program *program, cl_command_queue *queue,
+    cl_context *context)
+{
+    wait_retired_bounded(receipt, identity, 90000);
+    int failed = release_transport_loss_owners(api, event, kernel, buffer,
+                                              program, queue, context);
+    shutdown_transport_loss(api, shutdown);
+    if (abandon(identity) != RingOk)
+        fail_closed("OpenCL transport-loss session abandonment failed after SDK shutdown");
+    return failed;
+}
+
 /** @brief Exercise one real buffer-backed kernel cancellation and retirement.
  * @param[in] api Nonnull borrowed dispatch; module outlives all owners.
  * @param[in] device Borrowed selected RTX 5080 device.
@@ -574,6 +624,7 @@ static int release_transport_loss_owners(const api_t *api, cl_event *event,
  * @return Zero only for exact enqueue/read result and complete post-proof teardown.
  * @note The supervisor must observe its fresh RequestSubmit/opcode-18 marker,
  * cancel that session, reap the exact worker, and publish the matching receipt.
+ * SDK release and shutdown precede ICD abandon to preserve loader dispatch.
  */
 static int run_transport_loss(const api_t *api, cl_device_id device,
     clvk_shutdown_t shutdown, const wchar_t *receipt, bootstrap_stop_t stop,
@@ -641,59 +692,32 @@ static int run_transport_loss(const api_t *api, cl_device_id device,
     if (!read_started) goto setup_failure;
     if (call.read_status != CL_OUT_OF_RESOURCES) failed = 1;
 
-    {
-        /* Keep every CL owner and all three module refs until the supervisor's
-         * exact receiver-reap proof makes local abandonment safe. */
-        wait_retired_bounded(receipt, identity, 90000);
-        if (abandon(identity) != RingOk)
-            fail_closed("OpenCL transport-loss session abandonment failed after retirement proof");
-        if (release_transport_loss_owners(api, &call.kernel_event, &kernel,
-                &buffer, &program, &queue, &context))
-            failed = 1;
-    }
-    goto shutdown_state;
+    goto retire_state;
 
 setup_failure:
     failed = 1;
-    /* Once the API worker has started, even an enqueue failure may follow an
-     * actual submit request. Do not call CL destructors until the supervisor
-     * has proved that exact receiver retired and local ICD ownership is safe
-     * to abandon. */
+retire_state:
     if (api_thread_started) {
-        uint64_t retained = session();
-        if (!retained) fail_closed("OpenCL API failure lost bootstrap ownership identity");
-        wait_retired_bounded(receipt, retained, 90000);
-        if (abandon(retained) != RingOk)
-            fail_closed("OpenCL API failure abandonment failed after retirement proof");
+        /* Even an enqueue failure may follow a real submit. Retain all owners
+         * until exact receiver reap, then keep dispatch valid through SDK teardown. */
+        if (release_transport_loss_after_retirement(api, shutdown, receipt,
+                identity, abandon, &call.kernel_event, &kernel, &buffer,
+                &program, &queue, &context))
+            failed = 1;
+    } else {
+        /* No API worker submitted work. Destroy the SDK graph before normal
+         * bootstrap stop; a failed stop still needs exact receiver-reap proof. */
+        if (release_transport_loss_owners(api, &call.kernel_event, &kernel,
+                &buffer, &program, &queue, &context))
+            failed = 1;
+        shutdown_transport_loss(api, shutdown);
+        if (stop() != RingOk) {
+            wait_retired_bounded(receipt, identity, 90000);
+            if (abandon(identity) != RingOk)
+                fail_closed("OpenCL setup failure abandonment failed after SDK shutdown");
+        }
     }
-    if (release_transport_loss_owners(api, &call.kernel_event, &kernel,
-            &buffer, &program, &queue, &context))
-        failed = 1;
-    if (!api_thread_started && stop() != RingOk) {
-        uint64_t retained = session();
-        if (!retained) fail_closed("OpenCL setup failure lost bootstrap ownership identity");
-        wait_retired_bounded(receipt, retained, 90000);
-        if (abandon(retained) != RingOk)
-            fail_closed("OpenCL setup failure abandonment failed after retirement proof");
-    }
-
-shutdown_state:
-    ;
-    ULONGLONG shutdown_started = GetTickCount64();
-    int32_t shutdown_status;
-    while ((shutdown_status = shutdown(ClvkShutdownAbi)) == ClvkShutdownBusy) {
-        if (GetTickCount64() - shutdown_started >= 5000)
-            fail_closed("OpenCL transport-loss shutdown remained Busy after owner release");
-        Sleep(1);
-    }
-    if (shutdown_status != ClvkShutdownOk ||
-        shutdown(ClvkShutdownAbi) != ClvkShutdownOk)
-        fail_closed("OpenCL transport-loss terminal shutdown failed");
-    cl_uint count = 0;
-    if (api->get_platform_ids(0, NULL, &count) != CL_INVALID_PLATFORM)
-        fail_closed("OpenCL transport-loss shutdown did not invalidate platform");
-    if (failed) return 1;
-    return 0;
+    return failed;
 }
 
 /** @brief Joined caller-thread state; modules transfer to the joining parent.

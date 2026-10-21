@@ -7002,3 +7002,16 @@ source-bound production admission must be rebuilt after this change. Atomic
 unit: `test(vgpu): tolerate bounded native audit acknowledgement sharing`
 (hash recorded next checkpoint). +0% to all tasks; parent85.5%, M2 94% / Review,
 Time Ended TBD.
+
+### Corrected supervised OpenCL loss teardown (2026-10-21)
+
+The earlier in-flight fault fixture's abandon-before-CL-release description is
+superseded by the actual native invalid-device failure and corrected
+[retirement contract](OPENCL_CANCELLATION_CONTRACT.md). Exact receiver reap
+precedes reverse CL release; Vulkan loader/ICD dispatch stays valid through
+SDK object destruction and bounded terminal shutdown. Only then may bootstrap
+abandon clear poisoned local ICD records. All previous exact error, ownership,
+deadline and module-retirement requirements remain. The actual extracted
+helpers have100% line/directional-branch portable coverage with ASan/LSan/UBSan;
+native rerun is pending. This correction touches the qualification fixture,
+not upstream SDK sources, dependency pins or the production OpenCL image.

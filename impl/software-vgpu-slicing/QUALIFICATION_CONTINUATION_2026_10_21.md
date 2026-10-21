@@ -60,8 +60,9 @@ Root portable ASan/LSan/UBSan checks passed (18 groups / 5,314 checks), with
 Root native control `m2_gui_native_df4d92e7/` passed with natural exit zero,
 real hidden top-level, child and message-only identities, exact owned cleanup
 and no survivors. Windows CI ran these controls successfully at8038ad9.
-These controls do not qualify the full WSI workload. Fresh full M2 qualification
-is running with six bounded root-owned CPU workers; no result is credited yet.
+These controls do not qualify the full WSI workload. Both full loaded-host M2 workloads now pass; the exact evidence is in
+[M2_OWNED_NATIVE_2026_10_21.md](../wsi-window-lifetime/M2_OWNED_NATIVE_2026_10_21.md).
+M2 remains94% pending final CI/review; no completion credit is awarded yet.
 All original comparisons, sampling, timing and UI behavior remain mandatory.
 
 ## Linux physical GPU matrix
@@ -114,3 +115,15 @@ Astra's new reload fixture is still being implemented in its isolated worktree.
 All raw failure folders are preserved. The existing VM and its state are
 preserved; root remains sole native/GPU runner. No gc/prune: the candidate
 clone shares repository objects. +0% credit to all tasks at this checkpoint.
+
+## Actual in-flight cancellation exposed a fixture teardown defect
+
+`build/windows11_vm/tcp_gpu_7359408c/` proves authenticated opcode18, the actual
+joined enqueue0/read-5 result and exact owned host reaping, then exits3 because
+the fixture cleared ICD dispatch before clvk's buffer destructor. The raw run
+remains failed. The source correction preserves dispatch through reverse CL
+release and terminal SDK shutdown, abandoning only afterwards. All four
+extracted helper lines/branches and sanitizer controls pass; independent source
+review reports no further defect. A fresh native run is still required. See
+[the corrected contract](OPENCL_CANCELLATION_CONTRACT.md). Current production
+DLL inputs/identity are unchanged. This correction awards+0% acceptance credit.
