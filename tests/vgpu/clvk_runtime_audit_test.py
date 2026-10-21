@@ -327,6 +327,28 @@ class runtime_audit_test_t(unittest.TestCase):
                 Audit.audit_runtime_tls(dll, symbol_lines=symbols, limits=CompiledLimits,
                                         expected_exports=ExpectedExports, runtime_policy=valid_policy())
 
+    def test_discarded_inventory_cannot_hide_an_actual_forbidden_output(self):
+        good = map_text()
+        prefix = "Discarded input sections\n .text$__at_thread_exit\n 0x0 0x10 /toolchain/libstdc++.a(condition_variable.o)\nLinker script and memory map\n"
+        dll = write_file(self.root / "OpenCL.dll", make_pe()[0])
+        path = self.root / "test.map"
+        path.write_text(prefix + good + " /DISCARD/\n *(.text$__at_thread_exit)\n")
+        Audit.verify_runtime_link(path, dll, expected_output_name='OpenCL.dll', map_working_directory=self.root)
+        path.write_text(prefix + good + " .text$__at_thread_exit 0x1000 0x10 /toolchain/libstdc++.a(condition_variable.o)\n")
+        with self.assertRaisesRegex(Audit.audit_error_t, "forbidden CRT"):
+            Audit.verify_runtime_link(path, dll, expected_output_name='OpenCL.dll', map_working_directory=self.root)
+        path.write_text(prefix.replace('Linker script and memory map', 'unrecognized boundary') + good)
+        with self.assertRaisesRegex(Audit.audit_error_t, "unique output boundary"):
+            Audit.verify_runtime_link(path, dll, expected_output_name='OpenCL.dll', map_working_directory=self.root)
+
+    def test_gnu_long_section_continuation_preserves_exact_owner(self):
+        lines = [" .text.startup 0x140001000 0x10 wrong.o",
+                 " .text.unlikely._ZN9__gnu_cxx9__freeresEv",
+                 "                0x140001010 0x30 /toolchain/libstdc++.a(eh_alloc.o)",
+                 "                0x140001010 __gnu_cxx::__freeres()"]
+        self.assertEqual(Audit._symbol_input(lines, '__gnu_cxx::__freeres()'),
+                         '/toolchain/libstdc++.a(eh_alloc.o)')
+
     def test_import_thunk_policies_reject_unpaired_and_unapproved_apis(self):
         raw, symbols = make_pe()
         symbols = [line.replace("__gthr_win32_key_create", "foreign_tls_allocator") for line in symbols]

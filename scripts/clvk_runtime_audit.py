@@ -49,6 +49,7 @@ ForbiddenThreadAtexit = (
     "__cxa_thread_atexit",
     "__cxa_thread_atexit_impl",
     "__at_thread_exit",
+    "notify_all_at_thread_exit",
 )
 SensitiveApis = ("TlsAlloc", "TlsFree", "FlsAlloc", "FlsFree", "DuplicateHandle", "GetProcAddress")
 Executable = 0x20000000
@@ -718,7 +719,7 @@ def _symbol_input(map_lines: Sequence[str], symbol: str) -> str:
     i = symbol_lines[0]
     for j in range(i - 1, max(-1, i - 12), -1):
         line = map_lines[j]
-        if re.match(r"\s+\.\S+\s+0x[0-9a-fA-F]+\s+0x[0-9a-fA-F]+\s+\S+", line):
+        if re.match(r"\s+(?:\.\S+\s+)?0x[0-9a-fA-F]+\s+0x[0-9a-fA-F]+\s+\S+", line):
             return line.strip().split()[-1]
     raise audit_error_t(f"cannot attribute map definition of {symbol} to an input object")
 
@@ -751,7 +752,18 @@ def _runtime_map_audit(map_text: str, policy: Mapping, shim_object: str, eh_pool
         if Path(owner).name != Path(shim_object).name:
             raise audit_error_t(f"{symbol} resolves from {owner}, expected Waddle shim object {shim_object}")
     forbidden_tokens = tuple(ForbiddenThreadAtexit) + tuple(policy.get("forbidden_map_tokens", ()))
-    present = sorted(token for token in forbidden_tokens if token in map_text)
+    # Discarded input inventory and linker wildcard declarations are not mapped
+    # output. Reject actual forbidden output rows; PE defined symbols are also
+    # independently rejected. A missing/duplicate boundary fails closed.
+    active_text = map_text
+    boundary = "Linker script and memory map"
+    if "Discarded input sections" in map_text:
+        if map_text.count(boundary) != 1:
+            raise audit_error_t("discarded map inventory has no unique output boundary")
+        active_text = map_text.split(boundary, 1)[1]
+    active_text = "\n".join(line for line in active_text.splitlines()
+                            if not line.lstrip().startswith("*("))
+    present = sorted(token for token in forbidden_tokens if token in active_text)
     if present:
         raise audit_error_t(f"forbidden CRT/thread-atexit entries appear in map: {present}")
     crt_policy = policy.get("crt_sections")

@@ -122,3 +122,9 @@ vgpu-opencl-runtime-eh-sanitizers: | build
 vgpu-opencl-runtime-eh-coverage: | build
 	python3 -B tests/vgpu/clvk_runtime_tls_coverage_test.py
 	python3 -B scripts/clvk_runtime_tls_coverage.py --eh-pool
+
+# Real compiler/linker controls; explicit reviewed compiler selectors may be
+# supplied through WADDLE_CLVK_CC/CXX. These never execute Windows binaries.
+.PHONY: vgpu-opencl-runtime-link-test
+vgpu-opencl-runtime-link-test:
+	python3 -B tests/vgpu/clvk_runtime_link_test.py
