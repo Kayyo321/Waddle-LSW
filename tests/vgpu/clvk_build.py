@@ -600,6 +600,9 @@ class runtime_driver_tests_t(unittest.TestCase):
         identity = Driver.source_identity(Root)
         self.assertIn('scripts/clvk/runtime_sections.ld', identity)
         self.assertIn('tests/vgpu/clvk_runtime_link_test.py', identity)
+        heap_stage = 'tests/vgpu/dxvk_heap_audit_windows.inc'
+        self.assertIn(heap_stage, identity)
+        self.assertEqual(identity[heap_stage], Driver.digest(Root / heap_stage))
 
     def test_default_and_custom_receipt_paths(self):
         self.assertEqual(Driver._receipt_path(Root, 'build/clvk_client'),

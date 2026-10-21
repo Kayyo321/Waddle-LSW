@@ -35,6 +35,8 @@ jobs:
         run: |
           make vgpu-opencl-runtime-tls-test vgpu-opencl-runtime-tls-sanitizers vgpu-opencl-runtime-tls-coverage
           make vgpu-opencl-runtime-eh-test vgpu-opencl-runtime-eh-sanitizers vgpu-opencl-runtime-eh-coverage
+      - name: Verify native heap-stage acknowledgement and strict coverage
+        run: make vgpu-native-heap-stage-coverage
       - name: Verify actual native probe build boundaries without execution
         run: make vgpu-opencl-runtime-probe-build-test
       - name: Verify qualification-only OpenCL submit witness ownership

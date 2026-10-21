@@ -159,3 +159,11 @@ vgpu-opencl-transport-gate-coverage: | build
 vgpu-opencl-cancellation-test:
 	python3 -B tests/vgpu/opencl_cancellation_test.py
 	python3 -O -B tests/vgpu/opencl_cancellation_test.py
+
+# Exact native heap-stage logic under portable Win32 doubles; native file-system
+# behavior remains a separate Windows execution gate. No coverage exclusions.
+.PHONY: vgpu-native-heap-stage-coverage
+vgpu-native-heap-stage-coverage:
+	python3 -B tests/vgpu/dxvk_heap_audit_coverage_test.py
+	python3 -O -B tests/vgpu/dxvk_heap_audit_coverage_test.py
+	python3 -B scripts/dxvk_heap_audit_coverage.py

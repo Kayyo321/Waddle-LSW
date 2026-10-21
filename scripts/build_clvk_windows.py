@@ -318,6 +318,7 @@ def source_identity(root):
     """Hash all runtime-driver inputs whose changes affect binary admission."""
     paths = (*ShimSources, 'tests/vgpu/clvk_runtime_windows.c',
              'tests/vgpu/clvk_runtime_windows.cpp', 'scripts/clvk/OpenCL.def',
+             'tests/vgpu/dxvk_heap_audit_windows.inc',
              'tests/vgpu/clvk_runtime_link_test.py', 'scripts/clvk/runtime_sections.ld',
              'include/waddle/clvk.h', AuditorPath, 'scripts/build_clvk_windows.py',
              *PrivatePatches)

@@ -6976,3 +6976,29 @@ and Linux GPU acceptance remain separate.
 Atomic unit: `test(vgpu): account for qualified ownership sanitizer helpers`
 (hash recorded next checkpoint). Task impact +0% to every task; parent85.5%,
 M2 94% / Review, Time Ended TBD.
+
+### Native heap acknowledgement correction (2026-10-21)
+
+The preserved PageHeap calibration `pageheap_negative_45c0d686` stopped because
+opening an already-published acknowledgement transiently returned Windows
+ERROR_SHARING_VIOLATION32. The audit include now retries that one error alongside
+FILE_NOT_FOUND within its unchanged60-second/10-ms loop. All other open errors
+fail immediately; successful opens still require exact bytes/size, regular
+single-link disk files and successful handle closure. Persistent sharing reaches
+the original timeout. No allocation/native acceptance assertion changes.
+
+The actual include runs against deterministic Win32 doubles covering transient
+sharing, timeout, malformed/stale/foreign files, I/O, clock, close and ownership
+errors. Root ASan/LSan/UBSan passes with53/53 lines and82/88 branch outcomes
+(93.18%), both functions executed, no exclusions. Evidence:
+`build/coverage/vgpu/dxvk_heap_audit_root/run-20261021T194243056452Z-349543/coverage.json`.
+The build driver's source identity now includes this transitively compiled
+header; all34 driver tests pass normally and optimized outside ptrace. The
+strict coverage target is included in OpenCL admission CI. Worker ptrace/LSan
+failures remain preserved and are not acceptance evidence.
+
+Previous fixture/DLL identities remain historical. Fresh native fixtures and
+source-bound production admission must be rebuilt after this change. Atomic
+unit: `test(vgpu): tolerate bounded native audit acknowledgement sharing`
+(hash recorded next checkpoint). +0% to all tasks; parent85.5%, M2 94% / Review,
+Time Ended TBD.

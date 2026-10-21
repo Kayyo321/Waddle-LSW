@@ -72,7 +72,7 @@ static int audit_stage(const wchar_t *directory,const char *stage)
             return match ? 0 : 1;
         }
         DWORD error=GetLastError();
-        if(error!=ERROR_FILE_NOT_FOUND){
+        if(error!=ERROR_FILE_NOT_FOUND && error!=ERROR_SHARING_VIOLATION){
             fprintf(stderr,"Native heap stage %s acknowledgement open failed: %lu\n",stage,(unsigned long)error);
             return 1;
         }
