@@ -1,0 +1,170 @@
+{
+ "recorded_utc": "2026-10-21T03:19:50Z (user-requested stopping point)",
+ "acceptance": false,
+ "scope": "software-vGPU OpenCL (clvk) Windows runtime-unload lifetime defect: root cause, approved correction path, isolated native proof, candidate DLL build. NOT M2. Not native OpenCL qualification, no heap acceptance, no physical-GPU result.",
+ "base_head": "52a1a2970c2a182c155c718432a9dee520b0ca72",
+ "human_approval": {
+  "given_in_session": true,
+  "answer": "Approve shim approach (Recommended)",
+  "approved": [
+   "Win32 thread model (GCC 14.2 win32 compilers, -mthreads, static libgcc/libstdc++, no winpthreads)",
+   "Waddle-authored C runtime shim replacing libgcc_eh emutls.o and gthr-win32-thread.o members",
+   "release of the libstdc++ emergency-exception pool at DLL teardown",
+   "hardened fail-closed build gates",
+   "integration as reviewed atomic commits, real-DLL rebuild and native OpenCL qualification with new TLS and heap oracles"
+  ],
+  "not_approved": [
+   "any clvk/LLVM/clspv/SPIRV source change",
+   "any submodule pin or content change",
+   "patches/clvk changes",
+   "host package installs",
+   "README edits"
+  ],
+  "compiler_provisioning": "hash-verified private extraction under build/qualification_20261017/mingw_win32_private_1402 on PATH; no host install"
+ },
+ "root_cause_summary": {
+  "posix_static_winpthreads_per_unload": {
+   "handles": 6,
+   "tls_slots": 1,
+   "owners": "4 semaphores: winpthreads lazy condition variables inside never-destroyed PTHREAD_RWLOCK_INITIALIZER locks (LLVM PassRegistry std::shared_mutex; winpthreads key lock via libgcc emutls key creation); 1 event + 1 thread handle: winpthreads lazy per-thread state of the unloading thread; 1 TLS index: winpthreads TlsAlloc without TlsFree"
+  },
+  "win32_model_per_unload": {
+   "handles": 0,
+   "tls_slots": 2,
+   "owners": "libgcc_eh emutls.o emutls_key and gthr-win32-thread.o __gthr_win32_tls: TlsAlloc without TlsFree; plus a duplicated thread handle per foreign thread calling std::this_thread::get_id (extended probe)"
+  },
+  "stall_at_543_reloads": "2 slots x 543 = 1086 free slots; libgcc spin-once aborts before done and later emutls access spins in Sleep(0) (static proof of the spin; the process-exit path is inference, no stack captured)",
+  "newly_found_by_review": "libstdc++ eh_alloc emergency pool mallocs 0x16000 bytes per load and is never freed in either thread model (arena released only by __gnu_cxx::__freeres, which has no caller); heap oracle was blind because msvcrt.dll probably unloads with the DLL"
+ },
+ "isolated_native_results": {
+  "context": "Windows 11 build 26300 guest, interactive console desktop, medium integrity, lead run 2026-10-21; harness = receipt-bound original vgpu_clvk_runtime_test.exe/stress.exe (unchanged oracle: exact handles with 100x10ms, exact free-TLS equality, module and export absence)",
+  "variants": {
+   "candidate win32+shim v1 (probe)": {
+    "dll_sha256": "1ed28683b747efb46e7291a4778086cbb2bff5805ae0008fe7e592c62691bef5",
+    "8_cycle_exit": 0,
+    "handles": "53->53 every cycle",
+    "free_tls": "1086 every cycle",
+    "stress_2048_exit": 0,
+    "stress_cycle_lines": 2048,
+    "stress_nonconforming": 0,
+    "stress_seconds": 50.3
+   },
+   "candidate win32+shim v1 (extended probe: thread_local init, exception, thread::id)": {
+    "dll_sha256": "c05472630bb968e8f03d7a20b7d128c62b56901f6fd00093b176627c35585985",
+    "8_cycle_exit": 0,
+    "handles": "47->47 every cycle",
+    "free_tls": "1086 every cycle",
+    "stress_2048_exit": 0,
+    "stress_cycle_lines": 2048,
+    "stress_nonconforming": 0,
+    "stress_seconds": 50.6
+   },
+   "control posix (approved model)": {
+    "exit": 1,
+    "handles": "47->53",
+    "free_tls": "1086->1085"
+   },
+   "control win32 without shim": {
+    "exit": 1,
+    "handles": "47->47",
+    "free_tls": "1086->1084"
+   },
+   "control win32 without shim, extended probe": {
+    "exit": 1,
+    "handles": "47->48 (duplicated thread handle)",
+    "free_tls": "1086->1084"
+   },
+   "control posix, extended probe": {
+    "exit": 1,
+    "handles": "47->53",
+    "free_tls": "1086->1085"
+   }
+  },
+  "also": "WinRM non-interactive reproduction of the POSIX/Win32 controls on the same boot (baselines 60/54): same deltas",
+  "limits": "Isolated probe DLL only. Not the real OpenCL.dll, no HeapWalk/UMDH heap oracle, no pre-existing idle threads, msvcrt.dll not pinned: the 0x16000-per-load pool leak is NOT visible to this oracle."
+ },
+ "candidate_real_dll_build": {
+  "built_never_executed": true,
+  "location": "build/qualification_20261020/cand_clone/build/clvk_client/clvk_a70a7984aeaf_149_sgi7/out/OpenCL.dll",
+  "sha256": "2b04fb74bc6f6f9f961b81efa8747159744973be6ed217fe6f21121aa0d94509",
+  "size": 187096741,
+  "source": "isolated shared clone at HEAD 52a1a29 + proposal-runtime-tls-win32.diff v1 (sha256 da538045da187c526cf3fc60588265230fc6378a9310992a9ecd7369849bf898) + optional probe diff; submodules read-only via symlink; audited unchanged",
+  "make_vgpu_opencl_build": {
+   "exit": 0,
+   "seconds": 1865,
+   "native_tools_minutes": 16.6,
+   "windows_cross_minutes": 14.4
+  },
+  "exports": 121,
+  "imports": "ADVAPI32 7, KERNEL32 132, msvcrt 131, ntdll 2, ole32 4, SHELL32 4, vulkan-1 75; no libwinpthread; no CreateSemaphore/CreateEvent imports",
+  "tlsalloc_sites": [
+   "__gthr_win32_key_create (paired with TlsFree in __gthr_win32_key_delete)"
+  ],
+  "duplicatehandle_sites": "3, all LLVM Support (Execute, RedirectIO, mapped_file_region::init)",
+  "tls_directory": {
+   "start": "0x20d70f000",
+   "end": "0x20d70f260",
+   "template_bytes": 608,
+   "zero_fill": 0,
+   "index": "_tls_index",
+   "callbacks": "__dyn_tls_init, __dyn_tls_dtor"
+  },
+  "approved_dll_for_comparison": {
+   "sha256": "a8fd9d7a4f979ca4534e26d789025cf9f7c7affd84b46726eeee28f40d83c54d",
+   "tls_template_bytes": 8,
+   "callbacks": 3
+  },
+  "toolchain": "5 Debian packages hash-matched; 4166 files compared; g++-win32 --version prints 14-win32 (Debian BASE-VER), package version 14.2.0-19+27+b1",
+  "receipt": "cand_clone/build/clvk_client.json sha256 9553393d...; map sha256 c809bf29..."
+ },
+ "independent_reviews": {
+  "low_level_opus": {
+   "linking": "SOUND",
+   "abi_parity": "SOUND",
+   "implicit_tls_mechanics": "UNPROVEN (loader per-thread retention of the 608 byte template unmeasured; 16-byte alignment relies on heap alignment)",
+   "concurrency": "SOUND",
+   "gthr_parity": "SOUND",
+   "thread_model_side_effects": "UNSOUND against zero-leak (eh pool 0x16000 per load; guard mutex; Win32 mutex destruction order)",
+   "fail_fast_and_gates": "fail-fast SOUND, gates UNSOUND (fail-open)",
+   "report": "impl/software-vgpu-slicing/CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md"
+  },
+  "driver_and_compliance_sonnet": {
+   "driver_mutants_surviving": "12 of 30",
+   "shim_mutants_surviving": "4 of 27",
+   "high_defects": [
+    "Makefile fixture gate fail-once and passes on missing map",
+    "main() untested",
+    "TlsAlloc audit blind to thunk calls, FlsAlloc, GetProcAddress"
+   ],
+   "compliance": "0 camelCase, 0 types missing _t; P1: docs not updated, 1408-line diff not atomic",
+   "production_default_after_diff": "unconditional switch to win32+shim; POSIX path deleted; native tool key changes needlessly"
+  }
+ },
+ "v2_status": {
+  "eh_pool_release_design": "analysis only: release must run after every static destructor: a C initializer in .CRT$XC* calling atexit so it is table entry 0 (runs last) while the heap is valid; .dtors/constructor(101)/init_priority(101) are too early. Needs link-map fail-closed checks (no tls_atexit/__cxa_atexit/__cxa_thread_atexit, atexit resolves to dllcrt2.o). No code written.",
+  "shim_hardening": "not started",
+  "strengthened_regression": "not started (agent stopped before editing tracked files)",
+  "native_plan": "draft in impl/software-vgpu-slicing/CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md section v2 report"
+ },
+ "evidence_sha256": {
+  "build/qualification_20261020/clvk_candidate/native_stage1_20261021.json": "26abf791aeb9ebb67b959e4cd3d3f416c2f0acd610785e6f3e9020ba963d3e57",
+  "build/qualification_20261020/clvk_candidate/native_stage1_extended_20261021.json": "7b267907d00d38f6433470021ff7b064d9184faf9ff6076f06ef5b8f19d304eb",
+  "build/qualification_20261020/runtime_baseline/native_reproduction_boot2_20261021.json": "3601d83088776ef18d9d625d1a5f53c8038c17e9e5cf62c3dbcada22ff467e67",
+  "build/qualification_20261020/clvk_candidate/vgpu_clvk_runtime_win32_tls.dll": "1ed28683b747efb46e7291a4778086cbb2bff5805ae0008fe7e592c62691bef5",
+  "build/qualification_20261020/clvk_candidate/vgpu_clvk_runtime_win32_tls.dll.map": "9222db8e3df8ce0dcc7a055d6d2ddd418a9422453d569b4bf2e6321cd9de1041",
+  "build/qualification_20261020/clvk_candidate/proposal-runtime-tls-win32.diff": "da538045da187c526cf3fc60588265230fc6378a9310992a9ecd7369849bf898",
+  "build/qualification_20261020/clvk_candidate/optional-probe-coverage.diff": "5d5391cc10806b7521143e694fd6c2b6f4887be3f04dc1bfb85074d49de30a68",
+  "build/qualification_20261020/clvk_candidate/approval_request.md": "3d6d3a51ae65c1bd0dabb7408855e172ded6a9817ea4fa98c9f561a0cb8440e2",
+  "build/qualification_20261020/clvk_candidate/probe_ext/SHA256SUMS": "168b6861e19189de3fd69272474334e0c79ee9bebc773614c269cf004b40bb4a",
+  "build/qualification_20261020/clvk_candidate/probe_ext/win32.dll": "8bd333369857e3d685a23a31d8960d591aa52e61b307410a58cfa6991c8ff8a2",
+  "build/qualification_20261020/clvk_candidate/probe_ext/win32_tls.map": "44b79c82c461044f8d274e26f2651fdcd31ea92db1e9d9030c9de3978fa30713",
+  "build/qualification_20261020/clvk_candidate/probe_ext/clvk_runtime_windows.cpp": "49c18a50e950bc757c6359a6a3032ccc3a09f01d829337d15d7e857a4db3033f",
+  "build/qualification_20261020/clvk_candidate/probe_ext/win32_tls.dll": "c05472630bb968e8f03d7a20b7d128c62b56901f6fd00093b176627c35585985",
+  "build/qualification_20261020/clvk_candidate/probe_ext/posix.dll": "474461d6521739e34b70d9728765ce5d9e82c246def296531ed19cee2a58f90d",
+  "build/qualification_20261020/cand_logs/SHA256SUMS_artifacts.txt": "b5cf3e22abaa28a6961d9320efe7705ab9a8bb14eda3caa614481d1c16b0e180",
+  "build/qualification_20261020/cand_logs/06_candidate_dll_analysis.json": "49accae1ef2a698220569719a69ce98e1f97db9b2bc736bfb0159aab8e0f63b0",
+  "build/qualification_20261020/cand_logs/05d_opencl_build.log": "7e330153dfaf95e7793a939b75df1bc545473c7f432b9981cb36cdcf84598739",
+  "build/qualification_20261020/cand_logs/env.sh": "7641061db0fe2862f9d5d10e45b4cf1b35c01c54f18ef199d65a8ec7496ee809",
+  "build/qualification_20261020/cand_logs/run_step.sh": "c7a03f27635c1e25b44b983196af7d1d47e1bf65e718caa2e140312c03ce1db1"
+ }
+}

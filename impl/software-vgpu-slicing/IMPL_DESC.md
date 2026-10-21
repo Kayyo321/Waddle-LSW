@@ -6742,3 +6742,30 @@ See [CLVK_RUNTIME_LIFETIME_REVIEW.md](CLVK_RUNTIME_LIFETIME_REVIEW.md) and
 Evidence commit0a2eec0 records the preceding trace isolation. New regression
 coverage adds0% to #3/#5/#11; total85.5%. M2 remains94%/Review and Time Ended TBD.
 No new upstream SDK patch, feature push, PR readiness or assertion waiver.
+
+
+## OpenCL runtime-unload lifetime correction: approved design contract (2026-10-21; NOT implemented)
+
+Status: root cause established; the human approved this design in principle on 2026-10-21; v1 was reviewed and found not zero-leak; v2 is the work to do. This section is the contract v2 must satisfy
+and supersedes the "Win32 configuration rejected" paragraph only once v2 passes native qualification. Evidence: [CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md](CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md),
+[CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md](CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md), [RUNTIME_CANDIDATE_RECEIPT_2026_10_21.json](RUNTIME_CANDIDATE_RECEIPT_2026_10_21.json), v1 snapshot `clvk_runtime_proposal/`.
+
+**Scope.** Inside: the C/C++ runtime state that OpenCL.dll's MinGW toolchain creates per load and never releases: winpthreads handles and TLS index (POSIX model), libgcc_eh `emutls.o` and `gthr-win32-thread.o` TLS indices (Win32 model), the libstdc++ emergency-exception pool (0x16000 bytes per load), thread-handle duplication for foreign threads. Outside: clvk/LLVM/clspv/SPIRV sources, submodule pins, `patches/clvk/*`, host package installation, the private shutdown ABI of patch 0001, the OpenCL API behaviour.
+
+**Architecture.** (1) Build OpenCL.dll with the GCC 14.2 win32-model compilers (`-mthreads -static-libgcc -static-libstdc++`), no winpthreads. (2) Link a Waddle C object first that defines the complete external symbol set of libgcc_eh `emutls.o` (`__emutls_get_address`, `__emutls_register_common`) and
+`gthr-win32-thread.o` (`__gthr_win32_create/join/self`) so neither member is extracted. Per-thread emulated-TLS storage is one fixed-capacity record in the DLL's own loader-managed implicit TLS (`.tls$WDL` between `_tls_start` and `_tls_end`, reached via `gs:[0x58]` -> `ThreadLocalStoragePointer[_tls_index]`), so the module owns no TLS index, no per-thread heap and no unload-time code.
+(3) Release the libstdc++ emergency pool as the DLL's very last teardown action: a C initializer in `.CRT$XC*` that calls `atexit` (becomes onexit-table entry 0, runs after every static destructor while the heap is valid) and calls `_ZN9__gnu_cxx9__freeresEv`. (4) Fail-closed build gates (below).
+
+**Data and memory layout.** `emutls_object_t {size, align, location, templ}` mirrors libgcc's 4 x 8-byte object; `location = (arena byte offset << 8) | (slot + 1)`, published once with release ordering under a static `SRWLOCK`. `runtime_tls_record_t {storage[arena] (16-byte aligned), initialized[slots], gthread_handle}`; capacities are compile-time constants validated by the build gate (v1: 512 bytes, 32 slots, alignment 16; v2 must justify values from the real inventory: 11 objects, alignment <= 8, 96 bytes address-order, 157 bytes worst case, and reduce the 608-byte template if native loader retention is measured). Foreign-thread identity: record address | 1 (never a valid handle, owns nothing).
+
+**Execution sequence.** Load: loader allocates and template-initialises each thread's record; first use of an emulated-TLS object assigns a slot (locked), later uses copy the template once per thread. Thread start (`__gthr_win32_create`): suspended `CreateThread`, the new thread copies and frees the heap start block before user code and stores the borrowed creation handle in its record. Unload: static destructors run, then the release step frees the pool; the loader frees every thread's record and the implicit TLS index.
+
+**Concurrency.** Slot assignment under an `SRWLOCK`; per-thread data touched only by its owner; `initialized[]` per thread; double-checked publication with acquire/release. No DllMain, TLS callback, atexit-time TLS destruction or loader-lock cleanup beyond the CRT's normal teardown.
+
+**Failure handling.** Arena/slot overflow, impossible alignment, NULL TLS vector/block or misaligned record: `__fastfail` (no detach code, no hang). The build gate must make the overflow case unreachable in shipped DLLs.
+
+**Required gates (all fail closed, each with a failing test):** link map shows the shim and none of `libgcc_eh.a(emutls.o)`, `libgcc_eh.a(gthr-win32-thread.o)`, `libwinpthread`, `tls_atexit.o`, `__cxa_atexit`, `__cxa_thread_atexit(_impl)`, and that `atexit` resolves to `dllcrt2.o`; the map is bound to the produced DLL; TLS directory parsed and consistent; emulated-TLS inventory within the worst-case bound; every `TlsAlloc`/`FlsAlloc` call site (direct, thunk, pointer, `GetProcAddress`) paired or rejected; compiler version asserted (not only "win32") with libgcc/libstdc++ hashes in the cache key; pre-flight on the probe before the multi-hour build; idempotent Makefile gate; tests for the driver `main()`.
+
+**Verification criteria.** Isolated native regression (strengthened): handles, TLS and FLS exact every cycle; HeapWalk busy bytes exact from cycle 3 (msvcrt pinned, 4 pre-existing idle threads, foreign-thread exercise); 8 and 2048 cycles natural exit 0; the approved POSIX build and the shim-less Win32 build still fail on the same image. Real DLL: native exit 0 on the full qualification, constant post-unload handle count (approved DLL: 142 -> 148 -> 154), UMDH zero positive groups unloaded2 -> 3, a new exact per-unload TLS/FLS check on the real DLL, a 1100+ reload loop. Prior executions of `a8fd9d7a...` do not qualify a rebuilt DLL.
+
+**Evidence so far.** Isolated native proof of the v1 mechanism (8 and 2048 reloads, exact handles and free TLS, controls fail); candidate DLL built (2b04fb74...), not executed. The eh-pool leak, loader retention and heap behaviour are unmeasured.

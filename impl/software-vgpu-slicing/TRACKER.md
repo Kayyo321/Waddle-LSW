@@ -1605,3 +1605,17 @@ failed and is not acceptance evidence. No checkout/pin was changed to hide it.
 Required feature top-level checkouts are initialized at their pins; the
 inventory has no advanced/conflicted entries. Raw inventory and corrected
 non-acceptance report remain in `build/qualification_20261017/runtime_final_git_state.json`.
+
+
+## 2026-10-21 user-requested stopping point
+
+See [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md). **No progress change: software-vGPU remains 85.5% / In Progress; M2 remains 94% / Review; Time Ended TBD for both.**
+
+- M2 audit, passive handle-attribution diagnostics, two fixture fixes and their native proof: commits `7b6c9d5`, `6faf4ed`, `faf9d19`, `44d69c2`, `56b89a9` (+0% to #3/#5/#11; M2 #4 +0%).
+  Receipt [M2_DIAGNOSTICS_RECEIPT_2026_10_21.json](M2_DIAGNOSTICS_RECEIPT_2026_10_21.json); audit [../wsi-window-lifetime/M2_HANDLE_GATE_AUDIT_2026_10_21.md](../wsi-window-lifetime/M2_HANDLE_GATE_AUDIT_2026_10_21.md).
+- OpenCL runtime-unload defect (TODO #5 evidence only, +0%): root cause, independent reviews and a built-but-never-run candidate DLL in
+  [CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md](CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md), [CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md](CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md),
+  [RUNTIME_CANDIDATE_RECEIPT_2026_10_21.json](RUNTIME_CANDIDATE_RECEIPT_2026_10_21.json) and `clvk_runtime_proposal/`. **Human approval recorded (2026-10-21):** shim approach with a hardened v2
+  (Win32 thread model, Waddle C runtime shim replacing two libgcc_eh members, emergency-exception-pool release, fail-closed gates); no clvk/LLVM/clspv/submodule/`patches/clvk` change and no host package install.
+  Nothing is integrated; the v2 work list is in the checkpoint. The earlier "Win32 configuration rejected" status stands until v2 passes native qualification.
+- Task attribution for the docs-only commit(s) of this checkpoint: +0% to #3, #5, #11; overall remains 85.5%.
