@@ -175,3 +175,15 @@ vgpu-handle-diag-sanitizers: | build
 	$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuHandleDiagHostSources) -o build/vgpu_handle_diag_sanitized
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/vgpu_handle_diag_sanitized tests/vgpu/tcp_gpu_windows.c
 	@WADDLE_TEST_LEAK_CONTROL=1 ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 ./build/vgpu_handle_diag_sanitized > build/vgpu_handle_diag_leak_control.log 2>&1; status=$$?; if test $$status -eq 23 && grep -q 'LeakSanitizer: detected memory leaks' build/vgpu_handle_diag_leak_control.log; then echo 'handle diagnostics LeakSanitizer self-control: deliberate leak detected, exit 23'; else echo "handle diagnostics LeakSanitizer self-control FAILED: exit $$status"; cat build/vgpu_handle_diag_leak_control.log; exit 1; fi
+
+# Native Windows counterpart of the host test above: the same tcp_gpu_handle_diag_windows.inc against the
+# real ntdll (ProcessHandleInformation and ObjectTypeInformation layouts, object type names, passivity).
+# Cross-compile only: build/vgpu_handle_diag_native.exe must be run inside the Windows guest. It prints
+# HANDLE_DIAG_NATIVE lines and exits 0 only if every case passed. The first recipe line requires the test's
+# symbol() helper to match the fixture's byte for byte.
+build/vgpu_handle_diag_native.exe: tests/vgpu/tcp_gpu_handle_diag_native.c tests/vgpu/tcp_gpu_handle_diag_windows.inc tests/vgpu/tcp_gpu_windows.c | build
+	@test "$$(sed -n '/^static int symbol(HMODULE module/,/^}/p' tests/vgpu/tcp_gpu_windows.c)" = "$$(sed -n '/^static int symbol(HMODULE module/,/^}/p' $<)" || { echo 'symbol() in $< differs from the one in tests/vgpu/tcp_gpu_windows.c' >&2; exit 1; }
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include $< -luser32 -lgdi32 -ladvapi32 -o $@
+
+.PHONY: vgpu-handle-diag-native-build
+vgpu-handle-diag-native-build: build/vgpu_handle_diag_native.exe
