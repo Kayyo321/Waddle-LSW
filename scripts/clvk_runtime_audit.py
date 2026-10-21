@@ -50,6 +50,8 @@ ForbiddenThreadAtexit = (
     "__cxa_thread_atexit_impl",
     "__at_thread_exit",
     "notify_all_at_thread_exit",
+    "_ZNSt13__future_base13_State_baseV211_Make_ready6_M_setEv",
+    "_Make_ready::_M_set",
 )
 SensitiveApis = ("TlsAlloc", "TlsFree", "FlsAlloc", "FlsFree", "DuplicateHandle", "GetProcAddress")
 Executable = 0x20000000

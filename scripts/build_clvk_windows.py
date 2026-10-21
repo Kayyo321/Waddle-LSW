@@ -546,6 +546,7 @@ def linker_flags(runtime_objects, export_file, link_map):
                        '-Wl,-T,' + shlex.quote(str(root / 'scripts/clvk/runtime_sections.ld')),
                        '-Wl,--wrap=__gthr_win32_equal',
                        '-Wl,--wrap=_ZSt16__at_thread_exitPSt20__at_thread_exit_elt',
+                       '-Wl,--wrap=_ZNSt13__future_base13_State_baseV211_Make_ready6_M_setEv',
                        '-Wl,--wrap=_ZSt25notify_all_at_thread_exitRSt18condition_variableSt11unique_lockISt5mutexE')
     return ' '.join((prefix, '-mthreads', '-static-libgcc', '-static-libstdc++',
                      *required_fences,
@@ -702,6 +703,7 @@ def preflight_runtime_probe(root, selected, folder):
                '-Wl,-T,' + str(root / 'scripts/clvk/runtime_sections.ld'),
                '-Wl,--wrap=__gthr_win32_equal',
                '-Wl,--wrap=_ZSt16__at_thread_exitPSt20__at_thread_exit_elt',
+               '-Wl,--wrap=_ZNSt13__future_base13_State_baseV211_Make_ready6_M_setEv',
                '-Wl,--wrap=_ZSt25notify_all_at_thread_exitRSt18condition_variableSt11unique_lockISt5mutexE',
                '-o', str(probe_dll)]
     run(command, cwd=root)

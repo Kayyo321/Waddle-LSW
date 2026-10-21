@@ -39,3 +39,29 @@ Exact GCC archive review found no inbound calls/address references to the two th
 The first actual negative link test exposed that GNU PE ld silently permits a reference to a discarded function. **Discard alone is unsafe and not admitted.** Mandatory undefined `--wrap` fences for both exact mangled roots now reject external calls and address-taking before a DLL can be admitted. An additional undefined `--wrap=__gthr_win32_equal` rejects use of the comparator incompatible with foreign resource-free identities. The exact reviewed gthr archive has no internal comparator calls; std::thread::id uses scalar comparisons, as the native probe exercises. Detached-created-thread handle identity behavior is inherited from this GCC runtime, not a new foreign-thread guarantee. These unsupported low-level APIs must not be invoked; no general replacement ABI beyond the documented five entry points is claimed. Package/archive identity, ordinary synchronization, final PE checks and actual negative link tests are mandatory.
 
 `vgpu-opencl-runtime-link-test` compiles a positive DLL plus six separate negative objects; each negative must compile successfully, then fail the actual link for the expected unresolved wrapper (direct call and address-taking for all three APIs). The final positive PE contains no mapped thread-exit root definitions; discarded section-zero COFF names are metadata only. Root confirmed strict map ABI/CRT ownership on that DLL after adding correct support for GNU long-section continuation rows. The map gate ignores only the discarded inventory and linker wildcard declarations; any forbidden mapped output row and any defined PE function still fail. Nineteen synthetic admission groups pass optimized. Failed and corrected real controls remain under `build/qualification_runtime_link/`, including the initial discarded-reference bypass. No native acceptance is inferred from the link controls.
+
+### Normal futures without thread-exit callbacks (2026-10-21)
+
+The first full production link exposed an additional dead COMDAT in the exact
+reviewed GCC archive: `future.o` is needed by LLVM's ordinary future_error,
+promise.set_value and future.wait paths, but also contains
+`std::__future_base::_State_baseV2::_Make_ready::_M_set()`, a tail-call to the
+unsupported thread-exit callback API. Source scans and exact object relocations
+show no normal runtime caller of the thread-exit helper. The original failed
+link/map remain in `root_tls/full_driver_build/`.
+
+The Waddle linker supplement discards only that helper's text/pdata/xdata and
+adds an undefined-reference wrap for the helper itself in both production and
+probe links. This preserves the fence against GNU PE discard-only call/address
+bypasses. Final map/PE admission rejects a retained helper in mangled or
+demangled form. No dependency source/archive, pin or forbidden API allowance
+changes. Actual ordinary promise.set_value/future.wait/get linking passes; all
+eight direct/address controls reject, including set_value_at_thread_exit call
+and member-pointer use. Both Python modes pass. Root independently reran all34
+build-driver tests outside ptrace in both modes: PASS, including actual
+ASan/LSan-backed boundaries. Worker ptrace-related sanitizer failures remain
+preserved. Receipt `build/qualification_feature_20261021/root_tls/future_link_root/receipt.json`;
+link/audit evidence `root_tls/future_link_revision/`. Full new production link,
+static admission and native qualification remain pending.
+
+Task impact: +0% to #5/all tasks; parent85.5%, M2 94%, Time Ended TBD.

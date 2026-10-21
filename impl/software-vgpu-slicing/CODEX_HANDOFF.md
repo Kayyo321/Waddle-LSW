@@ -565,3 +565,29 @@ isolated runtime evidence only. The full production OpenCL build fails closed
 at its final link on future.o's forbidden thread-exit reference; it is not
 published or qualified. All failures and raw evidence are preserved.
 Task impact: +0% to #5/all tasks; parent85.5%, M2 94%, Time Ended TBD.
+
+### Normal futures without thread-exit callbacks (2026-10-21)
+
+The first full production link exposed an additional dead COMDAT in the exact
+reviewed GCC archive: `future.o` is needed by LLVM's ordinary future_error,
+promise.set_value and future.wait paths, but also contains
+`std::__future_base::_State_baseV2::_Make_ready::_M_set()`, a tail-call to the
+unsupported thread-exit callback API. Source scans and exact object relocations
+show no normal runtime caller of the thread-exit helper. The original failed
+link/map remain in `root_tls/full_driver_build/`.
+
+The Waddle linker supplement discards only that helper's text/pdata/xdata and
+adds an undefined-reference wrap for the helper itself in both production and
+probe links. This preserves the fence against GNU PE discard-only call/address
+bypasses. Final map/PE admission rejects a retained helper in mangled or
+demangled form. No dependency source/archive, pin or forbidden API allowance
+changes. Actual ordinary promise.set_value/future.wait/get linking passes; all
+eight direct/address controls reject, including set_value_at_thread_exit call
+and member-pointer use. Both Python modes pass. Root independently reran all34
+build-driver tests outside ptrace in both modes: PASS, including actual
+ASan/LSan-backed boundaries. Worker ptrace-related sanitizer failures remain
+preserved. Receipt `build/qualification_feature_20261021/root_tls/future_link_root/receipt.json`;
+link/audit evidence `root_tls/future_link_revision/`. Full new production link,
+static admission and native qualification remain pending.
+
+Task impact: +0% to #5/all tasks; parent85.5%, M2 94%, Time Ended TBD.

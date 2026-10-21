@@ -469,6 +469,7 @@ class runtime_driver_tests_t(unittest.TestCase):
                          '-Wl,-T,' + str(Root / 'scripts/clvk/runtime_sections.ld'),
                          '-Wl,--wrap=__gthr_win32_equal',
                          '-Wl,--wrap=_ZSt16__at_thread_exitPSt20__at_thread_exit_elt',
+                         '-Wl,--wrap=_ZNSt13__future_base13_State_baseV211_Make_ready6_M_setEv',
                          '-Wl,--wrap=_ZSt25notify_all_at_thread_exitRSt18condition_variableSt11unique_lockISt5mutexE'):
                 self.assertIn(flag, dll_command)
 

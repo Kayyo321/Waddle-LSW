@@ -353,12 +353,17 @@ class runtime_audit_test_t(unittest.TestCase):
 
     def test_discarded_inventory_cannot_hide_an_actual_forbidden_output(self):
         good = map_text()
-        prefix = "Discarded input sections\n .text$__at_thread_exit\n 0x0 0x10 /toolchain/libstdc++.a(condition_variable.o)\nLinker script and memory map\n"
+        ready_section = ".text$_ZNSt13__future_base13_State_baseV211_Make_ready6_M_setEv"
+        prefix = ("Discarded input sections\n .text$__at_thread_exit\n 0x0 0x10 /toolchain/libstdc++.a(condition_variable.o)\n "
+                  + ready_section + "\n 0x0 0x10 /toolchain/libstdc++.a(future.o)\nLinker script and memory map\n")
         dll = write_file(self.root / "OpenCL.dll", make_pe()[0])
         path = self.root / "test.map"
         path.write_text(prefix + good + " /DISCARD/\n *(.text$__at_thread_exit)\n")
         Audit.verify_runtime_link(path, dll, expected_output_name='OpenCL.dll', map_working_directory=self.root)
         path.write_text(prefix + good + " .text$__at_thread_exit 0x1000 0x10 /toolchain/libstdc++.a(condition_variable.o)\n")
+        with self.assertRaisesRegex(Audit.audit_error_t, "forbidden CRT"):
+            Audit.verify_runtime_link(path, dll, expected_output_name='OpenCL.dll', map_working_directory=self.root)
+        path.write_text(prefix + good + " " + ready_section + " 0x2000 0x10 /toolchain/libstdc++.a(future.o)\n")
         with self.assertRaisesRegex(Audit.audit_error_t, "forbidden CRT"):
             Audit.verify_runtime_link(path, dll, expected_output_name='OpenCL.dll', map_working_directory=self.root)
         path.write_text(prefix.replace('Linker script and memory map', 'unrecognized boundary') + good)
@@ -445,6 +450,10 @@ class runtime_audit_test_t(unittest.TestCase):
         with self.assertRaisesRegex(Audit.audit_error_t, "empty or stripped"):
             Audit.audit_runtime_tls(dll, symbol_lines=[], limits=CompiledLimits, expected_exports=ExpectedExports, runtime_policy=valid_policy())
         symbols.append(f"{Base + 0x1200:016x} T __cxa_thread_atexit")
+        with self.assertRaisesRegex(Audit.audit_error_t, "forbidden thread-exit"):
+            Audit.audit_runtime_tls(dll, symbol_lines=symbols, limits=CompiledLimits, expected_exports=ExpectedExports, runtime_policy=valid_policy())
+        symbols = [line for line in symbols if "__cxa_thread_atexit" not in line]
+        symbols.append(f"{Base + 0x1300:016x} T _ZNSt13__future_base13_State_baseV211_Make_ready6_M_setEv")
         with self.assertRaisesRegex(Audit.audit_error_t, "forbidden thread-exit"):
             Audit.audit_runtime_tls(dll, symbol_lines=symbols, limits=CompiledLimits, expected_exports=ExpectedExports, runtime_policy=valid_policy())
 
