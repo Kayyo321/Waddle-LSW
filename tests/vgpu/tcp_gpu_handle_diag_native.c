@@ -93,7 +93,8 @@ enum {
     NativeSettleAttempts = 100,  /**< Handle count samples, 10 ms apart, while waiting for balance. */
     NativeStressRounds = 50,     /**< Captures and name lookups of the passive case. */
     NativeStableRuns = 5,        /**< Back-to-back comparisons of layout_sanity. */
-    NativeAddedAttempts = 3      /**< Whole-case attempts of added_types when only OS noise appears. */
+    NativeAddedAttempts = 3,     /**< Whole-case attempts of added_types when only OS noise appears. */
+    NativeGrowthHandles = 1024  /**< Owned events: exceed the initial class-51 snapshot capacity. */
 };
 /** @brief Documented all-access masks of the synchronization objects (EVENT_ALL_ACCESS and kin). */
 enum { NativeEventAllAccess = 0x1F0003, NativeSemaphoreAllAccess = 0x1F0003,
@@ -838,6 +839,42 @@ cleanup:
     return result;
 }
 
+/** @brief Force real class-51 buffer growth and verify every owned event survives decoding.
+ * @return Zero only after a snapshot larger than the initial buffer succeeds, every event
+ * is represented with its exact access mask, and all acquired handles are closed.
+ * @details Single test thread; handles belong only to this case. Cleanup visits every slot
+ * after any acquisition or validation failure. No borrowed snapshot handle is ever closed.
+ */
+static int case_snapshot_growth(void)
+{
+    int result=0;
+    HANDLE events[NativeGrowthHandles]={0};
+    handle_diag_t diag={0};handle_diag_set_t set={0};
+    const DWORD start=process_handles();
+    require(start!=0,"GetProcessHandleCount failed, error %lu",(unsigned long)GetLastError());
+    handle_diag_begin(&diag);
+    require(diag.baseline.unavailable[0]==0,"baseline snapshot unavailable: %s",diag.baseline.unavailable);
+    for(unsigned index=0;index<NativeGrowthHandles;index++){
+        events[index]=CreateEventW(NULL,TRUE,FALSE,NULL);
+        require(events[index]!=NULL,"event %u creation failed, error %lu",index,(unsigned long)GetLastError());
+    }
+    require(handle_diag_capture(&diag,&set)==0,"grown snapshot unavailable: %s",set.unavailable);
+    require(set.count>(HandleDiagInitialBytes-sizeof(handle_diag_header_t))/sizeof(handle_diag_wire_entry_t),
+        "snapshot did not exceed the initial buffer: %llu entries",(unsigned long long)set.count);
+    for(unsigned index=0;index<NativeGrowthHandles;index++){
+        const handle_diag_entry_t *entry=find_entry(&set,(uintptr_t)events[index]);
+        require(entry!=NULL,"event %u missing from grown snapshot",index);
+        require(entry->granted_access==NativeEventAllAccess,"event %u access mask 0x%lx",index,(unsigned long)entry->granted_access);
+    }
+cleanup:
+    for(unsigned index=0;index<NativeGrowthHandles;index++){
+        if(close_owned(&events[index],"snapshot growth event"))result=1;
+    }
+    handle_diag_set_free(&set);handle_diag_free(&diag);
+    if(!result)result=check_balance(start);
+    return result;
+}
+
 /** @brief Case timing: handle_diag_now_ms is monotonic and measures a Sleep(50) plausibly. */
 static int case_timing(void)
 {
@@ -922,6 +959,7 @@ int main(void)
         {"removed",case_removed},
         {"failure_report_shape",case_failure_report_shape},
         {"type_name_unknown",case_type_name_unknown},
+        {"snapshot_growth",case_snapshot_growth},
         {"timing",case_timing},
     };
     const unsigned total=(unsigned)(sizeof cases/sizeof cases[0]);
