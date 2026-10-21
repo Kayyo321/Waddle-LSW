@@ -1632,3 +1632,10 @@ unchanged strict handle gate on the committed fixture, all passing; portable gat
 - **Commit `ca52536`**: `docs(wsi): record source-bound native receipts for the instrumented M2 handle-gate runs` - +0% to #3/#5/#11 (M2 #4 +0%).
 - **Commits `d5f2361`, `0faf4cd`** and the later review-fix documentation commit(s), which carry this section, the M2 tracker/IMPL_DESC/audit updates and the review handoff: +0% to #3, #5, #11; overall remains 85.5%.
 - The OpenCL runtime-unload correction (TODO #5) is untouched by this resumption and remains NOT READY; its remaining-work list is in [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md).
+
+
+### Independent M2 review checkpoint, 2026-10-21
+
+[M2_CODEX_REVIEW_2026_10_21.md](../wsi-window-lifetime/M2_CODEX_REVIEW_2026_10_21.md) and its [receipt](../wsi-window-lifetime/M2_CODEX_RECEIPT_2026_10_21.json) record the independent review of `8810544`. Commits `c650401` (snapshot-capacity correction), `ff66d04` (native 1,024-event growth regression) and `bc89bb0` (provenance/duration correction) each affect bounded M2 TODO #4 by +0%; every software-vGPU task remains +0%. The commit containing this checkpoint, `docs(wsi): record independent Codex review and qualification blocker`, likewise changes every task by +0%.
+
+All prescribed M2 portable gates pass independently, including 394 ICD cases and 90.32% ICD branch coverage. The corrected diagnostics pass 18 cases / 6,779 checks with ASan/LSan/UBSan; native Windows diagnostics pass 8/8. Fresh corrected-fixture triangle and WSI workloads pass through the physical RTX 5080, with all 16 checks exactly at 199 handles. The original 199-to-200 failure remains unattributed and unwaived, so M2 stays 94% / Review. CI is not run for these commits, no criteria amendment is approved, no acceptance credit is granted, and no push, PR-readiness update or merge occurs. Software-vGPU remains **85.5%**, Time Ended TBD; OpenCL runtime-unload, DXVK heap and other separate feature gates remain open.

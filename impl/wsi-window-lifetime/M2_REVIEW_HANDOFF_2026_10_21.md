@@ -1,5 +1,7 @@
 # READY FOR INDEPENDENT CODEX REVIEW: Milestone 2 (`impl/wsi-window-lifetime`)
 
+> Codex subsequently completed independent review, corrected the snapshot capacity, added native growth coverage and replayed both GPU workloads. Qualification remains blocked at 94%; see [M2_CODEX_REVIEW_2026_10_21.md](M2_CODEX_REVIEW_2026_10_21.md). This original handoff remains bound to candidate `8810544`.
+
 From: Claude Code (implementation owner for this closure session, 2026-10-21). To: Codex (owner of independent review, verification, qualification and the decision to advance M2 to 100%).
 Nothing in this file is an acceptance. It says the implementer's part of M2 is done, evidenced on the final sources and ready for you to check, and it names the one decision that is not the implementer's.
 

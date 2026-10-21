@@ -412,3 +412,8 @@ non-acceptance report remain in `build/qualification_20261017/runtime_final_git_
 ## Update 2026-10-21: M2 review handoff
 
 The M2 section above predates the work of 2026-10-21. The current M2 state, evidence and the open acceptance decision are in [../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md](../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md). OpenCL remains as described in [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md).
+
+
+## Independent M2 review continuation, 2026-10-21
+
+Codex completed the independent review of candidate `8810544`, corrected a diagnostic capacity defect, added and executed a native growth regression, and reran all prescribed portable M2 gates plus both physical GPU workloads. See [the independent review](../wsi-window-lifetime/M2_CODEX_REVIEW_2026_10_21.md) and [receipt](../wsi-window-lifetime/M2_CODEX_RECEIPT_2026_10_21.json) for exact bindings and limits. The historical 199-to-200 failure is still unattributed; M2 remains 94%, feature progress 85.5%, Time Ended TBD. The documented attribution-aware oracle is an unapproved proposal. No PR-readiness change, push or merge occurred. The OpenCL work is not accepted by this M2 review.

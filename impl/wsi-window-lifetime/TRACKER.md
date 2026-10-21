@@ -1,6 +1,6 @@
 # Feature Tracker: Guest WSI resize and retirement lifetime
 
-- **Contributors / Agents**: Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
+- **Contributors / Agents**: Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex independent qualification lead with read-only Luna source/evidence reviewers; Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
 - **Time Started**: 2026-10-09T19:59:10Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -14,7 +14,7 @@
 | #1 | Specify bounded lifetime and native thread contracts | Done | 15% | 100% | IMPL_DESC.md; unobserved HWND reuse and full window-event integration remain separate |
 | #2 | Implement replacement retirement, resize/loss and queue ownership gates | Done | 35% | 100% | Retire on failed replacement; exact Win32 capabilities; acquire/present gates; correct acquisition release; queue result precedence and conservative loss after ambiguous failure |
 | #3 | Add exact-size native presentation with balanced DC release attempts | Done | 20% | 100% | Preserves scaled compatibility API; exact path rejects extent changes before drawing |
-| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Current ICD 394 Debug/ReleaseSafe and prescribed ASan/LSan/allocator gates pass with 90.32% branch coverage; native WSI transitions and two full48-frame runs pass, but strict native handle-count gate remains externally blocked by Windows RPC; see M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json. 2026-10-21: fresh source-bound native runs on the committed fixture pass (triangle_present 20/20, wsi_lifetime 10/10) but do not waive the preserved 199 to 200 failure; the acceptance-owner decision is open (sections dated 2026-10-21) |
+| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Independent Codex portable gates pass: 394 ICD cases, 90.32% branches, prescribed ASan/LSan/allocator checks; corrected diagnostics 18 cases / 6,779 checks, native diagnostics 8/8 and both fresh physical GPU workloads pass. The preserved 199-to-200 failure remains unattributed and unwaived; CI and an acceptance-owner decision remain open. See M2_CODEX_REVIEW_2026_10_21.md. |
 
 **Total Feature Completion**: `94.0%`
 
@@ -279,3 +279,23 @@ They are closed below. The strict gate, baseline point, retry budget, frame and 
 ### Independent review provenance amendment (2026-10-21)
 
 `docs(wsi): correct console sign-in provenance and duration clocks` corrects the historical handoff, receipt disclosure and implementation description: Codex entered the saved test-account credential via QMP at the user’s explicit request; auto-logon remained off. The receipt now compares controller-relative durations only with the same clock. Original receipt bytes are preserved under `build/qualification_20261021_codex/before_signin_correction/`; its prior digest is recorded in the amended receipt. No raw run artifact, native source binding, assertion or result changes. TODO #4 +0% (+0% overall). The exact original review candidate remains `8810544b114ee69f0b3990d51b987caebc774c70`.
+
+
+## Independent Codex review checkpoint, 2026-10-21
+
+Full review: [M2_CODEX_REVIEW_2026_10_21.md](M2_CODEX_REVIEW_2026_10_21.md). Source-bound results: [M2_CODEX_RECEIPT_2026_10_21.json](M2_CODEX_RECEIPT_2026_10_21.json). The review candidate was `8810544b114ee69f0b3990d51b987caebc774c70`; the independent correction and native test are separate atomic commits below.
+
+- **Commit `8810544b114ee69f0b3990d51b987caebc774c70`**: `docs(wsi): apply independent-review fixes to the M2 handoff, trackers and audit`.
+  - **Task Impact**: TODO #4 +0% (+0% overall); fixes the earlier handoff's review documentation without granting acceptance.
+- **Commit `c650401`**: `fix(vgpu-tests): honor the full handle snapshot capacity`.
+  - **Task Impact**: TODO #4 +0% (+0% overall); corrects the premature half-cap refusal. Regression rejects the candidate implementation and passes with ASan/LSan/UBSan after correction.
+- **Commit `ff66d04`**: `test(vgpu): exercise real Windows handle snapshot growth`.
+  - **Task Impact**: TODO #4 +0% (+0% overall); 1,024 owned-event growth regression cross-compiles and executes natively as part of 8/8 Windows diagnostics cases, with exact retirement.
+- **Commit `bc89bb0`**: `docs(wsi): correct console sign-in provenance and duration clocks`.
+  - **Task Impact**: TODO #4 +0% (+0% overall); transparently amends metadata, preserving original receipt digest and all raw native artifacts.
+- **Commit containing this checkpoint**, `docs(wsi): record independent Codex review and qualification blocker`:
+  - **Task Impact**: TODO #4 +0% (+0% overall); records independent test/coverage/native receipts, synchronized tracker/handoff state and the concrete unapproved alternative oracle. Its exact object identity is the Git commit containing this entry.
+
+All six prescribed portable target groups pass independently. WSI branches are 92.95% Zig and 98.61% native C; the full ICD has 394 Debug/ReleaseSafe cases and 90.32% branches. Diagnostics have 18 cases / 6,779 checks under ASan/LSan/UBSan, with the intentional-leak self-control detected. Native Windows diagnostics pass 8/8. Fresh corrected-fixture `triangle_present` and `wsi_lifetime` runs pass on the actual RTX 5080 route; all 16 exact handle checks equal 199 on sample 1. Both the 1,020 historical and 68 new manifest-bound files re-hash successfully; an independent verifier additionally requires lifetime markers 1 through 8 in order.
+
+The historical `tcp_gpu_7adb6000` 199-to-200 failure remains unattributed and unwaived. CI has not run for these commits. The unchanged native qualification gate remains open; the proposed fail-closed attribution protocol is documented for an explicit owner decision, not implemented or adopted. **TODO #4 remains 80%, overall remains 94%, Time Ended TBD.** Software-vGPU remains 85.5%, with its separate OpenCL and other feature gates open. No PR-readiness update, push or merge occurred. The preserved VM is running; all owned native/GPU jobs and the temporary publisher have retired.

@@ -1,0 +1,348 @@
+{
+  "schema": "m2_codex_independent_review_v1",
+  "recorded_utc": "2026-10-21T16:55:53.050200+00:00",
+  "candidate_head": "8810544b114ee69f0b3990d51b987caebc774c70",
+  "reviewed_code_head": "ff66d04076dcc00759949b6befe317e14bc1ee4f",
+  "subsequent_metadata_correction_head": "bc89bb031acfc8899c7d1774f7dfd031aaeb4401",
+  "branch": "feature/software-vgpu-slicing",
+  "m2_accepted": false,
+  "m2_progress_percent": 94,
+  "software_vgpu_progress_percent": 85.5,
+  "feature_time_ended": "TBD",
+  "code_corrections": {
+    "c650401": "Clamp snapshot growth at the full documented 16 MiB cap; new regression fails against candidate and passes after correction.",
+    "ff66d04": "Add native 1024-event snapshot-growth regression with exact cleanup."
+  },
+  "evidence_correction": {
+    "bc89bb0": "Correct agent-assisted console sign-in attribution and like-for-like duration clocks; preserve original receipt digest and artifacts."
+  },
+  "portable_gates": [
+    {
+      "name": "wsi_functional",
+      "command": [
+        "make",
+        "vgpu-wsi-lifecycle-test"
+      ],
+      "started_utc": "2026-10-21T16:40:29.008218+00:00",
+      "ended_utc": "2026-10-21T16:40:34.824379+00:00",
+      "exit_code": 0,
+      "log": "build/qualification_20261021_codex/wsi_functional.log",
+      "sha256": "2d8c35b9fa9a6488d87d949f63f246210f4faf1200b3ef76fe453c51e15b88da"
+    },
+    {
+      "name": "wsi_sanitizers",
+      "command": [
+        "make",
+        "vgpu-wsi-lifecycle-sanitizers"
+      ],
+      "started_utc": "2026-10-21T16:40:34.824583+00:00",
+      "ended_utc": "2026-10-21T16:40:37.391803+00:00",
+      "exit_code": 0,
+      "log": "build/qualification_20261021_codex/wsi_sanitizers.log",
+      "sha256": "31af659ca2f7d0e57c6981d07c30b2ba71c5d7df69a878ecb27392704a5ea1f5"
+    },
+    {
+      "name": "wsi_coverage",
+      "command": [
+        "make",
+        "vgpu-wsi-lifecycle-coverage"
+      ],
+      "started_utc": "2026-10-21T16:40:37.392049+00:00",
+      "ended_utc": "2026-10-21T16:40:46.366934+00:00",
+      "exit_code": 0,
+      "log": "build/qualification_20261021_codex/wsi_coverage.log",
+      "sha256": "ece83baf251330c0f25934e22c22c36be483ff2b4683ded5b4971a5e5ff3fac0"
+    },
+    {
+      "name": "icd_units",
+      "command": [
+        "make",
+        "vgpu-icd-units"
+      ],
+      "started_utc": "2026-10-21T16:40:46.367093+00:00",
+      "ended_utc": "2026-10-21T16:41:42.186730+00:00",
+      "exit_code": 0,
+      "log": "build/qualification_20261021_codex/icd_units.log",
+      "sha256": "67423cee0549e7e84ca6955bdc4bd027ae3dda8a860106fff778441b5cc3691f"
+    },
+    {
+      "name": "icd_coverage",
+      "command": [
+        "make",
+        "vgpu-icd-coverage"
+      ],
+      "started_utc": "2026-10-21T16:41:42.187009+00:00",
+      "ended_utc": "2026-10-21T16:44:13.457587+00:00",
+      "exit_code": 0,
+      "log": "build/qualification_20261021_codex/icd_coverage.log",
+      "sha256": "664e7fb33b533e6af3fb225d4f02d7547e7ffd8da502259bf36355dfddb36aef"
+    },
+    {
+      "name": "handle_diag",
+      "command": [
+        "make",
+        "vgpu-handle-diag-test",
+        "vgpu-handle-diag-sanitizers"
+      ],
+      "started_utc": "2026-10-21T16:44:13.458002+00:00",
+      "ended_utc": "2026-10-21T16:44:13.845327+00:00",
+      "exit_code": 0,
+      "log": "build/qualification_20261021_codex/handle_diag.log",
+      "sha256": "99c5f1c743bf6b0f4d99de35366da11b44b80f77e8b40ceba10a5aecbee3048c"
+    }
+  ],
+  "portable_context": {
+    "ptrace_scope": "0",
+    "cwd": "/home/dev/Waddle-LSW",
+    "environment": {
+      "CC": null,
+      "ZIG": null,
+      "ASAN_OPTIONS": null,
+      "LSAN_OPTIONS": null,
+      "UBSAN_OPTIONS": null
+    },
+    "production_sources_unchanged_since_candidate": true,
+    "source_binding_note": "The full portable run began at candidate HEAD. Production inputs stayed unchanged throughout. Its final diagnostics step and the separate green regression use the corrected diagnostic source. The later native-growth test changes only its standalone native test, not portable production inputs.",
+    "wsi_zig_tests_debug_and_releasesafe": 12,
+    "wsi_owned_functions_instrumented": 39,
+    "wsi_zig_branch_coverage": "145/156 = 92.95%",
+    "wsi_native_c_branch_coverage": "71/72 = 98.61%",
+    "icd_tests_debug_and_releasesafe": 394,
+    "icd_branch_coverage": "4369/4837 = 90.32%",
+    "diagnostics_cases": 18,
+    "diagnostics_checks": 6779,
+    "asan_lsan_ubsan": "all prescribed clean runs exit 0; explicit LSan deliberate-leak self-control exits 23"
+  },
+  "snapshot_regression": {
+    "old_implementation_expected_failure": {
+      "path": "build/qualification_20261021_codex/snapshot_cap_red.log",
+      "sha256": "1371f2fd03e1737a67f58b0375f4961a6e0fa53497be485c03a3d3d83c1843ec"
+    },
+    "corrected_implementation": {
+      "path": "build/qualification_20261021_codex/snapshot_cap_green.log",
+      "sha256": "f6bd869b49155818df8e1a23a6746f2c979ec16634b44fe5881c39dab8b9d27b"
+    }
+  },
+  "native_windows_diagnostics": {
+    "result": {
+      "path": "build/qualification_20261021_codex/native_diag_result.json",
+      "sha256": "8a89ec5acb08947260b0bd79fc69de248faef1755a913a5bf203eb0358ea786e"
+    },
+    "binary": {
+      "path": "build/vgpu_handle_diag_native.exe",
+      "sha256": "080e7e63850cd777250742298cd4562cbc40106fd93c6422be3c4945f6c0e0b9"
+    },
+    "exit_code": 0,
+    "cases": 8,
+    "new_growth_case": "PASS; 1024 owned events, grown table and exact handle retirement",
+    "execution": "Windows 11 build 26300 via WinRM; native execution, not interactive-console execution"
+  },
+  "native_physical_gpu_runs": [
+    {
+      "folder": "build/windows11_vm/tcp_gpu_8cbf89ac",
+      "manifest": {
+        "path": "build/windows11_vm/tcp_gpu_8cbf89ac/evidence_manifest.json",
+        "sha256": "13379031ed271224431fee68739285dbb6162c713a4443d26ad6c9a909c4de21"
+      },
+      "files_verified": 34,
+      "exit_code": 0,
+      "workload": "triangle_present",
+      "ordered_lifetimes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "baseline": 199,
+      "first_sample_equal_checks": 8,
+      "frames": 48,
+      "wsi_cases": 0,
+      "last_check_ms_since_baseline": 55395,
+      "worker_retirement": {
+        "session": "c23a63fb5190d63c",
+        "worker_pid": "125436",
+        "worker_retired": "1",
+        "status": "0",
+        "worker_exit_status": "0"
+      },
+      "results_file": {
+        "path": "build/qualification_20261020/codex_review_triangle_results.json",
+        "sha256": "da6aed9241b2d7371a155a2bf6bf48ce68123102fbb10f19e7da6fb7fa3fe20e"
+      },
+      "fixture_sha256": "e68c6d85795b63ef1792c48b604c4176efa1b81ee903bcc6d93b360e75811c1a",
+      "liveness_after": {
+        "host_survivors": [],
+        "host_stray_run_processes": [],
+        "guest_gpu_processes": [],
+        "guest_run_cmd_processes": []
+      },
+      "runner": {
+        "path": "build/qualification_20261020/m2_runner/run_m2_instrumented.py",
+        "sha256": "e87ba840421bb77882a446dccf35244e6c5018108884988558ec1e3089748d3a",
+        "log": "build/qualification_20261020/m2_runner/logs/run_20261021T164833Z_e060d6.log"
+      }
+    },
+    {
+      "folder": "build/windows11_vm/tcp_gpu_72dc797c",
+      "manifest": {
+        "path": "build/windows11_vm/tcp_gpu_72dc797c/evidence_manifest.json",
+        "sha256": "f6096b8e1886f03550c304b3d85d88733c1335a75c8578cc5c4850863d4a1527"
+      },
+      "files_verified": 34,
+      "exit_code": 0,
+      "workload": "wsi_lifetime",
+      "ordered_lifetimes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "baseline": 199,
+      "first_sample_equal_checks": 8,
+      "frames": 0,
+      "wsi_cases": 32,
+      "last_check_ms_since_baseline": 38203,
+      "worker_retirement": {
+        "session": "9d2c780498c7d7a9",
+        "worker_pid": "128946",
+        "worker_retired": "1",
+        "status": "0",
+        "worker_exit_status": "0"
+      },
+      "results_file": {
+        "path": "build/qualification_20261020/codex_review_wsi_results.json",
+        "sha256": "c6e3d0351c31f46afd776f8de6eee4fffd501afd04f69dc4cde2655b6ab70ba3"
+      },
+      "fixture_sha256": "e68c6d85795b63ef1792c48b604c4176efa1b81ee903bcc6d93b360e75811c1a",
+      "liveness_after": {
+        "host_survivors": [],
+        "host_stray_run_processes": [],
+        "guest_gpu_processes": [],
+        "guest_run_cmd_processes": []
+      },
+      "runner": {
+        "path": "build/qualification_20261020/m2_runner/run_m2_instrumented_wsi.py",
+        "sha256": "77fb3703e54cd96baeec3f551f43bfbe9f57b0a0b8696b4377b31ca12a6c74e7",
+        "log": "build/qualification_20261020/m2_runner/logs/run_20261021T164944Z_ea0e41.log"
+      }
+    }
+  ],
+  "historical_receipts_recomputed": {
+    "run_count": 30,
+    "manifest_bound_files": 1020,
+    "original_fixture_sha256": "77a334150077b0702c0a4144124b760871ec2e1bb41a7967cc774139773bb66d",
+    "ordered_lifetimes_verified": true,
+    "handle_checks_equal_first_sample": 240,
+    "limit": "Bound to candidate diagnostic source. Mutable default build/gpu fixture was rebuilt; original executed bytes remain preserved in every historical run and build/qualification_20261021/executed_fixture_77a33415.exe.",
+    "full_verification": {
+      "path": "build/qualification_20261021_codex/evidence_verification.json",
+      "sha256": "33128a4ba060371f1fa831f3864cb606baa99fbfc8f81c6017a79affcaed3967"
+    }
+  },
+  "source_sha256": {
+    "src/vgpu/venus_wsi.zig": "6a01930a38ca517e268b2539a657a43ee5a85b2424ea5c40f42ed5ec5a02e78c",
+    "src/vgpu/venus_win32_present.c": "e7f7340e985e4e2fbd0c8196f0c9b007545320e99c6c08dd494847d414e37150",
+    "src/vgpu/venus_icd.zig": "7cf58eefde08348512f6890338c106e5f81c3d5f352f034a86b18b8a2a1832ff",
+    "tests/vgpu/tcp_gpu_windows.c": "ef51e3d6006fadd4006d6ce67d4ca81520c3c3d275abefa4efd57ae3fc1fc17d",
+    "tests/vgpu/tcp_gpu_present_windows.inc": "61b8189e388496a9fcfe4068a9e5635abf3c54a9353ff19eacdd564591e857bb",
+    "tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": "dcb3a630ff3b6f955169268e68647304edec046304ce327b67bc202b90156595",
+    "tests/vgpu/tcp_gpu_handle_diag_windows.inc": "42cc4ec2af1383c1011a0b39ce2afcc7bcd2734a3d2dbbc3bee0048cf2a3ff42",
+    "tests/vgpu/tcp_gpu_handle_diag_host.c": "fb6f0768b68d28376275e7e520d54ee1f5a7cbf2b226e2959d48eab47f93faab",
+    "tests/vgpu/tcp_gpu_handle_diag_native.c": "7e34af7d531438cbe84953a1289eace2edb3c6f922c12c99c19e7135e2b49469",
+    "tests/vgpu/win32_fake/handle_diag_fake.h": "6d4eddfd645272f2b93e9d7b1eb58e37dd7eac786802a6470df09fe27d2cfe75",
+    "scripts/vgpu_tcp.mk": "a77f02131c63b0e9621356b2249990d4f1e87ce9de22f43ff6c6c4e0027a5388"
+  },
+  "preserved_collection_failure": {
+    "receipt": {
+      "path": "build/qualification_20261021_codex/native_collection_attempt_1/native_results.json",
+      "sha256": "10d63862bf31802cf862abc8067331bb6d4184fba0b94c2696e0bc09718d9578"
+    },
+    "stderr": {
+      "path": "build/qualification_20261021_codex/native_collection_attempt_1/native_diag_transport_stderr.log",
+      "sha256": "4cb18fa30a3af58f3f95bcc13698a6d960f64723eeca10197b9b7f00dc3ea5f3"
+    },
+    "explanation": "PowerShell treated native informational stderr as a terminating NativeCommandError. The first collection attempt has no acceptance credit. The corrected collector drains stdout/stderr separately, reads the actual process exit, and refuses overlapping native jobs."
+  },
+  "review_tools": [
+    {
+      "path": "build/qualification_20261021_codex/run_native_review.py",
+      "sha256": "a92f90411aed0e0581a400e967c2495dcb4de98e31d2f5259439cc2483dcc1b7"
+    },
+    {
+      "path": "build/qualification_20261021_codex/verify_evidence.py",
+      "sha256": "f320891372e94f6628859ce6234bc19730a52cfd8bd34bdb246c4eed34eb793c"
+    }
+  ],
+  "final_liveness": {
+    "path": "build/qualification_20261021_codex/final_liveness.json",
+    "sha256": "852009fe3989488fc8fdc3543c47b6f25cfb54bce848da525be06252230ccf27"
+  },
+  "submodule_inventory": {
+    "path": "build/qualification_20261021_codex/submodule_status.txt",
+    "sha256": "8a8914901f6b85e979a3fd8b1ea6b70a9eb6963e87524ed6e2a4efd992486adc"
+  },
+  "limitations": [
+    "tcp_gpu_7adb6000 remains a preserved, unattributed native exit-1 handle-count failure: 199 to 200 after 42 frames. No fresh pass waives it.",
+    "CI has not run for these commits. Nothing pushed, PR readiness unchanged, no merge.",
+    "No WOW64, loaded-host run, repeated system-only control on this boot, or native RTL regression.",
+    "Large-table failure-only delta reporting remains quadratic; read-only private benchmark at 100000 entries took about 2.17 seconds with output discarded and a fast type-query stub. This is diagnostic scalability evidence, not M2 pass/fail evidence.",
+    "Two replay drivers count exact-output lines without enforcing lifetime order; this independent verifier additionally requires ordered 1..8 on all 32 actual outputs. Drivers were not modified.",
+    "Vendor descendant wait status 9 remains recorded. Waddle-owned controller/worker retirement is 0 with no survivors or supervisor signals; no claim that every vendor descendant exited normally.",
+    "Five unrelated nested Looking Glass submodules remain uninitialized; no recursive-initialization acceptance is claimed.",
+    "OpenCL runtime-unload, DXVK native heap ownership, cancellation and shared Linux-GPU/OpenCL overlap are separate open feature gates, not accepted by this review."
+  ],
+  "ownership_and_delegation": {
+    "initial_head_and_tree_verified": true,
+    "claude_stopped_workers_verified": true,
+    "root": "sole writer, Git owner and VM/GPU runner",
+    "read_only_reviewers": "gpt-6-luna high (source and evidence), completed; no children spawned by reviewers",
+    "model_settings": "Session root settings inherited without change; explicit Luna high child overrides used per user preference. Stored workforce phase plan used for child allocation only.",
+    "local_qwen": "not invoked; GPU reserved for native verification"
+  },
+  "acceptance_decision_required": {
+    "current_rule": "Unchanged strict process-global count equality, same baseline, 100 x 10 ms and workloads.",
+    "no_waiver_applied": true,
+    "proposal": "A separately owner-approved, fail-closed attribution-aware oracle would require identity/trace evidence for all deltas including masked swaps, reject Waddle/directly-creatable/unresolved changes, and fully explain OS-only changes. This proposal is not implemented or accepted."
+  },
+  "diagnostics_coverage": {
+    "receipt": {
+      "path": "build/qualification_20261021_codex/diag_coverage_result.json",
+      "sha256": "f91e50c39be501f7257ba8e6659e35ae0045bb7d053001fd77e03eb7296c92cf"
+    },
+    "result": {
+      "real_include": "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_handle_diag_windows.inc",
+      "lines_hit": 108,
+      "lines_total": 108,
+      "branches_hit": 100,
+      "branches_total": 100,
+      "compile_command": [
+        "cc",
+        "-std=c11",
+        "-Wall",
+        "-Wextra",
+        "-Wpedantic",
+        "-Werror",
+        "-g",
+        "-O0",
+        "--coverage",
+        "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_handle_diag_host.c",
+        "-o",
+        "/home/dev/Waddle-LSW/build/qualification_20261021_codex/diag_coverage/host"
+      ],
+      "gcov_json": "build/qualification_20261021_codex/diag_coverage/tcp_gpu_handle_diag_host.gcov.json.gz"
+    }
+  },
+  "toolchain": {
+    "zig": "0.13.0",
+    "gcc": "14.2.0",
+    "clang": "19.1.7"
+  }
+}
