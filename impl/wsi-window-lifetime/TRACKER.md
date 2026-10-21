@@ -529,3 +529,16 @@ complete native WSI qualification. Fresh loaded-host full workloads are
 running; no result credited. Documentation unit
 `docs(vgpu): record physical matrix and allocator calibration`, task#4 +0%,
 M2 remains94% / Review, Time Ended TBD.
+
+### Current-source loaded-host full native workloads (2026-10-21)
+
+Both complete owned-protocol workloads pass: triangle8lifetimes/48frames and
+WSI8lifetimes/32cases, with strict GDI/USER equality, exact zero-owner snapshots,
+matching Ack, natural native/controller/worker0 and clean owned retirement.
+Six bounded owned CPU workers prove loaded-host execution and retire naturally.
+Both runs also record199-to200 process handle drift diagnostically. See
+[M2_OWNED_NATIVE_2026_10_21.md](M2_OWNED_NATIVE_2026_10_21.md) for exact source,
+package, session, file manifest and root review bindings. Historical failures
+remain preserved; no new attribution or waiver. Documentation unit
+`docs(vgpu): record loaded-host M2 ownership qualification`, #4 +0%, M2 remains
+94% / Review pending exact-candidate CI and final review; Time Ended TBD.

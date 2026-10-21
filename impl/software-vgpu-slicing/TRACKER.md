@@ -1980,3 +1980,13 @@ unit, `docs(vgpu): record physical matrix and allocator calibration`, also
 changes no task progress; parent85.5%, M2 94%, Time Ended TBD. Outstanding
 native ownership, stress, cancellation, overlap, CI and review gates remain
 explicit.
+
+### M2 loaded-host native evidence (2026-10-21)
+
+Both full M2 owned-protocol workloads pass under six owned CPU workers, with
+strict GUI checks and exact M2 owner retirement despite diagnostic199-to200
+process-handle drift. All owned load/native/host processes retire cleanly.
+See [the source-bound native evidence](../wsi-window-lifetime/M2_OWNED_NATIVE_2026_10_21.md).
+Atomic unit `docs(vgpu): record loaded-host M2 ownership qualification`, all
+parent tasks +0%, parent85.5%, M2 94%, Time Ended TBD. Separate DXVK/OpenCL
+native gates and final CI/review remain open.
