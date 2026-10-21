@@ -731,8 +731,10 @@ static int case_removed(void)
     require(diag.baseline.unavailable[0]==0,"baseline snapshot unavailable: %s",diag.baseline.unavailable);
     const unsigned long long value=(unsigned long long)(uintptr_t)target;
     require(find_entry(&diag.baseline,(uintptr_t)target)!=NULL,"the event 0x%llx is missing from the baseline snapshot",value);
-    require(CloseHandle(target),"CloseHandle(event) failed, error %lu",(unsigned long)GetLastError());
-    target=NULL;
+    {
+        HANDLE closing=target;target=NULL;   /* one CloseHandle attempt: cleanup must never close it again */
+        require(CloseHandle(closing),"CloseHandle(event) failed, error %lu",(unsigned long)GetLastError());
+    }
     require(handle_diag_capture(&diag,&second)==0,"second snapshot unavailable: %s",second.unavailable);
     handle_diag_print_delta(&diag,"added",&second,&diag.baseline,&second);
     handle_diag_print_delta(&diag,"removed",&diag.baseline,&second,&second);

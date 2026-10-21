@@ -52,6 +52,8 @@ jobs:
           echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
       - name: Verify loader environment rollback with mock-only sanitizers
         run: make vgpu-loader-environment-test vgpu-loader-environment-sanitizers vgpu-loader-environment-coverage
+      - name: Verify native fixture handle diagnostics with mock-only sanitizers
+        run: make vgpu-handle-diag-test vgpu-handle-diag-sanitizers
       - name: Verify metadata-bound concurrent coverage recorder
         run: |
           python3 -B tests/av/coverage_recorder_test.py -v

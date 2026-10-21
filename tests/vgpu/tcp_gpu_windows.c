@@ -760,8 +760,9 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
  * retirement-receipt paths, workload and exact physical-device name.
  * @return Zero only after exact real workload outputs and matching retirement Ack;
  * nonzero failure, retaining DLL/context until trusted host retirement if necessary.
- * Sole medium-integrity lifecycle thread. No allocation beyond application Vulkan
- * objects; bootstrap and loader references outlive all calls/CPU dispatch tables.
+ * Sole medium-integrity lifecycle thread. Allocation beyond application Vulkan objects is
+ * limited to the failure-attribution handle snapshot (handle_diag_t), released on every
+ * exit path; bootstrap and loader references outlive all calls/CPU dispatch tables.
  */
 int main(int argc,char **argv)
 {

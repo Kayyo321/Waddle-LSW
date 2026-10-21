@@ -54,10 +54,24 @@ static void handle_check_record(handle_check_t *check,DWORD count)
  * handle in this process. They run strictly after the baseline sample, are consulted only to
  * print text, and never change the exit status or the pass/fail decision. All helpers run on
  * the single fixture thread and share no state beyond the caller-owned handle_diag_t. */
+/** @brief Information classes and fixed capacities of the handle diagnostics; compile-time constants only. */
 enum {
-    HandleDiagProcessHandleInformation = 51, HandleDiagObjectTypeInformation = 2,
-    HandleDiagInitialBytes = 32768, HandleDiagMaxBytes = 16777216, HandleDiagMaxAttempts = 6,
-    HandleDiagTypeBytes = 1024, HandleDiagNameChars = 48, HandleDiagReasonChars = 96
+    /** NtQueryInformationProcess class ProcessHandleInformation (PROCESS_HANDLE_SNAPSHOT_INFORMATION). */
+    HandleDiagProcessHandleInformation = 51,
+    /** NtQueryObject class ObjectTypeInformation (reads the type, never the object or its name). */
+    HandleDiagObjectTypeInformation = 2,
+    /** First snapshot buffer size in bytes. */
+    HandleDiagInitialBytes = 32768,
+    /** Largest snapshot buffer in bytes; a larger table is reported as unavailable. */
+    HandleDiagMaxBytes = 16777216,
+    /** Query attempts before a snapshot is reported as unavailable. */
+    HandleDiagMaxAttempts = 6,
+    /** Bytes of the stack buffer that receives one OBJECT_TYPE_INFORMATION. */
+    HandleDiagTypeBytes = 1024,
+    /** Capacity in characters of a printed type name including the terminator. */
+    HandleDiagNameChars = 48,
+    /** Capacity in characters of the stored "snapshot unavailable" reason including the terminator. */
+    HandleDiagReasonChars = 96
 };
 /** @brief STATUS_INFO_LENGTH_MISMATCH, the only status that asks for a larger buffer. */
 static const ULONG HandleDiagStatusInfoLengthMismatch = 0xC0000004UL;
