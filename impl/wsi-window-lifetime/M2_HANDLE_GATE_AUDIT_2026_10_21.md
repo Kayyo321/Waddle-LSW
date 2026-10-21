@@ -46,6 +46,19 @@ The M2 acceptance owner must choose how the native Windows gate proceeds; agents
 Meanwhile the instrumented fixture can be run repeatedly (runner prepared under `build/qualification_20261020/m2_runner/`, not executed): if
 the historic failure recurs, the new output attributes it to a handle type and, with option B tracing, to a creator.
 
+### Update after the work resumed (same day): the instrumented runs were executed
+
+20 native `triangle_present` and 10 native `wsi_lifetime` repetitions ran on the committed fixture with the unchanged oracle (receipts
+[triangle_present](../software-vgpu-slicing/M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json) and [wsi_lifetime](../software-vgpu-slicing/M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json); specification and
+limits in [IMPL_DESC.md](IMPL_DESC.md)). All 30 pass, baseline 199, every one of the 240 lifetime checks equal on its first sample, so **the historic failure did not recur and no attribution was produced**.
+Per this audit's own rule these passes do not waive `tcp_gpu_7adb6000`; the options above are unchanged and the decision stays with the acceptance owner. New facts relevant to that decision:
+
+- The diagnostics were passive over 30 full runs (no run needed a second sample; slowest retirement check 1 ms), which supports the earlier review's judgement that they do not perturb the gate.
+- Every run ended its last retirement check 55.06-55.80 s (`triangle_present`) or 38.12-38.78 s (`wsi_lifetime`) after the baseline, i.e. before the roughly 60 s at which the OS RPC idle collector changed the count in the
+  system-only control. The earlier passing runs took 66-68 s and the failed run about 82 s for seven lifetimes. A dependence of the failure on run duration (host load or any other slowdown) is a hypothesis that fits these
+  numbers but is untested; a deliberately slowed-host diagnostic was considered, not run, and could be run by whoever holds the lease. If it held, whether to record a quiet-host precondition for running the unchanged gate would be a further owner decision (it changes the test protocol, not the oracle) and is not proposed or applied here.
+- The `wsi_lifetime` runs are the first native execution of the changed destroyed-HWND ownership path (`6faf4ed`).
+
 ## Independent review of the diagnostics change (interim, stopped at the user request)
 
 Opus review: no blocking defects. Acceptance integrity SOUND (only the listed lines changed; the new code creates no handles; under 1 microsecond

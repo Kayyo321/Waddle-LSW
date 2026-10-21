@@ -118,5 +118,36 @@ between snapshot and type lookup only yields type `unknown`. Object names are ne
 
 **Verification.** Host: 18 cases / 6724 checks, plain and ASan+LSan+UBSan, LeakSanitizer self-control exits 23, gcov 100% lines and branches of the `.inc`, mutation testing, exact-text
 pin of the acceptance rule. Native (Windows 11 build 26300 guest, WinRM and interactive): 7/7 cases (layout, passivity, added types
-Event/Semaphore/Mutant/Timer/File/Section/Job/Thread with exact names, removed handle, report shape, unknown type, timing). **Evidence limit:** the diagnostics have not yet
-been run inside a full 48-frame native workload, and earlier native receipts describe the old fixture hashes. Audit, decisions and the `StretchDIBits` probe: [M2_HANDLE_GATE_AUDIT_2026_10_21.md](M2_HANDLE_GATE_AUDIT_2026_10_21.md).
+Event/Semaphore/Mutant/Timer/File/Section/Job/Thread with exact names, removed handle, report shape, unknown type, timing). **Evidence limit (updated later on 2026-10-21):**
+the diagnostics have since run inside 20 full 48-frame `triangle_present` and 10 `wsi_lifetime` native workloads (next subsection); earlier native receipts
+(`M2_NATIVE_RECEIPT_2026_10_17.json`, `NATIVE_RECEIPTS_2026_10_18.json`, `M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json`) describe the old fixture hashes only. Over those 30 runs every compared
+sample was the first one and the slowest retirement check was 1 ms (no first-use or long-run side effect was observed); the class-51 growth path and WOW64 were not exercised. Audit, decisions and the
+`StretchDIBits` probe: [M2_HANDLE_GATE_AUDIT_2026_10_21.md](M2_HANDLE_GATE_AUDIT_2026_10_21.md).
+
+### Source-bound native evidence on the committed fixture (2026-10-21)
+
+**Scope.** Inside: native repetitions of the unchanged strict process-handle gate with the diagnostics compiled in. Outside: any change of the rule, the baseline point, the retry budget,
+the workload, the frozen guest inputs or the supervisor; any acceptance credit; any attribution of the preserved `tcp_gpu_7adb6000` failure.
+
+**What ran.** The byte-identical copies of the 2026-10-17 supervisor (`tcp_gpu_actual.py`, `tcp_gpu_owned_session.py`, `type_command_immediate.py`; hashes in the receipts) drove, per repetition, the frozen
+guest ICD, bootstrap, loader, host worker, runtime and controller (hash-equal to the two qualified 2026-10-17 runs); only the guest fixture executable differs: `make build/vgpu_tcp_gpu_windows_draft.exe`
+from the committed sources (sha256 `77a334150077b0702c0a4144124b760871ec2e1bb41a7967cc774139773bb66d`, 317,440 bytes, 8 `handle_diag:` strings, the legacy failure text unchanged). Environment: the existing
+Windows 11 VM booted from its preserved disk (never provisioned or reset), the interactive console session launched through Win+R key events (no credentials typed; the user signed in), medium
+integrity, the physical RTX 5080 through the host Waddle worker. A repetition passes only if the supervisor's own assertions pass and the runner's independent check agrees: guest exit 0, the exact
+output shape of the workload, no legacy handle-failure line, guest binary hashes verified after the run, and no live controller, worker or guest process afterwards.
+
+**Results** ([triangle_present receipt](../software-vgpu-slicing/M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json), [wsi_lifetime receipt](../software-vgpu-slicing/M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json)).
+
+| Workload | Runs | Passed | Baseline | Lifetime checks equal to the baseline | Last retirement check after the baseline | Per lifetime |
+|:--|--:|--:|--:|:--|:--|:--|
+| `triangle_present` (48 frames, 24 FIFO + 24 IMMEDIATE, 8 lifetimes) | 20 | 20 | 199 in every run | 160 of 160, each on the first sample | 55.06-55.80 s (median 55.34 s) | 6.82-7.39 s |
+| `wsi_lifetime` (8 lifetimes, 32 labeled cases) | 10 | 10 | 199 in every run | 80 of 80, each on the first sample | 38.12-38.78 s (median 38.44 s) | 4.72-5.11 s |
+
+**Meaning and limits.** These are repetitions of the unchanged oracle and grant no credit. They do not replace or attribute the preserved 199 to 200 failure and, as recorded in the audit, repeated passes
+do not waive it. Every run ended its last check well inside the roughly 60 s at which the OS RPC idle collector changed the count in the 2026-10-17 system-only control, whereas the earlier passing runs took
+66-68 s and the failed run about 82 s for seven lifetimes. Whether run duration explains that failure is an untested hypothesis; a deliberately slowed-host diagnostic was considered and not run.
+`wsi_lifetime` exercises the changed destroyed-HWND ownership path of `tcp_gpu_wsi_lifetime_windows.inc`; the earlier native pass (`tcp_gpu_683c0ee2`) used the old fixture.
+
+**Reproduction (this host, same lease rules).** `make build/vgpu_tcp_gpu_windows_draft.exe`; start the loopback publisher `build/qualification_20261017/public_binaries_resume.py` (serves `build/windows11_vm/repair_media` on
+127.0.0.1:55986); then `python3 -B build/qualification_20261020/m2_runner/run_m2_instrumented.py --repetitions N` or `python3 -B .../run_m2_instrumented_wsi.py --workload wsi_lifetime --repetitions N` (never `python -O`).
+The runners are git-ignored evidence tooling; their hashes are in the receipts. They refuse to start unless the VM, lease, console session and frozen inputs check out.

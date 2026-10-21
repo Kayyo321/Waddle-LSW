@@ -14,7 +14,7 @@
 | #1 | Specify bounded lifetime and native thread contracts | Done | 15% | 100% | IMPL_DESC.md; unobserved HWND reuse and full window-event integration remain separate |
 | #2 | Implement replacement retirement, resize/loss and queue ownership gates | Done | 35% | 100% | Retire on failed replacement; exact Win32 capabilities; acquire/present gates; correct acquisition release; queue result precedence and conservative loss after ambiguous failure |
 | #3 | Add exact-size native presentation with balanced DC release attempts | Done | 20% | 100% | Preserves scaled compatibility API; exact path rejects extent changes before drawing |
-| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Current ICD 394 Debug/ReleaseSafe and prescribed ASan/LSan/allocator gates pass with 90.32% branch coverage; native WSI transitions and two full48-frame runs pass, but strict native handle-count gate remains externally blocked by Windows RPC; see M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json |
+| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Current ICD 394 Debug/ReleaseSafe and prescribed ASan/LSan/allocator gates pass with 90.32% branch coverage; native WSI transitions and two full48-frame runs pass, but strict native handle-count gate remains externally blocked by Windows RPC; see M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json. 2026-10-21: fresh source-bound native runs on the committed fixture pass (triangle_present 20/20, wsi_lifetime 10/10) but do not waive the preserved 199 to 200 failure; the acceptance-owner decision is open (sections dated 2026-10-21) |
 
 **Total Feature Completion**: `94.0%`
 
@@ -240,3 +240,30 @@ unchanged. **Task #4 +0%; overall remains 94%; Time Ended TBD; not ready for clo
   - **Task Impact**: +0% to TODO: #4 (+0% overall). Native 7/7 PASS in the guest.
 - **Commit `56b89a9`**: `test(vgpu): apply independent-review fixes to the handle diagnostics`
   - **Task Impact**: +0% to TODO: #4 (+0% overall). Review fixes, CI step for the host tests; native test re-run 7/7.
+- **Commit `cdd7690`**: `docs(wsi): record the M2 handle-gate audit, diagnostics and the open acceptance decision`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Audit note, IMPL_DESC diagnostics section, tracker checkpoint and the diagnostics receipt.
+- **Commit `7392d93`**: `docs(vgpu): checkpoint at user stop with OpenCL runtime-unload root cause and approved path`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall; M2 untouched). OpenCL runtime-unload evidence and checkpoint; recorded here only so every commit of the branch is attributed.
+- **Commit `ca52536`**: `docs(wsi): record source-bound native receipts for the instrumented M2 handle-gate runs`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Machine-readable receipts of the 30 native runs below.
+
+## 2026-10-21 native verification on the committed fixture (work resumed at the user's request)
+
+The stopping-point section above listed three M2 gaps: no instrumented native run, receipts bound to the old fixture hashes, and the `wsi_lifetime` path of the changed fixture never executed.
+They are closed below. The strict gate, baseline point, retry budget, frame and lifetime counts, thresholds and every task weight are unchanged.
+**Task #4 +0%; overall remains 94%; Time Ended TBD; the PR is not marked ready; nothing merged.** Review readiness is not acceptance: whether these passes satisfy the native gate while
+`tcp_gpu_7adb6000` stays unwaived is the acceptance-owner decision recorded in [M2_HANDLE_GATE_AUDIT_2026_10_21.md](M2_HANDLE_GATE_AUDIT_2026_10_21.md); the amended [IMPL_DESC.md](IMPL_DESC.md) holds the full specification of this evidence.
+
+- **Portable gates on the final sources** (HEAD `7392d93`, incremental builds, logs and SHA-256 under `build/qualification_20261021/gates/`, every exit 0): `make vgpu-wsi-lifecycle-test` (Zig 12/12 in Debug and ReleaseSafe, native C API-double and
+  unsupported-platform tests); `make vgpu-wsi-lifecycle-sanitizers` (ASan/LSan/UBSan, 39 owned functions instrumented, zero leaks); `make vgpu-wsi-lifecycle-coverage` (Zig branches 92.95% = 145/156, lines 99.33% = 148/149; native C
+  branches 98.61% = 71/72, lines 100% = 47/47); `make vgpu-icd-units` (394/394 in Debug and ReleaseSafe, 128-cycle dispatch fixture in each); `make vgpu-icd-coverage` (branches 90.32% = 4369/4837, lines 98.53% = 4696/4766);
+  `make vgpu-handle-diag-test vgpu-handle-diag-sanitizers` (18 cases / 6724 checks, LeakSanitizer self-control exits 23); the three Windows cross-build targets were up to date in that run and were then freshly compiled at HEAD with the same
+  `zig cc -target x86_64-windows-gnu ... -Werror` recipes into scratch paths (exit 0; the executed binaries stay untouched). These equal the baseline recorded on the unchanged base HEAD.
+  `clang-19 -Werror` and `gcc -O2 -Werror` also build the diagnostics host test and it passes (no clang sanitizer runtime is installed here, so that check carries no sanitizer evidence). CI has not run for these commits.
+- **Native `triangle_present`:** 20 of 20 pass on the committed fixture (instrumented build sha256 `77a334150077b070...`). Baseline 199 in every run; all 160 lifetime checks equal on the first sample; last check 55.06-55.80 s after the baseline.
+  Receipt: [M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json](../software-vgpu-slicing/M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json).
+- **Native `wsi_lifetime`:** 10 of 10 pass (8 lifetimes and 32 labeled cases each, exact GPU-readback comparisons as in the 2026-10-17 run). Baseline 199 in every run; all 80 lifetime checks equal on the first sample; last check 38.12-38.78 s after the baseline.
+  Receipt: [M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json](../software-vgpu-slicing/M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json). This is the first native execution of the changed destroyed-HWND ownership path.
+- **What these do not show:** the preserved 199 to 200 failure is neither replaced nor attributed, and no artifact can attribute it retrospectively; repeated passes do not waive it. Run duration relative to the roughly 60 s OS RPC idle collector is an untested hypothesis
+  (a deliberately slowed-host diagnostic was considered, not run). WOW64, the class-51 growth path and any run of this fixture on a loaded host are unexercised.
+- **Disclosures:** the VM was restarted from its preserved disk after a second host reboot (qemu-img check clean first; the user signed in at the console); a light offline worker harness (nice 19, no VM/GPU/network contact) overlapped runs 18-20 of the triangle campaign, which recorded all-pass pre-checks and the same timings.
