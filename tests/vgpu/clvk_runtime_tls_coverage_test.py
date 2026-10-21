@@ -52,6 +52,22 @@ class coverage_test_t(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     coverage.coverage_summary(report, Source)
 
+    def test_eh_pool_inventory_uses_the_same_unweakened_floors(self):
+        required = frozenset(("waddle_clvk_eh_pool_register", "waddle_clvk_eh_pool_release"))
+        report = report_fixture()
+        report["files"][0]["functions"] = [{"name": name, "execution_count": 1} for name in sorted(required)]
+        self.assertEqual(coverage.coverage_summary(report, Source, required)["functions_executed"], 2)
+        report["files"][0]["functions"][0]["execution_count"] = 0
+        with self.assertRaises(ValueError):
+            coverage.coverage_summary(report, Source, required)
+        report["files"][0]["functions"][0]["execution_count"] = 1
+        for line in report["files"][0]["lines"][:2]:
+            line["branches"][0]["count"] = 0
+        with self.assertRaises(ValueError):
+            coverage.coverage_summary(report, Source, required)
+        with self.assertRaises(ValueError):
+            coverage.coverage_summary(report_fixture(), Source, frozenset())
+
     def test_source_and_zero_denominators(self):
         for report in (None, {}, {"files": []}, {"files": None}):
             with self.assertRaises(ValueError):

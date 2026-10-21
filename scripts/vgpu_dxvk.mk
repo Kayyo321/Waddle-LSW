@@ -109,3 +109,16 @@ vgpu-opencl-runtime-tls-coverage: | build
 	python3 -B tests/vgpu/clvk_runtime_tls_coverage_test.py
 	python3 -O -B tests/vgpu/clvk_runtime_tls_coverage_test.py
 	python3 -B scripts/clvk_runtime_tls_coverage.py
+
+.PHONY: vgpu-opencl-runtime-eh-test vgpu-opencl-runtime-eh-sanitizers vgpu-opencl-runtime-eh-coverage
+vgpu-opencl-runtime-eh-test: | build
+	$(CC) $(CFLAGS) tests/vgpu/clvk_runtime_eh_pool_test.c -o build/vgpu_clvk_runtime_eh_test
+	./build/vgpu_clvk_runtime_eh_test
+
+vgpu-opencl-runtime-eh-sanitizers: | build
+	$(CC) $(CFLAGS) -O1 -fsanitize=address,leak,undefined -fno-omit-frame-pointer tests/vgpu/clvk_runtime_eh_pool_test.c -o build/vgpu_clvk_runtime_eh_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/vgpu_clvk_runtime_eh_sanitized
+
+vgpu-opencl-runtime-eh-coverage: | build
+	python3 -B tests/vgpu/clvk_runtime_tls_coverage_test.py
+	python3 -B scripts/clvk_runtime_tls_coverage.py --eh-pool
