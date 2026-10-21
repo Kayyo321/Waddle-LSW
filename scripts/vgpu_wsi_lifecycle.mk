@@ -32,3 +32,41 @@ vgpu-wsi-lifecycle-coverage: vgpu-protocol
 .PHONY: vgpu-m2-output-test
 vgpu-m2-output-test:
 	python3 -B tests/vgpu/m2_output_test.py -v
+
+# Explicit qualification instrumentation; ordinary sink/DLL recipes are unchanged.
+VgpuM2OwnerSources = tests/vgpu/m2_owner_ledger.c tests/vgpu/m2_ownership_probe.c
+VgpuM2OwnerHeaders = tests/vgpu/m2_owner_ledger.h tests/vgpu/m2_ownership_probe.h
+VgpuM2OwnerFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu
+VgpuM2OwnerPortableFlags = $(VgpuM2OwnerFlags) -D_WIN32 -DWaddleM2OwnershipProbe -DWaddleM2OwnershipFaults -Itests/vgpu/win32_fake
+
+build/wsi-lifecycle/m2_owner_ledger: tests/vgpu/m2_owner_ledger_test.c tests/vgpu/m2_owner_ledger.c $(VgpuM2OwnerHeaders) | build/wsi-lifecycle
+	$(CC) $(VgpuM2OwnerFlags) -O2 tests/vgpu/m2_owner_ledger_test.c tests/vgpu/m2_owner_ledger.c -o $@
+
+build/wsi-lifecycle/m2_ownership_portable: tests/vgpu/m2_ownership_portable.c $(VgpuM2OwnerSources) $(VgpuM2OwnerHeaders) $(VgpuWsiLifecycleHeaders) src/vgpu/venus_win32_present.c | build/wsi-lifecycle
+	$(CC) $(VgpuM2OwnerPortableFlags) -O2 tests/vgpu/m2_ownership_portable.c $(VgpuM2OwnerSources) src/vgpu/venus_win32_present.c -o $@
+
+.PHONY: vgpu-m2-ownership-test vgpu-m2-ownership-sanitizers vgpu-m2-ownership-coverage vgpu-m2-ownership-native-build
+vgpu-m2-ownership-test: build/wsi-lifecycle/m2_owner_ledger build/wsi-lifecycle/m2_ownership_portable
+	./build/wsi-lifecycle/m2_owner_ledger
+	./build/wsi-lifecycle/m2_ownership_portable
+
+vgpu-m2-ownership-sanitizers: | build/wsi-lifecycle
+	$(CC) $(VgpuM2OwnerFlags) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak,undefined tests/vgpu/m2_owner_ledger_test.c tests/vgpu/m2_owner_ledger.c -o build/wsi-lifecycle/m2_owner_ledger_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./build/wsi-lifecycle/m2_owner_ledger_sanitized
+	$(CC) $(VgpuM2OwnerPortableFlags) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak,undefined tests/vgpu/m2_ownership_portable.c $(VgpuM2OwnerSources) src/vgpu/venus_win32_present.c -o build/wsi-lifecycle/m2_ownership_portable_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./build/wsi-lifecycle/m2_ownership_portable_sanitized
+
+vgpu-m2-ownership-coverage:
+	python3 -B tests/vgpu/m2_ownership_coverage_test.py -v
+	python3 -B tests/vgpu/m2_ownership_coverage.py
+
+build/vgpu_m2_ownership_native.exe: tests/vgpu/m2_ownership_native.c $(VgpuM2OwnerSources) $(VgpuM2OwnerHeaders) include/waddle/venus_win32_present.h src/vgpu/venus_win32_present.c | build
+	$(ZIG) cc -target x86_64-windows-gnu $(VgpuM2OwnerFlags) -DWaddleM2OwnershipProbe -DWaddleM2OwnershipFaults tests/vgpu/m2_ownership_native.c $(VgpuM2OwnerSources) src/vgpu/venus_win32_present.c -luser32 -lgdi32 -ldwmapi -o $@
+
+# This object deliberately omits WaddleM2OwnershipFaults; the qualified DLL will
+# link it in a separate later rule, never the standalone fault-control executable.
+build/wsi-lifecycle/m2_ownership_probe_windows.obj: tests/vgpu/m2_ownership_probe.c $(VgpuM2OwnerHeaders) | build/wsi-lifecycle
+	$(ZIG) cc -target x86_64-windows-gnu $(VgpuM2OwnerFlags) -DWaddleM2OwnershipProbeExport -c $< -o $@
+
+vgpu-m2-ownership-native-build: build/vgpu_m2_ownership_native.exe build/wsi-lifecycle/m2_ownership_probe_windows.obj
+	python3 -c 'import subprocess,sys; names={line.split()[-1] for line in subprocess.check_output(["nm","-g","--defined-only","build/wsi-lifecycle/m2_ownership_probe_windows.obj"],text=True).splitlines() if line.split()}; expected={"venus_m2_dc_acquire","venus_m2_dc_release","venus_m2_dc_snapshot"}; sys.exit(0 if names==expected else "Unexpected qualified observer definitions: "+repr(names));'

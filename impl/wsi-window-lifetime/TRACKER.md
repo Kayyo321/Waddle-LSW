@@ -411,3 +411,24 @@ coverage exclusions/thresholds, historical evidence or dependency pins changed.
   The remaining blocker is implementation and fresh qualification under the
   approved contract, including controls, exact-candidate CI and independent final
   review; approval itself provides no acceptance evidence.
+
+
+### Exact native ownership observer readiness, 2026-10-21
+
+- **Commit `fbd94e6`**: `docs(wsi): adopt bounded M2 ownership qualification`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. Records direct approval and the
+  complete owner map before implementation.
+- Current atomic unit: `test(wsi): observe exact native drawing-context owners`
+  (exact hash recorded in the next checkpoint). Adds reservation-before-GetDC,
+  exact successful-release retirement, sticky failed owners, fail-closed versioned
+  snapshots, native leak/masked-release controls and portable safety/coverage gates.
+  The default C path is unchanged; test faults are absent from the qualified object.
+- **PASS**: four ledger groups / 2,720 checks, three observer groups / 759 checks;
+  ASan/LSan/UBSan; four coverage-evidence groups (also under Python optimization);
+  ledger 85/85 lines and 143/144 outcomes, observer 35/35 lines and 26/28 outcomes;
+  existing WSI functional/safety/coverage gates; strict x64 Windows cross-build.
+  **NOT RUN**: four actual Windows owner controls, physical workload qualification,
+  CI. See `build/qualification_m2_astra_20261021/ownership_observer/receipt.json`.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  task #4 **80%**, Time Ended **TBD**. ICD quiescence and native per-lifetime
+  protocol remain to implement; historical failures remain failed/unattributed.

@@ -52,11 +52,11 @@ review, not an independent final acceptance review.
 
 No unaccounted Waddle-owned kernel acquisition was found in the changed M2 production WSI paths. Process-wide Windows/loader/vendor resources remain outside the approved narrowed claim; a DLL name is not ownership evidence.
 
-## Approved implementation boundaries (implementation pending)
+## Approved implementation boundaries (implementation in progress)
 
 1. Preserve the approved proposal verbatim as a tracked adoption appendix with the human answer/date and source hashes, explain prospective effect, and synchronize M2/parent docs. Record unit3 commit 3736237 at +0%. Existing historical audit/review/receipt files remain untouched.
 
-2. The planned qualification-only C DC observer wraps the actual GetDC/ReleaseDC calls when an explicit build macro is enabled. Fixed storage, no allocations/threads/native resources, monotonic IDs, exact HWND/HDC matching, sticky overflow/invalid-release/failure state. Release success retires that exact acquisition; failed release does not. A full/faulted/exhausted ledger must reject before another native acquisition, or immediately release the newly acquired exact DC while retaining a sticky failure; it must never silently lose a successful acquisition. Ledger access is serialized by the existing ICD lock for production calls and the sole fixture UI thread for controls; no observer thread is introduced. Query is read-only. Ordinary builds retain their current APIs/code path and exports. The qualified DLL exposes only read-only observer snapshots; fault injection exists only in the standalone control executable, never the qualified DLL.
+2. The qualification-only C DC observer wraps the actual GetDC/ReleaseDC calls when an explicit build macro is enabled. Fixed storage, no allocations/threads/native resources, monotonic IDs, exact HWND/HDC matching, sticky overflow/invalid-release/failure state. Release success retires that exact acquisition; failed release does not. A full/faulted/exhausted ledger must reject before another native acquisition, or immediately release the newly acquired exact DC while retaining a sticky failure; it must never silently lose a successful acquisition. Ledger access is serialized by the existing ICD lock for production calls and the sole fixture UI thread for controls; no observer thread is introduced. Query is read-only. Ordinary builds retain their current APIs/code path and exports. The qualified DLL exposes only read-only observer snapshots; fault injection exists only in the standalone control executable, never the qualified DLL.
 
 3. A qualification-only ICD read-only snapshot runs under lock_icd, scanning existing fixed owner arrays. It reports protocol/version/size, WSI next ID, object next ID, live surfaces/chains/pairs/acquired images, object/resource IDs, mappings/owned cache allocations, tickets/references, first retained identity and command/lost state. It verifies slots as well as live_count (count/slot inconsistency fails). It neither clears state nor unbinds, rebinds, retries or retires anything. Export exists only for explicitly qualified builds. Existing allocator/backend identity tests supply the temporary-slice and exact release proof; this is a quiescence query, not a general tracing/debug framework. Normal production DLL remains uninstrumented.
 
@@ -98,6 +98,97 @@ floor, or unrelated vendor change is authorized. Temporary pixel allocation owne
 is proved by the existing allocator/sanitizer boundary and is explicitly not visible
 to the native quiescence query. GDI/USER aggregate counts remain required supplemental
 checks and cannot substitute for the exact identity ledger.
+
+## Implemented C-boundary observer and controls (unit B)
+
+`m2_owner_ledger.h/.c` and `m2_ownership_probe.h/.c` now implement the exact native
+identity boundary. `src/vgpu/venus_win32_present.c` selects those wrappers only
+when `WaddleM2OwnershipProbe` is defined; otherwise the Win32 source preprocesses
+identically to its pre-observer form. The ordinary native object has no probe
+references. The qualified observer object is built without
+`WaddleM2OwnershipFaults`, and its only explicit Windows export directive is the
+read-only `venus_m2_dc_snapshot`. Its three externally linkable C definitions are
+exactly acquire, release and snapshot; the native build gate rejects any extra
+(including test-fault) definitions. The qualified ICD DLL and per-lifetime fixture
+protocol are not yet implemented by this unit.
+
+The caller exclusively owns a 32-entry fixed ledger. The ICD lock serializes
+production sink calls; native and portable controls use a sole UI thread. A
+successful reservation allocates a never-reused nonzero 64-bit ID before GetDC.
+Full capacity, an exhausted counter, invalid parent/class or an earlier sticky
+failure reject before another native acquisition. Failed GetDC cancels only its
+reserved empty slot. A successful native result remains in that reserved slot,
+even if it duplicates an existing identity. In that exceptional duplicate case,
+the wrapper attempts actual ReleaseDC for only the new acquisition's exact ID;
+a failed release remains recorded and acquisition stays blocked. No success is
+left without a slot.
+
+Release first resolves exactly one matching resource class, HWND and HDC.
+Unknown/ambiguous identities never reach ReleaseDC. The actual API result
+controls retirement: zero preserves the exact ID/native bits and records a sticky
+release failure; nonzero clears that one entry and increments retirement. Cleanup
+may retire proven owners despite a sticky error, but cannot make the qualification
+snapshot clean by erasing the error. Window identities use the same ledger type
+for the forthcoming fixture instrumentation; the production observer never owns
+or destroys HWND. No allocation, thread, kernel handle or general OS snapshot is
+introduced by the ledger itself.
+
+The snapshot ABI is exactly 72 bytes, compile-time asserted, with these fields in
+order: u32 `version=1`, u32 `bytes=72`; u64 `next_id`, `acquired`, `retired`,
+`first_live_id`, `first_live_parent`, `first_live_value`; u32 `live`, `pending`,
+`failures`, `reserved=0`. `venus_m2_dc_snapshot(version, output, bytes)` requires
+version 1, a nonnull distinct writable output and exact size; mismatch returns
+zero without touching output. A successful query scans entries, counts pending
+reservations and live identities and detects inconsistent counters/empty slots.
+It transfers no owner and performs no native call. A clean decision requires the
+valid ABI, no live/pending identity, no failure, zero first-live fields/reserved
+field, balanced successful acquire/retire counts and `next_id > acquired`.
+The final fixture must additionally require nonzero per-lifetime activity and
+monotonic high-water marks; an initial empty snapshot is not lifetime evidence.
+
+Four portable ledger groups (2,720 checks) exercise 128 repeated cycles, exact
+identity, unrelated release, failed/foreign/duplicate retirement, acquisition
+cancellation, capacity/counter exhaustion, malformed state and ABI. Three
+portable observer groups (759 checks) call the actual C sink and observer over
+Win32 API doubles, including the native ReleaseDC return path, omitted release,
+injected failure, actual API-double cleanup failure, foreign release, capacity
+rejection before GetDC and duplicate native results. These assertions remain
+active under optimization. ASan/LSan/UBSan reports zero owned leaks/errors.
+
+`make vgpu-m2-ownership-coverage` first validates malformed coverage evidence in
+four groups, then measures each actual ledger/observer source independently at
+>=90% lines and directional branch outcomes, with no exclusions. All standalone
+control code compiled into that observer is included in the denominator. The
+latest local result is ledger 85/85 lines and 143/144 outcomes (99.31%); observer
+35/35 lines and 26/28 outcomes (92.86%). Unique retained directories under
+`build/coverage/vgpu/m2_ownership/` contain binaries, objects, gcno/gcda, compressed
+gcov JSON and source/raw-report hashes. Empty/missing/duplicate/unexpected source
+records, zero denominators, malformed counters or either individual floor fail.
+Existing default WSI tests, allocator/sanitizers and coverage also pass unchanged:
+12 Zig cases; 145/156 Zig branches (92.95%) and 71/72 C branches (98.61%).
+
+`make vgpu-m2-ownership-native-build` cross-builds
+`build/vgpu_m2_ownership_native.exe` and the separate fault-free observer object.
+It does not execute Windows. The standalone executable has four ordered cases:
+`positive`, `owned-leak-equal-total`, `injected-release-failure`, and
+`unrelated-release-masks-total`. Every case invokes the actual production C sink
+on a real owned HWND. Negative cases retain the sink's actual acquired DC; one
+returns success despite omitting release, one injects the failed-release outcome,
+and one additionally releases a separate DC actually acquired by that control.
+The exact-owner decision must reject before cleanup even when measured total
+kernel counts are equal. There is no warmup/retry/baseline adjustment; an unequal
+negative-control total fails the control and must be reported. The injected
+failed-release outcome is not claimed as a naturally occurring Windows API
+failure. All cleanup uses actual ReleaseDC on only those acquired identities and
+requires success, balanced identities and preserved GDI/USER counts before the
+owned window is destroyed. Failed cleanup remains a failing test.
+
+These four Windows cases are **NOT RUN** in the isolated implementation worktree.
+Root-owned native execution and later CI must preserve their real output and exit
+status. Cross-compilation and portable API doubles grant no native acceptance.
+The source-bound unit receipt is
+[`ownership_observer/receipt.json`](../../build/qualification_m2_astra_20261021/ownership_observer/receipt.json).
+M2 remains 94%, parent 85.5%, Time Ended TBD.
 
 ## Exact approved proposal (historical source text)
 

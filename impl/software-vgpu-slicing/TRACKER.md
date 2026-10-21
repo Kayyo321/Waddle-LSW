@@ -1706,3 +1706,19 @@ are in [the M2 tracker](../wsi-window-lifetime/TRACKER.md) and
   failures remain failed/unattributed; the new protocol still requires its code,
   controls, fresh native/physical evidence, exact-candidate CI and final review.
   Separate OpenCL/DXVK tasks receive no credit from this amendment.
+
+
+### M2 native-owner observer readiness, 2026-10-21
+
+- **Commit `fbd94e6`**: `docs(wsi): adopt bounded M2 ownership qualification`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**.
+- Current atomic unit: `test(wsi): observe exact native drawing-context owners`
+  (exact hash recorded in the next checkpoint). The fixed identity ledger and
+  conditional actual C-boundary observer pass portable functional, sanitizer and
+  per-source >=90% coverage gates. The real Windows controls cross-build but are
+  unexecuted. Default behavior is unchanged; no test-fault definitions enter the
+  qualified observer object. Full [details and limits](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md).
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU stays
+  **85.5%**, M2 **94% / Review**, Time Ended **TBD**. No credit to OpenCL/DXVK;
+  ICD quiescence, the per-lifetime protocol, native controls, fresh physical
+  qualification, exact-candidate CI and independent final review remain open.

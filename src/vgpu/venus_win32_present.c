@@ -4,6 +4,13 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dwmapi.h>
+#ifdef WaddleM2OwnershipProbe
+/* Qualification-only exact owner observation. Ordinary builds call Win32
+ * directly; fault injection is never compiled into the qualified DLL. */
+#include "m2_ownership_probe.h"
+#define GetDC(window) ((HDC)venus_m2_dc_acquire((uintptr_t)(window)))
+#define ReleaseDC(window, dc) venus_m2_dc_release((uintptr_t)(window), (uintptr_t)(dc))
+#endif
 #endif
 int venus_win32_present_extent(uintptr_t hwnd, uint32_t *width, uint32_t *height) {
     if (!width || !height || width == height)

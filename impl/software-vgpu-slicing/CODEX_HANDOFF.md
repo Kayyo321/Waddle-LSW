@@ -437,3 +437,17 @@ controls, protocol, fresh qualification and exact-candidate CI are still pending
 Codex Astra implements in the isolated M2 checkout; the lead retains all Git and
 native/physical runner ownership. M2 stays 94%, software-vGPU 85.5%, Time Ended
 TBD. This M2 unit does not close separate OpenCL/DXVK tasks.
+
+
+### M2 observer implementation checkpoint
+
+The isolated unit after contract commit `fbd94e6` implements only the exact DC
+ledger/conditional C observer and its controls/build gates. Portable tests and
+ASan/LSan/UBSan pass; both actual observer sources independently exceed 90% line
+and branch coverage without exclusions. The standalone Windows executable
+cross-builds; its four real-window controls are **NOT RUN**. The fault-free
+observer object has no control definitions, and the ordinary sink remains
+unchanged. Receipt: `build/qualification_m2_astra_20261021/ownership_observer/receipt.json`.
+Continue with qualified ICD quiescence, explicit per-lifetime fixture/verifier
+protocol and CI, then root-only native/physical qualification and final review.
+M2 remains 94%, parent 85.5%, Time Ended TBD.

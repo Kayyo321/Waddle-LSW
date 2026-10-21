@@ -320,3 +320,20 @@ leak/cleanup-failure/masked-release controls, and missing-evidence rejection. Th
 conditional observer may not change default DLL behavior or ownership transitions.
 Implementation, fresh native/physical qualification, exact-candidate CI and an
 independent final review remain pending; no completion credit is granted.
+
+
+## Exact native owner observer (unit B, 2026-10-21)
+
+The [ownership contract](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#implemented-c-boundary-observer-and-controls-unit-b)
+now specifies the implemented 32-entry reservation-before-acquisition ledger,
+72-byte versioned snapshot, conditional real GetDC/ReleaseDC wrappers and four
+standalone Windows controls. Ordinary sink preprocessing remains identical and
+ordinary objects have no probe references. Fault functions exist only in the
+standalone test build; the fault-free object has only the read-only snapshot
+export directive and an enforced exact C definition set.
+
+Portable functional/sanitizer/coverage gates and strict native cross-build pass.
+Ledger coverage is 85/85 lines, 143/144 outcomes; observer coverage 35/35 lines,
+26/28 outcomes, individually >=90% with no exclusions. Actual Windows controls,
+qualified ICD quiescence, the new per-lifetime protocol and final qualification
+remain pending. No native or acceptance result follows from this implementation.

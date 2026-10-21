@@ -6783,3 +6783,10 @@ ICD/WSI quiescence must be backed by leak/cleanup-failure/masked-release control
 all allocator, sanitizer, coverage, functional and host retirement gates remain.
 Implementation and final qualification are pending. This amendment grants no
 progress and does not qualify separate OpenCL or DXVK feature requirements.
+
+
+The M2 contract's first implementation unit now provides the conditional real
+Win32 DC observer, fixed exact-identity ledger and standalone native leak/failure
+controls. Portable safety/coverage and Windows cross-build pass; actual Windows
+execution and the complete per-lifetime ownership protocol remain pending. See
+the [implemented observer ABI and limits](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#implemented-c-boundary-observer-and-controls-unit-b).
