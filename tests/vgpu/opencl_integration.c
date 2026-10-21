@@ -1045,6 +1045,7 @@ static int run_opencl_cycle(int argc,wchar_t **argv) {
 }
 
 #include "dxvk_heap_audit_windows.inc"
+#include "native_csr_heap_windows.inc"
 
 /** @brief Parent-owned stress inputs; all borrowed arguments survive the run. */
 typedef struct reload_fixture_t { int argc;wchar_t **argv;const wchar_t *directory; } reload_fixture_t;
@@ -1098,12 +1099,12 @@ int wmain(int argc, wchar_t **argv)
         if (length >= 16 || !parsed || parsed > 8 || !end || *end) return 2;
         cycles = (unsigned)parsed;
     }
-    if (audit_stage(directory, "baseline")) return 1;
+    if (native_csr_stage(directory, "baseline")) return 1;
     for (unsigned cycle = 0; cycle < cycles; ++cycle) {
         if (run_opencl_cycle(argc, argv)) return 1;
         char stage[64];
         int count = snprintf(stage, sizeof stage, "unloaded_%u", cycle + 1);
-        if (count <= 0 || (size_t)count >= sizeof stage || audit_stage(directory, stage)) return 1;
+        if (count <= 0 || (size_t)count >= sizeof stage || native_csr_stage(directory, stage)) return 1;
     }
     return 0;
 }

@@ -7035,3 +7035,15 @@ external exact OS binary admission and measured PEB build26300. Read-only
 process-memory access is bounded; unsupported targets fail closed. Portable
 validators and native CPU retention/OOM controls pass separately. FLS and
 full-DLL reload/heap/GPU acceptance remain open.
+
+### Exact CSR user-allocation inventory (2026-10-21)
+
+Atomic unit `test(vgpu): qualify CSR heap inventory and retirement` adds a
+bounded, locked, complete HeapWalk of the exact externally admitted CsrPortHeap
+at existing DXVK/OpenCL audit boundaries. Every boundary requires zero live
+user rows; DPH/API-heap coverage remains separately mandatory. Portable,
+ASan/LSan/UBSan and93.55%branch gates pass. Exact native12380-byte allocation/
+free controls pass with stable OS identities and no survivors.
+[Contract and evidence](NATIVE_CSR_HEAP_CONTRACT.md). All tasks +0%; total85.5%,
+M2 94%, Time Ended TBD. Commit `7dfd516` records the native TLS certificate,
+#5/all tasks +0%, overall +0%.

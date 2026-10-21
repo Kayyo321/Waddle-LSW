@@ -543,6 +543,7 @@ static int run_dxvk_cycle(int argc,wchar_t **argv,int audit_enabled) {
 }
 
 #include "dxvk_heap_audit_windows.inc"
+#include "native_csr_heap_windows.inc"
 /** @brief Run the ordinary fixture or supervisor-controlled heap capture cycles.
  * @param[in] argc/argv Borrowed immutable native fixture arguments.
  * @return Zero only after every original GPU assertion and optional audit gate.
@@ -562,11 +563,11 @@ int wmain(int argc,wchar_t **argv)
     if(length){wchar_t *end=NULL;unsigned long parsed=wcstoul(cycles_text,&end,10);
         if(length>=16 || !parsed || parsed>8 || !end || *end)return 2;
         cycles=(unsigned)parsed;}
-    if(audit_stage(directory,"baseline"))return 1;
+    if(native_csr_stage(directory,"baseline"))return 1;
     for(unsigned cycle=0;cycle<cycles;cycle++){
         if(run_dxvk_cycle(argc,argv,1))return 1;
         char stage[64];int count=snprintf(stage,sizeof stage,"unloaded_%u",cycle+1);
-        if(count<=0 || (size_t)count>=sizeof stage || audit_stage(directory,stage))return 1;
+        if(count<=0 || (size_t)count>=sizeof stage || native_csr_stage(directory,stage))return 1;
     }
     return 0;
 }

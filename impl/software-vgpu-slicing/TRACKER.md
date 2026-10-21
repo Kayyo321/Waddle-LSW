@@ -2036,3 +2036,15 @@ full/retained-slot/early-OOM/admission controls pass at1086→1085→1086 slots.
 Incorrect26100 target and compiler/ptrace/preflight failures remain preserved.
 [Contract/evidence](OPENCL_SLOT_CERTIFICATE.md). Full FLS/reload/heap/GPU gates
 remain open. All tasks +0%; total85.5%, M2 94%, Time Ended TBD.
+
+### Exact CSR user-allocation inventory (2026-10-21)
+
+Atomic unit `test(vgpu): qualify CSR heap inventory and retirement` adds a
+bounded, locked, complete HeapWalk of the exact externally admitted CsrPortHeap
+at existing DXVK/OpenCL audit boundaries. Every boundary requires zero live
+user rows; DPH/API-heap coverage remains separately mandatory. Portable,
+ASan/LSan/UBSan and93.55%branch gates pass. Exact native12380-byte allocation/
+free controls pass with stable OS identities and no survivors.
+[Contract and evidence](NATIVE_CSR_HEAP_CONTRACT.md). All tasks +0%; total85.5%,
+M2 94%, Time Ended TBD. Commit `7dfd516` records the native TLS certificate,
+#5/all tasks +0%, overall +0%.

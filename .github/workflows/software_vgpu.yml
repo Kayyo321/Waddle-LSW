@@ -37,12 +37,15 @@ jobs:
           make vgpu-opencl-runtime-eh-test vgpu-opencl-runtime-eh-sanitizers vgpu-opencl-runtime-eh-coverage
       - name: Verify native heap-stage acknowledgement and strict coverage
         run: make vgpu-native-heap-stage-coverage
+      - name: Verify CSR heap API-double controls and helper coverage
+        run: make vgpu-native-csr-heap-test vgpu-native-csr-heap-sanitizers vgpu-native-csr-heap-coverage
       - name: Verify actual native probe build boundaries without execution
         run: make vgpu-opencl-runtime-probe-build-test
       - name: Verify qualification-only OpenCL submit witness ownership
         run: make vgpu-opencl-transport-gate-test vgpu-opencl-transport-gate-sanitizers vgpu-opencl-transport-gate-coverage
       - name: Cross-compile ordinary and supervised-fault OpenCL fixture
         run: |
+          make vgpu-native-csr-heap-native-build
           x86_64-w64-mingw32-gcc-posix -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -Isubmodules/clvk/external/OpenCL-Headers tests/vgpu/opencl_integration.c tests/vgpu/loader_environment_windows.c -municode -o build/vgpu_opencl_integration_debug.exe
           x86_64-w64-mingw32-gcc-posix -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -Isubmodules/clvk/external/OpenCL-Headers tests/vgpu/opencl_integration.c tests/vgpu/loader_environment_windows.c -municode -o build/vgpu_opencl_integration.exe
       - name: Verify exact-target TLS certificate with API doubles and strict coverage

@@ -1,5 +1,5 @@
 # Cross-compilation is distinct from native execution/compatibility acceptance.
-build/vgpu_dxvk_integration.exe: tests/vgpu/dxvk_integration.c tests/vgpu/dxvk_heap_audit_windows.inc tests/vgpu/dxvk_fault_windows.inc tests/vgpu/loader_environment_windows.h tests/vgpu/loader_environment_windows.c | build
+build/vgpu_dxvk_integration.exe: tests/vgpu/dxvk_integration.c tests/vgpu/dxvk_heap_audit_windows.inc tests/vgpu/native_csr_heap_windows.inc tests/vgpu/dxvk_fault_windows.inc tests/vgpu/loader_environment_windows.h tests/vgpu/loader_environment_windows.c | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $< tests/vgpu/loader_environment_windows.c -municode -luser32 -lgdi32 -ldwmapi -ldxguid -o $@
 
 .PHONY: vgpu-dxvk-build
@@ -45,7 +45,7 @@ vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk_ru
 vgpu-opencl-test:
 	python3 -B tests/vgpu/clvk_build.py
 
-build/vgpu_opencl_integration.exe: tests/vgpu/opencl_integration.c tests/vgpu/dxvk_heap_audit_windows.inc tests/vgpu/loader_environment_windows.h tests/vgpu/loader_environment_windows.c include/waddle/venus_tcp.h include/waddle/clvk.h submodules/clvk/external/OpenCL-Headers/CL/cl.h | build
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_integration.c tests/vgpu/dxvk_heap_audit_windows.inc tests/vgpu/native_csr_heap_windows.inc tests/vgpu/loader_environment_windows.h tests/vgpu/loader_environment_windows.c include/waddle/venus_tcp.h include/waddle/clvk.h submodules/clvk/external/OpenCL-Headers/CL/cl.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -Isubmodules/clvk/external/OpenCL-Headers $< tests/vgpu/loader_environment_windows.c -municode -o $@
 
 vgpu-opencl-fixture: build/vgpu_opencl_integration.exe
@@ -230,3 +230,35 @@ vgpu-opencl-slot-coverage:
 build/vgpu_opencl_slot_certificate.exe: $(VgpuOpenclSlotSources) tests/vgpu/opencl_slot_certificate_windows.inc | build
 	$(ZIG) cc -target x86_64-windows-gnu $(VgpuOpenclSlotFlags) -O2 $(VgpuOpenclSlotSources) -o $@
 vgpu-opencl-slot-native-build: build/vgpu_opencl_slot_certificate.exe
+
+
+# Bounded CSR-port heap inventory under API doubles. Portable tests do not
+# qualify native Windows heap behavior; the native target only cross-builds
+# the exact-target calibration control.
+VgpuNativeCsrFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu
+VgpuNativeCsrSources = tests/vgpu/native_csr_heap_test.c
+VgpuNativeCsrWindowsCC ?= x86_64-w64-mingw32-gcc-posix
+VgpuNativeCsrHeaders = tests/vgpu/native_csr_heap_windows.inc tests/vgpu/win32_fake/native_csr_fake.h
+.PHONY: vgpu-native-csr-heap-test vgpu-native-csr-heap-sanitizers vgpu-native-csr-heap-coverage vgpu-native-csr-heap-native-build
+build/native-csr-heap: | build
+	mkdir -p $@
+
+build/native-csr-heap/host: $(VgpuNativeCsrSources) $(VgpuNativeCsrHeaders) | build/native-csr-heap
+	$(CC) $(VgpuNativeCsrFlags) -O2 $(VgpuNativeCsrSources) -o $@
+
+vgpu-native-csr-heap-test: build/native-csr-heap/host
+	./build/native-csr-heap/host
+
+vgpu-native-csr-heap-sanitizers: | build/native-csr-heap
+	$(CC) $(VgpuNativeCsrFlags) -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuNativeCsrSources) -o build/native-csr-heap/host_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/native-csr-heap/host_sanitized
+
+vgpu-native-csr-heap-coverage:
+	python3 -B scripts/native_csr_heap_coverage.py
+
+# This only cross-compiles the exact-target control; root runs it under the
+# supervised native Windows audit and makes no acceptance claim from the build.
+build/vgpu_native_csr_heap_control.exe: $(VgpuNativeCsrSources) $(VgpuNativeCsrHeaders) | build
+	$(VgpuNativeCsrWindowsCC) $(VgpuNativeCsrFlags) $< -o $@
+
+vgpu-native-csr-heap-native-build: build/vgpu_native_csr_heap_control.exe
