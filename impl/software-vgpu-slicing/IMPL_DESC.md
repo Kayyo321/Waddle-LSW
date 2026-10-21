@@ -6811,3 +6811,9 @@ The final-image TEB check covers the actual reviewed compiler's outlined C helpe
 
 - **Commit `82d17cb`** records the qualification-only OpenCL submit witness, +0% to all tasks.
 - **Commit containing `test(vgpu): stabilize runtime stress with observed startup retirement`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds a separate thin native stress wrapper that waits before any runtime load for externally proven startup-pool retirement; original2048 assertions/budgets remain unchanged. Strict cross-build and independent source/receipt review pass. [Exact protocol](CLVK_RUNTIME_PROBE_V2.md). Native2048 completion is not claimed; original381 failure and first-load/full-DLL gates remain open.
+
+### OpenCL transport-loss fixture and actual-owner controls (2026-10-21)
+
+- **Commit `c697d94`** records the separate strict startup-gated stress wrapper, +0% to all tasks.
+- **Commit containing `test(vgpu): qualify in-flight OpenCL transport-loss ownership`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds explicit supervised fault mode, exact CL_OUT_OF_RESOURCES, joined API caller, Busy while live owners, trusted reap/abandon before reverse CL release, bounded terminal shutdown/unload. Ordinary invocation remains. [Contract](OPENCL_CANCELLATION_CONTRACT.md).
+- Exact extracted call/release functions pass portable normal/-O and ASan/LSan/UBSan with zero reported leaks;17/17lines26/26branches100%, both functions100%, unchanged90% floors. Strict Windows builds and10 actual native invalid-mode/path/audit controls pass (all naturalexit2/no survivors). No native in-flight/GPU cancellation acceptance is claimed; final runtime qualification remains pending.

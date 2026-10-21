@@ -154,3 +154,8 @@ vgpu-opencl-transport-gate-sanitizers: | build
 vgpu-opencl-transport-gate-coverage: | build
 	python3 -B tests/vgpu/opencl_transport_gate_coverage.py
 	python3 -O -B tests/vgpu/opencl_transport_gate_coverage.py
+
+.PHONY: vgpu-opencl-cancellation-test
+vgpu-opencl-cancellation-test:
+	python3 -B tests/vgpu/opencl_cancellation_test.py
+	python3 -O -B tests/vgpu/opencl_cancellation_test.py

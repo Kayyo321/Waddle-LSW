@@ -39,6 +39,12 @@ jobs:
         run: make vgpu-opencl-runtime-probe-build-test
       - name: Verify qualification-only OpenCL submit witness ownership
         run: make vgpu-opencl-transport-gate-test vgpu-opencl-transport-gate-sanitizers vgpu-opencl-transport-gate-coverage
+      - name: Cross-compile ordinary and supervised-fault OpenCL fixture
+        run: |
+          x86_64-w64-mingw32-gcc-posix -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -Isubmodules/clvk/external/OpenCL-Headers tests/vgpu/opencl_integration.c tests/vgpu/loader_environment_windows.c -municode -o build/vgpu_opencl_integration_debug.exe
+          x86_64-w64-mingw32-gcc-posix -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -Isubmodules/clvk/external/OpenCL-Headers tests/vgpu/opencl_integration.c tests/vgpu/loader_environment_windows.c -municode -o build/vgpu_opencl_integration.exe
+      - name: Verify actual OpenCL cancellation call and reverse owner release
+        run: make vgpu-opencl-cancellation-test
       - name: Require buffer production line and directional branch coverage
         run: python3 -B scripts/clvk_buffer_coverage.py build/clvk_buffer_coverage
   transport:

@@ -70,6 +70,8 @@ typedef venus_ring_status_t (*bootstrap_abandon_t)(uint64_t);
  * @note Failure retains ownership until the supervisor proves host retirement.
  * Sole caller thread; each transient receipt handle is closed before retry.
  */
+static void fail_closed(const char *message);
+
 static void wait_retired(const wchar_t *path,uint64_t identity) {
     char expected[64];int length=snprintf(expected,sizeof expected,"retired_session=%016llx\n",(unsigned long long)identity);
     if(length<=0 || (size_t)length>=sizeof expected)abort();
@@ -89,6 +91,59 @@ static void wait_retired(const wchar_t *path,uint64_t identity) {
     }
 }
 
+/** @brief Wait a bounded period for this scenario's trusted retirement proof.
+ * @param[in] path Fresh trusted UTF-16 receipt path, borrowed.
+ * @param[in] identity Exact nonzero authenticated session identity.
+ * @param[in] timeout_ms Positive total wait budget.
+ * @note Timeout terminates the test process without calling abandon or
+ * gracefully unloading modules. The supervisor must still reap its receiver.
+ */
+static void wait_retired_bounded(const wchar_t *path, uint64_t identity,
+                                 ULONGLONG timeout_ms)
+{
+    ULONGLONG started = GetTickCount64();
+    char expected[64];
+    int length = snprintf(expected, sizeof expected,
+        "retired_session=%016llx\n", (unsigned long long)identity);
+    if (length <= 0 || (size_t)length >= sizeof expected)
+        fail_closed("OpenCL transport-loss retirement identity formatting failed");
+    for (;;) {
+        HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL,
+            OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+        if (file != INVALID_HANDLE_VALUE) {
+            BY_HANDLE_FILE_INFORMATION information = {0};
+            char actual[65];
+            DWORD count = 0;
+            int match = GetFileType(file) == FILE_TYPE_DISK &&
+                GetFileInformationByHandle(file, &information) &&
+                !(information.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT |
+                    FILE_ATTRIBUTE_DIRECTORY)) && information.nNumberOfLinks == 1 &&
+                !information.nFileSizeHigh && information.nFileSizeLow == (DWORD)length &&
+                ReadFile(file, actual, sizeof actual, &count, NULL) &&
+                count == (DWORD)length && !memcmp(actual, expected, (size_t)length);
+            if (!CloseHandle(file))
+                fail_closed("OpenCL transport-loss retirement receipt handle close failed");
+            if (match) return;
+        }
+        if (GetTickCount64() - started >= timeout_ms)
+            fail_closed("OpenCL transport-loss retirement proof timed out; retained session cannot be safely abandoned");
+        Sleep(10);
+    }
+}
+
+/** @brief Fail closed without running CRT or DLL teardown while a worker may be live.
+ * @param[in] message Nonnull diagnostic, borrowed until flushed.
+ * @note Never returns. The external supervisor remains responsible for actual
+ * receiver retirement; process termination is not treated as retirement proof.
+ */
+static void fail_closed(const char *message)
+{
+    fprintf(stderr, "%s\n", message);
+    fflush(stderr);
+    (void)TerminateProcess(GetCurrentProcess(), 1);
+    for (;;) Sleep(1000);
+}
+
 
 /** @brief Fixed upper bound for owned CPU oracle storage; not a GPU tolerance. */
 static const size_t MaxWords = 65536;
@@ -101,6 +156,10 @@ static const char Kernels[] =
     "if(i==0){uint sum=0;for(size_t j=0;j<get_local_size(0);j++)sum+=s[j];o[0]=sum;}}"
     "__kernel void count(__global uint *o){atomic_inc((volatile __global uint *)o);}"
     "__kernel void largest(__global uint *o){size_t i=get_global_id(0);o[i]=(uint)i*3u+7u;}";
+
+/** @brief Single dispatch for the separately supervised transport-loss case. */
+static const char TransportLossKernel[] =
+    "__kernel void transport_loss(__global uint *out){out[0]=0x51a7u;}";
 
 /** @brief One complete OpenCL context lifetime, no owner escapes.
  * @param[in] api Nonnull borrowed dispatch; device borrowed root device.
@@ -449,12 +508,201 @@ static unsigned __stdcall run_contexts(void *opaque) {
     return 0;
 }
 
+/** @brief Caller-owned state for one blocking OpenCL transport-loss operation.
+ * The API thread writes status and event fields; the parent reads them only
+ * after WaitForSingleObject and GetExitCodeThread prove natural thread exit.
+ */
+typedef struct transport_loss_call_t {
+    const api_t *api;
+    cl_command_queue queue;
+    cl_kernel kernel;
+    cl_mem buffer;
+    cl_uint output;
+    cl_event kernel_event;
+    cl_int enqueue_status;
+    cl_int read_status;
+} transport_loss_call_t;
+
+/** @brief Enqueue the real kernel, then block inside clEnqueueReadBuffer.
+ * @param[in,out] opaque Parent-owned state kept live through join.
+ * @return Zero only if enqueue succeeded and the blocking call returned; the
+ * exact OpenCL error is copied to read_status for the joining parent.
+ * @note This thread does not log a request witness. Only the bridge's decoded
+ * RequestSubmit/opcode-18 marker establishes the actual transport boundary.
+ */
+static unsigned __stdcall run_transport_loss_call(void *opaque)
+{
+    transport_loss_call_t *call = opaque;
+    size_t one = 1;
+    call->enqueue_status = call->api->enqueue_kernel(
+        call->queue, call->kernel, 1, NULL, &one, &one, 0, NULL,
+        &call->kernel_event);
+    if (call->enqueue_status != CL_SUCCESS) return 1;
+    call->read_status = call->api->read_buffer(
+        call->queue, call->buffer, CL_TRUE, 0, sizeof call->output,
+        &call->output, 0, NULL, NULL);
+    return 0;
+}
+
+/** @brief Release local OpenCL owners in reverse dependency order.
+ * @param[in] api Nonnull borrowed API table whose module remains mapped.
+ * @param[in,out] event, kernel, buffer, program, queue, context Owned handles;
+ * each is nulled after its release call even when the API reports an error.
+ * @return Zero only if every release returned CL_SUCCESS.
+ * @note Call after transport receipt and ICD abandon in the fault case. The
+ * queue must have no outstanding API caller or command group.
+ */
+static int release_transport_loss_owners(const api_t *api, cl_event *event,
+    cl_kernel *kernel, cl_mem *buffer, cl_program *program,
+    cl_command_queue *queue, cl_context *context)
+{
+    int failed = 0;
+    if (*event) { if (api->release_event(*event) != CL_SUCCESS) failed = 1; *event = NULL; }
+    if (*kernel) { if (api->release_kernel(*kernel) != CL_SUCCESS) failed = 1; *kernel = NULL; }
+    if (*buffer) { if (api->release_buffer(*buffer) != CL_SUCCESS) failed = 1; *buffer = NULL; }
+    if (*program) { if (api->release_program(*program) != CL_SUCCESS) failed = 1; *program = NULL; }
+    if (*queue) { if (api->release_queue(*queue) != CL_SUCCESS) failed = 1; *queue = NULL; }
+    if (*context) { if (api->release_context(*context) != CL_SUCCESS) failed = 1; *context = NULL; }
+    return failed;
+}
+
+/** @brief Exercise one real buffer-backed kernel cancellation and retirement.
+ * @param[in] api Nonnull borrowed dispatch; module outlives all owners.
+ * @param[in] device Borrowed selected RTX 5080 device.
+ * @param[in] receipt Trusted fresh retirement receipt path.
+ * @param[in] stop/session/abandon Borrowed serialized bootstrap lifecycle calls.
+ * @return Zero only for exact enqueue/read result and complete post-proof teardown.
+ * @note The supervisor must observe its fresh RequestSubmit/opcode-18 marker,
+ * cancel that session, reap the exact worker, and publish the matching receipt.
+ */
+static int run_transport_loss(const api_t *api, cl_device_id device,
+    clvk_shutdown_t shutdown, const wchar_t *receipt, bootstrap_stop_t stop,
+    bootstrap_session_t session, bootstrap_abandon_t abandon)
+{
+    int failed = 0;
+    int read_started = 0;
+    int api_thread_started = 0;
+    cl_int status = CL_SUCCESS;
+    cl_context context = NULL;
+    cl_command_queue queue = NULL;
+    cl_program program = NULL;
+    cl_kernel kernel = NULL;
+    cl_mem buffer = NULL;
+    transport_loss_call_t call = {0};
+    HANDLE thread = NULL;
+    uint64_t identity = session();
+    if (!identity) fail_closed("OpenCL transport-loss session identity missing");
+
+    context = api->create_context(NULL, 1, &device, NULL, NULL, &status);
+    if (!context || status != CL_SUCCESS) goto setup_failure;
+    queue = api->create_queue(context, device, 0, &status);
+    if (!queue || status != CL_SUCCESS) goto setup_failure;
+    const char *source = TransportLossKernel;
+    program = api->create_program(context, 1, &source, NULL, &status);
+    if (!program || status != CL_SUCCESS) goto setup_failure;
+    if (api->build_program(program, 1, &device, "", NULL, NULL) != CL_SUCCESS)
+        goto setup_failure;
+    kernel = api->create_kernel(program, "transport_loss", &status);
+    if (!kernel || status != CL_SUCCESS) goto setup_failure;
+    buffer = api->create_buffer(context, CL_MEM_READ_WRITE, sizeof(cl_uint), NULL, &status);
+    if (!buffer || status != CL_SUCCESS) goto setup_failure;
+    if (api->set_arg(kernel, 0, sizeof buffer, &buffer) != CL_SUCCESS)
+        goto setup_failure;
+
+    call.api = api;
+    call.queue = queue;
+    call.kernel = kernel;
+    call.buffer = buffer;
+    call.enqueue_status = CL_INVALID_OPERATION;
+    call.read_status = CL_INVALID_OPERATION;
+    fprintf(stderr, "OpenCL transport-loss call armed session=%016llx; supervisor must witness bridge RequestSubmit opcode=18 (API entry is not the witness)\n",
+            (unsigned long long)identity);
+    fflush(stderr);
+    uintptr_t raw_thread = _beginthreadex(NULL, 0, run_transport_loss_call,
+                                         &call, 0, NULL);
+    if (!raw_thread) fail_closed("OpenCL transport-loss API thread creation failed");
+    api_thread_started = 1;
+    thread = (HANDLE)raw_thread;
+    DWORD wait_status = WaitForSingleObject(thread, 65000);
+    if (wait_status != WAIT_OBJECT_0)
+        fail_closed("OpenCL transport-loss API call did not finish within 65 seconds");
+    DWORD thread_code = 1;
+    if (!GetExitCodeThread(thread, &thread_code) || !CloseHandle(thread))
+        fail_closed("OpenCL transport-loss API thread join/close failed");
+    thread = NULL;
+    read_started = thread_code == 0 && call.enqueue_status == CL_SUCCESS;
+    fprintf(stderr, "OpenCL transport-loss API thread joined exit=%lu enqueue_status=%d read_status=%d output=%u\n",
+            (unsigned long)thread_code, (int)call.enqueue_status,
+            (int)call.read_status, (unsigned)call.output);
+    fflush(stderr);
+    if (shutdown(ClvkShutdownAbi) != ClvkShutdownBusy)
+        fail_closed("OpenCL shutdown was not Busy while transport-loss owners remained live");
+
+    if (!read_started) goto setup_failure;
+    if (call.read_status != CL_OUT_OF_RESOURCES) failed = 1;
+
+    {
+        /* Keep every CL owner and all three module refs until the supervisor's
+         * exact receiver-reap proof makes local abandonment safe. */
+        wait_retired_bounded(receipt, identity, 90000);
+        if (abandon(identity) != RingOk)
+            fail_closed("OpenCL transport-loss session abandonment failed after retirement proof");
+        if (release_transport_loss_owners(api, &call.kernel_event, &kernel,
+                &buffer, &program, &queue, &context))
+            failed = 1;
+    }
+    goto shutdown_state;
+
+setup_failure:
+    failed = 1;
+    /* Once the API worker has started, even an enqueue failure may follow an
+     * actual submit request. Do not call CL destructors until the supervisor
+     * has proved that exact receiver retired and local ICD ownership is safe
+     * to abandon. */
+    if (api_thread_started) {
+        uint64_t retained = session();
+        if (!retained) fail_closed("OpenCL API failure lost bootstrap ownership identity");
+        wait_retired_bounded(receipt, retained, 90000);
+        if (abandon(retained) != RingOk)
+            fail_closed("OpenCL API failure abandonment failed after retirement proof");
+    }
+    if (release_transport_loss_owners(api, &call.kernel_event, &kernel,
+            &buffer, &program, &queue, &context))
+        failed = 1;
+    if (!api_thread_started && stop() != RingOk) {
+        uint64_t retained = session();
+        if (!retained) fail_closed("OpenCL setup failure lost bootstrap ownership identity");
+        wait_retired_bounded(receipt, retained, 90000);
+        if (abandon(retained) != RingOk)
+            fail_closed("OpenCL setup failure abandonment failed after retirement proof");
+    }
+
+shutdown_state:
+    ;
+    ULONGLONG shutdown_started = GetTickCount64();
+    int32_t shutdown_status;
+    while ((shutdown_status = shutdown(ClvkShutdownAbi)) == ClvkShutdownBusy) {
+        if (GetTickCount64() - shutdown_started >= 5000)
+            fail_closed("OpenCL transport-loss shutdown remained Busy after owner release");
+        Sleep(1);
+    }
+    if (shutdown_status != ClvkShutdownOk ||
+        shutdown(ClvkShutdownAbi) != ClvkShutdownOk)
+        fail_closed("OpenCL transport-loss terminal shutdown failed");
+    cl_uint count = 0;
+    if (api->get_platform_ids(0, NULL, &count) != CL_INVALID_PLATFORM)
+        fail_closed("OpenCL transport-loss shutdown did not invalidate platform");
+    if (failed) return 1;
+    return 0;
+}
+
 /** @brief Joined caller-thread state; modules transfer to the joining parent.
  * argc/argv are borrowed until join; only the worker writes module references.
  */
 typedef struct native_work_t {
     int argc;
     wchar_t **argv;
+    int transport_loss;
     HMODULE bootstrap;
     HMODULE loader;
     HMODULE opencl;
@@ -474,12 +722,14 @@ static unsigned __stdcall run_native_work(void *opaque)
     native_work_t *work = opaque;
     int argc = work->argc;
     wchar_t **argv = work->argv;
-    if (argc != 7) return 2;
-    for (int i = 1; i < 6; ++i)
+    const int base = work->transport_loss ? 2 : 1;
+    if ((!work->transport_loss && argc != 7) ||
+        (work->transport_loss && (argc != 8 || wcscmp(argv[1], L"--transport-loss")))) return 2;
+    for (int i = base; i < base + 5; ++i)
         if (wcslen(argv[i]) < 3 || argv[i][1] != L':' || argv[i][2] != L'\\' ||
             GetFileAttributesW(argv[i]) == INVALID_FILE_ATTRIBUTES) return 2;
-    if (wcslen(argv[6]) < 3 || argv[6][1] != L':' || argv[6][2] != L'\\' ||
-        GetFileAttributesW(argv[6]) != INVALID_FILE_ATTRIBUTES) return 2;
+    if (wcslen(argv[base + 5]) < 3 || argv[base + 5][1] != L':' || argv[base + 5][2] != L'\\' ||
+        GetFileAttributesW(argv[base + 5]) != INVALID_FILE_ATTRIBUTES) return 2;
     int result = 1;
     HMODULE bootstrap = NULL, loader = NULL, opencl = NULL;
     api_t api = {0};
@@ -489,7 +739,7 @@ static unsigned __stdcall run_native_work(void *opaque)
     bootstrap_session_t session = NULL;
     bootstrap_abandon_t abandon = NULL;
     clvk_shutdown_t shutdown = NULL;
-    bootstrap = LoadLibraryExW(argv[4], NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    bootstrap = LoadLibraryExW(argv[base + 3], NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!bootstrap) goto cleanup;
     FARPROC procedure = GetProcAddress(bootstrap, "venus_tcp_bootstrap_start");
     _Static_assert(sizeof start == sizeof procedure, "Windows function pointer ABI");
@@ -502,13 +752,13 @@ static unsigned __stdcall run_native_work(void *opaque)
     memcpy(&abandon, &procedure, sizeof abandon);
     if (!start || !stop || !session || !abandon) goto cleanup;
     char config[VenusTcpMaxWindowsPathBytes];
-    int config_bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[5], -1,
+    int config_bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, argv[base + 4], -1,
                                           config, sizeof config, NULL, NULL);
     if (!config_bytes) goto cleanup;
     ULONGLONG load_started = GetTickCount64();
-    loader = LoadLibraryExW(argv[1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    loader = LoadLibraryExW(argv[base], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!loader) goto cleanup;
-    opencl = LoadLibraryExW(argv[2], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    opencl = LoadLibraryExW(argv[base + 1], NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!opencl) goto cleanup;
     procedure = GetProcAddress(opencl, "waddle_clvk_shutdown");
     _Static_assert(sizeof shutdown == sizeof procedure, "Windows private C ABI");
@@ -574,6 +824,14 @@ static unsigned __stdcall run_native_work(void *opaque)
         !(type & CL_DEVICE_TYPE_GPU) || (type & CL_DEVICE_TYPE_CPU) || !group || group > MaxWords ||
         local_bytes < group * sizeof(cl_uint)) goto cleanup;
     printf("OpenCL selected GPU=%s vendor=%x maximum_group=%llu\n", name, vendor, (unsigned long long)group); fflush(stdout);
+    if (work->transport_loss) {
+        result = run_transport_loss(&api, device, shutdown, argv[base + 5],
+                                    stop, session, abandon);
+        work->opencl = opencl;
+        work->loader = loader;
+        work->bootstrap = bootstrap;
+        return (unsigned)result;
+    }
     for (unsigned cycle = 0; cycle < 2; ++cycle)
         if (run_lifetime(&api, device, group, shutdown)) goto cleanup;
     context_call_t calls[2] = {{&api, device, group}, {&api, device, group}};
@@ -621,7 +879,7 @@ cleanup:
         result = 1;
         uint64_t retained = session();
         if (retained) {
-            wait_retired(argv[6], retained);
+            wait_retired(argv[base + 5], retained);
             while (abandon(retained) != RingOk) Sleep(10);
         }
     }
@@ -662,17 +920,19 @@ static int restore_loader_environment(waddle_loader_environment_guard_t *guard)
  * The parent-owned loader snapshot remains active until all vendor modules exit.
  */
 static int run_opencl_cycle(int argc, wchar_t **argv) {
-    if (argc != 7) return 2;
-    for (int i = 1; i < 6; ++i)
+    const int transport_loss = argc > 1 && !wcscmp(argv[1], L"--transport-loss");
+    const int base = transport_loss ? 2 : 1;
+    if ((!transport_loss && argc != 7) || (transport_loss && argc != 8)) return 2;
+    for (int i = base; i < base + 5; ++i)
         if (wcslen(argv[i]) < 3 || argv[i][1] != L':' || argv[i][2] != L'\\' ||
             GetFileAttributesW(argv[i]) == INVALID_FILE_ATTRIBUTES) return 2;
-    if (wcslen(argv[6]) < 3 || argv[6][1] != L':' || argv[6][2] != L'\\' ||
-        GetFileAttributesW(argv[6]) != INVALID_FILE_ATTRIBUTES) return 2;
+    if (wcslen(argv[base + 5]) < 3 || argv[base + 5][1] != L':' || argv[base + 5][2] != L'\\' ||
+        GetFileAttributesW(argv[base + 5]) != INVALID_FILE_ATTRIBUTES) return 2;
 
     waddle_loader_environment_guard_t environment;
     waddle_loader_environment_guard_init(&environment);
     const waddle_loader_environment_override_t overrides[WaddleLoaderEnvironmentVariableCount] = {
-        {TRUE, argv[3]}, {FALSE, NULL}, {FALSE, NULL}, {TRUE, L"~all~"}
+        {TRUE, argv[base + 2]}, {FALSE, NULL}, {FALSE, NULL}, {TRUE, L"~all~"}
     };
     const waddle_loader_environment_api_t environment_api = waddle_loader_environment_windows_api();
     waddle_loader_environment_status_t environment_status =
@@ -684,7 +944,7 @@ static int run_opencl_cycle(int argc, wchar_t **argv) {
         return 1;
     }
 
-    native_work_t work = {argc, argv, NULL, NULL, NULL};
+    native_work_t work = {argc, argv, transport_loss, NULL, NULL, NULL};
     uintptr_t thread = _beginthreadex(NULL, 0, run_native_work, &work, 0, NULL);
     if (!thread) {
         fprintf(stderr, "OpenCL caller thread creation failed: %lu\n", (unsigned long)GetLastError());
@@ -692,21 +952,31 @@ static int run_opencl_cycle(int argc, wchar_t **argv) {
         return 1;
     }
     DWORD result = 1;
-    if (WaitForSingleObject((HANDLE)thread, INFINITE) != WAIT_OBJECT_0 ||
-        !GetExitCodeThread((HANDLE)thread, &result)) abort();
+    DWORD thread_wait = WaitForSingleObject((HANDLE)thread,
+        transport_loss ? 180000 : INFINITE);
+    if (thread_wait != WAIT_OBJECT_0 || !GetExitCodeThread((HANDLE)thread, &result)) {
+        if (transport_loss)
+            fail_closed("OpenCL transport-loss outer worker did not join within its deadline");
+        abort();
+    }
     if (!CloseHandle((HANDLE)thread)) abort();
     if (work.opencl && !FreeLibrary(work.opencl)) result = 1;
     if (work.loader && !FreeLibrary(work.loader)) result = 1;
     if (work.bootstrap && !FreeLibrary(work.bootstrap)) result = 1;
-    while (GetModuleHandleW(argv[1]) || GetModuleHandleW(argv[2]) || GetModuleHandleW(argv[4]) ||
+    ULONGLONG module_wait_started = GetTickCount64();
+    while (GetModuleHandleW(argv[base]) || GetModuleHandleW(argv[base + 1]) || GetModuleHandleW(argv[base + 3]) ||
            GetModuleHandleW(L"waddle_vulkan_experimental.dll")) {
+        if (transport_loss && GetTickCount64() - module_wait_started >= 10000)
+            fail_closed("OpenCL transport-loss module retirement timed out");
         result = 1;
         fputs("OpenCL loader environment retained until vendor module retirement\n", stderr);
         fflush(stderr);
         Sleep(10);
     }
     if (restore_loader_environment(&environment)) result = 1;
-    if (!result) puts("OpenCL eight exact context lifetimes and native module retirement passed.");
+    if (!result) puts(transport_loss ?
+        "OpenCL transport-loss result, retirement, shutdown, and module retirement passed." :
+        "OpenCL eight exact context lifetimes and native module retirement passed.");
     return (int)result;
 }
 
@@ -723,6 +993,7 @@ int wmain(int argc, wchar_t **argv)
     wchar_t directory[512];
     int enabled = audit_directory(directory, 512);
     if (enabled < 0) return 2;
+    if (enabled && argc > 1 && !wcscmp(argv[1], L"--transport-loss")) return 2;
     if (!enabled) return run_opencl_cycle(argc, argv);
 
     wchar_t cycles_text[16];
