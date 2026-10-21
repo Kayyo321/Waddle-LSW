@@ -392,26 +392,53 @@ def _emutls_name(name: str) -> bool:
 
 
 def _verify_teb_tls_accessor(image: pe_image_t, symbols: Sequence[tuple[int, str, str]], symbol: str = "__emutls_get_address") -> None:
+    """Check actual inline accessor or one exact direct call to its C helper.
+
+    Borrowed PE/symbol inputs; no mutation. Accept any x64 destination register
+    for GS absolute mov, not arbitrary GS occurrences elsewhere in the image.
+    Unsupported code forms/missing call edges/wrong offsets raise audit_error_t.
+    """
     starts = sorted((address, name) for address, kind, name in symbols if kind in "tT")
-    matches = [i for i, (_, name) in enumerate(starts) if name == symbol]
-    if len(matches) != 1:
-        raise audit_error_t(f"expected exactly one executable {symbol} symbol")
-    index = matches[0]
-    address = starts[index][0]
-    next_address = starts[index + 1][0] if index + 1 < len(starts) else address + 4096
-    section = image.rva_section(address - image.image_base, 1, raw=True)
-    if not section.characteristics & Executable:
-        raise audit_error_t(f"{symbol} does not reside in an executable section")
-    upper = min(next_address, image.image_base + section.virtual_address + section.raw_size)
-    code_start = section.raw_offset + address - image.image_base - section.virtual_address
-    code_end = section.raw_offset + upper - image.image_base - section.virtual_address
-    code = image.data[code_start:code_end]
-    expected = bytes.fromhex("65 48 8b 04 25 58 00 00 00")
-    wrong = bytes.fromhex("65 48 8b 04 25 60 00 00 00")
-    if expected not in code:
-        if wrong in code:
-            raise audit_error_t("runtime TLS accessor uses TEB offset 0x60; expected x64 TLS vector offset 0x58")
-        raise audit_error_t(f"{symbol} does not contain the required GS:0x58 TLS-vector access")
+
+    def body(name):
+        matches = [address for address, actual in starts if actual == name]
+        if len(matches) != 1:
+            raise audit_error_t(f"expected exactly one executable {name} symbol")
+        address = matches[0]
+        section = image.rva_section(address - image.image_base, 1, raw=True)
+        if not section.characteristics & Executable:
+            raise audit_error_t(f"{name} does not reside in an executable section")
+        following = [value for value, _ in starts if value > address]
+        upper = min(min(following) if following else address + 4096,
+                    image.image_base + section.virtual_address + section.raw_size)
+        offset = image.va_offset(address, upper - address, name)
+        return address, image.data[offset:offset + upper - address]
+
+    address, code = body(symbol)
+    scopes = [code]
+    helper = "runtime_tls_current_record"
+    helper_addresses = [value for value, name in starts if name == helper]
+    if helper_addresses:
+        if len(helper_addresses) != 1:
+            raise audit_error_t("duplicate runtime TLS helper")
+        target = helper_addresses[0]
+        called = any(code[pos] in (0xE8, 0xE9) and
+                     address + pos + 5 + struct.unpack_from("<i", code, pos + 1)[0] == target
+                     for pos in range(max(0, len(code) - 4)))
+        if called:
+            scopes.append(body(helper)[1])
+    offsets = []
+    for scope in scopes:
+        for pos in range(max(0, len(scope) - 8)):
+            if (scope[pos] == 0x65 and scope[pos + 1] in (0x48, 0x4C) and
+                scope[pos + 2] == 0x8B and scope[pos + 3] & 0xC7 == 0x04 and
+                scope[pos + 4] == 0x25):
+                offsets.append(struct.unpack_from("<I", scope, pos + 5)[0])
+    if any(offset != 0x58 for offset in offsets):
+        wrong = next(offset for offset in offsets if offset != 0x58)
+        raise audit_error_t(f"runtime TLS accessor uses TEB offset 0x{wrong:x}; expected x64 TLS vector offset 0x58")
+    if not offsets:
+        raise audit_error_t(f"{symbol} does not contain the required GS:0x58 TLS-vector access or direct helper call")
 
 
 def emutls_inventory(image: pe_image_t, symbols: Sequence[tuple[int, str, str]], limits: Mapping[str, int]) -> dict:

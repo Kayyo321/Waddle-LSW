@@ -236,6 +236,29 @@ class runtime_audit_test_t(unittest.TestCase):
         dll = write_file(self.root / "bad_index_owner.dll", bytes(changed_index))
         with self.assertRaisesRegex(Audit.audit_error_t, "AddressOfIndex does not resolve"):
             Audit.audit_runtime_tls(dll, symbol_lines=symbols, limits=CompiledLimits, expected_exports=ExpectedExports, runtime_policy=valid_policy())
+
+    def test_teb_register_allocation_and_actual_outlined_call_edge(self):
+        for rex in (0x48, 0x4C):
+            for register in range(8):
+                raw, symbols = make_pe()
+                mutable = bytearray(raw)
+                mutable[0x400:0x409] = bytes((0x65, rex, 0x8B, 0x04 | register << 3, 0x25)) + struct.pack('<I', 0x58)
+                image = Audit.pe_image_t('register.dll', bytes(mutable))
+                Audit._verify_teb_tls_accessor(image, Audit._load_symbols(Path('unused'), lines=symbols))
+        raw, symbols = make_pe()
+        mutable = bytearray(raw)
+        mutable[0x400:0x409] = b'\xe8' + struct.pack('<i', 0x11C0 - 0x1005) + bytes(4)
+        mutable[0x5C0:0x5C9] = bytes.fromhex('65 4c 8b 04 25 58 00 00 00')
+        symbols.append(f'{Base + 0x11C0:016x} t runtime_tls_current_record')
+        parsed = Audit._load_symbols(Path('unused'), lines=symbols)
+        Audit._verify_teb_tls_accessor(Audit.pe_image_t('outlined.dll', bytes(mutable)), parsed)
+        mutable[0x400:0x409] = bytes(9)
+        with self.assertRaisesRegex(Audit.audit_error_t, 'direct helper call'):
+            Audit._verify_teb_tls_accessor(Audit.pe_image_t('unreachable_decoy.dll', bytes(mutable)), parsed)
+        mutable[0x400:0x405] = b'\xe8' + struct.pack('<i', 0x11C0 - 0x1005)
+        mutable[0x5C5] = 0x60
+        with self.assertRaisesRegex(Audit.audit_error_t, 'TEB offset 0x60'):
+            Audit._verify_teb_tls_accessor(Audit.pe_image_t('bad_outlined.dll', bytes(mutable)), parsed)
         raw, symbols = make_pe(teb_offset=0x60)
         dll = write_file(self.root / "bad_teb.dll", raw)
         with self.assertRaisesRegex(Audit.audit_error_t, "TEB offset 0x60"):
