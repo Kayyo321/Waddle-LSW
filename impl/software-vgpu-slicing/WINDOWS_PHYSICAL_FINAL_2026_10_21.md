@@ -26,7 +26,7 @@ SHA256 b6a675e7cb7abcb39ad890872a65edcb96d29165f90834ee4e2c9d8e62a64add.
 It checks all12 raw folders,48lifetimes,216sources,12sessions and49 closed
 pidfd owners (the last case includes one additional witnessed controller child).
 The portable37-module/Linux physical qualification remains separately bound
-in `QUALIFICATION_CONTINUATION.md`.
+in `QUALIFICATION_CONTINUATION_2026_10_21.md`.
 
 This matrix completes its stated functional physical scope. It does not
 establish DXVK/OpenCL native heap lifetime acceptance or full OpenCL reload

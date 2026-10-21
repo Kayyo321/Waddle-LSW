@@ -2061,3 +2061,8 @@ prospective ownership contract passes, while historical kernel/USER failures
 remain failed/unattributed. Exact current CI remains pending. Review artifacts
 are preserved under `build/qualification_feature_20261021/final_scope_reviews`.
 All tasks +0%; total85.5%, M2 94%, Time Ended TBD.
+
+Commit `e9c474e` records the Windows physical matrix, all tasks +0%. Atomic
+`docs(vgpu): consolidate qualification continuation evidence` moves its new
+entry into the existing dated continuation document and corrects its link;
+all tasks +0%, overall +0%, no evidence/acceptance change.
