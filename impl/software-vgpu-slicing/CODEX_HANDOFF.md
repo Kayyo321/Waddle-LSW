@@ -448,3 +448,99 @@ Codex completed the independent review of candidate `8810544`, corrected a diagn
 - **Commit `c697d94`** records the separate strict startup-gated stress wrapper, +0% to all tasks.
 - **Commit containing `test(vgpu): qualify in-flight OpenCL transport-loss ownership`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds explicit supervised fault mode, exact CL_OUT_OF_RESOURCES, joined API caller, Busy while live owners, trusted reap/abandon before reverse CL release, bounded terminal shutdown/unload. Ordinary invocation remains. [Contract](OPENCL_CANCELLATION_CONTRACT.md).
 - Exact extracted call/release functions pass portable normal/-O and ASan/LSan/UBSan with zero reported leaks;17/17lines26/26branches100%, both functions100%, unchanged90% floors. Strict Windows builds and10 actual native invalid-mode/path/audit controls pass (all naturalexit2/no survivors). No native in-flight/GPU cancellation acceptance is claimed; final runtime qualification remains pending.
+
+
+
+## M2 ownership contract approved, implementation pending (2026-10-21)
+
+The direct human answer **“Approve M2-specific ownership gate (Recommended)”**
+adopts the [bounded owned-resource contract and source-audited owner
+map](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md). It prospectively
+requires exact native DC retirement and per-lifetime ICD/WSI quiescence rather
+than process-wide count equality, while retaining legacy strict mode and process
+count/snapshot diagnostics. Historical failed runs retain their failed status and
+missing attribution. This supersedes only the earlier “decision unapproved”
+status, not any recorded result.
+
+Readiness commits `17dc2d0`, `e17425b`, and `3736237` are complete and reviewed;
+their source-bound receipts and direct approval are archived read-only under
+`build/qualification_m2_astra_20261021/pre_ownership/`. The ownership observer,
+controls, protocol, fresh qualification and exact-candidate CI are still pending.
+Codex Astra implements in the isolated M2 checkout; the lead retains all Git and
+native/physical runner ownership. M2 stays 94%, software-vGPU 85.5%, Time Ended
+TBD. This M2 unit does not close separate OpenCL/DXVK tasks.
+
+
+### M2 observer implementation checkpoint
+
+The isolated unit after contract commit `fbd94e6` implements only the exact DC
+ledger/conditional C observer and its controls/build gates. Portable tests and
+ASan/LSan/UBSan pass; both actual observer sources independently exceed 90% line
+and branch coverage without exclusions. The standalone Windows executable
+cross-builds; its four real-window controls are **NOT RUN**. The fault-free
+observer object has no control definitions, and the ordinary sink remains
+unchanged. Receipt: `build/qualification_m2_astra_20261021/ownership_observer/receipt.json`.
+Continue with qualified ICD quiescence, explicit per-lifetime fixture/verifier
+protocol and CI, then root-only native/physical qualification and final review.
+M2 remains 94%, parent 85.5%, Time Ended TBD.
+
+
+### M2 actual-owner query checkpoint
+
+Unit B is commit `b385806`; its four actual Windows controls subsequently PASS
+under the lead's runner ownership (exact binary/source evidence is linked in the
+M2 ownership document). The next atomic unit implements a conditional read-only
+144-byte actual ICD owner query plus a separate qualified DLL. Both full 399-test
+build modes and owned access sanitizers pass, and the export/symbol gate requires
+exactly two added read-only queries without fault controls. Source-bound receipt:
+`build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`.
+Next implement the explicit native per-lifetime protocol/verifier/CI; then run
+fresh root-owned native/physical qualification and independent final review.
+The qualified DLL itself has NOT RUN on Windows. Existing historical failures
+and previous receipt meanings remain intact. M2 94%, parent 85.5%, +0%, Time Ended
+TBD; no separate OpenCL/DXVK acceptance follows from these changes.
+
+
+Pre-commit independent review required the M2 query to include all 320 separate
+copied-profile/command reservations, 64 graphics recordings and orphan cached or
+resource dependency tokens. The original query's false-clean profile result is
+preserved as a failing control; the corrected query retains the same fixed ABI.
+The fifth regression group exercises actual table reserve/release and 22 orphan
+cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
+the original unit C receipt is preserved and superseded for readiness. No new
+native execution or completion credit is claimed.
+
+### M2 explicit native protocol checkpoint
+
+Unit C is committed as `b56f7b7`. Unit D implements opt-in `m2_owned_v1` with an
+additional exact absolute qualified DLL path; legacy eight-argument strict mode
+is preserved. The bootstrap configuration and ICD manifest must select that same
+qualified DLL. Each initial/per-lifetime observation requires the same live
+session and module, exact fixed ABIs, healthy bound command state, all owner-zero
+fields and advancing identities/activity for ICD, sink DCs and fixture HWND/DCs.
+No count-only old output satisfies this protocol. Counts remain diagnostic and
+changed counts retain snapshot deltas; historical strict failures remain failed.
+
+Use the concrete fixture and final verification commands in
+`impl/wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md` (unit D). Freeze
+new root-owned invocation/evidence, preserve real exit/both streams and matching
+host retirement, then require the tracked verifier for every final status.
+Portable tests and Windows cross-build pass; actual execution of the new native
+protocol and remote CI remain NOT RUN. CI now has actual four-case Windows owner
+controls with a bounded collector plus portable ownership/query/controller gates.
+Receipt: `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+Next: fresh complete physical workloads, native diagnostic/control execution,
+controlled loaded-host qualification, exact integrated CI and independent final
+review. M2 94%, parent 85.5%, +0%, Time Ended TBD; no full-feature acceptance here.
+
+### Integrated M2 readiness checkpoint (2026-10-21)
+
+The lead integrated isolated Astra commits `17dc2d0`, `e17425b`, `3736237`,
+`fbd94e6`, `b385806`, `b56f7b7` and `d246127` with the existing runtime and
+OpenCL cancellation work, retaining both CI gate sets and both evidence
+histories. Root rehashed all 156 Unit D source/artifact bindings and reran its
+portable output, ownership and fixture gates successfully. Independent source
+review found no actionable false-clean path. The new native ownership protocol
+still requires fresh physical qualification and exact integrated CI; this merge
+claims +0% to all tasks. M2 remains 94% / Review, parent 85.5% / In Progress,
+Time Ended TBD.

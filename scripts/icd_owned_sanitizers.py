@@ -371,7 +371,7 @@ def main():
     arguments = parser.parse_args()
     assert arguments.source.resolve() == Path('src/vgpu/venus_icd.zig').resolve()
     subprocess.run([os.sys.executable, '-B', str(Path(__file__).with_name('icd_seam_sanitizers.py')),
-                    str(arguments.output), '--expected-icd-units', '394'], check=True, timeout=3600)
+                    str(arguments.output), '--expected-icd-units', '399'], check=True, timeout=3600)
 
 
 if __name__ == '__main__':

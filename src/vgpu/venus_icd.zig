@@ -55,6 +55,14 @@ const c = @cImport({
     @cInclude("waddle/venus_objects.h");
     @cInclude("waddle/venus_query_wire.h");
 });
+// Qualification ABI is compiled only for tests or an explicitly instrumented DLL.
+const m2_c = if (builtin.is_test or @hasDecl(c, "WaddleM2OwnershipProbe")) @cImport({
+    @cInclude("../tests/vgpu/m2_ownership_probe.h");
+}) else struct {};
+comptime {
+    if (@hasDecl(c, "WaddleM2OwnershipProbe"))
+        @export(m2_snapshot, .{ .name = "venus_icd_m2_snapshot" });
+}
 const MaxInstances: usize = 16;
 const MaxDevices: usize = 16;
 const physical_feature_cache_t = struct {
@@ -388,6 +396,150 @@ const exchange_t = *const fn (
     ?*anyopaque,
     usize,
 ) callconv(.C) c_int;
+// Caller holds the ICD lock. This helper records identity without dereferencing it.
+fn m2_note_id(snapshot: *m2_c.m2_icd_snapshot_t, id: u64) void {
+    if (snapshot.first_live_id == 0) snapshot.first_live_id = id;
+}
+// Qualification-only C ABI; invalid queries leave caller bytes untouched. Scan the
+// actual fixed arrays, not a redundant counter, and never call a retirement path.
+fn m2_snapshot(version: u32, output: ?*m2_c.m2_icd_snapshot_t, bytes: usize) callconv(.C) c_int {
+    if (version != m2_c.M2IcdVersion or output == null or bytes != @sizeOf(m2_c.m2_icd_snapshot_t)) return 0;
+    lock_icd();
+    defer unlock_icd();
+    var result = std.mem.zeroes(m2_c.m2_icd_snapshot_t);
+    result.version = m2_c.M2IcdVersion;
+    result.bytes = @sizeOf(m2_c.m2_icd_snapshot_t);
+    result.command_state = command.state;
+    result.lost = lost;
+    result.wsi_next_id = wsi_state.next_id;
+    result.object_next_id = (@as(u64, objects.namespace_id) << 32) | objects.next_id;
+    if (command.exchange == null) {
+        result.flags = m2_c.M2IcdUnbound;
+        output.?.* = result;
+        return 1; // slots are undefined before the first successful bind.
+    }
+    result.binding = 1;
+    if (objects.slots != @as([*c]c.venus_object_t, @ptrCast(&slots)) or objects.capacity != slots.len or objects.context == null or
+        objects.context != command.context or objects.namespace_id == 0 or objects.next_id == 0)
+        result.flags |= m2_c.M2IcdRegistryInconsistent;
+    for (slots, resource_states) |entry, state| {
+        if (entry.id != 0) {
+            result.objects += 1;
+            m2_note_id(&result, entry.id);
+        } else if (entry.handle != 0 or entry.parent_id != 0 or entry.kind != 0 or
+            entry.dispatchable != 0 or entry.loader_data != 0)
+            result.flags |= m2_c.M2IcdRegistryInconsistent;
+        if (state.id != 0) {
+            result.resources += 1;
+            m2_note_id(&result, state.id);
+            if (state.id != entry.id) result.flags |= m2_c.M2IcdOwnerInconsistent;
+        }
+        result.backings += @intFromBool(state.bound_memory != 0);
+        result.backings += @intFromBool(state.retired_wsi_image);
+        result.backings += @intFromBool(state.internal_fence);
+        result.mappings += @intFromBool(state.mapped_bytes != null);
+        result.mappings += @intFromBool(state.mapped_baseline != null);
+        result.mappings += @intFromBool(state.mapping_resource != 0);
+        result.references += @as(u64, state.inflight_count) + state.idle_refs;
+        result.references += @as(u64, @intFromBool(state.profile_index != 0)) + @intFromBool(state.command_profile_index != 0);
+        // These copied tokens retain native dependencies independently of id;
+        // notably, any view_image can block image destruction in destroy_simple.
+        for ([_]u64{ state.view_image, state.index_buffer, state.framebuffer_view }) |token| {
+            result.references += @intFromBool(token != 0);
+            m2_note_id(&result, token);
+        }
+        for (state.buffer_references, state.descriptor_uses) |buffer_refs, descriptor_refs|
+            result.references += @as(u64, @popCount(buffer_refs)) + @popCount(descriptor_refs);
+    }
+    if (result.objects != objects.live_count) result.flags |= m2_c.M2IcdRegistryInconsistent;
+    for (wsi_state.surfaces) |entry| {
+        if (entry.id != 0 or entry.instance != 0 or entry.hwnd != 0 or entry.lost) {
+            result.surfaces += 1;
+            m2_note_id(&result, entry.id);
+        }
+    }
+    for (wsi_state.swapchains) |entry| {
+        if (entry.id != 0) {
+            result.swapchains += 1;
+            m2_note_id(&result, entry.id);
+        } else if (entry.device != 0 or entry.surface != 0 or entry.count != 0)
+            result.flags |= m2_c.M2IcdOwnerInconsistent;
+        if (entry.count > entry.images.len) result.flags |= m2_c.M2IcdOwnerInconsistent;
+        for (entry.images, 0..) |pair, index| {
+            if (pair.image != 0 or pair.memory != 0) {
+                result.images += 1;
+                m2_note_id(&result, pair.image);
+                if (pair.image == 0 or pair.memory == 0 or entry.id == 0 or index >= entry.count)
+                    result.flags |= m2_c.M2IcdOwnerInconsistent;
+            }
+            result.acquired_images += @intFromBool(pair.acquired);
+        }
+    }
+    for (caches) |entry| {
+        result.caches += @intFromBool(entry.handle != 0);
+        var physicals: u64 = 0;
+        for (entry.physical) |token| {
+            physicals += @intFromBool(token != 0);
+            m2_note_id(&result, token);
+        }
+        result.references += physicals;
+        if (entry.handle == 0 and (entry.count != 0 or physicals != 0)) result.flags |= m2_c.M2IcdOwnerInconsistent;
+    }
+    for (instance_advertisements) |entry| result.caches += @intFromBool(entry.handle != 0);
+    for (device_caches) |entry| {
+        result.caches += @intFromBool(entry.handle != 0);
+        var owners: u64 = 0;
+        for (entry.queues, entry.rings, entry.ready) |queue, ring, ready| {
+            result.references += @intFromBool(queue != 0);
+            const reservations = @as(u64, @intFromBool(ring != 0)) + @intFromBool(ready);
+            result.reservations += reservations;
+            owners += @as(u64, @intFromBool(queue != 0)) + reservations;
+            m2_note_id(&result, queue);
+        }
+        if (entry.handle == 0 and owners != 0) result.flags |= m2_c.M2IcdOwnerInconsistent;
+    }
+    for (template_owners) |entry| result.caches += @intFromBool(entry.id != 0 or entry.parent_id != 0);
+    for (extension_caches) |entry| {
+        result.caches += @intFromBool(entry.handle != 0);
+        result.caches += @intFromBool(entry.records != null);
+    }
+    for (submission_tickets) |ticket| {
+        var references: u64 = 0;
+        for (ticket.references) |bits| references += @popCount(bits);
+        result.references += references;
+        if (ticket.queue != 0 or ticket.sequence != 0 or ticket.fence != 0 or ticket.fence_owned or references != 0) {
+            result.tickets += 1;
+            m2_note_id(&result, ticket.queue);
+        }
+    }
+    // Occupied copied profiles consume independently reusable capacity even if
+    // no object/resource record remains. Never infer these owners from live_count.
+    inline for (.{ &profile_registry.descriptor_layouts, &profile_registry.pipeline_layouts,
+        &profile_registry.pipelines, &profile_registry.sets, &command_registry.commands }) |table|
+        for (table) |*entry| { result.reservations += @intFromBool(entry.occupied); };
+    for (&command_registry.commands) |*entry| {
+        result.references += @intFromBool(entry.profile.pipeline != 0);
+        m2_note_id(&result, entry.profile.pipeline);
+        for (entry.profile.sets, entry.profile.graphics_sets) |compute_set, graphics_set| {
+            result.references += @as(u64, @intFromBool(compute_set != 0)) + @intFromBool(graphics_set != 0);
+            m2_note_id(&result, compute_set);
+            m2_note_id(&result, graphics_set);
+        }
+    }
+    for (graphics_recordings) |entry| {
+        result.reservations += @intFromBool(entry.pipeline != 0 or entry.pipeline_format != 0 or
+            entry.active_format != 0 or entry.dynamic_rendering);
+        result.references += @intFromBool(entry.pipeline != 0);
+        m2_note_id(&result, entry.pipeline);
+    }
+    for (mapping_slots, ring_slots) |mapping, ring|
+        result.reservations += @as(u64, @intFromBool(mapping)) + @intFromBool(ring);
+    // Completed gpu_fences are sequence history, not retained owners. Temporary
+    // WSI pixel slices are synchronous locals, covered by allocator/sanitizer gates.
+    output.?.* = result;
+    return 1;
+}
+
 fn clear() void {
     wsi_state = .{};
     retire_extension_cache(0);
@@ -16950,5 +17102,285 @@ test "WSI readback invalid wait rolls back recorded staging owners before any GP
         }
         try std.testing.expectEqual(required.len, completed);
         for (submission_tickets) |ticket| try std.testing.expectEqual(@as(u64, 0), ticket.queue);
+    }
+}
+
+// Test-only predicate mirrors the native fixture's required empty boundary. It is
+// deliberately separate from the observer: a successful query may report failure.
+fn m2_test_snapshot() !m2_c.m2_icd_snapshot_t {
+    var snapshot = std.mem.zeroes(m2_c.m2_icd_snapshot_t);
+    try std.testing.expectEqual(@as(c_int, 1), m2_snapshot(m2_c.M2IcdVersion, &snapshot, @sizeOf(@TypeOf(snapshot))));
+    return snapshot;
+}
+fn m2_test_clean(snapshot: m2_c.m2_icd_snapshot_t) bool {
+    if (snapshot.version != m2_c.M2IcdVersion or snapshot.bytes != 144 or snapshot.binding != 1 or
+        snapshot.flags != 0 or snapshot.command_state != c.CommandIdle or snapshot.lost != c.RingOk or
+        snapshot.object_next_id == 0 or snapshot.wsi_next_id == 0) return false;
+    inline for (.{ "first_live_id", "objects", "resources", "surfaces", "swapchains", "images",
+        "acquired_images", "backings", "mappings", "caches", "tickets", "references", "reservations" }) |name|
+        if (@field(snapshot, name) != 0) return false;
+    return true;
+}
+
+test "M2 query fixed ABI rejects malformed inputs unchanged and never clears unhealthy binding" {
+    try std.testing.expectEqual(@as(usize, 144), @sizeOf(m2_c.m2_icd_snapshot_t));
+    var output: m2_c.m2_icd_snapshot_t = undefined;
+    @memset(std.mem.asBytes(&output), 0xa7);
+    const original = output;
+    try std.testing.expectEqual(@as(c_int, 0), m2_snapshot(1, null, 144));
+    for ([_]u32{ 0, 2, std.math.maxInt(u32) }) |version| {
+        try std.testing.expectEqual(@as(c_int, 0), m2_snapshot(version, &output, 144));
+        try std.testing.expectEqualDeep(original, output);
+    }
+    for ([_]usize{ 0, 1, 143, 145, std.math.maxInt(usize) }) |bytes| {
+        try std.testing.expectEqual(@as(c_int, 0), m2_snapshot(1, &output, bytes));
+        try std.testing.expectEqualDeep(original, output);
+    }
+    const unbound = try m2_test_snapshot();
+    try std.testing.expectEqual(@as(u32, m2_c.M2IcdUnbound), unbound.flags);
+    try std.testing.expect(!m2_test_clean(unbound));
+    var fixture = wsi_status_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const clean = try m2_test_snapshot();
+    try std.testing.expect(m2_test_clean(clean));
+    lock_icd();
+    const nested = try m2_test_snapshot();
+    try std.testing.expectEqual(@as(usize, 1), lock_depth);
+    unlock_icd();
+    try std.testing.expectEqualDeep(clean, nested);
+    for ([_]u32{ c.CommandSubmitted, c.CommandReading, c.CommandReady }) |state| {
+        command.state = state;
+        lost = c.RingClosed;
+        const before = try m2_test_snapshot();
+        try std.testing.expect(!m2_test_clean(before));
+        try std.testing.expectEqualDeep(before, try m2_test_snapshot());
+        try std.testing.expectEqual(state, command.state);
+        try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    }
+}
+
+test "M2 query observes actual swapchain construction and acknowledged complete retirement" {
+    var fixture = wsi_swapchain_constructor_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_swapchain_constructor_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const initial = try m2_test_snapshot();
+    const graph = try wsi_status_graph_t.init();
+    const device: c.VkDevice = @ptrFromInt(graph.device.handle);
+    const instance: c.VkInstance = @ptrFromInt(graph.instance.handle);
+    // The reused graph reserves objects directly; complete its instance cache so
+    // actual destroy_instance owns and retires the synthetic physical child.
+    caches[0] = .{ .handle = graph.instance.handle, .ready = true, .count = 1 };
+    caches[0].physical[0] = graph.physical.handle;
+    const info = c.VkSwapchainCreateInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = @ptrFromInt(100), .minImageCount = 2, .imageFormat = c.VK_FORMAT_B8G8R8A8_UNORM,
+        .imageColorSpace = c.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, .imageExtent = .{ .width = 64, .height = 64 },
+        .imageArrayLayers = 1, .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE, .preTransform = c.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+        .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = c.VK_PRESENT_MODE_FIFO_KHR };
+    var chain: c.VkSwapchainKHR = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_swapchain(device, &info, null, &chain));
+    const live = try m2_test_snapshot();
+    try std.testing.expect(!m2_test_clean(live));
+    try std.testing.expectEqual(@as(u64, 11), live.objects);
+    try std.testing.expectEqual(@as(u64, 1), live.surfaces);
+    try std.testing.expectEqual(@as(u64, 2), live.swapchains);
+    try std.testing.expectEqual(@as(u64, 3), live.images);
+    try std.testing.expect(live.resources != 0 and live.backings != 0 and live.caches != 0);
+    const calls = fixture.base.base.submissions;
+    try std.testing.expectEqualDeep(live, try m2_test_snapshot());
+    try std.testing.expectEqual(calls, fixture.base.base.submissions);
+    destroy_swapchain(device, chain, null);
+    destroy_swapchain(device, @ptrFromInt(101), null);
+    destroy_semaphore(device, @ptrFromInt(graph.semaphore.handle), null);
+    destroy_device(device, null);
+    destroy_surface(instance, @ptrFromInt(100), null);
+    destroy_instance(instance, null);
+    const retired = try m2_test_snapshot();
+    if (!m2_test_clean(retired)) std.debug.print("M2 retirement snapshot: {any}\n", .{retired});
+    try std.testing.expect(m2_test_clean(retired));
+    try std.testing.expect(retired.object_next_id > initial.object_next_id);
+    try std.testing.expect(retired.wsi_next_id > initial.wsi_next_id);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_unbind());
+    try std.testing.expect(!m2_test_clean(try m2_test_snapshot()));
+}
+
+test "M2 query observes readback retirement and preserves real failed queue proof owners" {
+    for ([_]bool{ false, true }) |gpu_closed| {
+        var fixture = wsi_complete_readback_fixture_t{ .gpu_closed = gpu_closed };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_complete_readback_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        resource_state(graph.image).image_type = c.VK_IMAGE_TYPE_2D;
+        const initial = try m2_test_snapshot();
+        var context = wsi_callback_context_t{ .device = graph.device.handle, .queue = @ptrFromInt(graph.queue.handle) };
+        var pixels = [_]u8{0xa7} ** 256;
+        const result = wsi_readback(&context, graph.image.handle, 8, 8, 44, &pixels, pixels.len, 0, null);
+        const after = try m2_test_snapshot();
+        if (gpu_closed) {
+            try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), result);
+            try std.testing.expect(after.objects > initial.objects);
+            try std.testing.expect(after.lost != c.RingOk);
+        } else {
+            try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), result);
+            try std.testing.expectEqual(@as(usize, 1), fixture.exports);
+            try std.testing.expectEqual(fixture.exports, fixture.releases);
+            try std.testing.expectEqual(initial.objects, after.objects);
+            try std.testing.expectEqual(initial.reservations, after.reservations);
+            try std.testing.expectEqual(initial.references, after.references);
+            try std.testing.expectEqual(@as(u64, 0), after.mappings);
+            try std.testing.expectEqual(@as(u64, 0), after.tickets);
+            try std.testing.expect(after.object_next_id > initial.object_next_id);
+        }
+        try std.testing.expectEqualDeep(after, try m2_test_snapshot());
+    }
+    for ([_]u32{ c.RequestGpuFence, c.RequestGpuPoll }) |fault_kind| {
+        var fixture = wsi_wait_proof_fixture_t{ .fault_kind = fault_kind };
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_wait_proof_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const graph = try wsi_status_graph_t.init();
+        wsi_state.swapchains[0].images[0].acquired = true;
+        const chain: c.VkSwapchainKHR = @ptrFromInt(101);
+        const index: u32 = 0;
+        const semaphore: c.VkSemaphore = @ptrFromInt(graph.semaphore.handle);
+        const info = c.VkPresentInfoKHR{ .sType = c.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1, .pWaitSemaphores = &semaphore,
+            .swapchainCount = 1, .pSwapchains = &chain, .pImageIndices = &index };
+        try std.testing.expectEqual(@as(c_int, c.VK_ERROR_DEVICE_LOST), queue_present(@ptrFromInt(graph.queue.handle), &info));
+        const retained = try m2_test_snapshot();
+        try std.testing.expect(retained.tickets != 0 and retained.references != 0 and retained.acquired_images == 1);
+        try std.testing.expect(!m2_test_clean(retained));
+        const calls = fixture.gpu_calls;
+        try std.testing.expectEqualDeep(retained, try m2_test_snapshot());
+        try std.testing.expectEqual(calls, fixture.gpu_calls);
+    }
+}
+
+test "M2 query rejects contradictory counts and independently retained owner fields" {
+    for (0..43) |case| {
+        var fixture = wsi_status_fixture_t{};
+        try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+        defer venus_icd_abandon();
+        const original_objects = objects;
+        var shadow: [4096]u8 align(4096) = undefined;
+        var records: [1]extensions_wire.extension_t = undefined;
+        switch (case) {
+            0 => objects.live_count = 1,
+            1 => objects.slots = null,
+            2 => objects.capacity = 0,
+            3 => objects.context = null,
+            4 => objects.context = &shadow,
+            5 => objects.namespace_id = 0,
+            6 => objects.next_id = 0,
+            7 => slots[0].handle = 1,
+            8 => slots[0].parent_id = 1,
+            9 => slots[0].kind = 1,
+            10 => slots[0].dispatchable = 1,
+            11 => slots[0].loader_data = 1,
+            12 => resource_states[0].id = 1,
+            13 => resource_states[0].bound_memory = 1,
+            14 => resource_states[0].retired_wsi_image = true,
+            15 => resource_states[0].internal_fence = true,
+            16 => resource_states[0].mapped_bytes = &shadow,
+            17 => resource_states[0].mapped_baseline = &shadow,
+            18 => resource_states[0].mapping_resource = 1,
+            19 => resource_states[0].inflight_count = 1,
+            20 => resource_states[0].idle_refs = 1,
+            21 => resource_states[0].buffer_references[7] = 1 << 63,
+            22 => resource_states[0].descriptor_uses[7] = 1 << 63,
+            23 => wsi_state.surfaces[0].instance = 1,
+            24 => wsi_state.surfaces[0].hwnd = 1,
+            25 => wsi_state.surfaces[0].lost = true,
+            26 => wsi_state.swapchains[0].device = 1,
+            27 => wsi_state.swapchains[0].surface = 1,
+            28 => wsi_state.swapchains[0].count = 4,
+            29 => wsi_state.swapchains[0].images[2].image = 1,
+            30 => wsi_state.swapchains[0].images[2].memory = 1,
+            31 => wsi_state.swapchains[0].images[2].acquired = true,
+            32 => caches[0].handle = 1,
+            33 => instance_advertisements[0].handle = 1,
+            34 => template_owners[0].parent_id = 1,
+            35 => extension_caches[0].handle = 1,
+            36 => extension_caches[0].records = &records,
+            37 => submission_tickets[0].sequence = 1,
+            38 => submission_tickets[0].fence = 1,
+            39 => submission_tickets[0].fence_owned = true,
+            40 => submission_tickets[0].references[7] = 1 << 63,
+            41 => mapping_slots[63] = true,
+            42 => ring_slots[63] = true,
+            else => unreachable,
+        }
+        const bad = try m2_test_snapshot();
+        try std.testing.expect(!m2_test_clean(bad));
+        try std.testing.expectEqualDeep(bad, try m2_test_snapshot());
+        // Synthetic corrupt-state controls do not transfer stack storage. Restore
+        // those borrowed fields before the ordinary fixture abandonment cleanup.
+        objects = original_objects;
+        @memset(&slots, std.mem.zeroes(c.venus_object_t));
+        resource_states[0] = .{};
+        extension_caches[0] = .{};
+    }
+}
+
+test "M2 query observes independent profile reservations and orphan recorded or cached tokens" {
+    var fixture = wsi_status_fixture_t{};
+    try std.testing.expectEqual(@as(c_int, c.RingOk), venus_icd_bind(wsi_status_fixture_t.exchange, &fixture));
+    defer venus_icd_abandon();
+    const tables = .{ &profile_registry.descriptor_layouts, &profile_registry.pipeline_layouts,
+        &profile_registry.pipelines, &profile_registry.sets, &command_registry.commands };
+    inline for (tables) |table| {
+        const index = try profiles.reserve_slot(table, @as(@TypeOf(table.*[0].profile), .{}));
+        const reserved = try m2_test_snapshot();
+        try std.testing.expectEqual(@as(u64, 0), reserved.objects);
+        try std.testing.expectEqual(@as(u64, 0), reserved.resources);
+        try std.testing.expect(!m2_test_clean(reserved));
+        try std.testing.expectEqual(@as(u64, 1), reserved.reservations);
+        try std.testing.expectEqualDeep(reserved, try m2_test_snapshot());
+        try std.testing.expect(profiles.release_slot(table, index));
+        try std.testing.expect(m2_test_clean(try m2_test_snapshot()));
+    }
+    // Exercise the last slot/element independently; no live object count or
+    // parent cache handle can hide a retained reservation/reference behind it.
+    for (0..22) |case| {
+        switch (case) {
+            0 => profile_registry.descriptor_layouts[31].occupied = true,
+            1 => profile_registry.pipeline_layouts[31].occupied = true,
+            2 => profile_registry.pipelines[63].occupied = true,
+            3 => profile_registry.sets[127].occupied = true,
+            4 => command_registry.commands[63].occupied = true,
+            5 => graphics_recordings[63].pipeline = 1,
+            6 => graphics_recordings[63].pipeline_format = 44,
+            7 => graphics_recordings[63].active_format = 44,
+            8 => graphics_recordings[63].dynamic_rendering = true,
+            9 => command_registry.commands[63].profile.pipeline = 1,
+            10 => command_registry.commands[63].profile.sets[15] = 1,
+            11 => command_registry.commands[63].profile.graphics_sets[15] = 1,
+            12 => device_caches[15].queues[63] = 1,
+            13 => device_caches[15].rings[63] = 1,
+            14 => device_caches[15].ready[63] = true,
+            15 => caches[15].physical[15] = 1,
+            16 => caches[15].count = 1,
+            17 => resource_states[511].view_image = 1,
+            18 => resource_states[511].index_buffer = 1,
+            19 => resource_states[511].framebuffer_view = 1,
+            20 => resource_states[511].profile_index = 1,
+            21 => resource_states[511].command_profile_index = 1,
+            else => unreachable,
+        }
+        const retained = try m2_test_snapshot();
+        try std.testing.expectEqual(@as(u64, 0), retained.objects);
+        try std.testing.expectEqual(@as(u64, 0), retained.resources);
+        try std.testing.expect(!m2_test_clean(retained));
+        try std.testing.expectEqualDeep(retained, try m2_test_snapshot());
+        if (case >= 12 and case <= 16)
+            try std.testing.expect(retained.flags & m2_c.M2IcdOwnerInconsistent != 0);
+        // Clear only the synthetic corruption after both rejection assertions.
+        profile_registry = .{};
+        command_registry = .{};
+        graphics_recordings[63] = .{};
+        caches[15] = .{};
+        device_caches[15] = .{};
+        resource_states[511] = .{};
+        try std.testing.expect(m2_test_clean(try m2_test_snapshot()));
     }
 }

@@ -47,7 +47,7 @@ vgpu-icd-dependency-sanitizers: vgpu-capabilities-owned-sanitizers vgpu-command-
 # access proof. Header discovery is read-only; no generated/shared prerequisite.
 .PHONY: vgpu-icd-complete-seam-sanitizers
 vgpu-icd-complete-seam-sanitizers: vgpu-owned-sanitizer-inventory-test scripts/icd_seam_sanitizers.py scripts/icd_dependency_sanitizers.py scripts/icd_owned_sanitizers.py
-	python3 scripts/icd_seam_sanitizers.py build/icd_complete_seam_safety_37 --expected-icd-units 394 --latest-record build/icd_complete_seam_safety_37/latest.json
+	python3 scripts/icd_seam_sanitizers.py build/icd_complete_seam_safety_37 --expected-icd-units 399 --latest-record build/icd_complete_seam_safety_37/latest.json
 
 # Serial isolated GPU matrix; every invocation retains a unique artifact receipt.
 # Frozen production runtime and all eight driver manifests remain read-only.

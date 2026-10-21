@@ -72,13 +72,37 @@ jobs:
       - name: Verify loader environment rollback with mock-only sanitizers
         run: make vgpu-loader-environment-test vgpu-loader-environment-sanitizers vgpu-loader-environment-coverage
       - name: Verify native fixture handle diagnostics with mock-only sanitizers
-        run: make vgpu-handle-diag-test vgpu-handle-diag-sanitizers
+        run: make vgpu-handle-diag-test vgpu-handle-diag-sanitizers vgpu-handle-diag-coverage
+      - name: Preserve real-source handle diagnostic coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: handle-diagnostic-coverage
+          path: build/coverage/vgpu/handle_diag/**
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Reject malformed and unordered M2 qualification output
+        run: make vgpu-m2-output-test
+      - name: Verify exact M2 owners and native fixture protocol with portable controls
+        run: make vgpu-m2-ownership-test vgpu-m2-ownership-sanitizers vgpu-m2-ownership-coverage vgpu-m2-fixture-test vgpu-m2-fixture-sanitizers vgpu-m2-fixture-coverage
+      - name: Preserve M2 owner and fixture coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m2-ownership-coverage
+          path: |
+            build/coverage/vgpu/m2_ownership/**
+            build/coverage/vgpu/m2_owned_fixture/**
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify metadata-bound concurrent coverage recorder
         run: |
           python3 -B tests/av/coverage_recorder_test.py -v
           WADDLE_RECORDER_SANITIZERS=1 python3 -B tests/av/coverage_recorder_test.py -v
       - name: Check out immutable renderer and Mesa dependencies
         run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol submodules/vulkan_loader submodules/mesa
+      - name: Cross-build native M2 diagnostics and full GPU fixture
+        run: make vgpu-handle-diag-native-build vgpu-m2-ownership-native-build vgpu-m2-qualification-build build/vgpu_tcp_gpu_windows_draft.exe
       - name: Verify Mesa CPU topology allocation ownership
         run: |
           case "$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)" in
@@ -142,7 +166,7 @@ jobs:
       - name: Verify actual extension count and fill codecs and owned access
         run: make vgpu-extensions-wire-test vgpu-extensions-wire-sanitizers vgpu-extensions-wire-coverage
       - name: Verify WSI resize, retirement and native boundary ownership
-        run: make vgpu-wsi-lifecycle-test vgpu-icd-units vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage
+        run: make vgpu-wsi-lifecycle-test vgpu-icd-units vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage vgpu-m2-icd-sanitizers
       - name: Verify experimental ICD loader and instance dispatch
         run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
       - name: Verify pinned native loader instance device and fence discovery
@@ -273,6 +297,67 @@ jobs:
           git submodule update --init --depth 1 submodules/looking_glass submodules/venus_protocol submodules/virglrenderer submodules/vulkan_loader
       - name: Provision native Windows protocol generator
         run: python -m pip install PyYAML==6.0.2 Mako==1.3.8 MarkupSafe==3.0.2
+      - name: Verify native Windows handle snapshots and exact cleanup
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          @'
+          import re
+          from pathlib import Path
+          pattern = r"^static int symbol\(HMODULE module.*?^}"
+          fixture = re.search(pattern, Path("tests/vgpu/tcp_gpu_windows.c").read_text(), re.M | re.S)
+          native = re.search(pattern, Path("tests/vgpu/tcp_gpu_handle_diag_native.c").read_text(), re.M | re.S)
+          if fixture is None or native is None or fixture[0] != native[0]:
+              raise SystemExit("Native diagnostics symbol helper differs from the GPU fixture")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include tests/vgpu/tcp_gpu_handle_diag_native.c -luser32 -lgdi32 -ladvapi32 -o build/vgpu_handle_diag_native.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          import subprocess
+          import sys
+          from pathlib import Path
+          # Drain both streams together. Informational stderr is preserved and
+          # cannot become a PowerShell NativeCommandError or hide the real exit.
+          timed_out = False
+          try:
+              result = subprocess.run(["build/vgpu_handle_diag_native.exe"], capture_output=True, check=False, timeout=60)
+              stdout, stderr = result.stdout, result.stderr
+              exit_text = str(result.returncode) + "\n"
+          except subprocess.TimeoutExpired as error:
+              # subprocess.run kills and reaps only its own diagnostic child.
+              # Preserve partial evidence; timeout is a failed gate, never a retry.
+              timed_out = True
+              stdout, stderr = error.stdout or b"", error.stderr or b""
+              exit_text = "TIMEOUT after 60 seconds\n"
+          Path("build/vgpu_handle_diag_native_stdout.log").write_bytes(stdout)
+          Path("build/vgpu_handle_diag_native_stderr.log").write_bytes(stderr)
+          Path("build/vgpu_handle_diag_native_exit.txt").write_text(exit_text)
+          sys.stdout.buffer.write(stdout)
+          sys.stdout.buffer.write(stderr)
+          if timed_out:
+              raise SystemExit("Native diagnostics timed out after 60 seconds")
+          if result.returncode != 0:
+              raise SystemExit(result.returncode)
+          cases = ("layout_sanity", "passive", "added_types", "removed",
+                   "failure_report_shape", "type_name_unknown", "snapshot_growth", "timing")
+          expected = ["HANDLE_DIAG_NATIVE case=" + name + " PASS" for name in cases]
+          expected.append("HANDLE_DIAG_NATIVE PASS cases=8")
+          if result.stdout.decode("utf-8").splitlines() != expected:
+              raise SystemExit("Native diagnostics did not report all eight ordered cases")
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve native handle diagnostic results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-handle-diagnostic-results
+          path: |
+            build/vgpu_handle_diag_native_stdout.log
+            build/vgpu_handle_diag_native_stderr.log
+            build/vgpu_handle_diag_native_exit.txt
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Build and run native Windows transport and allocator tests
         shell: pwsh
         run: |
@@ -421,6 +506,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_command.zig -Iinclude -lc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Execute real Windows M2 exact-owner leak and masked-count controls
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -DWaddleM2OwnershipProbe -DWaddleM2OwnershipFaults tests/vgpu/m2_ownership_native.c tests/vgpu/m2_owner_ledger.c tests/vgpu/m2_ownership_probe.c src/vgpu/venus_win32_present.c -luser32 -lgdi32 -ldwmapi -o build/vgpu_m2_ownership_native.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -B tests/vgpu/m2_native_controls.py --executable build/vgpu_m2_ownership_native.exe --output-dir build/m2_native_controls
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve real Windows M2 control output and binary binding
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-m2-native-controls
+          path: build/m2_native_controls/**
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify native Windows WSI size and DC ownership
         shell: pwsh

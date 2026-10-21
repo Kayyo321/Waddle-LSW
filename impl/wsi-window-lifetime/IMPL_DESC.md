@@ -160,3 +160,234 @@ The native diagnostics test additionally creates 1,024 private manual-reset even
 
 
 The independent verification of the capacity correction and native growth regression is recorded in [M2_CODEX_REVIEW_2026_10_21.md](M2_CODEX_REVIEW_2026_10_21.md) and its [machine-readable receipt](M2_CODEX_RECEIPT_2026_10_21.json). All prescribed portable gates, eight native Windows diagnostics cases and both fresh physical GPU workloads pass. The historical count failure remains open; the alternative attribution protocol described there is an unapproved proposal and changes no current acceptance criterion. M2 remains 94%, Time Ended TBD.
+
+
+## Ordered strict-count guest-output gate (original protocol, 2026-10-21)
+
+`scripts/vgpu_m2_output.py` is the tracked, read-only final guest-output gate for
+new full `triangle_present` and `wsi_lifetime` qualifications. These preserved strict-mode examples require explicit `strict_count_v1` selection.
+The adopted ownership protocol below is required for new M2 qualification; strict
+output alone cannot satisfy it. Both modes additionally require the independent
+host/source/binary/process-owner verification:
+
+```sh
+python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload triangle_present --device 'NVIDIA GeForce RTX 5080' --protocol strict_count_v1
+python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload wsi_lifetime --device 'NVIDIA GeForce RTX 5080' --protocol strict_count_v1
+```
+
+Use the corresponding workload command on each run's final collected status.
+Save its JSON stdout and exit code in new qualification evidence, bind the
+reported status/verifier SHA-256 hashes in the final review receipt, and require
+exit zero. A previous ignored replay driver's pass alone cannot close this
+check. The command never starts a guest, accesses the VM, changes a receipt,
+modifies historical runners, or accepts M2. Synthetic regression success and
+read-only checks of historical outputs do not qualify a new binary.
+
+**Input and ownership.** The input is the supervisor's UTF-8 JSON object with
+string `exit`, `stdout` and `stderr` fields. Duplicate JSON keys, invalid JSON,
+non-string or missing output, NUL output, and any exit other than the literal
+string `0` fail. The caller supplies the exact workload and device name. The
+verifier reads the file once, hashes those same bytes, and owns only ordinary
+Python parsing/storage objects until process exit. It has no subprocess,
+network, device, persistent state, output-file or native resource ownership.
+Parallel invocations have independent local state. Python is existing test and
+qualification tooling; no runtime dependency or production parser is added.
+
+**Sequence.** The verifier requires exactly one nonzero authenticated session
+header for the selected workload/API 1.0 and one positive handle baseline before
+workload events. It then requires lifetimes 1 through 8 in order, with the exact
+requested device on every lifetime line. Before each triangle lifetime line,
+exactly FIFO frames 1, 2, 3 then IMMEDIATE frames 1, 2, 3 must appear. Before each
+WSI lifetime line, the four existing case labels must appear exactly once in
+the fixture's order (failed replacement, zero area/restore, resize, destroyed
+HWND). The final retirement-Ack PASS must occur exactly once and be the last
+nonempty stdout line. CRLF, LF and CR line endings are supported. Unknown
+ordinary informational lines are allowed between required events. Recognizable
+but malformed/embedded acceptance markers, missing/extra events, wrong labels,
+reordered frames, wrong workload, duplicate lifetime numbers and acceptance
+markers on stderr fail. Known fixture failure markers in either stream fail,
+including markers embedded in loader output. Native snapshot availability and
+timing remain passive diagnostics and do not become new native acceptance
+criteria; no count rule, baseline, retry budget, workload or threshold changes.
+
+**Errors and verification.** Exit 0 means only the guest-output shape passed;
+exit 1 means input/read/validation failure; invalid command arguments exit 2.
+The JSON result explicitly limits its scope to guest output. Validation uses
+explicit exceptions, not Python assertions, so `python -O` does not bypass it.
+`make vgpu-m2-output-test` runs nine test groups: exact valid workloads, every
+required event's deletion/duplication/adjacent swap, count-preserving lifetime
+and frame mutations, cross-workload contamination, malformed markers,
+contradictory failures in both streams, schema/header/final-line errors, passive
+diagnostics, and the real CLI under normal/optimized Python with malformed and
+duplicate-key JSON. Temporary test files have a scoped owner and are removed
+on every test exit. These are output-verifier tests, separate from production
+memory sanitizer and coverage gates.
+
+Historical review already verified all actual 32 outputs had the correct
+ordered lifetime sequence. This prospective gate closes future false acceptance
+in count-only replay checks; it does not invalidate or rewrite those receipts,
+attribute the historical failure, or award the remaining M2 qualification weight.
+
+
+## Continuous integration of M2 readiness checks (2026-10-21)
+
+The existing software-vGPU workflow already runs WSI Debug/ReleaseSafe, native
+C API-double/unsupported tests, WSI sanitizers and >=90% production coverage,
+complete ICD units/coverage, and portable handle diagnostics with their deliberate
+leak control. The Windows job already executes the real Win32 sink and WSI state
+fixtures. Those gates and all thresholds remain intact.
+
+The Linux transport job additionally runs `make vgpu-m2-output-test`, followed
+(after immutable dependency checkout) by `make vgpu-handle-diag-native-build
+build/vgpu_tcp_gpu_windows_draft.exe`. The latter checks actual Windows headers
+and linkage for both diagnostic and complete GPU fixtures. It does not execute
+either binary or qualify the physical GPU route.
+
+The Windows job compiles the same native diagnostic source with the pinned Zig
+0.13.0 toolchain and strict C warnings. Its symbol helper must match the GPU
+fixture's helper before compilation. The job then executes the binary once,
+requires actual exit zero and the exact eight ordered case lines followed by
+`HANDLE_DIAG_NATIVE PASS cases=8`, including the existing 1,024-event snapshot
+growth case. No failed run is retried by CI. The existing native fixture's own
+case semantics, internal controls, count assertions and cleanup remain unchanged.
+
+The collector uses Python `subprocess.run(capture_output=True, timeout=60)` to
+drain both pipes without PowerShell interpreting informational native stderr as
+a terminating command error. It records raw stdout and stderr separately and
+records the actual process exit code. Both streams are displayed through the
+collector's stdout solely for PowerShell transport. A timeout kills and reaps
+only the collector's diagnostic child, preserves both partial streams, writes
+`TIMEOUT after 60 seconds` rather than a fabricated process exit, and fails the
+job without retry. Collection/write/decoding errors also fail the step. The
+always-run artifact step uploads the two raw logs and exit record when present,
+using the workflow's existing pinned upload action and seven-day retention.
+
+This is x64 Windows diagnostics execution on the hosted CI image, separate from
+the preserved guest's native execution and the physical-GPU M2 workloads. The
+hosted job does not establish WOW64, interactive-console pixels, physical GPU
+retirement, whole-process Windows heap ownership or historical handle attribution.
+The existing final independent qualification still requires the actual guest/
+physical runs and the new ordered output gate on the integrated candidate.
+
+
+## Reproducible real-source handle diagnostic coverage (2026-10-21)
+
+`make vgpu-handle-diag-coverage` replaces the need for a manual diagnostic gcov
+invocation. It first runs malformed-evidence/floor controls, then compiles the
+normal `tcp_gpu_handle_diag_host.c` translation unit with GCC coverage, strict
+warnings, `-O0` and absolute source paths. The unchanged real
+`tcp_gpu_handle_diag_windows.inc` is included normally, with the existing
+scripted kernel and allocator hooks; no implementation is copied or sliced.
+The normal 18-case fixture runs with the acceptance-source pin. The report
+counts every recorded line and directional branch outcome of the real include,
+requiring at least 90% for each using an exact integer comparison. Host fixture
+and fake-header counters remain in the raw report and do not contribute to the
+native diagnostic implementation's denominator. There are no implementation
+line/branch exclusions or threshold overrides.
+
+The gate requires exactly one gcov file record for each of the three actual
+translation-unit sources (host fixture, real include, fake API header). It
+rejects missing/duplicate/unexpected file records, absent or empty production
+lines/branch outcomes, duplicate/invalid line numbers and non-integer or
+negative counters. Five test groups exercise those fail-closed boundaries,
+independent line/branch failures and the exact inclusive 90% floor. All parsing
+is ordinary test tooling with owned local Python objects and explicit failures;
+no assertion setting can disable the production coverage decision.
+
+Each invocation owns a fresh `build/coverage/vgpu/handle_diag/run-<UTC>-<PID>/`
+directory and retains its runner, object, raw gcno/gcda, compressed gcov JSON
+and successful summary. The summary binds the real source and raw JSON hashes
+and records actual line/outcome numerators and denominators. Tool errors,
+fixture failures and malformed/insufficient coverage return nonzero and retain
+the generated evidence. CI runs the gate alongside the existing diagnostics
+functional/sanitizer gates and always uploads available coverage evidence using
+the same pinned artifact action and seven-day retention. It neither changes
+native acceptance nor replaces Windows execution, sanitizer or allocator checks.
+
+
+## Approved prospective M2 ownership contract (2026-10-21)
+
+The acceptance owner approved the bounded [M2 owned-resource qualification
+contract](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md). Its complete source-audited
+owner table and implementation boundaries supersede process-wide kernel-count
+equality only for the forthcoming explicit `m2_owned_v1` protocol. The old strict
+mode and every historical result retain their original semantics. This does not
+adopt automatic OS-module attribution or resolve the original missing identity.
+
+The new protocol requires exact native DC ownership, per-lifetime quiescence of
+the real ICD/WSI owner tables, unchanged allocator/sanitizer/backend assertions,
+GDI/USER and exact-output checks, passive process counts/snapshot deltas, native
+leak/cleanup-failure/masked-release controls, and missing-evidence rejection. The
+conditional observer may not change default DLL behavior or ownership transitions.
+Implementation, fresh native/physical qualification, exact-candidate CI and an
+independent final review remain pending; no completion credit is granted.
+
+
+## Exact native owner observer (unit B, 2026-10-21)
+
+The [ownership contract](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#implemented-c-boundary-observer-and-controls-unit-b)
+now specifies the implemented 32-entry reservation-before-acquisition ledger,
+72-byte versioned snapshot, conditional real GetDC/ReleaseDC wrappers and four
+standalone Windows controls. Ordinary sink preprocessing remains identical and
+ordinary objects have no probe references. Fault functions exist only in the
+standalone test build; the fault-free object has only the read-only snapshot
+export directive and an enforced exact C definition set.
+
+Portable functional/sanitizer/coverage gates and strict native cross-build pass.
+Ledger coverage is 85/85 lines, 143/144 outcomes; observer coverage 35/35 lines,
+26/28 outcomes, individually >=90% with no exclusions. Actual Windows controls,
+qualified ICD quiescence, the new per-lifetime protocol and final qualification
+remain pending. No native or acceptance result follows from this implementation.
+
+
+## Conditional actual ICD quiescence (unit C, 2026-10-21)
+
+The [implemented 144-byte query and build boundary](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#read-only-actual-icd-ownership-query-unit-c-2026-10-21)
+scan real registry slots, WSI pairs/acquisitions, mappings, caches, queue tickets,
+references and reservations under the existing lock. Invalid ABI leaves output
+untouched; healthy/unhealthy queries perform no cleanup or transport operations.
+Only the separate qualified DLL adds the two read-only queries. Ordinary exports
+and default behavior stay unchanged, and fault controls cannot enter the candidate.
+All 399 Debug/ReleaseSafe tests and the full owned ICD access-sanitizer suite pass;
+coverage/export/rejection receipts are bound to this source. Unit B real Windows
+controls subsequently PASS under the lead's ownership, including equal-total
+leak and unrelated-release negatives; the [evidence follow-up](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#root-executed-real-c-boundary-controls-unit-b-evidence-follow-up)
+does not qualify the new DLL. Native protocol/verifier/CI wiring, fresh physical
+runs, exact-candidate CI and independent final review remain required, +0%.
+
+
+Pre-commit independent review required the M2 query to include all 320 separate
+copied-profile/command reservations, 64 graphics recordings and orphan cached or
+resource dependency tokens. The original query's false-clean profile result is
+preserved as a failing control; the corrected query retains the same fixed ABI.
+The fifth regression group exercises actual table reserve/release and 22 orphan
+cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
+the original unit C receipt is preserved and superseded for readiness. No new
+native execution or completion credit is claimed.
+
+## Explicit owned-resource qualification protocol (unit D)
+
+The approved contract is now operational in the tracked native fixture. Legacy
+argc=8 retains strict count equality unchanged. Full presentation/WSI runs may
+select argc=10 with `m2_owned_v1` and the exact already-loaded qualified DLL path.
+Borrowed module identity and both actual export addresses are checked before
+using the fixed ABI. Separate fixture HWND/DC ledgers reserve before acquisition
+and retire only actual successful releases; the sink's borrowed HWND and its DC
+ledger remain independent. Every initial/per-lifetime record binds session,
+workload, loaded module, healthy bound ICD state, all owner-zero fields and
+monotonically advancing real acquisition IDs. No query performs cleanup.
+
+The complete protocol layout, ownership/error/concurrency rules, exact commands,
+portable/coverage/CI gates and remaining root-only qualification checklist are
+specified in [the ownership contract](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#explicit-native-ownership-protocol-unit-d-2026-10-21).
+The read-only verifier requires an explicit protocol; ownership selection requires
+`--icd-path`, and historical count-only outputs cannot satisfy it. Process counts
+and changed-count snapshot deltas remain diagnostics; old strict failures retain
+their original failed/unattributed status. Temporary pixels remain proved by the
+existing allocator/sanitizer/backend evidence, not by the native snapshot.
+
+Unit C is commit `b56f7b7`. Unit D adds no production changes. Local new-controller
+coverage is 100% lines / 96.58% directional branches, with unchanged >=90% floors
+and no exclusions. Native/physical execution and exact integrated CI remain
+pending. Receipt: `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+No completion credit is awarded: M2 94%, parent 85.5%, Time Ended TBD.

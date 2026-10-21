@@ -1,6 +1,6 @@
 # Feature Tracker: Guest WSI resize and retirement lifetime
 
-- **Contributors / Agents**: Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex independent qualification lead with read-only Luna source/evidence reviewers; Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
+- **Contributors / Agents**: Codex Astra isolated readiness implementer; Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex independent qualification lead with read-only Luna source/evidence reviewers; Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
 - **Time Started**: 2026-10-09T19:59:10Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -14,7 +14,7 @@
 | #1 | Specify bounded lifetime and native thread contracts | Done | 15% | 100% | IMPL_DESC.md; unobserved HWND reuse and full window-event integration remain separate |
 | #2 | Implement replacement retirement, resize/loss and queue ownership gates | Done | 35% | 100% | Retire on failed replacement; exact Win32 capabilities; acquire/present gates; correct acquisition release; queue result precedence and conservative loss after ambiguous failure |
 | #3 | Add exact-size native presentation with balanced DC release attempts | Done | 20% | 100% | Preserves scaled compatibility API; exact path rejects extent changes before drawing |
-| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Independent Codex portable gates pass: 394 ICD cases, 90.32% branches, prescribed ASan/LSan/allocator checks; corrected diagnostics 18 cases / 6,779 checks, native diagnostics 8/8 and both fresh physical GPU workloads pass. The preserved 199-to-200 failure remains unattributed and unwaived; CI and an acceptance-owner decision remain open. See M2_CODEX_REVIEW_2026_10_21.md. |
+| #4 | Run functional, coverage, native Windows/physical, integrated and sanitizer gates | In Progress | 30% | 80% | Independent Codex portable gates pass: 394 ICD cases, 90.32% branches, prescribed ASan/LSan/allocator checks; corrected diagnostics 18 cases / 6,779 checks, native diagnostics 8/8 and both fresh physical GPU workloads pass. The preserved 199-to-200 failure remains failed/unattributed. The acceptance owner approved the prospective owned-resource contract; its implementation, fresh qualification, exact-candidate CI and final review remain open. See M2_OWNERSHIP_QUALIFICATION_2026_10_21.md. |
 
 **Total Feature Completion**: `94.0%`
 
@@ -299,3 +299,189 @@ Full review: [M2_CODEX_REVIEW_2026_10_21.md](M2_CODEX_REVIEW_2026_10_21.md). Sou
 All six prescribed portable target groups pass independently. WSI branches are 92.95% Zig and 98.61% native C; the full ICD has 394 Debug/ReleaseSafe cases and 90.32% branches. Diagnostics have 18 cases / 6,779 checks under ASan/LSan/UBSan, with the intentional-leak self-control detected. Native Windows diagnostics pass 8/8. Fresh corrected-fixture `triangle_present` and `wsi_lifetime` runs pass on the actual RTX 5080 route; all 16 exact handle checks equal 199 on sample 1. Both the 1,020 historical and 68 new manifest-bound files re-hash successfully; an independent verifier additionally requires lifetime markers 1 through 8 in order.
 
 The historical `tcp_gpu_7adb6000` 199-to-200 failure remains unattributed and unwaived. CI has not run for these commits. The unchanged native qualification gate remains open; the proposed fail-closed attribution protocol is documented for an explicit owner decision, not implemented or adopted. **TODO #4 remains 80%, overall remains 94%, Time Ended TBD.** Software-vGPU remains 85.5%, with its separate OpenCL and other feature gates open. No PR-readiness update, push or merge occurred. The preserved VM is running; all owned native/GPU jobs and the temporary publisher have retired.
+
+
+### Isolated M2 readiness: ordered output gate, 2026-10-21
+
+- Implementer: Codex Astra readiness worker, isolated branch
+  `feature/m2-astra-readiness`, base `ca00ad7396ad42e6cdacc6fbe7b15f4fd53cd3a4`.
+  Shared native jobs, VM/GPU state, runners and historical receipts stayed read-only.
+- Commit subject: `test(vgpu): reject unordered M2 qualification output`
+  (exact hash is recorded by the lead in the subsequent commit checkpoint).
+  **Task impact: +0% to TODO #4 (+0% overall); M2 remains 94% / Review,
+  Time Ended TBD; software-vGPU remains 85.5%.**
+- Added `scripts/vgpu_m2_output.py` and `tests/vgpu/m2_output_test.py`, exposed by
+  `make vgpu-m2-output-test`. Future final qualification must invoke the tracked
+  verifier for every collected run in addition to the native supervisor/host
+  checks. It enforces ordered lifetimes 1..8 and each workload's ordered events,
+  rejects contradictory failures and malformed evidence, and records hashes.
+- `TMPDIR=/tmp/waddle_m2_astra_readiness/tmp make vgpu-m2-output-test`:
+  **PASS**, exit 0, nine regression groups including normal and optimized CLI.
+  Log: `/tmp/waddle_m2_astra_readiness/logs/unit1_output_test.log`.
+- Read-only compatibility controls: existing `tcp_gpu_8cbf89ac` triangle and
+  `tcp_gpu_72dc797c` WSI output shapes **PASS**; original failed
+  `tcp_gpu_7adb6000` **REJECTED** as required. No native jobs ran and these checks
+  add no acceptance credit or new historical attribution. Input hashes and
+  results: `/tmp/waddle_m2_astra_readiness/logs/unit1_historical_readonly.log`.
+- CI wiring and final native/physical verification of the integrated candidate
+  remain pending. The strict native handle oracle remains unchanged.
+
+
+### Isolated M2 CI readiness wiring, 2026-10-21
+
+- **Commit `17dc2d0`**: `test(vgpu): reject unordered M2 qualification output`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. The lead independently reviewed
+  the six-file unit, reran nine regression groups and checked preserved positive
+  and failed outputs before committing. Historical receipts remain unchanged.
+- Current unit subject: `ci(vgpu): enforce M2 output and native diagnostic gates`
+  (exact hash recorded by the lead in the following checkpoint). Add the
+  portable verifier gate, strict diagnostic/full-GPU cross-build, and native
+  Windows diagnostic execution with exact eight-case output, real exit status,
+  60-second own-child timeout and preserved raw output/exit artifacts.
+  **Task impact: +0% to TODO #4 (+0% overall); M2 remains 94% / Review,
+  Time Ended TBD; software-vGPU remains 85.5%.**
+- YAML and embedded Python compilation/source-helper pin: **PASS**. Controlled
+  collector cases **PASS** for informational stderr, actual exit 7, missing case
+  despite exit 0, and timeout with preserved partial evidence. Log:
+  `/tmp/waddle_m2_astra_readiness/logs/unit2_ci_config_test.log`.
+- Actual Windows CI, PowerShell parsing and native/physical execution of this
+  integrated candidate: **NOT RUN** in the isolated worktree. No VM/GPU access
+  or new native acceptance is claimed. Portable gate results follow in this
+  unit's evidence record.
+
+
+Fresh isolated unit-2 verification (all commands from
+`/home/dev/.codex/worktrees/m2-astra-readiness/Waddle-LSW`, with both Zig caches,
+TMPDIR and logs under `/tmp/waddle_m2_astra_readiness/`, Python bytecode disabled):
+
+| Command | Observed result |
+|:--|:--|
+| `make vgpu-m2-output-test` | PASS, exit 0; nine regression groups |
+| `make vgpu-wsi-lifecycle-test` | PASS, exit 0; 12 Zig cases in Debug/ReleaseSafe plus C API-double/unsupported fixtures |
+| `make vgpu-wsi-lifecycle-sanitizers` | PASS, exit 0; 39 owned Zig functions instrumented; ASan/LSan/UBSan and allocator checks clean |
+| `make vgpu-wsi-lifecycle-coverage` | PASS, exit 0; Zig branches 145/156 (92.95%); C branches 71/72 (98.61%) |
+| `make vgpu-icd-units` | PASS, exit 0; 394 cases each in Debug/ReleaseSafe and 128-cycle dispatch fixture each |
+| `make vgpu-icd-coverage` | PASS, exit 0; ICD branches 4369/4837 (90.32%), lines 4696/4766 (98.53%) |
+| `make vgpu-handle-diag-test vgpu-handle-diag-sanitizers` | PASS, exit 0; 18 cases/6,779 checks, source pin and intentional LSan leak exit-23 control |
+| `make vgpu-handle-diag-native-build build/vgpu_tcp_gpu_windows_draft.exe build/vgpu_win32_present_test.exe` | PASS, exit 0; strict x64 Windows compilation/linkage only; all three executables unexecuted here |
+
+Exact commands, environment, UTC start/end times, exits and log SHA-256 hashes:
+`/tmp/waddle_m2_astra_readiness/unit2_gate_results.json`. Source/config bindings
+and configuration-control results are in the sibling `unit2_receipt.json`.
+No production sources, existing native workloads, strict acceptance rule,
+coverage exclusions/thresholds, historical evidence or dependency pins changed.
+
+
+### Isolated diagnostic coverage gate, 2026-10-21
+
+- **Commit `e17425b`**: `ci(vgpu): enforce M2 output and native diagnostic gates`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. Lead review independently
+  rehashed all nine bound logs and source/config records before committing.
+- Current unit subject: `test(vgpu): gate real handle diagnostic coverage`
+  (exact hash recorded by the lead in the next checkpoint). Add the reproducible
+  real-include gcov gate, five fail-closed evidence controls, make target and CI
+  artifact retention. No production or acceptance rule changes in this unit.
+- `TMPDIR=/tmp/waddle_m2_astra_readiness/tmp PYTHONDONTWRITEBYTECODE=1 make
+  vgpu-handle-diag-coverage`: **PASS**, exit 0; five evidence-control groups,
+  existing 18 diagnostic cases/6,779 checks and source pin; real-include coverage
+  **108/108 lines (100%) and 100/100 branch outcomes (100%)**, no exclusions.
+  Log: `/tmp/waddle_m2_astra_readiness/logs/unit3_coverage.log`.
+  Raw report/summary directory:
+  `build/coverage/vgpu/handle_diag/run-20261021T172335548961Z-178883/`.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  Time Ended **TBD**; software-vGPU remains **85.5%**. Hosted CI and the final
+  native/physical qualification are **NOT RUN** by this isolated worker.
+
+
+### Approved ownership qualification contract, 2026-10-21
+
+- **Commit `3736237`**: `test(vgpu): gate real handle diagnostic coverage`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. The reproduced real-source gate
+  reports 108/108 lines and 100/100 directional branch outcomes; it retains all
+  thresholds and raw evidence. Prior reviewed receipts are archived under
+  `build/qualification_m2_astra_20261021/pre_ownership/` with a manifest.
+- Current atomic unit: `docs(wsi): adopt bounded M2 ownership qualification`
+  (exact hash recorded in the next checkpoint). The direct human answer
+  **“Approve M2-specific ownership gate (Recommended)”** adopts the prospective
+  contract and complete [owner inventory](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md).
+  Conditional native identity observation and read-only ICD/WSI quiescence checks
+  are authorized; no ownership code is implemented by this documentation unit.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**, task
+  #4 **80%**, Time Ended **TBD**. Historical failures stay failed/unattributed.
+  The remaining blocker is implementation and fresh qualification under the
+  approved contract, including controls, exact-candidate CI and independent final
+  review; approval itself provides no acceptance evidence.
+
+
+### Exact native ownership observer readiness, 2026-10-21
+
+- **Commit `fbd94e6`**: `docs(wsi): adopt bounded M2 ownership qualification`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. Records direct approval and the
+  complete owner map before implementation.
+- Current atomic unit: `test(wsi): observe exact native drawing-context owners`
+  (exact hash recorded in the next checkpoint). Adds reservation-before-GetDC,
+  exact successful-release retirement, sticky failed owners, fail-closed versioned
+  snapshots, native leak/masked-release controls and portable safety/coverage gates.
+  The default C path is unchanged; test faults are absent from the qualified object.
+- **PASS**: four ledger groups / 2,720 checks, three observer groups / 759 checks;
+  ASan/LSan/UBSan; four coverage-evidence groups (also under Python optimization);
+  ledger 85/85 lines and 143/144 outcomes, observer 35/35 lines and 26/28 outcomes;
+  existing WSI functional/safety/coverage gates; strict x64 Windows cross-build.
+  **NOT RUN**: four actual Windows owner controls, physical workload qualification,
+  CI. See `build/qualification_m2_astra_20261021/ownership_observer/receipt.json`.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  task #4 **80%**, Time Ended **TBD**. ICD quiescence and native per-lifetime
+  protocol remain to implement; historical failures remain failed/unattributed.
+
+
+### M2 actual-owner query readiness, 2026-10-21
+
+- **Commit `b385806`**: `test(wsi): observe exact native drawing-context owners`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. The lead subsequently executed
+  its source-bound native controls: all four PASS; exact owned leaks rejected
+  despite equal process totals. Earlier deployment failure remains preserved.
+- Current atomic unit: `test(wsi): expose read-only qualified ICD ownership` (exact
+  hash recorded in the next checkpoint). Adds the fixed 144-byte actual-array
+  query, five meaningful Zig groups, separate qualified DLL and actual export/
+  symbol gate. Invalid queries do not mutate output; valid queries never retire
+  owners or clear failures. The two existing exact test pins increase 394→399.
+- **PASS**: 399 Debug/ReleaseSafe tests, owned ICD ASan/LSan access instrumentation,
+  qualified Windows cross-build and strict export/fault/wrong-DLL controls.
+  Corrected coverage: ICD 90.42% branches / 98.56% lines; query 50/50 branch
+  outcomes and 81/81 lines. Exact source/artifact bindings are in
+  `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`.
+  **NOT RUN**: qualified DLL native/physical execution and remote CI.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  M2 task #4 **80%**, parent **85.5%**, Time Ended **TBD**. Per-lifetime protocol,
+  CI wiring, fresh physical qualification and independent final review remain.
+  Every historical strict failure remains failed/unattributed.
+
+- Pre-commit independent review reopened this unit for a real observation gap:
+  copied-profile occupancy/recordings could survive with zero object counts.
+  Revision 2 adds all 320 occupied profile/command slots, all recording fields,
+  orphan cache/dependency tokens and 22 retained-owner controls. The initial
+  false-clean regression failure and old receipt remain preserved; current
+  validation is source-bound in `ownership_icd_revision2/receipt.json`. +0%.
+
+### Explicit native ownership protocol readiness, 2026-10-21
+
+- **Commit `b56f7b7`**: `test(wsi): expose read-only qualified ICD ownership`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. Includes the independently
+  corrected copied-profile/command/recording owner inventory and preserved
+  false-clean failure control, 399 tests and exact qualified export boundary.
+- Current atomic unit: `test(wsi): enforce explicit native ownership qualification`
+  (exact hash recorded in the next checkpoint). Adds the opt-in exact-module,
+  session-bound, per-lifetime protocol and fixture HWND/DC ownership, mandatory
+  verifier selection, actual C serialization/malformed-evidence regressions,
+  portable safety/coverage gates and bounded real Windows control CI execution.
+  Legacy eight-argument strict mode and historical failure meanings stay intact.
+- **PASS**: 15 verifier groups, 3 collector groups, 4 actual-controller API-double
+  groups / 686 checks; owner/controller sanitizers and coverage; controller
+  103/103 lines, 141/146 directional branches (96.58%); default/qualified export
+  and integrated Windows cross-build gates. Source-bound aggregate logs/receipts:
+  `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+  **NOT RUN**: this candidate's native/physical workloads and remote CI.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  task #4 **80%**, parent **85.5%**, Time Ended **TBD**. Require root-owned fresh
+  complete workloads, native controls/diagnostics, loaded-host qualification,
+  matching independent host retirement, exact integrated CI and final review.
