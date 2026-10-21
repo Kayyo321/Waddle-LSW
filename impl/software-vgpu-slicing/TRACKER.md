@@ -1951,3 +1951,11 @@ source-bound production admission must be rebuilt after this change. Atomic
 unit: `test(vgpu): tolerate bounded native audit acknowledgement sharing`
 (hash recorded next checkpoint). +0% to all tasks; parent85.5%, M2 94% / Review,
 Time Ended TBD.
+
+### Independent qualification continuation (2026-10-21)
+
+See [the current source-bound checkpoint](QUALIFICATION_CONTINUATION_2026_10_21.md)
+for the new real OpenCL GPU pass, preserved fresh M2 USER-count failure and
+remaining gates. Commits5260170 and01702c5 add strict sanitizer inventory and
+bounded native audit regressions, respectively; +0% to every task. Parent85.5%,
+M2 94%, Time Ended TBD. No final acceptance or merge readiness claimed.

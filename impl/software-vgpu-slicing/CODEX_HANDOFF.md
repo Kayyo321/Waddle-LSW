@@ -606,3 +606,11 @@ PASS normally and optimized outside ptrace, including ASan/LSan boundaries.
 Receipt `build/qualification_feature_20261021/ci_preflight_root/receipt.json`.
 This is a test portability fix, not production/native acceptance. +0% to every
 task; parent85.5%, M2 94%, Time Ended TBD. CI must rerun at the corrected head.
+
+### Independent qualification continuation (2026-10-21)
+
+See [the current source-bound checkpoint](QUALIFICATION_CONTINUATION_2026_10_21.md)
+for the new real OpenCL GPU pass, preserved fresh M2 USER-count failure and
+remaining gates. Commits5260170 and01702c5 add strict sanitizer inventory and
+bounded native audit regressions, respectively; +0% to every task. Parent85.5%,
+M2 94%, Time Ended TBD. No final acceptance or merge readiness claimed.
