@@ -116,8 +116,8 @@ snapshot and absent in the other with value, type index, type name and access, t
 **Failure handling.** Any unavailable step prints `handle_diag: snapshot unavailable (<reason>)` and continues; no diagnostic path changes the exit status. A handle closing
 between snapshot and type lookup only yields type `unknown`. Object names are never queried (name queries can block on pipes).
 
-**Verification.** Host: 18 cases / 6724 checks, plain and ASan+LSan+UBSan, LeakSanitizer self-control exits 23, gcov 100% lines and branches of the `.inc`, mutation testing, exact-text
-pin of the acceptance rule. Native (Windows 11 build 26300 guest, WinRM and interactive): 7/7 cases (layout, passivity, added types
+**Verification.** Host: 18 cases / 6724 checks, plain and ASan+LSan+UBSan, LeakSanitizer self-control exits 23, gcov 100% lines and branches of the `.inc` and mutation testing (38 mutants, 35 killed; both measured manually, no make target), exact-text
+pin of the acceptance rule (a literal-edit guard only; the git diff is the real proof). Native (Windows 11 build 26300 guest, WinRM and interactive): 7/7 cases (layout, passivity, added types
 Event/Semaphore/Mutant/Timer/File/Section/Job/Thread with exact names, removed handle, report shape, unknown type, timing). **Evidence limit (updated later on 2026-10-21):**
 the diagnostics have since run inside 20 full 48-frame `triangle_present` and 10 `wsi_lifetime` native workloads (next subsection); earlier native receipts
 (`M2_NATIVE_RECEIPT_2026_10_17.json`, `NATIVE_RECEIPTS_2026_10_18.json`, `M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json`) describe the old fixture hashes only. Over those 30 runs every compared
@@ -144,8 +144,8 @@ output shape of the workload, no legacy handle-failure line, guest binary hashes
 | `wsi_lifetime` (8 lifetimes, 32 labeled cases) | 10 | 10 | 199 in every run | 80 of 80, each on the first sample | 38.12-38.78 s (median 38.44 s) | 4.72-5.11 s |
 
 **Meaning and limits.** These are repetitions of the unchanged oracle and grant no credit. They do not replace or attribute the preserved 199 to 200 failure and, as recorded in the audit, repeated passes
-do not waive it. Every run ended its last check well inside the roughly 60 s at which the OS RPC idle collector changed the count in the 2026-10-17 system-only control, whereas the earlier passing runs took
-66-68 s and the failed run about 82 s for seven lifetimes. Whether run duration explains that failure is an untested hypothesis; a deliberately slowed-host diagnostic was considered and not run.
+do not waive it. Duration is not discriminated by these runs: on the like-for-like controller-ready to host-result clock the new `triangle_present` runs took 65.1-68.6 s versus 66.4-68.5 s for the earlier passes (the failed `tcp_gpu_7adb6000` took 81.8 s), and the earlier `wsi_lifetime` run `tcp_gpu_683c0ee2` took 71.1 s (new runs 48.1-48.9 s) and passed. Only the failed run was clearly slower; whether slowness explains it is an untested hypothesis. A slowed-host diagnostic was considered; one attempt to restrict the VM process's CPU affinity was blocked by the harness permission policy and was not pursued (no user approval was given for it).
+
 `wsi_lifetime` exercises the changed destroyed-HWND ownership path of `tcp_gpu_wsi_lifetime_windows.inc`; the earlier native pass (`tcp_gpu_683c0ee2`) used the old fixture.
 
 **Reproduction (this host, same lease rules).** `make build/vgpu_tcp_gpu_windows_draft.exe`; start the loopback publisher `build/qualification_20261017/public_binaries_resume.py` (serves `build/windows11_vm/repair_media` on

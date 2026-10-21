@@ -1,6 +1,6 @@
 # Feature Tracker: Guest WSI resize and retirement lifetime
 
-- **Contributors / Agents**: Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
+- **Contributors / Agents**: Claude Code (M2 handle-gate audit, diagnostics, fixture fixes and native verification; Sonnet 5.5 lead and workers, Opus 5.5 reviewers); Codex WSI lifetime worker; independent WSI reviewer; queue coverage regression worker and reviewer
 - **Time Started**: 2026-10-09T19:59:10Z
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
@@ -222,7 +222,7 @@ unchanged. **Task #4 +0%; overall remains 94%; Time Ended TBD; not ready for clo
   inferred defect (positive scanline counts everywhere; sink succeeds); no change was made.
 - Native evidence: the diagnostics test passes 7/7 in the Windows 11 guest over WinRM and on the interactive desktop
   (class-51 snapshot equals `GetProcessHandleCount`, exact type names and access masks, passive: 50 captures leave the count unchanged).
-  The existing native presentation fixture passes on the interactive desktop. **No instrumented 48-frame workload was run**; the repeat runner is
+  The existing native presentation fixture passes on the interactive desktop. **No instrumented 48-frame workload was run at that point (superseded: executed later the same day, see the section below)**; the repeat runner is
   prepared (`build/qualification_20261020/m2_runner/`, dry-run only) and will need the rebuilt `gpu.exe`.
 - The committed fixture sources change the fixture hashes; M2 receipts that pin the old hashes (`M2_NATIVE_RECEIPT_2026_10_17.json`,
   `NATIVE_RECEIPTS_2026_10_18.json`, `M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json`) describe the old fixture only.
@@ -246,6 +246,11 @@ unchanged. **Task #4 +0%; overall remains 94%; Time Ended TBD; not ready for clo
   - **Task Impact**: +0% to TODO: #4 (+0% overall; M2 untouched). OpenCL runtime-unload evidence and checkpoint; recorded here only so every commit of the branch is attributed.
 - **Commit `ca52536`**: `docs(wsi): record source-bound native receipts for the instrumented M2 handle-gate runs`
   - **Task Impact**: +0% to TODO: #4 (+0% overall). Machine-readable receipts of the 30 native runs below.
+- **Commit `d5f2361`**: `docs(wsi): record the source-bound native verification in the M2 IMPL_DESC, tracker and audit`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Documentation sync of the native evidence.
+- **Commit `0faf4cd`**: `docs(wsi): add the M2 review handoff and point the checkpoint and feature tracker at it`
+  - **Task Impact**: +0% to TODO: #4 (+0% overall). Review handoff and pointers.
+- Later documentation commit(s) (review fixes, e.g. the corrected duration comparison): +0%; see `git log`.
 
 ## 2026-10-21 native verification on the committed fixture (work resumed at the user's request)
 
@@ -264,6 +269,5 @@ They are closed below. The strict gate, baseline point, retry budget, frame and 
   Receipt: [M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json](../software-vgpu-slicing/M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json).
 - **Native `wsi_lifetime`:** 10 of 10 pass (8 lifetimes and 32 labeled cases each, exact GPU-readback comparisons as in the 2026-10-17 run). Baseline 199 in every run; all 80 lifetime checks equal on the first sample; last check 38.12-38.78 s after the baseline.
   Receipt: [M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json](../software-vgpu-slicing/M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json). This is the first native execution of the changed destroyed-HWND ownership path.
-- **What these do not show:** the preserved 199 to 200 failure is neither replaced nor attributed, and no artifact can attribute it retrospectively; repeated passes do not waive it. Run duration relative to the roughly 60 s OS RPC idle collector is an untested hypothesis
-  (a deliberately slowed-host diagnostic was considered, not run). WOW64, the class-51 growth path and any run of this fixture on a loaded host are unexercised.
+- **What these do not show:** the preserved 199 to 200 failure is neither replaced nor attributed, and no artifact can attribute it retrospectively; repeated passes do not waive it. Duration is not discriminated: on the like-for-like controller-ready to host-result clock the new triangle runs (65.1-68.6 s) were no faster than the earlier passes (66.4-68.5 s) and the earlier `wsi_lifetime` run 683c0ee2 (71.1 s) passed; only the failed run (81.8 s) was clearly slower. A slowed-host diagnostic was considered; a CPU-affinity change on the VM process was blocked by the harness permission policy and not pursued. WOW64, the class-51 growth path and any loaded-host run are unexercised.
 - **Disclosures:** the VM was restarted from its preserved disk after a second host reboot (qemu-img check clean first; the user signed in at the console); a light offline worker harness (nice 19, no VM/GPU/network contact) overlapped runs 18-20 of the triangle campaign, which recorded all-pass pre-checks and the same timings.

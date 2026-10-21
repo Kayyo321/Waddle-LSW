@@ -1630,5 +1630,5 @@ unchanged strict handle gate on the committed fixture, all passing; portable gat
 - **Commit `cdd7690`**: `docs(wsi): record the M2 handle-gate audit, diagnostics and the open acceptance decision` - +0% to #3/#5/#11 (M2 #4 +0%).
 - **Commit `7392d93`**: `docs(vgpu): checkpoint at user stop with OpenCL runtime-unload root cause and approved path` - +0% to #3/#5/#11.
 - **Commit `ca52536`**: `docs(wsi): record source-bound native receipts for the instrumented M2 handle-gate runs` - +0% to #3/#5/#11 (M2 #4 +0%).
-- Documentation commit(s) after `ca52536` that carry this section, the M2 tracker/IMPL_DESC/audit updates and the review handoff: +0% to #3, #5, #11; overall remains 85.5%.
+- **Commits `d5f2361`, `0faf4cd`** and the later review-fix documentation commit(s), which carry this section, the M2 tracker/IMPL_DESC/audit updates and the review handoff: +0% to #3, #5, #11; overall remains 85.5%.
 - The OpenCL runtime-unload correction (TODO #5) is untouched by this resumption and remains NOT READY; its remaining-work list is in [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md).

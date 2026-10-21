@@ -54,9 +54,8 @@ limits in [IMPL_DESC.md](IMPL_DESC.md)). All 30 pass, baseline 199, every one of
 Per this audit's own rule these passes do not waive `tcp_gpu_7adb6000`; the options above are unchanged and the decision stays with the acceptance owner. New facts relevant to that decision:
 
 - The diagnostics were passive over 30 full runs (no run needed a second sample; slowest retirement check 1 ms), which supports the earlier review's judgement that they do not perturb the gate.
-- Every run ended its last retirement check 55.06-55.80 s (`triangle_present`) or 38.12-38.78 s (`wsi_lifetime`) after the baseline, i.e. before the roughly 60 s at which the OS RPC idle collector changed the count in the
-  system-only control. The earlier passing runs took 66-68 s and the failed run about 82 s for seven lifetimes. A dependence of the failure on run duration (host load or any other slowdown) is a hypothesis that fits these
-  numbers but is untested; a deliberately slowed-host diagnostic was considered, not run, and could be run by whoever holds the lease. If it held, whether to record a quiet-host precondition for running the unchanged gate would be a further owner decision (it changes the test protocol, not the oracle) and is not proposed or applied here.
+- Duration is not discriminated by these runs: on the like-for-like controller-ready to host-result clock the new `triangle_present` runs took 65.1-68.6 s versus 66.4-68.5 s for the earlier passes (the failed `tcp_gpu_7adb6000` took 81.8 s), and the earlier `wsi_lifetime` run `tcp_gpu_683c0ee2` took 71.1 s (new runs 48.1-48.9 s) and passed. Only the failed run was clearly slower; whether slowness explains it is an untested hypothesis. A slowed-host diagnostic was considered; one attempt to restrict the VM process's CPU affinity was blocked by the harness permission policy and was not pursued (no user approval was given for it).
+  A quiet-host precondition would be a further owner decision (it changes the protocol, not the oracle) and is not proposed or applied here.
 - The `wsi_lifetime` runs are the first native execution of the changed destroyed-HWND ownership path (`6faf4ed`).
 
 ## Independent review of the diagnostics change (interim, stopped at the user request)

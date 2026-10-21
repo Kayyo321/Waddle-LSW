@@ -407,3 +407,8 @@ failed and is not acceptance evidence. No checkout/pin was changed to hide it.
 Required feature top-level checkouts are initialized at their pins; the
 inventory has no advanced/conflicted entries. Raw inventory and corrected
 non-acceptance report remain in `build/qualification_20261017/runtime_final_git_state.json`.
+
+
+## Update 2026-10-21: M2 review handoff
+
+The M2 section above predates the work of 2026-10-21. The current M2 state, evidence and the open acceptance decision are in [../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md](../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md). OpenCL remains as described in [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md).

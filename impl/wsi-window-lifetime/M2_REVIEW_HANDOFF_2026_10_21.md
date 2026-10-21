@@ -14,7 +14,7 @@ The earlier stop (checkpoint `7392d93`) left three M2 gaps. All are closed.
 | Gap at the stop | Resolution | Evidence |
 |:--|:--|:--|
 | No instrumented 48-frame native run; the failure diagnostics had only been proved in isolation | 20 native `triangle_present` runs on the committed fixture with the diagnostics compiled in | section 3, receipt `ca52536` |
-| Native receipts bound the old fixture hashes | 30 new receipts bind the committed sources, the executed fixture hash (`77a33415...`) and the unchanged frozen guest inputs | section 3 |
+| Native receipts bound the old fixture hashes | two new receipts (30 run entries) bind the committed sources, the executed fixture hash (`77a33415...`) and the unchanged frozen guest inputs | section 3 |
 | The `wsi_lifetime` workload had never executed with the changed destroyed-HWND ownership path (`6faf4ed`) | 10 native `wsi_lifetime` runs, all pass | section 3 |
 
 Commits on the branch since the base (all docs or test-fixture changes; no `src/` or `include/` production file changed):
@@ -29,9 +29,9 @@ Commits on the branch since the base (all docs or test-fixture changes; no `src/
 | `cdd7690` | audit note, IMPL_DESC section, tracker checkpoint, diagnostics receipt | +0% |
 | `7392d93` | checkpoint at the user stop (mostly OpenCL evidence) | +0% |
 | `ca52536` | receipts of the 30 native runs | +0% |
-| the commit(s) that add this file | docs sync (IMPL_DESC, tracker, audit update, checkpoint pointer, this handoff) | +0% |
+| `d5f2361`, `0faf4cd`, and the review-fix commit(s) after them | docs sync (IMPL_DESC, tracker, audit update, checkpoint pointer, this handoff) | +0% |
 
-Unchanged on purpose: the assertion in `handle_baseline()` (exact `GetProcessHandleCount` equality to the baseline, 100 samples x `Sleep(10)`, baseline taken once before the lifetimes), the workload (48 frames / 8 lifetimes; 8 lifetimes and 32 cases for `wsi_lifetime`), the budgets and the thresholds. The host test `tests/vgpu/tcp_gpu_handle_diag_host.c` pins the exact source text of that rule, so a change to it fails the build. None of the forbidden remedies was used: no borrowed handle closed, no prewarmed or elevated baseline, no reduced workload, no widened budget, no assertion replaced by logging, no redefined acceptance.
+Unchanged on purpose: the assertion in `handle_baseline()` (exact `GetProcessHandleCount` equality to the baseline, 100 samples x `Sleep(10)`, baseline taken once before the lifetimes), the workload (48 frames / 8 lifetimes; 8 lifetimes and 32 cases for `wsi_lifetime`), the budgets and the thresholds. The host test `tests/vgpu/tcp_gpu_handle_diag_host.c` pins the exact source text of that rule, so a literal-text edit of it fails that test (a guard against accidental edits only: macros or loop edits elsewhere are not caught, and the `git diff` is the real proof). None of the forbidden remedies was used: no borrowed handle closed, no prewarmed or elevated baseline, no reduced workload, no widened budget, no assertion replaced by logging, no redefined acceptance.
 
 ## 2. Final-source portable gates
 
@@ -67,7 +67,7 @@ Disclosures: run 1 of each workload is a pilot invocation, the rest a second inv
 ## 4. What these runs do not show
 
 - The preserved `tcp_gpu_7adb6000` failure (199 to 200 after 42 frames) did not recur, and it is **neither replaced nor attributed**: no artifact records which handle appeared. The audit's rule stands: repeated passes do not waive it. The only direct evidence about the oracle's sensitivity is the 2026-10-17 system-only control (no Vulkan, no Waddle, +1 at 59.8 s) and the diagnostic traces of balanced RPC garbage-collection churn.
-- A duration hypothesis fits the numbers but is **untested**: these runs ended their last check 55 s (38 s) after the baseline, before the roughly 60 s at which the control changed, while the earlier passing runs took 66-68 s and the failed run about 82 s for seven lifetimes. A deliberately slowed-host diagnostic was considered; one attempt to restrict the VM process's CPU affinity was blocked by the harness's permission policy and was not pursued by other means. It is open for whoever holds the lease.
+- Duration is **not discriminated** by these runs. The 66-68 s and 82 s figures of the earlier runs are controller-ready to host-result times; on that same clock the new `triangle_present` runs took 65.1-68.6 s (no faster than the earlier passes at 66.4-68.5 s), and the earlier `wsi_lifetime` run `tcp_gpu_683c0ee2` took 71.1 s (new runs 48.1-48.9 s) and still passed. Only the failed run (81.8 s) was clearly slower, and whether slowness explains it is untested. A slowed-host diagnostic was considered; one attempt to restrict the VM process's CPU affinity was blocked by the harness permission policy and not pursued, and the user did not approve it. It remains open for whoever holds the lease.
 - Not exercised: WOW64, the diagnostics' class-51 buffer growth path, any run of this fixture on a loaded host, a repeat of the system-only control on this boot.
 - Not added: a native right-to-left (`WS_EX_LAYOUTRTL`) regression in `tests/vgpu/win32_present.c`. The audit's inferred `StretchDIBits` defect did not reproduce in a native probe (positive scanline counts on every layout), so no production change was made; the regression test remains an optional follow-up.
 - Statistics: zero failures in 20 `triangle_present` runs bound the per-run failure probability below about 14% (one-sided 95%), and zero in 10 `wsi_lifetime` runs below about 26%; they cannot show the rate is zero. The earlier history on the old fixture (six passes and one failure of the same workload) is consistent with a rate of that order.
@@ -116,11 +116,12 @@ Suggested review focus: (1) that the acceptance rule and workload are byte-for-b
 
 Agents may not redefine acceptance. The audit (`M2_HANDLE_GATE_AUDIT_2026_10_21.md`, with the update after the resumption) lays out the options without endorsement:
 
-- **A. Keep the oracle as written.** The fresh evidence passes it 30 of 30, but `tcp_gpu_7adb6000` stays unwaived and unattributable; whether 30 fresh passes plus the OS-only control suffice to count the native gate is yours.
+- **A. Keep the oracle as written.** M2 stays blocked on this Windows image; future failures are attributable. The fresh 30/30 passes do not waive `tcp_gpu_7adb6000` (the audit's rule).
+- **A'. Count the native gate despite the unexplained failure.** This is a waiver in effect and needs an explicit, recorded owner decision; it is named separately so it is not mistaken for A. Not proposed.
 - **B. A recorded criteria amendment, not a waiver,** to an attribution-aware strict oracle (handle-table snapshots with tracing from process start; fail on any Waddle-attributed, directly-creatable-type or unattributed delta). Strictly stronger for Waddle-owned handles and catches offset swaps; costs a new oracle and its tests.
 - **C. Change the platform under test.** Not proposed.
 
-My assessment, which is not a decision: no Waddle-owned code path explains the failure (static proof from the import closure plus every rare path provably not run), the oracle is process-global and can hide an offsetting real leak, and the fresh runs give no reason to suspect a Waddle defect. If you can accept A on that basis, M2's native gate would pass on the final sources. If you need the historical failure attributed, only B (or a protocol that can reproduce it) can supply that.
+My assessment, which is not a decision: no Waddle-owned code path explains the failure (static proof from the import closure plus every rare path provably not run), the oracle is process-global and can hide an offsetting real leak, and the fresh runs give no reason to suspect a Waddle defect. They also do not discriminate any cause of the historical failure. If you need that failure attributed, only B (or a protocol that can reproduce it) can supply it; A' is a waiver decision, not an evidence outcome.
 
 ## 7. Live state at this handoff (verify, do not trust)
 
@@ -132,4 +133,4 @@ My assessment, which is not a decision: no Waddle-owned code path explains the f
 
 ## 8. Independent review of this package
 
-(Recorded below after the review that precedes this handoff; see the final commit message.)
+Independent Opus review of HEAD `0faf4cd` (read-only, adversarial): **PASS WITH FIXES**. It recomputed all 30 runs from the raw folders (all 240 checks equal on the first sample, 1,020 manifest-bound files re-hash cleanly, executed `gpu.exe` hash consistent, no hidden or extra run), found no acceptance change on the success path of the fixture diff, ran the host gates (all pass), and found the runner generalisation no looser than the supervisor. Its blocking findings were documentation only and are fixed in the review-fix commit: option A had been reframed (restored; the waiver option A' is named separately), the duration comparison mixed metrics (restated like-for-like), and this section was a placeholder (this text). Should-fix items applied: pin wording, commit attribution and contributors header, pointer from `CODEX_HANDOFF.md`, consistent slowed-host disclosure, supersession notes. Left open and disclosed: the diagnostics' gcov 100% and mutation results are manual (no make target); audit line numbers refer to base HEAD.

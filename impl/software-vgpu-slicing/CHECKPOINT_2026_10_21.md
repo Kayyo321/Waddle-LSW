@@ -32,7 +32,7 @@ ready or merges. README.md is untouched.
   threads/events/timers/files after the baseline; the rare retain/poison paths provably did not run. The process-global count is sensitive to OS-owned RPC idle-GC churn
   (system-only control: -3 ALPC, +4 Thread/Event, net +1 at 59.8 s) and could hide an offsetting Waddle leak. No production fix was made or justified. None of the forbidden remedies was used.
 - Native `StretchDIBits` right-to-left probe (interactive and WinRM): positive scanline counts everywhere, sink succeeds -> the audit's inferred defect is not reproduced.
-- Diagnostics are implemented and natively proven (7/7 in the guest). **They have not yet run inside a full 48-frame workload.**
+- Diagnostics are implemented and natively proven (7/7 in the guest). **They had not yet run inside a full 48-frame workload at the stop (superseded: 30 native runs later the same day).**
 - **Decision needed from the acceptance owner** (agents cannot redefine acceptance): A keep as written (M2 blocked on this image), B a recorded criteria amendment to an attribution-aware strict oracle, C change the platform. See the audit note.
 
 ## OpenCL runtime-unload findings (details: `CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md`, `CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md`, `RUNTIME_CANDIDATE_RECEIPT_2026_10_21.json`)
