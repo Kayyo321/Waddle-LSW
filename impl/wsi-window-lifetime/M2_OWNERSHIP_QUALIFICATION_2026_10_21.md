@@ -348,3 +348,172 @@ suite is now 399 tests; both exact-count pins are 399. New receipt and candidate
 artifacts reside only in `ownership_icd_revision2/`; the earlier
 `ownership_icd/receipt.json` is superseded for readiness and remains unmodified.
 M2 remains 94%, parent 85.5%, +0%, Time Ended TBD.
+
+## Explicit native ownership protocol (unit D, 2026-10-21)
+
+Commit `b56f7b7` completes the corrected actual-owner query. Unit D consumes that
+query in the existing physical fixture, with no production source change. The
+original eight-argument invocation retains its original strict handle-baseline
+function, 100 samples/10 ms, workloads, assertions and cleanup. The additional
+mode is selected only by exactly two extra arguments, `m2_owned_v1` followed by
+the absolute qualified DLL path; it is valid only for full `triangle_present`
+and `wsi_lifetime`, never smoke or compute. The candidate DLL must already be
+loaded/bound by the bootstrap configuration and selected by the manifest.
+The new mode performs no new graphics initialization or baseline adjustment.
+
+After authentication and pinned-loader discovery, the fixture canonicalizes the
+supplied absolute path with GetFullPathNameA and requires the already loaded
+GetModuleHandleA result to report that same path through GetModuleFileNameA.
+Paths are printable ASCII and shorter than MAX_PATH (260 including terminator);
+relative/noncanonical, missing or truncated paths fail. Both exact snapshot
+exports must resolve, and GetModuleHandleExA with FROM_ADDRESS and
+UNCHANGED_REFCOUNT must identify that same module for both actual addresses.
+Forwarded exports in another module fail. These are borrowed module references;
+no observer LoadLibrary/FreeLibrary, file open or handle close is added. Root's
+separate binary/source and loaded-module receipt still binds the exact artifact.
+The snapshot ABI is not a substitute for an independent binary hash.
+Final cleanup additionally requires that exact qualified module path to be absent
+after the existing loader/bootstrap reference retirement.
+
+A fixed fixture controller owns two independent 32-slot ledgers: CreateWindowExA
+HWNDs and pixel-read GetDC results. Only the two existing presentation includes
+select these wrappers. Each reserves an exact ID before acquiring; full/faulted
+state rejects before another native call. Failed acquisitions cancel only their
+empty reservation. A duplicate successful native acquisition remains recorded;
+only that new exact acquisition is eligible for an actual cleanup attempt.
+Unknown/ambiguous retirements never reach the API. Actual DestroyWindow/ReleaseDC
+success retires one identity; failure retains it and a sticky fault. Existing
+cleanup may retry its own owner as before, but never clears the observation
+fault. The DLL's independent sink-DC ledger and borrowed HWND boundary are
+unchanged. Legacy mode wrappers simply invoke the original APIs. The controller
+allocates no memory, thread, mutex or OS handle and runs on the sole UI thread.
+
+The initial boundary follows the existing independent window initialization and
+original process-count baseline. Each later boundary follows actual workload
+success, device idle, device destruction and instance destruction, and precedes
+that lifetime's PASS and final bootstrap Stop. Every query must return exactly
+one with the exact fixed version/size. The current bootstrap session must equal
+the initial nonzero session. The ICD must be bound, idle, healthy and have zero
+flags, first-live identity and every owner field. Both nonzero high-water marks
+must share the original nonzero namespace. On each of lifetimes 1..8 both marks
+must strictly advance in that namespace. All three native owner snapshots must
+be valid, balanced and empty, including pending slots, first-live fields, sticky
+failures and reserved ABI space. Successful acquisition counters and next IDs
+must advance for each lifetime, and the next-ID increase must be at least the
+acquisition increase. The initial snapshot cannot replace later observations.
+A query never releases owners, clears state, retries or unbinds. Missing or
+unclean evidence fails the fixture before a corresponding lifetime PASS.
+
+Every complete observation is one stdout line beginning `M2_OWNED_V1 ` followed
+by JSON with exactly these keys: `session` (16 lowercase hex digits), `workload`,
+`lifetime` (0 initially, then 1..8), `module_hex` (lowercase two-digit hex encoding
+of each byte of the actual loaded path), `handles` (positive u32 diagnostic),
+`icd`, `sink_dc`, `fixture_dc`, `fixture_window`. There are no extra/missing keys.
+The ICD array has 21 integer words in the declaration order documented in unit C:
+version, bytes, flags, command_state, lost, binding, object_next_id, wsi_next_id,
+first_live_id, objects, resources, surfaces, swapchains, images, acquired_images,
+backings, mappings, caches, tickets, references, reservations. Each owner array
+has 12 words in the unit B declaration order: version, bytes, next_id, acquired,
+retired, first_live_id, first_live_parent, first_live_value, live, pending,
+failures, reserved. Word widths match those ABIs; negative/oversized integers,
+bools, floats and duplicate JSON keys fail verification. The signed lost word
+must be zero; any negative code fails as unhealthy evidence.
+
+The read-only output verifier now requires `--protocol strict_count_v1` or
+`--protocol m2_owned_v1`. Ownership mode additionally requires `--icd-path` with
+the exact loaded Windows path. It repeats all field/predicate/monotonicity checks
+and requires the initial record after baseline, then each ownership record after
+its exact workload events and immediately before its lifetime event in the
+acceptance-event sequence. Ordinary diagnostic lines can remain between events.
+Missing, duplicate, reordered, stderr or malformed ownership records fail.
+Records bind the same authenticated session/workload/module for the whole run.
+The initial count must equal the reported baseline; subsequent process counts
+may change and are reported without being used as ownership evidence. Count-only
+historical output is rejected by the ownership mode; ownership output is rejected
+by the strict mode. All known contradictory fixture failures still fail both.
+
+Counts are recorded at every boundary. A changed count also prints the existing
+bounded NT snapshot added/removed delta without a retirement-failed label. An
+unavailable diagnostic snapshot is reported and remains passive. Equal counts
+do not trigger an identity snapshot and are not claimed as identity evidence.
+No OS object-type allowlist, symbol attribution, prewarming, baseline inflation
+or borrowed-handle close is introduced. The diagnostic comparison retains its
+bounded quadratic algorithm, now used only on changed totals or legacy failure.
+All original strict failures remain failed/unattributed.
+
+### Operational qualification commands and external checks
+
+Root's existing native supervisor must invoke the frozen fixture as follows
+(the first seven arguments and workload remain its existing exact run inputs):
+
+```text
+vgpu_tcp_gpu_windows_draft.exe <bootstrap> <pinned-loader> <manifest> <config> <fresh-retirement-receipt> <triangle_present|wsi_lifetime> "NVIDIA GeForce RTX 5080" m2_owned_v1 "C:\exact\candidate\waddle_vulkan_experimental.dll"
+```
+
+It must preserve real exit/both streams, source/binary identities, medium
+integrity, exact current transport session, matching host retirement Ack and no
+survivors. Select the qualified DLL in both bootstrap configuration and manifest;
+passing an ordinary DLL or a different/unbound query module must fail. Do not
+edit historical ignored supervisors or receipts; freeze a new invocation for
+this protocol. On every resulting status, require the tracked final gate:
+
+```sh
+python3 -B scripts/vgpu_m2_output.py --status /absolute/new-run/guest_status.json --workload triangle_present --device 'NVIDIA GeForce RTX 5080' --protocol m2_owned_v1 --icd-path 'C:\exact\candidate\waddle_vulkan_experimental.dll'
+python3 -B scripts/vgpu_m2_output.py --status /absolute/new-run/guest_status.json --workload wsi_lifetime --device 'NVIDIA GeForce RTX 5080' --protocol m2_owned_v1 --icd-path 'C:\exact\candidate\waddle_vulkan_experimental.dll'
+```
+
+Save gate JSON/exit and bind its status/verifier hashes. These commands only read
+collected evidence; they neither launch a native job nor accept M2 themselves.
+Complete both eight-lifetime workloads (48 exact frames or 32 ordered WSI cases),
+the real Windows eight-case diagnostics and four exact-owner controls, and one
+controlled loaded-host run when root's runner ownership permits, without VM
+configuration changes. Native/physical execution of this Unit D candidate is
+**NOT RUN** in the implementer's isolated checkout. No source-only test awards
+physical acceptance, remote CI success, M2 100% or a Time Ended.
+
+### Automated gate coverage and limits
+
+The actual included native controller passes four API-double groups / 686 checks
+under optimized C and ASan/LSan/UBSan. Its measured source covers 103/103 lines
+and 141/146 directional branch outcomes (96.58%), no exclusions. Malformed
+coverage records/floors fail. Tests cover exact module/export binding, legacy
+pass-through, failed/cancelled/full/duplicate acquisition, unknown and failed
+retirement, every ICD owner field, stale sessions/namespaces/IDs, incomplete
+queries and repeated boundary ordering. Synthetic C serialization for both
+workloads is independently consumed by the Python verifier. Fifteen verifier
+groups cover both protocols, every ABI field, missing/duplicate/reordered records,
+contradictory failures, exact CLI behavior and optimized Python. API doubles and
+synthetic count drift are explicitly not native evidence.
+
+`vgpu-m2-output-test` also runs three native-collector regression groups. The
+tracked `tests/vgpu/m2_native_controls.py` runs the separately built four-case
+Windows executable with a 60-second timeout, preserves real exit and both
+streams, retains partial timeout logs, and kills/reaps only its own direct child.
+It rejects failed exit even if every PASS line exists. Informational stderr is
+not treated as a native failure, but contradictory failure or acceptance events
+there fail. Output directories must be fresh. The exact four ordered INFO/PASS
+pairs and final summary are mandatory; leak/failure/masked controls must expose
+live identity 1 and rejection despite equal measured process totals. Binary,
+collector and collected-status hashes accompany the result. Stub tests validate
+failure/timeout/shape behavior and claim no Windows execution.
+
+CI retains every existing job and pinned action/checksum. The portable job adds
+owner/controller tests, sanitizers and >=90% coverage, the actual ICD access
+sanitizer gate, qualified/default DLL export checks and full fixture cross-build.
+Its Windows job builds and actually executes the four real controls with the
+tracked collector; logs/hashes and coverage are preserved as artifacts. The full
+fixture cross-build is never labeled native/physical acceptance. Applicable CI
+on the exact integrated candidate and independent final review remain required.
+Source-bound local receipts are in
+`build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+M2 remains 94% / Review, parent 85.5%, +0%, Time Ended TBD.
+
+
+The first aggregate diagnostic run correctly rejected the old unconditional
+call-site source pin after explicit mode dispatch was introduced. Its failed log
+is preserved as `ownership_protocol/legacy_diagnostics.log`. The revised test
+pins the complete explicit owner/strict dispatch and mode selector while retaining
+the exact original handle_baseline function, unique strict call, counts, sleeps,
+baseline ordering and failure path. Subsequent validation uses a separate log;
+no failed evidence is overwritten or waived. Four deliberate source mutations
+(sample count, equality, explicit selector and strict branch) must still fail.

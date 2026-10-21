@@ -6811,3 +6811,22 @@ The fifth regression group exercises actual table reserve/release and 22 orphan
 cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
 the original unit C receipt is preserved and superseded for readiness. No new
 native execution or completion credit is claimed.
+
+### Explicit M2 ownership protocol integration
+
+Commit `b56f7b7` provides the corrected actual ICD ownership query. The subsequent
+M2 unit integrates it into the native fixture's explicit `m2_owned_v1` mode and
+requires exact loaded-module/session binding, fixed healthy ABI snapshots, all
+owned resources retired and monotonic per-lifetime activity. Separate fixture
+HWND/DC ledgers use actual successful cleanup and retain failures. The original
+strict-count mode remains available with its original invocation and rules;
+old receipts retain their original meanings. Complete protocol/commands and
+compositional ownership limits are specified in
+`impl/wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md`.
+
+Portable/native-control CI wiring and strict output verification are operational;
+Windows cross-compilation does not prove execution. Fresh root-owned native and
+physical qualification, exact integrated CI and independent review remain before
+M2 acceptance. No OpenCL/DXVK admission is inferred. M2 94%, parent 85.5%, +0%,
+Time Ended TBD; unit receipt is
+`build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.

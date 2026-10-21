@@ -136,3 +136,30 @@ My assessment, which is not a decision: no Waddle-owned code path explains the f
 ## 8. Independent review of this package
 
 Independent Opus review of HEAD `0faf4cd` (read-only, adversarial): **PASS WITH FIXES**. It recomputed all 30 runs from the raw folders (all 240 checks equal on the first sample, 1,020 manifest-bound files re-hash cleanly, executed `gpu.exe` hash consistent, no hidden or extra run), found no acceptance change on the success path of the fixture diff, ran the host gates (all pass), and found the runner generalisation no looser than the supervisor. Its blocking findings were documentation only and are fixed in the review-fix commit: option A had been reframed (restored; the waiver option A' is named separately), the duration comparison mixed metrics (restated like-for-like), and this section was a placeholder (this text). Should-fix items applied: pin wording, commit attribution and contributors header, pointer from `CODEX_HANDOFF.md`, consistent slowed-host disclosure, supersession notes. Left open and disclosed: the diagnostics' gcov 100% and mutation results are manual (no make target); audit line numbers refer to base HEAD.
+
+## 9. Adopted ownership contract and current qualification entrypoint
+
+Sections 1–8 remain the historical strict-count package and retain their original
+evidence meanings. The acceptance owner subsequently explicitly approved the
+bounded M2-specific ownership gate; the approved text, owner inventory and limits
+are preserved in `M2_OWNERSHIP_QUALIFICATION_2026_10_21.md`. This is distinct from
+the unapproved generic attribution proposal in section 6. Every original strict
+failure remains failed/unattributed.
+
+Commit `b56f7b7` completes the corrected actual ICD owner query. The next unit
+adds the explicit native `m2_owned_v1` mode and mandatory tracked verifier. Use
+its exact fixture invocation and verification commands in the ownership document;
+the old ignored runners and their count-only verdicts cannot qualify the new
+mode. Preserve the original eight-argument strict invocation for comparisons.
+Qualified snapshots bind exact loaded module, authenticated session, initial and
+eight quiescent lifetimes, real activity and zero owners, including independent
+sink and fixture native ledgers. Native/physical execution and remote CI of the
+new protocol remain NOT RUN in the isolated implementation checkout.
+
+Review the source-bound local receipt at
+`build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`, then perform
+fresh root-owned physical/native/loaded-host qualification, applicable CI on the
+exact integrated candidate and independent final review. Temporary pixels remain
+covered compositionally by allocator/sanitizer/backend tests. No query or passive
+process count claims whole-process leak freedom. M2 remains 94% / Review, parent
+85.5%, Time Ended TBD, with no completion credit from this checkpoint.

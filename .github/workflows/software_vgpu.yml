@@ -64,6 +64,18 @@ jobs:
           retention-days: 7
       - name: Reject malformed and unordered M2 qualification output
         run: make vgpu-m2-output-test
+      - name: Verify exact M2 owners and native fixture protocol with portable controls
+        run: make vgpu-m2-ownership-test vgpu-m2-ownership-sanitizers vgpu-m2-ownership-coverage vgpu-m2-fixture-test vgpu-m2-fixture-sanitizers vgpu-m2-fixture-coverage
+      - name: Preserve M2 owner and fixture coverage
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: m2-ownership-coverage
+          path: |
+            build/coverage/vgpu/m2_ownership/**
+            build/coverage/vgpu/m2_owned_fixture/**
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify metadata-bound concurrent coverage recorder
         run: |
           python3 -B tests/av/coverage_recorder_test.py -v
@@ -71,7 +83,7 @@ jobs:
       - name: Check out immutable renderer and Mesa dependencies
         run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol submodules/vulkan_loader submodules/mesa
       - name: Cross-build native M2 diagnostics and full GPU fixture
-        run: make vgpu-handle-diag-native-build build/vgpu_tcp_gpu_windows_draft.exe
+        run: make vgpu-handle-diag-native-build vgpu-m2-ownership-native-build vgpu-m2-qualification-build build/vgpu_tcp_gpu_windows_draft.exe
       - name: Verify Mesa CPU topology allocation ownership
         run: |
           case "$(dpkg-query -W -f='${Version}' mesa-vulkan-drivers)" in
@@ -135,7 +147,7 @@ jobs:
       - name: Verify actual extension count and fill codecs and owned access
         run: make vgpu-extensions-wire-test vgpu-extensions-wire-sanitizers vgpu-extensions-wire-coverage
       - name: Verify WSI resize, retirement and native boundary ownership
-        run: make vgpu-wsi-lifecycle-test vgpu-icd-units vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage
+        run: make vgpu-wsi-lifecycle-test vgpu-icd-units vgpu-wsi-lifecycle-sanitizers vgpu-wsi-lifecycle-coverage vgpu-m2-icd-sanitizers
       - name: Verify experimental ICD loader and instance dispatch
         run: make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage
       - name: Verify pinned native loader instance device and fence discovery
@@ -475,6 +487,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           zig test src/vgpu/venus_command.zig -Iinclude -lc
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Execute real Windows M2 exact-owner leak and masked-count controls
+        shell: pwsh
+        run: |
+          zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -DWaddleM2OwnershipProbe -DWaddleM2OwnershipFaults tests/vgpu/m2_ownership_native.c tests/vgpu/m2_owner_ledger.c tests/vgpu/m2_ownership_probe.c src/vgpu/venus_win32_present.c -luser32 -lgdi32 -ldwmapi -o build/vgpu_m2_ownership_native.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -B tests/vgpu/m2_native_controls.py --executable build/vgpu_m2_ownership_native.exe --output-dir build/m2_native_controls
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve real Windows M2 control output and binary binding
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-m2-native-controls
+          path: build/m2_native_controls/**
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify native Windows WSI size and DC ownership
         shell: pwsh

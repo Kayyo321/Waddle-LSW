@@ -687,8 +687,40 @@ cleanup:
     return result;
 }
 
+#include "tcp_gpu_m2_owned_windows.inc"
+/* Only these fixture bodies own HWND/pixel-read DCs. The qualification sink's
+ * borrowed HWND and its own DC ledger remain independent inside the DLL. */
+#define CreateWindowExA m2_owned_create_window
+#define DestroyWindow m2_owned_destroy_window
+#define GetDC m2_owned_get_dc
+#define ReleaseDC m2_owned_release_dc
 #include "tcp_gpu_present_windows.inc"
 #include "tcp_gpu_wsi_lifetime_windows.inc"
+#undef CreateWindowExA
+#undef DestroyWindow
+#undef GetDC
+#undef ReleaseDC
+
+/** @brief Passive diagnostic delta after an ownership-mode count change.
+ * @param[in] diag Borrowed bounded baseline. @param[in] baseline,count Measured
+ * totals, never adjusted or used to override an ownership verdict. Sole thread;
+ * owns/frees one bounded snapshot and never closes any enumerated native handle.
+ */
+static void m2_owned_diagnostic(const handle_diag_t *diag, DWORD baseline, DWORD count)
+{
+    if (count == baseline) return;
+    handle_diag_set_t current={0};
+    fprintf(stderr,"m2_owned_diag: baseline=%lu current=%lu (process totals diagnostic only)\n",(unsigned long)baseline,(unsigned long)count);
+    if(diag->baseline.unavailable[0])fprintf(stderr,"handle_diag: snapshot unavailable (baseline: %s)\n",diag->baseline.unavailable);
+    else if(handle_diag_capture(diag,&current))fprintf(stderr,"handle_diag: snapshot unavailable (ownership boundary: %s)\n",current.unavailable);
+    else {
+        const size_t added=handle_diag_print_delta(diag,"added",&current,&diag->baseline,&current);
+        const size_t removed=handle_diag_print_delta(diag,"removed",&diag->baseline,&current,&current);
+        fprintf(stderr,"m2_owned_diag: baseline_handles=%llu current_handles=%llu added=%llu removed=%llu\n",
+            (unsigned long long)diag->baseline.count,(unsigned long long)current.count,(unsigned long long)added,(unsigned long long)removed);
+    }
+    handle_diag_set_free(&current);fflush(stderr);
+}
 
 /** @brief Query actual modern physical wire paths without enabling unimplemented features.
  * @param[in] physical Live borrowed device, lookup Live borrowed instance dispatcher,
@@ -757,7 +789,9 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
 
 /** @brief Run eight actual GPU lifetimes over one explicit authenticated binding.
  * @param[in] argc/argv Immutable trusted absolute bootstrap/loader/manifest/config/
- * retirement-receipt paths, workload and exact physical-device name.
+ * retirement-receipt paths, workload and exact physical-device name. Legacy argc=8
+ * retains strict count equality. Opt-in argc=10 adds m2_owned_v1 and the exact
+ * already-loaded qualified DLL absolute path, requiring owner evidence instead.
  * @return Zero only after exact real workload outputs and matching retirement Ack;
  * nonzero failure, retaining DLL/context until trusted host retirement if necessary.
  * Sole medium-integrity lifecycle thread. Allocation beyond application Vulkan objects is
@@ -766,7 +800,10 @@ static int modern_query_probe(VkPhysicalDevice physical,PFN_vkGetInstanceProcAdd
  */
 int main(int argc,char **argv)
 {
-    if(argc!=8 || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries") && strcmp(argv[6],"triangle_present") && strcmp(argv[6],"triangle_present_smoke") && strcmp(argv[6],"wsi_lifetime")))return 2;
+    if((argc!=8 && argc!=10) || (strcmp(argv[6],"triangle") && strcmp(argv[6],"compute") && strcmp(argv[6],"compute_push") && strcmp(argv[6],"triangle_queries") && strcmp(argv[6],"triangle_present") && strcmp(argv[6],"triangle_present_smoke") && strcmp(argv[6],"wsi_lifetime")))return 2;
+    const int ownership_mode=argc==10;
+    if(ownership_mode && (strcmp(argv[8],"m2_owned_v1") ||
+        (strcmp(argv[6],"triangle_present") && strcmp(argv[6],"wsi_lifetime"))))return 2;
     int modern_queries=!strcmp(argv[6],"triangle_queries");
     int presentation_smoke=!strcmp(argv[6],"triangle_present_smoke");
     int lifetime_workload=!strcmp(argv[6],"wsi_lifetime");
@@ -799,6 +836,8 @@ int main(int argc,char **argv)
     PFN_vkDestroyInstance owned_destroy_instance=NULL;PFN_vkDestroyDevice owned_destroy_device=NULL;
     if(!create_instance || symbol(loader_module,"vkDestroyInstance",&owned_destroy_instance,sizeof owned_destroy_instance) ||
         symbol(loader_module,"vkDestroyDevice",&owned_destroy_device,sizeof owned_destroy_device))goto cleanup;
+    stage="exact qualified M2 ownership module binding";
+    if(ownership_mode && !m2_owned_begin(argv[9],identity))goto cleanup;
     stage="independent process-lifetime Windows graphics initialization";
     if(initialize_system_graphics(&system_dxgi_module))goto cleanup;
     if(presentation && initialize_presentation_windows())goto cleanup;
@@ -806,6 +845,8 @@ int main(int argc,char **argv)
     handle_diag_begin(&diag);
     printf("Native repeated application handle baseline=%lu\n",(unsigned long)baseline);fflush(stdout);
     handle_diag_describe_baseline(&diag,baseline);
+    stage="initial bound M2 ownership evidence";
+    if(ownership_mode && !m2_owned_boundary(session(),argv[6],0,baseline))goto cleanup;
     for(unsigned iteration=0;iteration<(presentation_smoke ? 2u : 8u);iteration++) {
         const unsigned long long iteration_start_ms=handle_diag_now_ms(&diag);
         stage="Vulkan1.0 instance creation";
@@ -886,7 +927,13 @@ int main(int argc,char **argv)
         destroy_device(device,NULL);device=NULL;destroy_device=NULL;cleanup_idle=NULL;destroy_instance(instance,NULL);instance=NULL;destroy_instance=NULL;
         stage="exact native application handle retirement";
         const unsigned long long check_start_ms=handle_diag_now_ms(&diag);handle_check_t check={0};
-        if(handle_baseline(baseline,&check)){handle_diag_report(&diag,baseline,&check,iteration,check_start_ms);goto cleanup;}
+        if(ownership_mode) {
+            stage="bound quiescent M2 ownership evidence";
+            const DWORD count=native_handles();if(!count)goto cleanup;
+            handle_check_record(&check,count);
+            m2_owned_diagnostic(&diag,baseline,count);
+            if(!m2_owned_boundary(session(),argv[6],iteration+1,count))goto cleanup;
+        } else if(handle_baseline(baseline,&check)){handle_diag_report(&diag,baseline,&check,iteration,check_start_ms);goto cleanup;}
         const unsigned long long check_done_ms=handle_diag_now_ms(&diag);
         printf("Native actual %s lifetime=%u device=%s exact-output PASS\n",argv[6],iteration+1,argv[7]);fflush(stdout);
         handle_diag_iteration(iteration,&check,iteration_start_ms,check_start_ms,check_done_ms);
@@ -920,7 +967,8 @@ cleanup:
     if(loader_module){while(!FreeLibrary(loader_module))Sleep(10);loader_module=NULL;}
     if(bootstrap_module){while(!FreeLibrary(bootstrap_module))Sleep(10);bootstrap_module=NULL;}
     if(system_dxgi_module){while(!FreeLibrary(system_dxgi_module))Sleep(10);system_dxgi_module=NULL;}
-    if(GetModuleHandleA(argv[1]) || GetModuleHandleA(argv[2]) || GetModuleHandleA("waddle_vulkan_experimental.dll")) {
+    if(GetModuleHandleA(argv[1]) || GetModuleHandleA(argv[2]) || GetModuleHandleA("waddle_vulkan_experimental.dll") ||
+       (ownership_mode && GetModuleHandleA(argv[9]))) {
         fputs("Native fixture retained a released bootstrap/loader/ICD module\n",stderr);result=1;
     }
     if(!result)puts("Actual native GPU outputs and matching retirement Ack PASS; independent host result still required");

@@ -32,6 +32,7 @@ vgpu-wsi-lifecycle-coverage: vgpu-protocol
 .PHONY: vgpu-m2-output-test
 vgpu-m2-output-test:
 	python3 -B tests/vgpu/m2_output_test.py -v
+	python3 -B tests/vgpu/m2_native_controls_test.py -v
 
 # Explicit qualification instrumentation; ordinary sink/DLL recipes are unchanged.
 VgpuM2OwnerSources = tests/vgpu/m2_owner_ledger.c tests/vgpu/m2_ownership_probe.c
@@ -101,3 +102,21 @@ vgpu-m2-qualification-build: build/waddle_vulkan_experimental.dll build/m2_quali
 # oracles/codecs retain their existing separate sanitizer gates and ownership.
 vgpu-m2-icd-sanitizers: $(VgpuIcdUnitCodecs) $(VgpuIcdUnitOracles)
 	python3 -B tests/vgpu/state_sanitizers.py venus_icd --link $(VgpuIcdUnitCodecs) $(VgpuIcdUnitOracles)
+
+# Actual opt-in fixture controller over API doubles; never a Windows/GPU claim.
+VgpuM2FixtureSources = tests/vgpu/m2_owned_fixture_test.c tests/vgpu/m2_owner_ledger.c
+VgpuM2FixtureHeaders = tests/vgpu/tcp_gpu_m2_owned_windows.inc $(VgpuM2OwnerHeaders)
+build/wsi-lifecycle/m2_owned_fixture: $(VgpuM2FixtureSources) $(VgpuM2FixtureHeaders) | build/wsi-lifecycle
+	$(CC) $(VgpuM2OwnerFlags) -O2 $(VgpuM2FixtureSources) -o $@
+
+.PHONY: vgpu-m2-fixture-test vgpu-m2-fixture-sanitizers vgpu-m2-fixture-coverage
+vgpu-m2-fixture-test: build/wsi-lifecycle/m2_owned_fixture
+	./build/wsi-lifecycle/m2_owned_fixture
+	python3 -B tests/vgpu/m2_output_test.py -v
+
+vgpu-m2-fixture-sanitizers: | build/wsi-lifecycle
+	$(CC) $(VgpuM2OwnerFlags) -O1 -g -fno-omit-frame-pointer -fsanitize=address,leak,undefined $(VgpuM2FixtureSources) -o build/wsi-lifecycle/m2_owned_fixture_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./build/wsi-lifecycle/m2_owned_fixture_sanitized
+
+vgpu-m2-fixture-coverage:
+	python3 -B tests/vgpu/m2_owned_fixture_coverage.py

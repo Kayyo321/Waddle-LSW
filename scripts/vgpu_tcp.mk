@@ -153,8 +153,8 @@ vgpu-tcp-bootstrap-sanitizers:
 	python3 tests/vgpu/tcp_bootstrap_sdk_coverage.py sanitizers
 
 # Native real-GPU fixture is separate from synthetic TCP/bootstrap acceptance.
-build/vgpu_tcp_gpu_windows_draft.exe: tests/vgpu/tcp_gpu_windows.c tests/vgpu/tcp_gpu_present_windows.inc tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc tests/vgpu/tcp_gpu_handle_diag_windows.inc $(VgpuIcdHeaders) tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/compute_push_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h | build
-	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include $< -luser32 -lgdi32 -ldwmapi -ldxguid -ladvapi32 -o $@
+build/vgpu_tcp_gpu_windows_draft.exe: tests/vgpu/tcp_gpu_windows.c tests/vgpu/tcp_gpu_present_windows.inc tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc tests/vgpu/tcp_gpu_handle_diag_windows.inc tests/vgpu/tcp_gpu_m2_owned_windows.inc tests/vgpu/m2_owner_ledger.c tests/vgpu/m2_owner_ledger.h tests/vgpu/m2_ownership_probe.h $(VgpuIcdHeaders) tests/vgpu/shaders/compute_shader.h tests/vgpu/shaders/compute_push_shader.h tests/vgpu/shaders/triangle_vertex_shader.h tests/vgpu/shaders/triangle_fragment_shader.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isubmodules/venus_protocol/include $< tests/vgpu/m2_owner_ledger.c -luser32 -lgdi32 -ldwmapi -ldxguid -ladvapi32 -o $@
 
 # Host unit test of the native fixture's handle-retirement failure diagnostics: the real
 # tcp_gpu_handle_diag_windows.inc over a fake Win32/NT surface. It also pins the unchanged

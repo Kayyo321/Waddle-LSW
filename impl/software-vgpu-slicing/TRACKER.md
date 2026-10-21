@@ -1752,3 +1752,21 @@ are in [the M2 tracker](../wsi-window-lifetime/TRACKER.md) and
   orphan cache/dependency tokens and 22 retained-owner controls. The initial
   false-clean regression failure and old receipt remain preserved; current
   validation is source-bound in `ownership_icd_revision2/receipt.json`. +0%.
+
+### M2 explicit ownership protocol checkpoint, 2026-10-21
+
+- **Commit `b56f7b7`**: `test(wsi): expose read-only qualified ICD ownership`.
+  **Task impact: +0% to parent tasks (+0% overall)**. The corrected actual-array
+  query includes profile/command reservations, graphics recordings and orphan
+  cache/token owners; the original missed-owner failure remains preserved.
+- Current atomic unit: `test(wsi): enforce explicit native ownership qualification`
+  (hash recorded next checkpoint). Integrates that query and real sink/fixture
+  ledgers into an explicit session/module-bound native protocol, strict output
+  verification, meaningful malformed/API-double controls and portable/native CI
+  gates. The old eight-argument strict-count mode remains; historical failures
+  are not relabeled. No OpenCL/DXVK scope or production implementation is changed.
+- **Task impact: +0% to parent tasks (+0% overall)**. All parent task percentages
+  remain unchanged, total **85.5%**; M2 **94% / Review**, Time Ended **TBD**.
+  Local evidence: `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+  This candidate still needs fresh root-owned native/physical qualification,
+  exact integrated CI and independent final review before M2 completion.

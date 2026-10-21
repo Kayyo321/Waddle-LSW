@@ -462,3 +462,26 @@ coverage exclusions/thresholds, historical evidence or dependency pins changed.
   orphan cache/dependency tokens and 22 retained-owner controls. The initial
   false-clean regression failure and old receipt remain preserved; current
   validation is source-bound in `ownership_icd_revision2/receipt.json`. +0%.
+
+### Explicit native ownership protocol readiness, 2026-10-21
+
+- **Commit `b56f7b7`**: `test(wsi): expose read-only qualified ICD ownership`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. Includes the independently
+  corrected copied-profile/command/recording owner inventory and preserved
+  false-clean failure control, 399 tests and exact qualified export boundary.
+- Current atomic unit: `test(wsi): enforce explicit native ownership qualification`
+  (exact hash recorded in the next checkpoint). Adds the opt-in exact-module,
+  session-bound, per-lifetime protocol and fixture HWND/DC ownership, mandatory
+  verifier selection, actual C serialization/malformed-evidence regressions,
+  portable safety/coverage gates and bounded real Windows control CI execution.
+  Legacy eight-argument strict mode and historical failure meanings stay intact.
+- **PASS**: 15 verifier groups, 3 collector groups, 4 actual-controller API-double
+  groups / 686 checks; owner/controller sanitizers and coverage; controller
+  103/103 lines, 141/146 directional branches (96.58%); default/qualified export
+  and integrated Windows cross-build gates. Source-bound aggregate logs/receipts:
+  `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+  **NOT RUN**: this candidate's native/physical workloads and remote CI.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  task #4 **80%**, parent **85.5%**, Time Ended **TBD**. Require root-owned fresh
+  complete workloads, native controls/diagnostics, loaded-host qualification,
+  matching independent host retirement, exact integrated CI and final review.

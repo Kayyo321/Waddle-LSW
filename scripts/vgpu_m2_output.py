@@ -10,10 +10,21 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import ntpath
 import sys
 
 # Supported full workloads; smoke runs cannot satisfy this verifier.
 Workloads = ("triangle_present", "wsi_lifetime")
+# Protocol is explicit: historical count evidence can never imply ownership proof.
+Protocols = ("strict_count_v1", "m2_owned_v1")
+# ABI field order is fixed by the native declarations, not host Python layout.
+IcdFields = ("version", "bytes", "flags", "command_state", "lost", "binding",
+             "object_next_id", "wsi_next_id", "first_live_id", "objects", "resources",
+             "surfaces", "swapchains", "images", "acquired_images", "backings",
+             "mappings", "caches", "tickets", "references", "reservations")
+OwnerFields = ("version", "bytes", "next_id", "acquired", "retired", "first_live_id",
+               "first_live_parent", "first_live_value", "live", "pending", "failures", "reserved")
+OwnerGroups = ("sink_dc", "fixture_dc", "fixture_window")
 # Fixed native fixture order, once per lifetime.
 WsiCaseLabels = (
     "failed-replacement-retained-acquired-image",
@@ -26,7 +37,7 @@ FinalPassLine = ("Actual native GPU outputs and matching retirement Ack PASS; "
                  "independent host result still required")
 # Match markers anywhere to reject contradictory failures in interleaved logs.
 FailureMarkers = (
-    "Native GPU handle baseline=", "Native actual GPU fixture failed:",
+    "M2_OWNED_FAILURE", "Native GPU handle baseline=", "Native actual GPU fixture failed:",
     "Native WSI lifetime case failed:", "Native WSI lifetime pixel (",
     "Native WSI lifetime retained GDI/USER owner:",
     "Native Vulkan swapchain failed:", "Native Vulkan present pixel(",
@@ -41,7 +52,7 @@ FailureMarkers = (
 )
 # Any malformed or embedded acceptance marker is rejected, not silently ignored.
 EventMarkers = (
-    "Authenticated native GPU ", "Native repeated application handle baseline",
+    "M2_OWNED", "Authenticated native GPU ", "Native repeated application handle baseline",
     "Native actual ", "exact-output PASS", "Native Vulkan actual swapchain ",
     "exact4096RGB/BGRA PASS", "Native WSI lifetime case=",
     "Actual native GPU outputs and matching retirement Ack",
@@ -55,15 +66,100 @@ FramePattern = re.compile(r"Native Vulkan actual swapchain mode=(FIFO|IMMEDIATE)
 CasePattern = re.compile(r"Native WSI lifetime case=(\S+) PASS")
 
 
-def verify_guest_status(status, workload, device):
+def qualified_path(path):
+    """in: exact Windows ASCII path. out: normalized comparison string.
+
+    Pure/thread-safe; reject non-absolute/noncanonical or unsupported paths rather
+    than resolving files on the verifier host. No file or native access.
+    """
+    if not isinstance(path, str) or not path or len(path) >= 260 or any(ord(c) < 32 or ord(c) > 126 for c in path):
+        raise ValueError("qualified ICD path must be bounded printable ASCII")
+    drive, tail = ntpath.splitdrive(path)
+    if not drive or not tail.startswith("\\") or ntpath.normpath(path).lower() != path.lower():
+        raise ValueError("qualified ICD path must be canonical and absolute")
+    return path.lower()
+
+
+def abi_values(value, fields, u32_indices):
+    """in: borrowed fixed array/schema. out: newly owned field mapping.
+
+    Reject booleans, floats, negative/oversized words or wrong length. Pure,
+    thread-safe; signed lost must be zero anyway, so negative values fail here.
+    """
+    if not isinstance(value, list) or len(value) != len(fields):
+        raise ValueError("missing or extra ownership ABI field")
+    for index, word in enumerate(value):
+        if type(word) is not int or word < 0 or word >= 1 << (32 if index in u32_indices else 64):
+            raise ValueError("invalid ownership ABI integer")
+    return dict(zip(fields, value))
+
+
+def verify_ownership(record, session, workload, path, previous):
+    """in: borrowed record/run identity/prior record. out: validated copied state.
+
+    Require exact healthy ABIs, zero owners and new lifetime activity. Initial
+    record establishes clean bound marks; no resets, live-owner forgiveness or
+    total-count oracle. Pure/thread-safe; raises ValueError on incomplete proof.
+    """
+    keys = {"session", "workload", "lifetime", "module_hex", "handles", "icd", *OwnerGroups}
+    if not isinstance(record, dict) or set(record) != keys:
+        raise ValueError("missing or extra ownership record field")
+    if record["session"] != session or record["workload"] != workload:
+        raise ValueError("ownership record session/workload mismatch")
+    lifetime = record["lifetime"]
+    if type(lifetime) is not int or lifetime != (previous["lifetime"] + 1 if previous else 0) or lifetime > 8:
+        raise ValueError("ownership lifetime missing, duplicated or out of order")
+    module_hex = record["module_hex"]
+    if not isinstance(module_hex, str) or not re.fullmatch(r"(?:[0-9a-f]{2})+", module_hex):
+        raise ValueError("invalid loaded module path encoding")
+    try:
+        actual_path = bytes.fromhex(module_hex).decode("ascii")
+    except (ValueError, UnicodeError) as error:
+        raise ValueError("invalid loaded module path") from error
+    if qualified_path(actual_path) != path:
+        raise ValueError("wrong loaded qualified ICD path")
+    count = record["handles"]
+    if type(count) is not int or not 0 < count < 1 << 32:
+        raise ValueError("missing process count diagnostic")
+    icd = abi_values(record["icd"], IcdFields, range(6))
+    if [icd[name] for name in IcdFields[:6]] != [1, 144, 0, 0, 0, 1] or any(icd[name] for name in IcdFields[8:]):
+        raise ValueError("unhealthy, incompatible or retained ICD ownership")
+    object_id, wsi_id = icd["object_next_id"], icd["wsi_next_id"]
+    if not object_id >> 32 or not object_id & 0xffffffff or not wsi_id & 0xffffffff or object_id >> 32 != wsi_id >> 32:
+        raise ValueError("invalid ICD identity namespace")
+    if previous:
+        old = previous["icd"]
+        if object_id >> 32 != old["object_next_id"] >> 32 or object_id <= old["object_next_id"] or wsi_id <= old["wsi_next_id"]:
+            raise ValueError("stale or reset ICD identity evidence")
+    state = {"lifetime": lifetime, "icd": icd, "handles": count}
+    for group in OwnerGroups:
+        owner = abi_values(record[group], OwnerFields, (0, 1, 8, 9, 10, 11))
+        if owner["version"] != 1 or owner["bytes"] != 72 or any(owner[name] for name in OwnerFields[5:]) or owner["acquired"] != owner["retired"] or owner["next_id"] <= owner["acquired"]:
+            raise ValueError("incompatible, failed or retained exact native owner: " + group)
+        if previous:
+            old = previous[group]
+            if owner["acquired"] <= old["acquired"] or owner["next_id"] <= old["next_id"] or owner["next_id"] - old["next_id"] < owner["acquired"] - old["acquired"]:
+                raise ValueError("stale or reset native owner activity: " + group)
+        state[group] = owner
+    return state
+
+
+def verify_guest_status(status, workload, device, protocol, icd_path=None):
     """Validate borrowed status against the full ordered workload.
 
-    in: non-null decoded guest-status object, supported workload and exact device
-    name. No input is mutated or retained. out: newly owned summary dictionary.
+    in: non-null decoded guest-status object, supported workload, exact device
+    name and explicit protocol. icd_path is the exact absolute candidate path for
+    ownership mode, otherwise None. No input is mutated or retained.
+    out: newly owned summary dictionary.
     Raises ValueError for missing, malformed, failed or contradictory evidence.
     Pure and thread-safe; no file, process, native, network or global mutations.
     Diagnostics remain passive: snapshot availability and timing are not gates.
     """
+    if protocol not in Protocols:
+        raise ValueError("explicit supported qualification protocol required")
+    path = qualified_path(icd_path) if protocol == "m2_owned_v1" else None
+    if protocol == "strict_count_v1" and icd_path is not None:
+        raise ValueError("legacy protocol does not accept an ownership module path")
     if workload not in Workloads:
         raise ValueError("unsupported full M2 workload")
     if not isinstance(device, str) or not device or any(c in device for c in "\r\n\0"):
@@ -82,6 +178,7 @@ def verify_guest_status(status, workload, device):
         if marker in status["stderr"]:
             raise ValueError("acceptance event unexpectedly present on stderr: " + marker)
     events = []
+    ownership = []
     session = None
     baseline = None
     lines = [line for line in re.split(r"\r\n|\n|\r", status["stdout"]) if line]
@@ -91,7 +188,16 @@ def verify_guest_status(status, workload, device):
         lifetime = LifetimePattern.fullmatch(line)
         frame = FramePattern.fullmatch(line)
         case = CasePattern.fullmatch(line)
-        if header:
+        if line.startswith("M2_OWNED_V1 "):
+            if protocol != "m2_owned_v1":
+                raise ValueError("ownership evidence in a different protocol")
+            record = json.loads(line[len("M2_OWNED_V1 "):], object_pairs_hook=unique_object)
+            state = verify_ownership(record, session, workload, path, ownership[-1] if ownership else None)
+            if not ownership and state["handles"] != baseline:
+                raise ValueError("initial diagnostic count disagrees with baseline")
+            ownership.append(state)
+            events.append(("ownership", state["lifetime"]))
+        elif header:
             if header[1] == "0000000000000000" or header[2] != workload:
                 raise ValueError("wrong authenticated session or workload")
             session = header[1]
@@ -110,12 +216,16 @@ def verify_guest_status(status, workload, device):
         elif any(marker in line for marker in EventMarkers):
             raise ValueError(f"malformed acceptance event at stdout line {number}")
     expected = [("header",), ("baseline",)]
+    if protocol == "m2_owned_v1":
+        expected.append(("ownership", 0))
     for lifetime in range(1, 9):
         if workload == "triangle_present":
             expected.extend(("frame", mode, frame) for mode in ("FIFO", "IMMEDIATE")
                             for frame in range(1, 4))
         else:
             expected.extend(("case", label) for label in WsiCaseLabels)
+        if protocol == "m2_owned_v1":
+            expected.append(("ownership", lifetime))
         expected.append(("lifetime", workload, lifetime, device))
     expected.append(("final",))
     if events != expected:
@@ -124,7 +234,10 @@ def verify_guest_status(status, workload, device):
         raise ValueError(f"missing, extra or out-of-order acceptance event at index {mismatch}")
     if not lines or lines[-1] != FinalPassLine:
         raise ValueError("final retirement PASS must be the last nonempty stdout line")
-    return {"workload": workload, "device": device, "session": session,
+    return {"protocol": protocol, "icd_path": icd_path,
+            "ownership_boundaries": len(ownership),
+            "diagnostic_handle_counts": [item["handles"] for item in ownership],
+            "workload": workload, "device": device, "session": session,
             "baseline": baseline, "ordered_lifetimes": list(range(1, 9)),
             "frames": 48 if workload == "triangle_present" else 0,
             "wsi_cases": 32 if workload == "wsi_lifetime" else 0}
@@ -156,6 +269,8 @@ def main(argv=None):
     parser.add_argument("--status", required=True, type=Path)
     parser.add_argument("--workload", required=True, choices=Workloads)
     parser.add_argument("--device", required=True)
+    parser.add_argument("--protocol", required=True, choices=Protocols)
+    parser.add_argument("--icd-path")
     args = parser.parse_args(argv)
     report = {"schema": "m2_guest_output_verification_v1", "passed": False,
               "scope": "guest output only; independent host qualification still required",
@@ -165,7 +280,7 @@ def main(argv=None):
         raw = args.status.read_bytes()
         report["status_sha256"] = hashlib.sha256(raw).hexdigest()
         status = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_object)
-        report.update(verify_guest_status(status, args.workload, args.device))
+        report.update(verify_guest_status(status, args.workload, args.device, args.protocol, args.icd_path))
         report["passed"] = True
     except (OSError, ValueError, RecursionError) as error:
         report["error"] = str(error)

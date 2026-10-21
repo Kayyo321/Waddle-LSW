@@ -477,3 +477,26 @@ The fifth regression group exercises actual table reserve/release and 22 orphan
 cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
 the original unit C receipt is preserved and superseded for readiness. No new
 native execution or completion credit is claimed.
+
+### M2 explicit native protocol checkpoint
+
+Unit C is committed as `b56f7b7`. Unit D implements opt-in `m2_owned_v1` with an
+additional exact absolute qualified DLL path; legacy eight-argument strict mode
+is preserved. The bootstrap configuration and ICD manifest must select that same
+qualified DLL. Each initial/per-lifetime observation requires the same live
+session and module, exact fixed ABIs, healthy bound command state, all owner-zero
+fields and advancing identities/activity for ICD, sink DCs and fixture HWND/DCs.
+No count-only old output satisfies this protocol. Counts remain diagnostic and
+changed counts retain snapshot deltas; historical strict failures remain failed.
+
+Use the concrete fixture and final verification commands in
+`impl/wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md` (unit D). Freeze
+new root-owned invocation/evidence, preserve real exit/both streams and matching
+host retirement, then require the tracked verifier for every final status.
+Portable tests and Windows cross-build pass; actual execution of the new native
+protocol and remote CI remain NOT RUN. CI now has actual four-case Windows owner
+controls with a bounded collector plus portable ownership/query/controller gates.
+Receipt: `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+Next: fresh complete physical workloads, native diagnostic/control execution,
+controlled loaded-host qualification, exact integrated CI and independent final
+review. M2 94%, parent 85.5%, +0%, Time Ended TBD; no full-feature acceptance here.

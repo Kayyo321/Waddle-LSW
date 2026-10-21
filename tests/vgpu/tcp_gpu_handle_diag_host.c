@@ -993,7 +993,8 @@ static size_t find_once(const char *text,const char *snippet,const char *label)
  * @param[in] path Fixture source, read with the real allocator and released before return.
  * @details handle_baseline cannot be compiled here, so any edit to the 100 samples, the 10 ms
  * interval, the equality test, the legacy failure line, the baseline-sample ordering or the
- * lifetime count fails this case until the pins are updated together with the acceptance criteria.
+ * lifetime count fails this case. The explicit owner-mode dispatch is separately pinned;
+ * its opt-in argc=10 cannot silently replace the original argc=8 strict invocation.
  */
 static void test_acceptance_source_pin(const char *path)
 {
@@ -1039,8 +1040,19 @@ static void test_acceptance_source_pin(const char *path)
     find_once(source,
         "        stage=\"exact native application handle retirement\";\n"
         "        const unsigned long long check_start_ms=handle_diag_now_ms(&diag);handle_check_t check={0};\n"
-        "        if(handle_baseline(baseline,&check)){handle_diag_report(&diag,baseline,&check,iteration,check_start_ms);goto cleanup;}\n",
-        "retirement check and failure path");
+        "        if(ownership_mode) {\n"
+        "            stage=\"bound quiescent M2 ownership evidence\";\n"
+        "            const DWORD count=native_handles();if(!count)goto cleanup;\n"
+        "            handle_check_record(&check,count);\n"
+        "            m2_owned_diagnostic(&diag,baseline,count);\n"
+        "            if(!m2_owned_boundary(session(),argv[6],iteration+1,count))goto cleanup;\n"
+        "        } else if(handle_baseline(baseline,&check)){handle_diag_report(&diag,baseline,&check,iteration,check_start_ms);goto cleanup;}\n",
+        "explicit owner-mode dispatch and unchanged strict retirement failure path");
+    find_once(source,
+        "    const int ownership_mode=argc==10;\n"
+        "    if(ownership_mode && (strcmp(argv[8],\"m2_owned_v1\") ||\n"
+        "        (strcmp(argv[6],\"triangle_present\") && strcmp(argv[6],\"wsi_lifetime\"))))return 2;\n",
+        "ownership mode requires explicit extra arguments and full workload");
     find_once(source,"handle_baseline(baseline,&check)","the only handle_baseline call");
     (free)(source);
 }

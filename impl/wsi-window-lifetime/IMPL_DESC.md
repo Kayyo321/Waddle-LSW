@@ -162,16 +162,17 @@ The native diagnostics test additionally creates 1,024 private manual-reset even
 The independent verification of the capacity correction and native growth regression is recorded in [M2_CODEX_REVIEW_2026_10_21.md](M2_CODEX_REVIEW_2026_10_21.md) and its [machine-readable receipt](M2_CODEX_RECEIPT_2026_10_21.json). All prescribed portable gates, eight native Windows diagnostics cases and both fresh physical GPU workloads pass. The historical count failure remains open; the alternative attribution protocol described there is an unapproved proposal and changes no current acceptance criterion. M2 remains 94%, Time Ended TBD.
 
 
-## Prospective ordered guest-output qualification gate (2026-10-21)
+## Ordered strict-count guest-output gate (original protocol, 2026-10-21)
 
 `scripts/vgpu_m2_output.py` is the tracked, read-only final guest-output gate for
-new full `triangle_present` and `wsi_lifetime` qualifications. Every final native
-repetition must pass this command in addition to the existing supervisor and
-independent host/source/binary/process-owner verification:
+new full `triangle_present` and `wsi_lifetime` qualifications. These preserved strict-mode examples require explicit `strict_count_v1` selection.
+The adopted ownership protocol below is required for new M2 qualification; strict
+output alone cannot satisfy it. Both modes additionally require the independent
+host/source/binary/process-owner verification:
 
 ```sh
-python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload triangle_present --device 'NVIDIA GeForce RTX 5080'
-python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload wsi_lifetime --device 'NVIDIA GeForce RTX 5080'
+python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload triangle_present --device 'NVIDIA GeForce RTX 5080' --protocol strict_count_v1
+python3 -B scripts/vgpu_m2_output.py --status /absolute/run/guest_status.json --workload wsi_lifetime --device 'NVIDIA GeForce RTX 5080' --protocol strict_count_v1
 ```
 
 Use the corresponding workload command on each run's final collected status.
@@ -363,3 +364,30 @@ The fifth regression group exercises actual table reserve/release and 22 orphan
 cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
 the original unit C receipt is preserved and superseded for readiness. No new
 native execution or completion credit is claimed.
+
+## Explicit owned-resource qualification protocol (unit D)
+
+The approved contract is now operational in the tracked native fixture. Legacy
+argc=8 retains strict count equality unchanged. Full presentation/WSI runs may
+select argc=10 with `m2_owned_v1` and the exact already-loaded qualified DLL path.
+Borrowed module identity and both actual export addresses are checked before
+using the fixed ABI. Separate fixture HWND/DC ledgers reserve before acquisition
+and retire only actual successful releases; the sink's borrowed HWND and its DC
+ledger remain independent. Every initial/per-lifetime record binds session,
+workload, loaded module, healthy bound ICD state, all owner-zero fields and
+monotonically advancing real acquisition IDs. No query performs cleanup.
+
+The complete protocol layout, ownership/error/concurrency rules, exact commands,
+portable/coverage/CI gates and remaining root-only qualification checklist are
+specified in [the ownership contract](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#explicit-native-ownership-protocol-unit-d-2026-10-21).
+The read-only verifier requires an explicit protocol; ownership selection requires
+`--icd-path`, and historical count-only outputs cannot satisfy it. Process counts
+and changed-count snapshot deltas remain diagnostics; old strict failures retain
+their original failed/unattributed status. Temporary pixels remain proved by the
+existing allocator/sanitizer/backend evidence, not by the native snapshot.
+
+Unit C is commit `b56f7b7`. Unit D adds no production changes. Local new-controller
+coverage is 100% lines / 96.58% directional branches, with unchanged >=90% floors
+and no exclusions. Native/physical execution and exact integrated CI remain
+pending. Receipt: `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+No completion credit is awarded: M2 94%, parent 85.5%, Time Ended TBD.
