@@ -12,17 +12,24 @@
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1 | Specify authorization, static inspection, and operator instructions | Done | 20% | 100% | Verified repository/account IDs and CLI capabilities |
-| #2 | Implement workflow, controller, and project review prompt | Pending | 50% | 0% | Use only trusted orchestration and isolated static source |
+| #2 | Implement workflow, controller, and project review prompt | Done | 50% | 100% | Owner-only requests; immutable source; isolated credentials; validated verdict |
 | #3 | Verify authorization, stale requests, failures, and output | Pending | 30% | 0% | Local mocks; first live paid run after merge |
 
-**Total Feature Completion**: `20.0%`
+**Total Feature Completion**: `70.0%`
 
 ## Commit History & Progress Log
 
-- **Commit `HEAD`**: `docs(ci): specify owner-authorized Claude PR reviews`
+- **Commit `4821ea86824535e4a4593bb1cac9f99bff494252`**: `docs(ci): specify owner-authorized Claude PR reviews`
   - **Task Impact**: +100% to TODO #1 (+20% overall).
   - **Summary**: Define event gates, credential boundaries, immutable source,
     verdict validation, error handling, and activation procedure.
+
+- **Commit `HEAD`**: `feat(ci): add owner-authorized static Claude PR reviews`
+  - **Task Impact**: +100% to TODO #2 (+50% overall).
+  - **Summary**: Add the identity-gated workflow, immutable regular-blob snapshot,
+    static project prompt, separate credential phases, and checked verdict posting.
+  - **Verification**: Bash syntax, ShellCheck, workflow structure checks, and 38
+    offline cases pass before commit; the test suite is added in the next commit.
 
 The newest ledger entry uses the Git revision `HEAD` to identify its own commit;
 embedding that commit's hash in its own contents is self-referential. The next

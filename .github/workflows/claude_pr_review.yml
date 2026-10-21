@@ -1,0 +1,76 @@
+name: Claude PR review
+
+on:
+  pull_request_target:
+    types: [ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  review:
+    # Kayyo321's immutable user ID. Collaborator permission is not authorization.
+    # Reruns require a fresh command so old consent cannot review new commits.
+    if: >-
+      github.repository_id == '1404691070' &&
+      github.event.sender.id == 76451541 &&
+      github.actor_id == '76451541' &&
+      github.triggering_actor == github.actor &&
+      github.run_attempt == 1 &&
+      ((github.event_name == 'pull_request_target' &&
+        github.event.action == 'ready_for_review') ||
+       (github.event_name == 'issue_comment' &&
+        github.event.action == 'created' &&
+        github.event.issue.pull_request &&
+        github.event.comment.user.id == 76451541 &&
+        github.event.comment.body == '/claude-review'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+    # Job-level: rejected requests never enter this concurrency group.
+    concurrency:
+      group: claude-pr-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Check out trusted default-branch orchestration
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          submodules: false
+          persist-credentials: false
+
+      - name: Install pinned Claude Code
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://claude.ai/install.sh -o "$RUNNER_TEMP/install_claude.sh"
+          bash "$RUNNER_TEMP/install_claude.sh" 2.1.301
+          "$HOME/.local/bin/claude" --version
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare immutable static review input
+        id: prepare
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/claude_pr_review.sh prepare
+
+      - name: Review with read tools and Anthropic credentials only
+        id: review
+        timeout-minutes: 15
+        shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: bash scripts/claude_pr_review.sh review
+
+      - name: Publish feedback or explicit incomplete verdict
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && (success() || failure()) }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/claude_pr_review.sh publish
