@@ -1665,3 +1665,8 @@ All prescribed M2 portable gates pass independently, including 394 ICD cases and
 
 - **Commit `da3e308`**: `test(vgpu): bind Debian runtime version alias to exact package members`; +0% to #5/all tasks, recording the preceding unit.
 - **Commit containing `test(vgpu): verify the actual outlined runtime TLS accessor`**: +0% to #5/all tasks; feature **85.5% / In Progress**, Time Ended TBD. Corrects an unsupported inline-rax assumption in the static checker; the actual GCC image directly calls the exact C helper and loads GS:0x58 into r8. Tests require that edge, all16 register forms, and reject wrong offset/unreachable decoy. 21 synthetic groups pass optimized; actual fenced positive probe passes complete PE/TLS/runtime admission (`root_tls/probe_full_static_admission.json`). No native/full-DLL qualification credit.
+
+### Runtime heap-attribution fixture unit (2026-10-21)
+
+- **Commit containing `test(vgpu): expose bounded runtime heap attribution stages`**: +0% to #5/all tasks; feature **85.5% / In Progress**, Time Ended TBD. Adds optional K={0,4,16} pre-existing-thread variants and exact UMDH baseline/loaded/unloaded/threads-retired stages, with no threshold or timeout relaxation. Three real-source compile groups pass normally and optimized (six positive and three rejected configurations each). See [CLVK_RUNTIME_PROBE_V2.md](CLVK_RUNTIME_PROBE_V2.md).
+- The frozen admitted probe's native2048 stress **fails at381**: heap decreases1048bytes/2entries while handles/TLS/FLS balance; natural exit1, no owned survivor. Evidence `build/qualification_feature_20261021/native_probe_cda4fe0f/` remains failed/unattributed. New audited variants and full OpenCL native acceptance remain pending.

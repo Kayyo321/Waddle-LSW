@@ -79,3 +79,35 @@ The process-heap tuple is measured only with test-owned DLL calls quiescent. `Ge
 `--heap-controls` loads no candidate DLL: it creates one private heap, captures the process tuple, retains a 12,345-byte owned allocation, requires the tuple to detect it, frees it, requires exact restoration, and destroys the heap before reporting success. The first exploratory native v2 run failed before any candidate load with error 259, exposing the fixture's incorrect use of `ERROR_NO_MORE_FILES`. Microsoft documents `ERROR_NO_MORE_ITEMS` for successful `HeapWalk` completion; the corrected implementation accepts only that code, preserving all other error failures. The original failed run remains in `build/qualification_feature_20261021/native_probe_758487be/`. No candidate acceptance is inferred from correcting the fixture.
 
 The Win32 end-code contract is specified in [Microsoft HeapWalk documentation](https://learn.microsoft.com/en-us/windows/win32/api/heapapi/nf-heapapi-heapwalk). The corrected native heap control passes in `build/qualification_feature_20261021/native_probe_4f58c01e/` (zero exit, no owned survivors). An exploratory eight-cycle run of the combined Win32 shim/EH probe in `native_probe_3301f3fc/` ends naturally with exact handles 70, free TLS 1086 and FLS 4078 in every cycle, and exact heap tuples from cycle 3. It also exposes an unattributed first-load increase of 8,016 busy bytes / 6 entries; the reference does not prove those bytes retired. This run is explicitly **not acceptance**: strict admission still rejects retained thread-exit helpers, the foreign gthread-equality boundary remains under review, and first-load attribution is pending. The actual full OpenCL.dll was not executed by these experiments. Source/binary hashes and failed initial baseline run are retained.
+
+### Optional loader-TLS heap attribution matrix (2026-10-21)
+
+`WaddleRuntimeIdleThreadCount` selects 0..16 pre-existing idle threads (default4);
+per-cycle foreign callers remain exactly4. The fixed16-element stack arrays do
+not allocate, and the zero-thread case skips only the readiness wait. All
+handle/TLS/FLS/heap assertions and their budgets are unchanged.
+`WaddleRuntimeHeapAudit` requires a valid fresh supervisor directory in
+`WADDLE_DXVK_HEAP_AUDIT`; absence/malformation fails before module loading.
+It allows at most8 cycles and uses the existing closed-handle, exact PID/creation,
+60-second acknowledgement contract. Captures occur at baseline, loaded_N after
+all candidate callers retire, unloaded_N after confirmed module absence, and
+threads_retired after the pre-existing threads/events close while msvcrt remains
+pinned. Stages do not perform cleanup or alter the measurement reference.
+These variants enable UMDH attribution of first-load and loader-TLS storage with
+K={0,4,16}; compiling them is not proof that any allocation retired.
+
+Three real-source build regression groups cover all six K/audit combinations,
+reject out-of-range thread counts and reject oversized audited runs, including
+normal versus optimized Python execution. Raw cross-build receipts are retained
+under `build/qualification_runtime_probe/20261021T182818_pim4vi1u/` and
+`20261021T182821_9f8o8qit/`. Native execution of these variants remains pending.
+
+The separately frozen admitted probe's2048-cycle native stress run
+`build/qualification_feature_20261021/native_probe_cda4fe0f/` **failed naturally
+at cycle381**, exit1, no owned survivors. Handles70, free TLS1086 and FLS4078
+were exact throughout; heap busy bytes fell from177275 to176227 and busy
+entries239 to237. This is an unclassified decrease1048bytes/2entries, not a
+passing stress run or zero-owned-leak proof. It is preserved without widening
+the strict equality oracle. The source/executable hashes bind that earlier
+fixture, not the newly added audit variants. First-load UMDH and stress-delta
+attribution remain required before final runtime acceptance.

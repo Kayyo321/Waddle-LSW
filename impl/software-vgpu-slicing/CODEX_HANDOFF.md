@@ -417,3 +417,8 @@ The M2 section above predates the work of 2026-10-21. The current M2 state, evid
 ## Independent M2 review continuation, 2026-10-21
 
 Codex completed the independent review of candidate `8810544`, corrected a diagnostic capacity defect, added and executed a native growth regression, and reran all prescribed portable M2 gates plus both physical GPU workloads. See [the independent review](../wsi-window-lifetime/M2_CODEX_REVIEW_2026_10_21.md) and [receipt](../wsi-window-lifetime/M2_CODEX_RECEIPT_2026_10_21.json) for exact bindings and limits. The historical 199-to-200 failure is still unattributed; M2 remains 94%, feature progress 85.5%, Time Ended TBD. The documented attribution-aware oracle is an unapproved proposal. No PR-readiness change, push or merge occurred. The OpenCL work is not accepted by this M2 review.
+
+### Runtime heap-attribution fixture unit (2026-10-21)
+
+- **Commit containing `test(vgpu): expose bounded runtime heap attribution stages`**: +0% to #5/all tasks; feature **85.5% / In Progress**, Time Ended TBD. Adds optional K={0,4,16} pre-existing-thread variants and exact UMDH baseline/loaded/unloaded/threads-retired stages, with no threshold or timeout relaxation. Three real-source compile groups pass normally and optimized (six positive and three rejected configurations each). See [CLVK_RUNTIME_PROBE_V2.md](CLVK_RUNTIME_PROBE_V2.md).
+- The frozen admitted probe's native2048 stress **fails at381**: heap decreases1048bytes/2entries while handles/TLS/FLS balance; natural exit1, no owned survivor. Evidence `build/qualification_feature_20261021/native_probe_cda4fe0f/` remains failed/unattributed. New audited variants and full OpenCL native acceptance remain pending.

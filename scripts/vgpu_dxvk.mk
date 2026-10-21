@@ -82,13 +82,19 @@ build/vgpu_clvk_runtime_posix.dll: tests/vgpu/clvk_runtime_windows.cpp | build
 build/vgpu_clvk_runtime_win32.dll: tests/vgpu/clvk_runtime_windows.cpp | build
 	x86_64-w64-mingw32-g++-win32 -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -shared -mthreads $< -o $@ -static-libgcc -static-libstdc++
 
-build/vgpu_clvk_runtime_test.exe: tests/vgpu/clvk_runtime_windows.c | build
+build/vgpu_clvk_runtime_test.exe: tests/vgpu/clvk_runtime_windows.c tests/vgpu/dxvk_heap_audit_windows.inc | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror $< -o $@
 
-build/vgpu_clvk_runtime_stress.exe: tests/vgpu/clvk_runtime_windows.c | build
+build/vgpu_clvk_runtime_stress.exe: tests/vgpu/clvk_runtime_windows.c tests/vgpu/dxvk_heap_audit_windows.inc | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DWaddleRuntimeLifetimeCount=2048 $< -o $@
 
 vgpu-opencl-runtime-fixture: build/vgpu_clvk_runtime_posix.dll build/vgpu_clvk_runtime_win32.dll build/vgpu_clvk_runtime_test.exe build/vgpu_clvk_runtime_stress.exe
+
+# Real fixture compile boundaries only; these do not execute Windows code.
+.PHONY: vgpu-opencl-runtime-probe-build-test
+vgpu-opencl-runtime-probe-build-test:
+	python3 -B tests/vgpu/clvk_runtime_probe_build_test.py
+	python3 -O -B tests/vgpu/clvk_runtime_probe_build_test.py
 
 # Actual Waddle runtime shim with Linux Win32 doubles. These gates do not
 # qualify Windows loader/TEB behavior or the final linked OpenCL image.

@@ -15,10 +15,18 @@
 #ifndef WaddleRuntimeLifetimeCount
 #define WaddleRuntimeLifetimeCount 8
 #endif
+#ifndef WaddleRuntimeIdleThreadCount
+#define WaddleRuntimeIdleThreadCount 4
+#endif
+
+#ifdef WaddleRuntimeHeapAudit
+#include "dxvk_heap_audit_windows.inc"
+#endif
 
 enum {
    ApiVersion = 2,
    ForeignThreadCount = 4,
+   IdleThreadCapacity = 16,
    HeapHandleCapacity = 128,
    TlsProbeCapacity = 2048,
    FlsProbeCapacity = 4097,
@@ -96,6 +104,13 @@ fail_closed_process(const char *message, DWORD exit_code)
 
 _Static_assert(WaddleRuntimeLifetimeCount >= 3 && WaddleRuntimeLifetimeCount <= 4096,
                "Runtime lifetime count must be within 3..4096");
+_Static_assert(WaddleRuntimeIdleThreadCount >= 0 &&
+                  WaddleRuntimeIdleThreadCount <= IdleThreadCapacity,
+               "Runtime idle thread count must be within 0..16");
+#ifdef WaddleRuntimeHeapAudit
+_Static_assert(WaddleRuntimeLifetimeCount <= 8,
+               "UMDH capture runs must be bounded to at most eight cycles");
+#endif
 _Static_assert(sizeof(FARPROC) == sizeof(runtime_lifetime_probe_t),
                "Windows function pointer ABI mismatch");
 _Static_assert(sizeof(FARPROC) == sizeof(runtime_foreign_thread_probe_t),
@@ -408,7 +423,7 @@ idle_thread_main(LPVOID opaque)
    if (!context || !context->ready_event || !context->release_event ||
        !context->ready_count || !context->thread_error)
       return 1;
-   if (InterlockedIncrement(context->ready_count) == ForeignThreadCount &&
+   if (InterlockedIncrement(context->ready_count) == WaddleRuntimeIdleThreadCount &&
        !SetEvent(context->ready_event)) {
       InterlockedExchange(context->thread_error, 1);
       return 2;
@@ -570,8 +585,13 @@ main(int argc, char **argv)
    WCHAR loaded_path[PathCapacity] = { 0 };
    HANDLE idle_ready_event = NULL;
    HANDLE idle_release_event = NULL;
-   HANDLE idle_threads[ForeignThreadCount] = { NULL, NULL, NULL, NULL };
-   idle_thread_context_t idle_contexts[ForeignThreadCount];
+   HANDLE idle_threads[IdleThreadCapacity] = { NULL };
+   idle_thread_context_t idle_contexts[IdleThreadCapacity];
+   const unsigned idle_thread_count = WaddleRuntimeIdleThreadCount;
+#ifdef WaddleRuntimeHeapAudit
+   wchar_t audit_path[1024] = { 0 };
+   int audit_enabled = 0;
+#endif
    HANDLE foreign_ready_event = NULL;
    HANDLE foreign_release_event = NULL;
    HANDLE foreign_threads[ForeignThreadCount] = { NULL, NULL, NULL, NULL };
@@ -605,6 +625,13 @@ main(int argc, char **argv)
                     "usage: clvk_runtime_windows.exe <exact-utf8-dll-path>|--heap-controls\n");
       return 2;
    }
+#ifdef WaddleRuntimeHeapAudit
+   audit_enabled = audit_directory(audit_path, 1024);
+   if (audit_enabled != 1) {
+      (void)fprintf(stderr, "SETUP_ERROR stage=required_heap_audit_directory\n");
+      return 2;
+   }
+#endif
 
    msvcrt_module = LoadLibraryW(L"msvcrt.dll");
    if (!msvcrt_module) {
@@ -619,7 +646,7 @@ main(int argc, char **argv)
                     (unsigned long)GetLastError());
       goto cleanup;
    }
-   for (unsigned index = 0; index < ForeignThreadCount; index++) {
+   for (unsigned index = 0; index < idle_thread_count; index++) {
       idle_contexts[index].ready_event = idle_ready_event;
       idle_contexts[index].release_event = idle_release_event;
       idle_contexts[index].ready_count = &idle_ready_count;
@@ -634,14 +661,19 @@ main(int argc, char **argv)
       }
       idle_count++;
    }
-   if (WaitForSingleObject(idle_ready_event, ThreadWaitTimeoutMs) !=
-          WAIT_OBJECT_0 ||
+   if ((idle_thread_count &&
+        WaitForSingleObject(idle_ready_event, ThreadWaitTimeoutMs) !=
+           WAIT_OBJECT_0) ||
        InterlockedCompareExchange(&idle_thread_error, 0, 0) != 0 ||
-       InterlockedCompareExchange(&idle_ready_count, 0, 0) != ForeignThreadCount) {
+       InterlockedCompareExchange(&idle_ready_count, 0, 0) != (LONG)idle_thread_count) {
       (void)fprintf(stderr, "SETUP_ERROR stage=idle_threads_ready win32=%lu\n",
                     (unsigned long)GetLastError());
       goto cleanup;
    }
+#ifdef WaddleRuntimeHeapAudit
+   if (audit_stage(audit_path, "baseline"))
+      goto cleanup;
+#endif
 
    if (!count_free_tls_slots(&baseline_tls_slots)) {
       (void)fprintf(stderr, "BASELINE_TLS_PROBE_ERROR\n");
@@ -666,7 +698,7 @@ main(int argc, char **argv)
                 "preload_heap_bytes=%llu preload_heap_entries=%llu "
                 "heap_policy=warmup_cycle_1_reference_cycle_2\n",
                 (unsigned long)baseline_handle_count, baseline_tls_slots,
-                baseline_fls_slots, (unsigned)ForeignThreadCount,
+                baseline_fls_slots, idle_thread_count,
                 (unsigned long long)first_load_heap_baseline.busy_bytes,
                 (unsigned long long)first_load_heap_baseline.busy_entries);
 
@@ -814,6 +846,13 @@ main(int argc, char **argv)
                        cycle, (unsigned long)GetLastError());
          goto cleanup;
       }
+#ifdef WaddleRuntimeHeapAudit
+      char audit_name[64];
+      int audit_length = snprintf(audit_name, sizeof audit_name, "loaded_%u", cycle);
+      if (audit_length <= 0 || (size_t)audit_length >= sizeof audit_name ||
+          audit_stage(audit_path, audit_name))
+         goto cleanup;
+#endif
       lifetime_probe = NULL;
       foreign_probe = NULL;
       lifetime_address = NULL;
@@ -844,6 +883,12 @@ main(int argc, char **argv)
             GetProcAddress(module, "runtime_foreign_thread_probe") == NULL;
       }
       module = NULL; /* GetModuleHandleW returns a borrowed reference. */
+#ifdef WaddleRuntimeHeapAudit
+      audit_length = snprintf(audit_name, sizeof audit_name, "unloaded_%u", cycle);
+      if (audit_length <= 0 || (size_t)audit_length >= sizeof audit_name ||
+          audit_stage(audit_path, audit_name))
+         goto cleanup;
+#endif
 
       handles_balanced = wait_for_handle_baseline(baseline_handle_count,
                                                   &after_unload,
@@ -1004,6 +1049,10 @@ cleanup:
          result_ok = FALSE;
       idle_release_event = NULL;
    }
+#ifdef WaddleRuntimeHeapAudit
+   if (result_ok && audit_stage(audit_path, "threads_retired"))
+      result_ok = FALSE;
+#endif
    if (msvcrt_module && !FreeLibrary(msvcrt_module)) {
       (void)fprintf(stderr, "CLEANUP_ERROR stage=unpin_msvcrt win32=%lu\n",
                     (unsigned long)GetLastError());
