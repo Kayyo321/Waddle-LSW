@@ -112,3 +112,5 @@ Worker ptrace/cross-build setup failures remain failed records. Cross-compiling
 the diagnostic fixture is not a native rerun. The full DLL/build receipt and
 production inputs are unchanged. Fresh native diagnostics, full1100-cycle
 qualification, heap ownership, final CI and independent review remain open.
+
+Native R7 diagnostic outcome: [measured first-cycle retention](OPENCL_NATIVE_RETENTION_2026_10_21.md). The exact post-cycle comparison rejects+83handles/threeTLS/threeFLS; zero strict cycles accepted. No count or ownership waiver follows.

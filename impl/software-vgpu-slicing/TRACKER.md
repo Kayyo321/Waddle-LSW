@@ -14,7 +14,7 @@
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD399-case aggregate and90.42% branch /98.56% line gates pass; current37-module ASan/LSan seam and15-case Linux physical matrix pass. Final DXVK native heap, exact-head CI and final review remain open; final Windows physical and M2 owned/WSI workloads pass; see QUALIFICATION_CONTINUATION_2026_10_21.md. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Historical exact native GPU kernels pass. Approved owned Win32 TLS/EH correction passes isolated2048-reload measurement; new full DLL static build/admission and native TLS/FLS controls pass; complete-input actual cancellation passes. Final native heap/full reload and Linux GPU overlap remain open. Earlier leaking candidates are preserved failures; see current qualification checkpoint. |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Historical exact native GPU kernels pass. Approved owned Win32 TLS/EH correction passes isolated2048-reload measurement; new full DLL static build/admission and native TLS/FLS controls pass; complete-input actual cancellation passes. Functional Linux GPU overlap passes; final native heap/full reload remain open. Earlier leaking candidates are preserved failures; see current qualification checkpoint. |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -2114,3 +2114,15 @@ The previous worker LSan ptrace failure remains preserved. Exact inverse source
 proof recovers all original predicates/tokens and original include bytes.
 All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `8d71d8a` records
 the complete-input cancellation qualification, all tasks +0%, overall +0%.
+
+### Measured full-DLL retention and physical overlap (2026-10-21)
+
+Atomic `docs(opencl): record strict native reload failure and overlap` records
+R7 first-cycle equality failure (+83handles, three TLS and three FLS slots),
+three exact GPU contexts, natural failed-process retirement and zero accepted
+reloads. No-vendor native CRT controls show no corresponding count retention.
+[Exact evidence, limits and next steps](OPENCL_NATIVE_RETENTION_2026_10_21.md).
+The15-case Linux physical matrix and source-bound functional GPU overlap pass;
+reload and heap acceptance remain open. All tasks +0%; total85.5%, M2 94%,
+Time Ended TBD. Commit `7d5c6bb` records failure-only reload diagnostics,
+all tasks +0%, overall +0%.

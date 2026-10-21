@@ -242,3 +242,15 @@ The previous worker LSan ptrace failure remains preserved. Exact inverse source
 proof recovers all original predicates/tokens and original include bytes.
 All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `8d71d8a` records
 the complete-input cancellation qualification, all tasks +0%, overall +0%.
+
+### Measured full-DLL retention and physical overlap (2026-10-21)
+
+Atomic `docs(opencl): record strict native reload failure and overlap` records
+R7 first-cycle equality failure (+83handles, three TLS and three FLS slots),
+three exact GPU contexts, natural failed-process retirement and zero accepted
+reloads. No-vendor native CRT controls show no corresponding count retention.
+[Exact evidence, limits and next steps](OPENCL_NATIVE_RETENTION_2026_10_21.md).
+The15-case Linux physical matrix and source-bound functional GPU overlap pass;
+reload and heap acceptance remain open. All tasks +0%; total85.5%, M2 94%,
+Time Ended TBD. Commit `7d5c6bb` records failure-only reload diagnostics,
+all tasks +0%, overall +0%.
