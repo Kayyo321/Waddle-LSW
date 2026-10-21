@@ -553,3 +553,15 @@ Its 47 offline controller cases pass; no review API was invoked. This does not
 qualify the integrated software-vGPU candidate or replace its own tests/CI.
 Task impact: +0% to every software-vGPU task; parent remains 85.5%, M2 94%,
 Time Ended TBD. No force push or merge to the target branch occurred.
+
+### First-load allocator calibration checkpoint (2026-10-21)
+
+The deliberately retained malloc negative fixture and its native expected
+rejection are documented in [the runtime probe contract](CLVK_RUNTIME_PROBE_V2.md).
+HeapWalk catches exact12,345bytes/oneentry; UMDH misses the same control, so
+zero-owned first-load acceptance remains open. The separate strict2048-cycle
+startup-gated probe passes naturally, without relaxing assertions; that is
+isolated runtime evidence only. The full production OpenCL build fails closed
+at its final link on future.o's forbidden thread-exit reference; it is not
+published or qualified. All failures and raw evidence are preserved.
+Task impact: +0% to #5/all tasks; parent85.5%, M2 94%, Time Ended TBD.

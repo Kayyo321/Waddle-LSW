@@ -148,3 +148,30 @@ The three prior K={0,4,16} audits collected all8stages, exited0 and restored UST
 their raw inventories independently reproduce the OS startup -912/-136 groups.
 UMDH omits allocations without collected stacks, so it supplies attribution,
 not a replacement for the unchanged all-process-heaps HeapWalk oracle.
+
+## First-load observability negative control (2026-10-21)
+
+`tests/vgpu/clvk_runtime_first_load_control.cpp` is an explicit-opt-in negative
+DLL fixture, never a production or leak-free candidate. It includes the actual
+runtime workload unchanged and intentionally retains one 12,345-byte malloc
+allocation from a static C++ constructor on every load. The volatile owner
+prevents removal; OS process teardown is its only retirement site. The normal
+strict probe must reject it; no allocator suppression or relaxed threshold is
+permitted.
+
+Strict cross-build receipt: `build/qualification_feature_20261021/root_tls/
+probe_first_load_control/receipt.json`. Actual console execution is preserved in
+`build/qualification_feature_20261021/runtime_first_load_negative_05771710/`: it
+exits naturally with expected failure1 at cycle3, no survivors. HeapWalk rises
+203,504/273 to215,849/274 between cycles2/3, exactly12,345bytes/one entry. All
+seven UMDH captures miss that allocation and contain zero runtime DLL frames,
+including while the DLL is loaded. Therefore absence of UMDH runtime stacks is
+not calibrated evidence of zero owned malloc leaks. The older raw reports stay
+preserved; allocator acceptance is explicitly open pending another method that
+identifies this control and proves normal ownership retirement.
+
+The separate startup-gated unchanged2048-cycle probe finishes naturally with
+exit0 in `runtime_quiescent_stress_9fcc8655/`, exact per-cycle heap/handle/TLS/FLS
+balances and no survivors. Startup OS pool retirement was observed before any
+DLL load; no original assertion or budget changed. This isolated runtime result
+does not qualify the full OpenCL DLL or first-load owned allocations.
