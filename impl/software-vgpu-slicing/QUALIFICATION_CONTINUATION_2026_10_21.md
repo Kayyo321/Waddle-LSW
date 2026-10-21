@@ -31,8 +31,9 @@ canonical `build/clvk_client.json` SHA256 is
 `7c8c386350c347b45956822e216316f53269092674488c4c217e7f58077c1433`;
 its DLL SHA256 is
 `70ca4fdbc2ca54954b7879f28f11e013c63a0a660cca718815abc24e98d5887a`
-(186,373,276 bytes). Current source hashes match. This image has not yet run
-natively. Historical functional results are not relabeled as this candidate.
+(186,373,276 bytes). Current source hashes match. This image subsequently passes the scoped native cancellation result below;
+ordinary/full reload/heap acceptance remains separate. Historical functional
+results are not relabeled as this candidate.
 
 ## Fresh M2 failure retained
 
@@ -170,3 +171,13 @@ not run. Status8 cannot alone distinguish exhausted slots from allocation
 failure. See [the exact contract and preserved evidence](OPENCL_RELOAD_CONTRACT.md).
 This supersedes the earlier statement that Astra implementation is still open;
 actual native calibration/qualification remains open. +0% progress.
+
+## Exact-target TLS native controls pass
+
+[The new certificate](OPENCL_SLOT_CERTIFICATE.md) proves actual saturation by
+bitmap and token identity rather than error8 alone. Root safety/coverage and
+native Windows controls pass:1086 free,1085 with an exact held slot,1086 after
+release. Forced early error8 is rejected; all temporary owners retire. Actual
+PEB build26300 differs from DLL file version26100; the wrong-target native
+result is retained as failed. FLS and full-DLL qualification remain open.
++0% progress; parent85.5%, M2 94%, Time Ended TBD.

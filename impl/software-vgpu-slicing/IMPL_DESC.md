@@ -7025,3 +7025,13 @@ mandatory separate native heap acceptance. Ordinary and transport-loss paths
 are inverse-checked unchanged. Portable support ownership gates pass; the
 actual Windows exhaustion calibration rejects status8 and remains unresolved.
 No full native reload acceptance or feature progress is inferred.
+
+### Exact native TLS capacity evidence (2026-10-21)
+
+[The source-bound TLS certificate](OPENCL_SLOT_CERTIFICATE.md) replaces sentinel
+interpretation for native TLS with exact target bitmap/token reconciliation,
+free-one/refill proof and complete temporary-owner retirement. It requires
+external exact OS binary admission and measured PEB build26300. Read-only
+process-memory access is bounded; unsupported targets fail closed. Portable
+validators and native CPU retention/OOM controls pass separately. FLS and
+full-DLL reload/heap/GPU acceptance remain open.

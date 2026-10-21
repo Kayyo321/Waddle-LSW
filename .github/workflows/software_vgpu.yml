@@ -45,6 +45,8 @@ jobs:
         run: |
           x86_64-w64-mingw32-gcc-posix -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -Isubmodules/clvk/external/OpenCL-Headers tests/vgpu/opencl_integration.c tests/vgpu/loader_environment_windows.c -municode -o build/vgpu_opencl_integration_debug.exe
           x86_64-w64-mingw32-gcc-posix -O2 -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Itests/vgpu -Isubmodules/clvk/external/OpenCL-Headers tests/vgpu/opencl_integration.c tests/vgpu/loader_environment_windows.c -municode -o build/vgpu_opencl_integration.exe
+      - name: Verify exact-target TLS certificate with API doubles and strict coverage
+        run: make vgpu-opencl-slot-test vgpu-opencl-slot-sanitizers vgpu-opencl-slot-coverage
       - name: Verify bounded full reload ownership with API doubles and strict output receipts
         run: make vgpu-opencl-reload-test vgpu-opencl-reload-sanitizers vgpu-opencl-reload-coverage
       - name: Verify actual OpenCL cancellation call and reverse owner release

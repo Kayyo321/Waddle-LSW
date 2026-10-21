@@ -208,3 +208,25 @@ vgpu-opencl-reload-verify:
 	$(if $(strip $(VgpuOpenclReloadExpectedCandidateSha256)),,$(error VgpuOpenclReloadExpectedCandidateSha256 is required))
 	$(if $(strip $(VgpuOpenclReloadExpectedFixtureSha256)),,$(error VgpuOpenclReloadExpectedFixtureSha256 is required))
 	python3 -B scripts/opencl_reload_output.py --stdout "$(VgpuOpenclReloadStdout)" --stderr "$(VgpuOpenclReloadStderr)" --manifest "$(VgpuOpenclReloadManifest)" --dll "$(VgpuOpenclReloadDll)" --fixture "$(VgpuOpenclReloadFixture)" --exit-code "$(VgpuOpenclReloadExit)" --expected-candidate-sha256 "$(VgpuOpenclReloadExpectedCandidateSha256)" --expected-fixture-sha256 "$(VgpuOpenclReloadExpectedFixtureSha256)"
+
+# Exact-target TLS certificate: portable API doubles and native calibration are separate.
+VgpuOpenclSlotSources = tests/vgpu/opencl_slot_certificate_test.c
+VgpuOpenclSlotHeaders = tests/vgpu/opencl_slot_certificate_windows.inc tests/vgpu/win32_fake/opencl_slot_certificate_fake.h
+VgpuOpenclSlotFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_slot_certificate_windows.inc
+build/opencl_slot: | build
+	mkdir -p $@
+build/opencl_slot/host: $(VgpuOpenclSlotSources) $(VgpuOpenclSlotHeaders) | build/opencl_slot
+	$(CC) $(VgpuOpenclSlotFlags) -O2 $(VgpuOpenclSlotSources) -o $@
+.PHONY: vgpu-opencl-slot-test vgpu-opencl-slot-sanitizers vgpu-opencl-slot-coverage vgpu-opencl-slot-native-build
+vgpu-opencl-slot-test: build/opencl_slot/host
+	./build/opencl_slot/host
+vgpu-opencl-slot-sanitizers: | build/opencl_slot
+	$(CC) $(VgpuOpenclSlotFlags) -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuOpenclSlotSources) -o build/opencl_slot/sanitized
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:abort_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./build/opencl_slot/sanitized
+vgpu-opencl-slot-coverage:
+	python3 -B tests/vgpu/opencl_slot_certificate_coverage.py
+	python3 -O -B tests/vgpu/opencl_slot_certificate_coverage.py
+build/vgpu_opencl_slot_certificate.exe: $(VgpuOpenclSlotSources) tests/vgpu/opencl_slot_certificate_windows.inc | build
+	$(ZIG) cc -target x86_64-windows-gnu $(VgpuOpenclSlotFlags) -O2 $(VgpuOpenclSlotSources) -o $@
+vgpu-opencl-slot-native-build: build/vgpu_opencl_slot_certificate.exe

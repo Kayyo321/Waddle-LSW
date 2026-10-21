@@ -2025,3 +2025,14 @@ Windows cross-build passes. Native controls reject error8 at TLS exhaustion;
 no successful controls receipt or full native stress is claimed.
 [Contract/evidence](OPENCL_RELOAD_CONTRACT.md).
 #5/all tasks +0%; total85.5%, M2 94%, Time Ended TBD.
+
+### Native TLS capacity certificate (2026-10-21)
+
+Commit `31312b2` integrates Astra full reload harness; #5/all tasks +0%, overall
++0%. Atomic unit `test(vgpu): prove exact native TLS exhaustion and retirement`
+adds source-bound target-specific bitmap reconciliation. Root193-case safety
+and98.85% branch gates pass; private14 strict cross-build and actual Windows
+full/retained-slot/early-OOM/admission controls pass at1086→1085→1086 slots.
+Incorrect26100 target and compiler/ptrace/preflight failures remain preserved.
+[Contract/evidence](OPENCL_SLOT_CERTIFICATE.md). Full FLS/reload/heap/GPU gates
+remain open. All tasks +0%; total85.5%, M2 94%, Time Ended TBD.
