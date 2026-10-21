@@ -1,6 +1,10 @@
 # User-requested stopping point, 2026-10-21 (Claude Code implementation owner)
 
-**Status: NOT READY for independent Codex qualification.** Work was stopped at the user's request ("find a stopping point now").
+> **Update, later the same day (work resumed at the user's request):** the **M2** gaps listed below (no instrumented native run, receipts bound to the old fixture hashes, `wsi_lifetime` path unexecuted) are closed;
+> M2 is handed over as READY FOR INDEPENDENT CODEX REVIEW in [../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md](../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md) (that document also holds the current VM/process state; the
+> "Live state" section below describes the moment of the stop only). The **OpenCL runtime-unload** work list below is unchanged and remains NOT READY. No percentage, Time Ended, PR or merge state changed.
+
+**Status at the stop: NOT READY for independent Codex qualification.** Work was stopped at the user's request ("find a stopping point now").
 This is a recoverable checkpoint, not closure. Nothing here marks M2 or the feature complete, records a final Time Ended, marks the PR
 ready or merges. README.md is untouched.
 

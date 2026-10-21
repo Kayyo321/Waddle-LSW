@@ -1619,3 +1619,16 @@ See [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md). **No progress change: 
   (Win32 thread model, Waddle C runtime shim replacing two libgcc_eh members, emergency-exception-pool release, fail-closed gates); no clvk/LLVM/clspv/submodule/`patches/clvk` change and no host package install.
   Nothing is integrated; the v2 work list is in the checkpoint. The earlier "Win32 configuration rejected" status stands until v2 passes native qualification.
 - Task attribution for the docs-only commit(s) of this checkpoint: +0% to #3, #5, #11; overall remains 85.5%.
+
+## 2026-10-21 resumed: M2 native verification on the committed fixture (evidence only)
+
+**No progress change: software-vGPU remains 85.5% / In Progress; M2 remains 94% / Review; Time Ended TBD for both.** The work resumed at the user's request to bring M2 to a reviewable state. The M2 evidence (30 native repetitions of the
+unchanged strict handle gate on the committed fixture, all passing; portable gates on the final sources; amended M2 IMPL_DESC and tracker) is recorded in [../wsi-window-lifetime/TRACKER.md](../wsi-window-lifetime/TRACKER.md) and handed over in
+[../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md](../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md). Receipts: [M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json](M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json),
+[M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json](M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json).
+
+- **Commit `cdd7690`**: `docs(wsi): record the M2 handle-gate audit, diagnostics and the open acceptance decision` - +0% to #3/#5/#11 (M2 #4 +0%).
+- **Commit `7392d93`**: `docs(vgpu): checkpoint at user stop with OpenCL runtime-unload root cause and approved path` - +0% to #3/#5/#11.
+- **Commit `ca52536`**: `docs(wsi): record source-bound native receipts for the instrumented M2 handle-gate runs` - +0% to #3/#5/#11 (M2 #4 +0%).
+- Documentation commit(s) after `ca52536` that carry this section, the M2 tracker/IMPL_DESC/audit updates and the review handoff: +0% to #3, #5, #11; overall remains 85.5%.
+- The OpenCL runtime-unload correction (TODO #5) is untouched by this resumption and remains NOT READY; its remaining-work list is in [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md).
