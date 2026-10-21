@@ -1658,3 +1658,19 @@ required. Historical receipts and the strict count oracle are unchanged.
 Native/physical acceptance and CI are pending. Details and validation evidence
 are in [the M2 tracker](../wsi-window-lifetime/TRACKER.md) and
 [implementation contract](../wsi-window-lifetime/IMPL_DESC.md).
+
+
+### M2 CI readiness and prior commit attribution, 2026-10-21
+
+- **Commit `17dc2d0`**: `test(vgpu): reject unordered M2 qualification output`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Adds the tracked final
+  output gate, malformed-output regressions and qualification instructions.
+- Current isolated unit: `ci(vgpu): enforce M2 output and native diagnostic gates`
+  (exact hash recorded by the lead in the following checkpoint). CI now checks
+  the verifier, builds both M2 native fixtures, and runs all eight diagnostic
+  cases on Windows while preserving real exit/failure/timeout evidence.
+  Config and controlled collector checks pass; actual CI/native execution is
+  not claimed. See the [M2 tracker](../wsi-window-lifetime/TRACKER.md).
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
+  **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. Original native
+  strict-count failure and final qualification remain open.

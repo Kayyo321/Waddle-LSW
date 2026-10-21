@@ -226,3 +226,44 @@ Historical review already verified all actual 32 outputs had the correct
 ordered lifetime sequence. This prospective gate closes future false acceptance
 in count-only replay checks; it does not invalidate or rewrite those receipts,
 attribute the historical failure, or award the remaining M2 qualification weight.
+
+
+## Continuous integration of M2 readiness checks (2026-10-21)
+
+The existing software-vGPU workflow already runs WSI Debug/ReleaseSafe, native
+C API-double/unsupported tests, WSI sanitizers and >=90% production coverage,
+complete ICD units/coverage, and portable handle diagnostics with their deliberate
+leak control. The Windows job already executes the real Win32 sink and WSI state
+fixtures. Those gates and all thresholds remain intact.
+
+The Linux transport job additionally runs `make vgpu-m2-output-test`, followed
+(after immutable dependency checkout) by `make vgpu-handle-diag-native-build
+build/vgpu_tcp_gpu_windows_draft.exe`. The latter checks actual Windows headers
+and linkage for both diagnostic and complete GPU fixtures. It does not execute
+either binary or qualify the physical GPU route.
+
+The Windows job compiles the same native diagnostic source with the pinned Zig
+0.13.0 toolchain and strict C warnings. Its symbol helper must match the GPU
+fixture's helper before compilation. The job then executes the binary once,
+requires actual exit zero and the exact eight ordered case lines followed by
+`HANDLE_DIAG_NATIVE PASS cases=8`, including the existing 1,024-event snapshot
+growth case. No failed run is retried by CI. The existing native fixture's own
+case semantics, internal controls, count assertions and cleanup remain unchanged.
+
+The collector uses Python `subprocess.run(capture_output=True, timeout=60)` to
+drain both pipes without PowerShell interpreting informational native stderr as
+a terminating command error. It records raw stdout and stderr separately and
+records the actual process exit code. Both streams are displayed through the
+collector's stdout solely for PowerShell transport. A timeout kills and reaps
+only the collector's diagnostic child, preserves both partial streams, writes
+`TIMEOUT after 60 seconds` rather than a fabricated process exit, and fails the
+job without retry. Collection/write/decoding errors also fail the step. The
+always-run artifact step uploads the two raw logs and exit record when present,
+using the workflow's existing pinned upload action and seven-day retention.
+
+This is x64 Windows diagnostics execution on the hosted CI image, separate from
+the preserved guest's native execution and the physical-GPU M2 workloads. The
+hosted job does not establish WOW64, interactive-console pixels, physical GPU
+retirement, whole-process Windows heap ownership or historical handle attribution.
+The existing final independent qualification still requires the actual guest/
+physical runs and the new ordered output gate on the integrated candidate.

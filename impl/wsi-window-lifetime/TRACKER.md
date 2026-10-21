@@ -325,3 +325,48 @@ The historical `tcp_gpu_7adb6000` 199-to-200 failure remains unattributed and un
   results: `/tmp/waddle_m2_astra_readiness/logs/unit1_historical_readonly.log`.
 - CI wiring and final native/physical verification of the integrated candidate
   remain pending. The strict native handle oracle remains unchanged.
+
+
+### Isolated M2 CI readiness wiring, 2026-10-21
+
+- **Commit `17dc2d0`**: `test(vgpu): reject unordered M2 qualification output`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. The lead independently reviewed
+  the six-file unit, reran nine regression groups and checked preserved positive
+  and failed outputs before committing. Historical receipts remain unchanged.
+- Current unit subject: `ci(vgpu): enforce M2 output and native diagnostic gates`
+  (exact hash recorded by the lead in the following checkpoint). Add the
+  portable verifier gate, strict diagnostic/full-GPU cross-build, and native
+  Windows diagnostic execution with exact eight-case output, real exit status,
+  60-second own-child timeout and preserved raw output/exit artifacts.
+  **Task impact: +0% to TODO #4 (+0% overall); M2 remains 94% / Review,
+  Time Ended TBD; software-vGPU remains 85.5%.**
+- YAML and embedded Python compilation/source-helper pin: **PASS**. Controlled
+  collector cases **PASS** for informational stderr, actual exit 7, missing case
+  despite exit 0, and timeout with preserved partial evidence. Log:
+  `/tmp/waddle_m2_astra_readiness/logs/unit2_ci_config_test.log`.
+- Actual Windows CI, PowerShell parsing and native/physical execution of this
+  integrated candidate: **NOT RUN** in the isolated worktree. No VM/GPU access
+  or new native acceptance is claimed. Portable gate results follow in this
+  unit's evidence record.
+
+
+Fresh isolated unit-2 verification (all commands from
+`/home/dev/.codex/worktrees/m2-astra-readiness/Waddle-LSW`, with both Zig caches,
+TMPDIR and logs under `/tmp/waddle_m2_astra_readiness/`, Python bytecode disabled):
+
+| Command | Observed result |
+|:--|:--|
+| `make vgpu-m2-output-test` | PASS, exit 0; nine regression groups |
+| `make vgpu-wsi-lifecycle-test` | PASS, exit 0; 12 Zig cases in Debug/ReleaseSafe plus C API-double/unsupported fixtures |
+| `make vgpu-wsi-lifecycle-sanitizers` | PASS, exit 0; 39 owned Zig functions instrumented; ASan/LSan/UBSan and allocator checks clean |
+| `make vgpu-wsi-lifecycle-coverage` | PASS, exit 0; Zig branches 145/156 (92.95%); C branches 71/72 (98.61%) |
+| `make vgpu-icd-units` | PASS, exit 0; 394 cases each in Debug/ReleaseSafe and 128-cycle dispatch fixture each |
+| `make vgpu-icd-coverage` | PASS, exit 0; ICD branches 4369/4837 (90.32%), lines 4696/4766 (98.53%) |
+| `make vgpu-handle-diag-test vgpu-handle-diag-sanitizers` | PASS, exit 0; 18 cases/6,779 checks, source pin and intentional LSan leak exit-23 control |
+| `make vgpu-handle-diag-native-build build/vgpu_tcp_gpu_windows_draft.exe build/vgpu_win32_present_test.exe` | PASS, exit 0; strict x64 Windows compilation/linkage only; all three executables unexecuted here |
+
+Exact commands, environment, UTC start/end times, exits and log SHA-256 hashes:
+`/tmp/waddle_m2_astra_readiness/unit2_gate_results.json`. Source/config bindings
+and configuration-control results are in the sibling `unit2_receipt.json`.
+No production sources, existing native workloads, strict acceptance rule,
+coverage exclusions/thresholds, historical evidence or dependency pins changed.
