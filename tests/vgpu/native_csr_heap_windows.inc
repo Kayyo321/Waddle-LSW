@@ -38,6 +38,7 @@ typedef struct native_csr_heap_snapshot_t {
     uintptr_t module_base;
     HANDLE heap;
     DWORD process_heap_count;
+    HANDLE process_heaps[NativeCsrMaxHeaps];
     DWORD walk_entries;
     DWORD busy_count;
     WCHAR module_path[MAX_PATH];
@@ -107,6 +108,7 @@ static int native_csr_capture(native_csr_heap_snapshot_t *snapshot)
         for (DWORD prior = 0; prior < index; ++prior) if (heaps[index] == heaps[prior]) return 0;
     }
     snapshot->process_heap_count = heap_count;
+    memcpy(snapshot->process_heaps, heaps, (size_t)heap_count * sizeof *heaps);
 
     HANDLE heap = NULL;
     SIZE_T bytes_read = 0;
@@ -170,6 +172,11 @@ static int native_csr_emit(const char *stage, const native_csr_heap_snapshot_t *
         if (printf("%04x", (unsigned)snapshot->module_path[index]) < 0) return 0;
     }
     if (puts("") == EOF) return 0;
+    for (DWORD index = 0; index < snapshot->process_heap_count; ++index) {
+        if (printf("CSR_HEAP_API stage=%s index=%lu heap=%016llx\n", stage,
+                (unsigned long)index,
+                (unsigned long long)(uintptr_t)snapshot->process_heaps[index]) < 0) return 0;
+    }
     for (DWORD index = 0; index < snapshot->busy_count; ++index) {
         const native_csr_heap_row_t *row = &snapshot->rows[index];
         if (printf("CSR_HEAP_BUSY stage=%s index=%lu user=%016llx bytes=%lu flags=%04x\n",

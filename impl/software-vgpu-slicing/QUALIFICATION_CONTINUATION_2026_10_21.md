@@ -207,3 +207,13 @@ All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Full candidate stress/heap/
 overlap and final CI/review remain open. Commit `a845098` records CSR inventory
 and native calibration, all tasks +0%; `7db0909` consolidates documentation,
 all tasks +0%.
+
+### Bind actual API heap arrays during native audits (2026-10-21)
+
+Atomic `test(vgpu): bind complete native API heap snapshots` preserves each
+validated GetProcessHeaps array and emits ordered handles, correcting the
+verification assumption that PageHeap's PEB list is complete. Native retained/
+freed CSR control and exact API rows pass; current San3 and94.53%branch gates
+pass. [Contract, preserved failure and inverse proof](NATIVE_CSR_HEAP_CONTRACT.md).
+All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `f873b18` records
+Astra FLS certificate/gates and native controls; all tasks +0%, overall +0%.

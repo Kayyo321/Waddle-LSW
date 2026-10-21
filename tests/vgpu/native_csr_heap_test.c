@@ -210,6 +210,7 @@ static int native_csr_test_printf(const char *format, ...)
     if (fake_printf_failure == 1 && !strncmp(format,"CSR_HEAP_V1",11)) return -1;
     if (fake_printf_failure == 2 && !strcmp(format,"%04x")) return -1;
     if (fake_printf_failure == 3 && !strncmp(format,"CSR_HEAP_BUSY",13)) return -1;
+    if (fake_printf_failure == 4 && !strncmp(format,"CSR_HEAP_API",12)) return -1;
     va_list arguments; va_start(arguments,format); int result=vprintf(format,arguments); va_end(arguments); return result;
 }
 static int native_csr_test_puts(const char *text)
@@ -234,6 +235,16 @@ static void test_empty_success_and_stage(void)
     NativeCsrTestCheck(native_csr_capture(&snapshot));
     NativeCsrTestCheck(snapshot.module_base == (uintptr_t)CurrentModule && snapshot.heap == CurrentHeap);
     NativeCsrTestCheck(snapshot.process_heap_count == 1 && snapshot.walk_entries == 0 && snapshot.busy_count == 0);
+    NativeCsrTestCheck(snapshot.process_heaps[0] == CurrentHeap);
+    heap_return_count=3;
+    heap_list[0]=(HANDLE)(uintptr_t)0x21000000u;
+    heap_list[1]=CurrentHeap;
+    heap_list[2]=(HANDLE)(uintptr_t)0x23000000u;
+    NativeCsrTestCheck(native_csr_capture(&snapshot));
+    NativeCsrTestCheck(snapshot.process_heap_count==3);
+    NativeCsrTestCheck(!memcmp(snapshot.process_heaps,heap_list,3u*sizeof(HANDLE)));
+    reset_fake();
+    NativeCsrTestCheck(native_csr_capture(&snapshot));
     NativeCsrTestCheck(lock_count == 1 && unlock_count == 1);
     NativeCsrTestCheck(native_csr_stage(AuditPath, "baseline") == 0);
     NativeCsrTestCheck(audit_count == 1 && lock_count == 2 && unlock_count == 2);
@@ -314,6 +325,8 @@ static void test_walk_errors_bounds_and_unlock(void)
     fake_puts_failure=1;NativeCsrTestCheck(!native_csr_emit("baseline",&empty));fake_puts_failure=0;
     empty.busy_count=1;empty.rows[0]=(native_csr_heap_row_t){.user=1,.bytes=2,.flags=PROCESS_HEAP_ENTRY_BUSY};
     fake_printf_failure=3;NativeCsrTestCheck(!native_csr_emit("baseline",&empty));fake_printf_failure=0;
+    empty.process_heap_count=1;empty.process_heaps[0]=CurrentHeap;
+    fake_printf_failure=4;NativeCsrTestCheck(!native_csr_emit("baseline",&empty));fake_printf_failure=0;
     empty.busy_count=0;fake_fflush_failure=1;NativeCsrTestCheck(!native_csr_emit("baseline",&empty));fake_fflush_failure=0;
     reset_fake();audit_result=1;NativeCsrTestCheck(native_csr_stage(AuditPath,"baseline") == 1);NativeCsrTestCheck(unlock_count==1 && audit_count==1);
 }
