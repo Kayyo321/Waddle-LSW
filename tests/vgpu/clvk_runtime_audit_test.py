@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import copy
 import struct
 import sys
 import tempfile
@@ -475,6 +476,45 @@ class runtime_audit_test_t(unittest.TestCase):
             changed = {**fields, "runtime_archives": {**archives,
                        "libgcc_eh.a": {"resolved_path": "/runtime/libgcc_eh.a", "sha256": "d" * 64}}}
             Audit.verify_toolchain_identity(changed, fields)
+
+    def test_debian_reported_alias_requires_complete_exact_package_proof(self):
+        compiler = {"resolved_path": "/private/gcc", "sha256": "a" * 64,
+                    "version": "gcc (GCC) 14-win32", "dumpfullversion": "14-win32",
+                    "dumpmachine": "x86_64-w64-mingw32", "thread_model": "win32"}
+        archives = {name: {"resolved_path": "/private/" + name, "sha256": "b" * 64}
+                    for name in ("libgcc.a", "libgcc_eh.a", "libstdc++.a", "libmingw32.a",
+                                 "libmsvcrt.a", "dllcrt2.o", "crtbegin.o", "crtend.o")}
+        fields = {"cc": compiler, "cxx": {**compiler, "resolved_path": "/private/g++"},
+                  "runtime_archives": archives, "critical_headers": {"/private/header": "c" * 64},
+                  "target": "x86_64-w64-mingw32"}
+        with self.assertRaisesRegex(Audit.audit_error_t, "package provenance"):
+            Audit.verify_toolchain_identity(fields, fields)
+        gcc_package = "gcc-mingw-w64-x86-64-win32"
+        versions = {gcc_package: "14.2.0-19+27+b1", gcc_package + "-runtime": "14.2.0-19+27+b1",
+                    "g++-mingw-w64-x86-64-win32": "14.2.0-19+27+b1", "mingw-w64-common": "12.0.0-5",
+                    "mingw-w64-x86-64-dev": "12.0.0-5"}
+        fields['backend_programs'] = {model: {name: {"sha256": "d" * 64} for name in ('cc1', 'cc1plus', 'collect2')}
+                                      for model in ('cc', 'cxx')}
+        members = {model: compiler['sha256'] for model in ('cc', 'cxx')}
+        members.update({model + ':' + name: 'd' * 64 for model in ('cc', 'cxx') for name in ('cc1', 'cc1plus', 'collect2')})
+        members.update({'archive:' + name: item['sha256'] for name, item in archives.items()})
+        members['header:/private/header'] = 'c' * 64
+        fields['package_provenance'] = {'provenance': {'schema': 1, 'packages': [
+            {'name': name, 'version': version, 'sha256': 'e' * 64} for name, version in versions.items()]},
+            'package_receipt_sha256': 'f' * 64, 'provenance_sha256': 'f' * 64,
+            'package_member_proof': {label: {'relative_path': 'usr/member', 'package': gcc_package, 'sha256': digest}
+                                     for label, digest in members.items()}}
+        Audit.verify_toolchain_identity(fields, fields)
+        for mutation in ('version', 'missing_backend', 'member_digest', 'absolute_path', 'schema'):
+            changed = copy.deepcopy(fields)
+            origin = changed['package_provenance']
+            if mutation == 'version': origin['provenance']['packages'][0]['version'] = '14.3.0'
+            elif mutation == 'missing_backend': del origin['package_member_proof']['cc:cc1']
+            elif mutation == 'member_digest': origin['package_member_proof']['cxx']['sha256'] = '0' * 64
+            elif mutation == 'absolute_path': origin['package_member_proof']['cc']['relative_path'] = '/outside'
+            else: origin['provenance']['schema'] = 2
+            with self.subTest(mutation=mutation), self.assertRaises(Audit.audit_error_t):
+                Audit.verify_toolchain_identity(changed, changed)
         with self.assertRaisesRegex(Audit.audit_error_t, "14.2.0"):
             changed = {**fields, "cc": {**compiler, "version": "gcc 13.2.0"}}
             Audit.verify_toolchain_identity(changed, fields)

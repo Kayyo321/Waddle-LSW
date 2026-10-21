@@ -863,6 +863,67 @@ def verify_runtime_link(
             **mapped}
 
 
+def _verify_debian_version_alias(record: Mapping[str, object]) -> None:
+    """Require package-member proof for Debian's literal `14-win32` label.
+
+    in: borrowed identity collected from actual package members; expected whole
+    identity must also match exactly at the caller. No I/O or mutation; raises
+    audit_error_t on incomplete release/member binding. Version is never spoofed.
+    """
+    origin = record.get("package_provenance")
+    if not isinstance(origin, Mapping) or not isinstance(origin.get("provenance"), Mapping):
+        raise audit_error_t("Debian 14-win32 requires exact package provenance")
+    if origin["provenance"].get("schema") != 1:
+        raise audit_error_t("unsupported Debian package provenance schema")
+    for key in ("package_receipt_sha256", "provenance_sha256"):
+        if not isinstance(origin.get(key), str) or not re.fullmatch("[0-9a-f]{64}", origin[key]):
+            raise audit_error_t("missing Debian provenance/receipt digest")
+    packages = origin["provenance"].get("packages")
+    expected_versions = {
+        "gcc-mingw-w64-x86-64-win32": "14.2.0-19+27+b1",
+        "gcc-mingw-w64-x86-64-win32-runtime": "14.2.0-19+27+b1",
+        "g++-mingw-w64-x86-64-win32": "14.2.0-19+27+b1",
+        "mingw-w64-common": "12.0.0-5", "mingw-w64-x86-64-dev": "12.0.0-5",
+    }
+    if not isinstance(packages, list) or len(packages) != len(expected_versions):
+        raise audit_error_t("Debian alias requires the five reviewed package versions")
+    observed = {}
+    for item in packages:
+        if not isinstance(item, Mapping) or not isinstance(item.get("name"), str):
+            raise audit_error_t("invalid Debian package provenance entry")
+        name = item["name"]
+        digest = item.get("sha256")
+        if name in observed or name not in expected_versions or item.get("version") != expected_versions[name]:
+            raise audit_error_t("unreviewed Debian compiler/SDK package version")
+        if not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
+            raise audit_error_t("missing Debian package digest")
+        observed[name] = item["version"]
+    proof = origin.get("package_member_proof")
+    backends = record.get("backend_programs")
+    if not isinstance(proof, Mapping) or not isinstance(backends, Mapping):
+        raise audit_error_t("Debian alias requires compiler/backend/header member proof")
+    members = {compiler: record[compiler]["sha256"] for compiler in ("cc", "cxx")}
+    for compiler in ("cc", "cxx"):
+        programs = backends.get(compiler)
+        if not isinstance(programs, Mapping):
+            raise audit_error_t("missing compiler backend closure")
+        for name in ("cc1", "cc1plus", "collect2"):
+            item = programs.get(name)
+            if not isinstance(item, Mapping) or not isinstance(item.get("sha256"), str):
+                raise audit_error_t("missing private compiler backend digest")
+            members[compiler + ":" + name] = item["sha256"]
+    members.update({"archive:" + name: item["sha256"] for name, item in record["runtime_archives"].items()})
+    members.update({"header:" + path: digest for path, digest in record["critical_headers"].items()})
+    for label, digest in members.items():
+        if not isinstance(digest, str) or not re.fullmatch("[0-9a-f]{64}", digest):
+            raise audit_error_t("invalid Debian member digest: " + label)
+        item = proof.get(label)
+        if not isinstance(item, Mapping) or item.get("sha256") != digest or item.get("package") not in observed:
+            raise audit_error_t("missing or mismatched Debian package member proof: " + label)
+        if not isinstance(item.get("relative_path"), str) or not item["relative_path"] or Path(item["relative_path"]).is_absolute() or ".." in Path(item["relative_path"]).parts:
+            raise audit_error_t("invalid Debian package member path")
+
+
 def verify_toolchain_identity(actual: Mapping[str, object], expected: Mapping[str, object]) -> dict:
     """Require exact compiler, runtime archive, and C++ header identities.
 
@@ -908,9 +969,15 @@ def verify_toolchain_identity(actual: Mapping[str, object], expected: Mapping[st
         raise audit_error_t("runtime shim requires both MinGW compiler thread models to be win32")
     if actual["target"] != "x86_64-w64-mingw32" or actual["cc"]["dumpmachine"] != actual["target"] or actual["cxx"]["dumpmachine"] != actual["target"]:
         raise audit_error_t("runtime shim requires target x86_64-w64-mingw32")
-    if any("14.2.0" not in actual[compiler]["version"] or actual[compiler]["dumpfullversion"] != "14.2.0"
-           for compiler in ("cc", "cxx")):
+    canonical = all("14.2.0" in actual[compiler]["version"] and actual[compiler]["dumpfullversion"] == "14.2.0"
+                    for compiler in ("cc", "cxx"))
+    debian_alias = all(actual[compiler]["version"].endswith("(GCC) 14-win32") and actual[compiler]["dumpfullversion"] == "14-win32"
+                       for compiler in ("cc", "cxx"))
+    if not canonical and not debian_alias:
         raise audit_error_t("runtime shim admits only the reviewed GCC 14.2.0 ABI")
+    if debian_alias:
+        _verify_debian_version_alias(actual)
+        _verify_debian_version_alias(expected)
     for record in (actual, expected):
         flat_values = [record["target"], *record["critical_headers"].keys(), *record["critical_headers"].values()]
         for compiler in ("cc", "cxx"):
