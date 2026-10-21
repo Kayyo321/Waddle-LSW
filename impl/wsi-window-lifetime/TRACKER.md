@@ -516,3 +516,16 @@ Atomic unit `test(vgpu): capture bounded GUI ownership failure identities`
 CI now executes portable gates and a real Windows retained-top/child/message
 control plus exact owned cleanup. Neither cross-build nor CI HWND controls
 substitute for fresh full physical WSI qualification.
+
+### GUI control native execution checkpoint (2026-10-21)
+
+Commit8038ad9 adds the passive failure-only identity collector. Root native
+control `build/qualification_feature_20261021/m2_gui_native_df4d92e7/` exits
+zero after identifying retained hidden top-level, child and message-only
+windows and destroying each owned window; no owned survivor remains. The
+same controls and exact-owner controls pass in native Windows CI at8038ad9.
+These controls do not waive the preserved USER4->9 full-workload failure or
+complete native WSI qualification. Fresh loaded-host full workloads are
+running; no result credited. Documentation unit
+`docs(vgpu): record physical matrix and allocator calibration`, task#4 +0%,
+M2 remains94% / Review, Time Ended TBD.

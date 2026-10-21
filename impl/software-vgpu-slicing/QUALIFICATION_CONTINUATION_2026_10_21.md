@@ -24,9 +24,15 @@ Evidence: `build/windows11_vm/tcp_gpu_1cab18c8/`, session7fae26884eb14282;
 
 These are actual native GPU results, not heap/TLS/FLS, transport-cancellation
 or simultaneous Linux/OpenCL acceptance. The later audit-header/source-identity
-correction requires fresh affected fixtures/admission; a full new build is in
-progress at01702c5 in `root_tls/full_driver_build_v3/`. Historical results are
-not relabeled as the final candidate.
+correction requires fresh affected fixtures/admission. The new full build at
+01702c5 completed all 2,738 targets, link and admission with exit zero:
+`root_tls/full_driver_build_v3/{invocation.json,build.log,exit.json}`. Current
+canonical `build/clvk_client.json` SHA256 is
+`7c8c386350c347b45956822e216316f53269092674488c4c217e7f58077c1433`;
+its DLL SHA256 is
+`70ca4fdbc2ca54954b7879f28f11e013c63a0a660cca718815abc24e98d5887a`
+(186,373,276 bytes). Current source hashes match. This image has not yet run
+natively. Historical functional results are not relabeled as this candidate.
 
 ## Fresh M2 failure retained
 
@@ -48,18 +54,62 @@ VM affinity or unrelated process was changed.
 Source review found that the fixture never pumps Windows messages. Windows
 ghosting/deferred UI activity is a hypothesis, not established allocation
 attribution or a production defect. A bounded failure-only HWND identity
-collector is being independently reviewed before fresh native diagnostics.
+collector passed independent source review and was committed in8038ad9.
+Root portable ASan/LSan/UBSan checks passed (18 groups / 5,314 checks), with
+100% included-source lines,98.39% GUI branches and96.71% owner branches.
+Root native control `m2_gui_native_df4d92e7/` passed with natural exit zero,
+real hidden top-level, child and message-only identities, exact owned cleanup
+and no survivors. Windows CI ran these controls successfully at8038ad9.
+These controls do not qualify the full WSI workload. Fresh full M2 qualification
+is running with six bounded root-owned CPU workers; no result is credited yet.
 All original comparisons, sampling, timing and UI behavior remain mandatory.
+
+## Linux physical GPU matrix
+
+The complete37-module ICD seam ASan/LSan gate passes at the current sources:
+`build/icd_complete_seam_safety_37/run-20261021T193122717034Z-341004/completion.json`.
+It proves662 owned functions across31 modules and399 test-mode cases; all37
+module obligations pass with actual instrumentation checks.
+
+The subsequent coherent-memory physical RTX5080 matrix passes:
+`build/icd_physical_coherent_owned_safety_37/run-20261021T194847362262Z-365988/physical_report.json`.
+Nine positive runs cover144 lifetimes (direct, shared normal and shared ASan,
+for triangle, compute and compute-push). Six expected status-one post-flush
+failure runs prove cleanup. Complete/source-preservation checks pass. This is
+Linux native physical execution, not Windows or OpenCL overlap acceptance.
+The earlier run194256680532Z-349996 was invalidated by a concurrent Make recipe
+edit; its raw files remain preserved and receive no credit.
+
+## Native allocator measurement controls
+
+UMDH alone missed the known owned malloc12345 first-load negative control.
+The bounded full-PageHeap inventory now detects the exact live malloc23457 and
+HeapAlloc34561 controls and proves their disappearance after real frees. It
+also detects the deliberately retained12345 allocation after DLL unload,
+bound to the actual loaded module range and exact constructor return RVA.
+Native run `pageheap_negative_73f47037/` completed naturally, with no survivors
+and the original per-image registry state restored. Its source-bound
+`calibration_observation.json` records these controls. A subsequent nine-stage
+critical-section init/delete/reinitialize calibration
+`pageheap_negative_41846803/` also completed naturally with empty structural
+inventory errors and registry restoration; ownership analysis is pending.
+
+These controls are measurement evidence, not final candidate heap acceptance.
+Six of seven exposed API heap handles have an exact verifier-code mapping;
+the remaining heap and all retained-block ownership still require proof.
+Four retained48-byte critical-section debug blocks have a possible bounded
+NTDLL cache owner; stack causation alone does not establish that owner. No
+allocation allowance, warmed-up candidate baseline or generic subtraction is
+permitted. Tool syntax/preflight failures remain preserved.
 
 ## Remaining gates
 
-Current complete37-module ICD seam ASan/LSan passes; physical Linux15-case
-matrix is running. Exact-head CI is rerunning after5260170 and01702c5.
-The first-load malloc12345 negative control proves UMDH alone misses an owned
-allocation; full native heap acceptance remains open until a calibrated
-alternative inventory proves ownership/retirement. Full OpenCL TLS/FLS/reload,
-actual in-flight cancellation, host-GPU overlap, final three-lifetime DXVK heap,
+Exact-head Windows transport and OpenCL admission CI pass at8038ad9; the full
+Linux transport job is still running. Full OpenCL TLS/FLS/1100-reload stress,
+actual in-flight cancellation, simultaneous Linux GPU execution, calibrated
+first-load native heap qualification, final three-lifetime DXVK heap,
 Windows physical matrix, M2 native qualification and final review remain open.
+Astra's new reload fixture is still being implemented in its isolated worktree.
 
 All raw failure folders are preserved. The existing VM and its state are
 preserved; root remains sole native/GPU runner. No gc/prune: the candidate

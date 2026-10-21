@@ -12,9 +12,9 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD 394-case Debug/ReleaseSafe, sanitizer/allocator and 90.32% branch / 98.53% line gates pass after loader debug-chain correction. Fresh corrected-ICD DXVK sanitized positive and normal/sanitized postflush runs pass; final three-life native heap and full physical WSI matrix remain open. |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD399-case aggregate and90.42% branch /98.56% line gates pass; current37-module ASan/LSan seam and15-case Linux physical matrix pass. Final DXVK native heap, Windows physical/WSI, exact-head CI and final review remain open; see QUALIFICATION_CONTINUATION_2026_10_21.md. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Exact native kernels and24-primary-lifetime captures pass, but current runtime retains6handles/1TLS slot per isolated unload. Candidate Win32 runtime loses2TLS slots and stalls after543 reloads; switch withdrawn. SDK lifetime correction, heap ownership, cancellation and simultaneous Linux GPU acceptance remain open. |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Historical exact native GPU kernels pass. Approved owned Win32 TLS/EH correction passes isolated2048-reload measurement; new full DLL static build/admission passes, but its final native heap/TLS/FLS/reload, actual cancellation and Linux GPU overlap remain open. Earlier leaking candidates are preserved failures; see current qualification checkpoint. |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -1969,3 +1969,14 @@ cross-build pass; native controls and full WSI remain pending. See
 [the detailed contract](../wsi-window-lifetime/IMPL_DESC.md). +0% all parent
 tasks; total85.5%, M2 94%, Time Ended TBD. Commits5260170,01702c5 ande895d9d
 retain their +0% task impacts.
+
+### Physical and allocator qualification checkpoint (2026-10-21)
+
+The [current checkpoint](QUALIFICATION_CONTINUATION_2026_10_21.md) records the
+completed37-module seam and Linux physical15-case matrix, new full OpenCL
+static image, real Windows GUI identity controls and allocator calibration
+limits. Commits8038ad9 ande895d9d retain +0% to every task. This documentation
+unit, `docs(vgpu): record physical matrix and allocator calibration`, also
+changes no task progress; parent85.5%, M2 94%, Time Ended TBD. Outstanding
+native ownership, stress, cancellation, overlap, CI and review gates remain
+explicit.
