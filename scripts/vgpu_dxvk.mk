@@ -89,3 +89,23 @@ build/vgpu_clvk_runtime_stress.exe: tests/vgpu/clvk_runtime_windows.c | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DWaddleRuntimeLifetimeCount=2048 $< -o $@
 
 vgpu-opencl-runtime-fixture: build/vgpu_clvk_runtime_posix.dll build/vgpu_clvk_runtime_win32.dll build/vgpu_clvk_runtime_test.exe build/vgpu_clvk_runtime_stress.exe
+
+# Actual Waddle runtime shim with Linux Win32 doubles. These gates do not
+# qualify Windows loader/TEB behavior or the final linked OpenCL image.
+.PHONY: vgpu-opencl-runtime-tls-test vgpu-opencl-runtime-tls-sanitizers vgpu-opencl-runtime-tls-tsan vgpu-opencl-runtime-tls-coverage
+vgpu-opencl-runtime-tls-test: | build
+	$(CC) $(CFLAGS) -pthread -DWaddleRuntimeTlsFakeWindows -Itests/vgpu tests/vgpu/clvk_runtime_tls_test.c -o build/vgpu_clvk_runtime_tls_test
+	./build/vgpu_clvk_runtime_tls_test
+
+vgpu-opencl-runtime-tls-sanitizers: | build
+	$(CC) $(CFLAGS) -O1 -pthread -fsanitize=address,leak,undefined -fno-omit-frame-pointer -DWaddleRuntimeTlsFakeWindows -Itests/vgpu tests/vgpu/clvk_runtime_tls_test.c -o build/vgpu_clvk_runtime_tls_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/vgpu_clvk_runtime_tls_sanitized
+
+vgpu-opencl-runtime-tls-tsan: | build
+	$(CC) $(CFLAGS) -O1 -pthread -fsanitize=thread -fno-omit-frame-pointer -DWaddleRuntimeTlsFakeWindows -Itests/vgpu tests/vgpu/clvk_runtime_tls_test.c -o build/vgpu_clvk_runtime_tls_tsan
+	TSAN_OPTIONS=halt_on_error=1 ./build/vgpu_clvk_runtime_tls_tsan
+
+vgpu-opencl-runtime-tls-coverage: | build
+	python3 -B tests/vgpu/clvk_runtime_tls_coverage_test.py
+	python3 -O -B tests/vgpu/clvk_runtime_tls_coverage_test.py
+	python3 -B scripts/clvk_runtime_tls_coverage.py
