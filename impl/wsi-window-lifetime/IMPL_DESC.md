@@ -337,3 +337,29 @@ Ledger coverage is 85/85 lines, 143/144 outcomes; observer coverage 35/35 lines,
 26/28 outcomes, individually >=90% with no exclusions. Actual Windows controls,
 qualified ICD quiescence, the new per-lifetime protocol and final qualification
 remain pending. No native or acceptance result follows from this implementation.
+
+
+## Conditional actual ICD quiescence (unit C, 2026-10-21)
+
+The [implemented 144-byte query and build boundary](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#read-only-actual-icd-ownership-query-unit-c-2026-10-21)
+scan real registry slots, WSI pairs/acquisitions, mappings, caches, queue tickets,
+references and reservations under the existing lock. Invalid ABI leaves output
+untouched; healthy/unhealthy queries perform no cleanup or transport operations.
+Only the separate qualified DLL adds the two read-only queries. Ordinary exports
+and default behavior stay unchanged, and fault controls cannot enter the candidate.
+All 399 Debug/ReleaseSafe tests and the full owned ICD access-sanitizer suite pass;
+coverage/export/rejection receipts are bound to this source. Unit B real Windows
+controls subsequently PASS under the lead's ownership, including equal-total
+leak and unrelated-release negatives; the [evidence follow-up](M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#root-executed-real-c-boundary-controls-unit-b-evidence-follow-up)
+does not qualify the new DLL. Native protocol/verifier/CI wiring, fresh physical
+runs, exact-candidate CI and independent final review remain required, +0%.
+
+
+Pre-commit independent review required the M2 query to include all 320 separate
+copied-profile/command reservations, 64 graphics recordings and orphan cached or
+resource dependency tokens. The original query's false-clean profile result is
+preserved as a failing control; the corrected query retains the same fixed ABI.
+The fifth regression group exercises actual table reserve/release and 22 orphan
+cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
+the original unit C receipt is preserved and superseded for readiness. No new
+native execution or completion credit is claimed.

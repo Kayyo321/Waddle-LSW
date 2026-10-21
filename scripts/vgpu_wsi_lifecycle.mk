@@ -70,3 +70,34 @@ build/wsi-lifecycle/m2_ownership_probe_windows.obj: tests/vgpu/m2_ownership_prob
 
 vgpu-m2-ownership-native-build: build/vgpu_m2_ownership_native.exe build/wsi-lifecycle/m2_ownership_probe_windows.obj
 	python3 -c 'import subprocess,sys; names={line.split()[-1] for line in subprocess.check_output(["nm","-g","--defined-only","build/wsi-lifecycle/m2_ownership_probe_windows.obj"],text=True).splitlines() if line.split()}; expected={"venus_m2_dc_acquire","venus_m2_dc_release","venus_m2_dc_snapshot"}; sys.exit(0 if names==expected else "Unexpected qualified observer definitions: "+repr(names));'
+
+# Separate qualified candidate; never overwrites the ordinary production DLL.
+# Depending on the ordinary ICD object preserves its full imported-source closure.
+build/m2_qualification: | build
+	mkdir -p $@
+
+build/m2_qualification/venus_icd_windows.obj: src/vgpu/venus_icd.zig build/venus_icd_windows.obj $(VgpuM2OwnerHeaders) | build/m2_qualification
+	$(ZIG) build-obj $< $(VgpuInstanceWireIncludes) -DWaddleM2OwnershipProbe -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+
+build/m2_qualification/venus_win32_present_windows.obj: src/vgpu/venus_win32_present.c include/waddle/venus_win32_present.h $(VgpuM2OwnerHeaders) | build/m2_qualification
+	$(ZIG) cc -target x86_64-windows-gnu $(VgpuM2OwnerFlags) -DWaddleM2OwnershipProbe -c $< -o $@
+
+build/m2_qualification/m2_owner_ledger_windows.obj: tests/vgpu/m2_owner_ledger.c $(VgpuM2OwnerHeaders) | build/m2_qualification
+	$(ZIG) cc -target x86_64-windows-gnu $(VgpuM2OwnerFlags) -c $< -o $@
+
+build/m2_qualification/venus_icd.def: src/vgpu/venus_icd.def | build/m2_qualification
+	python3 -c 'from pathlib import Path; Path("$@").write_text(Path("$<").read_text()+"    venus_icd_m2_snapshot\n")'
+
+VgpuM2QualifiedObjects = build/m2_qualification/venus_icd_windows.obj build/m2_qualification/venus_win32_present_windows.obj build/m2_qualification/m2_owner_ledger_windows.obj build/wsi-lifecycle/m2_ownership_probe_windows.obj
+VgpuM2QualifiedLibraries = $(filter-out build/venus_win32_present_windows.obj build/venus_icd_windows.lib,$(VgpuIcdWindowsLibraries))
+build/m2_qualification/waddle_vulkan_experimental.dll: build/m2_qualification/venus_icd.def $(VgpuM2QualifiedObjects) $(VgpuM2QualifiedLibraries)
+	$(ZIG) cc -target x86_64-windows-gnu -shared $^ -luser32 -lgdi32 -ldwmapi -o $@
+
+.PHONY: vgpu-m2-qualification-build vgpu-m2-icd-sanitizers
+vgpu-m2-qualification-build: build/waddle_vulkan_experimental.dll build/m2_qualification/waddle_vulkan_experimental.dll
+	python3 -B tests/vgpu/m2_qualification_build_test.py
+
+# Full portable ICD suite with actual owned Zig accesses instrumented. Native
+# oracles/codecs retain their existing separate sanitizer gates and ownership.
+vgpu-m2-icd-sanitizers: $(VgpuIcdUnitCodecs) $(VgpuIcdUnitOracles)
+	python3 -B tests/vgpu/state_sanitizers.py venus_icd --link $(VgpuIcdUnitCodecs) $(VgpuIcdUnitOracles)

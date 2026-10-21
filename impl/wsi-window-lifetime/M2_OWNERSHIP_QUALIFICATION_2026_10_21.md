@@ -44,6 +44,9 @@ review, not an independent final acceptance review.
 | Readback staging buffer, memory, command pool/buffer | venus_icd.wsi_readback owns private registry IDs from successful creation; deferred cleanup in reverse dependency order | Queue idle proof precedes map/copy; failures before submission release partial constructors. Unknown completion retains real owner records; device loss and trusted abandon rules apply. | Existing staging-failure, invalid-wait rollback, readback bytes and queue-loss tests. Native snapshot requires the actual shared registry/resource owner records empty, independently of process counts. |
 | Mapped shadow bytes and baseline, mapping slot/resource ID | map_memory owns two allocator slices and an exported mapping reservation, recorded in resource_state | unmap/release_shadow frees CPU slices; free_memory releases exported mapping after acknowledgment; failure retains owned reservation rather than pretending retirement. | Existing allocator/sanitizer and mapping tests; native snapshot checks pointers and mapping-resource slots, not only object live_count. |
 | Queue submission tickets, wait semaphores, fences, idle_refs and inflight_count | queue-submit owns ticket ID/queue/fence and per-resource reference bitmap; shared present waits submitted once | retire_ticket decrements exact references after acknowledged queue/fence completion and destroys internally owned fence. Ambiguous submission/proof returns device loss and retains ticket/references until trusted abandon. | Existing shared-wait and corrupt/closed proof tests check retained IDs, acquired flags, semaphore refs and zero idle_refs. Native snapshot checks ticket records and reference fields are empty after each lifetime. |
+| Copied descriptor-layout, pipeline-layout, pipeline, descriptor-set and command profiles | profiles.reserve_slot publishes an occupied flag in one of five independently bounded tables (32/32/64/128/64 slots); the owning resource records a one-based index | release_slot scrubs the profile and clears occupied after acknowledged native retirement or safe constructor rollback. release_command_profile also resets the corresponding graphics recording; uncertain transport retains the reservation. | Native query scans all 320 occupied flags independently of object/resource IDs, plus copied command pipeline/set references. Portable controls reserve/release every actual table and retain last-slot orphan owners with objects/resources zero. |
+| Graphics recording and orphan cache/dependency tokens | command-owned recording contains pipeline token/format, active pass format and dynamic-rendering flag; parent caches retain physical/queue tokens and queue/ring-ready markers | Acknowledged command reset/retirement resets recordings; instance/device retirement clears cache. Resource view_image can independently prevent image destruction, even with missing resource ID. | Native query scans all recording fields, cached physical/queue tokens, ring/ready markers and explicit resource dependency/profile links. Orphan parent cache ownership raises inconsistency; no inferred cleanup. |
+| Temporary fixed descriptor allocation/update staging and wire arrays | exclusively borrowed, reused transaction buffers under the ICD mutex; no occupied/free-slot reservation | Existing defer scrubs allocation/update snapshots and buffer/image/texel wire staging on every return. They never reserve persistent capacity or acquire native owners. | Existing allocator/state/rollback and staging-scrub assertions remain compositional evidence. Quiescence does not scan arbitrary scalar scratch bytes or claim heap-wide visibility. |
 | Instance/device/queue/private Vulkan registry owners and extension-cache allocations | fixed object slots with monotonic namespace IDs; caches owned by the matching acknowledged parent | destroy_device refuses pending tickets/refs/nonqueue children; acknowledges host destruction before releasing queues/device. destroy_instance releases acknowledged children and extension-cache slices. | Existing actual dispatch tests and independent final host Ack. Native snapshot scans real slots and cached allocations under the existing mutex; final bootstrap stop/unbind remains mandatory. No per-lifetime unbind/rebind is introduced. |
 | Production presentation DC: exact acquired (HWND,HDC) and monotonic local acquisition ID | venus_win32_present.c GetDC; synchronous presentation thread under ICD lock; no retained native allocation otherwise | Every successful GetDC has one ReleaseDC attempt, including post-acquisition resize/loss and draw failure. Only successful ReleaseDC proves retirement; failure propagates and must leave a live ledger owner. DwmFlush occurs after release. | Existing API doubles prove attempts/error propagation, not actual OS retirement. Add qualification-only fixed identity ledger around the actual APIs plus native deliberate leak/failed-release/masked-release controls. |
 | Fixture window and pixel-inspection DC owners | the existing present and WSI lifetime fixtures CreateWindowExA/GetDC; fixture owns HWND while production only borrows it | Successful DestroyWindow/ReleaseDC retires exact identity; error paths retain a ledger entry and fail. Destroyed-window test clears its owner only after success. | Keep existing native GDI/USER equality and pixel assertions. Add local fixed fixture ledger so an unrelated retirement cannot mask one missing owned DC/window. Initialization before the lifetime loop remains unchanged and is checked separately. |
@@ -220,3 +223,128 @@ This is a measurement-contract amendment, not a waiver claiming the old scalar t
 
 No code or acceptance rule has been changed by this proposal. Astra's current work retains the existing strict gate. Adoption requires explicit acceptance-owner approval because M2_CODEX_REVIEW_2026_10_21.md preserves exact equality and expressly reserves an acceptance-owner decision for replacing it.
 ```
+
+
+## Read-only actual ICD ownership query (unit C, 2026-10-21)
+
+Commit `b385806` completed the C observer unit. This unit adds a conditional
+`venus_icd_m2_snapshot` export to the actual ICD and a separate qualified DLL at
+`build/m2_qualification/waddle_vulkan_experimental.dll`. The ordinary DLL stays at
+its original path with exactly its original 11 exports. The qualified DLL has
+exactly those exports plus `venus_icd_m2_snapshot` and `venus_m2_dc_snapshot`.
+`WaddleM2OwnershipProbe` enables the ICD query and the real C sink wrappers;
+`WaddleM2OwnershipProbeExport` exports only the DC snapshot. No qualified input
+object is compiled with `WaddleM2OwnershipFaults`. The actual PE export tables
+and object definitions are checked by `vgpu-m2-qualification-build`; an ordinary
+DLL substituted for the candidate and injected fault definitions fail the gate.
+Cross-build success proves no Windows execution or physical acceptance.
+
+The ICD ABI is version 1 and exactly 144 bytes on the supported x86_64 boundary.
+Offsets 0/4/8/12 contain u32 version/bytes/flags/command_state; offset 16 is i32
+lost, 20 is u32 binding. Offsets 24/32/40 contain u64 object_next_id/wsi_next_id/
+first_live_id. Starting at offset 48, twelve successive u64 fields are objects,
+resources, surfaces, swapchains, images, acquired_images, backings, mappings,
+caches, tickets, references and reservations. There is no pointer/ownership
+transfer, variable-sized tail or implicit cleanup. A null output, wrong version,
+short/long/zero size returns zero without writing any output byte. A valid query
+returns one even when its snapshot is unhealthy; the caller must validate the
+complete result, not just the function return.
+
+The query takes the existing nested ICD mutex and scans actual private arrays.
+It validates the bound slot pointer/capacity/context/namespace/next ID, counts
+actual object IDs independently of live_count, rejects dirty empty slots and
+mismatched resource identities, and reports all fixed surface/swapchain/image
+entries (including orphan or partial pairs and acquired bits beyond active count).
+It independently counts bound memory, retired WSI images, internal fence fields,
+mapped shadow/baseline pointers, exported mapping IDs, instance/device/template
+cache owners and extension-cache allocations. Submission tickets include orphan
+sequence/fence/reference metadata; references include inflight/idle counts and
+all resource/ticket bitmaps and explicit image/index/framebuffer/profile links.
+All 320 occupied copied-profile/command slots, all 64 graphics recordings, cached
+physical/queue tokens and cache ring/ready markers are scanned independently.
+Parentless cache ownership raises inconsistency, including nonzero physical count
+with a zero instance handle. Mapping/ring reservation bits are scanned directly.
+The first available retained identity is diagnostic; absence of that identity
+never cancels a nonzero owner field. Completed GPU fence sequence history is not
+an owner and is not reset. The query never allocates, calls transport/native APIs,
+releases an owner, retries, unbinds, abandons or changes sticky lost state.
+
+An unbound query reports flag 1 and cannot qualify (including after abandonment).
+Registry inconsistency is flag 2, owner inconsistency flag 4. The future native
+per-lifetime predicate must require bound=1, flags=0, CommandIdle=0, RingOk=0,
+nonzero monotonic identity marks and zero in all thirteen retained-identity/owner
+fields. The marks must also advance during the expected workload. This query
+reports the real shared registries, including retained readback staging and queue
+owners; temporary synchronous pixel slices remain proved compositionally by the
+existing allocator/ASan/LSan and backend identity tests, not by native heap-size
+claims. A healthy query is necessary but cannot alone satisfy the M2 protocol.
+
+Five new Zig groups exercise malformed ABI/output preservation, nested locking,
+unbound and failed command state, actual swapchain create/destroy and complete
+acknowledged device/instance retirement, actual readback success/loss, failed GPU
+wait proof with retained tickets/references/acquisitions, 43 independently
+corrupted/retained-owner fields, real reserve/release across
+all five metadata tables, and 22 additional last-slot orphan reservation/token
+controls. Repeated queries preserve state and callback
+counts. The reused synthetic graph explicitly supplies the instance cache needed
+by actual destroy_instance; no query-side cleanup makes a test pass. The full
+suite grows from 394 to 399; both existing exact-count sanitizer pins are updated
+to that observed count without changing any floor or assertion.
+
+Validation: 399/399 Debug and ReleaseSafe tests; full portable ICD ASan/LSan
+access instrumentation (1,603 emitted owned functions) with zero reported leaks;
+actual default/qualified export and object boundaries; malformed export-table,
+wrong-DLL and injected-fault rejection controls, including optimized Python.
+The unchanged full ICD coverage gate passes 4,419/4,887 branches (90.42%) and
+4,777/4,847 lines (98.56%); the two query helpers cover 50/50 measured branch
+outcomes and 81/81 measured lines. Source-bound raw artifacts are recorded in
+`build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json` along with source,
+binary and log hashes. Native execution of this qualified DLL remains NOT RUN.
+Unit D must still implement the explicit per-lifetime native protocol, verifier
+requirements and CI wiring before root's fresh physical qualification.
+
+## Root-executed real C-boundary controls (unit B evidence follow-up)
+
+The lead executed the exact unit B standalone binary in the signed-in Windows
+console at medium integrity: all four cases PASS, real exit 0, empty stderr and
+no survivors. SHA-256 is
+`fee79e5a5ef4a7133769c7ba605a5b9a0692bde380084bd3baacdf085e128b4e`.
+Positive case measured 154→154 with live=0. Owned leak, injected release failure
+and unrelated release masking each measured 158→158 while live=1 was rejected;
+the injected failure additionally retained failure bit 8. Actual owned cleanup
+succeeded. These are actual Windows C-boundary controls, not physical GPU or
+complete M2 qualification. The prior deployment `8351a349` failed before execution
+because the lead's hash substitution changed an algorithm token; that failed
+attempt remains preserved and is not a passing run.
+
+Read-only evidence:
+`/home/dev/Waddle-LSW/build/qualification_feature_20261021/m2_owner_native_2f66c87a/guest_status.json`,
+its `source_receipt.json`, binary and frozen runner. The isolated unit C binding
+record independently hashes all six evidence files and checks all 17 unit B
+source hashes against commit `b385806`. Existing unit B receipts remain unchanged
+and retain their original build-only meaning. This follow-up grants +0%: M2 stays
+94% / Review, parent 85.5%, Time Ended TBD, and historical strict failures remain
+failed/unattributed.
+
+
+## Pre-commit owner-inventory correction (unit C revision 2)
+
+Independent lead/Luna review found that the first unit C snapshot omitted the
+separate copied-profile reservation flags and graphics recordings. A reserved
+profile could coexist with zero object/resource counts and be falsely reported
+clean. This was a qualification-observer defect; no native qualification ran and
+no production resource-lifetime fix is inferred. The old receipt, source files,
+binaries and failure logs remain preserved. A new regression first reproduced
+false acceptance through actual profiles.reserve_slot before changing the query;
+that 398-pass/1-fail run is retained under ownership_icd_revision2.
+
+Revision 2 keeps the fixed version-1 144-byte ABI and broadens its existing
+reservations/references fields as specified above. Repeated observations never
+release slots or clear faults. The fifth test group observes exact reserve/release
+of all five tables, then independently rejects 22 orphan flag/token cases at the
+last array positions with zero objects/resources. A successful complete readback
+must also return reservations and references to their pre-call values. The actual
+suite is now 399 tests; both exact-count pins are 399. New receipt and candidate
+artifacts reside only in `ownership_icd_revision2/`; the earlier
+`ownership_icd/receipt.json` is superseded for readiness and remains unmodified.
+M2 remains 94%, parent 85.5%, +0%, Time Ended TBD.

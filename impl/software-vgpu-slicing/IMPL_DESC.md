@@ -6790,3 +6790,24 @@ Win32 DC observer, fixed exact-identity ledger and standalone native leak/failur
 controls. Portable safety/coverage and Windows cross-build pass; actual Windows
 execution and the complete per-lifetime ownership protocol remain pending. See
 the [implemented observer ABI and limits](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#implemented-c-boundary-observer-and-controls-unit-b).
+
+
+The M2 qualified build now adds a versioned read-only query over actual ICD owner
+arrays; it performs no cleanup and rejects malformed ABI without output mutation.
+Its ordinary DLL keeps the original exports, and the qualified DLL admits exactly
+two read-only queries with no fault controls. All 399 portable ICD tests and owned
+access sanitizers pass. Root subsequently ran all four real Windows unit B owner
+controls successfully, including leaks masked by equal total counts. This bounded
+evidence and [query ABI](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md#read-only-actual-icd-ownership-query-unit-c-2026-10-21)
+provide no final M2 credit; per-lifetime protocol/CI and fresh final qualification
+remain outstanding. Separate feature milestones remain outside this M2 unit.
+
+
+Pre-commit independent review required the M2 query to include all 320 separate
+copied-profile/command reservations, 64 graphics recordings and orphan cached or
+resource dependency tokens. The original query's false-clean profile result is
+preserved as a failing control; the corrected query retains the same fixed ABI.
+The fifth regression group exercises actual table reserve/release and 22 orphan
+cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
+the original unit C receipt is preserved and superseded for readiness. No new
+native execution or completion credit is claimed.

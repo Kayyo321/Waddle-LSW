@@ -432,3 +432,33 @@ coverage exclusions/thresholds, historical evidence or dependency pins changed.
 - **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
   task #4 **80%**, Time Ended **TBD**. ICD quiescence and native per-lifetime
   protocol remain to implement; historical failures remain failed/unattributed.
+
+
+### M2 actual-owner query readiness, 2026-10-21
+
+- **Commit `b385806`**: `test(wsi): observe exact native drawing-context owners`.
+  **Task impact: +0% to TODO #4 (+0% overall)**. The lead subsequently executed
+  its source-bound native controls: all four PASS; exact owned leaks rejected
+  despite equal process totals. Earlier deployment failure remains preserved.
+- Current atomic unit: `test(wsi): expose read-only qualified ICD ownership` (exact
+  hash recorded in the next checkpoint). Adds the fixed 144-byte actual-array
+  query, five meaningful Zig groups, separate qualified DLL and actual export/
+  symbol gate. Invalid queries do not mutate output; valid queries never retire
+  owners or clear failures. The two existing exact test pins increase 394→399.
+- **PASS**: 399 Debug/ReleaseSafe tests, owned ICD ASan/LSan access instrumentation,
+  qualified Windows cross-build and strict export/fault/wrong-DLL controls.
+  Corrected coverage: ICD 90.42% branches / 98.56% lines; query 50/50 branch
+  outcomes and 81/81 lines. Exact source/artifact bindings are in
+  `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`.
+  **NOT RUN**: qualified DLL native/physical execution and remote CI.
+- **Task impact: +0% to TODO #4 (+0% overall)**. M2 remains **94% / Review**,
+  M2 task #4 **80%**, parent **85.5%**, Time Ended **TBD**. Per-lifetime protocol,
+  CI wiring, fresh physical qualification and independent final review remain.
+  Every historical strict failure remains failed/unattributed.
+
+- Pre-commit independent review reopened this unit for a real observation gap:
+  copied-profile occupancy/recordings could survive with zero object counts.
+  Revision 2 adds all 320 occupied profile/command slots, all recording fields,
+  orphan cache/dependency tokens and 22 retained-owner controls. The initial
+  false-clean regression failure and old receipt remain preserved; current
+  validation is source-bound in `ownership_icd_revision2/receipt.json`. +0%.

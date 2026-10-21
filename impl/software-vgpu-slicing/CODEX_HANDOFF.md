@@ -451,3 +451,29 @@ unchanged. Receipt: `build/qualification_m2_astra_20261021/ownership_observer/re
 Continue with qualified ICD quiescence, explicit per-lifetime fixture/verifier
 protocol and CI, then root-only native/physical qualification and final review.
 M2 remains 94%, parent 85.5%, Time Ended TBD.
+
+
+### M2 actual-owner query checkpoint
+
+Unit B is commit `b385806`; its four actual Windows controls subsequently PASS
+under the lead's runner ownership (exact binary/source evidence is linked in the
+M2 ownership document). The next atomic unit implements a conditional read-only
+144-byte actual ICD owner query plus a separate qualified DLL. Both full 399-test
+build modes and owned access sanitizers pass, and the export/symbol gate requires
+exactly two added read-only queries without fault controls. Source-bound receipt:
+`build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`.
+Next implement the explicit native per-lifetime protocol/verifier/CI; then run
+fresh root-owned native/physical qualification and independent final review.
+The qualified DLL itself has NOT RUN on Windows. Existing historical failures
+and previous receipt meanings remain intact. M2 94%, parent 85.5%, +0%, Time Ended
+TBD; no separate OpenCL/DXVK acceptance follows from these changes.
+
+
+Pre-commit independent review required the M2 query to include all 320 separate
+copied-profile/command reservations, 64 graphics recordings and orphan cached or
+resource dependency tokens. The original query's false-clean profile result is
+preserved as a failing control; the corrected query retains the same fixed ABI.
+The fifth regression group exercises actual table reserve/release and 22 orphan
+cases. Current evidence is `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`;
+the original unit C receipt is preserved and superseded for readiness. No new
+native execution or completion credit is claimed.
