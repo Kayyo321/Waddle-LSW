@@ -6890,3 +6890,12 @@ review found no actionable false-clean path. The new native ownership protocol
 still requires fresh physical qualification and exact integrated CI; this merge
 claims +0% to all tasks. M2 remains 94% / Review, parent 85.5% / In Progress,
 Time Ended TBD.
+
+### Remote history synchronization (2026-10-21)
+
+The lead preserved remote head `b95751e302e97aa56c5a2124d469a450883f3bec`
+with a normal merge, including the separate Claude review-controller feature.
+Its 47 offline controller cases pass; no review API was invoked. This does not
+qualify the integrated software-vGPU candidate or replace its own tests/CI.
+Task impact: +0% to every software-vGPU task; parent remains 85.5%, M2 94%,
+Time Ended TBD. No force push or merge to the target branch occurred.

@@ -1,0 +1,32 @@
+name: Claude review controller checks
+
+on:
+  push:
+    branches: [feature/claude-pr-review]
+  pull_request:
+    paths:
+      - .github/workflows/claude_pr_review*.yml
+      - scripts/claude_pr_review*
+      - tests/ci/claude_pr_review.sh
+      - impl/claude-pr-review/**
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Check shell syntax and diagnostics
+        shell: bash
+        run: |
+          bash -n scripts/claude_pr_review.sh tests/ci/claude_pr_review.sh
+          shellcheck scripts/claude_pr_review.sh tests/ci/claude_pr_review.sh
+      - name: Exercise authorization and static review lifecycle without credentials
+        shell: bash
+        run: bash tests/ci/claude_pr_review.sh
