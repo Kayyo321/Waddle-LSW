@@ -559,3 +559,8 @@ and USER failures remain failed/unattributed; no threshold is lowered.
 Parent feature85.5%, Time Ended TBD; exact final PR CI and separate OpenCL/
 DXVK qualification remain pending. Commit `fdf2038` records the strict native
 OpenCL failure and independently passing functional overlap (+0% to all tasks).
+
+Closure commit attribution: `54ee9c452c0124200e76ef72eb2e85b2c6487a9e`
+(`docs(m2): close independently qualified ownership milestone`) completes
+task#4 +20points and M2 +6points to100%; parent progress +0%. Subsequent
+OpenCL diagnostic documentation does not change M2 code, acceptance or status.

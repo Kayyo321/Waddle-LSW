@@ -1,8 +1,8 @@
 # OpenCL Native Retention Diagnostic — 2026-10-21
 
 Status: **qualification failed; attribution pending**. This records a reproducible
-resource delta, not acceptance or a production root cause. M2 remains94%/Review;
-parent85.5%/In Progress; both Time Ended values remain TBD.
+resource delta, not acceptance or a production root cause. M2 is separately completed at100%; see [closure](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md).
+Parent85.5%/In Progress and its Time Ended remain TBD.
 
 ## Exact candidate and execution
 
@@ -79,3 +79,42 @@ thread inventories; correct any owned defect and rerun strict1100-cycle
 qualification. Complete all-heap DXVK/OpenCL lifetime inventories and zero-owned
 retention proof, final source-applicable checks/CI and independent review.
 No assertion, threshold, count gate, deadline or historical failure is waived.
+
+## Full candidate load-only control (subsequent native diagnostic)
+
+The same exact candidate70ca and loaderdcc3 execute three balanced LoadLibrary/
+FreeLibrary lives without resolving or invoking any OpenCL export. Four raw
+idle threads persist across all three unloads. Artifact:
+`build/qualification_feature_20261021/full_dll_load_native_fab15a15/`.
+Control executableSHA`3f3bec563b500d4ca897ef30fafea1b11451d2c3757e6e50a7810bb5bda2c092`;
+frozen receiptSHA`95152b5200395d5bdb9b16f1eeb911d3aaf4cdb6cc141a21148e1aba96d36319`.
+Root rehashes342 bindings,282 compiler inputs and12 link inputs. Both exact
+portable sanitizer binaries pass ASan/LSan/UBSan with leak detection enabled;
+worker ptrace failures remain preserved. Thirty-six module/loader-reference
+and actual-entrypoint controls pass using API doubles, not Windows execution.
+
+Native WinRM session0, PID6544/creation`01dd61abfab29315`, exits0 naturally
+with no survivor. Exact OS and all three staged binaries match before/after.
+Nine complete phase/module inventories and four idle identities are recorded;
+counts bracket each inventory and remain stable during observation.
+
+| Phase | Handles | Free TLS | Free FLS |
+|:--|--:|--:|--:|
+| Entry |58|1086|4078|
+| Four-idle baseline |70|1086|4078|
+| Each loaded image (three observations) |127|1085|4075|
+| Each unloaded image (three observations) |77|1086|4078|
+| Final owned idle/CRT cleanup |65|1086|4078|
+
+All three candidate references are freed and the module is absent after each.
+No additional module path remains after unload relative to baseline. The +7
+handles are unattributed; the control grants no heap or strict reload credit.
+It does not reproduce the active workload's three retained TLS/FLS slots.
+Session0 loading is not equivalent to the interactive three-context GPU run;
+next attribution uses its existing ordinary-workload pauses and an external
+read-only census. Earlier wrapper attempts stopped before launching the
+control because of a five-artifact schema error, then a scalar-hash lookup
+error; both failures remain recorded, and staging folders are preserved.
+
+M2 independently closes at100% in commit `54ee9c4`; this control changes no
+parent task percentage, acceptance predicate, deadline or ownership rule.

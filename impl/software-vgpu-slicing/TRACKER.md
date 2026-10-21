@@ -2141,3 +2141,14 @@ USER equality stays strict under the human-approved explicit ownership mode.
 All parent tasks +0%; parent85.5% / In Progress, Time Ended TBD. Final OpenCL
 heap/reload and DXVK heap qualification remain open; PR#6 stays draft.
 Commit `fdf2038` records OpenCL native retention/physical overlap (+0% all tasks).
+
+### Full-DLL static-load attribution control (2026-10-21)
+
+Atomic unit `docs(opencl): distinguish static loading from active retention`
+records three real load-only lives of candidate70ca with all explicit refs
+retired. Native session0 exits0, no additional module paths remain, TLS/FLS
+fully return after each unload, and a +7handle delta remains unattributed.
+[Evidence and limits](OPENCL_NATIVE_RETENTION_2026_10_21.md). This does not
+reproduce or waive the active GPU workload's +83handles/threeTLS/threeFLS.
+No parent progress changes:85.5% / In Progress, Time Ended TBD. M2 is100% /
+Completed in commit `54ee9c4` (+6 M2 points; +0 parent points).
