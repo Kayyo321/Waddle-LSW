@@ -132,7 +132,7 @@ the workload, the frozen guest inputs or the supervisor; any acceptance credit; 
 **What ran.** The byte-identical copies of the 2026-10-17 supervisor (`tcp_gpu_actual.py`, `tcp_gpu_owned_session.py`, `type_command_immediate.py`; hashes in the receipts) drove, per repetition, the frozen
 guest ICD, bootstrap, loader, host worker, runtime and controller (hash-equal to the two qualified 2026-10-17 runs); only the guest fixture executable differs: `make build/vgpu_tcp_gpu_windows_draft.exe`
 from the committed sources (sha256 `77a334150077b0702c0a4144124b760871ec2e1bb41a7967cc774139773bb66d`, 317,440 bytes, 8 `handle_diag:` strings, the legacy failure text unchanged). Environment: the existing
-Windows 11 VM booted from its preserved disk (never provisioned or reset), the interactive console session launched through Win+R key events (no credentials typed; the user signed in), medium
+Windows 11 VM booted from its preserved disk (never provisioned or reset), the interactive console session launched through Win+R key events (Codex signed in through QMP using the saved test-account credential at the user’s explicit request; auto-logon stayed off), medium
 integrity, the physical RTX 5080 through the host Waddle worker. A repetition passes only if the supervisor's own assertions pass and the runner's independent check agrees: guest exit 0, the exact
 output shape of the workload, no legacy handle-failure line, guest binary hashes verified after the run, and no live controller, worker or guest process afterwards.
 

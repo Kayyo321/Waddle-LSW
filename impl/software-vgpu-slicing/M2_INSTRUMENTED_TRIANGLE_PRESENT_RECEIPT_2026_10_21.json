@@ -2,10 +2,10 @@
  "acceptance_credit": false,
  "disclosures": [
   "Run 1 is the pilot (invocation 20261021T153046Z_0c3dd4); runs 2-20 are the second invocation (20261021T153515Z_c128ca, continue past failure enabled; none failed).",
-  "The Windows 11 VM was booted from its preserved disk at 2026-10-21T15:25:18Z host time after a host reboot (never provisioned or reset; qemu-img check clean before boot). The user signed in at the console; run 1 started about 5 minutes after boot.",
+  "The Windows 11 VM was booted from its preserved disk at 2026-10-21T15:25:18Z host time after a host reboot (never provisioned or reset; qemu-img check clean before boot). Codex signed in at the console using the saved test-account credential through QMP at the user\u2019s explicit request (auto-logon remained off); run 1 started about 5 minutes after boot.",
   "Host portable gates ended at 15:28:50Z, before run 1. During runs 18-20 a light offline mock-harness of an evidence-tooling worker ran at nice 19 under unshare -rn with no VM, WinRM, QMP, GPU or network contact; those runs recorded all-pass pre-checks, empty stray-process lists and the same timings as the others.",
   "All runs used the frozen guest ICD, bootstrap, loader, worker, runtime and controller of the qualified 2026-10-17 runs (hash-equal); only the guest fixture executable differs and is the instrumented build of the committed sources.",
-  "Every run finished its last retirement check about 55 s after the baseline, which is less than the roughly 60 s at which the OS RPC idle collector changed the count in the 2026-10-17 system-only control; the earlier passing runs took 66-68 s and the failed run about 82 s for 7 lifetimes. Whether duration explains the preserved failure is a hypothesis these runs cannot test."
+  "Every run finished its last retirement check 55.06-55.80 s after its own baseline, whereas the system-only control changed count about 59.8 s after its baseline. The earlier GPU runs lack this same baseline-relative clock. On the shared controller-ready to host-result clock these new runs took 65.1-68.6 s, the earlier passes 66.4-68.5 s, and the failed run 81.8 s for 7 lifetimes. The 71.1 s earlier wsi_lifetime run also passed. These runs do not discriminate duration as a cause of the preserved failure."
  ],
  "fixture": {
   "build_command": "make build/vgpu_tcp_gpu_windows_draft.exe  # zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror",
@@ -2857,5 +2857,10 @@
    "vm_name": "waddle_windows11_test"
   }
  },
- "workload": "triangle_present"
+ "workload": "triangle_present",
+ "signin_provenance_amendment": {
+  "recorded_by": "Codex independent review, 2026-10-21",
+  "reason": "The original disclosure incorrectly attributed console sign-in to the user. This chat records Codex entering the saved credential through QMP at explicit user request on October 20 and October 21. No run-folder artifact, source binding, outcome or acceptance criterion is changed. The duration disclosure also now separates baseline-relative and controller-relative clocks; its measured outcomes remain unchanged.",
+  "prior_receipt_sha256": "01440bc359fd69bade8eb6e8e0a2f5cad5e48fb9fa50334921b5df908bf1939a"
+ }
 }
