@@ -222,31 +222,134 @@ class runtime_driver_tests_t(unittest.TestCase):
         self.assertIs(sys.modules.get(auditor.__name__), auditor)
         self.assertTrue(dataclasses.is_dataclass(auditor.section_t))
 
-    def test_real_reviewed_preflight_stops_before_any_build(self):
-        private = Root / 'build/qualification_20261017/mingw_win32_private_1402/extracted/usr/bin'
-        evidence = Root / 'build/qualification_feature_20261021/root_tls'
-        args = type('Args', (), {
-            'cc': str(private / 'x86_64-w64-mingw32-gcc-win32'),
-            'cxx': str(private / 'x86_64-w64-mingw32-g++-win32'),
-            'dlltool': '/usr/bin/x86_64-w64-mingw32-dlltool',
-            'objdump': '/usr/bin/x86_64-w64-mingw32-objdump',
-            'nm': '/usr/bin/x86_64-w64-mingw32-nm',
-            'windres': '/usr/bin/x86_64-w64-mingw32-windres',
-            'ar': str(private / 'x86_64-w64-mingw32-gcc-ar-win32'),
-            'ranlib': str(private / 'x86_64-w64-mingw32-gcc-ranlib-win32'),
-            'reviewed_toolchain': str(evidence / 'reviewed_toolchain.json'),
-            'toolchain_provenance': str(evidence / 'toolchain_provenance.json'),
-            'runtime_policy': str(evidence / 'production_runtime_policy.json'),
-            'probe_runtime_policy': str(evidence / 'probe_runtime_policy.json')})()
-        selected = Driver._preflight(Root, args)
-        self.assertEqual(selected['runtime_policy'],
-                         json.loads(Path(args.runtime_policy).read_text()))
-        self.assertEqual(selected['probe_runtime_policy'],
-                         json.loads(Path(args.probe_runtime_policy).read_text()))
-        self.assertEqual(selected['inputs']['toolchain_identity']['identity'],
-                         json.loads(Path(args.reviewed_toolchain).read_text()))
-        self.assertIn('toolchain_provenance', selected['inputs'])
-        self.assertIn('host_cc', selected['inputs']['build_tools'])
+    def test_fixture_preflight_uses_real_auditor_and_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+
+            def make_tool(name):
+                path = fixture / name
+                path.write_text('#!/bin/sh\nprintf \'fixture tool 1\\n\'\n')
+                path.chmod(0o700)
+                return path
+
+            tools = {name: make_tool(name) for name in
+                     ('cc', 'cxx', 'dlltool', 'objdump', 'nm', 'windres', 'ar',
+                      'ranlib', 'cmake', 'ninja', 'host_cc', 'host_cxx')}
+            files = {}
+            for name in (*Driver.ArchiveNames, 'critical-header.h'):
+                path = fixture / name
+                path.write_bytes(('fixture:' + name).encode())
+                files[name] = path
+
+            def compiler_record(path):
+                return {'resolved_path': str(path.resolve()), 'sha256': 'a' * 64,
+                        'version': 'x86_64-w64-mingw32-gcc (GCC) 14.2.0',
+                        'dumpfullversion': '14.2.0',
+                        'dumpmachine': 'x86_64-w64-mingw32', 'thread_model': 'win32'}
+
+            actual_identity = {
+                'target': 'x86_64-w64-mingw32',
+                'cc': compiler_record(tools['cc']),
+                'cxx': compiler_record(tools['cxx']),
+                'runtime_archives': {
+                    name: {'resolved_path': str(files[name].resolve()),
+                           'sha256': hashlib.sha256(files[name].read_bytes()).hexdigest()}
+                    for name in Driver.ArchiveNames},
+                'critical_headers': {
+                    str(files['critical-header.h'].resolve()):
+                    hashlib.sha256(files['critical-header.h'].read_bytes()).hexdigest()}}
+            captured_identity = json.loads(json.dumps(actual_identity))
+            package_provenance = {'fixture_proof': 'compiler/package capture is mocked'}
+            actual_identity['package_provenance'] = package_provenance
+            reviewed_identity = fixture / 'reviewed-toolchain.json'
+            reviewed_identity.write_text(json.dumps(actual_identity))
+            provenance_path = fixture / 'toolchain-provenance.json'
+            provenance_path.write_text('{}')
+            runtime_policy = {
+                'allowed_api_callers': {'TlsAlloc': ['reviewed_tls_owner'],
+                                        'FlsAlloc': [], 'DuplicateHandle': []},
+                'tls_pairs': {'reviewed_tls_owner': 'reviewed_tls_cleanup'},
+                'dynamic_lookup_callers': ['reviewed_lookup_owner']}
+            probe_policy = {
+                'allowed_api_callers': {'TlsAlloc': [], 'FlsAlloc': ['reviewed_probe_owner'],
+                                        'DuplicateHandle': []},
+                'tls_pairs': {}, 'dynamic_lookup_callers': []}
+            runtime_policy_path = fixture / 'production-policy.json'
+            runtime_policy_path.write_text(json.dumps(runtime_policy))
+            probe_policy_path = fixture / 'probe-policy.json'
+            probe_policy_path.write_text(json.dumps(probe_policy))
+            args = type('Args', (), {
+                **{name: str(tools[name]) for name in
+                   ('cc', 'cxx', 'dlltool', 'objdump', 'nm', 'windres', 'ar', 'ranlib')},
+                'reviewed_toolchain': str(reviewed_identity),
+                'toolchain_provenance': str(provenance_path),
+                'runtime_policy': str(runtime_policy_path),
+                'probe_runtime_policy': str(probe_policy_path)})()
+            required_tools = {'cmake': tools['cmake'], 'ninja': tools['ninja'],
+                              'cc': tools['host_cc'], 'c++': tools['host_cxx']}
+
+            def run_preflight():
+                def capture_fixture(cc, cxx):
+                    self.assertEqual(Path(cc), tools['cc'].resolve())
+                    self.assertEqual(Path(cxx), tools['cxx'].resolve())
+                    return captured_identity
+
+                with patch.object(Driver, 'capture_toolchain_identity',
+                                  side_effect=capture_fixture), \
+                     patch.object(Driver, 'verify_package_provenance',
+                                  return_value=package_provenance), \
+                     patch.object(Driver, '_required_tool',
+                                  side_effect=lambda name: required_tools[name]):
+                    return Driver._preflight(Root, args)
+
+            selected = run_preflight()
+            self.assertEqual(selected['runtime_policy'], runtime_policy)
+            self.assertEqual(selected['probe_runtime_policy'], probe_policy)
+            self.assertEqual(selected['inputs']['toolchain_identity']['identity'],
+                             actual_identity)
+            self.assertEqual(selected['inputs']['source_hashes'], Driver.source_identity(Root))
+            self.assertEqual(selected['inputs']['runtime_policy_sha256'],
+                             Driver.digest(runtime_policy_path))
+            self.assertEqual(selected['inputs']['probe_runtime_policy_sha256'],
+                             Driver.digest(probe_policy_path))
+            for name, path in required_tools.items():
+                key = 'host_' + name if name in ('cc', 'c++') else name
+                if name == 'c++':
+                    key = 'host_cxx'
+                self.assertEqual(selected['inputs']['build_tools'][key]['resolved_path'],
+                                 str(path.resolve()))
+
+            # The production entrypoint must reject stale/malformed review inputs
+            # before verification scripts, probe compilation, or the LLVM build.
+            build_started = AssertionError('build gate reached before preflight rejection')
+            with patch.object(Driver, 'capture_toolchain_identity',
+                              return_value=captured_identity), \
+                 patch.object(Driver, 'verify_package_provenance',
+                              return_value=package_provenance), \
+                 patch.object(Driver, '_required_tool',
+                              side_effect=lambda name: required_tools[name]), \
+                 patch.object(Driver, 'run', side_effect=build_started), \
+                 patch.object(Driver, 'build_native', side_effect=build_started), \
+                 patch.object(Driver, 'preflight_runtime_probe', side_effect=build_started):
+                malformed_identity = json.loads(reviewed_identity.read_text())
+                malformed_identity['cc']['sha256'] = 'b' * 64
+                reviewed_identity.write_text(json.dumps(malformed_identity))
+                with self.assertRaisesRegex(ValueError, 'toolchain/runtime identity mismatch'):
+                    Driver.main(self._preflight_argv(args))
+                reviewed_identity.write_text(json.dumps(actual_identity))
+                args.probe_runtime_policy = str(fixture / 'missing-probe-policy.json')
+                with self.assertRaisesRegex(SystemExit, 'cannot read reviewed probe runtime policy'):
+                    Driver.main(self._preflight_argv(args))
+
+    @staticmethod
+    def _preflight_argv(args):
+        return ['--cc', args.cc, '--cxx', args.cxx, '--dlltool', args.dlltool,
+                '--objdump', args.objdump, '--nm', args.nm, '--windres', args.windres,
+                '--ar', args.ar, '--ranlib', args.ranlib,
+                '--reviewed-toolchain', args.reviewed_toolchain,
+                '--toolchain-provenance', args.toolchain_provenance,
+                '--runtime-policy', args.runtime_policy,
+                '--probe-runtime-policy', args.probe_runtime_policy]
 
     def test_package_provenance_rejects_archive_hash_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:

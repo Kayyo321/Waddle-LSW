@@ -1886,3 +1886,18 @@ link/audit evidence `root_tls/future_link_revision/`. Full new production link,
 static admission and native qualification remain pending.
 
 Task impact: +0% to #5/all tasks; parent85.5%, M2 94%, Time Ended TBD.
+
+### Fresh-checkout CI preflight correction (2026-10-21)
+
+Current-head OpenCL CI at `52f8999` found that one integration test depended on
+this machine's private build/compiler evidence, absent in a fresh checkout. The
+failed job/log remain preserved (`ci_opencl_39659026160_job.log`). The corrected
+test uses explicit temporary tools, archives/headers, identities and distinct
+policies, exercises the actual preflight, auditor, tool records and source hashes,
+and proves malformed identity/missing policy reject before any build. Only
+external compiler capture/package proof/PATH selection are doubles; separate
+real package and native build evidence remain mandatory. Root's full34 tests
+PASS normally and optimized outside ptrace, including ASan/LSan boundaries.
+Receipt `build/qualification_feature_20261021/ci_preflight_root/receipt.json`.
+This is a test portability fix, not production/native acceptance. +0% to every
+task; parent85.5%, M2 94%, Time Ended TBD. CI must rerun at the corrected head.
