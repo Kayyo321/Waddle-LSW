@@ -21,7 +21,8 @@ vgpu-dxvk-client-build: vgpu-dxvk-pin scripts/build_dxvk_client.py patches/dxvk/
 .PHONY: vgpu-native-loader-win64
 # Windows loaders build from a private copy of the pin with the tracked patches applied
 # (patches/vulkan_loader/, approved 2026-10-22); the submodule itself is never modified.
-VgpuLoaderPatches = patches/vulkan_loader/0001-release-windows-initialization-module-references.patch
+VgpuLoaderPatches = patches/vulkan_loader/0001-release-windows-initialization-module-references.patch \
+	patches/vulkan_loader/0002-skip-dxgi-sorting-for-explicit-driver-lists.patch
 vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan_loader.cmake scripts/vulkan_loader_win64.cmake scripts/vulkan_loader_private_source.py $(VgpuLoaderPatches)
 	python3 -B scripts/vulkan_loader_private_source.py build/vendor/vulkan_loader_private
 	cmake -S build/vendor/vulkan_loader_private -B build/vendor/vulkan_loader_win64_private -G Ninja -DCMAKE_TOOLCHAIN_FILE="$(CURDIR)/scripts/vulkan_loader_win64.cmake" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE="$(CURDIR)/scripts/vulkan_loader.cmake" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DUSE_GAS=ON

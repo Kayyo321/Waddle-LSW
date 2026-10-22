@@ -25,7 +25,8 @@ from pathlib import Path
 Root = Path(__file__).resolve().parents[1]
 Submodule = Root / 'submodules/vulkan_loader'
 PatchDirectory = Root / 'patches/vulkan_loader'
-ExpectedPatches = ('0001-release-windows-initialization-module-references.patch',)
+ExpectedPatches = ('0001-release-windows-initialization-module-references.patch',
+                   '0002-skip-dxgi-sorting-for-explicit-driver-lists.patch')
 
 
 def run(arguments: list[str], cwd: Path, data: bytes | None = None, environment: dict[str, str] | None = None) -> bytes:

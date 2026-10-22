@@ -1,0 +1,81 @@
+diff --git a/loader/loader.c b/loader/loader.c
+index 04d2f45..3eca0d8 100644
+--- a/loader/loader.c
++++ b/loader/loader.c
+@@ -4823,7 +4823,7 @@ VkResult loader_create_instance_chain(const VkInstanceCreateInfo *pCreateInfo, c
+ 
+     VkLoaderFeatureFlags feature_flags = 0;
+ #if defined(_WIN32)
+-    feature_flags = windows_initialize_dxgi();
++    feature_flags = windows_initialize_dxgi(inst);
+ #endif
+ 
+     // The following line of code is actually invalid at least according to the Vulkan spec with header update 1.2.193 and onwards.
+diff --git a/loader/loader_windows.c b/loader/loader_windows.c
+index e6d54dc..0e2e673 100644
+--- a/loader/loader_windows.c
++++ b/loader/loader_windows.c
+@@ -945,6 +945,20 @@ void sort_physical_devices_with_same_luid(struct loader_instance *inst, uint32_t
+     }
+ }
+ 
++// An explicit driver list (VK_DRIVER_FILES, else VK_ICD_FILENAMES) is the same override that makes
++// loader_get_data_files skip the registry. With it, DXGI adapter-preference sorting is skipped too,
++// exactly as when DXGI factory creation fails: no DXGI factory is created, so dxgi, dxcore and their
++// RPC/ALPC clients never start in the process.
++bool windows_explicit_driver_list(const struct loader_instance *inst) {
++    char *files = loader_secure_getenv(VK_DRIVER_FILES_ENV_VAR, inst);
++    if (NULL == files) {
++        files = loader_secure_getenv(VK_ICD_FILENAMES_ENV_VAR, inst);
++    }
++    bool explicit_list = NULL != files;
++    loader_free_getenv(files, inst);
++    return explicit_list;
++}
++
+ // This function allocates icd_phys_devs_array which must be freed by the caller if not null
+ VkResult windows_read_sorted_physical_devices(struct loader_instance *inst, uint32_t *icd_phys_devs_array_count,
+                                               struct loader_icd_physical_devices **icd_phys_devs_array) {
+@@ -953,6 +967,10 @@ VkResult windows_read_sorted_physical_devices(struct loader_instance *inst, uint
+     uint32_t icd_phys_devs_array_size = 0;
+     struct loader_icd_term *icd_term = NULL;
+     IDXGIFactory6 *dxgi_factory = NULL;
++    if (windows_explicit_driver_list(inst)) {
++        loader_log(inst, VULKAN_LOADER_INFO_BIT, 0, "Explicit driver list in use. Physical devices will not be sorted");
++        goto out;
++    }
+     HRESULT hres = fpCreateDXGIFactory1(&IID_IDXGIFactory6, (void **)&dxgi_factory);
+     if (hres != S_OK) {
+         loader_log(inst, VULKAN_LOADER_INFO_BIT, 0, "Failed to create DXGI factory 6. Physical devices will not be sorted");
+@@ -1031,8 +1049,11 @@ out:
+     return res;
+ }
+ 
+-VkLoaderFeatureFlags windows_initialize_dxgi(void) {
++VkLoaderFeatureFlags windows_initialize_dxgi(const struct loader_instance *inst) {
+     VkLoaderFeatureFlags feature_flags = 0;
++    if (windows_explicit_driver_list(inst)) {
++        return feature_flags;
++    }
+     IDXGIFactory6 *dxgi_factory = NULL;
+     HRESULT hres = fpCreateDXGIFactory1(&IID_IDXGIFactory6, (void **)&dxgi_factory);
+     if (hres == S_OK) {
+diff --git a/loader/loader_windows.h b/loader/loader_windows.h
+index 12e2e13..348e10c 100644
+--- a/loader/loader_windows.h
++++ b/loader/loader_windows.h
+@@ -112,9 +112,12 @@ VkResult windows_sort_physical_device_groups(struct loader_instance *inst, const
+                                              const uint32_t sorted_device_count,
+                                              struct loader_icd_physical_devices *sorted_phys_dev_array);
+ 
+-// Creates a DXGI factory
++// Returns true when VK_DRIVER_FILES or VK_ICD_FILENAMES supplies an explicit driver list
++bool windows_explicit_driver_list(const struct loader_instance *inst);
++
++// Creates a DXGI factory unless an explicit driver list is in use
+ // Returns VkLoaderFeatureFlags containing VK_LOADER_FEATURE_PHYSICAL_DEVICE_SORTING if successful, otherwise 0
+-VkLoaderFeatureFlags windows_initialize_dxgi(void);
++VkLoaderFeatureFlags windows_initialize_dxgi(const struct loader_instance *inst);
+ 
+ // Retrieve a path to an installed app package that contains Vulkan manifests.
+ // When done using the returned string, the caller should free the pointer.
