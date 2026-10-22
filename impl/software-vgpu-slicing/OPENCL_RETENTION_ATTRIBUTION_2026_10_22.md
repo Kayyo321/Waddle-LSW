@@ -294,3 +294,71 @@ loader and the seven-step OS pre-initialization:
 
 Native exit 0, natural process absence and a complete diagnostic. This matches the zero-residual
 proof of section 10 with the fixed ICD. It is one ordinary life, not the 1100-cycle reload.
+
+## 13. Reload R9 and the RPC timer residual (2026-10-22)
+
+R9 ran the 1100-cycle reload with the promoted-structure ICD (composite `ec4eaf98…`, controls
+`opencl_reload_controls_native_06d96b57`). Two attempts gave the same result:
+
+| Attempt | Cycle 1 | Cycle 2 | Cycle 3 |
+|:--|:--|:--|:--|
+| `opencl_reload_final_r9` | 121 handles, exact | 121 handles, exact | 123 handles, rejected |
+| `opencl_reload_final_r9_attempt2` | 121 handles, exact | 121 handles, exact | 123 handles, rejected |
+
+TLS 1083 and FLS 4075 matched baseline in every cycle. The R8 cycle-2 defect is gone. In both
+attempts the native process exited naturally with status 1 after the fixture rejected cycle 3, the
+host session was empty with no signals, and no reload, OpenCL or CDB process remained
+(`failed_attempt_review.json` in each directory).
+
+### Six-life census `opencl_census_a442128d`
+
+Census revision `opencl_census_multilife_r1/` runs six ordinary lives in one process, with a full
+snapshot after every unload and one host slot per life. Native exit 0; all snapshots complete.
+
+| Life | Handles after unload | Change from the previous life |
+|:--|--:|:--|
+| Baseline | 109 | |
+| 1 | 109 | none |
+| 2 | 111 | +1 Thread, +1 unnamed Event; two new pool workers |
+| 3 | 113 | +1 Event, +1 Thread |
+| 4 | 113 | none |
+| 5 | 113 | life 2's Thread and Event closed when its worker (TID 1144) exited |
+| 6 | 111 | one new pool worker |
+
+Every non-main thread starts at `ntdll+0x24990`, which the pinned ntdll PDB names `TppWorkerThread`.
+
+### Kernel handle trace `opencl_census_ad3a8117`
+
+Revision `opencl_census_multilife_r2/` adds snapshot helper revision 4 (`--trace-enable`,
+`--trace-dump`). It enables kernel handle tracing on the paused target at baseline. After every unload
+it dumps the open and close stacks of each changed handle and the target's unload ring. The original
+snapshot mode is unchanged, and both runner and helper patches reverse exactly. Native exit 0.
+
+Lives 2, 3 and 6 each add one Thread and one Event. The newest open of every one of them has the same
+stack (frames named with the pinned ntdll and kernelbase PDBs):
+
+```
+Thread: RtlUserThreadStart <- TppWorkerThread+0x80d <- TppTimerpExecuteCallback+0x2ba
+        <- RPCRT4+0x171db <- RPCRT4+0x174fd <- RPCRT4+0x33548 <- DuplicateHandle+0x40 <- ZwDuplicateObject
+Event:  RtlUserThreadStart <- TppWorkerThread+0x80d <- TppTimerpExecuteCallback+0x2ba
+        <- RPCRT4+0x171db <- RPCRT4+0x174fd <- RPCRT4+0x3340d <- CreateEventW+0x7d <- ZwCreateEvent
+```
+
+Older trace rows for the same handle values belong to dxgi, dxcore (through cfgmgr32
+`DeviceIoControl`) and directxdatabasehelper, which open and close them within a life. In life 5 the
+life-2 pair closes together with two ALPC ports.
+
+### Attribution
+
+- The residual is RPC runtime per-thread state: a duplicated thread handle and an event that RPCRT4
+  attaches to a thread-pool worker when its timer callback runs there. It stays until that worker
+  retires after idling.
+- The timer exists because the process holds RPC/ALPC connections. Those come from dxgi, dxcore and
+  directxdatabasehelper, which the Windows Vulkan loader uses to enumerate and sort adapters.
+- Neither Waddle nor clvk code is on these stacks. The Waddle sources queue no thread-pool work.
+- The cycle in which it appears depends on timer timing. With R9's steady cycle length it falls in
+  cycle 3 every time.
+
+No predicate, threshold, baseline or count policy changed. Resolving this needs a human decision:
+an upstream loader change that stops the DXGI/DXCore enumeration for explicitly listed drivers, an
+OS-level step, or a contract amendment. Each one is outside the approvals already given.

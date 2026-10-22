@@ -2330,3 +2330,18 @@ transcripts. Each one was admitted only on exact SHA-256 equality
 
 Next: prepare and run the R9 1100-cycle reload. All tasks +0%; parent 85.5% /
 In Progress, Time Ended TBD.
+
+### Reload R9 attribution and guard review (2026-10-22)
+
+R9 passes cycles 1 and 2 with exact equality. Cycle 3 adds one Thread and one Event, identically in
+two attempts. Kernel handle tracing attributes both to RPCRT4 per-thread state created by an ntdll
+thread-pool timer callback. The RPC connections come from the Windows Vulkan loader's DXGI/DXCore
+adapter enumeration ([attribution section 13](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#13-reload-r9-and-the-rpc-timer-residual-2026-10-22)).
+The resolution needs a human decision.
+
+An offline review of the frozen CDB guard R14 found that its 309 KB worker upload takes about 120 s
+against a 60 s stage. R14 also imports an inventory module that the reboot wiped, with no preserved
+copy. R14 and the native guard fixture each need a reviewed revision before native guard controls
+(`build/qualification_feature_20261021/guard_native_control_r1/REVIEW_FINDINGS_20261022.md`).
+
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
