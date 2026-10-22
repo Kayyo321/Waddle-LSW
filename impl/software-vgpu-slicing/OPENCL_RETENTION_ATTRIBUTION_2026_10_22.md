@@ -191,3 +191,21 @@ with native exit 0, natural absence, host status 0 / worker 0, no signals and an
 
 Exact equality now depends on one more OS-only step, a nonblocking loopback connect. That is
 outside the approved six, so it needs a human decision. No predicate, threshold or baseline changed.
+
+## 10. Zero-residual proof (amendment 3, 2026-10-22)
+
+Step 7 is implemented (commit `4ce7a3e`), and the reload witness bound now admits the seven-step
+witness (commit `4dd24d1`). Census R10 (`opencl_census_r10/`, fixture `622209a3…`, receipt
+`bc547a4a…`, patched loader `8a9e3d32…`, no `VK_LOADER_DEBUG`) ran
+`opencl_census_5a04e3d8`: one ordinary eight-context RTX 5080 life after the approved seven-step
+pre-initialization.
+
+| Resource | Baseline | After full unload | Delta |
+|:--|--:|--:|--:|
+| Handles | 109 | 109 | 0 added, 0 removed, 0 changed |
+| TLS / FLS | unchanged | unchanged | 0 |
+| Modules / threads | unchanged | unchanged | 0 |
+
+Native exit 0, natural process absence, host status 0 / worker 0, no signals, empty owned session,
+and exactly one seven-step witness line. This satisfies the proof required before reload runs. It
+is one ordinary life, not the 1100-cycle reload or heap acceptance.

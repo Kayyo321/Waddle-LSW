@@ -2258,3 +2258,14 @@ from qualification batches.
 [Amendment 3](OPENCL_RELOAD_CONTRACT.md#approved-amendment-3-loopback-connect-and-loader-logging-2026-10-22).
 Commit `1182579` records censuses R7-R9 (+0%). All tasks +0%; parent 85.5% / In
 Progress, Time Ended TBD.
+
+### Seven-step pre-initialization and zero-residual proof (2026-10-22)
+
+Commit `65ba629` records amendment 3 (+0%). Commit `4ce7a3e` (`test(opencl): add
+approved loopback connect pre-initialization step`) adds step 7 with 133/133
+lines and 146/146 branches (+0%). Commit `4dd24d1` (`fix(opencl): accept the
+seven-step pre-initialization witness`) raises the reload witness bound that the
+79-character witness would have exceeded (+0%). Atomic unit `docs(opencl): record
+zero-residual census` records census R10: one full GPU life leaves handles, TLS,
+FLS, modules and threads exactly unchanged. The 1100-cycle reload is next. All
+tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
