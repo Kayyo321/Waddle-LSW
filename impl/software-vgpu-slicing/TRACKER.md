@@ -2269,3 +2269,16 @@ seven-step pre-initialization witness`) raises the reload witness bound that the
 zero-residual census` records census R10: one full GPU life leaves handles, TLS,
 FLS, modules and threads exactly unchanged. The 1100-cycle reload is next. All
 tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Promoted core structure specification (2026-10-22)
+
+Commit `32bbf08` records census R10 (+0%). The 1100-cycle reload attempt with
+the R8 runner failed in cycle 2: clvk read stale bytes from an unwritten
+`VkPhysicalDeviceDriverProperties`. Root cause: the ICD advertises Vulkan 1.3
+but leaves every promoted core property and feature structure unwritten, and
+device creation skips promoted feature requests. Atomic unit `docs(vgpu):
+specify promoted core structure publication` adds the
+[IMPL_DESC section](IMPL_DESC.md#promoted-core-structure-publication-2026-10-22).
+The failed attempt stays preserved under
+`build/qualification_feature_20261021/opencl_reload_final_r8/`. All tasks +0%;
+parent 85.5% / In Progress, Time Ended TBD.

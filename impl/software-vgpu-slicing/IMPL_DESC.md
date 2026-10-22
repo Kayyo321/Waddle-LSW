@@ -7131,3 +7131,122 @@ sections 7-8).
   shows the dxgi closure retained by the unpatched loader and zero residual for the patched one after
   OS pre-initialization. Every Windows workload that loads the patched `vulkan-1.dll` is requalified:
   the M2 regression workloads, the Windows physical matrix and the DXVK checks.
+
+### Promoted core structure publication (2026-10-22)
+
+The 1100-cycle OpenCL reload run (`build/qualification_feature_20261021/opencl_reload_final_r8/`)
+failed in cycle 2. clvk logged non-UTF-8 bytes from `VkPhysicalDeviceDriverProperties.driverName`.
+The ICD advertises `VK_API_VERSION_1_3` (`ImplementedApiVersion`). It fills only the Vulkan 1.1, 1.2
+and 1.3 aggregate structures, robustness2 and maintenance5 in `vkGetPhysicalDeviceProperties2`. Every
+structure promoted into core 1.1-1.3 stays unwritten. clvk does not value-initialize its driver, ID,
+PCI or maintenance3 property members, so cycle 2 read stale heap bytes. The same gap exists for
+promoted feature structures in `vkGetPhysicalDeviceFeatures2`. `vkCreateDevice` silently skipped them
+as unknown headers, so a requested true promoted feature was neither enabled nor rejected.
+
+**Scope.** The fix covers exactly the structures promoted into Vulkan 1.1, 1.2 and 1.3 that are not
+already canonical nodes. It changes no allowlist, no advertised API version and no extension list.
+Each promoted structure reports the same values as its aggregate: the projected aggregate policy is
+the only source. Promoted structures of version 1.4 and later, and structures of extensions the ICD
+does not advertise, stay unknown headers.
+
+**Version gate.** A promoted structure is written only when the visible API version is at least its
+promotion version. The visible API version is `min(actual, ImplementedApiVersion)` under a ready reply
+profile and `VK_API_VERSION_1_0` otherwise; `project_properties` and Features2 share this rule. A
+promoted structure above the visible version is left byte-for-byte unchanged.
+
+#### Properties2 (`venus_properties_native.zig`)
+
+Seventeen promoted property structures. Each maps every named field to the same-named field of its
+aggregate, except the subgroup renames listed. Comptime checks prove each target field exists with an
+identical type.
+
+| Aggregate | Structures |
+|:--|:--|
+| `VkPhysicalDeviceVulkan11Properties` | ID; Subgroup (`supportedStages`, `supportedOperations`, `quadOperationsInAllStages` map to the `subgroup`-prefixed aggregate names); PointClipping; Multiview; ProtectedMemory; Maintenance3 |
+| `VkPhysicalDeviceVulkan12Properties` | Driver; FloatControls; DescriptorIndexing; DepthStencilResolve; SamplerFilterMinmax; TimelineSemaphore |
+| `VkPhysicalDeviceVulkan13Properties` | SubgroupSizeControl; InlineUniformBlock; TexelBufferAlignment; ShaderIntegerDotProduct; Maintenance4 |
+
+- `chain_t` gains `promoted_count` (0..17), `promoted_tags` and `promoted_addresses` in forward order.
+  `collect_chain` range-checks each promoted object at its full native size and rejects a repeated
+  promoted tag. Promoted headers still count toward the 64-header walk quota.
+- `request_tags(chain, api_version)` returns the wire request: the chain's canonical tags in forward
+  order, then each missing parent aggregate in 1.1, 1.2, 1.3 order. A parent is added only when at
+  least one promoted structure of that level is present and the API gate admits it. The result never
+  exceeds the existing five-tag wire profile because every parent is one of the five canonical tags.
+  A forged snapshot whose additions would exceed five returns `Invalid`.
+- `publish_properties2` derives the gate from the projected `value.properties.apiVersion`, recomputes
+  the request and validates the reply against it. Promoted targets join the existing range proof:
+  they must not overlap the root, the snapshot, the reply, any canonical target, each other or any
+  unknown header. The topology re-collection compares promoted arrays as well. All checks finish
+  before the first write. The canonical nodes occupy the first `chain.count` reply nodes, so their
+  publication is unchanged. Each admitted promoted target receives only its named fields from the
+  parent aggregate node. Headers, links, padding and unknown objects stay unchanged.
+- ICD `properties2`: when the chain holds a promoted structure and the actual API version is not
+  cached yet, it first issues the existing command 6 core-properties query through `raw_properties`.
+  That query's failure leaves the output unchanged with the usual loss handling. Chains without
+  promoted structures issue exactly the same commands as before.
+
+#### Features2 (`venus_features_native.zig`)
+
+Thirty promoted feature structures; every field keeps its aggregate name. `ShaderDrawParameters` and
+`HostQueryReset` stay canonical nodes.
+
+| Aggregate | Structures |
+|:--|:--|
+| `VkPhysicalDeviceVulkan11Features` | 16BitStorage; Multiview; VariablePointers; ProtectedMemory; SamplerYcbcrConversion |
+| `VkPhysicalDeviceVulkan12Features` | 8BitStorage; ShaderAtomicInt64; ShaderFloat16Int8; DescriptorIndexing; ScalarBlockLayout; ImagelessFramebuffer; UniformBufferStandardLayout; ShaderSubgroupExtendedTypes; SeparateDepthStencilLayouts; TimelineSemaphore; BufferDeviceAddress; VulkanMemoryModel |
+| `VkPhysicalDeviceVulkan13Features` | ImageRobustness; InlineUniformBlock; PipelineCreationCacheControl; PrivateData; ShaderDemoteToHelperInvocation; ShaderTerminateInvocation; SubgroupSizeControl; Synchronization2; TextureCompressionASTCHDR; ZeroInitializeWorkgroupMemory; DynamicRendering; ShaderIntegerDotProduct; Maintenance4 |
+
+- `chain_t` gains `promoted_count` (0..30), `promoted_tags` and `promoted_addresses`; its pinned x64
+  size changes from 104 to 472 bytes. A repeated promoted tag is `Invalid`.
+- New owned `promoted_source_t` carries the visible `api_version` and the projected Vulkan 1.1/1.2/1.3
+  aggregate words (extents 12, 47 and 15, zero suffix). `validate_features2` and `publish_features2`
+  take it as a fifth argument. Validation rejects a non-Boolean word or nonzero suffix, a canonical
+  aggregate node whose words differ from the source, and a promoted target that is null, misaligned,
+  re-tagged, overflowing or overlapping the outer object, a canonical target or another promoted
+  target. Validation of promoted targets does not depend on the API gate. `publish_batch` keeps its
+  canonical-only contract.
+- ICD `features2` builds the source from `project_device_feature_nodes`, the same projection that
+  device creation uses, zeroed without a ready reply profile. Its structural preflight before any
+  command passes an all-zero source.
+
+#### Device creation (`venus_device_native.zig`)
+
+- The same thirty promoted feature structures are recognized. Each word must be 0 or 1, and a
+  repeated promoted tag is `Invalid`.
+- Vulkan `VkDeviceCreateInfo` valid usage forbids an aggregate together with any structure promoted
+  into it (VUIDs 02829, 02830 and 06532). Any such pair is `Invalid` in either order, even when every
+  word is false.
+- After the walk, promoted words of one level merge into one owned aggregate record, because the
+  structures of one level cover disjoint aggregate fields. A level with at least one true word appends
+  that aggregate record after the recognized nodes, in 1.1, 1.2, 1.3 order. An all-false level adds
+  nothing, which matches the existing omission of all-false records. If the record for level 1.1 is
+  appended while a standalone `ShaderDrawParameters` record is present, the standalone word moves into
+  the aggregate's `shaderDrawParameters` word and the standalone record is removed. Level 1.2 does the
+  same with `HostQueryReset`. The host therefore never receives an aggregate together with its
+  promoted standalone structure.
+- Appended records use canonical tags absent from the chain, so the nine-record bound and the
+  2696-byte owned request are unchanged. `preflight` reports `FeatureNotPresent` for an appended true
+  word. `preflight_supported` checks it against the projected aggregate policy. The enabled-device
+  state records it under the aggregate tag, which keeps later feature gates exact.
+- The ICD cross-checks at compile time that the feature and device modules list identical promoted
+  tags and levels.
+
+#### Verification
+
+- Properties: every promoted structure alone, with its aggregate, after unknown headers and in a
+  combined chain, under visible API 1.0, 1.1, 1.2 and 1.3. Named fields equal the aggregate, and every
+  other byte, header, link and canary is unchanged. Gated structures stay unchanged. Duplicate,
+  overflowing, overlapping and forged-request cases return `Invalid` with zero output bytes changed.
+- Features: every promoted field one-hot through the source; API gating; inconsistent aggregate node;
+  every promoted alias and alignment error.
+- Device: every promoted field one-hot true, giving `FeatureNotPresent` from `preflight` and an exact
+  aggregate record from `preflight_supported`; all-false omission; every aggregate/promoted conflict in
+  both orders; the ShaderDrawParameters and HostQueryReset folds; duplicates and malformed Booleans.
+- ICD: Properties2 with a cold API cache issues command 6 before command 148 and publishes driver
+  properties identical to the Vulkan12 aggregate; Features2 promoted structures match the aggregate;
+  device creation with a promoted BufferDeviceAddress request sends the equivalent Vulkan12 aggregate
+  and records it in the enabled state.
+- Gates: Debug and ReleaseSafe units, owned sanitizers with zero leaks, production coverage at least
+  90% for each changed module, the Windows cross-compiles, then the rebuilt ICD in the census and the
+  full 1100-cycle reload.
