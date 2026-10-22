@@ -488,6 +488,12 @@ class runtime_audit_test_t(unittest.TestCase):
             map_path.write_text(text)
             with self.subTest(message=message), self.assertRaises(Audit.audit_error_t):
                 Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root, **kwargs)
+        probe = map_text(output="libOpenCL.dll").replace(" 0x140001140 llvm::llvm_shutdown()\n", "")
+        map_path.write_text(probe)
+        self.assertEqual(Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root,
+                                                   llvm_runtime=False)["map_output"], "libOpenCL.dll")
+        with self.assertRaisesRegex(Audit.audit_error_t, "define llvm::llvm_shutdown"):
+            Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root)
         map_path.write_text(map_text(output="libOpenCL.dll"))
         with self.assertRaisesRegex(Audit.audit_error_t, "cannot weaken mandatory"):
             Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root,

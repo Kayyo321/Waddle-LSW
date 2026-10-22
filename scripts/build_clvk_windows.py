@@ -346,15 +346,19 @@ def _load_reviewed_json(path, label):
 
 
 def build_admission(root, dll_path, map_path, *, nm, map_working_directory, runtime_policy,
-                    expected_output_name='libOpenCL.dll', expected_exports=None):
-    """Run both static admission checks on one exact freshly linked DLL/map."""
+                    expected_output_name='libOpenCL.dll', expected_exports=None, llvm_runtime=True):
+    """Run both static admission checks on one exact freshly linked DLL/map.
+
+    llvm_runtime=False is only for the LLVM-free runtime probe DLL, whose own harness
+    defines the llvm::llvm_shutdown() the shared EH-pool callback calls."""
     audit = load_auditor(root)
     link = audit.verify_runtime_link(map_path, dll_path,
                                      expected_output_name=expected_output_name,
                                      shim_object='clvk_runtime_tls.o',
                                      eh_pool_object='clvk_runtime_eh_pool.o',
                                      runtime_policy=runtime_policy,
-                                     map_working_directory=map_working_directory)
+                                     map_working_directory=map_working_directory,
+                                     llvm_runtime=llvm_runtime)
     image = audit.audit_runtime_tls(dll_path, nm=nm, limits=TlsLimits,
                                     expected_exports=(expected_exports or
                                                       read_export_list(root / 'scripts/clvk/OpenCL.def')),
@@ -725,7 +729,7 @@ def preflight_runtime_probe(root, selected, folder):
         report['admission'] = build_admission(
             root, probe_dll, probe_map, nm=selected['nm'],
             map_working_directory=probe, runtime_policy=selected['probe_runtime_policy'],
-            expected_output_name=probe_dll.name, expected_exports=ProbeExports)
+            expected_output_name=probe_dll.name, expected_exports=ProbeExports, llvm_runtime=False)
     except (OSError, ValueError, SystemExit) as exc:
         report['status'] = 'rejected'
         report['rejection'] = str(exc)

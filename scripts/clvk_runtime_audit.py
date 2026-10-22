@@ -834,8 +834,13 @@ def verify_runtime_link(
     eh_pool_object: str = "clvk_runtime_eh_pool.o",
     runtime_policy: Mapping | None = None,
     map_working_directory: str | os.PathLike[str] | None = None,
+    llvm_runtime: bool = True,
 ) -> dict:
     """Prove link-map output identity, ABI member ownership, and CRT policy.
+
+    llvm_runtime is True for OpenCL.dll: the EH-pool callback's llvm::llvm_shutdown()
+    must then resolve from LLVM's own ManagedStatic object. Only the LLVM-free runtime
+    probe DLL passes False; a runtime policy file can never change it.
 
     The link map and DLL are borrowed inputs. Caller must produce both in the
     same fresh build invocation and bind this result with their receipt; a GNU
@@ -874,13 +879,14 @@ def verify_runtime_link(
         "required_map_symbols": {
             "atexit": "dllcrt2.o",
             "__gnu_cxx::__freeres()": "eh_alloc.o",
-            "llvm::llvm_shutdown()": "ManagedStatic.cpp.obj",
             "waddle_clvk_eh_pool_register": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_release": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_initializer": Path(eh_pool_object).name,
             "waddle_clvk_runtime_tls_limits": Path(shim_object).name,
         },
     }
+    if llvm_runtime:
+        mandatory_policy["required_map_symbols"]["llvm::llvm_shutdown()"] = "ManagedStatic.cpp.obj"
     for key, required in mandatory_policy.items():
         if key in policy and policy[key] != required:
             raise audit_error_t(f"runtime policy cannot weaken mandatory {key} checks")
