@@ -12,9 +12,9 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD399-case aggregate and90.42% branch /98.56% line gates pass; current37-module ASan/LSan seam and15-case Linux physical matrix pass. Final DXVK native heap, exact-head CI and final review remain open; final Windows physical and M2 owned/WSI workloads pass; see QUALIFICATION_CONTINUATION_2026_10_21.md. |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 94% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification flagged for user review). M2 requalification on the patched loader, exact-head CI and final review remain open. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). Guarded native heap qualification, exact-head CI and final review remain open; see attribution section 15. |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). The guarded three-life heap run (r3, guard R22) completes but FAILS: 27 OWNED blocks (107,842 B) leak per OpenCL.dll load (LLVM ManagedStatics without llvm_shutdown; std::mutex critical sections never deleted). The fix needs user-approved private-copy changes, a rebuild, a new 1100-cycle reload and a new heap run (attribution section 16). |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -23,7 +23,7 @@
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned loader, medium-integrity bootstrap/receiver and real GPU/DXVK execution verified; final native heap teardown qualification pending |
 | #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
 
-**Total Feature Completion**: `91.5%`
+**Total Feature Completion**: `92.5%`
 
 ## Commit History & Progress Log
 
@@ -2507,3 +2507,24 @@ The R16 timeout control left one CPU-only control fixture suspended in the guest
 retained, not terminated, and recorded in the lease. The guard is now cleared for the heap runs. The
 Windows physical matrix revision 2 is running. All tasks +0%; parent 91.5% / In Progress, Time
 Ended TBD.
+
+### Physical matrix, guarded heap runs and M2 revision 4 (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `09ff98e` | docs(tracker): record CDB guard R16-R18 and the passing native controls | No task delta; overall +0% | - |
+| `fce4e28` | docs(opencl): correct the pre-initialization comments to ten steps and four amendments | #5 +0%; overall +0% | Comment-only; pre-initialization coverage 100% |
+| `59c06e2` | docs(vgpu): record guard R19-R22, the heap residual review and both heap results | #3 +4%; overall +1% | Windows physical r2: 12/12 PASS. DXVK heap revision 11: three lifetimes, native exit 0, review PASS with zero OWNED blocks; guard controls r6/r8/r9 PASS; review tool tests 7/7 |
+| `2e411c4` | docs(opencl): attribute the guarded heap run's owned per-load leaks | #5 +0%; overall +0% | OpenCL heap r3: three lives complete, review FAIL (27 OWNED blocks per load) |
+
+TODO #3 moves from 90% to 94% (+1% overall). The Windows physical matrix requalified 12/12 on the
+patched loader, and the DXVK heap qualification shows zero owned leaks. Classifying DXVK's own
+statically linked runtime residue as CLIENT rather than OWNED was Claude's decision under the user's
+autonomy instruction. It follows the handoff criterion "zero owned leaks" and is flagged for the
+user's review. The remaining 6% of #3 is M2 on the patched loader (running as revision 4; revision 3
+refused before native work because its owner check named the previous lease owner), exact-head CI
+and the final review.
+
+TODO #5 stays at 70%. The OpenCL heap run proves per-load owned leaks in OpenCL.dll, which block
+heap acceptance until a user-approved teardown fix, rebuild and requalification. The R16 control
+fixture (pid 7984) remains suspended in the guest. Parent 92.5% / In Progress, Time Ended TBD.
