@@ -7453,3 +7453,59 @@ the exact files:
 
 The guard touches only the debugger and the qualification target's suspend counts. It runs only
 during native heap captures, and no shipped component links or calls it.
+
+### CDB suspend guard R16-R18 and passing native guard controls (2026-10-22)
+
+R15 and the first control runners failed natively in five distinct ways. Each one was fixed in a new
+revision directory, and the failed run was kept as evidence. Every revision keeps the worker
+executable `2da53bdf…` and the C core byte-identical to R14 and R15.
+
+| Native run | Failure | Fix |
+|:--|:--|:--|
+| `guard_native_control_r1/run_c9e1182e` (R15) | Every control: "The command line is too long". The worker start script embedded the 4398-character base64 C# marker reader. R12 sends each script as `powershell -encodedcommand <base64(UTF-16LE)>`, which made it 16627 characters against the 8191-character Windows limit. | **R16:** `stage_worker()` also stages the marker reader as `guard_marker_reader_<sha16>.cs` beside the worker, before any timed stage. The start and signal scripts read it once, check its SHA-256 in memory, then `Add-Type` it, which brings them to 5979 and 4667 encoded characters. `_run_powershell` refuses any command whose encoded form exceeds `MaxWinrmCommandChars` (8000). |
+| `guard_native_control_r2/run_03ab77e8` (R16) | Every post-pass worker signal: "original capture-stage deadline is exhausted". Cleanup had `min(stage deadline, now + 6 s)`, but each R12 PowerShell call keeps 4 s for its own cleanup and needs 2 s more. The worker then waited out its stage-sized `wait_ms` and aborted without reconciling. | **R17:** cleanup gets its own deadline, `now + GuardCleanupSeconds` (20 s), never capped by the stage. The worker always waits `MaxWorkerWaitMs` (60000) for its signal. The pass-1 precheck reserves only R12's own `reserve_after` (at least 19 s). A cleanup that outlasts the stage still fails the stage, but the worker always gets its signal. |
+| `guard_native_control_r3/run_60f05c3c` (R17) | All four fixtures exited naturally, but (a) the wait re-read `MainModule.FileName` while the worker was exiting, giving "suspend worker identity changed", and (b) the result came back with PowerShell's appended CRLF, giving "unknown worker result record". The fresh control's thread was created before the READY census. | **R18:** proves the worker's identity once while it is alive, holds that `Process` handle, writes the signal and waits with `WaitForExit` on the held handle. The result travels base64-encoded and decodes to the exact bytes. **Controls r4:** the fresh hook fires inside pass 1, after the READY census. |
+| `guard_native_control_r4/run_f87e010c` (R18) | normal, fresh and timeout pass. inject fails because the stray suspend was injected after both passes, when no worker was left to recover it. | **Controls r5:** the injection fires inside pass 1, after R12's CDB pass returns and before the guard signals its worker. |
+
+**Native result** (`guard_native_control_r5/run_b85ce051`, R18 `99237ba3…`, runner `634d497f…`, adapter
+`edd1f1c5…`, fixture `52c668c8…`): **PASS.**
+
+| Control | Guard outcome | Fixture retirement |
+|:--|:--|:--|
+| normal | cleanup proven, nothing recovered, every original at its baseline | TERMINAL 0, handles 58/58, absent |
+| inject | exactly slot 0 (tid 7500) recovered | TERMINAL 0, handles 52/52, absent |
+| fresh | `FRESH|tid=6156|…|action=none` (the fixture-created thread), never resumed, stage fails | TERMINAL 0, handles 52/52, absent |
+| timeout | the real 15 s CDB bound is hit and all six originals are restored (the CREATE_SUSPENDED slot back to 1); `GuardTimeoutCleaned` | TERMINAL 0, handles 52/52, absent |
+
+**Retained process.** In run `03ab77e8` the R16 timeout control left fixture `guard_cdb_control.exe`
+pid 7984 (creation `01dd62614fecac33`) with all six threads suspended. A read-only liveness query
+found no CDB or worker process alive. The handoff forbids force kills and arbitrary
+`ResumeThread`, and a new worker cannot restore it, because its baselines would be the current
+counts. So the process stays in the guest, CPU-only and outside every qualification image name,
+and the lease records it. Removing it is left to the user.
+
+**Offline gates (R18).** 30 tests (22 + 8) pass, normal and `-O`; 98.38% lines and 96.7% branch
+outcomes (176/182). The fake PowerShell now models R12's 4 s + 2 s per-call reserve, the
+8191-character command line and PowerShell's CRLF. The same tests fail 6 cases against R16 and
+8 against R17. The control runner and adapter pass 17 tests, normal and `-O`. The DXVK heap runner
+revision 9 and OpenCL heap runner r2 pin R18 and differ from revision 8 and r1 only in that pin
+(exact inverse patches, tests pass).
+
+| File (under `build/qualification_feature_20261021/`) | SHA-256 |
+|:--|:--|
+| `cdb_guard_r18/guarded_capture.py` | `99237ba334e57391774ec37d2d74f5107eeb43c8409c158cef427f766f758d91` |
+| `cdb_guard_r18/receipt.json` | `e6a26730f32fbeb2fdb424a3c3ffc9f3d99432e5906b23fd9f299d40078d8e70` |
+| `cdb_guard_r18/guarded_capture_r16.patch` | `b10bbcde29d7a73d3dd3789ff940f14dc1e6a1fe92f5800c7d192c5118db4e66` |
+| `cdb_guard_r18/guarded_capture_r17.patch` | `4fbc8a92ea3f6d2747e1267ca85860409fc9fb1333ac2a1ad9171ddc816163e6` |
+| `cdb_guard_r18/guarded_capture_r18.patch` | `32f411d6b30332e972ac4ff156604993c712e0bd4e44bf7915d40707c5af820b` |
+| `cdb_guard_r18/test_guarded_capture.py` | `be8dd8a042dbf57dfa7cce5e7b5a751131f9670f12c88b13227dd01f939d8f8a` |
+| `cdb_guard_r18/test_guarded_capture_paths.py` | `4c51a45d2bd44ec7d09ee22c0ce40d6e7d87114da70e4fce6851889959437091` |
+| `guard_native_control_r5/guard_control_runner.py` | `634d497fb7f198672f157fcb3d4ad9e8a8c31be1a452b21845c4cf9534c7457d` |
+| `guard_native_control_r5/guard_fixture_capture.py` | `edd1f1c51ba384931f1fd960f86696aeca30970d5caebc6b713b0d076ca07da0` |
+| `guard_native_control_r5/test_guard_control_runner.py` | `193e800e4c3f722126e045cb7d79eee5b35f7e273bba39a349bb1cede543ceab` |
+| `dxvk_heap_runner_revision9/dxvk_pageheap.py` | `ac1fcea9fc3f2b14f8e9b9502b7b3323dea5e5422e14ce163e840b920ebb24f9` |
+| `run_dxvk_final_heap_revision9.py` | `2b300d8c1542cac87f2cf7a509e134b8f0189bd602190a78ae6d6b58516778ae` |
+| `opencl_heap_runner_r2/runner.py` | `f9cec92659f734b548e4a6dc97ae70a6630066917d5bacc255cbc509b7f175cf` |
+| `opencl_heap_runner_r2/run_heap.py` | `25cfda4dbaf54b2f855f508ea428267b8a3eea655d24ba50986c068d679fa41b` |
+
+The guard has now passed its native controls, so heap acceptance runs may use it.
