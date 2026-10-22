@@ -40,7 +40,7 @@ class inventory_tests_t(unittest.TestCase):
         for root, names, expected, units in (
                 ('venus_device_wire.zig', wire.SourceNames, WireSources, 32),
                 ('venus_device_native.zig', native.SourceNames,
-                 WireSources | {'venus_device_native.zig'}, 45)):
+                 WireSources | {'venus_device_native.zig'}, 49)):
             with self.subTest(root=root):
                 inventory = owned.source_inventory(SourceRoot / root)
                 self.assertEqual(len(names), len(set(names)))
@@ -78,7 +78,7 @@ class inventory_tests_t(unittest.TestCase):
         inventory = owned.icd_source_inventory(SourceRoot / 'venus_icd.zig')
         self.assertEqual(len(inventory), 31)
         self.assertEqual({path.name for path in inventory}, set(owned.IcdEmbeddedSourceNames))
-        self.assertEqual(sum(len(item['functions']) for item in inventory.values()), 662)
+        self.assertEqual(sum(len(item['functions']) for item in inventory.values()), 674)
         icd = inventory[(SourceRoot / 'venus_icd.zig').resolve()]
         self.assertTrue(M2OwnershipFunctions <= set(icd['functions']))
         self.assertTrue(M2OwnershipFunctions.isdisjoint(icd['excluded']))
