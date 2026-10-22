@@ -775,7 +775,7 @@ static void lease_lifecycle(void) {
     puts("AV Wayland leases: CreateV3 selection, immutable lifecycle routing and capability loss passed");
 }
 /* Windows-drawn frames: request client-side decoration when the compositor
- * offers xdg-decoration and destroy the
+ * offers xdg-decoration, re-issue titles only on change, and destroy the
  * decoration object before its toplevel as the protocol requires. */
 static void decoration_callbacks(void) {
     deliveries = 0; fail_delivery = 0;
@@ -802,6 +802,15 @@ static void decoration_callbacks(void) {
     video_window_t *window = find_window(&client, 9);
     assert(window && window->decoration && decoration_modes == modes + 1);
     assert(last_decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    /* Geometry with an unchanged title does not re-issue it; a change does. */
+    av_message_t geometry = window->geometry;
+    geometry.type = MsgWindowGeometry; geometry.width = 32;
+    titles = title_requests;
+    assert(av_wayland_message(&client, &geometry) == 0 && title_requests == titles);
+    snprintf(geometry.title, sizeof(geometry.title), "*notes.txt - Notepad");
+    assert(av_wayland_message(&client, &geometry) == 0);
+    assert(title_requests == titles + 1 && !strcmp(last_title, "*notes.txt - Notepad"));
+    assert(av_wayland_message(&client, &geometry) == 0 && title_requests == titles + 1);
     /* Retirement destroys the decoration before the toplevel. */
     destroy_count = 0;
     retire_window(window);
@@ -809,5 +818,5 @@ static void decoration_callbacks(void) {
     assert(!strcmp(destroy_log[0], "zxdg_toplevel_decoration_v1"));
     assert(!strcmp(destroy_log[1], "xdg_toplevel"));
     free_window(window);
-    puts("AV Wayland decorations: client-side mode and destroy order passed");
+    puts("AV Wayland decorations: client-side mode, title change re-issue and destroy order passed");
 }

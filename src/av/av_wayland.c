@@ -842,7 +842,12 @@ int av_wayland_message(av_wayland_t *client, const av_message_t *message) {
     } else if (message->type == MsgWindowGeometry) {
         uint32_t previous_flags = window->geometry.flags;
         uint32_t process_id = window->geometry.process_id;
+        /* Titles are NUL-terminated by the codec; re-issue only real changes. */
+        int retitled = strncmp(window->geometry.title, message->title,
+                               sizeof(message->title)) != 0;
         window->geometry = *message;
+        if (retitled)
+            xdg_toplevel_set_title(window->toplevel, message->title);
         if (!window->geometry.process_id) window->geometry.process_id = process_id;
         if (message->flags & AvWindowMinimized)
             xdg_toplevel_set_minimized(window->toplevel);
