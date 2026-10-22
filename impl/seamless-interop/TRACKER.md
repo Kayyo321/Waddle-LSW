@@ -18,7 +18,7 @@ Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
 | #1  | IMPL_DESC.md + TRACKER.md, contract freeze (protocol v1, layout v2, manifest schema, config keys) | Done | 2% | 100% | Contracts frozen in IMPL_DESC §3 |
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **hardware run by user pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | CSD + title fixes, script and template done; **GNOME and KDE hardware runs by user pending** |
-| #4  | Interop protocol v1 header + Zig codec, Hello/capabilities, chunked transfers | Pending | 4% | 0% | - |
+| #4  | Interop protocol v1 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | Codec 96.97% branch / 96.35% line; sanitizers clean; Windows lib + ABI link; CI configured |
 | #5  | IVSHMEM layout v2 (slot heap, 64 windows, 8 audio rings) | Pending | 3% | 0% | Waits on #4 |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
@@ -50,7 +50,7 @@ Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | Pending | 3% | 0% | Waits on #1 |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
-**Total Feature Completion**: `5.6%`
+**Total Feature Completion**: `9.6%`
 
 ## Commit History & Progress Log
 
@@ -87,9 +87,31 @@ Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
     summary), its fake-tool fixture `tests/interop/verify_m0.sh`, and
     `make interop-test` via `scripts/interop.mk`. No hardware evidence yet.
 
-- **Commit `HEAD`**: `docs(seamless-interop): add milestone 0 verification record`
+- **Commit `d4ccabd`**: `docs(seamless-interop): add milestone 0 verification record`
   - **Task Impact**: +10% to TODO: #2 (+0.3% overall), +10% to TODO: #3 (+0.3% overall)
   - **Summary**: Adds VERIFICATION_M0.md with prerequisites, procedure, pass
     rules, the fixes made before the run and empty result tables to be filled
-    from real GNOME/KDE runs. `HEAD` denotes the containing commit until
-    resolved by the next atomic commit.
+    from real GNOME/KDE runs.
+
+- **Commit `d3cc78d`**: `feat(interop): add interop protocol v1 public header`
+  - **Task Impact**: +20% to TODO: #4 (+0.8% overall feature completion)
+  - **Summary**: Public constants, structs, enumerations and the documented
+    allocation-free codec C ABI.
+
+- **Commit `1b22b42`**: `feat(interop): implement the Zig interop codec with tests and gates`
+  - **Task Impact**: +70% to TODO: #4 (+2.8% overall feature completion)
+  - **Summary**: Registry, message table, cross-field rules, transactional
+    writer and SHA-256 transfer reassembly; 16 Zig tests including a
+    20000-case fuzz, C ABI round trip, ASan/LSan/UBSan clean, coverage gate
+    96.97% branch / 96.35% line, Windows static library and ABI link.
+
+- **Commit `5fdb8a9`**: `ci(interop): verify seamless-interop gates on the feature branch`
+  - **Task Impact**: +10% to TODO: #4 (+0.4% overall feature completion)
+  - **Summary**: New interop workflow (Linux gates + native Windows ABI run);
+    AV workflow also runs on this branch. Workflow results are recorded when
+    observed.
+
+- **Commit `HEAD`**: `docs(seamless-interop): record protocol codec completion`
+  - **Task Impact**: +0% (tracker bookkeeping).
+  - **Summary**: Marks TODO #4 Done and resolves earlier HEAD entries. `HEAD`
+    denotes the containing commit until resolved by the next atomic commit.
