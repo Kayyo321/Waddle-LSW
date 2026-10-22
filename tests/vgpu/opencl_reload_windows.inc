@@ -34,7 +34,7 @@ typedef struct reload_cycle_result_t {
 /** Immutable orchestration callbacks; state is borrowed through the full run.
  * preinit runs the approved OS-only first-use step (2026-10-22 contract amendment) once,
  * before the entry baseline; zero means success. preinit_record is the borrowed witness
- * written into the baseline record; it must be nonempty lowercase [a-z0-9_,]. */
+ * written into the baseline record; it must be 1..128 characters of lowercase [a-z0-9_,]. */
 typedef struct reload_api_t {
     int (*cycle)(void *,reload_cycle_result_t *);
     int (*absent)(void *);
@@ -221,7 +221,7 @@ static void reload_path(FILE *output,const wchar_t *path) {
         (unsigned long)observed.handles,observed.tls,observed.fls, \
         (unsigned long long)result.session,(unsigned long)result.foreign[0], \
         (unsigned long)result.foreign[1],result.module_exact,result.modules_absent),1) : 0)
-/** @brief Accept only a bounded JSON-safe witness: 1..64 chars of [a-z0-9_,].
+/** @brief Accept only a bounded JSON-safe witness: 1..128 chars of [a-z0-9_,].
  * @param[in] record Borrowed witness; NULL is rejected.
  * @return Nonzero only when the witness can be emitted verbatim inside a JSON string.
  */
@@ -229,7 +229,7 @@ static int reload_record_safe(const char *record) {
     if(!record || !record[0])return 0;
     for(unsigned i=0;record[i];++i) {
         char c=record[i];
-        if(i>=64 || !((c>='a' && c<='z') || (c>='0' && c<='9') || c=='_' || c==','))return 0;
+        if(i>=128 || !((c>='a' && c<='z') || (c>='0' && c<='9') || c=='_' || c==','))return 0;
     }
     return 1;
 }

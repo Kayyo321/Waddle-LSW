@@ -46,7 +46,7 @@ def record(value):
 def valid():
     baseline = {"event": "baseline", "pid": 1234, "creation": Creation, "cycles": 1100, "contexts_per_cycle": 3, "idle_threads": 4,
                 "handles": 62, "tls": 8, "fls": 12, "heap_acceptance": False, "entry": [50, 8, 12],
-                "os_preinit": "user32,winsock,bcrypt,dxgi_factory,search_order,package_family", "module_utf16": Module.encode("utf-16-be").hex()}
+                "os_preinit": "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect", "module_utf16": Module.encode("utf-16-be").hex()}
     lines = [record(baseline)]
     hosts = []
     for cycle in range(1, 1101):
@@ -95,6 +95,16 @@ class OutputTests(unittest.TestCase):
         self.assertFalse(result["heap_acceptance"])
         self.assertEqual(result["scope"], "full_dll_reload_lifecycle_only")
 
+    def test_fixture_witness_matches_verifier(self):
+        import re
+        root = Path(__file__).resolve().parents[2]
+        include = (root / "tests/vgpu/opencl_os_preinit_windows.inc").read_text()
+        records = re.findall(r'^#define OsPreinitRecord "([a-z0-9_,]+)"$', include, re.M)
+        self.assertEqual(records, [Gate.OsPreinit])
+        bound = re.findall(r"if\(i>=([0-9]+) \|\|", (root / "tests/vgpu/opencl_reload_windows.inc").read_text())
+        self.assertEqual(len(bound), 1)
+        self.assertLessEqual(len(Gate.OsPreinit), int(bound[0]))
+
     def test_baseline_shape_and_identity(self):
         for field in json.loads(self.lines[0][len(Gate.Prefix):]):
             with self.subTest(missing=field):
@@ -103,7 +113,8 @@ class OutputTests(unittest.TestCase):
                              ("creation", "0"*16), ("module_utf16", "ff"), ("heap_acceptance", True), ("handles", True),
                              ("tls", -1), ("fls", "12"), ("entry", [50, 8]), ("entry", [True, 8, 12]), ("extra", 1),
                              ("os_preinit", "user32,winsock,bcrypt,dxgi_factory"), ("os_preinit", ""), ("os_preinit", None),
-                             ("os_preinit", "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,extra")]:
+                             ("os_preinit", "user32,winsock,bcrypt,dxgi_factory,search_order,package_family"),
+                             ("os_preinit", "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect,extra")]:
             with self.subTest(field=field, value=value):
                 self.reject_record("baseline", field, value)
 
