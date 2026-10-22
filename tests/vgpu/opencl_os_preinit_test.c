@@ -26,6 +26,9 @@ static struct fake_module_t fake_modules[FakeModules] = {
     {L"user32.dll", 0}, {L"ws2_32.dll", 0}, {L"bcrypt.dll", 0}, {L"dxgi.dll", 0}, {L"dwmapi.dll", 0},
     {L"kernel32.dll", 0}};
 static int fake_wrong_dwmapi_path, fake_package_status, fake_long_system, fake_truncated_module;
+static int fake_connect_immediate, fake_name_size_wrong, fake_select_mode, fake_last_error = 10035;
+typedef struct { uint16_t family, port; uint32_t address; unsigned char zero[8]; } fake_address_t;
+typedef struct { unsigned count; uintptr_t sockets[64]; } fake_set_t;
 static char fake_trace[FakeTraceCapacity][FakeTraceText];
 static unsigned fake_trace_count, fake_step, fake_fail_step;
 static int fake_startups, fake_cleanups, fake_sockets_open, fake_sockets_closed;
@@ -70,6 +73,75 @@ static int WINAPI fake_closesocket(uintptr_t socket)
     fake_record("closesocket");
     ++fake_sockets_closed;
     return fake_fails() ? -1 : 0;
+}
+
+static int WINAPI fake_bind(uintptr_t socket, const void *address, int size)
+{
+    const fake_address_t *a = address;
+    assert(socket >= 0x40 && a && size == 16 && a->family == 2 && a->port == 0 && a->address == 0x0100007fu);
+    fake_record("bind");
+    return fake_fails() ? -1 : 0;
+}
+
+static int WINAPI fake_listen(uintptr_t socket, int backlog)
+{
+    assert(socket >= 0x40 && backlog == 1);
+    fake_record("listen");
+    return fake_fails() ? -1 : 0;
+}
+
+static int WINAPI fake_getsockname(uintptr_t socket, void *address, int *size)
+{
+    assert(socket >= 0x40 && address && size && *size == 16);
+    fake_record("getsockname");
+    if (fake_fails()) return -1;
+    ((fake_address_t *)address)->port = 0x3930;
+    if (fake_name_size_wrong) *size = 8;
+    return 0;
+}
+
+static int WINAPI fake_setsockopt(uintptr_t socket, int level, int name, const char *value, int size)
+{
+    int enabled = 0;
+    assert(socket >= 0x40 && level == 6 && name == 1 && value && size == (int)sizeof enabled);
+    memcpy(&enabled, value, sizeof enabled);
+    assert(enabled == 1);
+    fake_record("setsockopt");
+    return fake_fails() ? -1 : 0;
+}
+
+static int WINAPI fake_ioctlsocket(uintptr_t socket, long command, unsigned long *value)
+{
+    assert(socket >= 0x40 && command == (long)0x8004667eUL && value && *value == 1);
+    fake_record("ioctlsocket");
+    return fake_fails() ? -1 : 0;
+}
+
+static int WINAPI fake_connect(uintptr_t socket, const void *address, int size)
+{
+    const fake_address_t *a = address;
+    assert(socket >= 0x40 && a && size == 16 && a->port == 0x3930 && a->address == 0x0100007fu);
+    fake_record("connect");
+    if (fake_fails()) { fake_last_error = 10061; return -1; }  /* WSAECONNREFUSED */
+    return fake_connect_immediate ? 0 : -1;
+}
+
+static int WINAPI fake_wsa_last_error(void)
+{
+    fake_record("WSAGetLastError");
+    return fake_fails() ? 10061 : fake_last_error;
+}
+
+static int WINAPI fake_select(int ignored, void *read, void *write, void *except, const void *wait)
+{
+    const int32_t *time = wait;
+    fake_set_t *writable = write;
+    assert(!ignored && !read && !except && writable && writable->count == 1 && time && time[0] == 2 && time[1] == 0);
+    fake_record("select");
+    if (fake_fails()) return 0;  /* timeout */
+    if (fake_select_mode == 1) writable->count = 0;
+    if (fake_select_mode == 2) writable->sockets[0] = 0x1000;
+    return 1;
 }
 
 static int WINAPI fake_cleanup(void)
@@ -152,6 +224,14 @@ static FARPROC GetProcAddress(HMODULE module, const char *name)
     if (module == &fake_modules[1] && !strcmp(name, "WSACleanup")) FakeExport(fake_cleanup);
     if (module == &fake_modules[3] && !strcmp(name, "CreateDXGIFactory1")) FakeExport(fake_create_factory);
     if (module == &fake_modules[5] && !strcmp(name, "GetPackagesByPackageFamily")) FakeExport(fake_packages);
+    if (module == &fake_modules[1] && !strcmp(name, "bind")) FakeExport(fake_bind);
+    if (module == &fake_modules[1] && !strcmp(name, "listen")) FakeExport(fake_listen);
+    if (module == &fake_modules[1] && !strcmp(name, "getsockname")) FakeExport(fake_getsockname);
+    if (module == &fake_modules[1] && !strcmp(name, "setsockopt")) FakeExport(fake_setsockopt);
+    if (module == &fake_modules[1] && !strcmp(name, "ioctlsocket")) FakeExport(fake_ioctlsocket);
+    if (module == &fake_modules[1] && !strcmp(name, "connect")) FakeExport(fake_connect);
+    if (module == &fake_modules[1] && !strcmp(name, "select")) FakeExport(fake_select);
+    if (module == &fake_modules[1] && !strcmp(name, "WSAGetLastError")) FakeExport(fake_wsa_last_error);
     assert(!"unexpected export");
     return NULL;
 }
@@ -223,7 +303,11 @@ static const char *const ExpectedTrace[] = {
     "load bcrypt.dll", "free bcrypt.dll",
     "load dxgi.dll", "resolve CreateDXGIFactory1", "CreateDXGIFactory1", "Release", "free dxgi.dll",
     "search dwmapi.dll", "GetSystemDirectoryW", "GetModuleFileNameW", "free dwmapi.dll",
-    "borrow kernel32.dll", "resolve GetPackagesByPackageFamily", "GetPackagesByPackageFamily"};
+    "borrow kernel32.dll", "resolve GetPackagesByPackageFamily", "GetPackagesByPackageFamily",
+    "load ws2_32.dll", "resolve WSAStartup", "resolve WSACleanup", "resolve socket", "resolve closesocket", "resolve bind",
+    "resolve listen", "resolve getsockname", "resolve setsockopt", "resolve ioctlsocket", "resolve connect", "resolve select",
+    "resolve WSAGetLastError", "WSAStartup", "socket", "socket", "bind", "listen", "getsockname", "setsockopt", "ioctlsocket",
+    "connect", "WSAGetLastError", "select", "closesocket", "closesocket", "WSACleanup", "free ws2_32.dll"};
 enum { ExpectedSteps = sizeof ExpectedTrace / sizeof ExpectedTrace[0] - 1 /* Release is not fakeable */ };
 
 static void reset(unsigned fail_step, int factory_mode)
@@ -237,6 +321,8 @@ static void reset(unsigned fail_step, int factory_mode)
     fake_wrong_dwmapi_path = 0;
     fake_package_status = 0;
     fake_long_system = fake_truncated_module = 0;
+    fake_connect_immediate = fake_name_size_wrong = fake_select_mode = 0;
+    fake_last_error = 10035;  /* WSAEWOULDBLOCK */
 }
 
 /** @brief Every acquired owner is released, whatever the outcome. */
@@ -254,9 +340,9 @@ int main(void)
     assert(os_preinitialize() == 0);
     assert(fake_trace_count == sizeof ExpectedTrace / sizeof ExpectedTrace[0]);
     for (unsigned i = 0; i < fake_trace_count; ++i) assert(!strcmp(fake_trace[i], ExpectedTrace[i]));
-    assert(fake_step == ExpectedSteps && fake_startups == 1 && fake_sockets_open == 1 && fake_factories == 1);
+    assert(fake_step == ExpectedSteps && fake_startups == 2 && fake_sockets_open == 3 && fake_factories == 1);
     assert_released();
-    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_factory,search_order,package_family"));
+    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect"));
     const unsigned success_calls = fake_trace_count;
 
     unsigned failures = 0;
@@ -321,6 +407,19 @@ int main(void)
         fake_package_status = Statuses[i];
         assert(os_preinitialize() != 0);
         assert(!strcmp(fake_trace[fake_trace_count - 1], "GetPackagesByPackageFamily"));
+        assert_released();
+        ++failures;
+    }
+    reset(0, FactoryNormal);
+    fake_connect_immediate = 1;  /* immediate loopback success skips WSAGetLastError */
+    assert(os_preinitialize() == 0);
+    for (unsigned i = 0; i < fake_trace_count; ++i) assert(strcmp(fake_trace[i], "WSAGetLastError"));
+    assert_released();
+    for (int mode = 0; mode < 3; ++mode) {
+        reset(0, FactoryNormal);
+        if (mode == 0) fake_name_size_wrong = 1; else fake_select_mode = mode;
+        assert(os_preinitialize() != 0);
+        assert(!strcmp(fake_trace[fake_trace_count - 1], "free ws2_32.dll"));
         assert_released();
         ++failures;
     }

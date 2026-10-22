@@ -1,11 +1,11 @@
 /** @file opencl_os_preinit_windows.inc
  * @brief Approved OS-only first-use initialization before persistent reload baselines.
  *
- * Implements amendments 1 and 2 (2026-10-22) to OPENCL_RELOAD_CONTRACT.md. Windows keeps
+ * Implements amendments 1-3 (2026-10-22) to OPENCL_RELOAD_CONTRACT.md. Windows keeps
  * process-lifetime state after the first use of USER32, Winsock, bcrypt, DXGI, default-order
- * DLL search and the package state repository (see OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md).
- * Before the entry baseline the fixture runs exactly six Windows-component operations, in
- * order, and nothing else. No Waddle, clvk or Vulkan loader code runs here. Exact baseline
+ * DLL search, the package state repository and a nonblocking Winsock connect (see
+ * OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md). Before the entry baseline the fixture runs
+ * exactly seven Windows-component operations, in order, and nothing else. No Waddle, clvk or Vulkan loader code runs here. Exact baseline
  * equality is still required afterwards.
  *
  * Ownership: every module reference, Winsock startup, socket and COM reference acquired
@@ -15,13 +15,18 @@
  * The caller supplies the Win32 declarations (windows.h natively, a fake for tests).
  */
 
-/** Exact witness string recorded with the baseline; fixed order of the six steps. */
-#define OsPreinitRecord "user32,winsock,bcrypt,dxgi_factory,search_order,package_family"
+/** Exact witness string recorded with the baseline; fixed order of the seven steps. */
+#define OsPreinitRecord "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect"
 
 /** Fixed Winsock constants; winsock2.h is not included after windows.h. */
 enum { OsPreinitWinsockVersion = 0x0202, OsPreinitAfInet = 2, OsPreinitSockStream = 1,
        OsPreinitTcp = 6, OsPreinitWsaDataBytes = 512, OsPreinitReleaseSlot = 2,
-       OsPreinitPathCapacity = 520, OsPreinitStatusSuccess = 0, OsPreinitStatusInsufficientBuffer = 122 };
+       OsPreinitPathCapacity = 520, OsPreinitStatusSuccess = 0, OsPreinitStatusInsufficientBuffer = 122,
+       OsPreinitWouldBlock = 10035, OsPreinitLevelTcp = 6, OsPreinitTcpNoDelay = 1, OsPreinitSelectSeconds = 2 };
+/** FIONBIO as defined by winsock2.h: _IOW('f', 126, u_long). */
+#define OsPreinitFionbio ((long)0x8004667eUL)
+/** Loopback 127.0.0.1 in network byte order as stored in a little-endian uint32_t. */
+#define OsPreinitLoopback 0x0100007fu
 
 typedef int (WINAPI *os_preinit_startup_t)(WORD, void *);
 typedef uintptr_t (WINAPI *os_preinit_socket_t)(int, int, int);
@@ -30,10 +35,24 @@ typedef int (WINAPI *os_preinit_cleanup_t)(void);
 typedef int32_t (WINAPI *os_preinit_factory_t)(const GUID *, void **); /* HRESULT is a 32-bit LONG */
 typedef unsigned long (WINAPI *os_preinit_release_t)(void *);
 typedef int32_t (WINAPI *os_preinit_packages_t)(const wchar_t *, uint32_t *, wchar_t **, uint32_t *, wchar_t *); /* LONG */
+typedef int (WINAPI *os_preinit_bind_t)(uintptr_t, const void *, int);
+typedef int (WINAPI *os_preinit_listen_t)(uintptr_t, int);
+typedef int (WINAPI *os_preinit_name_t)(uintptr_t, void *, int *);
+typedef int (WINAPI *os_preinit_option_t)(uintptr_t, int, int, const char *, int);
+typedef int (WINAPI *os_preinit_ioctl_t)(uintptr_t, long, unsigned long *);
+typedef int (WINAPI *os_preinit_connect_t)(uintptr_t, const void *, int);
+typedef int (WINAPI *os_preinit_select_t)(int, void *, void *, void *, const void *);
+typedef int (WINAPI *os_preinit_error_t)(void);
+/** sockaddr_in, fd_set and timeval layouts of the Windows ABI; winsock2.h is not included. */
+typedef struct os_preinit_address_t { uint16_t family, port; uint32_t address; unsigned char zero[8]; } os_preinit_address_t;
+typedef struct os_preinit_set_t { unsigned count; uintptr_t sockets[64]; } os_preinit_set_t;
+typedef struct os_preinit_wait_t { int32_t seconds, microseconds; } os_preinit_wait_t;
 
 _Static_assert(sizeof(os_preinit_startup_t) == sizeof(FARPROC) && sizeof(os_preinit_socket_t) == sizeof(FARPROC) &&
                sizeof(os_preinit_close_t) == sizeof(FARPROC) && sizeof(os_preinit_cleanup_t) == sizeof(FARPROC) &&
-               sizeof(os_preinit_factory_t) == sizeof(FARPROC) && sizeof(os_preinit_packages_t) == sizeof(FARPROC),
+               sizeof(os_preinit_factory_t) == sizeof(FARPROC) && sizeof(os_preinit_packages_t) == sizeof(FARPROC) &&
+               sizeof(os_preinit_bind_t) == sizeof(FARPROC) && sizeof(os_preinit_select_t) == sizeof(FARPROC) &&
+               sizeof(os_preinit_address_t) == 16 && sizeof(os_preinit_wait_t) == 8,
                "export storage must match FARPROC exactly");
 
 /** IID_IDXGIFactory1 {770aae78-f26f-4dba-a829-253c83d1b387}. */
@@ -183,12 +202,83 @@ static int os_preinit_package_family(void)
     return status != OsPreinitStatusSuccess && status != OsPreinitStatusInsufficientBuffer;
 }
 
-/** @brief Run the six approved OS-only first-use operations in their fixed order.
- * @return Zero only when all six steps succeeded; stops at the first failing step.
+/** @brief One nonblocking 127.0.0.1 loopback connect completed with select (amendment 3).
+ *
+ * Opens a listener on an ephemeral loopback port and a TCP_NODELAY nonblocking client, connects
+ * (immediate success or WSAEWOULDBLOCK only), waits at most two seconds for writability, then
+ * closes both sockets, balances WSAStartup and frees the module. No accept and no data.
+ * @return Zero on success; nonzero after releasing every socket, startup and module reference.
+ */
+static int os_preinit_winsock_connect(void)
+{
+    HMODULE module = NULL;
+    os_preinit_startup_t startup = NULL;
+    os_preinit_cleanup_t cleanup = NULL;
+    os_preinit_socket_t open_socket = NULL;
+    os_preinit_close_t close_socket = NULL;
+    os_preinit_bind_t bind_socket = NULL;
+    os_preinit_listen_t listen_socket = NULL;
+    os_preinit_name_t socket_name = NULL;
+    os_preinit_option_t set_option = NULL;
+    os_preinit_ioctl_t io_control = NULL;
+    os_preinit_connect_t connect_socket = NULL;
+    os_preinit_select_t select_sockets = NULL;
+    os_preinit_error_t last_error = NULL;
+    union { unsigned char bytes[OsPreinitWsaDataBytes]; uint64_t align; } data;
+    if (!os_preinit_load(L"ws2_32.dll", &module)) return 1;
+    int failed = !os_preinit_resolve(module, "WSAStartup", &startup) ||
+                 !os_preinit_resolve(module, "WSACleanup", &cleanup) ||
+                 !os_preinit_resolve(module, "socket", &open_socket) ||
+                 !os_preinit_resolve(module, "closesocket", &close_socket) ||
+                 !os_preinit_resolve(module, "bind", &bind_socket) ||
+                 !os_preinit_resolve(module, "listen", &listen_socket) ||
+                 !os_preinit_resolve(module, "getsockname", &socket_name) ||
+                 !os_preinit_resolve(module, "setsockopt", &set_option) ||
+                 !os_preinit_resolve(module, "ioctlsocket", &io_control) ||
+                 !os_preinit_resolve(module, "connect", &connect_socket) ||
+                 !os_preinit_resolve(module, "select", &select_sockets) ||
+                 !os_preinit_resolve(module, "WSAGetLastError", &last_error);
+    if (!failed) {
+        memset(&data, 0, sizeof data);
+        if (startup(OsPreinitWinsockVersion, data.bytes) != 0) {
+            failed = 1;
+        } else {
+            const uintptr_t invalid = ~(uintptr_t)0;
+            uintptr_t server = open_socket(OsPreinitAfInet, OsPreinitSockStream, OsPreinitTcp);
+            uintptr_t client = server == invalid ? invalid : open_socket(OsPreinitAfInet, OsPreinitSockStream, OsPreinitTcp);
+            os_preinit_address_t address = {OsPreinitAfInet, 0, OsPreinitLoopback, {0}};
+            int size = (int)sizeof address, nodelay = 1;
+            unsigned long nonblocking = 1;
+            failed = client == invalid ||
+                     bind_socket(server, &address, (int)sizeof address) != 0 ||
+                     listen_socket(server, 1) != 0 ||
+                     socket_name(server, &address, &size) != 0 || size != (int)sizeof address ||
+                     set_option(client, OsPreinitLevelTcp, OsPreinitTcpNoDelay, (const char *)&nodelay, (int)sizeof nodelay) != 0 ||
+                     io_control(client, OsPreinitFionbio, &nonblocking) != 0;
+            if (!failed && connect_socket(client, &address, (int)sizeof address) != 0 &&
+                last_error() != OsPreinitWouldBlock) failed = 1;
+            if (!failed) {
+                os_preinit_set_t writable = {1, {client}};
+                os_preinit_wait_t wait = {OsPreinitSelectSeconds, 0};
+                if (select_sockets(0, NULL, &writable, NULL, &wait) != 1 || writable.count != 1 ||
+                    writable.sockets[0] != client) failed = 1;
+            }
+            if (client != invalid && close_socket(client) != 0) failed = 1;
+            if (server != invalid && close_socket(server) != 0) failed = 1;
+            if (cleanup() != 0) failed = 1;
+        }
+    }
+    if (!FreeLibrary(module)) failed = 1;
+    return failed;
+}
+
+/** @brief Run the seven approved OS-only first-use operations in their fixed order.
+ * @return Zero only when all seven steps succeeded; stops at the first failing step.
  * @note Callers must stop the run before measuring any baseline when this fails.
  */
 static int os_preinitialize(void)
 {
     return os_preinit_user32() || os_preinit_winsock() || os_preinit_bcrypt() ||
-           os_preinit_dxgi_factory() || os_preinit_search_order() || os_preinit_package_family();
+           os_preinit_dxgi_factory() || os_preinit_search_order() || os_preinit_package_family() ||
+           os_preinit_winsock_connect();
 }
