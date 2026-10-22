@@ -2491,3 +2491,19 @@ is the full-reload acceptance for TODO #5, so #5 moves from 40% to 70% (+6% over
 Patch 0002 and steps 8-10 still need the user's explicit ratification before merge (contract
 amendment 4). The native CDB guard controls are running now; the Windows physical matrix, M2 and the
 DXVK and OpenCL heap runs follow. Parent 91.5% / In Progress, Time Ended TBD.
+
+### CDB guard R16-R18 and passing native guard controls (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `dc7ca79` | docs(tracker): credit the passing 1100-cycle reload R10 to TODO #5 | #5 +0% (records the +30% above); overall +0% | Logged deltas re-summed to 91.5% |
+| `90bc5c5` | docs(vgpu): specify CDB guard R16-R18 and the passing native guard controls | #3, #5 +0%; overall +0% | Native controls r5 `run_b85ce051` PASS: normal, inject (slot 0 recovered), fresh (FRESH reported, never resumed), timeout (all six restored, `GuardTimeoutCleaned`); every fixture TERMINAL 0 with equal handles and absent |
+
+R15, R16 and R17 each failed the native guard controls once, on a WinRM command-line limit, a
+stage-capped cleanup deadline, and an exit-time identity re-read plus a PowerShell CRLF on the
+result. Controls r4 also showed that the inject hook fired too late. Each failure is preserved and
+fixed in a new revision ([IMPL_DESC](IMPL_DESC.md#cdb-suspend-guard-r16-r18-and-passing-native-guard-controls-2026-10-22)).
+The R16 timeout control left one CPU-only control fixture suspended in the guest (pid 7984). It is
+retained, not terminated, and recorded in the lease. The guard is now cleared for the heap runs. The
+Windows physical matrix revision 2 is running. All tasks +0%; parent 91.5% / In Progress, Time
+Ended TBD.
