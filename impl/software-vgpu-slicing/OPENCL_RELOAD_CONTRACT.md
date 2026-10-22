@@ -161,7 +161,9 @@ The user then approved two more OS-only steps and one upstream change on 2026-10
    `Microsoft.D3DMappingLayers_8wekyb3d8bbwe` with no output buffers (size query only). Only
    `ERROR_SUCCESS` and `ERROR_INSUFFICIENT_BUFFER` are accepted. kernel32 is borrowed with
    `GetModuleHandleW`; no reference is taken.
-3. **Loader patch.** Apply the 76-line Vulkan loader correction that stores the `gdi32.dll` and
+3. **Loader patch.** Apply the 76-line Vulkan loader correction (tracked as the 78-line
+   `0001-release-windows-initialization-module-references.patch`; the extra two lines are patch
+   header lines) that stores the `gdi32.dll` and
    `dxgi.dll` references taken by `windows_initialization` and frees them in `loader_release()`,
    through a tracked `patches/vulkan_loader/` private build. The submodule pin does not change.
 4. **Regression reruns.** Every Windows workload that loads the patched `vulkan-1.dll` is
@@ -190,14 +192,18 @@ The baseline witness becomes
 `user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect`. All other rules of
 amendments 1 and 2 are unchanged, including exact equality on every reload.
 
-## Amendment 4: explicit driver lists skip DXGI, step 4 loads dxgi.dll only (2026-10-22)
+## Amendment 4: explicit driver lists skip DXGI, step 4 loads dxgi.dll only, steps 8-10 (2026-10-22)
 
 R9 failed cycle 3 with one Thread and one Event. Kernel handle tracing attributes both to RPCRT4
 per-thread state created by a thread-pool timer callback
 ([attribution sections 13-14](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#13-reload-r9-and-the-rpc-timer-residual-2026-10-22)).
-The user approved evaluating a loader patch on 2026-10-22 and told Claude to work autonomously and
-resolve roadblocks itself. Under that instruction Claude integrates both changes below. Neither one
-alters a predicate, threshold, baseline or count policy.
+Claude recommended a loader patch that skips DXGI/DXCore enumeration for explicit driver lists, to
+be A/B tested and then integrated. On 2026-10-22 the user replied: "Go with your recommended option,
+also make sure to work autonomous because im away. If you hit a roadblock you must be the one to
+find a way around it." Under that instruction Claude integrates the three changes below. Item 6 of
+amendment 1 requires separate approval for any loader patch; this amendment rests on the reply
+above, and the user is asked to ratify patch 0002 and steps 8-10 explicitly before the branch
+merges. None of the three changes alters a predicate, threshold, baseline or count policy.
 
 1. **Loader patch 0002.** When `VK_DRIVER_FILES` or `VK_ICD_FILENAMES` is set, which is the same
    override that already makes the loader skip the registry, `windows_initialize_dxgi` and
@@ -233,3 +239,6 @@ The baseline witness becomes
 `user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters`,
 and verifiers reject both the previous `dxgi_factory` witness and the seven-step prefix. All other
 rules of amendments 1-3 are unchanged, including exact equality on every reload.
+
+**Outcome (2026-10-22).** Reload R10 passed all 1100 cycles with exact equality on this amendment
+([attribution section 15](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#15-reload-r10-passes-1100-cycles-2026-10-22)).
