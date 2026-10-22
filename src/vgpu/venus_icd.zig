@@ -1784,7 +1784,7 @@ fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv
     const chain = features_native.collect_chain(output.pNext) catch return;
     var nodes = zero_feature_nodes(&chain);
     const zero_core = [_]u32{0} ** features_wire.CoreFlags;
-    features_native.validate_features2(output_address, &chain, nodes[0..chain.count], &zero_core) catch return;
+    features_native.validate_features2(output_address, &chain, nodes[0..chain.count], &zero_core, &features_native.promoted_source_t{}) catch return;
     const raw = ensure_raw_features(physical) orelse return;
     const core = project_core(&raw.core);
     var supported_names: [4][]const u8 = undefined;
@@ -1800,7 +1800,17 @@ fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv
             break;
         }
     }
-    features_native.publish_features2(output_address, &chain, nodes[0..chain.count], &core) catch return;
+    const entry = physical_features_cache(physical).?; // ensure_raw_features cached the actual API.
+    const source = promoted_feature_source(raw, supported_names[0..supported_count], visible_api_version(entry.actual_api_version));
+    features_native.publish_features2(output_address, &chain, nodes[0..chain.count], &core, &source) catch return;
+}
+// Promoted structures mirror the same projected aggregates that device creation admits.
+fn promoted_feature_source(raw: *const features_wire.result_t, names: []const []const u8, api: u32) features_native.promoted_source_t {
+    var source = features_native.promoted_source_t{ .api_version = api };
+    if (!reply_profile_ready) return source;
+    const projected = project_device_feature_nodes(raw, names);
+    for (&source.flags, projected[0..3], FeatureCounts[0..3]) |*flags, node, count| @memcpy(flags[0..count], node.flags[0..count]);
+    return source;
 }
 /// Query modern typed physical properties; caller owns initialized exclusive root/chain storage.
 /// Promoted core structures are filled from their parent aggregates under the visible API gate;
@@ -10000,6 +10010,60 @@ test "Features2 cached raw137 one-hots are immutable while public flags stay fal
         try std.testing.expectEqualDeep(raw_before, entry.raw);
         try std.testing.expectEqual(@as(u32, 2), fixture.commands);
     }
+}
+test "public Features2 promoted structures mirror projected aggregates for every raw aggregate one-hot" {
+    @setEvalBranchQuota(1000000);
+    const capabilities = feature_test_capabilities();
+    const Promoted = features_native.Promoted;
+    const storage_t = extern struct { value: [128]u8 align(8) };
+    var promoted_ones: usize = 0;
+    for ([_]bool{ false, true }) |profile| for (55..55 + 12 + 47 + 15) |selected| {
+        var fixture = feature_fixture_t{ .hot = selected };
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        const prior = reply_profile_ready;
+        reply_profile_ready = profile;
+        defer reply_profile_ready = prior;
+        // Empty raw device extension cache: aggregates need no extension.
+        extension_caches[0] = .{ .handle = @intFromPtr(physical.?), .ready = true };
+        var vulkan11 = std.mem.zeroes(c.VkPhysicalDeviceVulkan11Features);
+        var vulkan12 = std.mem.zeroes(c.VkPhysicalDeviceVulkan12Features);
+        var vulkan13 = std.mem.zeroes(c.VkPhysicalDeviceVulkan13Features);
+        vulkan11.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        vulkan12.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        vulkan13.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        vulkan11.pNext = &vulkan12;
+        vulkan12.pNext = &vulkan13;
+        var promoted: [Promoted.len]storage_t = undefined;
+        @memset(std.mem.asBytes(&promoted), 0xa5);
+        inline for (Promoted, 0..) |record, index| {
+            const header: *c.VkBaseOutStructure = @ptrCast(&promoted[index].value);
+            header.sType = record.tag;
+            header.pNext = if (index + 1 < Promoted.len) @ptrCast(&promoted[index + 1].value) else null;
+        }
+        vulkan13.pNext = @ptrCast(&promoted[0].value);
+        const before = promoted;
+        var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        outer.pNext = &vulkan11;
+        features2(physical, &outer);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        if (!profile) {
+            // Visible API1.0: promoted structures stay byte-for-byte unchanged.
+            try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&promoted));
+            continue;
+        }
+        inline for (Promoted, 0..) |record, index| {
+            const value: *const record.native_t = @ptrCast(@alignCast(&promoted[index].value));
+            const aggregate = if (record.core == 0) &vulkan11 else if (record.core == 1) &vulkan12 else &vulkan13;
+            inline for (@typeInfo(record.native_t).Struct.fields[2..]) |field| {
+                try std.testing.expectEqual(@field(aggregate.*, field.name), @field(value.*, field.name));
+                promoted_ones += @field(value.*, field.name);
+            }
+        }
+    };
+    // Projected allowlist entries that a promoted structure also names: eight Vulkan12, five Vulkan13.
+    try std.testing.expectEqual(@as(usize, 13), promoted_ones);
 }
 test "Features2 actual API gates aggregates correctly and never147 on API1.0" {
     const capabilities = feature_test_capabilities();
