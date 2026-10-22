@@ -206,6 +206,7 @@ device-stress: build/waddle
 	python3 tests/integration/device_stress.py
 
 include scripts/av.mk
+include scripts/interop.mk
 
 include scripts/mesa_cpu_cache.mk
 include scripts/vgpu.mk
