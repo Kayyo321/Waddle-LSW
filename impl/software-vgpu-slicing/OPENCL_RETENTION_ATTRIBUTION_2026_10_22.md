@@ -463,3 +463,39 @@ real reload defect.
 Both are private-copy changes, which the handoff reserves for human approval. After them, OpenCL.dll
 must be rebuilt (a multi-hour build), followed by a new 1100-cycle reload and a new guarded heap
 run. Heap acceptance for TODO #5 stays open.
+
+## 17. OpenCL.dll teardown fix and the critical-section records (2026-10-22)
+
+**Fix.** The Waddle-owned EH-pool shim (`src/vgpu/clvk_runtime_eh_pool.c`, commit `23e9275`) already
+registers OpenCL.dll's final DLL-local atexit callback before C++ construction, so that callback runs
+after every static destructor. It now calls `llvm::llvm_shutdown()`, which destroys every LLVM
+`ManagedStatic` of the image, and then `__gnu_cxx::__freeres()`. No clvk or LLVM source changes.
+- **Map gate (`99d333a`).** The link-map admission requires `llvm::llvm_shutdown()` to come from
+  `libLLVMSupport.a(ManagedStatic.cpp.obj)`.
+- **Probe (`9f40010`).** The LLVM-free runtime probe DLL defines a documented stand-in for that
+  symbol. Only the probe's admission skips the LLVM binding.
+- **Build.** The rebuilt candidate is OpenCL.dll `8552b3a1…` (receipt `61f2ce53…`, build
+  `root_tls/full_driver_build_v4`). Its `waddle_clvk_eh_pool_release` calls `llvm_shutdown` and then
+  tail-calls `__freeres`.
+
+**Critical-section records.** The 48 B blocks allocated by `ntdll!RtlpAddDebugInfoToCriticalSection`
+split into three groups:
+1. **Per clvk object** (`cvk_buffer`, `cvk_kernel`, `cvk_program::get_entry_point`,
+   `cvk_event_command`). These are member `std::mutex`es (for example `this+0x28` in `cvk_mem`, set
+   up through `__gthr_win32_mutex_init_function`). Their destructors do call
+   `__gthr_win32_mutex_destroy`, a direct jump to `DeleteCriticalSection`. The pinned ntdll's
+   `RtlpFreeDebugInfo` pushes the freed debug-info record onto a global SList cache while that list
+   holds fewer than 10 entries, and only calls `RtlFreeHeap` otherwise. In run `opencl_heap_1e336986`
+   these records go 8, then 0, then 8 across stages: a bounded OS reuse cache, not growth.
+2. **LLVM statics** (`TimerGlobals`, two `SmartMutex`es). These grow by one set per load. They
+   belong to the ManagedStatics that `llvm_shutdown()` now destroys.
+3. **One per load from libsupc++'s private guard mutex** (`__cxa_guard_acquire` →
+   `__gthr_win32_once`). It is never deleted by design. Windows allocates its debug info only because
+   the verifier forces critical-section debug info, so production retains no memory. The allocating
+   module is ntdll, so the residual review classifies it as OS.
+
+**Native check before the reload.** Census revision 6 (`opencl_census_523ca7d6`, six lives) ran the
+rebuilt fixture `d519743e…` and candidate `8552b3a1…`. Every life shows zero handle, module, TLS and
+FLS change, with only thread-pool churn, and the native exit is 0. Native controls revision 8
+(`opencl_reload_controls_native_cdefffa2`) pass. Reload R11 (composite `e5d6c2df…`) and the guarded
+heap run r4 follow.
