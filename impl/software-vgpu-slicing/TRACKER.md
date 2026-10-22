@@ -2213,3 +2213,14 @@ upstream loader's leaked dxgi/gdi32 references; a scratch-evaluated loader patch
 plus two more OS-only steps reach exact zero. Each needs a human decision.
 [Evidence](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#7-diagnostic-census-after-the-approved-pre-initialization-2026-10-22).
 All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved second amendment: OS steps 5-6 and loader patch (2026-10-22)
+
+Atomic unit `docs(opencl): record approved second reload pre-initialization
+amendment`. The user approved a bare-name System32 `dwmapi.dll` load/free with a
+fail-closed path check, one `GetPackagesByPackageFamily` size query, and the
+76-line Vulkan loader module-reference patch through a tracked private build,
+with M2, Windows physical and DXVK requalification on the patched loader.
+[Amendment 2](OPENCL_RELOAD_CONTRACT.md#approved-amendment-2-two-more-os-steps-and-the-loader-patch-2026-10-22).
+Commit `3459a1e` records the diagnostic census after the first amendment (+0%).
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.

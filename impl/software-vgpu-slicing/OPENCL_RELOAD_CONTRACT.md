@@ -145,3 +145,27 @@ process-lifetime state after the first use of USER32, Winsock, bcrypt and DXGI.
    heap qualification is unchanged unless separately approved.
 6. **Upstream loader.** The Vulkan loader's leaked `dxgi.dll`/`gdi32.dll` references are not
    approved for change here; any loader patch needs its own approval.
+
+## Approved amendment 2: two more OS steps and the loader patch (2026-10-22)
+
+The diagnostic census after the first amendment left +34 handles (see
+[attribution sections 7-8](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#7-diagnostic-census-after-the-approved-pre-initialization-2026-10-22)).
+The user then approved two more OS-only steps and one upstream change on 2026-10-22.
+
+1. **Step 5, standard-search resolution.** Load System32 `dwmapi.dll` by bare name with
+   `LoadLibraryW`, so ntdll resolves one module through the default search order and opens its
+   `Session Manager` key, then free it. A full-path load does not trigger this, so the bare name is
+   required. Because a bare name searches the application directory first, the step fails closed
+   unless the loaded module's path is exactly System32 `dwmapi.dll`.
+2. **Step 6, package-family query.** Call kernel32 `GetPackagesByPackageFamily` once for
+   `Microsoft.D3DMappingLayers_8wekyb3d8bbwe` with no output buffers (size query only). Only
+   `ERROR_SUCCESS` and `ERROR_INSUFFICIENT_BUFFER` are accepted. kernel32 is borrowed with
+   `GetModuleHandleW`; no reference is taken.
+3. **Loader patch.** Apply the 76-line Vulkan loader correction that stores the `gdi32.dll` and
+   `dxgi.dll` references taken by `windows_initialization` and frees them in `loader_release()`,
+   through a tracked `patches/vulkan_loader/` private build. The submodule pin does not change.
+4. **Regression reruns.** Every Windows workload that loads the patched `vulkan-1.dll` is
+   requalified on it: the M2 regression workloads, the Windows physical matrix and the DXVK checks.
+
+The baseline witness becomes `user32,winsock,bcrypt,dxgi_factory,search_order,package_family`.
+All other rules of the first amendment are unchanged, including exact equality on every reload.
