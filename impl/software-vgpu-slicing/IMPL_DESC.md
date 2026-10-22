@@ -7620,3 +7620,39 @@ a multi-hour OpenCL.dll rebuild, and then a new 1100-cycle reload and a new heap
 | `opencl_heap_runner_r3/runner.py` | `c7365238261f24aa652bf5ef4ae9fd2040394a8ffecabb5704c26fd5cac378dd` |
 | `build/windows11_vm/dxvk_heap_ab2efe3cbec4fc1f/heap_residual_review.json` | `d0a41da25e16c4de7677018f443cfa4a8cfb0dc05892ecba685af840bfcd1088` |
 | `opencl_heap_1e336986/heap_residual_review.json` | `21f569dacb08265c670495dc6350610bd92ffb3b1604fbbf30f1d0169bc32270` |
+
+### OpenCL.dll final teardown: llvm_shutdown before the arena release (2026-10-22)
+
+**Interface.** `waddle_clvk_eh_pool_release(void)` in `src/vgpu/clvk_runtime_eh_pool.c` is the final
+DLL-local atexit callback of OpenCL.dll. It is registered by the `.CRT$XCAWDL` initializer before any
+C++ constructor, so it runs after every static destructor. Its body is:
+1. fail fast unless the state is `RuntimeEhRegistered`;
+2. set the state to `RuntimeEhReleased`;
+3. call `llvm::llvm_shutdown()` (`_ZN4llvm13llvm_shutdownEv`);
+4. call `__gnu_cxx::__freeres()`.
+
+It is not exported and owns no allocation. Its effect is to destroy every LLVM `ManagedStatic` of
+this module image (the `cl::opt` registry, `TimerGlobals`, `DebugCounter`, statistic and timer
+mutexes), then the libstdc++ emergency arena, each exactly once.
+
+**Ordering.** Every clvk, clspv and LLVM static object has been destroyed before step 3. This is the
+same order an `llvm_shutdown_obj` static would give. Nothing runs after step 4.
+
+**Admission.** The mandatory link-map policy requires:
+- `__gnu_cxx::__freeres()` from `eh_alloc.o`;
+- `llvm::llvm_shutdown()` from `libLLVMSupport.a(ManagedStatic.cpp.obj)`;
+- the existing EH-pool and TLS symbols.
+
+`verify_runtime_link(..., llvm_runtime=True)` is the default. Only the LLVM-free runtime probe passes
+`llvm_runtime=False`; it defines its own documented no-op stand-in in
+`tests/vgpu/clvk_runtime_windows.cpp`. A runtime policy file cannot change either gate.
+
+**Verification.**
+- **Unit test.** `tests/vgpu/clvk_runtime_eh_pool_test.c` proves `llvm_shutdown` runs after every
+  registered destructor and before the arena release, exactly once each. Plain, ASan/LSan/UBSan and
+  100% line and branch coverage pass.
+- **Audit tests.** `tests/vgpu/clvk_runtime_audit_test.py` (both modes) rejects a foreign owner and
+  a missing definition.
+- **Native.** The rebuilt candidate OpenCL.dll `8552b3a1…` passes census revision 6 and native
+  controls revision 8, and is under 1100-cycle reload R11 and the guarded heap run (attribution
+  section 17).

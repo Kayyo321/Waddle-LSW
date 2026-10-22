@@ -2544,3 +2544,18 @@ Windows workload that loads the patched `vulkan-1.dll`) is now complete for M2, 
 matrix and DXVK. TODO #3 moves from 94% to 96% (+0.5% overall). Its remaining 4% is exact-head CI and
 the final review. TODO #5 stays blocked on the OpenCL.dll per-load leak fix, which awaits the user's
 decision. Parent 93.0% / In Progress, Time Ended TBD.
+
+### OpenCL.dll llvm_shutdown teardown fix (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `46f623a` | docs(tracker): record the passing M2 revision 4 requalification | #3 +0% (records the +2% above); overall +0% | Logged deltas re-summed to 93.0% |
+| `23e9275` | fix(opencl): destroy LLVM managed statics before releasing the GCC arena | #5 +0%; overall +0% | EH-pool unit test plain/ASan/LSan/UBSan; 100% line and branch coverage |
+| `99d333a` | test(opencl): require llvm_shutdown to resolve from LLVM's ManagedStatic object | #5 +0%; overall +0% | Audit tests; current map satisfies the gate |
+| `9f40010` | fix(opencl): give the LLVM-free runtime probe its own llvm_shutdown stand-in | #5 +0%; overall +0% | Audit, build-driver (34) and probe-build tests; rebuilt candidate 8552b3a1 admitted statically |
+| `8fb0b93` | docs(opencl): record the llvm_shutdown teardown fix and the critical-section analysis | #5 +0%; overall +0% | Census r6 zero handle/module/TLS/FLS change; controls r8 PASS |
+
+The user approved this fix and its requalification on 2026-10-22. Reload R11 (1100 cycles) and the
+guarded heap run r4 are running or queued. TODO #5 stays at 70% until both pass. Parent 93.0% / In
+Progress, Time Ended TBD.
+
