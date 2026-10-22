@@ -403,3 +403,24 @@ modules over baseline. The trace attributes each one:
 The loader frames are resolved from the symbol table of the `c04164e1` build. The old factory step
 absorbed all three, together with the RPC connection that caused the R9 failure. The three new steps
 absorb them without RPC (reload contract amendment 4).
+
+## 15. Reload R10 passes 1100 cycles (2026-10-22)
+
+R10 ran the 1100-cycle reload from about 16:21Z to 20:02Z on composite admission `e769dd0f…`. It
+used fixture `27cfb403…`, candidate `OpenCL.dll` `70ca4fdb…`, the patched loader `c04164e1…` and the
+ten-step pre-initialization. The output is preserved under
+`build/qualification_feature_20261021/opencl_reload_final_r10/`.
+
+| Check | Result |
+|:--|:--|
+| Executor exit and verdict | 0, `native_result.json` status `PASS`, scope `full_dll_reload_lifecycle_only` |
+| Independent rerun of the pinned verifier (`8d7d4f1d…`) on the preserved stdout, stderr and manifest | PASS |
+| Baseline witness | `user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters` |
+| Cycle records | 1100, numbered 1-1100, every one at handles 104, TLS 1083, FLS 4075, module exact and module absent |
+| Completion record | 1100 cycles, 3300 contexts, cleanup true, entry `[92, 1083, 4075]` |
+| Host retirement and lease | native and host identities retired; lease back to `idle; …`, VM preserved |
+
+Cycle 3, where R9 failed twice, now matches the baseline exactly, like every other cycle. This
+settles the RPC timer residual (sections 13-14) without a tolerance, and it is the full-reload
+acceptance required by the reload contract. Heap acceptance is separate (`heap_acceptance` false) and
+remains open until the guarded OpenCL heap run passes.
