@@ -424,3 +424,42 @@ Cycle 3, where R9 failed twice, now matches the baseline exactly, like every oth
 settles the RPC timer residual (sections 13-14) without a tolerance, and it is the full-reload
 acceptance required by the reload contract. Heap acceptance is separate (`heap_acceptance` false) and
 remains open until the guarded OpenCL heap run passes.
+
+## 16. OpenCL guarded heap run: owned per-load leaks in OpenCL.dll (2026-10-22)
+
+Heap runner r3 (`build/qualification_feature_20261021/opencl_heap_1e336986`, guard R22) completed
+three ordinary lives under full PageHeap with user stack tracing. All eight guarded captures
+succeeded, the native exit was 0, the process was naturally absent afterwards, and the unique IFEO
+key was restored exactly. The offline residual review (`heap_residual_review.py`, report
+`21f569da…`) attributes every residual block to its allocating module. Result: **FAIL.**
+
+| Stage | OWNED (OpenCL.dll) blocks / bytes | OS blocks / bytes |
+|:--|--:|--:|
+| `unloaded_1` | 27 / 107,842 | 108 / 17,376 |
+| `unloaded_2` | 54 / 215,684 | 113 / 18,312 |
+| `unloaded_3` | 81 / 323,526 | 122 / 20,112 |
+
+The owned residue repeats exactly each load, and two sources explain all of it:
+1. **LLVM `ManagedStatic` objects are never destroyed.** Static construction and clspv's
+   `ParseCommandLineOptions` create the `cl::opt` registry (`CommandLineParser`, its 98,831 B
+   `DenseMap<StringRef, cl::Option*>` and `SubCommand`s), `TimerGlobals`, `DebugCounter`, the
+   `TimePassesHandler` timer groups and several `SmartMutex` objects. Nothing calls
+   `llvm_shutdown()` before OpenCL.dll unloads.
+2. **CRITICAL_SECTION debug info is never released.** Each clvk object with a `std::mutex`
+   (`cvk_buffer::create`, `cvk_kernel::init`, `cvk_event_command`, `cvk_program::get_entry_point`)
+   leaves one 48 B record. Under the GCC win32 thread model the mutex is a critical section that is
+   never deleted, and the verifier forces debug-info allocation for every critical section.
+
+The 1100-cycle reload R10 (section 15) proved exact handle, TLS and FLS equality, but it never
+measured the heap. At about 108 KB per load, 1100 reloads would retain about 118 MB, so this is a
+real reload defect.
+
+**Required fix (not started; needs user approval).** OpenCL.dll's teardown must:
+- run `llvm_shutdown()` after clvk's own static destructors, for example from the Waddle-owned
+  DLL-local onexit entry 0 that already releases the libstdc++ emergency pool;
+- delete the critical section behind every `std::mutex`, which needs a mutex implementation change
+  in the private toolchain or clvk copy.
+
+Both are private-copy changes, which the handoff reserves for human approval. After them, OpenCL.dll
+must be rebuilt (a multi-hour build), followed by a new 1100-cycle reload and a new guarded heap
+run. Heap acceptance for TODO #5 stays open.
