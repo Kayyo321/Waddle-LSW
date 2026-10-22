@@ -2171,3 +2171,19 @@ M2 stays100% / Completed in54ee9c4; parent85.5% / In Progress, Time Ended TBD.
 Final OpenCL reload/native heap, DXVK heap, final review and exact-head CI remain.
 Atomic unit `docs(vgpu): preserve recoverable Fable qualification handoff`: all
 tasks +0%, overall +0%. Commit `cbae0a9` corrects the212-file source count (+0%).
+
+### OpenCL first-cycle retention attribution (2026-10-22)
+
+Atomic unit `docs(opencl): attribute first-cycle reload retention`. Continuation
+took the sole VM lease with explicit user permission and a user-approved
+owner-only lease wrapper. Census R5 completes one ordinary eight-context GPU
+life with natural exit and retired host, and reproduces R7's +83 handles,
++3 TLS and +3 FLS. All 83 handles are typed; every retained module is a Windows
+component. Sixteen component controls attribute the state to USER32/win32k
+connection, Winsock, bcrypt, the C runtime and an upstream Vulkan loader
+reference leak (`LoadLibrary` of dxgi/gdi32 without `FreeLibrary`); none grows
+on a second cycle. Three failed census attempts (runner batch line, stage
+directory, non-duplicable handles) are preserved with corrected R3-R5 revisions.
+[Attribution](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md). The no-warm-up reload
+contract conflicts with Windows first-use state; it is unchanged pending a human
+decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
