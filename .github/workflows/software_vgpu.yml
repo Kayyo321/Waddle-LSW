@@ -114,6 +114,8 @@ jobs:
           WADDLE_RECORDER_SANITIZERS=1 python3 -B tests/av/coverage_recorder_test.py -v
       - name: Check out immutable renderer and Mesa dependencies
         run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol submodules/vulkan_loader submodules/mesa
+      - name: Verify tracked Windows loader patch applies to the exact pin
+        run: make vgpu-loader-patch-test
       - name: Cross-build native M2 diagnostics and full GPU fixture
         run: make vgpu-handle-diag-native-build vgpu-m2-ownership-native-build vgpu-m2-qualification-build build/vgpu_tcp_gpu_windows_draft.exe
       - name: Verify Mesa CPU topology allocation ownership
@@ -650,7 +652,9 @@ jobs:
         run: |
           $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
           $loader_include = (Resolve-Path scripts/vulkan_loader.cmake).Path
-          cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_windows -A x64 "-DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$loader_include" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON
+          python scripts/vulkan_loader_private_source.py build/vendor/vulkan_loader_private
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake -S build/vendor/vulkan_loader_private -B build/vendor/vulkan_loader_windows -A x64 "-DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$loader_include" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/vendor/vulkan_loader_windows --config Release --parallel 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -1,0 +1,78 @@
+diff --git a/loader/loader.c b/loader/loader.c
+index d79258c..04d2f45 100644
+--- a/loader/loader.c
++++ b/loader/loader.c
+@@ -2007,6 +2007,10 @@ void loader_release() {
+     // Guarantee release of the preloaded ICD libraries. This may have already been called in vkDestroyInstance.
+     loader_unload_preloaded_icds();
+ 
++#if defined(_WIN32)
++    windows_teardown();
++#endif
++
+     // release mutexes
+     teardown_global_loader_settings();
+     loader_platform_thread_delete_mutex(&loader_lock);
+diff --git a/loader/loader_windows.c b/loader/loader_windows.c
+index f73659c..e6d54dc 100644
+--- a/loader/loader_windows.c
++++ b/loader/loader_windows.c
+@@ -62,6 +62,10 @@
+ 
+ typedef HRESULT(APIENTRY *PFN_CreateDXGIFactory1)(REFIID riid, void **ppFactory);
+ PFN_CreateDXGIFactory1 fpCreateDXGIFactory1;
++// Module references taken by windows_initialization and released by windows_teardown, so a
++// dynamically unloaded loader does not leave gdi32.dll and dxgi.dll referenced forever.
++static HMODULE windows_gdi32_module;
++static HMODULE windows_dxgi_module;
+ 
+ // Empty function just so windows_initialization can find the current module location
+ void function_for_finding_the_current_module(void) {}
+@@ -79,12 +83,13 @@ void windows_initialization(void) {
+ 
+     // This is needed to ensure that newer APIs are available right away
+     // and not after the first call that has been statically linked
+-    LoadLibraryEx("gdi32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
++    windows_gdi32_module = LoadLibraryEx("gdi32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+ 
+     wchar_t systemPath[MAX_PATH] = L"";
+     GetSystemDirectoryW(systemPath, MAX_PATH);
+     StringCchCatW(systemPath, MAX_PATH, L"\\dxgi.dll");
+     HMODULE dxgi_module = LoadLibraryW(systemPath);
++    windows_dxgi_module = dxgi_module;
+     fpCreateDXGIFactory1 =
+         dxgi_module == NULL ? NULL : (PFN_CreateDXGIFactory1)(void *)GetProcAddress(dxgi_module, "CreateDXGIFactory1");
+ 
+@@ -95,6 +100,18 @@ void windows_initialization(void) {
+ #endif
+ }
+ 
++void windows_teardown(void) {
++    fpCreateDXGIFactory1 = NULL;
++    if (windows_dxgi_module != NULL) {
++        FreeLibrary(windows_dxgi_module);
++        windows_dxgi_module = NULL;
++    }
++    if (windows_gdi32_module != NULL) {
++        FreeLibrary(windows_gdi32_module);
++        windows_gdi32_module = NULL;
++    }
++}
++
+ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
+     (void)hinst;
+     switch (reason) {
+diff --git a/loader/loader_windows.h b/loader/loader_windows.h
+index b783909..12e2e13 100644
+--- a/loader/loader_windows.h
++++ b/loader/loader_windows.h
+@@ -40,6 +40,9 @@
+ // Windows specific initialization functionality
+ void windows_initialization(void);
+ 
++// Release the module references taken by windows_initialization.
++void windows_teardown(void);
++
+ // Append the JSON path data to the list and allocate/grow the list if it's not large enough.
+ // Function returns true if filename was appended to reg_data list.
+ // Caller should free reg_data.

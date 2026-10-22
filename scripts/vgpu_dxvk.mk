@@ -19,12 +19,21 @@ vgpu-dxvk-client-build: vgpu-dxvk-pin scripts/build_dxvk_client.py patches/dxvk/
 
 # Private immutable loader crossbuild: native discovery remains a separate gate.
 .PHONY: vgpu-native-loader-win64
-vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan_loader.cmake scripts/vulkan_loader_win64.cmake
-	cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_win64 -G Ninja -DCMAKE_TOOLCHAIN_FILE="$(CURDIR)/scripts/vulkan_loader_win64.cmake" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE="$(CURDIR)/scripts/vulkan_loader.cmake" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DUSE_GAS=ON
-	cmake --build build/vendor/vulkan_loader_win64 --parallel 4
-	test -s build/vendor/vulkan_loader_win64/loader/vulkan-1.dll
-	x86_64-w64-mingw32-objdump -f build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'file format pei-x86-64'
-	x86_64-w64-mingw32-objdump -p build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'DLL Name:'
+# Windows loaders build from a private copy of the pin with the tracked patches applied
+# (patches/vulkan_loader/, approved 2026-10-22); the submodule itself is never modified.
+VgpuLoaderPatches = patches/vulkan_loader/0001-release-windows-initialization-module-references.patch
+vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan_loader.cmake scripts/vulkan_loader_win64.cmake scripts/vulkan_loader_private_source.py $(VgpuLoaderPatches)
+	python3 -B scripts/vulkan_loader_private_source.py build/vendor/vulkan_loader_private
+	cmake -S build/vendor/vulkan_loader_private -B build/vendor/vulkan_loader_win64_private -G Ninja -DCMAKE_TOOLCHAIN_FILE="$(CURDIR)/scripts/vulkan_loader_win64.cmake" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE="$(CURDIR)/scripts/vulkan_loader.cmake" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DUSE_GAS=ON
+	cmake --build build/vendor/vulkan_loader_win64_private --parallel 4
+	test -s build/vendor/vulkan_loader_win64_private/loader/vulkan-1.dll
+	x86_64-w64-mingw32-objdump -f build/vendor/vulkan_loader_win64_private/loader/vulkan-1.dll | grep 'file format pei-x86-64'
+	x86_64-w64-mingw32-objdump -p build/vendor/vulkan_loader_win64_private/loader/vulkan-1.dll | grep 'DLL Name:'
+
+.PHONY: vgpu-loader-patch-test
+vgpu-loader-patch-test:
+	python3 -B tests/vgpu/vulkan_loader_patch_test.py
+	python3 -O -B tests/vgpu/vulkan_loader_patch_test.py
 
 # OpenCL (TODO #5): pinned clvk + clspv/LLVM cross-built for Windows. Not part of the
 # default vgpu-windows aggregate because the LLVM build is long; cross-compilation is

@@ -7096,3 +7096,38 @@ API completion and exact guest/host/module retirement pass;41rawfiles rehashed.
 and exact final CI/review remain required. All tasks +0%; total85.5%, M2 94%,
 Time Ended TBD. Commit `4688cf8` records complete API-heap snapshots, all tasks
 +0%, overall +0%.
+
+### Tracked Windows Vulkan loader private patch (approved 2026-10-22)
+
+This supersedes "make no vendor source edits" for Windows loader builds only. The user
+approved one correction on 2026-10-22 after the OpenCL retention attribution
+([OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md),
+sections 7-8).
+
+- **Defect.** Upstream `windows_initialization` (pin `0508dee4ff864f5034ae6b7f68d34cb2822b827d`,
+  v1.4.307) calls `LoadLibraryEx("gdi32.dll")` and `LoadLibraryW(<System32>\dxgi.dll)` and never
+  frees either. It runs once per loaded `vulkan-1.dll` instance, so every dynamic reload adds one
+  more reference and `dxgi.dll` with its dependencies can never unload.
+- **Correction.** `patches/vulkan_loader/0001-release-windows-initialization-module-references.patch`
+  (25 changed lines in `loader/loader.c`, `loader/loader_windows.c`, `loader/loader_windows.h`)
+  stores both module handles and frees them in a new `windows_teardown()`. `loader_release()`
+  calls it under `_WIN32`, after `loader_unload_preloaded_icds()` and before the mutexes are
+  deleted. That is the same `DLL_PROCESS_DETACH` path (dynamic unload only, `reserved == NULL`)
+  where upstream already frees preloaded ICD libraries. Both references stay valid for the
+  loader's lifetime, because a later `GetModuleHandle("gdi32.dll")` and `fpCreateDXGIFactory1`
+  depend on them.
+- **Build boundary.** `scripts/vulkan_loader_private_source.py` verifies that the submodule checkout
+  equals the superproject gitlink, extracts that tree with `git archive`, applies the reviewed patch
+  set with `git apply --check` and proves it present with a reverse check. Git discovery is bounded
+  with `GIT_CEILING_DIRECTORIES`, because inside the superproject an unbounded `git apply` reports
+  success while changing nothing. The MinGW target `vgpu-native-loader-win64` and the native Windows
+  CI loader build compile `build/vendor/vulkan_loader_private`. Linux builds keep using the submodule:
+  every patched line is Windows-only. The pin, `.gitmodules` and the submodule tree are unchanged.
+- **License.** The upstream file headers stay Apache-2.0 and the patch is distributed under the same
+  terms, compatible with this repository's GPL-3.0 distribution.
+- **Verification.** `make vgpu-loader-patch-test` (CI transport job) checks the exact patch scope, an
+  applied tree that differs from the pin in exactly the three files, a fail-closed preimage mismatch
+  and rejection of an unreviewed patch. Native A/B in `build/qualification_feature_20261021/loader_release_eval/`
+  shows the dxgi closure retained by the unpatched loader and zero residual for the patched one after
+  OS pre-initialization. Every Windows workload that loads the patched `vulkan-1.dll` is requalified:
+  the M2 regression workloads, the Windows physical matrix and the DXVK checks.

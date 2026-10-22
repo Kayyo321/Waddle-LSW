@@ -2224,3 +2224,15 @@ with M2, Windows physical and DXVK requalification on the patched loader.
 [Amendment 2](OPENCL_RELOAD_CONTRACT.md#approved-amendment-2-two-more-os-steps-and-the-loader-patch-2026-10-22).
 Commit `3459a1e` records the diagnostic census after the first amendment (+0%).
 All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Tracked Windows Vulkan loader patch (2026-10-22)
+
+Commit `f871b9e` (`test(opencl): add approved search-order and package-family
+pre-initialization`) adds OS steps 5-6 with 77/77 lines and 72/72 branches and
+native zero-residual controls (+0%). Atomic unit `chore(deps): build Windows
+Vulkan loader from tracked private patch` adds the approved module-reference
+patch, a pin-verifying private-source builder, its CI test, and switches the
+MinGW and native Windows loader builds to the private tree. The submodule pin is
+unchanged; Linux loader builds are unaffected. Requalification on the patched
+loader `8a9e3d32…` (local MinGW build) is still required. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
