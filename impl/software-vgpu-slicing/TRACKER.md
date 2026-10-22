@@ -12,7 +12,7 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 94% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification flagged for user review). M2 requalification on the patched loader, exact-head CI and final review remain open. |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 96% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification flagged for user review). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). Exact-head CI and final review remain open. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). The guarded three-life heap run (r3, guard R22) completes but FAILS: 27 OWNED blocks (107,842 B) leak per OpenCL.dll load (LLVM ManagedStatics without llvm_shutdown; std::mutex critical sections never deleted). The fix needs user-approved private-copy changes, a rebuild, a new 1100-cycle reload and a new heap run (attribution section 16). |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -23,7 +23,7 @@
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned loader, medium-integrity bootstrap/receiver and real GPU/DXVK execution verified; final native heap teardown qualification pending |
 | #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
 
-**Total Feature Completion**: `92.5%`
+**Total Feature Completion**: `93.0%`
 
 ## Commit History & Progress Log
 
@@ -2528,3 +2528,19 @@ and the final review.
 TODO #5 stays at 70%. The OpenCL heap run proves per-load owned leaks in OpenCL.dll, which block
 heap acceptance until a user-approved teardown fix, rebuild and requalification. The R16 control
 fixture (pid 7984) remains suspended in the guest. Parent 92.5% / In Progress, Time Ended TBD.
+
+### M2 revision 4 passes on the patched loader (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `9228a01` | docs(tracker): credit physical requalification and DXVK heap, record the OpenCL heap failure | #3 +0% (records the +4% above); overall +0% | Logged deltas re-summed to 92.5% |
+| (this commit) | docs(tracker): record the passing M2 revision 4 requalification | #3 +2%; overall +0.5% | `m2_owned_runs_2e411c4_revision4/results.json` (`515f17cb…`): status PASS; triangle_present (eight lifetimes) and wsi_lifetime (eight lifetimes) PASS on exact RTX 5080; guest pre/postflight PASS; no host survivors; retirement and VM preservation PASS |
+
+Package `m2_owned_candidate_2e411c4_r4` (manifest `63f66a5b…`) was frozen by plan revision 4
+(`build/qualification_feature_20261021/m2_root_plan_r4`). That revision differs from revision 3
+only in the sole-owner string its lease check requires and in its regenerated plan manifest.
+Revision 3 refused before any native work (status NOT_RUN). Amendment 2 item 4 (requalify every
+Windows workload that loads the patched `vulkan-1.dll`) is now complete for M2, the Windows physical
+matrix and DXVK. TODO #3 moves from 94% to 96% (+0.5% overall). Its remaining 4% is exact-head CI and
+the final review. TODO #5 stays blocked on the OpenCL.dll per-load leak fix, which awaits the user's
+decision. Parent 93.0% / In Progress, Time Ended TBD.
