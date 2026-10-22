@@ -2,8 +2,8 @@
  *
  * Exercises the exact include compiled into the Windows fixture. Every fakeable operation of
  * the success path is failed once in turn; after each failure the test proves that every module
- * reference, Winsock startup, socket and DXGI factory reference was released. No Windows loader,
- * Winsock, DXGI, native execution or GPU acceptance is claimed.
+ * reference, Winsock startup and socket was released. No Windows loader, Winsock, DXGI,
+ * native execution or GPU acceptance is claimed.
  */
 #include <assert.h>
 #ifdef NDEBUG
@@ -20,7 +20,6 @@
 /** One fake System32 module with an exact reference count. */
 struct fake_module_t { const wchar_t *name; int references; };
 enum { FakeModules = 6, FakeTraceCapacity = 64, FakeTraceText = 64 };
-enum { FactoryNormal, FactoryFailWithObject, FactoryFailWithoutObject, FactorySuccessWithoutObject };
 
 static struct fake_module_t fake_modules[FakeModules] = {
     {L"user32.dll", 0}, {L"ws2_32.dll", 0}, {L"bcrypt.dll", 0}, {L"dxgi.dll", 0}, {L"dwmapi.dll", 0},
@@ -32,7 +31,6 @@ typedef struct { unsigned count; uintptr_t sockets[64]; } fake_set_t;
 static char fake_trace[FakeTraceCapacity][FakeTraceText];
 static unsigned fake_trace_count, fake_step, fake_fail_step;
 static int fake_startups, fake_cleanups, fake_sockets_open, fake_sockets_closed;
-static int fake_factories, fake_factory_releases, fake_factory_mode;
 static uintptr_t fake_next_socket = 0x40;
 
 /** @brief Count one fakeable operation; returns nonzero when it is the injected failure. */
@@ -152,38 +150,6 @@ static int WINAPI fake_cleanup(void)
     return fake_fails() ? -1 : 0;
 }
 
-static unsigned long WINAPI fake_factory_release(void *object);
-static void *fake_factory_table[3] = {NULL, NULL, NULL};
-static struct { void **table; } fake_factory_object = {fake_factory_table};
-
-static unsigned long WINAPI fake_factory_release(void *object)
-{
-    assert(object == &fake_factory_object && fake_factories > fake_factory_releases);
-    fake_record("Release");
-    ++fake_factory_releases;
-    return 0;
-}
-
-static int32_t WINAPI fake_create_factory(const GUID *riid, void **out)
-{
-    static const unsigned char expected[8] = {0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87};
-    assert(riid && out && *out == NULL && riid->Data1 == 0x770aae78u && riid->Data2 == 0xf26f &&
-           riid->Data3 == 0x4dba && !memcmp(riid->Data4, expected, sizeof expected));
-    fake_record("CreateDXGIFactory1");
-    int failed = fake_fails();
-    int mode = failed ? FactoryNormal : fake_factory_mode;
-    if (failed) return INT32_C(-2005270527);  /* DXGI_ERROR_INVALID_CALL 0x887a0001 */
-    if (mode == FactoryFailWithoutObject) return INT32_C(-2147467259);  /* E_FAIL 0x80004005 */
-    if (mode == FactorySuccessWithoutObject) return 0;
-    void *release = NULL;
-    unsigned long (WINAPI *function)(void *) = fake_factory_release;
-    memcpy(&release, &function, sizeof function);
-    fake_factory_table[2] = release;
-    *out = &fake_factory_object;
-    ++fake_factories;
-    return mode == FactoryFailWithObject ? INT32_C(-2147467259) : 0;
-}
-
 static int32_t WINAPI fake_packages(const wchar_t *family, uint32_t *count, wchar_t **names, uint32_t *length, wchar_t *buffer)
 {
     assert(family && !wcscmp(family, L"Microsoft.D3DMappingLayers_8wekyb3d8bbwe") && count && length && !names && !buffer &&
@@ -222,7 +188,6 @@ static FARPROC GetProcAddress(HMODULE module, const char *name)
     if (module == &fake_modules[1] && !strcmp(name, "socket")) FakeExport(fake_socket);
     if (module == &fake_modules[1] && !strcmp(name, "closesocket")) FakeExport(fake_closesocket);
     if (module == &fake_modules[1] && !strcmp(name, "WSACleanup")) FakeExport(fake_cleanup);
-    if (module == &fake_modules[3] && !strcmp(name, "CreateDXGIFactory1")) FakeExport(fake_create_factory);
     if (module == &fake_modules[5] && !strcmp(name, "GetPackagesByPackageFamily")) FakeExport(fake_packages);
     if (module == &fake_modules[1] && !strcmp(name, "bind")) FakeExport(fake_bind);
     if (module == &fake_modules[1] && !strcmp(name, "listen")) FakeExport(fake_listen);
@@ -301,23 +266,21 @@ static const char *const ExpectedTrace[] = {
     "load ws2_32.dll", "resolve WSAStartup", "resolve socket", "resolve closesocket", "resolve WSACleanup",
     "WSAStartup", "socket", "closesocket", "WSACleanup", "free ws2_32.dll",
     "load bcrypt.dll", "free bcrypt.dll",
-    "load dxgi.dll", "resolve CreateDXGIFactory1", "CreateDXGIFactory1", "Release", "free dxgi.dll",
+    "load dxgi.dll", "free dxgi.dll",
     "search dwmapi.dll", "GetSystemDirectoryW", "GetModuleFileNameW", "free dwmapi.dll",
     "borrow kernel32.dll", "resolve GetPackagesByPackageFamily", "GetPackagesByPackageFamily",
     "load ws2_32.dll", "resolve WSAStartup", "resolve WSACleanup", "resolve socket", "resolve closesocket", "resolve bind",
     "resolve listen", "resolve getsockname", "resolve setsockopt", "resolve ioctlsocket", "resolve connect", "resolve select",
     "resolve WSAGetLastError", "WSAStartup", "socket", "socket", "bind", "listen", "getsockname", "setsockopt", "ioctlsocket",
     "connect", "WSAGetLastError", "select", "closesocket", "closesocket", "WSACleanup", "free ws2_32.dll"};
-enum { ExpectedSteps = sizeof ExpectedTrace / sizeof ExpectedTrace[0] - 1 /* Release is not fakeable */ };
+enum { ExpectedSteps = sizeof ExpectedTrace / sizeof ExpectedTrace[0] };
 
-static void reset(unsigned fail_step, int factory_mode)
+static void reset(unsigned fail_step)
 {
     for (unsigned i = 0; i < FakeModules; ++i) fake_modules[i].references = 0;
     fake_trace_count = fake_step = 0;
     fake_fail_step = fail_step;
     fake_startups = fake_cleanups = fake_sockets_open = fake_sockets_closed = 0;
-    fake_factories = fake_factory_releases = 0;
-    fake_factory_mode = factory_mode;
     fake_wrong_dwmapi_path = 0;
     fake_package_status = 0;
     fake_long_system = fake_truncated_module = 0;
@@ -331,28 +294,27 @@ static void assert_released(void)
     for (unsigned i = 0; i < FakeModules; ++i) assert(fake_modules[i].references == 0);
     assert(fake_startups == fake_cleanups);
     assert(fake_sockets_open == fake_sockets_closed);
-    assert(fake_factories == fake_factory_releases);
 }
 
 int main(void)
 {
-    reset(0, FactoryNormal);
+    reset(0);
     assert(os_preinitialize() == 0);
     assert(fake_trace_count == sizeof ExpectedTrace / sizeof ExpectedTrace[0]);
     for (unsigned i = 0; i < fake_trace_count; ++i) assert(!strcmp(fake_trace[i], ExpectedTrace[i]));
-    assert(fake_step == ExpectedSteps && fake_startups == 2 && fake_sockets_open == 3 && fake_factories == 1);
+    assert(fake_step == ExpectedSteps && fake_startups == 2 && fake_sockets_open == 3);
     assert_released();
-    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect"));
+    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect"));
     const unsigned success_calls = fake_trace_count;
 
     unsigned failures = 0;
     for (unsigned step = 1; step <= ExpectedSteps; ++step) {
-        reset(step, FactoryNormal);
+        reset(step);
         assert(os_preinitialize() != 0);
         assert(fake_step >= step && fake_trace_count >= step);
-        /* The failing operation is the step-th fakeable trace entry (Release is the only unfakeable
-         * call). Its step may still release what it acquired, but no later step may start. */
-        unsigned failing_index = step - 1 + (step > 17u);  /* skip the Release entry */
+        /* The failing operation is the step-th trace entry; every operation is fakeable. Its step
+         * may still release what it acquired, but no later step may start. */
+        unsigned failing_index = step - 1;
         assert(failing_index < fake_trace_count);
         const char *failing = fake_trace[failing_index], *module = NULL;
         for (unsigned i = 0; i <= failing_index; ++i) {
@@ -374,49 +336,40 @@ int main(void)
         ++failures;
     }
 
-    static const int Modes[] = {FactoryFailWithObject, FactoryFailWithoutObject, FactorySuccessWithoutObject};
-    for (unsigned i = 0; i < sizeof Modes / sizeof Modes[0]; ++i) {
-        reset(0, Modes[i]);
-        assert(os_preinitialize() != 0);
-        assert(fake_modules[3].references == 0 && !strcmp(fake_trace[fake_trace_count - 1], "free dxgi.dll"));
-        assert(fake_factories == (Modes[i] == FactoryFailWithObject));
-        assert_released();
-        ++failures;
-    }
-    reset(0, FactoryNormal);
+    reset(0);
     fake_wrong_dwmapi_path = 1;  /* a planted application-directory dwmapi.dll is rejected and freed */
     assert(os_preinitialize() != 0);
     assert(!strcmp(fake_trace[fake_trace_count - 1], "free dwmapi.dll"));
     assert_released();
     ++failures;
     for (int mode = 0; mode < 2; ++mode) {
-        reset(0, FactoryNormal);
+        reset(0);
         if (mode) fake_truncated_module = 1; else fake_long_system = 1;
         assert(os_preinitialize() != 0);
         assert(!strcmp(fake_trace[fake_trace_count - 1], "free dwmapi.dll"));
         assert_released();
         ++failures;
     }
-    reset(0, FactoryNormal);
+    reset(0);
     fake_package_status = 122;  /* ERROR_INSUFFICIENT_BUFFER: package present, accepted */
     assert(os_preinitialize() == 0);
     assert_released();
     static const int32_t Statuses[] = {2, 5, 87, 1168, -1};
     for (unsigned i = 0; i < sizeof Statuses / sizeof Statuses[0]; ++i) {
-        reset(0, FactoryNormal);
+        reset(0);
         fake_package_status = Statuses[i];
         assert(os_preinitialize() != 0);
         assert(!strcmp(fake_trace[fake_trace_count - 1], "GetPackagesByPackageFamily"));
         assert_released();
         ++failures;
     }
-    reset(0, FactoryNormal);
+    reset(0);
     fake_connect_immediate = 1;  /* immediate loopback success skips WSAGetLastError */
     assert(os_preinitialize() == 0);
     for (unsigned i = 0; i < fake_trace_count; ++i) assert(strcmp(fake_trace[i], "WSAGetLastError"));
     assert_released();
     for (int mode = 0; mode < 3; ++mode) {
-        reset(0, FactoryNormal);
+        reset(0);
         if (mode == 0) fake_name_size_wrong = 1; else fake_select_mode = mode;
         assert(os_preinitialize() != 0);
         assert(!strcmp(fake_trace[fake_trace_count - 1], "free ws2_32.dll"));

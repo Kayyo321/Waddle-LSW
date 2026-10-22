@@ -1,14 +1,14 @@
 /** @file opencl_os_preinit_windows.inc
  * @brief Approved OS-only first-use initialization before persistent reload baselines.
  *
- * Implements amendments 1-3 (2026-10-22) to OPENCL_RELOAD_CONTRACT.md. Windows keeps
- * process-lifetime state after the first use of USER32, Winsock, bcrypt, DXGI, default-order
+ * Implements amendments 1-4 (2026-10-22) to OPENCL_RELOAD_CONTRACT.md. Windows keeps
+ * process-lifetime state after the first use of USER32, Winsock, bcrypt, dxgi.dll, default-order
  * DLL search, the package state repository and a nonblocking Winsock connect (see
  * OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md). Before the entry baseline the fixture runs
  * exactly seven Windows-component operations, in order, and nothing else. No Waddle, clvk or Vulkan loader code runs here. Exact baseline
  * equality is still required afterwards.
  *
- * Ownership: every module reference, Winsock startup, socket and COM reference acquired
+ * Ownership: every module reference, Winsock startup and socket acquired
  * by a step is released by that same step before it returns, on success and on every
  * failure path. Nothing is retained by this include.
  * Thread safety: sole main thread, before any fixture worker exists; not reentrant.
@@ -16,11 +16,11 @@
  */
 
 /** Exact witness string recorded with the baseline; fixed order of the seven steps. */
-#define OsPreinitRecord "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect"
+#define OsPreinitRecord "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect"
 
 /** Fixed Winsock constants; winsock2.h is not included after windows.h. */
 enum { OsPreinitWinsockVersion = 0x0202, OsPreinitAfInet = 2, OsPreinitSockStream = 1,
-       OsPreinitTcp = 6, OsPreinitWsaDataBytes = 512, OsPreinitReleaseSlot = 2,
+       OsPreinitTcp = 6, OsPreinitWsaDataBytes = 512,
        OsPreinitPathCapacity = 520, OsPreinitStatusSuccess = 0, OsPreinitStatusInsufficientBuffer = 122,
        OsPreinitWouldBlock = 10035, OsPreinitLevelTcp = 6, OsPreinitTcpNoDelay = 1, OsPreinitSelectSeconds = 2 };
 /** FIONBIO as defined by winsock2.h: _IOW('f', 126, u_long). */
@@ -32,8 +32,6 @@ typedef int (WINAPI *os_preinit_startup_t)(WORD, void *);
 typedef uintptr_t (WINAPI *os_preinit_socket_t)(int, int, int);
 typedef int (WINAPI *os_preinit_close_t)(uintptr_t);
 typedef int (WINAPI *os_preinit_cleanup_t)(void);
-typedef int32_t (WINAPI *os_preinit_factory_t)(const GUID *, void **); /* HRESULT is a 32-bit LONG */
-typedef unsigned long (WINAPI *os_preinit_release_t)(void *);
 typedef int32_t (WINAPI *os_preinit_packages_t)(const wchar_t *, uint32_t *, wchar_t **, uint32_t *, wchar_t *); /* LONG */
 typedef int (WINAPI *os_preinit_bind_t)(uintptr_t, const void *, int);
 typedef int (WINAPI *os_preinit_listen_t)(uintptr_t, int);
@@ -50,13 +48,10 @@ typedef struct os_preinit_wait_t { int32_t seconds, microseconds; } os_preinit_w
 
 _Static_assert(sizeof(os_preinit_startup_t) == sizeof(FARPROC) && sizeof(os_preinit_socket_t) == sizeof(FARPROC) &&
                sizeof(os_preinit_close_t) == sizeof(FARPROC) && sizeof(os_preinit_cleanup_t) == sizeof(FARPROC) &&
-               sizeof(os_preinit_factory_t) == sizeof(FARPROC) && sizeof(os_preinit_packages_t) == sizeof(FARPROC) &&
+               sizeof(os_preinit_packages_t) == sizeof(FARPROC) &&
                sizeof(os_preinit_bind_t) == sizeof(FARPROC) && sizeof(os_preinit_select_t) == sizeof(FARPROC) &&
                sizeof(os_preinit_address_t) == 16 && sizeof(os_preinit_wait_t) == 8,
                "export storage must match FARPROC exactly");
-
-/** IID_IDXGIFactory1 {770aae78-f26f-4dba-a829-253c83d1b387}. */
-static const GUID OsPreinitFactory1 = {0x770aae78, 0xf26f, 0x4dba, {0xa8, 0x29, 0x25, 0x3c, 0x83, 0xd1, 0xb3, 0x87}};
 
 /** @brief Load one System32 module by bare name.
  * @param[in] name Borrowed nonnull module file name without a directory.
@@ -136,31 +131,19 @@ static int os_preinit_bcrypt(void)
     return !FreeLibrary(module);
 }
 
-/** @brief Create and release one IDXGIFactory1; no adapter is enumerated.
- * @return Zero on success; nonzero after releasing a returned factory and the module.
+/** @brief Load and free dxgi.dll once; no DXGI factory is created.
+ *
+ * Amendment 4 (2026-10-22): with loader patch 0002 no reload cycle creates a DXGI factory, but
+ * the loader still loads and frees dxgi.dll. Creating a factory here opened an RPC/ALPC client
+ * connection whose later idle cleanup attached RPCRT4 per-thread state (a thread handle and an
+ * event) to a thread-pool worker, which broke exact handle equality in cycle 3.
+ * @return Zero on success; nonzero when the load fails or after a failed release.
  */
-static int os_preinit_dxgi_factory(void)
+static int os_preinit_dxgi_module(void)
 {
     HMODULE module = NULL;
-    os_preinit_factory_t create = NULL;
-    void *factory = NULL;
     if (!os_preinit_load(L"dxgi.dll", &module)) return 1;
-    int failed = !os_preinit_resolve(module, "CreateDXGIFactory1", &create);
-    if (!failed) {
-        int32_t result = create(&OsPreinitFactory1, &factory);
-        if (result < 0) failed = 1;
-        if (factory) {
-            void **table = *(void ***)factory;
-            os_preinit_release_t release = NULL;
-            memcpy(&release, &table[OsPreinitReleaseSlot], sizeof release);
-            release(factory);
-            factory = NULL;
-        } else {
-            failed = 1;
-        }
-    }
-    if (!FreeLibrary(module)) failed = 1;
-    return failed;
+    return !FreeLibrary(module);
 }
 
 /** @brief Resolve one module by bare name through the default search order, then free it.
@@ -279,6 +262,6 @@ static int os_preinit_winsock_connect(void)
 static int os_preinitialize(void)
 {
     return os_preinit_user32() || os_preinit_winsock() || os_preinit_bcrypt() ||
-           os_preinit_dxgi_factory() || os_preinit_search_order() || os_preinit_package_family() ||
+           os_preinit_dxgi_module() || os_preinit_search_order() || os_preinit_package_family() ||
            os_preinit_winsock_connect();
 }

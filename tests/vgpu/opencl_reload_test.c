@@ -249,7 +249,7 @@ static void test_probes(void) {
 }
 typedef struct run_state_t { unsigned cycles,stage_calls,absent_calls,preinit_calls;int bad_cycle,bad_stage,bad_absent,bad_preinit;
     const char *record;int custom_record; } run_state_t;
-static const char FakePreinitRecord[]="user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect";
+static const char FakePreinitRecord[]="user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect";
 static char fake_run_head[4096];
 static int cycle_call(void *opaque,reload_cycle_result_t *result) {
     run_state_t *state=opaque;++state->cycles;
@@ -288,7 +288,7 @@ static void test_run(void) {
     ++groups;reset();run_state_t state={0};Check(!run_case(&state,L"C:\\candidate\\OpenCL.dll"));Check(state.cycles==1100);Check(state.stage_calls==2201);Check(!fake_live());
     Check(state.preinit_calls==1);
     Check(!strncmp(fake_run_head,"OPENCL_RELOAD_V1 {\"event\":\"baseline\"",33));
-    Check(strstr(fake_run_head,",\"os_preinit\":\"user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect\",\"module_utf16\":\"")!=NULL);
+    Check(strstr(fake_run_head,",\"os_preinit\":\"user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect\",\"module_utf16\":\"")!=NULL);
     const wchar_t *invalid[]={L"",L"C:",L"relative",L"C:/bad"};
     for(unsigned i=0;i<4;++i){reset();state=(run_state_t){0};Check(run_case(&state,invalid[i])==1);Check(state.cycles==0);}
     wchar_t *long_path=calloc(ReloadPathCapacity+1,sizeof *long_path);assert(long_path);
