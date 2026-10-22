@@ -7509,3 +7509,114 @@ revision 9 and OpenCL heap runner r2 pin R18 and differ from revision 8 and r1 o
 | `opencl_heap_runner_r2/run_heap.py` | `25cfda4dbaf54b2f855f508ea428267b8a3eea655d24ba50986c068d679fa41b` |
 
 The guard has now passed its native controls, so heap acceptance runs may use it.
+
+### Native heap qualification: guard R19-R22, residual review, DXVK and OpenCL results (2026-10-22)
+
+**Guard revisions forced by the real heap targets.** Each one was found by a native failure, which
+is preserved. Each passed the four native controls before use (controls r6, r8 and r9; normal,
+inject, fresh and timeout all PASS).
+
+| Revision | Native failure that forced it | Change |
+|:--|:--|:--|
+| R19 | DXVK revision 9 (`dxvk_heap_6da665cd6f4f9a1e`, stage `unloaded_1`): every original thread was restored, but the worker reported two FRESH threads that Windows created in the target during the pass, so `cleanup_ok=0` | A completed pass whose only open item is FRESH threads is accepted when a read-only query proves each FRESH thread exited or is an unsuspended OS thread. |
+| R20 | DXVK revision 10 (`dxvk_heap_12144d0af8939cc7`): R19's start check rejected the FRESH threads and recorded nothing | The full observation is written to `<stem>.fresh_proof_observed.json` before any verdict. A FRESH thread is accepted when its start lies in a module loaded from System32. |
+| R21 | Controls r7: the fresh control passed, because .NET `ProcessThread.StartAddress` is `ntdll!RtlUserThreadStart` (ntdll+0x7ee20) for every thread | The staged, hash-verified helper gains `win32_start(tid)`: `OpenThread(THREAD_QUERY_INFORMATION)`, `GetThreadTimes` (exact creation, so TID reuse cannot alias), and `NtQueryInformationThread(ThreadQuerySetWin32StartAddress)`. It was checked natively with Add-Type before use (`cdb_guard_r21/native_compile_check.py`). |
+| R22 | OpenCL heap r2 (`opencl_heap_daf789f5`): R12's pass-1 precheck refused the baseline pass, because pass 1 was measured against stage − 7 s, a reserve that only existed for the pre-R17 in-stage cleanup | Pass 1 is measured against stage − 1 s, like pass 2. A pass that cannot fit still fails R12's precheck before CDB starts. |
+
+In controls r8 and r9 the fresh control fails for exactly the intended reason: "a FRESH thread does not
+start in a System32 module: guard_cdb_control.exe". Every failed heap run was retired the same way:
+1. a read-only process review (`heap_run_liveness.py`; per-run scripts for DXVK revisions 9-11);
+2. exact IFEO restoration through `pageheap_flags_t.restore` (`heap_run_retire.py`), which asserts
+   the current key equals the recorded post-enable state and the restored key equals the recorded
+   absent state;
+3. a `root_failed_run_retirement.json` per run.
+
+**Residual review (`build/qualification_feature_20261021/heap_residual_review.py`).** Offline and
+read-only.
+- **Residual blocks.** A busy DPH block (user address, size, allocation stack) that is busy at
+  `unloaded_N` and was not busy at baseline is a residual of lifetime N.
+- **Frame mapping.** Frames map to modules through CDB's own `lm` table, including the
+  "Unloaded modules" ranges, because the project DLLs are unloaded at every `unloaded_N`.
+- **Allocating module.** The module of the first frame above the allocator. Skipped frames:
+  verifier.dll; ntdll heap internals, named by the pinned ntdll publics (`ntdll_c93f4614_publics.json`);
+  every consecutive ucrtbase/msvcrt frame; and only those kernelbase frames that the pinned
+  kernelbase publics name `Local`/`Global`/`Heap(Re)Alloc`. A kernelbase API such as
+  `LoadLibraryExW` is never skipped.
+- **Categories.**
+  - **OWNED:** the allocating module is a Waddle module: the ICD, the TCP bootstrap, the
+    project-built patched loader, OpenCL.dll, or the fixture executable.
+  - **CLIENT:** the allocating module is DXVK's application-directory `d3d11.dll`/`dxgi.dll`. The
+    fixture's printed module bases identify these and are cross-checked against `lm`.
+  - **OS:** any other allocating module.
+- **Verdict.** PASS requires zero OWNED residual blocks at every unloaded stage, including the
+  first. CLIENT and OS residue is listed with full stacks and per-lifetime growth for review.
+
+The tool's own tests (`test_heap_residual_review.py`, 7 tests, normal and `-O`) prove the
+following, with 96.97% directional branch coverage (the uncovered outcomes are the `__main__`
+guard):
+- a `malloc` leak through two CRT frames is OWNED;
+- an OS allocation under a project call (`LoadLibraryExW` → `LdrpHandleTlsData`, or a Winsock
+  `LocalAlloc`) is OS;
+- client-runtime residue and growth are counted;
+- malformed inputs are rejected.
+
+This classification follows the handoff's acceptance criterion, "zero owned leaks". Claude adopted
+it under the user's autonomy instruction, and it is flagged for the user's review.
+
+**DXVK result** (`build/windows11_vm/dxvk_heap_ab2efe3cbec4fc1f`, revision 11, guard R21): all three
+GPU lifetimes completed, the native exit was 0, combined API heap coverage was complete, and the
+runner restored the IFEO key. Review `d0a41da2…`: **PASS, zero OWNED blocks at every stage.**
+
+| Stage | OS residual (blocks / bytes) | CLIENT residual (blocks / bytes) |
+|:--|--:|--:|
+| `unloaded_1` | 801 / 173,177 | 11 / 181,400 |
+| `unloaded_2` | 854 / 186,285 | 19 / 362,680 |
+| `unloaded_3` | 861 / 188,821 | 27 / 543,960 |
+
+Steady-state attribution (lifetime 2 → 3), symbolized with the snapshot binaries and pinned PDBs:
+- **CLIENT, 2 × 90,112 B per lifetime.** The libstdc++ emergency exception pool (0x16000) that DXVK's
+  statically linked runtime allocates in `__do_global_ctors` and never frees on unload. Also 480 B
+  and 24 B per DLL for winpthreads' `pop_pthread_mem`/mutex state, reached through `std::locale` in
+  `dxvk::Logger`, and two 24 B `__cxa_guard_acquire` mutexes. This is the same toolchain-runtime
+  class that OpenCL.dll's runtime V2 removes for the project's own DLL.
+- **OS.**
+  - 5 × 24 B from `ntdll!LdrpHandleTlsData` inside `kernelbase!LoadLibraryExW`, called by the
+    loader's `windows_initialization`.
+  - 304 B from `bcryptprimitives`, under the balanced open/generate/close in `venus_tcp_random`.
+  - 2 × 256 B from Winsock `GlobalAlloc`, under the balanced `WSAStartup`/`WSACleanup` path.
+  - TSF/IME (`msctf`, `imm32`) allocations during window creation and thread exit.
+
+OS growth shrinks from 801 to 854 to 861 blocks, so most of it is one-time first use.
+
+**OpenCL result** (`build/qualification_feature_20261021/opencl_heap_1e336986`, r3, guard R22): all
+three lives completed, the native exit was 0, the process was naturally absent, and the IFEO key was
+restored. Review `21f569da…`: **FAIL**, with 27 OWNED blocks (107,842 B) per load, all allocated by
+OpenCL.dll (candidate `70ca4fdb…`):
+- **LLVM `ManagedStatic` objects never destroyed.** These are created by clspv's
+  `ParseCommandLineOptions`, by `cl::opt` global constructors and by `TimePassesHandler`. They include
+  the 98,831 B `cl::Option` `DenseMap`, `CommandLineParser`, `TimerGlobals`, `DebugCounter`,
+  `SubCommand`, the `TimerGroup` names and `SmartMutex` objects. Nothing calls `llvm_shutdown()`
+  before OpenCL.dll unloads.
+- **48 B CRITICAL_SECTION debug-info records.** One for each clvk object that owns a `std::mutex`
+  (`cvk_buffer`, `cvk_kernel`, `cvk_event_command`, `cvk_program::get_entry_point`). The GCC
+  win32-thread-model mutex never calls `DeleteCriticalSection`, and the verifier forces debug info,
+  so each destroyed object leaves its record behind.
+
+Both are owned leaks under the reload contract. Fixing them needs an OpenCL.dll teardown change:
+`llvm_shutdown()` ordered after clvk's own destructors, and a mutex implementation that deletes its
+critical section. That change requires the user's approval of a private-copy change (handoff rule),
+a multi-hour OpenCL.dll rebuild, and then a new 1100-cycle reload and a new heap run.
+
+| File (under `build/qualification_feature_20261021/` unless stated) | SHA-256 |
+|:--|:--|
+| `cdb_guard_r22/guarded_capture.py` | `525fc26812ff7d1f8d5b2fdf79e3ac104752a9252311af4f91f2c7673fe2bd75` |
+| `cdb_guard_r22/receipt.json` | `107784a8c9b8e631d791a83e28490808b019168a79444b17a4cc5e830a6bb78e` |
+| `heap_residual_review.py` | `af069c0b5b0f8b7f1d8c028b32ee3a4360a2085049e81177ef2382fdc7e943ca` |
+| `test_heap_residual_review.py` | `046c35f8e83f1be327fb548d1090194ebe9339ab76e1a6a8894e5fc056eb5e2c` |
+| `ntdll_c93f4614_publics.json` | `d90d2d86c93554415177edda2f13b6202d1f896aa0e01a9c19256f9c58711cec` |
+| `kernelbase_pinned_publics.json` | `c9f98370056f26dc0f8afacca0942ba504a722ab52a9276f9f698be7a1752585` |
+| `guard_native_control_r9/guard_control_runner.py` | `ad4fb95fde869352deac32aa4c58114d8016aaedeb625e7d1ecd1fd33fd3fe73` |
+| `dxvk_heap_runner_revision11/dxvk_pageheap.py` | `bfe6dbdfb3699ffcf78c80be5fd0e4239a655d21531d09eb3eb44e4254ecfd7b` |
+| `opencl_heap_runner_r3/runner.py` | `c7365238261f24aa652bf5ef4ae9fd2040394a8ffecabb5704c26fd5cac378dd` |
+| `build/windows11_vm/dxvk_heap_ab2efe3cbec4fc1f/heap_residual_review.json` | `d0a41da25e16c4de7677018f443cfa4a8cfb0dc05892ecba685af840bfcd1088` |
+| `opencl_heap_1e336986/heap_residual_review.json` | `21f569dacb08265c670495dc6350610bd92ffb3b1604fbbf30f1d0169bc32270` |
