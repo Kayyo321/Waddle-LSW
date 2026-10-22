@@ -2359,3 +2359,118 @@ R12 inputs were rebuilt by exact hash (inventory replay `3ca2e4e3…`, wrapper-m
 `f370ea1e…`), and R12's 33 tests pass. The native guard controls run after R10 releases the lease.
 
 All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Commit hash backfill (2026-10-22)
+
+The independent pre-review found 98 branch commits that this log never recorded by hash,
+plus the IMPL_DESC commit `713ef8e` made just before this backfill. Many were recorded only by subject,
+because a commit cannot contain its own hash, or only in another feature's tracker. The task and
+overall deltas in the table at the top of this log already sum to exactly 85.5%, the current
+total. So every commit below carries +0% overall. Its work is credited in the adjacent logged rows
+or, for separate features, in that feature's own tracker. The table lists the 99 commits
+newest first.
+
+| Commit | Date | Change | Task / overall impact | Also recorded in |
+|:--|:--|:--|:--|:--|
+| `713ef8e` | 2026-10-22 | docs(opencl): specify the ten-step reload pre-initialization in IMPL_DESC | #5 +0%; overall +0% | not recorded elsewhere |
+| `df4d25d` | 2026-10-22 | docs(vgpu): specify CDB guard R15 and the native guard controls | #3 +0%; overall +0% | not recorded elsewhere |
+| `d2ba4a4` | 2026-10-22 | fix(opencl): absorb user-hive, RNG and D3DKMT first use in pre-initialization | #5 +0%; overall +0% | software-vgpu-slicing/IMPL_DESC.md |
+| `408752e` | 2026-10-22 | docs(opencl): add pre-initialization steps 8-10 and their attribution | #5 +0%; overall +0% | not recorded elsewhere |
+| `cfb951e` | 2026-10-22 | fix(opencl): narrow pre-initialization step 4 to a dxgi.dll load | #5 +0%; overall +0% | not recorded elsewhere |
+| `448f608` | 2026-10-22 | fix(vgpu): skip DXGI adapter sorting for explicit Vulkan loader driver lists | #3 +0%; overall +0% | not recorded elsewhere |
+| `f930eee` | 2026-10-22 | docs(opencl): specify loader patch 0002 and reload contract amendment 4 | #5 +0%; overall +0% | not recorded elsewhere |
+| `0541b3e` | 2026-10-22 | docs(opencl): attribute the R9 cycle-3 handle residual to RPC timer state | #5 +0%; overall +0% | not recorded elsewhere |
+| `901751f` | 2026-10-22 | docs(opencl): count the third transcript-rebuilt evidence file | #5 +0%; overall +0% | not recorded elsewhere |
+| `bbbdaee` | 2026-10-22 | docs(opencl): record reboot recovery and zero-residual promoted-ICD census | #5 +0%; overall +0% | not recorded elsewhere |
+| `d249a07` | 2026-10-21 | docs(opencl): record promoted ICD fix and overnight checkpoint | #5 +0%; overall +0% | this tracker, by subject |
+| `3997f55` | 2026-10-21 | docs(opencl): record approved second reload pre-initialization amendment | #5 +0%; overall +0% | not recorded elsewhere |
+| `800a5d6` | 2026-10-21 | docs(opencl): record approved OS-only reload pre-initialization | #5 +0%; overall +0% | this tracker, by subject |
+| `8a6e25e` | 2026-10-21 | docs(vgpu): preserve recoverable Fable qualification handoff | #3 +0%; overall +0% | this tracker, by subject; software-vgpu-slicing/CODEX_HANDOFF.md |
+| `8b964ab` | 2026-10-21 | fix(vgpu-tests): retire OpenCL owners before ICD abandonment | #5 +0%; overall +0% | this tracker, by subject |
+| `1ea8364` | 2026-10-21 | docs(vgpu): record loaded-host M2 ownership qualification | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `3e3d205` | 2026-10-21 | docs(vgpu): record physical matrix and allocator calibration | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `24f766b` | 2026-10-21 | test(vgpu): make preflight admission independent of local artifacts | #3 +0%; overall +0% | software-vgpu-slicing/QUALIFICATION_CONTINUATION_2026_10_21.md |
+| `2c3ca25` | 2026-10-21 | test(vgpu): calibrate first-load malloc leak detection | #3 +0%; overall +0% | not recorded elsewhere |
+| `4116250` | 2026-10-21 | test(vgpu): qualify in-flight OpenCL transport-loss ownership | #5 +0%; overall +0% | this tracker, by subject; software-vgpu-slicing/CODEX_HANDOFF.md |
+| `b374f69` | 2026-10-21 | test(vgpu): verify the actual outlined runtime TLS accessor | #3 +0%; overall +0% | this tracker, by subject |
+| `ca00ad7` | 2026-10-21 | docs(wsi): record independent Codex review and qualification blocker | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `52a1a29` | 2026-10-17 | docs(vgpu): retain final recursive checkout inventory limitation | #3 +0%; overall +0% | software-vgpu-slicing/CHECKPOINT_2026_10_21.md; software-vgpu-slicing/CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md |
+| `eb88c71` | 2026-10-17 | docs(vgpu): record qualification blockers and retired owned runners | #3 +0%; overall +0% | not recorded elsewhere |
+| `0c57b69` | 2026-10-17 | docs(wsi): clarify native acceptance in verification gate accounting | #3 +0%; overall +0% | not recorded elsewhere |
+| `2933aa6` | 2026-10-17 | docs(vgpu): record fresh qualification gates and native heap growth | #3 +0%; overall +0% | not recorded elsewhere |
+| `3ec4908` | 2026-10-17 | docs(tracker): record OpenCL implementation honestly as unverified at TODO #5 40% | #5 +0%; overall +0% | software-vgpu-slicing/CODEX_HANDOFF.md |
+| `de518b4` | 2026-10-09 | docs: bind reviewed input lease and terminal recovery handoff | No task delta; overall +0% | software-vgpu-slicing/CODEX_HANDOFF.md |
+| `d714621` | 2026-10-09 | fix(av): retain failed releases for bounded teardown retry | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `8d8d4df` | 2026-10-09 | test(av): exercise actual poll boundary across EINTR | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `8650e12` | 2026-10-09 | docs(cli): record reviewed terminal race implementation | No task here (separate feature); overall +0% | not recorded elsewhere |
+| `3884af7` | 2026-10-09 | fix(cli): drain terminal frames after peer write shutdown | No task here (separate feature); overall +0% | auto-terminal-race/TRACKER.md |
+| `26a73cb` | 2026-10-09 | feat(av): integrate revocable input leases across native peers | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `461f7c5` | 2026-10-09 | test(av): wire lease coverage and frozen V2 compatibility gate | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `efee605` | 2026-10-09 | feat(av): add canonical epoch protocol and portable lease authority | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `414d7e4` | 2026-10-09 | docs: preserve exact green native CI checkpoint | No task delta; overall +0% | REVIEW_CHECKLIST.md; auto-terminal-race/IMPL_DESC.md |
+| `879d0c3` | 2026-10-09 | docs(test): correct sanitizer implementation receipt hash | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; CI_GREEN_CHECKPOINT_2026-10-10.md |
+| `34c9d3e` | 2026-10-09 | docs(test): bind fail-closed sanitizer review receipt | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `01c30f7` | 2026-10-09 | docs: retain worker query and fatal sanitizer acceptance gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1b7cd17` | 2026-10-09 | test: make coverage sanitizer probes fail closed | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; coverage-recorder-integrity/TRACKER.md |
+| `50ca9bd` | 2026-10-09 | docs(vgpu): bind worker query runtime correction receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `3d3267d` | 2026-10-09 | test(vgpu): enable legal KHR queries in worker acceptance | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-runtime/TRACKER.md |
+| `f62cf52` | 2026-10-09 | docs: add exact coverage recorder replay and diagnostic handoff | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1e49a8e` | 2026-10-09 | docs: trace native fixture and recorder publication | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `51583f9` | 2026-10-09 | docs(test): bind native recorder integrity verification receipt | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `8d2dd4f` | 2026-10-09 | fix(test): retain every native coverage site within recorder budget | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `6f9494c` | 2026-10-09 | docs(vgpu): bind native WSI capability verification receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `0c65763` | 2026-10-09 | docs: record native lifecycle CI and remaining WSI gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `337021a` | 2026-10-09 | test(vgpu): opt native WSI fixtures into swapchain capability | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; native-wsi-test-capabilities/TRACKER.md |
+| `f04e358` | 2026-10-09 | docs: trace the bounded worker link repair and pending execution | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-runtime/TRACKER.md |
+| `d6be1c1` | 2026-10-09 | docs(vgpu): bind presented worker link correction receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `37df949` | 2026-10-09 | fix(vgpu): link native WSI sink into worker acceptance binaries | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-link/TRACKER.md |
+| `ec8bf07` | 2026-10-09 | docs: preserve lifecycle upgrade and native verification handoff | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `7c26f20` | 2026-10-09 | docs(av): bind synthetic callback correction verification receipt | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `f6e5695` | 2026-10-09 | test(av): accept validated input in synthetic platform fixture | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `f8163d9` | 2026-10-09 | docs(vgpu): record native extension oracle coverage receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `efc09c8` | 2026-10-09 | docs(av): record exact generation lifecycle verification receipt | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1337fe5` | 2026-10-09 | feat(av): gate native lifecycle effects on admitted window generations | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `b317c05` | 2026-10-09 | test(vgpu): verify exact native extension projections | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; native-icd-extension-oracle/TRACKER.md |
+| `580349c` | 2026-10-09 | feat(av): add explicit lifecycle capability and identity effect gate | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `c11ce21` | 2026-10-09 | docs(vgpu): record exact sanitizer inventory repair evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; coverage-recorder-integrity/TRACKER.md |
+| `cf1ca1e` | 2026-10-09 | docs(av): specify generation-safe lifecycle capability contract | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `dfe7969` | 2026-10-09 | docs: link the portability checkpoint and remaining sanitizer gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `3cf2faa` | 2026-10-09 | fix(vgpu): account for device sanitizer helper closure | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; owned-sanitizer-inventory/TRACKER.md |
+| `e9b0663` | 2026-10-09 | docs(vgpu): attribute portable ICD test environment evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `37970ae` | 2026-10-09 | test(vgpu): make ICD environment fixtures portable on Windows | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; windows-icd-test-environment/TRACKER.md |
+| `b7c5912` | 2026-10-09 | docs(av): record native CI and leak-enabled input acceptance | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `622e79e` | 2026-10-09 | docs: map the verified coverage follow-on publication | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `4e07ac8` | 2026-10-09 | docs: add a concise prioritized home-validation index | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1de3fdd` | 2026-10-09 | docs(vgpu): record restored whole-ICD coverage evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/EVIDENCE.md |
+| `96291c5` | 2026-10-09 | docs: record restored ICD coverage without hardware acceptance credit | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `2d97603` | 2026-10-09 | test(vgpu): cover queue-side WSI failure transactions | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; wsi-window-lifetime/TRACKER.md |
+| `b137f3e` | 2026-10-09 | docs: map published checkpoints and retain the full coverage failure | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `78ed9d1` | 2026-10-09 | ci(vgpu): include full ICD queue regression units in both modes | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `f130306` | 2026-10-09 | docs(vgpu): record reviewed WSI lifetime verification | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; HARDWARE_TEST_HANDOFF.md |
+| `6a4e65a` | 2026-10-09 | ci(vgpu): exercise WSI lifetime and repair native ICD link parity | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `51ee17b` | 2026-10-09 | fix(vgpu): harden Win32 swapchain retirement and resize lifetimes | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `272f030` | 2026-10-09 | docs(av): correct measured cloud compiler version | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `c854a79` | 2026-10-09 | test(av): record input verification and native DPI assertions | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `2d4cb16` | 2026-10-09 | ci(av): verify desktop input on the shared GPU branch | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `388b7b3` | 2026-10-09 | feat(av): connect Wayland seat input to tracked guest injection | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `887c5f7` | 2026-10-09 | feat(av): validate bounded input and track held ownership | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `c4a4d39` | 2026-10-09 | docs(av): specify ordinary-window input contract | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `9cdb6b6` | 2026-10-09 | test(vgpu): add Properties2 sanitizer gate and DXVK shader tooling | #3 +0%; overall +0% | not recorded elsewhere |
+| `c6cf98c` | 2026-10-08 | docs: add shared GPU Windows desktop roadmap | No task delta; overall +0% | not recorded elsewhere |
+| `cb0b0d5` | 2026-10-07 | docs(vgpu): record final ICD and real Windows Vulkan qualification | #3 +0%; overall +0% | SHARED_GPU_DESKTOP_ROADMAP.md |
+| `c390a74` | 2026-10-07 | test(dxvk): exercise genuine recorded submission transport loss | #3 +0%; overall +0% | not recorded elsewhere |
+| `e24733e` | 2026-10-07 | docs(vgpu): record real compute acceptance and remaining presentation gate | #3 +0%; overall +0% | not recorded elsewhere |
+| `5407cfc` | 2026-10-07 | docs(vgpu): record real DXVK pixel acceptance and remaining compute failure | #3 +0%; overall +0% | not recorded elsewhere |
+| `357d6e4` | 2026-10-07 | docs(vgpu): record integrated transport and honest qualification gaps | #3 +0%; overall +0% | not recorded elsewhere |
+| `e6687ad` | 2026-10-07 | test(vgpu): preserve all final coverage attempts and track qualification scope | #3 +0%; overall +0% | not recorded elsewhere |
+| `8083c76` | 2026-10-07 | chore(vgpu): describe Vulkan 1.3 ceiling and coherent integration milestone | #3 +0%; overall +0% | not recorded elsewhere |
+| `393b2f3` | 2026-10-07 | feat(vgpu): support bounded full-size DXVK shader packets | #3 +0%; overall +0% | not recorded elsewhere |
+| `081989b` | 2026-10-07 | chore(vgpu): integrate modern Vulkan module builds and targeted checks | #3 +0%; overall +0% | not recorded elsewhere |
+| `75c0954` | 2026-10-07 | fix(vgpu): freeze every Properties2 SDK member type explicitly | #3 +0%; overall +0% | not recorded elsewhere |
+| `4ae52ec` | 2026-10-07 | docs(vgpu): record exact native SDK owner attribution | #3 +0%; overall +0% | not recorded elsewhere |
+| `7bfb191` | 2026-10-07 | feat(vgpu): forward immutable guest caps with absolute deadlines | #3 +0%; overall +0% | not recorded elsewhere |
+| `12bdbac` | 2026-10-07 | feat(vgpu): expose exact validated extension backend status | #3 +0%; overall +0% | this tracker, by subject |
+| `640ea9a` | 2026-10-07 | feat(vgpu): publish modern native Properties2 payloads transactionally | #3 +0%; overall +0% | not recorded elsewhere |
+
+Later commits are recorded by hash in the section that follows each one. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
