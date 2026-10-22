@@ -2,7 +2,7 @@
  *
  * Exercises the exact include compiled into the Windows fixture. Every fakeable operation of
  * the success path is failed once in turn; after each failure the test proves that every module
- * reference, Winsock startup and socket was released. No Windows loader, Winsock, DXGI,
+ * reference, Winsock startup, socket, registry key and RNG provider was released. No Windows loader, Winsock, DXGI,
  * native execution or GPU acceptance is claimed.
  */
 #include <assert.h>
@@ -19,11 +19,11 @@
 
 /** One fake System32 module with an exact reference count. */
 struct fake_module_t { const wchar_t *name; int references; };
-enum { FakeModules = 6, FakeTraceCapacity = 64, FakeTraceText = 64 };
+enum { FakeModules = 8, FakeTraceCapacity = 96, FakeTraceText = 64 };
 
 static struct fake_module_t fake_modules[FakeModules] = {
     {L"user32.dll", 0}, {L"ws2_32.dll", 0}, {L"bcrypt.dll", 0}, {L"dxgi.dll", 0}, {L"dwmapi.dll", 0},
-    {L"kernel32.dll", 0}};
+    {L"kernel32.dll", 0}, {L"advapi32.dll", 0}, {L"gdi32.dll", 0}};
 static int fake_wrong_dwmapi_path, fake_package_status, fake_long_system, fake_truncated_module;
 static int fake_connect_immediate, fake_name_size_wrong, fake_select_mode, fake_last_error = 10035;
 typedef struct { uint16_t family, port; uint32_t address; unsigned char zero[8]; } fake_address_t;
@@ -31,6 +31,8 @@ typedef struct { unsigned count; uintptr_t sockets[64]; } fake_set_t;
 static char fake_trace[FakeTraceCapacity][FakeTraceText];
 static unsigned fake_trace_count, fake_step, fake_fail_step;
 static int fake_startups, fake_cleanups, fake_sockets_open, fake_sockets_closed;
+static int fake_keys_open, fake_keys_closed, fake_providers_open, fake_providers_closed;
+static int fake_key_object, fake_provider_object;
 static uintptr_t fake_next_socket = 0x40;
 
 /** @brief Count one fakeable operation; returns nonzero when it is the injected failure. */
@@ -159,6 +161,63 @@ static int32_t WINAPI fake_packages(const wchar_t *family, uint32_t *count, wcha
     return fake_package_status;
 }
 
+static int32_t WINAPI fake_open_key(void *root, const wchar_t *name, uint32_t options, uint32_t access, void **key)
+{
+    assert(root == (void *)(intptr_t)INT32_C(-2147483647) && name && !wcscmp(name, L"Software") && options == 0 &&
+           access == 0x20019 && key);
+    fake_record("RegOpenKeyExW");
+    if (fake_fails()) return 2;  /* ERROR_FILE_NOT_FOUND */
+    ++fake_keys_open;
+    *key = &fake_key_object;
+    return 0;
+}
+
+static int32_t WINAPI fake_close_key(void *key)
+{
+    assert(key == &fake_key_object && fake_keys_open > fake_keys_closed);
+    fake_record("RegCloseKey");
+    ++fake_keys_closed;
+    return fake_fails() ? 6 : 0;  /* ERROR_INVALID_HANDLE */
+}
+
+static int32_t WINAPI fake_open_provider(void **provider, const wchar_t *algorithm, const wchar_t *implementation, uint32_t flags)
+{
+    assert(provider && algorithm && !wcscmp(algorithm, L"RNG") && implementation &&
+           !wcscmp(implementation, L"Microsoft Primitive Provider") && flags == 0);
+    fake_record("BCryptOpenAlgorithmProvider");
+    if (fake_fails()) return INT32_C(-1073741275);  /* STATUS_NOT_FOUND 0xc0000225 */
+    ++fake_providers_open;
+    *provider = &fake_provider_object;
+    return 0;
+}
+
+static int32_t WINAPI fake_generate(void *provider, unsigned char *bytes, uint32_t length, uint32_t flags)
+{
+    assert(provider == &fake_provider_object && bytes && length == 16 && flags == 0);
+    fake_record("BCryptGenRandom");
+    if (fake_fails()) return INT32_C(-1073741823);  /* STATUS_UNSUCCESSFUL */
+    memset(bytes, 0xa5, length);
+    return 0;
+}
+
+static int32_t WINAPI fake_close_provider(void *provider, uint32_t flags)
+{
+    assert(provider == &fake_provider_object && flags == 0 && fake_providers_open > fake_providers_closed);
+    fake_record("BCryptCloseAlgorithmProvider");
+    ++fake_providers_closed;
+    return fake_fails() ? INT32_C(-1073741816) : 0;  /* STATUS_INVALID_HANDLE */
+}
+
+typedef struct { uint32_t count; void *adapters; } fake_adapters_t;
+static int32_t WINAPI fake_enum_adapters(fake_adapters_t *adapters)
+{
+    assert(adapters && adapters->count == 0 && adapters->adapters == NULL);
+    fake_record("D3DKMTEnumAdapters2");
+    if (fake_fails()) return INT32_C(-1073741823);  /* STATUS_UNSUCCESSFUL */
+    adapters->count = 2;
+    return 0;
+}
+
 /** @brief Convert one fake function to FARPROC storage without a function-type cast. */
 #define FakeExport(function) do { FARPROC address; __typeof__(&function) source = function; \
     _Static_assert(sizeof source == sizeof address, "fake export size"); \
@@ -197,6 +256,12 @@ static FARPROC GetProcAddress(HMODULE module, const char *name)
     if (module == &fake_modules[1] && !strcmp(name, "connect")) FakeExport(fake_connect);
     if (module == &fake_modules[1] && !strcmp(name, "select")) FakeExport(fake_select);
     if (module == &fake_modules[1] && !strcmp(name, "WSAGetLastError")) FakeExport(fake_wsa_last_error);
+    if (module == &fake_modules[6] && !strcmp(name, "RegOpenKeyExW")) FakeExport(fake_open_key);
+    if (module == &fake_modules[6] && !strcmp(name, "RegCloseKey")) FakeExport(fake_close_key);
+    if (module == &fake_modules[2] && !strcmp(name, "BCryptOpenAlgorithmProvider")) FakeExport(fake_open_provider);
+    if (module == &fake_modules[2] && !strcmp(name, "BCryptGenRandom")) FakeExport(fake_generate);
+    if (module == &fake_modules[2] && !strcmp(name, "BCryptCloseAlgorithmProvider")) FakeExport(fake_close_provider);
+    if (module == &fake_modules[7] && !strcmp(name, "D3DKMTEnumAdapters2")) FakeExport(fake_enum_adapters);
     assert(!"unexpected export");
     return NULL;
 }
@@ -272,7 +337,11 @@ static const char *const ExpectedTrace[] = {
     "load ws2_32.dll", "resolve WSAStartup", "resolve WSACleanup", "resolve socket", "resolve closesocket", "resolve bind",
     "resolve listen", "resolve getsockname", "resolve setsockopt", "resolve ioctlsocket", "resolve connect", "resolve select",
     "resolve WSAGetLastError", "WSAStartup", "socket", "socket", "bind", "listen", "getsockname", "setsockopt", "ioctlsocket",
-    "connect", "WSAGetLastError", "select", "closesocket", "closesocket", "WSACleanup", "free ws2_32.dll"};
+    "connect", "WSAGetLastError", "select", "closesocket", "closesocket", "WSACleanup", "free ws2_32.dll",
+    "load advapi32.dll", "resolve RegOpenKeyExW", "resolve RegCloseKey", "RegOpenKeyExW", "RegCloseKey", "free advapi32.dll",
+    "load bcrypt.dll", "resolve BCryptOpenAlgorithmProvider", "resolve BCryptGenRandom", "resolve BCryptCloseAlgorithmProvider",
+    "BCryptOpenAlgorithmProvider", "BCryptGenRandom", "BCryptCloseAlgorithmProvider", "free bcrypt.dll",
+    "load gdi32.dll", "resolve D3DKMTEnumAdapters2", "D3DKMTEnumAdapters2", "free gdi32.dll"};
 enum { ExpectedSteps = sizeof ExpectedTrace / sizeof ExpectedTrace[0] };
 
 static void reset(unsigned fail_step)
@@ -281,6 +350,7 @@ static void reset(unsigned fail_step)
     fake_trace_count = fake_step = 0;
     fake_fail_step = fail_step;
     fake_startups = fake_cleanups = fake_sockets_open = fake_sockets_closed = 0;
+    fake_keys_open = fake_keys_closed = fake_providers_open = fake_providers_closed = 0;
     fake_wrong_dwmapi_path = 0;
     fake_package_status = 0;
     fake_long_system = fake_truncated_module = 0;
@@ -294,6 +364,7 @@ static void assert_released(void)
     for (unsigned i = 0; i < FakeModules; ++i) assert(fake_modules[i].references == 0);
     assert(fake_startups == fake_cleanups);
     assert(fake_sockets_open == fake_sockets_closed);
+    assert(fake_keys_open == fake_keys_closed && fake_providers_open == fake_providers_closed);
 }
 
 int main(void)
@@ -302,9 +373,11 @@ int main(void)
     assert(os_preinitialize() == 0);
     assert(fake_trace_count == sizeof ExpectedTrace / sizeof ExpectedTrace[0]);
     for (unsigned i = 0; i < fake_trace_count; ++i) assert(!strcmp(fake_trace[i], ExpectedTrace[i]));
-    assert(fake_step == ExpectedSteps && fake_startups == 2 && fake_sockets_open == 3);
+    assert(fake_step == ExpectedSteps && fake_startups == 2 && fake_sockets_open == 3 && fake_keys_open == 1 &&
+           fake_providers_open == 1);
     assert_released();
-    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect"));
+    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,"
+                                   "user_hive,random,d3dkmt_adapters"));
     const unsigned success_calls = fake_trace_count;
 
     unsigned failures = 0;

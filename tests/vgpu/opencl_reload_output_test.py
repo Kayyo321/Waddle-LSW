@@ -46,7 +46,7 @@ def record(value):
 def valid():
     baseline = {"event": "baseline", "pid": 1234, "creation": Creation, "cycles": 1100, "contexts_per_cycle": 3, "idle_threads": 4,
                 "handles": 62, "tls": 8, "fls": 12, "heap_acceptance": False, "entry": [50, 8, 12],
-                "os_preinit": "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect", "module_utf16": Module.encode("utf-16-be").hex()}
+                "os_preinit": "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters", "module_utf16": Module.encode("utf-16-be").hex()}
     lines = [record(baseline)]
     hosts = []
     for cycle in range(1, 1101):
@@ -114,7 +114,8 @@ class OutputTests(unittest.TestCase):
                              ("tls", -1), ("fls", "12"), ("entry", [50, 8]), ("entry", [True, 8, 12]), ("extra", 1),
                              ("os_preinit", "user32,winsock,bcrypt,dxgi_module"), ("os_preinit", ""), ("os_preinit", None),
                              ("os_preinit", "user32,winsock,bcrypt,dxgi_module,search_order,package_family"),
-                             ("os_preinit", "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,extra"),
+                             ("os_preinit", "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters,extra"),
+                             ("os_preinit", "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect"),
                              ("os_preinit", "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect")]:
             with self.subTest(field=field, value=value):
                 self.reject_record("baseline", field, value)

@@ -31,7 +31,8 @@ def main():
     target = next(item for item in report["files"] if item["file"] == str(root / gate.CoverageSource))
     expected = {"os_preinit_load", "os_preinit_resolve", "os_preinit_user32", "os_preinit_winsock",
                 "os_preinit_bcrypt", "os_preinit_dxgi_module", "os_preinit_search_order",
-                "os_preinit_package_family", "os_preinit_winsock_connect", "os_preinitialize"}
+                "os_preinit_package_family", "os_preinit_winsock_connect", "os_preinit_user_hive",
+                "os_preinit_random", "os_preinit_d3dkmt_adapters", "os_preinitialize"}
     functions = target.get("functions")
     if not isinstance(functions, list) or len(functions) != len(expected) or {f.get("name") for f in functions} != expected:
         raise ValueError("missing, duplicate or unexpected OS pre-initialization function inventory")
