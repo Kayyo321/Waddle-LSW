@@ -5,6 +5,7 @@
 #include "av_lease.h"
 #include "linux_dmabuf_client.h"
 #include "xdg_shell_client.h"
+#include "xdg_decoration_client.h"
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -31,6 +32,8 @@ typedef struct video_window_t {
     struct wl_surface *surface;
     struct xdg_surface *xdg_surface;
     struct xdg_toplevel *toplevel;
+    /** Optional client-side decoration request; destroyed before the toplevel. */
+    struct zxdg_toplevel_decoration_v1 *decoration;
     struct wl_shm_pool *pool;
     video_buffer_t buffers[3];
     size_t capacity;
@@ -48,6 +51,8 @@ struct av_wayland_t {
     struct wl_shm *shm;
     struct xdg_wm_base *shell;
     struct zwp_linux_dmabuf_v1 *dmabuf;
+    /** Optional xdg-decoration manager; NULL when the compositor lacks it. */
+    struct zxdg_decoration_manager_v1 *decoration_manager;
     int linear_argb;
     video_window_t windows[AvMaxWindows];
     av_identity_session_t identity;
@@ -590,6 +595,9 @@ static void registry_global(void *context, struct wl_registry *registry, uint32_
         client->dmabuf = wl_registry_bind(registry, name, &zwp_linux_dmabuf_v1_interface, 3);
         if (client->dmabuf)
             zwp_linux_dmabuf_v1_add_listener(client->dmabuf, &DmabufEvents, client);
+    } else if (!strcmp(interface_name, "zxdg_decoration_manager_v1") && !client->decoration_manager) {
+        client->decoration_manager =
+            wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
     } else if (!strcmp(interface_name, "xdg_wm_base") && !client->shell) {
         client->shell = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
         if (client->shell)
@@ -632,6 +640,10 @@ static void retire_window(video_window_t *window) {
             suppress_observed(window->client, AvInputReleaseButtons);
             window->client->pointer_window = NULL;
         }
+    }
+    if (window->decoration) {
+        zxdg_toplevel_decoration_v1_destroy(window->decoration);
+        window->decoration = NULL;
     }
     if (window->toplevel) {
         xdg_toplevel_destroy(window->toplevel);
@@ -688,6 +700,8 @@ void av_wayland_free(av_wayland_t **client_pointer) {
         free_window(&client->windows[i]);
     if (client->dmabuf)
         zwp_linux_dmabuf_v1_destroy(client->dmabuf);
+    if (client->decoration_manager)
+        zxdg_decoration_manager_v1_destroy(client->decoration_manager);
     if (client->shell)
         xdg_wm_base_destroy(client->shell);
     if (client->shm)
@@ -784,6 +798,16 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
     xdg_toplevel_add_listener(window->toplevel, &ToplevelEvents, window);
     xdg_toplevel_set_title(window->toplevel, message->title);
     xdg_toplevel_set_app_id(window->toplevel, "waddle.av");
+    /* Windows draws its own frame; ask decoration-capable compositors (KWin)
+     * not to add a second, server-side frame around it. */
+    if (client->decoration_manager) {
+        window->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+            client->decoration_manager, window->toplevel);
+        if (!window->decoration)
+            goto fail;
+        zxdg_toplevel_decoration_v1_set_mode(window->decoration,
+                                             ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    }
     for (unsigned i = 0; i < 3; ++i) {
         window->buffers[i].slot = slots[i];
         window->buffers[i].offset = offsets[i];

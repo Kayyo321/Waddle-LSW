@@ -3,6 +3,9 @@
  * fabricating a display connection; native platform tests cover real protocol I/O.
  */
 #include <wayland-client.h>
+#include <stdio.h>
+#include "xdg_shell_client.h"
+#include "xdg_decoration_client.h"
 #include <stdint.h>
 #include <stdarg.h>
 #include <time.h>
@@ -19,6 +22,13 @@ static uint64_t now_ms = 1000;
 static int clock_failure, sync_failure, listener_failure, flush_error;
 static unsigned flushes, syncs, proxy_destroys, pending_dispatches, disconnects;
 static void (*during_drain)(void);
+/* Request recorder: interface of each fake proxy plus the decoded arguments of
+ * the requests the decoration/title tests assert on. */
+static const char *proxy_names[4096];
+static unsigned title_requests, decoration_modes, destroy_count;
+static char last_title[256];
+static uint32_t last_decoration_mode;
+static const char *destroy_log[16];
 static unsigned proxy_index(struct wl_proxy *proxy) {
     uintptr_t address = (uintptr_t)proxy;
     uintptr_t base = (uintptr_t)proxy_storage;
@@ -26,10 +36,36 @@ static unsigned proxy_index(struct wl_proxy *proxy) {
         (address - base) % sizeof(proxy_storage[0])) __builtin_trap();
     return (unsigned)((address - base) / sizeof(proxy_storage[0]));
 }
+/* Interface name of a fake proxy, NULL for test-local sentinel pointers. */
+static const char *proxy_name(struct wl_proxy *proxy) {
+    uintptr_t address = (uintptr_t)proxy, base = (uintptr_t)proxy_storage;
+    if (address < base || address >= base + sizeof(proxy_storage) ||
+        (address - base) % sizeof(proxy_storage[0])) return NULL;
+    return proxy_names[(address - base) / sizeof(proxy_storage[0])];
+}
 struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t opcode,
     const struct wl_interface *interface, uint32_t version, uint32_t flags, ...) {
-    (void)proxy; (void)opcode; (void)version; (void)flags;
+    (void)version;
     ++native_effects;
+    const char *target = proxy_name(proxy);
+    if (target && (flags & WL_MARSHAL_FLAG_DESTROY) && destroy_count < 16)
+        destroy_log[destroy_count++] = target;
+    if (target && !strcmp(target, "xdg_toplevel") && opcode == XDG_TOPLEVEL_SET_TITLE) {
+        va_list arguments;
+        va_start(arguments, flags);
+        const char *title = va_arg(arguments, const char *);
+        va_end(arguments);
+        snprintf(last_title, sizeof(last_title), "%s", title);
+        ++title_requests;
+    }
+    if (target && !strcmp(target, "zxdg_toplevel_decoration_v1") &&
+        opcode == ZXDG_TOPLEVEL_DECORATION_V1_SET_MODE) {
+        va_list arguments;
+        va_start(arguments, flags);
+        last_decoration_mode = va_arg(arguments, uint32_t);
+        va_end(arguments);
+        ++decoration_modes;
+    }
     if (!interface) return NULL;
     int callback = !strcmp(interface->name, "wl_callback");
     if (callback) {
@@ -38,6 +74,7 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
     }
     if (proxy_count >= 4096) __builtin_trap();
     callback_proxies[proxy_count] = (uint8_t)callback;
+    proxy_names[proxy_count] = interface->name;
     return (struct wl_proxy *)&proxy_storage[proxy_count++];
 }
 uint32_t __wrap_wl_proxy_get_version(struct wl_proxy *proxy) { (void)proxy; return 1; }
@@ -88,6 +125,7 @@ static int receive_request(const av_message_t *message, void *context) {
     return fail_delivery || (fail_delivery_at && deliveries == fail_delivery_at) ? -1 : 0;
 }
 static void lifecycle_callbacks(void);
+static void decoration_callbacks(void);
 static void lease_callbacks(void);
 static void lease_failures(void);
 static void lease_lifecycle(void);
@@ -220,6 +258,7 @@ int main(void) {
     assert(deliveries == 6 && client.delivery_failed);
     input_callbacks();
     lifecycle_callbacks();
+    decoration_callbacks();
     lease_callbacks();
     lease_failures();
     lease_lifecycle();
@@ -734,4 +773,41 @@ static void lease_lifecycle(void) {
     assert(delivered.type == MsgInputFocusV3 && !delivered.flags);
     free_window(window);
     puts("AV Wayland leases: CreateV3 selection, immutable lifecycle routing and capability loss passed");
+}
+/* Windows-drawn frames: request client-side decoration when the compositor
+ * offers xdg-decoration and destroy the
+ * decoration object before its toplevel as the protocol requires. */
+static void decoration_callbacks(void) {
+    deliveries = 0; fail_delivery = 0;
+    av_wayland_t client = {.request = receive_request, .request_context = &deliveries};
+    window_slot_header_t slots[3] = {0};
+    window_slot_header_t *pointers[3] = {&slots[0], &slots[1], &slots[2]};
+    uint64_t offsets[3] = {0, 4096, 8192};
+    av_message_t create = {.type = MsgWindowCreateV2, .window_id = 9, .sequence = 30,
+        .process_id = 100, .width = 16, .height = 16, .dpi = 96};
+    snprintf(create.title, sizeof(create.title), "Untitled - Notepad");
+    /* Without a manager no decoration object or mode request is created. */
+    unsigned modes = decoration_modes, titles = title_requests;
+    assert(av_wayland_create(&client, &create, 1, 16384, pointers, offsets, 4096) == 0);
+    video_window_t *plain = find_window(&client, 9);
+    assert(plain && !plain->decoration && decoration_modes == modes);
+    assert(title_requests == titles + 1 && !strcmp(last_title, "Untitled - Notepad"));
+    plain->surface = NULL; plain->xdg_surface = NULL; plain->toplevel = NULL;
+    free_window(plain);
+    /* With a manager the toplevel is created client-side decorated. */
+    proxy_names[proxy_count] = "zxdg_decoration_manager_v1";
+    client.decoration_manager = (struct zxdg_decoration_manager_v1 *)&proxy_storage[proxy_count++];
+    create.sequence = 31;
+    assert(av_wayland_create(&client, &create, 1, 16384, pointers, offsets, 4096) == 0);
+    video_window_t *window = find_window(&client, 9);
+    assert(window && window->decoration && decoration_modes == modes + 1);
+    assert(last_decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    /* Retirement destroys the decoration before the toplevel. */
+    destroy_count = 0;
+    retire_window(window);
+    assert(!window->decoration && !window->toplevel && destroy_count >= 2);
+    assert(!strcmp(destroy_log[0], "zxdg_toplevel_decoration_v1"));
+    assert(!strcmp(destroy_log[1], "xdg_toplevel"));
+    free_window(window);
+    puts("AV Wayland decorations: client-side mode and destroy order passed");
 }
