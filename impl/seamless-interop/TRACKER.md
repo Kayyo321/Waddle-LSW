@@ -16,8 +16,8 @@ Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1  | IMPL_DESC.md + TRACKER.md, contract freeze (protocol v1, layout v2, manifest schema, config keys) | Done | 2% | 100% | Contracts frozen in IMPL_DESC §3 |
-| #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | Pending | 3% | 0% | Manual hardware run by user |
-| #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | Pending | 3% | 0% | Manual hardware run by user |
+| #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **hardware run by user pending** (`scripts/interop_verify_m0.sh audio`) |
+| #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | CSD + title fixes, script and template done; **GNOME and KDE hardware runs by user pending** |
 | #4  | Interop protocol v1 header + Zig codec, Hello/capabilities, chunked transfers | Pending | 4% | 0% | - |
 | #5  | IVSHMEM layout v2 (slot heap, 64 windows, 8 audio rings) | Pending | 3% | 0% | Waits on #4 |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
@@ -50,7 +50,7 @@ Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | Pending | 3% | 0% | Waits on #1 |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
-**Total Feature Completion**: `2.0%`
+**Total Feature Completion**: `5.6%`
 
 ## Commit History & Progress Log
 
@@ -61,8 +61,35 @@ Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
     peripheral and desktop-integration mechanisms, execution sequences,
     threading, failure modes and verification criteria.
 
-- **Commit `HEAD`**: `docs(seamless-interop): add feature tracker`
+- **Commit `14183f8`**: `docs(seamless-interop): add feature tracker`
   - **Task Impact**: +20% to TODO: #1 (+0.4% overall feature completion)
   - **Summary**: Adds this tracker with 34 weighted tasks (sum 100%),
-    dependencies and blockers. `HEAD` denotes the containing commit until
+    dependencies and blockers.
+
+- **Commit `d5dcc25`**: `fix(av): request client-side decorations for Windows-framed windows`
+  - **Task Impact**: +20% to TODO: #3 (+0.6% overall feature completion)
+  - **Summary**: Generates and links xdg-decoration client code, binds the
+    optional manager, requests client-side mode per toplevel and destroys the
+    decoration before its toplevel. The Wayland request double records proxy
+    interfaces, destructor order and set_mode arguments; `make av-test` and the
+    ASan/LSan/UBSan build of `av_wayland_state_test` pass.
+
+- **Commit `23dd01f`**: `fix(av): re-issue window titles when the guest title changes`
+  - **Task Impact**: +10% to TODO: #3 (+0.3% overall feature completion)
+  - **Summary**: Calls `xdg_toplevel_set_title` only when an accepted geometry
+    message carries a different title; asserted for unchanged, changed and
+    repeated titles.
+
+- **Commit `03505b9`**: `test(seamless-interop): add milestone 0 hardware evidence script`
+  - **Task Impact**: +50% to TODO: #2 (+1.5% overall), +20% to TODO: #3 (+0.6% overall)
+  - **Summary**: Adds `scripts/interop_verify_m0.sh` (audio and window modes,
+    automatic PipeWire/guest-counter checks, operator questions, Markdown
+    summary), its fake-tool fixture `tests/interop/verify_m0.sh`, and
+    `make interop-test` via `scripts/interop.mk`. No hardware evidence yet.
+
+- **Commit `HEAD`**: `docs(seamless-interop): add milestone 0 verification record`
+  - **Task Impact**: +10% to TODO: #2 (+0.3% overall), +10% to TODO: #3 (+0.3% overall)
+  - **Summary**: Adds VERIFICATION_M0.md with prerequisites, procedure, pass
+    rules, the fixes made before the run and empty result tables to be filled
+    from real GNOME/KDE runs. `HEAD` denotes the containing commit until
     resolved by the next atomic commit.
