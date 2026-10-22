@@ -189,3 +189,29 @@ changes on 2026-10-22.
 The baseline witness becomes
 `user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect`. All other rules of
 amendments 1 and 2 are unchanged, including exact equality on every reload.
+
+## Amendment 4: explicit driver lists skip DXGI, step 4 loads dxgi.dll only (2026-10-22)
+
+R9 failed cycle 3 with one Thread and one Event. Kernel handle tracing attributes both to RPCRT4
+per-thread state created by a thread-pool timer callback
+([attribution sections 13-14](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#13-reload-r9-and-the-rpc-timer-residual-2026-10-22)).
+The user approved evaluating a loader patch on 2026-10-22 and told Claude to work autonomously and
+resolve roadblocks itself. Under that instruction Claude integrates both changes below. Neither one
+alters a predicate, threshold, baseline or count policy.
+
+1. **Loader patch 0002.** When `VK_DRIVER_FILES` or `VK_ICD_FILENAMES` is set, which is the same
+   override that already makes the loader skip the registry, `windows_initialize_dxgi` and
+   `windows_read_sorted_physical_devices` create no DXGI factory. The loader behaves exactly as it
+   already does when DXGI factory creation fails: no physical-device sorting feature and no sorted
+   list. The fixture always sets `VK_DRIVER_FILES` to the Waddle manifest.
+2. **Step 4 narrowed to a module load.** Step 4 now loads System32 `dxgi.dll` and frees it. It no
+   longer creates and releases an `IDXGIFactory1`. A native per-step control shows that factory
+   creation is the only pre-initialization step that opens RPC/ALPC client connections, and that a
+   plain load and free opens none. With patch 0002 no cycle creates a factory, while the loader still
+   loads and frees `dxgi.dll` each cycle. The narrowed step is a strict subset of the operation the
+   user approved in amendment 1.
+
+The baseline witness becomes
+`user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect`, and verifiers
+reject the previous `dxgi_factory` witness. All other rules of amendments 1-3 are unchanged,
+including exact equality on every reload.

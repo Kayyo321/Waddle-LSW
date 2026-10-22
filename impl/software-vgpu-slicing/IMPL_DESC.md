@@ -7250,3 +7250,42 @@ Thirty promoted feature structures; every field keeps its aggregate name. `Shade
 - Gates: Debug and ReleaseSafe units, owned sanitizers with zero leaks, production coverage at least
   90% for each changed module, the Windows cross-compiles, then the rebuilt ICD in the census and the
   full 1100-cycle reload.
+
+### Explicit driver lists skip DXGI sorting (loader patch 0002, 2026-10-22)
+
+**Scope.** `patches/vulkan_loader/0002-skip-dxgi-sorting-for-explicit-driver-lists.patch` changes
+three Windows-only loader files on top of patch 0001. Linux builds keep using the submodule
+unchanged. The submodule pin does not change.
+
+**Behavior.**
+
+- `bool windows_explicit_driver_list(const struct loader_instance *inst)` returns true when
+  `loader_secure_getenv` yields `VK_DRIVER_FILES`, or else `VK_ICD_FILENAMES`. It frees the value
+  with `loader_free_getenv`. This is exactly the condition under which `loader_get_data_files`
+  marks the driver override active and skips the registry.
+- `windows_initialize_dxgi(const struct loader_instance *inst)` returns 0 (no
+  `VK_LOADER_FEATURE_PHYSICAL_DEVICE_SORTING`) without creating a factory when the list is explicit.
+  `loader_create_instance_chain` passes its `inst`.
+- `windows_read_sorted_physical_devices` logs at info level and returns `VK_SUCCESS` with a zero
+  count and a NULL array, the same result as its existing factory-creation failure path.
+- `dxgi.dll` is still loaded by `windows_initialization` and released by patch 0001's
+  `windows_teardown`.
+
+**Why.** Each `IDXGIFactory` creation pulls in dxcore and directxdatabasehelper, which open RPC/ALPC
+client connections. RPCRT4 later closes idle connections from a thread-pool timer callback and
+attaches per-thread state (a duplicated thread handle and an event) to that pool worker until the
+worker retires. That broke exact handle equality in reload cycle 3. With an explicit driver list,
+adapter-preference sorting has no work to do for the single listed Waddle driver.
+
+**Error handling.** Allocation failure inside `loader_secure_getenv` yields NULL, which is treated as
+"no explicit list", so the original DXGI path runs. Nothing new can fail.
+
+**Verification.**
+
+- `tests/vgpu/vulkan_loader_patch_test.py` pins the exact patch set, the files it touches, the four
+  removed lines and the ordering of the explicit-list check before every `fpCreateDXGIFactory1` call.
+  It also proves every other pinned file stays byte-identical.
+- `make vgpu-native-loader-win64` builds with `BUILD_WERROR=ON`. The import table is unchanged.
+- Native evidence: the traced six-life census `opencl_census_55d8a20f` shows that no life opens an
+  ALPC port with the patched loader. Final acceptance is the 1100-cycle reload together with the
+  narrowed pre-initialization step 4 (reload contract amendment 4).
