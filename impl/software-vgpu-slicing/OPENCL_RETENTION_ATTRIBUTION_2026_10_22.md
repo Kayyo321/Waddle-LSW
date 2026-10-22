@@ -263,8 +263,10 @@ Temp-file restoration (`build/qualification_feature_20261021/tmp_restore_2026102
 - 517 distinct temp paths are pinned across preserved receipts, with no conflicting pins. 299 had
   byte-identical preserved copies and were restored.
 - Two census inputs had no copy: the identity helper `waddle_opencl_final_heap_plan/runner.py` and
-  `freeze_census_r2.py`. Both were rebuilt from the Codex session transcripts and admitted only on
-  exact hash equality. `reconstructed/PROVENANCE.md` records the transcript lines replayed.
+  `freeze_census_r2.py`. The R9 composite also inherits the evidence file
+  `waddle_tls_fls_contract_root_20261021.md`, which had no copy either. All three were rebuilt from
+  the Codex session transcripts and admitted only on exact hash equality.
+  `reconstructed/PROVENANCE.md` records the transcript lines used.
 - The other missing paths are historical scratch evidence (certificate build trees, coverage
   intermediates). No pending runner loads them. Their pins remain in the receipts that name them.
 
