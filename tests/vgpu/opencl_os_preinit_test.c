@@ -14,15 +14,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <wctype.h>
 #include "win32_fake/opencl_os_preinit_fake.h"
 
 /** One fake System32 module with an exact reference count. */
 struct fake_module_t { const wchar_t *name; int references; };
-enum { FakeModules = 4, FakeTraceCapacity = 64, FakeTraceText = 48 };
+enum { FakeModules = 6, FakeTraceCapacity = 64, FakeTraceText = 64 };
 enum { FactoryNormal, FactoryFailWithObject, FactoryFailWithoutObject, FactorySuccessWithoutObject };
 
 static struct fake_module_t fake_modules[FakeModules] = {
-    {L"user32.dll", 0}, {L"ws2_32.dll", 0}, {L"bcrypt.dll", 0}, {L"dxgi.dll", 0}};
+    {L"user32.dll", 0}, {L"ws2_32.dll", 0}, {L"bcrypt.dll", 0}, {L"dxgi.dll", 0}, {L"dwmapi.dll", 0},
+    {L"kernel32.dll", 0}};
+static int fake_wrong_dwmapi_path, fake_package_status, fake_long_system, fake_truncated_module;
 static char fake_trace[FakeTraceCapacity][FakeTraceText];
 static unsigned fake_trace_count, fake_step, fake_fail_step;
 static int fake_startups, fake_cleanups, fake_sockets_open, fake_sockets_closed;
@@ -109,6 +112,15 @@ static int32_t WINAPI fake_create_factory(const GUID *riid, void **out)
     return mode == FactoryFailWithObject ? INT32_C(-2147467259) : 0;
 }
 
+static int32_t WINAPI fake_packages(const wchar_t *family, uint32_t *count, wchar_t **names, uint32_t *length, wchar_t *buffer)
+{
+    assert(family && !wcscmp(family, L"Microsoft.D3DMappingLayers_8wekyb3d8bbwe") && count && length && !names && !buffer &&
+           *count == 0 && *length == 0);
+    fake_record("GetPackagesByPackageFamily");
+    if (fake_fails()) return 2;  /* ERROR_FILE_NOT_FOUND */
+    return fake_package_status;
+}
+
 /** @brief Convert one fake function to FARPROC storage without a function-type cast. */
 #define FakeExport(function) do { FARPROC address; __typeof__(&function) source = function; \
     _Static_assert(sizeof source == sizeof address, "fake export size"); \
@@ -129,7 +141,7 @@ static HMODULE LoadLibraryExW(const wchar_t *name, HANDLE file, DWORD flags)
 
 static FARPROC GetProcAddress(HMODULE module, const char *name)
 {
-    assert(module && module->references > 0 && name);
+    assert(module && (module->references > 0 || module == &fake_modules[5]) && name);  /* kernel32 is always resident */
     char text[FakeTraceText];
     snprintf(text, sizeof text, "resolve %s", name);
     fake_record(text);
@@ -139,8 +151,57 @@ static FARPROC GetProcAddress(HMODULE module, const char *name)
     if (module == &fake_modules[1] && !strcmp(name, "closesocket")) FakeExport(fake_closesocket);
     if (module == &fake_modules[1] && !strcmp(name, "WSACleanup")) FakeExport(fake_cleanup);
     if (module == &fake_modules[3] && !strcmp(name, "CreateDXGIFactory1")) FakeExport(fake_create_factory);
+    if (module == &fake_modules[5] && !strcmp(name, "GetPackagesByPackageFamily")) FakeExport(fake_packages);
     assert(!"unexpected export");
     return NULL;
+}
+
+static HMODULE LoadLibraryW(const wchar_t *name)
+{
+    assert(name && !wcscmp(name, L"dwmapi.dll"));  /* bare name: default search order */
+    fake_record("search dwmapi.dll");
+    if (fake_fails()) return NULL;
+    ++fake_modules[4].references;
+    return &fake_modules[4];
+}
+
+static HMODULE GetModuleHandleW(const wchar_t *name)
+{
+    assert(name && !wcscmp(name, L"kernel32.dll"));
+    fake_record("borrow kernel32.dll");
+    if (fake_fails()) return NULL;
+    return &fake_modules[5];  /* borrowed: no reference */
+}
+
+static unsigned GetSystemDirectoryW(wchar_t *buffer, unsigned capacity)
+{
+    static const wchar_t System[] = L"C:\\Windows\\System32";
+    assert(buffer && capacity >= sizeof System / sizeof System[0]);
+    fake_record("GetSystemDirectoryW");
+    if (fake_fails()) return 0;
+    memcpy(buffer, System, sizeof System);
+    if (fake_long_system) return capacity - 2;  /* no room left for the module name */
+    return (unsigned)(sizeof System / sizeof System[0] - 1);
+}
+
+static DWORD GetModuleFileNameW(HMODULE module, wchar_t *buffer, DWORD capacity)
+{
+    assert(module == &fake_modules[4] && module->references > 0 && buffer && capacity > 64);
+    fake_record("GetModuleFileNameW");
+    if (fake_fails()) return 0;
+    const wchar_t *path = fake_wrong_dwmapi_path ? L"C:\\fixture\\dwmapi.dll" : L"c:\\windows\\system32\\DWMAPI.DLL";
+    wcscpy(buffer, path);
+    if (fake_truncated_module) return capacity;  /* Windows truncation reports the full capacity */
+    return (DWORD)wcslen(path);
+}
+
+static int _wcsicmp(const wchar_t *left, const wchar_t *right)
+{
+    for (;; ++left, ++right) {
+        wint_t a = towlower((wint_t)*left), b = towlower((wint_t)*right);
+        if (a != b) return a < b ? -1 : 1;
+        if (!a) return 0;
+    }
 }
 
 static BOOL FreeLibrary(HMODULE module)
@@ -160,7 +221,9 @@ static const char *const ExpectedTrace[] = {
     "load ws2_32.dll", "resolve WSAStartup", "resolve socket", "resolve closesocket", "resolve WSACleanup",
     "WSAStartup", "socket", "closesocket", "WSACleanup", "free ws2_32.dll",
     "load bcrypt.dll", "free bcrypt.dll",
-    "load dxgi.dll", "resolve CreateDXGIFactory1", "CreateDXGIFactory1", "Release", "free dxgi.dll"};
+    "load dxgi.dll", "resolve CreateDXGIFactory1", "CreateDXGIFactory1", "Release", "free dxgi.dll",
+    "search dwmapi.dll", "GetSystemDirectoryW", "GetModuleFileNameW", "free dwmapi.dll",
+    "borrow kernel32.dll", "resolve GetPackagesByPackageFamily", "GetPackagesByPackageFamily"};
 enum { ExpectedSteps = sizeof ExpectedTrace / sizeof ExpectedTrace[0] - 1 /* Release is not fakeable */ };
 
 static void reset(unsigned fail_step, int factory_mode)
@@ -171,6 +234,9 @@ static void reset(unsigned fail_step, int factory_mode)
     fake_startups = fake_cleanups = fake_sockets_open = fake_sockets_closed = 0;
     fake_factories = fake_factory_releases = 0;
     fake_factory_mode = factory_mode;
+    fake_wrong_dwmapi_path = 0;
+    fake_package_status = 0;
+    fake_long_system = fake_truncated_module = 0;
 }
 
 /** @brief Every acquired owner is released, whatever the outcome. */
@@ -190,7 +256,7 @@ int main(void)
     for (unsigned i = 0; i < fake_trace_count; ++i) assert(!strcmp(fake_trace[i], ExpectedTrace[i]));
     assert(fake_step == ExpectedSteps && fake_startups == 1 && fake_sockets_open == 1 && fake_factories == 1);
     assert_released();
-    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_factory"));
+    assert(!strcmp(OsPreinitRecord, "user32,winsock,bcrypt,dxgi_factory,search_order,package_family"));
     const unsigned success_calls = fake_trace_count;
 
     unsigned failures = 0;
@@ -198,17 +264,26 @@ int main(void)
         reset(step, FactoryNormal);
         assert(os_preinitialize() != 0);
         assert(fake_step >= step && fake_trace_count >= step);
-        /* The failing operation is trace entry step-1 (Release is the only unfakeable call and is
-         * last). Its step may still release what it acquired, but no later step may start. */
-        const char *failing = fake_trace[step - 1], *module = NULL;
-        for (unsigned i = 0; i < step; ++i)
+        /* The failing operation is the step-th fakeable trace entry (Release is the only unfakeable
+         * call). Its step may still release what it acquired, but no later step may start. */
+        unsigned failing_index = step - 1 + (step > 17u);  /* skip the Release entry */
+        assert(failing_index < fake_trace_count);
+        const char *failing = fake_trace[failing_index], *module = NULL;
+        for (unsigned i = 0; i <= failing_index; ++i) {
             if (!strncmp(fake_trace[i], "load ", 5)) module = fake_trace[i] + 5;
-        assert(module);
-        char released[FakeTraceText];
-        snprintf(released, sizeof released, "free %s", module);
+            if (!strcmp(fake_trace[i], "search dwmapi.dll")) module = "dwmapi.dll";
+            if (!strcmp(fake_trace[i], "borrow kernel32.dll")) module = NULL;
+        }
         const char *last = fake_trace[fake_trace_count - 1];
-        assert(!strcmp(last, released) || (!strncmp(failing, "load ", 5) && fake_trace_count == step));
-        for (unsigned i = step; i < fake_trace_count; ++i) assert(strncmp(fake_trace[i], "load ", 5));
+        if (module) {
+            char released[FakeTraceText];
+            snprintf(released, sizeof released, "free %s", module);
+            assert(!strcmp(last, released) || (last == failing && fake_trace_count == failing_index + 1));
+        } else {
+            assert(last == failing && fake_trace_count == failing_index + 1);  /* borrowed kernel32: nothing to release */
+        }
+        for (unsigned i = failing_index + 1; i < fake_trace_count; ++i)
+            assert(strncmp(fake_trace[i], "load ", 5) && strncmp(fake_trace[i], "search ", 7) && strncmp(fake_trace[i], "borrow ", 7));
         assert_released();
         ++failures;
     }
@@ -219,6 +294,33 @@ int main(void)
         assert(os_preinitialize() != 0);
         assert(fake_modules[3].references == 0 && !strcmp(fake_trace[fake_trace_count - 1], "free dxgi.dll"));
         assert(fake_factories == (Modes[i] == FactoryFailWithObject));
+        assert_released();
+        ++failures;
+    }
+    reset(0, FactoryNormal);
+    fake_wrong_dwmapi_path = 1;  /* a planted application-directory dwmapi.dll is rejected and freed */
+    assert(os_preinitialize() != 0);
+    assert(!strcmp(fake_trace[fake_trace_count - 1], "free dwmapi.dll"));
+    assert_released();
+    ++failures;
+    for (int mode = 0; mode < 2; ++mode) {
+        reset(0, FactoryNormal);
+        if (mode) fake_truncated_module = 1; else fake_long_system = 1;
+        assert(os_preinitialize() != 0);
+        assert(!strcmp(fake_trace[fake_trace_count - 1], "free dwmapi.dll"));
+        assert_released();
+        ++failures;
+    }
+    reset(0, FactoryNormal);
+    fake_package_status = 122;  /* ERROR_INSUFFICIENT_BUFFER: package present, accepted */
+    assert(os_preinitialize() == 0);
+    assert_released();
+    static const int32_t Statuses[] = {2, 5, 87, 1168, -1};
+    for (unsigned i = 0; i < sizeof Statuses / sizeof Statuses[0]; ++i) {
+        reset(0, FactoryNormal);
+        fake_package_status = Statuses[i];
+        assert(os_preinitialize() != 0);
+        assert(!strcmp(fake_trace[fake_trace_count - 1], "GetPackagesByPackageFamily"));
         assert_released();
         ++failures;
     }

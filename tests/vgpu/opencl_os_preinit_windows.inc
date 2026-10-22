@@ -1,11 +1,12 @@
 /** @file opencl_os_preinit_windows.inc
  * @brief Approved OS-only first-use initialization before persistent reload baselines.
  *
- * Implements the 2026-10-22 amendment to OPENCL_RELOAD_CONTRACT.md. Windows keeps
- * process-lifetime state after the first use of USER32, Winsock, bcrypt and DXGI (see
- * OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md). Before the entry baseline the fixture runs
- * exactly four Windows-component operations, in order, and nothing else. No Waddle, clvk
- * or Vulkan loader code runs here. Exact baseline equality is still required afterwards.
+ * Implements amendments 1 and 2 (2026-10-22) to OPENCL_RELOAD_CONTRACT.md. Windows keeps
+ * process-lifetime state after the first use of USER32, Winsock, bcrypt, DXGI, default-order
+ * DLL search and the package state repository (see OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md).
+ * Before the entry baseline the fixture runs exactly six Windows-component operations, in
+ * order, and nothing else. No Waddle, clvk or Vulkan loader code runs here. Exact baseline
+ * equality is still required afterwards.
  *
  * Ownership: every module reference, Winsock startup, socket and COM reference acquired
  * by a step is released by that same step before it returns, on success and on every
@@ -14,12 +15,13 @@
  * The caller supplies the Win32 declarations (windows.h natively, a fake for tests).
  */
 
-/** Exact witness string recorded with the baseline; fixed order of the four steps. */
-#define OsPreinitRecord "user32,winsock,bcrypt,dxgi_factory"
+/** Exact witness string recorded with the baseline; fixed order of the six steps. */
+#define OsPreinitRecord "user32,winsock,bcrypt,dxgi_factory,search_order,package_family"
 
 /** Fixed Winsock constants; winsock2.h is not included after windows.h. */
 enum { OsPreinitWinsockVersion = 0x0202, OsPreinitAfInet = 2, OsPreinitSockStream = 1,
-       OsPreinitTcp = 6, OsPreinitWsaDataBytes = 512, OsPreinitReleaseSlot = 2 };
+       OsPreinitTcp = 6, OsPreinitWsaDataBytes = 512, OsPreinitReleaseSlot = 2,
+       OsPreinitPathCapacity = 520, OsPreinitStatusSuccess = 0, OsPreinitStatusInsufficientBuffer = 122 };
 
 typedef int (WINAPI *os_preinit_startup_t)(WORD, void *);
 typedef uintptr_t (WINAPI *os_preinit_socket_t)(int, int, int);
@@ -27,10 +29,11 @@ typedef int (WINAPI *os_preinit_close_t)(uintptr_t);
 typedef int (WINAPI *os_preinit_cleanup_t)(void);
 typedef int32_t (WINAPI *os_preinit_factory_t)(const GUID *, void **); /* HRESULT is a 32-bit LONG */
 typedef unsigned long (WINAPI *os_preinit_release_t)(void *);
+typedef int32_t (WINAPI *os_preinit_packages_t)(const wchar_t *, uint32_t *, wchar_t **, uint32_t *, wchar_t *); /* LONG */
 
 _Static_assert(sizeof(os_preinit_startup_t) == sizeof(FARPROC) && sizeof(os_preinit_socket_t) == sizeof(FARPROC) &&
                sizeof(os_preinit_close_t) == sizeof(FARPROC) && sizeof(os_preinit_cleanup_t) == sizeof(FARPROC) &&
-               sizeof(os_preinit_factory_t) == sizeof(FARPROC),
+               sizeof(os_preinit_factory_t) == sizeof(FARPROC) && sizeof(os_preinit_packages_t) == sizeof(FARPROC),
                "export storage must match FARPROC exactly");
 
 /** IID_IDXGIFactory1 {770aae78-f26f-4dba-a829-253c83d1b387}. */
@@ -141,12 +144,51 @@ static int os_preinit_dxgi_factory(void)
     return failed;
 }
 
-/** @brief Run the four approved OS-only first-use operations in their fixed order.
- * @return Zero only when all four steps succeeded; stops at the first failing step.
+/** @brief Resolve one module by bare name through the default search order, then free it.
+ *
+ * The first name-based resolution makes ntdll open and keep its Session Manager key; a
+ * full-path load does not. A bare name searches the application directory first, so the step
+ * fails closed unless the loaded module is exactly <System32>\dwmapi.dll.
+ * @return Zero on success; nonzero after freeing the module reference.
+ */
+static int os_preinit_search_order(void)
+{
+    wchar_t system[OsPreinitPathCapacity], loaded[OsPreinitPathCapacity];
+    static const wchar_t Name[] = L"\\dwmapi.dll";
+    HMODULE module = LoadLibraryW(L"dwmapi.dll");
+    if (!module) return 1;
+    unsigned length = GetSystemDirectoryW(system, OsPreinitPathCapacity);
+    unsigned got = GetModuleFileNameW(module, loaded, OsPreinitPathCapacity);
+    int failed = !length || length + sizeof Name / sizeof Name[0] > OsPreinitPathCapacity ||
+                 !got || got >= OsPreinitPathCapacity;
+    if (!failed) {
+        memcpy(system + length, Name, sizeof Name);
+        failed = _wcsicmp(system, loaded) != 0;
+    }
+    if (!FreeLibrary(module)) failed = 1;
+    return failed;
+}
+
+/** @brief One size-only package-family query that initializes the OS state repository.
+ * kernel32 is borrowed through GetModuleHandleW; no module reference or buffer is owned.
+ * @return Zero only for ERROR_SUCCESS or ERROR_INSUFFICIENT_BUFFER.
+ */
+static int os_preinit_package_family(void)
+{
+    os_preinit_packages_t query = NULL;
+    uint32_t count = 0, length = 0;
+    HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+    if (!kernel || !os_preinit_resolve(kernel, "GetPackagesByPackageFamily", &query)) return 1;
+    int32_t status = query(L"Microsoft.D3DMappingLayers_8wekyb3d8bbwe", &count, NULL, &length, NULL);
+    return status != OsPreinitStatusSuccess && status != OsPreinitStatusInsufficientBuffer;
+}
+
+/** @brief Run the six approved OS-only first-use operations in their fixed order.
+ * @return Zero only when all six steps succeeded; stops at the first failing step.
  * @note Callers must stop the run before measuring any baseline when this fails.
  */
 static int os_preinitialize(void)
 {
     return os_preinit_user32() || os_preinit_winsock() || os_preinit_bcrypt() ||
-           os_preinit_dxgi_factory();
+           os_preinit_dxgi_factory() || os_preinit_search_order() || os_preinit_package_family();
 }
