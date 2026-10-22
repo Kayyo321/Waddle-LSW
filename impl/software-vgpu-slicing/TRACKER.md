@@ -14,7 +14,7 @@
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD399-case aggregate and90.42% branch /98.56% line gates pass; current37-module ASan/LSan seam and15-case Linux physical matrix pass. Final DXVK native heap, exact-head CI and final review remain open; final Windows physical and M2 owned/WSI workloads pass; see QUALIFICATION_CONTINUATION_2026_10_21.md. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Historical exact native GPU kernels pass. Approved owned Win32 TLS/EH correction passes isolated2048-reload measurement; new full DLL static build/admission and native TLS/FLS controls pass; complete-input actual cancellation passes. Functional Linux GPU overlap passes; final native heap/full reload remain open. Earlier leaking candidates are preserved failures; see current qualification checkpoint. |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). Guarded native heap qualification, exact-head CI and final review remain open; see attribution section 15. |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -23,7 +23,7 @@
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned loader, medium-integrity bootstrap/receiver and real GPU/DXVK execution verified; final native heap teardown qualification pending |
 | #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
 
-**Total Feature Completion**: `85.5%`
+**Total Feature Completion**: `91.5%`
 
 ## Commit History & Progress Log
 
@@ -2474,3 +2474,20 @@ newest first.
 
 Later commits are recorded by hash in the section that follows each one. All tasks +0%; parent
 85.5% / In Progress, Time Ended TBD.
+
+### Reload R10 passes 1100 cycles (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `98d0211` | docs(tracker): backfill 99 unlogged commit hashes for software-vgpu-slicing | No task delta; overall +0% | Logged deltas re-summed to 85.5% |
+| `23e4d3b` | docs(vgpu): record where the R15 guard sources live and their hashes | #3, #5 +0%; overall +0% | 16 hashes recomputed from the files |
+| `63f0c80` | docs(opencl): record the passing 1100-cycle reload R10 | #5 +30%; overall +6% | R10 exit 0, verdict PASS; independent verifier rerun PASS; 1100 cycles at 104/1083/4075 |
+| `952583e` | docs(opencl): cite amendments 1-4 for the reload verifier witness | #5 +0%; overall +0% | Verifier tests 13/13 |
+| `1c3df0c` | docs(opencl): make reload amendment 4's approval basis and scope exact | #5 +0%; overall +0% | Wording only |
+
+R10 ([attribution section 15](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#15-reload-r10-passes-1100-cycles-2026-10-22))
+is the full-reload acceptance for TODO #5, so #5 moves from 40% to 70% (+6% overall). The remaining
+30% of #5 is guarded native heap qualification (20%), then exact-head CI and the final review (10%).
+Patch 0002 and steps 8-10 still need the user's explicit ratification before merge (contract
+amendment 4). The native CDB guard controls are running now; the Windows physical matrix, M2 and the
+DXVK and OpenCL heap runs follow. Parent 91.5% / In Progress, Time Ended TBD.
