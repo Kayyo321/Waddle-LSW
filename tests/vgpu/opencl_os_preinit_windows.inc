@@ -9,9 +9,9 @@
  * exactly ten Windows-component operations, in order, and nothing else. No Waddle, clvk or Vulkan loader code runs here. Exact baseline
  * equality is still required afterwards.
  *
- * Ownership: every module reference, Winsock startup and socket acquired
- * by a step is released by that same step before it returns, on success and on every
- * failure path. Nothing is retained by this include.
+ * Ownership: every module reference, Winsock startup, socket, registry key and bcrypt RNG
+ * provider acquired by a step is released by that same step before it returns, on success and
+ * on every failure path. Nothing is retained by this include.
  * Thread safety: sole main thread, before any fixture worker exists; not reentrant.
  * The caller supplies the Win32 declarations (windows.h natively, a fake for tests).
  */

@@ -1079,8 +1079,8 @@ static int reload_fixture_absent(void *opaque) {
 static int reload_fixture_stage(void *opaque,const char *stage) {
     return audit_stage(((reload_fixture_t *)opaque)->directory,stage);
 }
-/** @brief Approved OS-only first-use initialization before the entry baseline (amendments 1-2).
- * @return Zero only when all six steps succeeded; owns nothing on return.
+/** @brief OS-only first-use initialization before the entry baseline (reload contract amendments 1-4).
+ * @return Zero only when all ten steps succeeded; owns nothing on return.
  */
 static int reload_fixture_preinit(void *opaque) {
     (void)opaque;
