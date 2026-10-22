@@ -509,6 +509,21 @@ static unsigned __stdcall run_contexts(void *opaque) {
 }
 
 #include "opencl_reload_windows.inc"
+#include "opencl_os_preinit_windows.inc"
+
+/** @brief Read the diagnostic-only OS pre-initialization switch for heap-audit mode.
+ * @return 0 when WADDLE_OPENCL_OS_PREINIT is absent, 1 when it is exactly "1", and -1
+ *         for any other value (including empty). Reads the environment only; no owner.
+ * @note Sole main thread. Heap qualification runs never set it unless separately approved.
+ */
+static int audit_os_preinit_requested(void)
+{
+    wchar_t value[4];
+    SetLastError(ERROR_SUCCESS);
+    DWORD length = GetEnvironmentVariableW(L"WADDLE_OPENCL_OS_PREINIT", value, 4);
+    if (!length) return GetLastError() == ERROR_ENVVAR_NOT_FOUND ? 0 : -1;
+    return length == 1 && value[0] == L'1' ? 1 : -1;
+}
 
 /** @brief One complete exact lifetime on a pre-load raw caller; borrows until join. */
 static int run_reload_context(void *opaque) {
@@ -1078,8 +1093,10 @@ int wmain(int argc, wchar_t **argv)
     wchar_t directory[512];
     int enabled = audit_directory(directory, 512);
     if (enabled < 0) return 2;
+    int os_preinit = audit_os_preinit_requested();
+    if (os_preinit < 0) return 2;
     if(argc>1 && !wcscmp(argv[1],L"--runtime-reload")) {
-        if(argc!=8 || enabled!=1)return 2;
+        if(argc!=8 || enabled!=1 || os_preinit)return 2;
         wchar_t legacy[2];SetLastError(ERROR_SUCCESS);
         if(GetEnvironmentVariableW(L"WADDLE_DXVK_HEAP_CYCLES",legacy,2) || GetLastError()!=ERROR_ENVVAR_NOT_FOUND)return 2;
         wchar_t *cycle_argv[7]={argv[0],argv[2],argv[3],argv[4],argv[5],argv[6],argv[7]};
@@ -1088,7 +1105,7 @@ int wmain(int argc, wchar_t **argv)
         return reload_run(&api,cycle_argv[2],stdout);
     }
     if (enabled && argc > 1 && !wcscmp(argv[1], L"--transport-loss")) return 2;
-    if (!enabled) return run_opencl_cycle(argc, argv);
+    if (!enabled) return os_preinit ? 2 : run_opencl_cycle(argc, argv);
 
     wchar_t cycles_text[16];
     DWORD length = GetEnvironmentVariableW(L"WADDLE_DXVK_HEAP_CYCLES", cycles_text, 16);
@@ -1098,6 +1115,13 @@ int wmain(int argc, wchar_t **argv)
         unsigned long parsed = wcstoul(cycles_text, &end, 10);
         if (length >= 16 || !parsed || parsed > 8 || !end || *end) return 2;
         cycles = (unsigned)parsed;
+    }
+    if (os_preinit) {
+        if (os_preinitialize()) {
+            fputs("OpenCL OS pre-initialization failed\n", stderr);
+            return 1;
+        }
+        puts("OpenCL OS pre-initialization completed: " OsPreinitRecord);
     }
     if (native_csr_stage(directory, "baseline")) return 1;
     for (unsigned cycle = 0; cycle < cycles; ++cycle) {
