@@ -82,6 +82,12 @@ const FeatureTags = [_]u32{
     c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
 };
 const FeatureCounts = [_]u8{ 12, 47, 15, 1, 1, 2, 3, 1 };
+// Features2 publication and device creation must recognize the same promoted structures.
+comptime {
+    if (!std.mem.eql(u32, &features_native.PromotedTags, &device_native.PromotedTags) or
+        !std.mem.eql(u8, &features_native.PromotedCores, &device_native.PromotedCores))
+        @compileError("Promoted feature registries differ between Features2 and device creation");
+}
 fn boolean_mask(comptime native_t: type, comptime first: []const u8, comptime count: usize, comptime names: anytype) [count]u32 {
     var result = [_]u32{0} ** count;
     const start = @offsetOf(native_t, first);
@@ -10453,6 +10459,52 @@ test "public device ACK owns immutable canonical state and exact independent min
     try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
 }
 
+test "public device promoted buffer device address request sends and enables the Vulkan12 aggregate" {
+    const word = (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "bufferDeviceAddress") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4;
+    var fixture = feature_fixture_t{ .hot = 55 + 12 + word };
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    const prior = reply_profile_ready;
+    reply_profile_ready = true;
+    defer reply_profile_ready = prior;
+    extension_caches[0] = .{ .handle = @intFromPtr(physical.?), .ready = true };
+    var priorities = [_]f32{1};
+    var queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    var info = device_test_info(&queues);
+    var promoted = std.mem.zeroes(c.VkPhysicalDeviceBufferDeviceAddressFeatures);
+    promoted.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    promoted.bufferDeviceAddress = 1;
+    info.pNext = &promoted;
+    var aggregate = std.mem.zeroes(c.VkPhysicalDeviceVulkan12Features);
+    aggregate.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    aggregate.bufferDeviceAddress = 1;
+    var expected = info;
+    expected.pNext = &aggregate;
+    fixture.expected_device_info = &expected;
+    var device: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&device)));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    const entry = device_cache(@intFromPtr(device.?)).?;
+    for (entry.enabled_state.features.nodes[1].flags[0..47], 0..) |flag, index| try std.testing.expectEqual(@as(u32, @intFromBool(index == word)), flag);
+    try std.testing.expectEqualDeep([_]u32{0} ** 47, entry.enabled_state.features.nodes[0].flags[0..47].*);
+    // A promoted word outside the projected policy is not present.
+    promoted.bufferDeviceAddressCaptureReplay = 1;
+    var rejected: c.VkDevice = @ptrFromInt(8);
+    const commands = fixture.commands;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&rejected)));
+    try std.testing.expect(rejected == null);
+    try std.testing.expectEqual(commands, fixture.commands);
+    // The aggregate together with a structure promoted into it is invalid usage.
+    promoted.bufferDeviceAddressCaptureReplay = 0;
+    aggregate.pNext = &promoted;
+    info.pNext = &aggregate;
+    rejected = @ptrFromInt(8);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, &info, null, @ptrCast(&rejected)));
+    try std.testing.expect(rejected == null);
+    try std.testing.expectEqual(commands, fixture.commands);
+    destroy_device(device, null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+}
 test "public device explicit failure rolls back while uncertain create retains only opaque owners" {
     const priorities = [_]f32{1};
     const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
