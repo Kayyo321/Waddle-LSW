@@ -2248,3 +2248,13 @@ censuses R7-R9: with the patched loader, modules/TLS/FLS/threads are exactly
 zero; a DBWinMutex came from the harness's own loader debug logging, and one
 IoCompletion remains from Winsock's first nonblocking connect, which needs a
 human decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved third amendment: loopback connect step (2026-10-22)
+
+Atomic unit `docs(opencl): record approved loopback connect pre-initialization
+step`. The user approved a seventh OS-only step, one nonblocking 127.0.0.1
+connect completed with select and fully closed, and dropping `VK_LOADER_DEBUG`
+from qualification batches.
+[Amendment 3](OPENCL_RELOAD_CONTRACT.md#approved-amendment-3-loopback-connect-and-loader-logging-2026-10-22).
+Commit `1182579` records censuses R7-R9 (+0%). All tasks +0%; parent 85.5% / In
+Progress, Time Ended TBD.

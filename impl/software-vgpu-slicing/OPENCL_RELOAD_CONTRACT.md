@@ -169,3 +169,23 @@ The user then approved two more OS-only steps and one upstream change on 2026-10
 
 The baseline witness becomes `user32,winsock,bcrypt,dxgi_factory,search_order,package_family`.
 All other rules of the first amendment are unchanged, including exact equality on every reload.
+
+## Approved amendment 3: loopback connect and loader logging (2026-10-22)
+
+Censuses R7-R9 ([attribution section 9](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#9-six-step-pre-initialization-with-the-patched-loader-2026-10-22))
+left one IoCompletion created by Winsock's first nonblocking connect. The user approved two
+changes on 2026-10-22.
+
+1. **Step 7, nonblocking loopback connect.** Load System32 `ws2_32.dll` and call `WSAStartup(2.2)`.
+   Open one listener bound to `127.0.0.1` on an ephemeral port and listen. Open one client socket,
+   set `TCP_NODELAY` and nonblocking mode, and connect it to the listener. Accept only an immediate
+   success or `WSAEWOULDBLOCK`. Wait with `select` (bounded to 2 seconds) until the client is
+   writable. Then close both sockets, call `WSACleanup` and free the module. There is no accept and
+   no data transfer, and no Waddle, clvk or loader code runs.
+2. **No loader debug logging in qualification batches.** Qualification batches no longer set
+   `VK_LOADER_DEBUG`. The loader copies every emitted message to `OutputDebugString`, which makes
+   Windows open and cache `DBWinMutex`, and no qualification check reads loader log output.
+
+The baseline witness becomes
+`user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect`. All other rules of
+amendments 1 and 2 are unchanged, including exact equality on every reload.
