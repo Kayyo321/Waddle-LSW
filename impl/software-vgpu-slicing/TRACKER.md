@@ -2198,3 +2198,18 @@ reload, including the first. A diagnostic census must prove zero residual
 first. [Amendment](OPENCL_RELOAD_CONTRACT.md#approved-amendment-os-only-pre-initialization-2026-10-22).
 Commit `aa1b025` attributes the first-cycle retention (+0% all tasks). All
 tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### OS pre-initialization implementation and diagnostic census (2026-10-22)
+
+Commit `d029a7a` (`test(opencl): add approved OS-only pre-initialization with API
+doubles`) adds the four-step include with 58/58 lines and 46/46 branches under
+API doubles and ASan/LSan/UBSan, run in CI (+0%). Commit `5bb843b` (`test(opencl):
+add diagnostic OS pre-initialization switch to heap audits`) enables it for
+diagnostic heap audits only (+0%). Atomic unit `docs(opencl): record diagnostic
+census after approved pre-initialization` records census R6: TLS/FLS/thread
+deltas are now zero but +34 handles and seven modules remain. Controls attribute
+the residual to standard-search DLL resolution, an OS package query and the
+upstream loader's leaked dxgi/gdi32 references; a scratch-evaluated loader patch
+plus two more OS-only steps reach exact zero. Each needs a human decision.
+[Evidence](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#7-diagnostic-census-after-the-approved-pre-initialization-2026-10-22).
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.

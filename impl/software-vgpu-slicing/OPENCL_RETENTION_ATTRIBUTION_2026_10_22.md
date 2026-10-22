@@ -103,3 +103,59 @@ that uses Winsock or loads USER32 keeps the state above after its first use, so 
 run cannot pass first-cycle equality as long as the bootstrap uses Winsock. This is a contract
 conflict, not a measurement failure. Changing that rule needs an explicit human decision; no
 threshold, predicate or baseline was changed here.
+
+## 7. Diagnostic census after the approved pre-initialization (2026-10-22)
+
+The approved four-step pre-initialization is implemented in
+`tests/vgpu/opencl_os_preinit_windows.inc` (commit `d029a7a`) and enabled for this census by
+the diagnostic heap-audit switch (commit `5bb843b`). Fixture `4127a966…` (receipt
+`c09923a0…`, 301 dependencies) runs under census R6 (`opencl_census_r6/`, bindings
+`dd2a46f4…` re-bind only the changed fixture source and add the new include).
+
+Native switch controls (`os_preinit_switch_controls/`): a value of `2` in heap-audit mode and the
+switch in reload mode exit 2, while the same arguments without the switch exit 1. The
+no-audit case is not decisive because its arguments exit 2 either way.
+
+Census `opencl_census_4ddb96ad`: complete snapshots, native exit 0, natural absence, host
+status 0 / worker 0, no signals, empty owned session.
+
+| Resource | Delta after pre-initialization |
+|:--|:--|
+| TLS, FLS, threads | 0 |
+| Handles | +34: EtwRegistration 13, Event 8, Key 6, Semaphore 2, Mutant 2, File, IoCompletion, Section |
+| Modules | +7: dxgi, combase, directxdatabasehelper, kernel.appcore, powrprof, UMPDC, windows.staterepositorycore |
+
+The approved steps are therefore **not sufficient** for exact equality.
+
+## 8. Remaining residual attribution (component controls revision 2)
+
+`component_retention_r2/` (control source `c748c9d3…`, PE `36959718…`) compiles in the
+committed pre-initialization include. After pre-initialization, the Waddle bootstrap,
+Winsock, combase, ole32 and shell32 add nothing on either cycle. Three residual sources remain:
+
+1. **Standard-search DLL resolution.** The first DLL resolved through the default search order
+   makes ntdll open and keep `HKLM\SYSTEM\ControlSet001\Control\Session Manager` (+1 Key).
+   The approved steps load only System32 paths, so they never trigger it. The Waddle ICD and
+   OpenCL.dll trigger it through their dependencies. After one extra bare-name
+   `LoadLibraryW("dwmapi.dll")`/`FreeLibrary`, the ICD, OpenCL.dll, the bootstrap and a DXGI
+   factory each add exactly 0.
+2. **OS package query.** The loader calls kernel32 `GetPackagesByPackageFamily` for
+   `Microsoft.D3DMappingLayers_8wekyb3d8bbwe`. Windows then keeps `windows.staterepositorycore.dll`
+   and one StateRepository key. One OS-only size query of the same family absorbs it.
+3. **Upstream loader reference leak.** `windows_initialization` keeps `dxgi.dll` and `gdi32.dll`
+   referenced forever, one more reference per loader instance. A control that loads `dxgi.dll`
+   without freeing it reproduces the residual (+3 EtwRegistration, dxgi/powrprof/UMPDC).
+
+`loader_release_eval/` holds a proposed 76-line patch
+(`vulkan_loader_release_windows_module_references.patch`) that stores both module handles and
+frees them in `loader_release()`, beside upstream's existing preloaded-ICD release on dynamic
+unload. It is **evaluated, not integrated**: no submodule pin, product build or deployed
+asset changed. Native A/B results after the three OS steps (approved four, plus items 1 and 2):
+
+| Loader (scratch builds, same flags) | First cycle | Second cycle |
+|:--|:--|:--|
+| Unpatched `57679220…` | +3 handles, dxgi/powrprof/UMPDC stay loaded | +0 |
+| Patched `d7a71318…` | +0 | +0 |
+
+Items 1 and 2 are OS-only steps outside the approved four, and item 3 is an upstream change.
+Each needs an explicit human decision. No predicate, threshold or baseline changed.
