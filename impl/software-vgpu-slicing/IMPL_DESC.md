@@ -7425,3 +7425,31 @@ handle counts, and process absence by PID and exact creation time.
 Branch outcomes come from `cdb_guard_r15/branch_coverage.py`. It counts both directions of every
 if, while and for statement from traced line arcs, including server threads. Native controls must
 pass before any heap acceptance use.
+
+**Where the code lives.** Like every native qualification harness on this branch (R8-R14, the
+census and reload runners), the guard is evidence tooling, not product or CI code. It lives under
+the git-ignored `build/qualification_feature_20261021/`, and each runner admits it only by
+SHA-256. These are the hashes of the reviewed R15 and control sources, so reviewers can identify
+the exact files:
+
+| File (under `build/qualification_feature_20261021/`) | SHA-256 |
+|:--|:--|
+| `cdb_guard_r15/guarded_capture.py` | `db59cba781aaef6bad008b5d753e4d605cbeabf32dbbf90481041bd0d7039a29` |
+| `cdb_guard_r15/guarded_capture_r15.patch` (R14 to R15) | `6c30879b703a239a4ccdc86e59de0b0f0b4bc52b4b1d97985d1cbfc9dde6f9c2` |
+| `cdb_guard_r15/test_guarded_capture.py` | `30071b50de5ee6a2eeb520af072b5919380e5b4f563ba0ddbba24aad57489cfc` |
+| `cdb_guard_r15/test_guarded_capture_paths.py` | `e075a35165cf1afbd07b41f82620998c69f917a7aa9ed45d48da319e8ce10766` |
+| `cdb_guard_r15/branch_coverage.py` | `f9cc5b506646812166701030d961fdd0cc98d75819fd39ab4fce309cbf6d21df` |
+| `cdb_guard_r15/receipt.json` | `fc0edec2dedf9f8d1d95ec438fe941f5615735b7a773b5e1c653e40f5eb05987` |
+| `cdb_guard_r15/suspend_guard.c` (C core, unchanged from R14) | `7ab14f7d00e93565c9b5ae6136232940d45fed08a5be61d08b988f6312117d6c` |
+| `cdb_guard_r15/suspend_guard.h` | `25e565be9968b356f76d25c1ec0cd8ad1594cb83ed2652c9a3b0f88e07fb73e1` |
+| `cdb_guard_r15/suspend_guard_worker.c` | `ba582b995b926e07b2da311906db2c4eb6f23307d221f095dec801030694bcb2` |
+| `cdb_guard_r15/test_suspend_guard.c` | `b5b81624bab67b795e2c28ca7a8addd61d43433fccaa65ae3d484987b690d774` |
+| `cdb_guard_r15/suspend_guard_worker.exe` (unchanged from R14) | `2da53bdfa799750b38a1815f7eb1af80d866ffc85e2bef5d6b359fca84c1d271` |
+| `guard_native_control_r1/guard_cdb_control_r2.c` | `4260f02c5fa84c03510a5cebf4dc98ec2d79739c3925cf999be92c1a16c3a964` |
+| `guard_native_control_r1/build_r2/guard_cdb_control.exe` | `52c668c8861afb6cf635e7694b4b054f041a63c4de66f8b577e8baa1ee61b6fd` |
+| `guard_native_control_r1/guard_fixture_capture.py` | `72df3a1734a37c7ec944d307cfc7ebc4adc18e590d4957ac0af72af0aae12bde` |
+| `guard_native_control_r1/guard_control_runner.py` | `5f8f19435b7a78f91f6ff9fcd413e9ba80e376bd69bee750574f757d13b565f5` |
+| `guard_native_control_r1/test_guard_control_runner.py` | `c9d306631a24d069ebb0fe9e4bb84c85cb009bfaadd3c2f45273b917b22e3d64` |
+
+The guard touches only the debugger and the qualification target's suspend counts. It runs only
+during native heap captures, and no shipped component links or calls it.
