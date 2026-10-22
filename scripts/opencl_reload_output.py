@@ -10,6 +10,8 @@ from pathlib import Path
 import re
 
 Cycles = 1100
+# Approved OS-only pre-initialization witness (OPENCL_RELOAD_CONTRACT.md amendments 1-2).
+OsPreinit = "user32,winsock,bcrypt,dxgi_factory,search_order,package_family"
 Prefix = "OPENCL_RELOAD_V1 "
 Lifetime = "OpenCL exact add/local-barrier/atomics/max-group/buffers/events/build-error lifetime passed."
 Buffer = "OpenCL malformed buffer range, pointer, overlap, context and event oracles passed."
@@ -184,7 +186,7 @@ def verify(stdout, stderr, native_exit, manifest, candidate_sha256, fixture_sha2
         require(isinstance(record, dict) and not complete, "record after completion or malformed record")
         event = record.get("event")
         if baseline is None:
-            fields(record, {"event", "pid", "creation", "cycles", "contexts_per_cycle", "idle_threads", "handles", "tls", "fls", "heap_acceptance", "entry", "module_utf16"})
+            fields(record, {"event", "pid", "creation", "cycles", "contexts_per_cycle", "idle_threads", "handles", "tls", "fls", "heap_acceptance", "entry", "os_preinit", "module_utf16"})
             require(event == "baseline" and not current_lines, "missing first baseline")
             require(record["pid"] == manifest["pid"] and type(record["pid"]) is int and record["creation"] == manifest["creation"], "wrong native identity")
             require(type(record["cycles"]) is int and record["cycles"] == Cycles and
@@ -192,6 +194,7 @@ def verify(stdout, stderr, native_exit, manifest, candidate_sha256, fixture_sha2
                     type(record["idle_threads"]) is int and record["idle_threads"] == 4 and
                     record["heap_acceptance"] is False, "wrong baseline workload")
             require(record["module_utf16"] == manifest["module_path"].encode("utf-16-be").hex(), "wrong module path")
+            require(record["os_preinit"] == OsPreinit, "approved OS pre-initialization witness missing or different")
             require(all(integer(record[name], 1) for name in ("handles", "tls", "fls")), "invalid baseline counts")
             require(isinstance(record["entry"], list) and len(record["entry"]) == 3 and all(integer(value, 1) for value in record["entry"]), "invalid entry baseline")
             baseline = record

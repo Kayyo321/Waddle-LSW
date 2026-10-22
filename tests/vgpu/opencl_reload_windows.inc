@@ -31,11 +31,16 @@ typedef struct reload_cycle_result_t {
     DWORD foreign[ReloadForeignThreads];
     unsigned module_exact,modules_absent;
 } reload_cycle_result_t;
-/** Immutable orchestration callbacks; state is borrowed through the full run. */
+/** Immutable orchestration callbacks; state is borrowed through the full run.
+ * preinit runs the approved OS-only first-use step (2026-10-22 contract amendment) once,
+ * before the entry baseline; zero means success. preinit_record is the borrowed witness
+ * written into the baseline record; it must be nonempty lowercase [a-z0-9_,]. */
 typedef struct reload_api_t {
     int (*cycle)(void *,reload_cycle_result_t *);
     int (*absent)(void *);
     int (*stage)(void *,const char *);
+    int (*preinit)(void *);
+    const char *preinit_record;
     void *context;
 } reload_api_t;
 
@@ -216,12 +221,26 @@ static void reload_path(FILE *output,const wchar_t *path) {
         (unsigned long)observed.handles,observed.tls,observed.fls, \
         (unsigned long long)result.session,(unsigned long)result.foreign[0], \
         (unsigned long)result.foreign[1],result.module_exact,result.modules_absent),1) : 0)
+/** @brief Accept only a bounded JSON-safe witness: 1..64 chars of [a-z0-9_,].
+ * @param[in] record Borrowed witness; NULL is rejected.
+ * @return Nonzero only when the witness can be emitted verbatim inside a JSON string.
+ */
+static int reload_record_safe(const char *record) {
+    if(!record || !record[0])return 0;
+    for(unsigned i=0;record[i];++i) {
+        char c=record[i];
+        if(i>=64 || !((c>='a' && c<='z') || (c>='0' && c<='9') || c=='_' || c==','))return 0;
+    }
+    return 1;
+}
 /** @brief Execute1100 real module graphs in one process with exact retirement.
  * @param[in] api Nonnull immutable callbacks and borrowed state.
  * @param[in] module_path Exact absolute candidate path; max32767 UTF16 units.
  * @param[in] output Borrowed stream; every record is provisional until terminal.
  * @return0 only after1100 cycles and final owned cleanup/entry-baseline recovery.
- * Heap acceptance is deliberately separate; no first-load owner waiver exists.
+ * Heap acceptance is deliberately separate; no first-load owner waiver exists. The only
+ * pre-baseline step is api->preinit, the approved OS-only first-use initialization; a
+ * failure there stops the run before any baseline is measured.
  */
 static int reload_run(const reload_api_t *api,const wchar_t *module_path,FILE *output) {
     reload_counts_t entry={0},baseline={0},observed={0};
@@ -232,8 +251,11 @@ static int reload_run(const reload_api_t *api,const wchar_t *module_path,FILE *o
     size_t path_length=0;while(path_length<ReloadPathCapacity && module_path[path_length])++path_length;
     if(ReloadRejected(path_length<3) || ReloadRejected(path_length>=ReloadPathCapacity) ||
        ReloadRejected(module_path[1]!=L':') || ReloadRejected(module_path[2]!=L'\\') ||
-       ReloadRejected(!api->absent(api->context)) ||
-       ReloadRejected(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)) ||
+       ReloadRejected(!api->absent(api->context)) || ReloadRejected(!reload_record_safe(api->preinit_record)))goto cleanup;
+    diagnostic_stage="os_preinit";
+    if(ReloadRejected(api->preinit(api->context)!=0))goto cleanup;
+    diagnostic_stage="entry";
+    if(ReloadRejected(!GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user)) ||
        ReloadRejected(reload_measure(&entry)))goto cleanup;
     uint64_t creation=((uint64_t)created.dwHighDateTime<<32)|created.dwLowDateTime;
     DWORD pid=GetCurrentProcessId();
@@ -241,8 +263,8 @@ static int reload_run(const reload_api_t *api,const wchar_t *module_path,FILE *o
     diagnostic_stage="baseline";
     if(ReloadRejected(!crt) || ReloadRejected(reload_pool_start(&idle,ReloadIdleThreads)) ||
        ReloadRejected(reload_measure(&baseline)))goto cleanup;
-    fprintf(output,"OPENCL_RELOAD_V1 {\"event\":\"baseline\",\"pid\":%lu,\"creation\":\"%016llx\",\"cycles\":%u,\"contexts_per_cycle\":3,\"idle_threads\":4,\"handles\":%lu,\"tls\":%u,\"fls\":%u,\"heap_acceptance\":false,\"entry\":[%lu,%u,%u],\"module_utf16\":\"",
-        (unsigned long)pid,(unsigned long long)creation,ReloadCycles,(unsigned long)baseline.handles,baseline.tls,baseline.fls,(unsigned long)entry.handles,entry.tls,entry.fls);
+    fprintf(output,"OPENCL_RELOAD_V1 {\"event\":\"baseline\",\"pid\":%lu,\"creation\":\"%016llx\",\"cycles\":%u,\"contexts_per_cycle\":3,\"idle_threads\":4,\"handles\":%lu,\"tls\":%u,\"fls\":%u,\"heap_acceptance\":false,\"entry\":[%lu,%u,%u],\"os_preinit\":\"%s\",\"module_utf16\":\"",
+        (unsigned long)pid,(unsigned long long)creation,ReloadCycles,(unsigned long)baseline.handles,baseline.tls,baseline.fls,(unsigned long)entry.handles,entry.tls,entry.fls,api->preinit_record);
     reload_path(output,module_path);fputs("\"}\n",output);fflush(output);
     for(unsigned cycle=1;cycle<=ReloadCycles;++cycle) {
         char stage[40];result=(reload_cycle_result_t){0};

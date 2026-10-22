@@ -29,7 +29,7 @@ def main():
     report = json.loads(gzip.decompress(raw.read_bytes()))
     summary = gate.coverage_summary(report, root)
     target = next(item for item in report["files"] if item["file"] == str(root / gate.CoverageSource))
-    expected = {"reload_close", "reload_thread_main", "reload_pool_finish", "reload_pool_start", "reload_pool_call", "reload_indices", "reload_measure", "reload_equal", "reload_module_exact", "reload_path", "reload_run", "reload_control"}
+    expected = {"reload_close", "reload_thread_main", "reload_pool_finish", "reload_pool_start", "reload_pool_call", "reload_indices", "reload_measure", "reload_equal", "reload_module_exact", "reload_path", "reload_record_safe", "reload_run", "reload_control"}
     functions = target.get("functions")
     if not isinstance(functions, list) or len(functions) != len(expected) or {f.get("name") for f in functions} != expected:
         raise ValueError("missing, duplicate or unexpected reload function inventory")

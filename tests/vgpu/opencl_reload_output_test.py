@@ -45,7 +45,8 @@ def record(value):
 
 def valid():
     baseline = {"event": "baseline", "pid": 1234, "creation": Creation, "cycles": 1100, "contexts_per_cycle": 3, "idle_threads": 4,
-                "handles": 62, "tls": 8, "fls": 12, "heap_acceptance": False, "entry": [50, 8, 12], "module_utf16": Module.encode("utf-16-be").hex()}
+                "handles": 62, "tls": 8, "fls": 12, "heap_acceptance": False, "entry": [50, 8, 12],
+                "os_preinit": "user32,winsock,bcrypt,dxgi_factory,search_order,package_family", "module_utf16": Module.encode("utf-16-be").hex()}
     lines = [record(baseline)]
     hosts = []
     for cycle in range(1, 1101):
@@ -100,7 +101,9 @@ class OutputTests(unittest.TestCase):
                 self.reject_record("baseline", field, remove=True)
         for field, value in [("cycles", 8), ("cycles", True), ("contexts_per_cycle", 8), ("idle_threads", 0), ("pid", 0),
                              ("creation", "0"*16), ("module_utf16", "ff"), ("heap_acceptance", True), ("handles", True),
-                             ("tls", -1), ("fls", "12"), ("entry", [50, 8]), ("entry", [True, 8, 12]), ("extra", 1)]:
+                             ("tls", -1), ("fls", "12"), ("entry", [50, 8]), ("entry", [True, 8, 12]), ("extra", 1),
+                             ("os_preinit", "user32,winsock,bcrypt,dxgi_factory"), ("os_preinit", ""), ("os_preinit", None),
+                             ("os_preinit", "user32,winsock,bcrypt,dxgi_factory,search_order,package_family,extra")]:
             with self.subTest(field=field, value=value):
                 self.reject_record("baseline", field, value)
 

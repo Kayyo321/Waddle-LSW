@@ -1079,6 +1079,13 @@ static int reload_fixture_absent(void *opaque) {
 static int reload_fixture_stage(void *opaque,const char *stage) {
     return audit_stage(((reload_fixture_t *)opaque)->directory,stage);
 }
+/** @brief Approved OS-only first-use initialization before the entry baseline (amendments 1-2).
+ * @return Zero only when all six steps succeeded; owns nothing on return.
+ */
+static int reload_fixture_preinit(void *opaque) {
+    (void)opaque;
+    return os_preinitialize();
+}
 
 /** @brief Run the ordinary OpenCL fixture or supervisor-controlled heap cycles.
  * @param[in] argc/argv Borrowed immutable native fixture arguments.
@@ -1101,7 +1108,8 @@ int wmain(int argc, wchar_t **argv)
         if(GetEnvironmentVariableW(L"WADDLE_DXVK_HEAP_CYCLES",legacy,2) || GetLastError()!=ERROR_ENVVAR_NOT_FOUND)return 2;
         wchar_t *cycle_argv[7]={argv[0],argv[2],argv[3],argv[4],argv[5],argv[6],argv[7]};
         reload_fixture_t fixture={7,cycle_argv,directory};
-        const reload_api_t api={reload_fixture_cycle,reload_fixture_absent,reload_fixture_stage,&fixture};
+        const reload_api_t api={reload_fixture_cycle,reload_fixture_absent,reload_fixture_stage,
+                                reload_fixture_preinit,OsPreinitRecord,&fixture};
         return reload_run(&api,cycle_argv[2],stdout);
     }
     if (enabled && argc > 1 && !wcscmp(argv[1], L"--transport-loss")) return 2;
