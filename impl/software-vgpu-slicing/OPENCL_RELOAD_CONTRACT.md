@@ -114,3 +114,34 @@ production inputs are unchanged. Fresh native diagnostics, full1100-cycle
 qualification, heap ownership, final CI and independent review remain open.
 
 Native R7 diagnostic outcome: [measured first-cycle retention](OPENCL_NATIVE_RETENTION_2026_10_21.md). The exact post-cycle comparison rejects+83handles/threeTLS/threeFLS; zero strict cycles accepted. No count or ownership waiver follows.
+
+## Approved amendment: OS-only pre-initialization (2026-10-22)
+
+The user approved this amendment on 2026-10-22 after the retention
+[attribution](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md) showed that Windows keeps
+process-lifetime state after the first use of USER32, Winsock, bcrypt and DXGI.
+
+1. **Exact operations.** Before the entry baseline, the fixture performs these four steps,
+   in this order, and nothing else:
+   - Load and free System32 `user32.dll`.
+   - Load System32 `ws2_32.dll`, call `WSAStartup(2.2)`, open one IPv4 TCP socket, close it,
+     call `WSACleanup`, then free the module.
+   - Load and free System32 `bcrypt.dll`.
+   - Load System32 `dxgi.dll`, create one `IDXGIFactory1`, release it, then free the module.
+     There is no adapter enumeration.
+2. **No product code.** No Waddle, clvk or Vulkan loader code runs during pre-initialization.
+   All modules load with `LOAD_LIBRARY_SEARCH_SYSTEM32`. Every module reference, Winsock
+   startup, socket and COM reference it acquires is released before return on every path.
+   Any failure stops the run before the entry baseline is measured.
+3. **Equality is unchanged.** The entry and persistent baselines are measured after
+   pre-initialization. Exact handle/TLS/FLS equality is still required before and after
+   every one of the 1100 reloads, including the first candidate load, and the final cleanup
+   must still return to the entry baseline. No allowance, tolerance or baseline reset is added.
+4. **Evidence.** The baseline record states the completed operations, and the output verifier
+   requires that statement.
+5. **Proof first.** Before any reload run uses it, a diagnostic census must show that an
+   ordinary eight-context GPU life after pre-initialization leaves no handle, TLS or FLS delta.
+   Heap-audit mode enables pre-initialization only through an explicit diagnostic switch, so
+   heap qualification is unchanged unless separately approved.
+6. **Upstream loader.** The Vulkan loader's leaked `dxgi.dll`/`gdi32.dll` references are not
+   approved for change here; any loader patch needs its own approval.

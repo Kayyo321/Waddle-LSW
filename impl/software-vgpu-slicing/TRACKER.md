@@ -2187,3 +2187,14 @@ directory, non-duplicable handles) are preserved with corrected R3-R5 revisions.
 [Attribution](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md). The no-warm-up reload
 contract conflicts with Windows first-use state; it is unchanged pending a human
 decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved OS-only reload pre-initialization (2026-10-22)
+
+Atomic unit `docs(opencl): record approved OS-only reload pre-initialization`.
+The user approved four Windows-only first-use operations before the persistent
+reload baseline (USER32 load/free, Winsock startup/socket/cleanup, bcrypt
+load/free, DXGI factory create/release) with exact equality kept on every
+reload, including the first. A diagnostic census must prove zero residual
+first. [Amendment](OPENCL_RELOAD_CONTRACT.md#approved-amendment-os-only-pre-initialization-2026-10-22).
+Commit `aa1b025` attributes the first-cycle retention (+0% all tasks). All
+tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
