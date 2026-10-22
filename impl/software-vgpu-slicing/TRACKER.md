@@ -2311,3 +2311,22 @@ guard fixture and R14 integration, run native heap qualification, and
 requalify M2, the Windows physical matrix and DXVK on the patched loader and
 fixed ICD. Exact-head CI and the final review follow. All tasks +0%; parent
 85.5% / In Progress, Time Ended TBD.
+
+### Host reboot recovery and promoted-ICD census (2026-10-22)
+
+The host restarted overnight. The VM was booted from its preserved artifacts
+with no reset, and the user signed in at the console. The lease records the new
+QEMU and swtpm identities.
+
+The reboot cleared tmpfs `/tmp`. 302 hash-pinned frozen inputs were restored from
+byte-identical preserved copies, and three of them were rebuilt from session
+transcripts. Each one was admitted only on exact SHA-256 equality
+([attribution section 12](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#12-host-reboot-recovery-and-promoted-icd-census-2026-10-22)).
+
+| Gate | Result |
+|:--|:--|
+| Native TLS/FLS and malformed-input controls on the new VM instance | Pass, `opencl_reload_controls_native_06d96b57` |
+| Promoted-ICD census, one ordinary life | Zero residual, `opencl_census_483f3b38` |
+
+Next: prepare and run the R9 1100-cycle reload. All tasks +0%; parent 85.5% /
+In Progress, Time Ended TBD.

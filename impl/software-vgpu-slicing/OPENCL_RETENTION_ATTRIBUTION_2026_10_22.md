@@ -239,3 +239,56 @@ Prepared offline, **not run**:
 - Reload runner `opencl_reload_runner_r9/`: R8 with only the supervisor ICD override (16 added
   lines). R8 is kept as a history guard; R9, R8-history and both self-tests pass. Its composite
   manifest must be written after the census, with the census record as evidence.
+
+## 12. Host reboot recovery and promoted-ICD census (2026-10-22)
+
+The host shut down at 22:59 local on 2026-10-21, after the overnight pause, and booted again at
+10:44 local. That ended QEMU 10732/62029 and swtpm 10727/62022. It also cleared the tmpfs `/tmp`,
+which held hash-pinned frozen runner inputs.
+
+VM recovery:
+
+- `qemu-img check` found no errors. The preserved disk, `vars.fd` and TPM state were booted with
+  the documented no-install-media launch (CODEX_HANDOFF section 9). Nothing was reset,
+  reprovisioned or restored from backup.
+- New identities are QEMU 7564/25543 and swtpm 7558/25429. The lease records them, keeps the old
+  pair as superseded and stays idle. `vm_lease.pre_reboot_20261022.json` keeps the prior lease.
+- Auto-logon is off, so the user signed in at the console.
+
+Temp-file restoration (`build/qualification_feature_20261021/tmp_restore_20261022/`):
+
+- `restore.py` admits a preserved copy only when its SHA-256 equals the pinned value. It never
+  overwrites, and the census set was restored all-or-nothing. `receipt.json` lists every restored
+  and every missing file.
+- 517 distinct temp paths are pinned across preserved receipts, with no conflicting pins. 299 had
+  byte-identical preserved copies and were restored.
+- Two census inputs had no copy: the identity helper `waddle_opencl_final_heap_plan/runner.py` and
+  `freeze_census_r2.py`. Both were rebuilt from the Codex session transcripts and admitted only on
+  exact hash equality. `reconstructed/PROVENANCE.md` records the transcript lines replayed.
+- The other missing paths are historical scratch evidence (certificate build trees, coverage
+  intermediates). No pending runner loads them. Their pins remain in the receipts that name them.
+
+Census revision `opencl_census_promoted_icd_reboot/`:
+
+- The census bound the VM identity through the R7 plan, which names the ended instance. The
+  revision replaces only the identity source of the two lease checks with the leased instance
+  (`runner_reboot.patch`, 2 lines removed, 6 added). The lease check stays exact: owner, idle
+  state, identity equality and live start ticks.
+- The prepared promoted-ICD census stays unchanged as evidence. Its R10-to-promoted patch is
+  now checked against it as a history guard.
+
+Native TLS/FLS controls `opencl_reload_controls_native_06d96b57/` were rerun on the new instance
+with the unchanged revision-6 controls runner. R9 requires controls recorded under the leased VM
+identity. Both controls and all ten malformed-input controls pass.
+
+Census `opencl_census_483f3b38/` ran with the promoted-structure ICD `4a36da9b…`, the patched
+loader and the seven-step OS pre-initialization:
+
+| Resource | Delta from baseline to after full unload |
+|:--|:--|
+| Handles | 0 added, 0 removed, 0 changed |
+| Modules / threads | 0 |
+| TLS / FLS | 0 |
+
+Native exit 0, natural process absence and a complete diagnostic. This matches the zero-residual
+proof of section 10 with the fixed ICD. It is one ordinary life, not the 1100-cycle reload.
