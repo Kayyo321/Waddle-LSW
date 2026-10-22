@@ -7289,3 +7289,59 @@ adapter-preference sorting has no work to do for the single listed Waddle driver
 - Native evidence: the traced six-life census `opencl_census_55d8a20f` shows that no life opens an
   ALPC port with the patched loader. Final acceptance is the 1100-cycle reload together with the
   narrowed pre-initialization step 4 (reload contract amendment 4).
+
+### CDB suspend guard R15 and native guard controls (2026-10-22)
+
+**Scope.** Native heap captures run CDB non-invasively (`-pvs`), which suspends every target thread
+for the pass. If CDB is killed on its 15 s bound, those increments remain. The guard worker records
+each original thread's baseline suspend count before a pass, and after proven CDB retirement it
+removes exactly one debugger-owned increment from threads that still carry it. R15 is the reviewed
+revision of R14 (`build/qualification_feature_20261021/cdb_guard_r15/`, receipt `fc0edec2…`).
+
+**Changes from R14.** The worker sources and executable (`2da53bdf…`), the C core and every protocol
+parser are byte-identical.
+
+1. `stage_worker()` uploads the hash-bound worker to `<guest>\guard_worker_<sha16>.exe` before any
+   timed stage. It reuses an identical file and refuses a different one. `run_guarded_capture` takes
+   that path (`staged_worker_guest`) and each pass only re-verifies its hash. R14 re-uploaded 309 KB
+   through 1200-character WinRM chunks on every pass, about 120 s against a 60 s stage.
+2. The worker starts through `Win32_Process.Create`. R12 opens and closes a WinRM shell per
+   PowerShell call, so a `Start-Process` child belongs to a shell that closes immediately. The
+   worker's image is read from the live process, not assumed.
+3. When CDB times out and the guard proves every original count restored, the RESULT JSON is persisted
+   and `GuardTimeoutCleaned` (a `TimeoutError`) is raised. The stage still fails. R14 reported this
+   case as "cleanup not proven".
+4. The capture binding schema is `suspend_guard_r15_capture_v1` and records the staged path.
+5. Three R14 helpers that nothing called are removed.
+
+**Native controls** (`guard_native_control_r1/`, offline only until run). The fixture revision 2
+(`guard_cdb_control_r2.c`) starts three running threads and one `CREATE_SUSPENDED` thread (count 1).
+It writes READY, FRESH and TERMINAL records to marker files, has a 600 s budget and resets its
+done-events per request. `guard_fixture_capture.py` reuses R12's CDB machinery by hash and replaces
+only `capture()`. `guard_control_runner.py --native` runs four controls, each on a fresh fixture:
+
+| Control | Expected outcome |
+|:--|:--|
+| normal | cleanup proven, nothing recovered, every thread at its baseline (suspended thread stays at 1) |
+| inject | after both passes the fixture suspends slot 0 once; the guard recovers exactly that thread |
+| timeout | `.sleep 30000` hits the real 15 s bound; all threads restored; `GuardTimeoutCleaned` |
+| fresh | a thread created before the passes is reported FRESH, never resumed; the stage fails |
+
+Each control must end with the fixture exiting naturally: TERMINAL code 0, equal entry and final
+handle counts, and process absence by PID and exact creation time.
+
+**Verification (offline).**
+
+| Gate | Result |
+|:--|:--|
+| R15 tests, normal and -O | 27 pass |
+| R15 coverage | 98.69% lines, 96.55% branch outcomes |
+| Guard C core, ASan/LSan/UBSan with leak detection enabled | Pass |
+| Runner and adapter fakes, normal and -O | 15 pass |
+| Runner coverage | 96.22% lines, 91.67% branch outcomes |
+| Adapter coverage | 100% lines, 94.44% branch outcomes |
+| Fixture revision 2, private GCC14 cross-build with -Werror -Wconversion -Wshadow | Pass |
+
+Branch outcomes come from `cdb_guard_r15/branch_coverage.py`. It counts both directions of every
+if, while and for statement from traced line arcs, including server threads. Native controls must
+pass before any heap acceptance use.

@@ -2345,3 +2345,17 @@ copy. R14 and the native guard fixture each need a reviewed revision before nati
 (`build/qualification_feature_20261021/guard_native_control_r1/REVIEW_FINDINGS_20261022.md`).
 
 All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Reload R10 started; CDB guard R15 prepared (2026-10-22)
+
+Loader patch 0002 and the ten-step pre-initialization (amendment 4) remove the R9 residual: traced
+six-life census `opencl_census_709beb33` shows zero handle, module, TLS and FLS change in every life.
+Native TLS/FLS controls pass on fixture `27cfb403`, and R10 (composite `e769dd0f…`) is running the
+1100-cycle reload. It has already passed the cycle where R9 failed.
+
+CDB guard R15 and the native guard controls are implemented and pass all offline gates
+([IMPL_DESC](IMPL_DESC.md#cdb-suspend-guard-r15-and-native-guard-controls-2026-10-22)). The two wiped
+R12 inputs were rebuilt by exact hash (inventory replay `3ca2e4e3…`, wrapper-mapping report
+`f370ea1e…`), and R12's 33 tests pass. The native guard controls run after R10 releases the lease.
+
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
