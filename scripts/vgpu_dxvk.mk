@@ -170,6 +170,30 @@ vgpu-native-heap-stage-coverage:
 	python3 -O -B tests/vgpu/dxvk_heap_audit_coverage_test.py
 	python3 -B scripts/dxvk_heap_audit_coverage.py
 
+# Approved OS-only first-use initialization before reload baselines (2026-10-22 amendment).
+# Actual include under Win32 API doubles; native behavior is a separate census/run gate.
+VgpuOpenclOsPreinitFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu
+VgpuOpenclOsPreinitSources = tests/vgpu/opencl_os_preinit_test.c
+VgpuOpenclOsPreinitHeaders = tests/vgpu/opencl_os_preinit_windows.inc tests/vgpu/win32_fake/opencl_os_preinit_fake.h
+build/opencl-os-preinit: | build
+	mkdir -p $@
+
+build/opencl-os-preinit/host: $(VgpuOpenclOsPreinitSources) $(VgpuOpenclOsPreinitHeaders) | build/opencl-os-preinit
+	$(CC) $(VgpuOpenclOsPreinitFlags) -O2 $< -o $@
+
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_os_preinit_windows.inc
+
+.PHONY: vgpu-opencl-os-preinit-test vgpu-opencl-os-preinit-sanitizers vgpu-opencl-os-preinit-coverage
+vgpu-opencl-os-preinit-test: build/opencl-os-preinit/host
+	./build/opencl-os-preinit/host
+
+vgpu-opencl-os-preinit-sanitizers: | build/opencl-os-preinit
+	$(CC) $(VgpuOpenclOsPreinitFlags) -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuOpenclOsPreinitSources) -o build/opencl-os-preinit/host_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./build/opencl-os-preinit/host_sanitized
+
+vgpu-opencl-os-preinit-coverage:
+	python3 -B tests/vgpu/opencl_os_preinit_coverage.py
+
 # Separate actual-DLL1100-reload stress. Native execution is root-supervised.
 VgpuOpenclReloadFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -pthread
 VgpuOpenclReloadSources = tests/vgpu/opencl_reload_test.c

@@ -53,7 +53,7 @@ jobs:
       - name: Verify exact-target FLS certificate with API doubles and strict coverage
         run: make vgpu-opencl-fls-test vgpu-opencl-fls-sanitizers vgpu-opencl-fls-coverage
       - name: Verify bounded full reload ownership with API doubles and strict output receipts
-        run: make vgpu-opencl-reload-test vgpu-opencl-reload-sanitizers vgpu-opencl-reload-coverage
+        run: make vgpu-opencl-reload-test vgpu-opencl-reload-sanitizers vgpu-opencl-reload-coverage vgpu-opencl-os-preinit-test vgpu-opencl-os-preinit-sanitizers vgpu-opencl-os-preinit-coverage
       - name: Verify actual OpenCL cancellation call and reverse owner release
         run: make vgpu-opencl-cancellation-test
       - name: Require buffer production line and directional branch coverage
