@@ -1,5 +1,7 @@
 /** @file clvk_runtime_eh_pool_test.c
  * Actual final-callback implementation against a bounded CRT registration double.
+ * The double proves LLVM shutdown runs after every C++ destructor and before the
+ * GCC arena release, exactly once each.
  * No Windows CRT ordering or real exception arena retirement is inferred here.
  */
 #ifdef NDEBUG
@@ -20,6 +22,7 @@ static void (*callbacks[8])(void);
 static size_t callback_count;
 static unsigned sequence;
 static unsigned frees;
+static unsigned llvm_shutdowns;
 static int registration_error;
 
 /** Borrow callback until fake CRT retirement; nonzero leaves it unregistered. */
@@ -37,9 +40,18 @@ waddle_test_runtime_atexit(void (*callback)(void))
 void
 waddle_test_runtime_freeres(void)
 {
-   assert(sequence == 3 && frees == 0);
+   assert(sequence == 3 && frees == 0 && llvm_shutdowns == 1);
    assert(runtime_eh_state == RuntimeEhReleased);
    frees++;
+}
+
+/** LLVM managed statics retire after every destructor and before the arena. */
+void
+waddle_test_runtime_llvm_shutdown(void)
+{
+   assert(sequence == 3 && frees == 0 && llvm_shutdowns == 0);
+   assert(runtime_eh_state == RuntimeEhReleased);
+   llvm_shutdowns++;
 }
 
 /** Exact fatal status, distinct from assertion, signal or ordinary failure.
@@ -66,7 +78,7 @@ static void ordered_retirement(void)
    assert(waddle_test_runtime_atexit(last_constructed_destructor) == 0);
    while (callback_count)
       callbacks[--callback_count]();
-   assert(sequence == 3 && frees == 1 && runtime_eh_state == RuntimeEhReleased);
+   assert(sequence == 3 && frees == 1 && llvm_shutdowns == 1 && runtime_eh_state == RuntimeEhReleased);
 }
 
 static void registration_failure(void)
