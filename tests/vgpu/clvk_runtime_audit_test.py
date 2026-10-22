@@ -161,7 +161,9 @@ def map_text(*, output="OpenCL.dll", abi_owner="clvk_runtime_tls.o", include_eh=
                   " .text 0x1100 0x20 /toolchain/dllcrt2.o",
                   " 0x140001100 atexit",
                   " .text 0x1120 0x20 /toolchain/libstdc++.a(eh_alloc.o)",
-                  " 0x140001120 __gnu_cxx::__freeres()"]
+                  " 0x140001120 __gnu_cxx::__freeres()",
+                  " .text 0x1140 0x60 external/llvm/lib/libLLVMSupport.a(ManagedStatic.cpp.obj)",
+                  " 0x140001140 llvm::llvm_shutdown()"]
     if bad_crt:
         lines.append(" .text 0x1200 0x20 /toolchain/libgcc_eh.a(tls_atexit.o)")
     return "\n".join(lines) + "\n"
@@ -478,7 +480,11 @@ class runtime_audit_test_t(unittest.TestCase):
                                           " .CRT$XCAWDL 0x1008 0x8 clvk_runtime_eh_pool.o\n .CRT$XCZ 0x1010 0x8 cinitexe.o",
                                           " .CRT$XCZ 0x1010 0x8 cinitexe.o\n .CRT$XCAWDL 0x1008 0x8 clvk_runtime_eh_pool.o"),
                                        "unexpected .CRT entry", {}),
-                                      (map_text(output="libOpenCL.dll").replace("__gthr_win32_join", "foreign_join"), "define __gthr_win32_join", {})):
+                                      (map_text(output="libOpenCL.dll").replace("__gthr_win32_join", "foreign_join"), "define __gthr_win32_join", {}),
+                                      (map_text(output="libOpenCL.dll").replace("libLLVMSupport.a(ManagedStatic.cpp.obj)", "foreign.a(shutdown.o)"),
+                                       "expected ManagedStatic.cpp.obj", {}),
+                                      (map_text(output="libOpenCL.dll").replace(" 0x140001140 llvm::llvm_shutdown()\n", ""),
+                                       "define llvm::llvm_shutdown()", {})):
             map_path.write_text(text)
             with self.subTest(message=message), self.assertRaises(Audit.audit_error_t):
                 Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root, **kwargs)

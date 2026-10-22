@@ -874,6 +874,7 @@ def verify_runtime_link(
         "required_map_symbols": {
             "atexit": "dllcrt2.o",
             "__gnu_cxx::__freeres()": "eh_alloc.o",
+            "llvm::llvm_shutdown()": "ManagedStatic.cpp.obj",
             "waddle_clvk_eh_pool_register": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_release": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_initializer": Path(eh_pool_object).name,
