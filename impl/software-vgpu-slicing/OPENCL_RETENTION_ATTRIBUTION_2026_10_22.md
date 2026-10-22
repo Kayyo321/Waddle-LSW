@@ -209,3 +209,33 @@ pre-initialization.
 Native exit 0, natural process absence, host status 0 / worker 0, no signals, empty owned session,
 and exactly one seven-step witness line. This satisfies the proof required before reload runs. It
 is one ordinary life, not the 1100-cycle reload or heap acceptance.
+
+## 11. Reload attempt R8 and the promoted-structure ICD defect (2026-10-22)
+
+Reload runner R8 (`opencl_reload_runner_r8/`, composite `20825553…`) started the 1100-cycle run
+`opencl_reload_final_r8/`. Cycle 1 met exact handle/TLS/FLS equality. Cycle 2 failed when the
+supervisor could not decode clvk's log as UTF-8: clvk printed `driverName`/`driverInfo` bytes it
+never received. The native process retired naturally (exit 1), the host session was empty and no
+guest survivor remained (`failed_attempt_review.json`).
+
+Root cause: the Waddle ICD advertises Vulkan 1.3 but left every structure promoted into core
+1.1-1.3 unwritten. clvk does not value-initialize its driver, ID, PCI and maintenance3 property
+members, so cycle 2 read reused heap bytes. Features2 and device creation had the matching gap.
+Commits `5c8a557`, `1614757` and `b271730` fix all three paths
+([IMPL_DESC](IMPL_DESC.md#promoted-core-structure-publication-2026-10-22)).
+
+The fixed Windows ICD `4a36da9b…` is built from `b271730` by
+`icd_promoted_build/build_icd.py` with receipt `900a812e…`. The same builder applied to `b56f7b7`
+reproduces the previously deployed ICD `ba75a97c…` except 12 link-identity bytes (PE timestamp,
+its debug-directory copy and an 8-byte debug identifier). The deployed difference is therefore
+exactly the three fix commits.
+
+Prepared offline, **not run**:
+
+- Census `opencl_census_promoted_icd/`: R10 with only the ICD asset replaced. The host-tree check
+  admits exactly the four fixed sources, which must equal the ICD build receipt. Bindings
+  `e59342f3…` differ from R10 only in those four hashes. All revision tests and the read-only
+  preflight pass.
+- Reload runner `opencl_reload_runner_r9/`: R8 with only the supervisor ICD override (16 added
+  lines). R8 is kept as a history guard; R9, R8-history and both self-tests pass. Its composite
+  manifest must be written after the census, with the census record as evidence.

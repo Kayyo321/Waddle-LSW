@@ -2282,3 +2282,32 @@ specify promoted core structure publication` adds the
 The failed attempt stays preserved under
 `build/qualification_feature_20261021/opencl_reload_final_r8/`. All tasks +0%;
 parent 85.5% / In Progress, Time Ended TBD.
+
+### Promoted structure fix and overnight stopping point (2026-10-22)
+
+Commit `320c697` specifies the fix (+0%). Commits `5c8a557` (Properties2),
+`1614757` (Features2) and `b271730` (device creation) implement it, each with
+module coverage of at least 97% branches and ICD units 415/415 Debug and
+ReleaseSafe (+0%). Commit `c13e360` refreshes the local sanitizer pins
+(+0%). Its message misdates the physical run; the correct run is
+`build/icd_physical_coherent_owned_safety_37/run-20261022T023008133960Z-1408837`.
+
+| Gate | Result |
+|:--|:--|
+| ICD coverage | 90.45% branches, 98.54% lines |
+| 37-module ASan/LSan seam | Pass, 415 ICD + 29 standalone units, zero findings |
+| Linux physical coherent matrix | Pass, 144 GPU lives + 6 expected cleanup failures |
+| Device/Features2 sanitizers, Windows cross-compiles | Pass |
+
+Atomic unit `docs(opencl): record promoted ICD fix and overnight checkpoint`
+pauses work at the user's request.
+[Attribution section 11](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#11-reload-attempt-r8-and-the-promoted-structure-icd-defect-2026-10-22)
+lists the prepared census and R9 runner, which are **not run**. The lease is
+idle and the VM was not touched after the R8 attempt.
+
+Resume order: run the promoted-ICD census and require zero residual; write the
+R9 composite with the census record; run the 1100-cycle reload. Then finish the
+guard fixture and R14 integration, run native heap qualification, and
+requalify M2, the Windows physical matrix and DXVK on the patched loader and
+fixed ICD. Exact-head CI and the final review follow. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
