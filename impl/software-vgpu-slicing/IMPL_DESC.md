@@ -7287,8 +7287,88 @@ adapter-preference sorting has no work to do for the single listed Waddle driver
   It also proves every other pinned file stays byte-identical.
 - `make vgpu-native-loader-win64` builds with `BUILD_WERROR=ON`. The import table is unchanged.
 - Native evidence: the traced six-life census `opencl_census_55d8a20f` shows that no life opens an
-  ALPC port with the patched loader. Final acceptance is the 1100-cycle reload together with the
-  narrowed pre-initialization step 4 (reload contract amendment 4).
+  ALPC port with the patched loader. Final acceptance is the 1100-cycle reload with the ten-step
+  pre-initialization below (reload contract amendment 4).
+- Pinned patch files: 0001 is 78 lines, SHA-256
+  `29594d9caf3a70f8de8327b8debe0911d298db79aa592727fa78081fe7c6fa16`; 0002 is 81 lines, SHA-256
+  `5ed9a21f33821d351136da2370a258e94241f0110fc4eb2130dcc2293cc28f38`. The built Windows
+  `vulkan-1.dll` with both patches is `c04164e1d7061c850ee9009bfb3b0e07bc41ee98e6f7e303cf9164340670d3c2`.
+
+### OpenCL reload OS pre-initialization, ten steps (amendments 1-4, 2026-10-22)
+
+**Scope.** `tests/vgpu/opencl_os_preinit_windows.inc` is included only by the Windows OpenCL
+fixture `tests/vgpu/opencl_integration.c`. It runs before the entry baseline of a reload run and
+in heap-audit mode only through the explicit diagnostic switch (`audit_os_preinit_requested`). It
+is test-fixture code: no Waddle, clvk or Vulkan loader code runs inside it, and nothing in the
+shipped ICD or OpenCL layer calls it.
+
+**Interface.**
+
+- `static int os_preinitialize(void)` runs the ten steps below with short-circuit `||`, in this
+  order, and returns zero only when all ten succeed. It stops at the first failing step.
+- Each step is `static int os_preinit_<name>(void)`, returning zero on success. A nonzero return
+  means the step has already released everything it acquired.
+- `reload_fixture_preinit` calls `os_preinitialize`; a nonzero result stops the run before any
+  baseline is measured.
+- `OsPreinitRecord` is the witness written into the baseline record:
+  `user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters`.
+  `scripts/opencl_reload_output.py` requires exact string equality and rejects any prefix, any
+  suffix, the earlier `dxgi_factory` witness, an empty value and a missing value.
+
+**Steps, with the resources each one acquires and releases.** Every module is loaded from System32
+(`LOAD_LIBRARY_SEARCH_SYSTEM32`), except the deliberate bare-name load in step 5.
+
+| Step | Witness | Operation | Acquired, then released by the same step |
+|:-:|:--|:--|:--|
+| 1 | `user32` | Load and free `user32.dll` | 1 module reference |
+| 2 | `winsock` | `WSAStartup(2.2)`, open and close one IPv4 TCP socket, `WSACleanup` | module, startup, socket |
+| 3 | `bcrypt` | Load and free `bcrypt.dll` | 1 module reference |
+| 4 | `dxgi_module` | Load and free `dxgi.dll`; no factory is created | 1 module reference |
+| 5 | `search_order` | `LoadLibraryW(L"dwmapi.dll")` by bare name; fails unless the loaded path is System32 `dwmapi.dll` | 1 module reference |
+| 6 | `package_family` | Size-only `GetPackagesByPackageFamily` for `Microsoft.D3DMappingLayers_8wekyb3d8bbwe`; accepts `ERROR_SUCCESS` and `ERROR_INSUFFICIENT_BUFFER` | none (kernel32 borrowed via `GetModuleHandleW`) |
+| 7 | `winsock_connect` | Listener on `127.0.0.1`, nonblocking `TCP_NODELAY` client connect, `select` writable within 2 s; no accept, no data | module, startup, 2 sockets |
+| 8 | `user_hive` | `RegOpenKeyExW(HKEY_CURRENT_USER, L"Software", 0, KEY_READ)`, then `RegCloseKey` | `advapi32.dll` reference, 1 key; the predefined HKCU handle is never closed |
+| 9 | `random` | `BCryptOpenAlgorithmProvider(L"RNG", L"Microsoft Primitive Provider", 0)`, `BCryptGenRandom` of 16 bytes, `BCryptCloseAlgorithmProvider(h, 0)` | `bcrypt.dll` reference, 1 provider |
+| 10 | `d3dkmt_adapters` | `D3DKMTEnumAdapters2` with `{NumAdapters = 0, pAdapters = NULL}` | `gdi32.dll` reference |
+
+The include declares the Win32 constants it needs itself, because `winsock2.h`, `winreg.h`,
+`bcrypt.h` and `d3dkmthk.h` are not included after `windows.h`. HKCU is the sign-extended predefined
+handle value `0x80000001`, `KEY_READ` is `0x20019`, and `D3DKMT_ENUMADAPTERS2` uses its 16-byte x64
+layout (a 32-bit count, padding, then the array pointer).
+
+**Why each step exists.** Each step performs once, before the baseline, a Windows first use that
+an ordinary reload cycle triggers and that Windows then keeps for the life of the process. Steps 1-4
+come from amendment 1, steps 5-6 from amendment 2, step 7 from amendment 3, and steps 8-10 from
+amendment 4. Attribution sections 6-14 of `OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md` give the
+measured residual and the kernel stacks behind each one. Steps 8-10 absorb first uses that the
+`IDXGIFactory1` creation in the old step 4 used to trigger: the current-user hive key, the
+`bcryptprimitives.dll` RNG provider and the `dxcore.dll` load from D3DKMT enumeration.
+
+**Equality is unchanged.** Exact handle, TLS and FLS equality is still required before and after
+every one of the 1100 reloads and at final cleanup. Pre-initialization adds no tolerance and no
+baseline reset.
+
+**Concurrency.** Runs on the fixture's main thread before any fixture worker thread exists. Not
+reentrant.
+
+**Failure modes.** Any failed load, export lookup, startup, socket call, registry open, provider
+open, random generation or D3DKMT call releases what the step holds and returns nonzero. The fixture
+then exits before measuring a baseline, so a partial pre-initialization can never become a baseline.
+
+**Verification.**
+
+- `tests/vgpu/opencl_os_preinit_test.c` runs the include against Win32 doubles
+  (`tests/vgpu/win32_fake/opencl_os_preinit_fake.h`). The success trace has exactly 69 operations.
+  Failing each operation in turn, plus the three planted-`dwmapi.dll` path cases (80 failure
+  paths in all), proves that every owner counter (module
+  references, Winsock startups, sockets, registry keys, RNG providers) returns to zero on every path.
+- `tests/vgpu/opencl_os_preinit_coverage.py` measures branch coverage of the include against the
+  90% project gate; the measured result at commit `d2ba4a4` is 100%.
+- The test runs under ASan, LSan and UBSan with zero findings.
+- `tests/vgpu/opencl_reload_output_test.py` covers the witness rules above.
+- Native evidence: the traced six-life census `opencl_census_709beb33` shows zero handle, module,
+  TLS and FLS change in every life, and a per-step native control shows that none of the ten steps
+  opens an RPC/ALPC connection. Final acceptance is the 1100-cycle reload R10.
 
 ### CDB suspend guard R15 and native guard controls (2026-10-22)
 
