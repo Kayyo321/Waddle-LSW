@@ -10,7 +10,7 @@ from pathlib import Path
 import re
 
 Cycles = 1100
-# Approved OS-only pre-initialization witness (OPENCL_RELOAD_CONTRACT.md amendments 1-3).
+# OS-only pre-initialization witness (OPENCL_RELOAD_CONTRACT.md amendments 1-4).
 OsPreinit = "user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters"
 Prefix = "OPENCL_RELOAD_V1 "
 Lifetime = "OpenCL exact add/local-barrier/atomics/max-group/buffers/events/build-error lifetime passed."
