@@ -211,7 +211,25 @@ alters a predicate, threshold, baseline or count policy.
    loads and frees `dxgi.dll` each cycle. The narrowed step is a strict subset of the operation the
    user approved in amendment 1.
 
+3. **Steps 8-10.** Without the factory, the first life left three OS first-use residuals that the
+   factory used to absorb ([attribution section 14](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#14-loader-patch-0002-and-the-ten-step-pre-initialization-2026-10-22)).
+   Each new step repeats, once, an operation a cycle already performs. Each runs only Windows code
+   and releases everything it acquires.
+   - **Step 8, user hive.** Load System32 `advapi32.dll`, open `HKEY_CURRENT_USER\Software` for
+     reading and close it, then free the module. The loader's settings lookup reads HKCU, and the
+     first current-user access opens and caches the `HKU\<SID>` key. The predefined
+     `HKEY_CURRENT_USER` handle is never closed.
+   - **Step 9, random.** Load System32 `bcrypt.dll`, open the `RNG` provider of
+     `Microsoft Primitive Provider`, generate 16 bytes, close the provider and free the module. These
+     are exactly the calls `venus_tcp_random` makes. The first open keeps `bcryptprimitives.dll`
+     loaded with two ETW registrations and one device file.
+   - **Step 10, D3DKMT adapters.** Load System32 `gdi32.dll`, call `D3DKMTEnumAdapters2` once with a
+     zero count and no array, then free the module. The loader's driver-store implicit-layer scan
+     makes this call, and the first one keeps `dxcore.dll` loaded with two ETW registrations.
+
+A native per-step control shows that none of the ten steps opens an RPC/ALPC connection.
+
 The baseline witness becomes
-`user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect`, and verifiers
-reject the previous `dxgi_factory` witness. All other rules of amendments 1-3 are unchanged,
-including exact equality on every reload.
+`user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters`,
+and verifiers reject both the previous `dxgi_factory` witness and the seven-step prefix. All other
+rules of amendments 1-3 are unchanged, including exact equality on every reload.

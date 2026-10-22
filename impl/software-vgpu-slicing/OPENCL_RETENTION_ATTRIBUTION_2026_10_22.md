@@ -362,3 +362,44 @@ life-2 pair closes together with two ALPC ports.
 No predicate, threshold, baseline or count policy changed. Resolving this needs a human decision:
 an upstream loader change that stops the DXGI/DXCore enumeration for explicitly listed drivers, an
 OS-level step, or a contract amendment. Each one is outside the approvals already given.
+
+## 14. Loader patch 0002 and the ten-step pre-initialization (2026-10-22)
+
+### Evaluation census `opencl_census_55d8a20f` (loader patch 0002 only)
+
+Revision `opencl_census_multilife_r3/` changes only the loader asset, to `c04164e1…` (patches 0001
+and 0002). No life opens an ALPC port. Life 2 still adds one Thread and one Event, and the trace shows
+the same RPCRT4 timer callback on worker 2136. That callback closes the two ALPC ports that already
+existed at baseline, so they were opened before the first life, during pre-initialization.
+
+### Per-step control `rpc_source_control/`
+
+`rpc_source_control.exe` includes the tracked pre-initialization include unchanged. It runs one step
+in a fresh process over WinRM (CPU only), then reports RPCRT4 presence, loaded modules and handle
+types. No process survived.
+
+| Step | ALPC ports added | Modules kept |
+|:--|--:|:--|
+| Original step 4, DXGI factory | 2 | bcryptprimitives, cfgmgr32, dxcore, gdi32 and others |
+| dxgi.dll load and free | 0 | none |
+| All other approved steps | 0 | see the raw results |
+| HKCU key open and close | 0 | none, +1 Key |
+| bcrypt RNG open, generate, close | 0 | bcryptprimitives |
+| D3DKMTEnumAdapters2 count query | 0 | dxcore (with gdi32, user32 and others) |
+| Ten-step sequence | 0 | bcryptprimitives, dxcore, staterepositorycore and others |
+
+### Census `opencl_census_72049b10` (patch 0002, step 4 as a dxgi.dll load)
+
+Revision `opencl_census_multilife_r4/` uses fixture `0407bc09…`. Lives 2-6 equal each other exactly:
+no handle, module, TLS or FLS change, only thread-pool worker churn. Life 1 adds six handles and two
+modules over baseline. The trace attributes each one:
+
+| Residual | Opened by | Pre-initialization step that absorbs it |
+|:--|:--|:--|
+| `dxcore.dll`, 2 EtwRegistration | the loader's `windows_read_manifest_from_d3d_adapters` calling `D3DKMTEnumAdapters2` (implicit-layer scan) | 10, D3DKMT adapters |
+| `bcryptprimitives.dll`, 2 EtwRegistration, 1 File | the first bcrypt RNG provider open (`venus_tcp_random`) | 9, random |
+| Key `\REGISTRY\USER\<SID>` | the loader's HKCU settings lookup (`windows_get_loader_settings_file_path`) | 8, user hive |
+
+The loader frames are resolved from the symbol table of the `c04164e1` build. The old factory step
+absorbed all three, together with the RPC connection that caused the R9 failure. The three new steps
+absorb them without RPC (reload contract amendment 4).
