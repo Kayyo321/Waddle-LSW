@@ -2236,3 +2236,15 @@ MinGW and native Windows loader builds to the private tree. The submodule pin is
 unchanged; Linux loader builds are unaffected. Requalification on the patched
 loader `8a9e3d32…` (local MinGW build) is still required. All tasks +0%; parent
 85.5% / In Progress, Time Ended TBD.
+
+### Reload pre-initialization wiring and residual narrowing (2026-10-22)
+
+Commit `5682038` (`chore(deps): build Windows Vulkan loader from tracked private
+patch`) adds the approved loader patch build and its CI test (+0%). Commit
+`402c2e2` (`test(opencl): run approved OS pre-initialization before reload
+baselines`) wires the six steps into reload mode and the verifier (+0%). Atomic
+unit `docs(opencl): record residual after six-step pre-initialization` records
+censuses R7-R9: with the patched loader, modules/TLS/FLS/threads are exactly
+zero; a DBWinMutex came from the harness's own loader debug logging, and one
+IoCompletion remains from Winsock's first nonblocking connect, which needs a
+human decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.

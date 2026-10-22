@@ -159,3 +159,35 @@ asset changed. Native A/B results after the three OS steps (approved four, plus 
 
 Items 1 and 2 are OS-only steps outside the approved four, and item 3 is an upstream change.
 Each needs an explicit human decision. No predicate, threshold or baseline changed.
+
+## 9. Six-step pre-initialization with the patched loader (2026-10-22)
+
+Amendment 2 is implemented: six-step pre-initialization (commit `f871b9e`), the tracked loader
+patch build (commit `5682038`, frozen MinGW loader `8a9e3d32…` in
+`build/qualification_feature_20261021/patched_loader_8a9e3d32/`) and the reload-mode wiring
+(commit `402c2e2`). Fixture `d3464a8a…` (receipt `a9cde7f0…`). Every census below completes
+with native exit 0, natural absence, host status 0 / worker 0, no signals and an empty session.
+
+| Census | Change | Handles | TLS / FLS / modules | Threads |
+|:--|:--|:--|:--|:--|
+| R7 `opencl_census_75122850` | six steps, patched loader | +2: IoCompletion, Mutant | 0 / 0 / 0 | +1 pool worker |
+| R8 `opencl_census_d69c303d` | helper revision 3 names named objects | +2: IoCompletion, Mutant `\Sessions\1\BaseNamedObjects\DBWinMutex` | 0 / 0 / 0 | 0 |
+| R9 `opencl_census_4ab3b215` | batch no longer sets `VK_LOADER_DEBUG` | +1: IoCompletion | 0 / 0 / 0 | 0 |
+
+- **DBWinMutex.** The loader writes every emitted log message to `OutputDebugString` as well as
+  stderr (`loader/log.c`), and Windows opens and caches `DBWinMutex` on first use. The harness's own
+  `VK_LOADER_DEBUG=error,warn,driver` request caused it; nothing parses loader log output. Census R9
+  drops that variable. That is a harness diagnostic setting, not a product change.
+- **IoCompletion.** After the six steps, component controls (`component_retention_r2`, source
+  `4f935af3…`) add one IoCompletion only for a nonblocking connect completed through `select`,
+  which is Waddle's `venus_tcp_socket.c` connect path. A blocking connect with send/receive,
+  `select` on a listener, and the CNG RNG sequence used by the bootstrap each add 0. A second
+  cycle adds 0.
+- **Snapshot helper revision 3** (`opencl_census_r8/`, source `866793a7…`, PE `0471ce57…`) adds
+  `HANDLE_NAME` rows for Mutant, Event, Semaphore, Section, Key and Directory from a momentary
+  duplicate; File names are never queried. Its native control names 35 objects of a `cmd.exe`
+  target. R8 and R9 parse the rows, bind them only to listed named-type handles, and reject
+  malformed or duplicate rows.
+
+Exact equality now depends on one more OS-only step, a nonblocking loopback connect. That is
+outside the approved six, so it needs a human decision. No predicate, threshold or baseline changed.
