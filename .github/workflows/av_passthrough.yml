@@ -1,7 +1,7 @@
 name: Native AV verification
 on:
   push:
-    branches: [feature/high-perf-av-passthrough, feature/software-vgpu-slicing]
+    branches: [feature/high-perf-av-passthrough, feature/software-vgpu-slicing, feat/seamless-interop]
   pull_request:
   workflow_dispatch:
 permissions:
