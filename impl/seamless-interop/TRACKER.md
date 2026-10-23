@@ -1,6 +1,6 @@
 # Feature Tracker: Seamless Interop
 
-- **Contributors / Agents**: Claude Code (cloud session), Codex (/root)
+- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna audits (luna_foundations, luna_integration, luna_acceptance)
 - **Time Started**: 2026-10-22T00:59:49Z
 - **Time Ended**: TBD
 - **Feature Branch**: feat/seamless-interop
@@ -16,6 +16,12 @@ Original review and its follow-up resolutions:
 [status_2026_10_23.md](status_2026_10_23.md). Contract corrections supersede
 the original protocol v1/layout v2 freeze with protocol v2/layout v3. Completion
 stays at 9.6%; hardware evidence and the remaining implementation are pending.
+
+Execution plan: [completion_plan.md](completion_plan.md), reviewed with three
+parallel Luna audits on 2026-10-23. It defines exclusive implementation lanes,
+per-task acceptance and the PR path into `origin`; planning earns no progress.
+The user selected ViGEmBus inclusion for #25; implementation and driver/native
+acceptance remain pending.
 
 ## Tasks & Progress
 
@@ -45,15 +51,15 @@ stays at 9.6%; hardware evidence and the remaining implementation are pending.
 | #22 | Drag and drop both directions | Pending | 3% | 0% | Waits on #21 |
 | #23 | Microphone (PipeWire audiodev + discard sink) + per-app audio streams | Pending | 3% | 0% | Waits on #5, #8 |
 | #24 | USB redirection (CLI, daemon QMP, polkit ACL grant) for webcams, wired gamepads, other USB | Pending | 3% | 0% | Waits on #8 |
-| #25 | Bluetooth/evdev gamepads via virtual XInput | Pending | 2% | 0% | **Dependency approval gate** (ViGEmBus); IMPL_DESC §3.18 |
+| #25 | Bluetooth/evdev gamepads via virtual XInput | Pending | 2% | 0% | User selected ViGEmBus inclusion 2026-10-23; source/installer pins, implementation and native acceptance pending; IMPL_DESC §3.18 |
 | #26 | Printing via IPP guestfwd to host CUPS | Pending | 2% | 0% | Waits on #8 |
 | #27 | Guest app catalog, icon extraction (PNG), change notifications | Pending | 4% | 0% | Waits on #6 |
-| #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | Pending | 4% | 0% | Waits on #27, #33 |
+| #28 | Host desktop-entry/icon/menu materialization, app_id matching, toplevel icon, desktop-shortcut mirroring | Pending | 4% | 0% | Waits on #27 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #29 | `waddle open` launch path, activation tokens, cold-boot feedback, File Explorer seed | Pending | 3% | 0% | Waits on #7, #27 |
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
-| #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | Pending | 2% | 0% | Waits on #29, #33 |
+| #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | Pending | 2% | 0% | Waits on #29 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
-| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | Pending | 3% | 0% | Waits on #1 |
+| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | Pending | 3% | 0% | Primitives wait on #1; accepted journal/artifact API unblocks #28/#31; final closure waits on all host/guest artifact producers |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
 **Total Feature Completion**: `9.6%`
@@ -156,7 +162,7 @@ stays at 9.6%; hardware evidence and the remaining implementation are pending.
     Nineteen Zig tests and C ABI tests pass; coverage 97.23% branch/96.65% line,
     sanitizers clean and Windows ABI cross-link passes.
 
-- **Commit `HEAD`**: `refactor(interop): enforce codec naming and public interface contracts`
+- **Commit `9b3efcb`**: `refactor(interop): enforce codec naming and public interface contracts`
   - **Task Impact**: +0% to TODO #1/#4 (+0% overall); audit corrections to
     already credited code, no new runtime milestone completion.
   - **Summary**: Rename owned Zig types/constants and fixtures, preserve vendor
@@ -166,5 +172,21 @@ stays at 9.6%; hardware evidence and the remaining implementation are pending.
     and test literals are preserved. IMPL_DESC section 3.12.6 records the audit;
     final interop-test, rebuilt av-test, both sanitizer suites and the Windows
     ABI cross-link pass. Coverage stays 97.23% branch/96.65% line; formatting and
-    declaration documentation checks pass. `HEAD` identifies this containing
-    commit until the next tracker update.
+    declaration documentation checks pass.
+
+- **Commit `HEAD`**: `docs(seamless-interop): plan parallel Luna implementation and merge gates`
+  - **Task Impact**: +0% to TODO #1-#34 (+0% overall); planning and review only.
+  - **Summary**: Records three read-only Luna audits, a dependency-ordered plan
+    for all 34 tasks, exclusive worker/lead ownership, per-module and native
+    acceptance gates, exact completion arithmetic and PR merge into `origin`.
+    Splits #33's early journal/artifact API prerequisite from final lifecycle
+    closure to remove the coarse #28/#31 dependency cycle without changing scope.
+    Records the user's ViGEmBus inclusion decision without claiming dependency
+    installation or #25 progress. Corrects the stale session-start v2-header
+    reference to the already-frozen layout v3/SMW3. Forced normal interop rebuild
+    passes 19 Zig tests, C ABI and M0 fixture; initial reused sanitizer binary
+    failed LSan thread inspection. Documentation checks verify all 34 tasks,
+    unchanged weights/current progress, wave ceilings, links and existing
+    feature-commit attribution; `git diff --check` passes. No fresh hardware,
+    sanitizer or coverage result is claimed. `HEAD` identifies this containing planning commit until
+    the next tracker update.

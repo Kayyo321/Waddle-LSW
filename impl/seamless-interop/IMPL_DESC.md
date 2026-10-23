@@ -1654,6 +1654,11 @@ for non-native executables).
 
 ### 3.18 Bluetooth / evdev gamepads (Design, approval gated)
 
+Planning decision recorded 2026-10-23: the user selected **"Include ViGEmBus
+implementation"** for the completion plan. TODO #25 remains pending until its
+dependency pins, implementation and acceptance evidence pass. No driver was
+installed or guest configuration changed by this planning decision.
+
 Requires the user's approval of a new dependency before any work: ViGEmBus
 (BSD-3-Clause) pinned as `submodules/vigembus` for source audit plus the
 upstream signed driver installer pinned by SHA-256. If the user declines, TODO
@@ -1715,7 +1720,7 @@ agent feeds a ViGEm virtual Xbox 360 controller.
 6. Ask the daemon `GuestReadyReq` (timeout 120 s), then connect VSOCK 5002;
    handshake; on `VersionMismatch` run the redeploy sequence (4.1 steps 3-4)
    once, then reconnect.
-7. Map IVSHMEM (`[av] shm_path`) and validate the v2 header.
+7. Map IVSHMEM (`[av] shm_path`) and validate the layout-v3 (SMW3) header.
 8. Enter the event loop (Section 5.1).
 
 ### 4.3 Window appears
