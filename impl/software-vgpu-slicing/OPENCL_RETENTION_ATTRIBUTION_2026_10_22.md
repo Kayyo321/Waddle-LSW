@@ -537,3 +537,40 @@ bytes. These source/auditor changes affect the build cache key, so a fresh build
 DLL hash must be admitted before new native receipts are frozen. Census, controls, a fresh
 uninterrupted 1100-cycle reload and the rebuilt-DLL guarded heap verdict remain outstanding.
 There is no new heap PASS or feature-progress credit in this checkpoint.
+
+## 19. Current-source rebuild, new-boot controls and six-life census (2026-10-23)
+
+The fresh build after the review fixes completed all 2738 targets and passed static admission
+at 2026-10-23T14:06:44Z. Current DLL:
+`build/clvk_client/clvk_5667a182deca_2iuh35xp/out/OpenCL.dll`, SHA-256
+`81f3fc1d0515475a1b92046ce4131c8b970506c59549ab86e504ad23dc7175de`.
+Current receipt SHA-256: `4c0436a759df68ed1d1dcb702e9435527f0854c5008c4a0961d4e703e14297b0`.
+The prior 8552b3a1 DLL and its receipt remain preserved, including
+`codex_continuation_20261023/current_source_build/clvk_client.prior_8552b3a1.json`. The new DLL
+is different bytes, so old native evidence supplies no acceptance for it. No upstream source
+or submodule pin changed.
+
+**Native controls r9:** `opencl_reload_controls_native_c5d11649`; receipt SHA-256
+`b5d0b9003760b153ee6891326f91b7928ce7e4e63c73cfde07a2c53e46af95a1`. Both TLS/FLS controls
+and ten malformed CLI cases pass on this boot, with natural exits, no survivors and no forced
+cleanup. Revision 9 requires the approved Codex/Claude owner chain and removes the historical
+force-kill timeout fallback; a timeout instead preserves the child and makes the lease uncertain.
+
+**Six-life census r7:** `opencl_census_680adacd`; record SHA-256
+`25a2c0f0294d0dd99a556a2c58fcf4d693a3ae5e924a3382b1bac12e96cfa180`. All six lives complete
+the eight-context functional/malformed/concurrent-call oracles. After every unload there is zero
+handle, module, occupied-TLS or FLS change. Life six has only OS thread-pool churn. The native
+process naturally exits 0, signed console/native absence is proven, and every host graph is empty
+with no signals and exact retirement/owner-close proofs. The runner exits 0 at
+2026-10-23T14:12:37Z. This remains an attribution diagnostic, with acceptance_credit and
+heap_acceptance false; it does not replace the 1100-cycle reload or guarded heap gate.
+
+The r7 census and r6 heap runners bind the new DLL/receipt and exact new VM identities. Six
+offline revision groups pass normally and with optimized Python, including exact inverse patches,
+all frozen bindings, current source applicability, lifetime/guard pins, owner-chain checks and
+the absence of a control force-kill path. Both reload supervisor self-tests pass. Wrapper r2
+passes a live read-only check of the approved owner chain and exact VM executables/start ticks.
+
+Fresh reload R13 is prepared next, with unchanged cycle counts, equality predicates, context
+counts, deadlines and retirement rules. It must pass before the new-candidate heap run starts.
+Feature progress remains 93.0%; no incomplete reload or missing heap result is credited.

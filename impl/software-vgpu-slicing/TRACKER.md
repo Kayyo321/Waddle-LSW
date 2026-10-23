@@ -14,7 +14,7 @@
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 96% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification explicitly accepted by the user on 2026-10-23). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). Exact-head CI and final review remain open. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). The guarded three-life heap run (r3, guard R22) completes but FAILS: 27 OWNED blocks (107,842 B) leak per OpenCL.dll load (LLVM ManagedStatics without llvm_shutdown; std::mutex critical sections never deleted). The user approved the llvm_shutdown fix, implemented in 23e9275 and rebuilt as 8552b3a1; census r6 and controls r8 pass. R11 and R12 are incomplete and grant no new reload acceptance. Review fixes and explicit user ratifications are recorded; a current-source build, new-boot controls/census, uninterrupted 1100-cycle reload and guarded heap pass remain required (attribution sections 17-18). |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). The guarded three-life heap run (r3, guard R22) completes but FAILS: 27 OWNED blocks (107,842 B) leak per OpenCL.dll load (LLVM ManagedStatics without llvm_shutdown; std::mutex critical sections never deleted). The user approved the llvm_shutdown fix, implemented in 23e9275 and rebuilt as 8552b3a1; census r6 and controls r8 pass. R11 and R12 are incomplete and grant no new reload acceptance. Review fixes and explicit user ratifications are recorded; the current-source rebuild produces 81f3fc1d (receipt 4c0436a7), which passes native controls r9 and six-life census r7 on the new VM boot. Fresh uninterrupted 1100-cycle reload R13 and guarded heap runner r6 remain required (attribution sections 18-19). |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -2629,9 +2629,20 @@ addressed. TODO #5's note now reflects the already approved/implemented fix. Par
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | ci(vgpu): use the official Ubuntu archive for admission tools | #3/#5 +0%; overall +0% | Job 120451134378 in run 39964621955 at 608f0ee exhausted 15 minutes during Azure-mirror downloads before tests. Workflow YAML/shell syntax pass; test steps, package list, other jobs and timeout are unchanged. |
+| `ea40d8a` | ci(vgpu): use the official Ubuntu archive for admission tools | #3/#5 +0%; overall +0% | Job 120451134378 in run 39964621955 at 608f0ee exhausted 15 minutes during Azure-mirror downloads before tests. Workflow YAML/shell syntax pass; test steps, package list, other jobs and timeout are unchanged. |
 
 The same-head push admission job passed, but the cancelled PR job is not called green. The
 new commit changes the concrete failing download source instead of rerunning an unexplained
 failure. Raw installation log is preserved under codex_continuation_20261023. Parent remains
 93.0% / In Progress, Time Ended TBD; fresh-head CI and native gates remain open.
+
+### Current-source OpenCL build and native prerequisites (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | docs(opencl): record current-source build and new-boot native prerequisites | #5/#11 +0%; overall +0% | Build 2738/2738 and static admission PASS; candidate 81f3fc1d; native controls c5d11649 PASS; six-life census 680adacd completes with zero handle/module/TLS/FLS deltas, native exit 0 and exact host/native retirement. |
+
+Six normal/optimized revision groups and both supervisor self-tests pass. All 1225 preserved
+input paths were rechecked; only the approved shim documentation and new canonical receipt are
+rebound, with all other old bindings exact. New runners preserve prior revisions and bind the
+approved owner/new VM boot. Reload R13 and guarded heap remain open. Parent 93.0%, Time Ended TBD.

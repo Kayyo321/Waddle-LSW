@@ -7688,3 +7688,11 @@ the interrupted R11/R12 records, new VM process identities and preserved-artifac
 R12 contains only eight completed cycles and no verdict, so it contributes no reload acceptance.
 Fresh builds and native runners must freeze the current auditor/source hashes and new VM boot.
 Existing successful historical results remain historical; the OpenCL heap gate remains open.
+
+### Current-source OpenCL candidate qualification (2026-10-23)
+
+The review-fix build is candidate 81f3fc1d (receipt 4c0436a7), superseding 8552b3a1 for new native
+qualification. It passes static admission, new-boot native controls r9 and six-life census r7
+with zero handle/module/TLS/FLS deltas. The census proves attribution and functional retirement
+only. Attribution section 19 records exact hashes, applicability and natural retirement. Fresh
+1100-cycle reload R13 and guarded three-life heap runner r6 remain mandatory and uncredited.
