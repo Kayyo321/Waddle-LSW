@@ -17,6 +17,25 @@ const settings_t = struct {
     vsock_port: u32 = 5242,
     start_timeout: u32 = 60,
     stop_timeout: u32 = 15,
+    network_mode: []const u8 = "user",
+    network_cups_forward: bool = true,
+    usb_controller: bool = true,
+    usb_auto_attach: []const c.config_usb_id_t = &.{},
+    audio_backend: []const u8 = "pipewire",
+    audio_microphone: bool = true,
+    audio_per_app: bool = true,
+    input_ime: []const u8 = "guest",
+    input_inhibit_shortcuts: []const u8 = "fullscreen",
+    input_repeat: []const u8 = "host",
+    clipboard_enabled: bool = true,
+    clipboard_max_mb: u32 = 64,
+    clipboard_files: bool = true,
+    integration_start_at_login: bool = false,
+    integration_menu_apps: []const u8 = "installed",
+    integration_desktop_shortcuts: []const u8 = "mirror",
+    integration_exe_handler: []const u8 = "waddle",
+    integration_uac: []const u8 = "window",
+    integration_notify: bool = true,
 };
 /// Backup schema, owned by one bounded parse arena.
 const manifest_t = struct {
@@ -429,10 +448,63 @@ fn hash_disk(ctx: context_t, path: []const u8) !struct { size: u64, hash: [64]u8
     return .{ .size = size, .hash = std.fmt.bytesToHex(digest, .lower) };
 }
 fn settings(cfg: *const c.daemon_config_t) settings_t {
-    return .{ .memory_mb = cfg.memory_mb, .vcpus = cfg.vcpus, .default_shell = text(&cfg.default_shell), .vsock_port = cfg.vsock_port, .start_timeout = cfg.start_timeout_sec, .stop_timeout = cfg.stop_timeout_sec };
+    return .{
+        .memory_mb = cfg.memory_mb,
+        .vcpus = cfg.vcpus,
+        .default_shell = text(&cfg.default_shell),
+        .vsock_port = cfg.vsock_port,
+        .start_timeout = cfg.start_timeout_sec,
+        .stop_timeout = cfg.stop_timeout_sec,
+        .network_mode = if (cfg.network_mode == c.NetworkModeUser) "user" else "none",
+        .network_cups_forward = cfg.network_cups_forward != 0,
+        .usb_controller = cfg.usb_controller != 0,
+        .usb_auto_attach = cfg.usb_auto_attach[0..cfg.usb_auto_attach_count],
+        .audio_backend = if (cfg.audio_backend == c.AudioBackendPipewire) "pipewire" else "none",
+        .audio_microphone = cfg.audio_microphone != 0,
+        .audio_per_app = cfg.audio_per_app != 0,
+        .input_ime = if (cfg.input_ime == c.InputImeGuest) "guest" else "host",
+        .input_inhibit_shortcuts = switch (cfg.input_inhibit_shortcuts) {
+            c.InputInhibitShortcutsNever => "never",
+            c.InputInhibitShortcutsFullscreen => "fullscreen",
+            else => "focused",
+        },
+        .input_repeat = if (cfg.input_repeat == c.InputRepeatHost) "host" else "off",
+        .clipboard_enabled = cfg.clipboard_enabled != 0,
+        .clipboard_max_mb = cfg.clipboard_max_mb,
+        .clipboard_files = cfg.clipboard_files != 0,
+        .integration_start_at_login = cfg.integration_start_at_login != 0,
+        .integration_menu_apps = switch (cfg.integration_menu_apps) {
+            c.IntegrationMenuAppsInstalled => "installed",
+            c.IntegrationMenuAppsAll => "all",
+            else => "none",
+        },
+        .integration_desktop_shortcuts = if (cfg.integration_desktop_shortcuts == c.IntegrationDesktopShortcutsMirror) "mirror" else "off",
+        .integration_exe_handler = if (cfg.integration_exe_handler == c.IntegrationExeHandlerWaddle) "waddle" else "off",
+        .integration_uac = switch (cfg.integration_uac) {
+            c.IntegrationUacWindow => "window",
+            c.IntegrationUacAuto => "auto",
+            else => "native",
+        },
+        .integration_notify = cfg.integration_notify != 0,
+    };
 }
 fn settings_valid(value: settings_t) !void {
     if (value.memory_mb < 512 or value.memory_mb > 65536 or value.vcpus < 1 or value.vcpus > 128 or value.vsock_port == 0 or value.start_timeout < 1 or value.start_timeout > 600 or value.stop_timeout < 1 or value.stop_timeout > 300 or value.default_shell.len == 0 or value.default_shell.len > 255 or !std.unicode.utf8ValidateSlice(value.default_shell) or std.mem.indexOfAny(u8, value.default_shell, "\x00\r\n") != null) return error.InvalidConfig;
+    if (!one_of(value.network_mode, &.{ "user", "none" }) or !one_of(value.audio_backend, &.{ "pipewire", "none" }) or
+        !one_of(value.input_ime, &.{ "guest", "host" }) or !one_of(value.input_inhibit_shortcuts, &.{ "never", "fullscreen", "focused" }) or
+        !one_of(value.input_repeat, &.{ "host", "off" }) or !one_of(value.integration_menu_apps, &.{ "installed", "all", "none" }) or
+        !one_of(value.integration_desktop_shortcuts, &.{ "mirror", "off" }) or !one_of(value.integration_exe_handler, &.{ "waddle", "off" }) or
+        !one_of(value.integration_uac, &.{ "window", "auto", "native" }) or value.clipboard_max_mb < 1 or value.clipboard_max_mb > 1024 or
+        value.usb_auto_attach.len > c.ConfigMaxUsbAutoAttach) return error.InvalidConfig;
+    for (value.usb_auto_attach, 0..) |item, index| {
+        for (value.usb_auto_attach[0..index]) |prior| {
+            if (item.vendor_id == prior.vendor_id and item.product_id == prior.product_id) return error.InvalidConfig;
+        }
+    }
+}
+fn one_of(value: []const u8, choices: []const []const u8) bool {
+    for (choices) |choice| if (std.mem.eql(u8, value, choice)) return true;
+    return false;
 }
 fn blank_size(value: []const u8) !u64 {
     if (value.len < 2) return error.InvalidConfig;
@@ -457,14 +529,39 @@ fn profile(ctx: context_t, name: []const u8, disk: []const u8, cid: u32, value: 
     try settings_valid(value);
     if (std.mem.indexOfAny(u8, disk, "\r\n\x00") != null) return error.InvalidConfig;
     const prefix = original orelse "";
+    var seamless = std.ArrayList(u8).init(ctx.allocator);
+    defer seamless.deinit();
+    const writer = seamless.writer();
+    try writer.print(
+        "[network]\nmode = {s}\ncups_forward = {s}\n[usb]\ncontroller = {s}\nauto_attach = ",
+        .{ value.network_mode, bool_text(value.network_cups_forward), bool_text(value.usb_controller) },
+    );
+    for (value.usb_auto_attach, 0..) |item, index| {
+        if (index != 0) try writer.writeByte(',');
+        try writer.print("{x:0>4}:{x:0>4}", .{ item.vendor_id, item.product_id });
+    }
+    try writer.print(
+        "\n[audio]\nbackend = {s}\nmicrophone = {s}\nper_app = {s}\n[input]\nime = {s}\ninhibit_shortcuts = {s}\nrepeat = {s}\n[clipboard]\nenabled = {s}\nmax_mb = {d}\nfiles = {s}\n[integration]\nstart_at_login = {s}\nmenu_apps = {s}\ndesktop_shortcuts = {s}\nexe_handler = {s}\nuac = {s}\nnotify = {s}\n",
+        .{
+            value.audio_backend, bool_text(value.audio_microphone), bool_text(value.audio_per_app),
+            value.input_ime, value.input_inhibit_shortcuts, value.input_repeat,
+            bool_text(value.clipboard_enabled), value.clipboard_max_mb, bool_text(value.clipboard_files),
+            bool_text(value.integration_start_at_login), value.integration_menu_apps,
+            value.integration_desktop_shortcuts, value.integration_exe_handler, value.integration_uac,
+            bool_text(value.integration_notify),
+        },
+    );
     const bytes = try std.fmt.allocPrint(ctx.allocator,
-        "{s}\n[subsystem]\nname = {s}\ndisk_image = {s}\nvsock_cid = {d}\nmemory_mb = {d}\nvcpus = {d}\nvsock_port = {d}\ndefault_shell = {s}\n[timeouts]\nstart_timeout = {d}\nstop_timeout = {d}\n{s}",
-        .{ prefix, name, disk, cid, value.memory_mb, value.vcpus, value.vsock_port, value.default_shell, value.start_timeout, value.stop_timeout, mounts });
+        "{s}\n[subsystem]\nname = {s}\ndisk_image = {s}\nvsock_cid = {d}\nmemory_mb = {d}\nvcpus = {d}\nvsock_port = {d}\ndefault_shell = {s}\n[timeouts]\nstart_timeout = {d}\nstop_timeout = {d}\n{s}{s}",
+        .{ prefix, name, disk, cid, value.memory_mb, value.vcpus, value.vsock_port, value.default_shell, value.start_timeout, value.stop_timeout, mounts, seamless.items });
     if (bytes.len > 65536) return error.InvalidConfig;
     var candidate: c.daemon_config_t = undefined;
     c.daemon_config_init_defaults(&candidate);
     if (c.daemon_config_parse_string(&candidate, bytes.ptr, bytes.len) != 0) return error.InvalidConfig;
     return bytes;
+}
+fn bool_text(value: bool) []const u8 {
+    return if (value) "true" else "false";
 }
 fn selected_default(ctx: context_t) !?[]const u8 {
     const data = read_metadata(ctx, try ctx.join(ctx.config, "default_device")) catch |err| {
@@ -799,6 +896,88 @@ test "bounded journal parsing rejects duplicates unknown fields and nesting" {
     try std.testing.expectError(error.DuplicateField, parse_json(settings_t, ctx, "{\"vcpus\":4,\"vcpus\":8}"));
     try std.testing.expectError(error.UnknownField, parse_json(settings_t, ctx, "{\"unexpected\":4}"));
     try std.testing.expectError(error.InvalidConfig, parse_json(std.json.Value, ctx, "[[[[[[[[[0]]]]]]]]]"));
+}
+
+test "portable seamless settings round-trip and legacy manifests retain defaults" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const ctx = context(arena.allocator()) catch unreachable;
+    const legacy = try parse_json(settings_t, ctx, "{\"memory_mb\":8192,\"vcpus\":8}");
+    try std.testing.expectEqual(@as(u32, 8192), legacy.memory_mb);
+    try std.testing.expectEqualStrings("user", legacy.network_mode);
+    try std.testing.expect(legacy.network_cups_forward and legacy.usb_controller);
+    try std.testing.expectEqual(@as(usize, 0), legacy.usb_auto_attach.len);
+    try std.testing.expectEqualStrings("pipewire", legacy.audio_backend);
+    try std.testing.expectEqual(@as(u32, 64), legacy.clipboard_max_mb);
+    try settings_valid(legacy);
+
+    const configured = try parse_json(settings_t, ctx,
+        "{\"network_mode\":\"none\",\"network_cups_forward\":false,\"usb_controller\":false," ++
+            "\"usb_auto_attach\":[{\"vendor_id\":4660,\"product_id\":22136},{\"vendor_id\":1,\"product_id\":2}]," ++
+            "\"audio_backend\":\"none\",\"audio_microphone\":false,\"audio_per_app\":false," ++
+            "\"input_ime\":\"host\",\"input_inhibit_shortcuts\":\"focused\",\"input_repeat\":\"off\"," ++
+            "\"clipboard_enabled\":false,\"clipboard_max_mb\":128,\"clipboard_files\":false," ++
+            "\"integration_start_at_login\":true,\"integration_menu_apps\":\"all\"," ++
+            "\"integration_desktop_shortcuts\":\"off\",\"integration_exe_handler\":\"off\"," ++
+            "\"integration_uac\":\"native\",\"integration_notify\":false}");
+    try settings_valid(configured);
+    const bytes = try profile(ctx, "portable", "/tmp/portable.qcow2", 3, configured, null, "[filesystem]\n");
+    var cfg: c.daemon_config_t = undefined;
+    c.daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(c_int, 0), c.daemon_config_parse_string(&cfg, bytes.ptr, bytes.len));
+    try std.testing.expectEqual(@as(u32, c.NetworkModeNone), cfg.network_mode);
+    try std.testing.expectEqual(@as(u32, 0), cfg.network_cups_forward);
+    try std.testing.expectEqual(@as(u32, 2), cfg.usb_auto_attach_count);
+    try std.testing.expectEqual(@as(u16, 0x1234), cfg.usb_auto_attach[0].vendor_id);
+    try std.testing.expectEqual(@as(u16, 0x5678), cfg.usb_auto_attach[0].product_id);
+    try std.testing.expectEqual(@as(u32, c.AudioBackendNone), cfg.audio_backend);
+    try std.testing.expectEqual(@as(u32, c.InputImeHost), cfg.input_ime);
+    try std.testing.expectEqual(@as(u32, c.InputInhibitShortcutsFocused), cfg.input_inhibit_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.InputRepeatOff), cfg.input_repeat);
+    try std.testing.expectEqual(@as(u32, 128), cfg.clipboard_max_mb);
+    try std.testing.expectEqual(@as(u32, c.IntegrationMenuAppsAll), cfg.integration_menu_apps);
+    try std.testing.expectEqual(@as(u32, c.IntegrationUacNative), cfg.integration_uac);
+    try std.testing.expectEqual(@as(u32, 0), cfg.integration_notify);
+}
+
+test "portable seamless settings reject invalid types, values, bounds and duplicate USB selectors" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const ctx = context(arena.allocator()) catch unreachable;
+    for ([_][]const u8{
+        "{\"network_mode\":\"bridge\"}",
+        "{\"audio_backend\":\"alsa\"}",
+        "{\"input_ime\":\"system\"}",
+        "{\"input_inhibit_shortcuts\":\"always\"}",
+        "{\"input_repeat\":\"guest\"}",
+        "{\"integration_menu_apps\":\"unknown\"}",
+        "{\"integration_desktop_shortcuts\":\"all\"}",
+        "{\"integration_exe_handler\":\"native\"}",
+        "{\"integration_uac\":\"secure\"}",
+        "{\"network_cups_forward\":1}",
+        "{\"clipboard_max_mb\":0}",
+        "{\"clipboard_max_mb\":1025}",
+        "{\"usb_auto_attach\":[{\"vendor_id\":1,\"product_id\":2},{\"vendor_id\":1,\"product_id\":2}]}",
+        "{\"usb_auto_attach\":[{\"vendor_id\":65536,\"product_id\":2}]}",
+    }) |bytes| {
+        const parsed = parse_json(settings_t, ctx, bytes) catch continue;
+        try std.testing.expectError(error.InvalidConfig, settings_valid(parsed));
+    }
+    const too_many = try ctx.allocator.alloc(c.config_usb_id_t, c.ConfigMaxUsbAutoAttach + 1);
+    @memset(too_many, .{ .vendor_id = 1, .product_id = 2 });
+    try std.testing.expectError(error.InvalidConfig, settings_valid(.{ .usb_auto_attach = too_many }));
+}
+
+fn profile_allocation_probe(allocator: std.mem.Allocator) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const ctx = context_t{ .allocator = arena.allocator(), .config = "/tmp/config", .state = "/tmp/state" };
+    const selectors = [_]c.config_usb_id_t{.{ .vendor_id = 0x1234, .product_id = 0xabcd }};
+    _ = try profile(ctx, "portable", "/tmp/portable.qcow2", 3, .{ .usb_auto_attach = &selectors }, null, "[filesystem]\n");
+}
+
+test "portable seamless profile generation cleans up every allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, profile_allocation_probe, .{});
 }
 
 fn parser_allocation_probe(allocator: std.mem.Allocator, bytes: []const u8) !void {

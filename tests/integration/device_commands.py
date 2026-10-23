@@ -195,6 +195,69 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     assert not Path(env["XDG_RUNTIME_DIR"]).exists(), "read commands must never spawn or create runtime files"
 print("device_commands: isolated JSON, selection, inspection, malformed and raw-transport cases passed")
 
+# Portable storage preserves seamless settings while retaining the documented
+# clone/export/import host-share policy. Export paths must be private because
+# the storage API rejects unsafe ancestors such as world-writable /tmp.
+with tempfile.TemporaryDirectory(prefix="wd-persist-", dir=Path(__file__).resolve().parents[2]) as temporary:
+    storage_root = Path(temporary)
+    home = storage_root / "home"
+    home.mkdir(mode=0o700)
+    env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(storage_root / "config"),
+               XDG_STATE_HOME=str(storage_root / "state"), XDG_RUNTIME_DIR=str(storage_root / "run"))
+    env.pop("WADDLE_MOCK_GUEST_SOCK", None)
+    native_executable = os.environ.get("WADDLE_TEST_EXECUTABLE", str(Path("build/waddle").resolve()))
+
+    def persistence_run(*args):
+        result = subprocess.run([native_executable, *args], env=env, capture_output=True, text=True)
+        assert result.returncode == 0, (args, result.returncode, result.stdout, result.stderr)
+        return result
+
+    persistence_run("device", "init", "persist_source", "--blank-disk", "64M")
+    usb_selectors = ",".join(f"{index:04x}:{index:04x}" for index in range(16))
+    seamless_values = {
+        "network.mode": "none", "network.cups_forward": False,
+        "usb.controller": False, "usb.auto_attach": usb_selectors,
+        "audio.backend": "none", "audio.microphone": False, "audio.per_app": False,
+        "input.ime": "host", "input.inhibit_shortcuts": "focused", "input.repeat": "off",
+        "clipboard.enabled": False, "clipboard.max_mb": 128, "clipboard.files": False,
+        "integration.start_at_login": True, "integration.menu_apps": "all",
+        "integration.desktop_shortcuts": "off", "integration.exe_handler": "off",
+        "integration.uac": "native", "integration.notify": False,
+    }
+    assignments = [f"{key}={str(value).lower() if isinstance(value, bool) else value}"
+                   for key, value in seamless_values.items()]
+    persistence_run("device", "config", "set", "persist_source", *assignments[:10])
+    persistence_run("device", "config", "set", "persist_source", *assignments[10:])
+
+    def persistent_config(name):
+        response = persistence_run("device", "config", "get", name, "--json")
+        return json.loads(response.stdout)["results"][0]["data"]
+
+    def persistent_mounts(name):
+        response = persistence_run("fs", name, "--json")
+        return json.loads(response.stdout)["results"][0]["data"]["mounts"]
+
+    source_values = persistent_config("persist_source")
+    assert all(source_values[key] == value for key, value in seamless_values.items())
+    source_mounts = persistent_mounts("persist_source")
+    assert len(source_mounts) == 1 and source_mounts[0]["host_path"] == str(home)
+
+    persistence_run("device", "clone", "persist_source", "persist_clone")
+    clone_values = persistent_config("persist_clone")
+    assert all(clone_values[key] == value for key, value in seamless_values.items())
+    assert persistent_mounts("persist_clone") == source_mounts
+
+    bundle = storage_root / "exported-device"
+    persistence_run("device", "export", "persist_source", "--output", str(bundle))
+    assert (bundle / "manifest.json").is_file() and (bundle / "disk.qcow2").is_file()
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    assert manifest["schema_version"] == 1
+    persistence_run("device", "import", "persist_import", "--input", str(bundle))
+    imported_values = persistent_config("persist_import")
+    assert all(imported_values[key] == value for key, value in seamless_values.items())
+    assert persistent_mounts("persist_import") == []
+print("device persistence: seamless values survive clone/export/import; mount policy is preserved")
+
 # Text confirmation is cancellable, exact-name only and never applies on mismatch.
 for mode in ('cancel','confirm','mismatch','overlong'):
     with tempfile.TemporaryDirectory(prefix='wd-confirm-') as temporary:
