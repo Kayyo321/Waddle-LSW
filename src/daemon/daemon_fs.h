@@ -119,11 +119,14 @@ int daemon_fs_stop(virtiofs_process_t *proc, uint32_t timeout_ms);
 /**
  * @brief Converts daemon mount descriptors to path_rule_t rules for path translation.
  *
- * @param[in]  mounts      Array of waddle_daemon_fs_mount_t descriptors.
+ * @param[in]  mounts      Non-NULL borrowed mount_count descriptors, retained by caller.
  * @param[in]  mount_count Number of mounts in array.
- * @param[out] rules       Destination array of path_rule_t.
+ * @param[out] rules       Non-NULL caller-owned destination; unchanged on failure.
  * @param[in]  max_rules   Capacity of rules array.
- * @return Number of rules populated, or -1 on error.
+ * @return Number of rules populated, or -1 with EINVAL for invalid/unterminated
+ * mounts or count above WaddleMaxMounts; E2BIG for insufficient output capacity.
+ * @note No allocation; output borrows strings until mounts are changed/freed.
+ * Thread-safe for independent output and immutable input. Never truncates mounts.
  */
 int daemon_fs_mounts_to_rules(const waddle_daemon_fs_mount_t *mounts,
                               size_t mount_count,
@@ -133,9 +136,14 @@ int daemon_fs_mounts_to_rules(const waddle_daemon_fs_mount_t *mounts,
 /**
  * @brief Translates a host POSIX path to a guest Windows path using active daemon config.
  *
- * @param[in] path   POSIX path to translate.
- * @param[in] config Active daemon configuration.
- * @return Malloc-allocated translated string (caller frees via free()), or NULL on error.
+ * @param[in] path Non-NULL borrowed NUL-terminated path. Guest-native/relative
+ * strings pass through; absolute POSIX paths must match a configured export.
+ * @param[in] config Non-NULL borrowed immutable config; count bounded by WaddleMaxMounts.
+ * @return Owned malloc string, caller frees via free(), or NULL with EINVAL for
+ * invalid/unmapped input, E2BIG for oversized paths or ENOMEM for allocation failure.
+ * @note No implicit root export. Longest component-prefix match wins; explicit
+ * root exports are supported. Does not canonicalize symlinks or authorize access.
+ * No retained pointers; thread-safe for immutable config and independent calls.
  */
 char *daemon_fs_translate_path(const char *path, const daemon_config_t *config);
 

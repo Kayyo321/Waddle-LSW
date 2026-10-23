@@ -29,4 +29,45 @@ while test "$i" -lt 65; do
     i=$((i + 1))
 done
 expect_status 2 "$@" -- command
-echo 'path options: syntax, duplicates, limits and mapping failures passed'
+
+# Automatic rules describe configured exports only; a failure must occur before
+# the absent peer is contacted. Explicit root exports still reach that peer.
+mapping_root=$(mktemp -d)
+trap 'rm -rf "$mapping_root"' EXIT HUP INT TERM
+mkdir -p "$mapping_root/waddle"
+check_auto_mapping() {
+    expected_error=$1
+    shift
+    if LC_ALL=C XDG_CONFIG_HOME="$mapping_root" ./build/waddle exec \
+        --socket-path "$mapping_root/missing.sock" --translate-path \
+        --cwd 'C:\' -- "$@" >"$mapping_root/out" 2>"$mapping_root/error"; then
+        echo 'automatic mapping unexpectedly succeeded' >&2
+        exit 1
+    else
+        actual=$?
+    fi
+    test "$actual" -eq 125
+    grep -q "$expected_error" "$mapping_root/error"
+}
+cat >"$mapping_root/waddle/config.ini" <<'EOF'
+[filesystem]
+export=/export:Z:\:rw
+EOF
+check_auto_mapping 'Invalid argument' /outside/tool.exe
+check_auto_mapping 'Invalid argument' /export-sibling/tool.exe
+check_auto_mapping 'No such file or directory' /export/tool.exe
+cat >"$mapping_root/waddle/config.ini" <<'EOF'
+[filesystem]
+EOF
+check_auto_mapping 'Invalid argument' /outside/tool.exe
+cat >"$mapping_root/waddle/config.ini" <<'EOF'
+[filesystem]
+export=/:Z:\:rw
+EOF
+check_auto_mapping 'No such file or directory' /outside/tool.exe
+cat >"$mapping_root/waddle/config.ini" <<'EOF'
+[av]
+unknown=1
+EOF
+check_auto_mapping 'Invalid argument' /outside/tool.exe
+echo 'path options: syntax, duplicates, limits, export-only mapping and failures passed'

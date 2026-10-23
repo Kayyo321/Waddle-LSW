@@ -36,7 +36,7 @@ acceptance remain pending.
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 25% | Config defaults/parse/validate/edit-reset accepted; QEMU/devices/CLI persistence/native gates remain open |
-| #9  | Export all virtiofs mounts + root path fallback fix | Pending | 1% | 0% | - |
+| #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 10% | Phantom root mapping removed; canonical/symlink checks and all-mount lifecycle/guest binding pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 0% | Luna manifest lane: bounded schema codec first; accepted journal/artifact API later unblocks #28/#31; final closure waits on all producers |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
-**Total Feature Completion**: `10.35%`
+**Total Feature Completion**: `10.45%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -74,7 +74,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; C ABI+native atomic adapters 10%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | None |
 | #8 | Config parse/validate/edit-reset 25%; config CLI serialization/get 10%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config parse/validate/edit-reset 25%; 19 Zig tests and C ABI/sanitizer fixture |
-| #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; canonical translation/root fix 20%; fault/restart/native qualification 20% | None |
+| #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | None |
 
 Luna `luna_foundations` owns new layout Zig source/tests; Luna
@@ -218,7 +218,7 @@ runner is granted by these assignments. Shared build targets run serially.
     exclusive Luna implementation lanes and weighted subtasks before code.
     Existing feature completion remains 9.6%; native/hardware gates stay open.
 
-- **Commit `HEAD`**: `feat(interop): add transactional seamless configuration settings`
+- **Commit `87dc328`**: `feat(interop): add transactional seamless configuration settings`
   - **Task Impact**: +25% to TODO #8 (+0.75% overall; total 10.35%).
   - **Summary**: Luna implements all frozen config keys/defaults, bounded unique
     USB selectors and qualified edit/reset while retaining unqualified legacy
@@ -227,4 +227,15 @@ runner is granted by these assignments. Shared build targets run serially.
     sections. Nineteen Zig tests and the C config fixture pass; focused C
     ASan/LSan/UBSan runs pass with leak detection enabled. Config data only:
     QEMU/device behavior, CLI persistence and native qualification stay pending.
-    `HEAD` identifies this containing implementation commit until next update.
+
+- **Commit `HEAD`**: `fix(interop): restrict automatic path mapping to configured exports`
+  - **Task Impact**: +10% to TODO #9 (+0.10% overall; total 10.45%).
+  - **Summary**: Removes CLI/daemon phantom root mappings, refuses invalid config
+    and partial allocation/capacity failures, validates bounded mount strings
+    before publishing rules and preserves explicit root and guest-native paths.
+    C export tests and CLI option fixtures pass; ASan/LSan/UBSan C regressions
+    pass with leak detection enabled. CLI socket error distinction requires
+    local UNIX-socket access and passes with it. Generic legacy path helper
+    behavior is unchanged; realpath/symlink containment, all-mount processes
+    and guest drive binding remain open. Independent Luna review found no
+    additional substantive path-slice defects. `HEAD` is this containing commit.

@@ -294,6 +294,7 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     uint32_t timeout = 0;
     int interactive = -1;
     int translate = 0;
+    int configured_rules = 0;
     path_rule_t rules[64] = {0};
     size_t rule_count = 0;
     int start = 0;
@@ -422,8 +423,13 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     if (translate && rule_count == 0) {
         daemon_config_t cfg;
         daemon_config_init_defaults(&cfg);
-        (void)daemon_config_load_file(&cfg, target_dev.config_path[0] ? target_dev.config_path : NULL);
-        for (size_t m = 0; m < cfg.mount_count && rule_count < 63; m++) {
+        if (daemon_config_load_file(&cfg, target_dev.config_path[0] ? target_dev.config_path : NULL) != 0) {
+            errno = EINVAL;
+            result = 125;
+            goto local_error;
+        }
+        configured_rules = 1;
+        for (size_t m = 0; m < cfg.mount_count; m++) {
             char *src = strdup(cfg.mounts[m].host_path);
             char *dst = strdup(cfg.mounts[m].guest_drive);
             if (src != NULL && dst != NULL) {
@@ -436,17 +442,10 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
             } else {
                 free(src);
                 free(dst);
+                errno = ENOMEM;
+                result = 125;
+                goto local_error;
             }
-        }
-        /* Add root fallback mapping */
-        char *root_src = strdup("/");
-        char *root_dst = strdup("Z:\\");
-        if (root_src != NULL && root_dst != NULL && rule_count < 64) {
-            allocated_dest[rule_count] = root_dst;
-            rules[rule_count++] = (path_rule_t){root_src, root_dst};
-        } else {
-            free(root_src);
-            free(root_dst);
         }
     }
 
@@ -475,6 +474,11 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     }
 
     for (int i = start; i < argc; i++) {
+        if (translate && configured_rules && rule_count == 0 && argv[i][0] == '/') {
+            errno = EINVAL;
+            result = 125;
+            goto local_error;
+        }
         args[i - start] = translate ? waddle_translate_rules(argv[i], rules, rule_count) : strdup(argv[i]);
         if (args[i - start] == NULL) {
             result = 125;
@@ -483,6 +487,11 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     }
 
     if (translate) {
+        if (configured_rules && rule_count == 0 && cwd[0] == '/') {
+            errno = EINVAL;
+            result = 125;
+            goto local_error;
+        }
         char *mapped = waddle_translate_rules(cwd, rules, rule_count);
         if (mapped == NULL) {
             result = 125;

@@ -377,17 +377,27 @@ int daemon_fs_mounts_to_rules(const waddle_daemon_fs_mount_t *mounts,
                               size_t mount_count,
                               path_rule_t *rules,
                               size_t max_rules) {
-    if (mounts == NULL || rules == NULL || max_rules == 0) {
+    if (mounts == NULL || rules == NULL || max_rules == 0 || mount_count > WaddleMaxMounts) {
         errno = EINVAL;
         return -1;
     }
-
-    size_t count = (mount_count < max_rules) ? mount_count : max_rules;
-    for (size_t i = 0; i < count; i++) {
+    if (mount_count > max_rules) {
+        errno = E2BIG;
+        return -1;
+    }
+    for (size_t i = 0; i < mount_count; i++) {
+        if (memchr(mounts[i].host_path, '\0', sizeof(mounts[i].host_path)) == NULL ||
+            memchr(mounts[i].guest_drive, '\0', sizeof(mounts[i].guest_drive)) == NULL ||
+            !waddle_path_rule_valid(mounts[i].host_path, mounts[i].guest_drive)) {
+            errno = EINVAL;
+            return -1;
+        }
+    }
+    for (size_t i = 0; i < mount_count; i++) {
         rules[i].source = mounts[i].host_path;
         rules[i].target = mounts[i].guest_drive;
     }
-    return (int)count;
+    return (int)mount_count;
 }
 
 char *daemon_fs_translate_path(const char *path, const daemon_config_t *config) {
@@ -396,8 +406,13 @@ char *daemon_fs_translate_path(const char *path, const daemon_config_t *config) 
         return NULL;
     }
 
+    if (config->mount_count > WaddleMaxMounts ||
+        (config->mount_count == 0 && path[0] == '/')) {
+        errno = EINVAL;
+        return NULL;
+    }
     if (config->mount_count == 0) {
-        /* No explicit mounts, use root default rule */
+        /* Guest-native/relative strings need no host export. */
         return waddle_translate_rules(path, NULL, 0);
     }
 

@@ -80,6 +80,46 @@ static void test_path_translation(void) {
     free(translated);
 }
 
+static void test_export_boundaries(void) {
+    daemon_config_t cfg;
+    daemon_config_init_defaults(&cfg);
+    cfg.mount_count = 0;
+    errno = 0;
+    assert(daemon_fs_translate_path("/unshared/file", &cfg) == NULL);
+    assert(errno == EINVAL);
+    char *translated = daemon_fs_translate_path("C:\\native.exe", &cfg);
+    assert(translated != NULL && strcmp(translated, "C:\\native.exe") == 0);
+    free(translated);
+    translated = NULL;
+
+    cfg.mount_count = 2;
+    strcpy(cfg.mounts[0].host_path, "/shared");
+    strcpy(cfg.mounts[0].guest_drive, "X:\\");
+    strcpy(cfg.mounts[1].host_path, "/shared/nested");
+    strcpy(cfg.mounts[1].guest_drive, "Y:\\");
+    assert(daemon_fs_translate_path("/shared-sibling/file", &cfg) == NULL);
+    assert(daemon_fs_translate_path("/outside/file", &cfg) == NULL);
+    translated = daemon_fs_translate_path("/shared/nested/日本語", &cfg);
+    assert(translated != NULL && strcmp(translated, "Y:\\日本語") == 0);
+    free(translated);
+    translated = NULL;
+
+    strcpy(cfg.mounts[0].host_path, "/");
+    translated = daemon_fs_translate_path("/outside/file", &cfg);
+    assert(translated != NULL && strcmp(translated, "X:\\outside\\file") == 0);
+    free(translated);
+    translated = NULL;
+
+    path_rule_t rules[2] = {{"sentinel", "sentinel"}, {NULL, NULL}};
+    assert(daemon_fs_mounts_to_rules(cfg.mounts, 2, rules, 1) == -1 && errno == E2BIG);
+    assert(strcmp(rules[0].source, "sentinel") == 0);
+    memset(cfg.mounts[1].host_path, 'x', sizeof(cfg.mounts[1].host_path));
+    assert(daemon_fs_mounts_to_rules(cfg.mounts, 2, rules, 2) == -1 && errno == EINVAL);
+    assert(strcmp(rules[0].source, "sentinel") == 0);
+    cfg.mount_count = WaddleMaxMounts + 1;
+    assert(daemon_fs_translate_path("/x", &cfg) == NULL && errno == EINVAL);
+}
+
 static void test_invalid_spawn(void) {
     virtiofs_process_t proc;
     memset(&proc, 0, sizeof(proc));
@@ -103,6 +143,7 @@ int main(void) {
     test_build_args();
     test_mounts_to_rules();
     test_path_translation();
+    test_export_boundaries();
     test_invalid_spawn();
     printf("test_daemon_fs: all VirtIO-FS argument builder and path translation tests passed\n");
     return 0;
