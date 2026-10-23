@@ -2587,10 +2587,18 @@ No OpenCL.dll rebuild or native acceptance is credited; parent remains 93.0%.
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | docs(opencl): specify the managed-static teardown ordering limitation | #5 +0%; overall +0% | Shim preprocessed C unchanged; existing CRT-double tests pass 6/6 plain and ASan/LSan/UBSan; actual shim coverage 14/14 lines and 6/6 branches. |
+| `881b40f` | docs(opencl): specify the managed-static teardown ordering limitation | #5 +0%; overall +0% | Shim preprocessed C unchanged; existing CRT-double tests pass 6/6 plain and ASan/LSan/UBSan; actual shim coverage 14/14 lines and 6/6 branches. |
 
 The default-option review is conditional: -print-debug-counter can print through a destroyed
 LLVM stream during unload. No filter is implemented and no qualification is claimed for that
 option. IMPL_DESC and Doxygen now state the lifetime precondition and the separate approval
 and complete native requalification required for a private-copy filter. No upstream changes.
+Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: nonthrowing LLVM-free probe stand-in (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | test(opencl): declare the probe llvm_shutdown stand-in noexcept | #5 +0%; overall +0% | Three probe cross-build boundary tests pass. This affects only the LLVM-free probe; no production DLL rebuild or native acceptance is credited. |
+
 Parent remains 93.0% / In Progress, Time Ended TBD.

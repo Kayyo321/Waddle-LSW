@@ -137,7 +137,7 @@ namespace llvm {
  * @ownership Owns nothing; the probe has no LLVM managed statics.
  * @thread_safety Loader/CRT serialized final callback only.
  */
-void llvm_shutdown() {}
+void llvm_shutdown() noexcept {}
 } // namespace llvm
 
 /**
