@@ -335,7 +335,18 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
     if (qemu_find_binary(qemu_bin, sizeof(qemu_bin)) == 0) {
         target_qemu_bin = qemu_bin;
     }
-    if (qemu_spawn(&s->qemu, &s->config, s->qmp_sock_path, vfs_sock, s->qemu_log_path, target_qemu_bin) != 0) {
+    /* Only canonical registered-device socket identity supplies a sink suffix.
+     * Unmanaged legacy runtimes retain the documented default namespace. */
+    const char *qemu_device_name = "default";
+    const char *runtime_name = strrchr(s->runtime_dir, '/');
+    char named_socket[WaddleMaxPathLen];
+    if (runtime_name != NULL &&
+        daemon_device_get_socket_path(runtime_name + 1, named_socket, sizeof(named_socket)) == 0 &&
+        strcmp(named_socket, s->daemon_sock_path) == 0) {
+        qemu_device_name = runtime_name + 1;
+    }
+    if (qemu_spawn_for_device(&s->qemu, &s->config, qemu_device_name,
+                              s->qmp_sock_path, vfs_sock, s->qemu_log_path, target_qemu_bin) != 0) {
         snprintf(s->last_error, sizeof(s->last_error),
                  "Failed to spawn QEMU hypervisor: %.150s", strerror(errno));
         if (s->virtiofs.is_running) {

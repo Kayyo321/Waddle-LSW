@@ -4,6 +4,7 @@
  */
 
 #include "daemon_config.h"
+#include "daemon_device.h"
 #include "daemon_qemu.h"
 #include "daemon_qmp.h"
 #include <assert.h>
@@ -13,9 +14,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+/** @brief Test-only CUPS lstat result; -1 delegates to the real filesystem. */
+static int cups_test_mode = -1;
+
+/** @brief Linker-provided real lstat; arguments are borrowed for this call. */
+int __real_lstat(const char *path, struct stat *status);
+
+/** @brief Override only the frozen CUPS path to prove both device branches. */
+int __wrap_lstat(const char *path, struct stat *status) {
+    if (cups_test_mode >= 0 && strcmp(path, "/run/cups/cups.sock") == 0) {
+        if (cups_test_mode == 0) { errno = ENOENT; return -1; }
+        memset(status, 0, sizeof(*status));
+        status->st_mode = (mode_t)cups_test_mode;
+        return 0;
+    }
+    return __real_lstat(path, status);
+}
 
 static void test_qemu_build_args(void) {
     daemon_config_t cfg;
@@ -81,15 +100,19 @@ static void test_av_args(void) {
     int count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
     assert(count > 0);
     int ivshmem = 0, memory = 0, audio = 0, endpoint = 0, gpu = 0;
+    int pipewire_backend = 0;
+    int hda_count = 0;
     for (int i = 0; i < count; ++i) {
         if (!strcmp(argv[i], "ivshmem-plain,memdev=waddle_av")) ivshmem = 1;
         if (strstr(argv[i], "size=2147483648,mem-path=/dev/shm/waddle-av-test,share=on")) memory = 1;
-        if (!strcmp(argv[i], "none,id=waddle_silent")) audio = 1;
-        if (!strcmp(argv[i], "hda-duplex,audiodev=waddle_silent")) endpoint = 1;
+        if (!strcmp(argv[i], "pipewire,id=waddle_audio,out.name=waddle-discard.default")) { audio = 1; pipewire_backend = 1; }
+        if (!strcmp(argv[i], "hda-duplex,audiodev=waddle_audio")) { endpoint = 1; hda_count++; }
+        if (!strcmp(argv[i], "ich9-intel-hda")) hda_count++;
         if (!strcmp(argv[i], "vfio-pci,sysfsdev=/sys/bus/mdev/devices/12345678-1234-5678-9abc-123456789abc,display=off")) gpu = 1;
         assert(!strstr(argv[i], "vfio-pci,host="));
     }
-    assert(ivshmem && memory && audio && endpoint && gpu);
+    assert(ivshmem && memory && audio && pipewire_backend && endpoint && gpu);
+    assert(hda_count == 2);
     qemu_free_args(argv, (size_t)count);
     config.av_gpu_bdf[0] = '\0';
     count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
@@ -110,6 +133,130 @@ static void test_av_args(void) {
     strcpy(config.av_shm_path, "/tmp/x,share=off");
     assert(qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs) == -1);
     assert(argv[0] == NULL);
+}
+
+static int find_arg(char *const argv[], int argc, const char *needle) {
+    for (int i = 0; i < argc; ++i) if (strcmp(argv[i], needle) == 0) return i;
+    return -1;
+}
+
+static int count_arg(char *const argv[], int argc, const char *needle) {
+    int count = 0;
+    for (int i = 0; i < argc; ++i) if (strcmp(argv[i], needle) == 0) count++;
+    return count;
+}
+
+static void test_seamless_qemu_args(void) {
+    daemon_config_t config;
+    daemon_config_init_defaults(&config);
+    config.network_cups_forward = 0; /* The fixed host socket is environment-dependent. */
+    char *argv[QemuMaxArgs];
+    memset(argv, 0, sizeof(argv));
+
+    int count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && argv[count] == NULL);
+    int netdev = find_arg(argv, count, "-netdev");
+    int nic = find_arg(argv, count, "virtio-net-pci,netdev=waddle_net");
+    int xhci = find_arg(argv, count, "qemu-xhci,id=waddle_xhci");
+    int audio = find_arg(argv, count, "pipewire,id=waddle_audio,out.name=waddle-discard.default");
+    assert(netdev >= 0 && strcmp(argv[netdev + 1], "user,id=waddle_net") == 0);
+    assert(nic > netdev && xhci > nic && audio > xhci);
+    assert(find_arg(argv, count, "-nic") < 0);
+    assert(count_arg(argv, count, "ich9-intel-hda") == 1);
+    assert(count_arg(argv, count, "hda-duplex,audiodev=waddle_audio") == 1);
+    qemu_free_args(argv, (size_t)count);
+
+    config.network_mode = NetworkModeNone;
+    config.usb_controller = 0;
+    config.audio_backend = AudioBackendNone;
+    config.audio_microphone = 0; /* Silent backend retains HDA; mic has no capture. */
+    count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && argv[count] == NULL);
+    int no_network = find_arg(argv, count, "-nic");
+    int silent_audio = find_arg(argv, count, "none,id=waddle_audio");
+    assert(no_network >= 0 && strcmp(argv[no_network + 1], "none") == 0);
+    assert(find_arg(argv, count, "-netdev") < 0);
+    assert(find_arg(argv, count, "qemu-xhci,id=waddle_xhci") < 0);
+    assert(silent_audio >= 0);
+    assert(count_arg(argv, count, "ich9-intel-hda") == 1);
+    assert(count_arg(argv, count, "hda-duplex,audiodev=waddle_audio") == 1);
+    qemu_free_args(argv, (size_t)count);
+
+    config.network_mode = NetworkModeUser;
+    config.usb_controller = 1;
+    config.audio_backend = AudioBackendPipewire;
+    config.audio_microphone = 0;
+    count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && find_arg(argv, count, "pipewire,id=waddle_audio,out.name=waddle-discard.default,in.voices=0") >= 0);
+    qemu_free_args(argv, (size_t)count);
+
+    config.network_cups_forward = 1;
+    const int cups_modes[] = { 0, S_IFREG | 0600, S_IFLNK | 0777, S_IFSOCK | 0600 };
+    for (size_t index = 0; index < sizeof(cups_modes) / sizeof(cups_modes[0]); ++index) {
+        cups_test_mode = cups_modes[index];
+        int cups_socket = S_ISSOCK(cups_test_mode);
+        count = qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+        assert(count > 0);
+        int cups_chardev = find_arg(argv, count, "socket,id=waddle_cups,path=/run/cups/cups.sock");
+        int netdev_index = find_arg(argv, count, "-netdev");
+        assert((cups_chardev >= 0) == cups_socket);
+        assert((strstr(argv[netdev_index + 1], "guestfwd=tcp:10.0.2.100:631-chardev:waddle_cups") != NULL) == cups_socket);
+        qemu_free_args(argv, (size_t)count);
+    }
+    cups_test_mode = -1;
+
+    config.audio_microphone = 1;
+    count = qemu_build_args_for_device(&config, "alpha", "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && find_arg(argv, count, "pipewire,id=waddle_audio,out.name=waddle-discard.alpha") >= 0);
+    assert(find_arg(argv, count, "pipewire,id=waddle_audio,out.name=waddle-discard.beta") < 0);
+    qemu_free_args(argv, (size_t)count);
+    count = qemu_build_args_for_device(&config, "beta", "/tmp/qmp", NULL, NULL, argv, QemuMaxArgs);
+    assert(count > 0 && find_arg(argv, count, "pipewire,id=waddle_audio,out.name=waddle-discard.beta") >= 0);
+    qemu_free_args(argv, (size_t)count);
+
+    char too_long_name[WaddleMaxDeviceNameLen + 1];
+    memset(too_long_name, 'a', sizeof(too_long_name) - 1);
+    too_long_name[sizeof(too_long_name) - 1] = '\0';
+    const char *invalid_names[] = { NULL, "", "../escape", "name with space", too_long_name };
+    for (size_t index = 0; index < sizeof(invalid_names) / sizeof(invalid_names[0]); ++index) {
+        memset(argv, 0, sizeof(argv));
+        assert(qemu_build_args_for_device(&config, invalid_names[index], "/tmp/qmp", NULL,
+                                          NULL, argv, QemuMaxArgs) == -1);
+        assert(errno == EINVAL && argv[0] == NULL);
+    }
+}
+
+static void test_qemu_argument_failure_cleanup_and_path_bounds(void) {
+    daemon_config_t config;
+    daemon_config_init_defaults(&config);
+    char *argv[QemuMaxArgs];
+    memset(argv, 0, sizeof(argv));
+    assert(qemu_build_args(&config, "/tmp/qmp", NULL, NULL, argv, 32) == -1);
+    assert(errno == E2BIG && argv[0] == NULL);
+    for (size_t i = 0; i < QemuMaxArgs; ++i) assert(argv[i] == NULL);
+
+    char too_long_path[WaddleMaxPathLen + 1];
+    memset(too_long_path, 'x', sizeof(too_long_path) - 1);
+    too_long_path[sizeof(too_long_path) - 1] = '\0';
+    assert(qemu_build_args(&config, too_long_path, NULL, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    assert(qemu_build_args(&config, "relative-qmp.sock", NULL, NULL, argv, QemuMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+
+    config.av_enabled = 1;
+    config.av_uefi = 1;
+    strcpy(config.av_shm_path, "/dev/shm/waddle-av-capacity-test");
+    strcpy(config.av_gpu_bdf, "0000:0e:00.0");
+    strcpy(config.av_gpu_mdev_uuid, "12345678-1234-5678-9abc-123456789abc");
+    config.network_cups_forward = 1;
+    config.audio_backend = AudioBackendPipewire;
+    int count = qemu_build_args_for_device(&config, "capacity", "/tmp/qmp",
+                                          "/tmp/virtiofsd.sock", "/tmp/qemu.pid",
+                                          argv, QemuMaxArgs);
+    assert(count > 0 && argv[count] == NULL);
+    /* Current maximum options plus seven more four-argument mount groups fit. */
+    assert((size_t)count + (7U * 4U) < QemuMaxArgs);
+    qemu_free_args(argv, (size_t)count);
 }
 
 typedef struct mock_qmp_server_t {
@@ -262,6 +409,8 @@ int main(void) {
     test_qemu_find_binary();
     test_qemu_build_args();
     test_av_args();
+    test_seamless_qemu_args();
+    test_qemu_argument_failure_cleanup_and_path_bounds();
     test_qmp_client();
     test_qemu_process_lifecycle();
     printf("test_daemon_qemu: all QEMU argument builder, process lifecycle, and QMP client tests passed\n");

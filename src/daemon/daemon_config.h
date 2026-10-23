@@ -65,7 +65,7 @@ typedef enum config_network_mode_t {
 typedef enum config_audio_backend_t {
     /** @brief Use the host PipeWire audio backend. */
     AudioBackendPipewire = 0,
-    /** @brief Disable guest audio backend creation. */
+    /** @brief Use a silent guest render endpoint with no host playback/capture. */
     AudioBackendNone = 1
 } config_audio_backend_t;
 

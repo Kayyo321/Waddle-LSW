@@ -4,6 +4,7 @@
  */
 
 #include "daemon_qemu.h"
+#include "daemon_device.h"
 #include "../av/av_layout.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -14,6 +15,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/** @brief Frozen local CUPS socket forwarded into user-mode guest networking. */
+static const char CupsSocketPath[] = "/run/cups/cups.sock";
 
 /**
  * @brief Appends a duplicated string to the argument vector.
@@ -39,13 +43,52 @@ static int append_arg(char **argv, size_t *argc, size_t max, const char *val) {
     return 0;
 }
 
+/** @brief Check a nullable path is NUL-terminated within the public path bound. */
+static int qemu_path_valid(const char *path, int required) {
+    if (path == NULL) return !required;
+    size_t length = strnlen(path, WaddleMaxPathLen);
+    return length < WaddleMaxPathLen &&
+        (!required || (length != 0 && path[0] == '/'));
+}
+
 int qemu_build_args(const daemon_config_t *config,
                     const char *qmp_sock_path,
                     const char *virtiofsd_sock_path,
                     const char *pid_file_path,
                     char **argv,
                     size_t max_args) {
-    if (config == NULL || qmp_sock_path == NULL || argv == NULL || max_args < 32) {
+    return qemu_build_args_for_device(config, "default", qmp_sock_path,
+                                      virtiofsd_sock_path, pid_file_path,
+                                      argv, max_args);
+}
+
+/** @brief Validate the same bounded ASCII device identifier as daemon registry. */
+static int qemu_device_name_valid(const char *device_name) {
+    if (device_name == NULL) return 0;
+    size_t length = strnlen(device_name, WaddleMaxDeviceNameLen);
+    if (length == 0 || length >= WaddleMaxDeviceNameLen) return 0;
+    for (size_t index = 0; index < length; ++index) {
+        unsigned char character = (unsigned char)device_name[index];
+        if (!((character >= 'a' && character <= 'z') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9')) &&
+            character != '-' && character != '_') return 0;
+    }
+    return 1;
+}
+
+int qemu_build_args_for_device(const daemon_config_t *config,
+                               const char *device_name,
+                               const char *qmp_sock_path,
+                               const char *virtiofsd_sock_path,
+                               const char *pid_file_path,
+                               char **argv,
+                               size_t max_args) {
+    if (argv != NULL && max_args != 0) argv[0] = NULL;
+    if (config == NULL || !qemu_device_name_valid(device_name) ||
+        qmp_sock_path == NULL || argv == NULL || max_args < 32 ||
+        !qemu_path_valid(qmp_sock_path, 1) || !qemu_path_valid(virtiofsd_sock_path, 0) ||
+        !qemu_path_valid(pid_file_path, 0) || daemon_config_validate(config) != 0) {
         errno = EINVAL;
         return -1;
     }
@@ -144,6 +187,62 @@ int qemu_build_args(const daemon_config_t *config,
     if (append_arg(argv, &argc, max_args, "-device") != 0 ||
         append_arg(argv, &argc, max_args, vsock_buf) != 0) goto fail;
 
+    /* Explicit user networking, optional CUPS forwarding, or no NIC. */
+    if (config->network_mode == NetworkModeNone) {
+        if (append_arg(argv, &argc, max_args, "-nic") != 0 ||
+            append_arg(argv, &argc, max_args, "none") != 0) goto fail;
+    } else {
+        struct stat cups_stat;
+        int cups_available = config->network_cups_forward &&
+            lstat(CupsSocketPath, &cups_stat) == 0 && S_ISSOCK(cups_stat.st_mode);
+        char netdev_buf[256];
+        int netdev_length;
+        if (cups_available) {
+            char cups_chardev[WaddleMaxPathLen + 64];
+            int cups_length = snprintf(cups_chardev, sizeof(cups_chardev),
+                "socket,id=waddle_cups,path=%s", CupsSocketPath);
+            if (cups_length < 0 || (size_t)cups_length >= sizeof(cups_chardev)) {
+                errno = E2BIG; goto fail;
+            }
+            if (append_arg(argv, &argc, max_args, "-chardev") != 0 ||
+                append_arg(argv, &argc, max_args, cups_chardev) != 0) goto fail;
+            netdev_length = snprintf(netdev_buf, sizeof(netdev_buf),
+                "user,id=waddle_net,guestfwd=tcp:10.0.2.100:631-chardev:waddle_cups");
+        } else {
+            netdev_length = snprintf(netdev_buf, sizeof(netdev_buf), "user,id=waddle_net");
+        }
+        if (netdev_length < 0 || (size_t)netdev_length >= sizeof(netdev_buf) ||
+            append_arg(argv, &argc, max_args, "-netdev") != 0 ||
+            append_arg(argv, &argc, max_args, netdev_buf) != 0 ||
+            append_arg(argv, &argc, max_args, "-device") != 0 ||
+            append_arg(argv, &argc, max_args, "virtio-net-pci,netdev=waddle_net") != 0) goto fail;
+    }
+
+    /* USB hotplug and automatic selectors use this stable QMP bus when enabled. */
+    if (config->usb_controller &&
+        (append_arg(argv, &argc, max_args, "-device") != 0 ||
+         append_arg(argv, &argc, max_args, "qemu-xhci,id=waddle_xhci") != 0)) goto fail;
+
+    /* One shared HDA endpoint: PipeWire capture/playback or a silent backend. */
+    char audio_backend[256];
+    int audio_length;
+    if (config->audio_backend == AudioBackendPipewire) {
+        audio_length = snprintf(audio_backend, sizeof(audio_backend),
+            config->audio_microphone
+                ? "pipewire,id=waddle_audio,out.name=waddle-discard.%s"
+                : "pipewire,id=waddle_audio,out.name=waddle-discard.%s,in.voices=0",
+            device_name);
+    } else {
+        audio_length = snprintf(audio_backend, sizeof(audio_backend), "none,id=waddle_audio");
+    }
+    if (audio_length < 0 || (size_t)audio_length >= sizeof(audio_backend) ||
+        append_arg(argv, &argc, max_args, "-audiodev") != 0 ||
+        append_arg(argv, &argc, max_args, audio_backend) != 0 ||
+        append_arg(argv, &argc, max_args, "-device") != 0 ||
+        append_arg(argv, &argc, max_args, "ich9-intel-hda") != 0 ||
+        append_arg(argv, &argc, max_args, "-device") != 0 ||
+        append_arg(argv, &argc, max_args, "hda-duplex,audiodev=waddle_audio") != 0) goto fail;
+
     /* QMP Monitor socket */
     char qmp_buf[WaddleMaxPathLen + 64];
     snprintf(qmp_buf, sizeof(qmp_buf), "socket,id=qmp0,path=%s,server=on,wait=off", qmp_sock_path);
@@ -177,7 +276,6 @@ int qemu_build_args(const daemon_config_t *config,
 
     /* AV devices are managed with the existing VM; no external AV VM assumed. */
     if (config->av_enabled) {
-        if (daemon_config_validate(config) != 0) { errno = EINVAL; goto fail; }
         char av_backend[WaddleMaxPathLen + 128];
         int length = snprintf(av_backend, sizeof(av_backend),
             "memory-backend-file,id=waddle_av,size=%llu,mem-path=%s,share=on",
@@ -186,13 +284,7 @@ int qemu_build_args(const daemon_config_t *config,
         if (append_arg(argv, &argc, max_args, "-object") != 0 ||
             append_arg(argv, &argc, max_args, av_backend) != 0 ||
             append_arg(argv, &argc, max_args, "-device") != 0 ||
-            append_arg(argv, &argc, max_args, "ivshmem-plain,memdev=waddle_av") != 0 ||
-            append_arg(argv, &argc, max_args, "-audiodev") != 0 ||
-            append_arg(argv, &argc, max_args, "none,id=waddle_silent") != 0 ||
-            append_arg(argv, &argc, max_args, "-device") != 0 ||
-            append_arg(argv, &argc, max_args, "ich9-intel-hda") != 0 ||
-            append_arg(argv, &argc, max_args, "-device") != 0 ||
-            append_arg(argv, &argc, max_args, "hda-duplex,audiodev=waddle_silent") != 0) goto fail;
+            append_arg(argv, &argc, max_args, "ivshmem-plain,memdev=waddle_av") != 0) goto fail;
         /* A parent address is a capability constraint, never physical assignment. */
         if (config->av_gpu_bdf[0] && !config->av_gpu_mdev_uuid[0]) {
             errno = EINVAL; goto fail;
@@ -333,6 +425,17 @@ int qemu_spawn(qemu_process_t *proc,
                const char *virtiofsd_sock_path,
                const char *log_path,
                const char *qemu_binary) {
+    return qemu_spawn_for_device(proc, config, "default", qmp_sock_path,
+                                 virtiofsd_sock_path, log_path, qemu_binary);
+}
+
+int qemu_spawn_for_device(qemu_process_t *proc,
+                          const daemon_config_t *config,
+                          const char *device_name,
+                          const char *qmp_sock_path,
+                          const char *virtiofsd_sock_path,
+                          const char *log_path,
+                          const char *qemu_binary) {
     if (proc == NULL || config == NULL || qmp_sock_path == NULL || log_path == NULL) {
         errno = EINVAL;
         return -1;
@@ -351,7 +454,9 @@ int qemu_spawn(qemu_process_t *proc,
     char *argv[QemuMaxArgs];
     memset(argv, 0, sizeof(argv));
 
-    int argc = qemu_build_args(config, qmp_sock_path, virtiofsd_sock_path, NULL, argv, QemuMaxArgs);
+    int argc = qemu_build_args_for_device(config, device_name, qmp_sock_path,
+                                          virtiofsd_sock_path, NULL, argv,
+                                          QemuMaxArgs);
     if (argc < 0) {
         return -1;
     }

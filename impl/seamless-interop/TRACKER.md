@@ -35,7 +35,7 @@ acceptance remain pending.
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 40% | Snapshot primitives and first-fit reservations accepted; native ABI/atomics and slot pins/runtime remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
-| #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 30% | Config and typed CLI get/set/reset accepted; export/import persistence, QEMU/devices/native gates remain open |
+| #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 45% | Config, typed CLI and reviewed device argv accepted; persistence/build/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 10% | Phantom root mapping removed; canonical/symlink checks and all-mount lifecycle/guest binding pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `12.25%`
+**Total Feature Completion**: `12.70%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -73,7 +73,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
-| #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config 25%; typed CLI get/set/reset 5%; isolated CLI integration passes |
+| #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config 25%; typed CLI get/set/reset 5%; QEMU argv 15%; focused QEMU/QMP normal and sanitizers pass |
 | #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
@@ -300,7 +300,7 @@ runner is granted by these assignments. Shared build targets run serially.
     native atomic proof or hosted CI result is claimed. Independent Luna
     read-only review finds no additional primitive correctness defects.
 
-- **Commit `HEAD`**: `docs(interop): define layout C boundary and settings persistence`
+- **Commit `b0d6e96`**: `docs(interop): define layout C boundary and settings persistence`
   - **Task Impact**: +0% to TODO #5/#8 (#5 ABI/atomic allocation split 5%/5%;
     total remains 12.25%).
   - **Summary**: Publishes the fixed C boundary before consumer implementation,
@@ -309,4 +309,18 @@ runner is granted by these assignments. Shared build targets run serially.
     clone/import host-mount boundaries. Clarifies QEMU silent HDA, default input
     source and validated named sink identity; routing and native gates remain
     pending. No implementation acceptance is claimed by this contract commit.
-    `HEAD` identifies this containing API/contract commit.
+
+- **Commit `HEAD`**: `feat(interop): construct explicit named QEMU network USB and audio devices`
+  - **Task Impact**: +15% to TODO #8 (+0.45% overall; total 12.70%).
+  - **Summary**: Adds explicit none/user networking, conditional CUPS forwarding,
+    optional xHCI and one HDA endpoint with PipeWire/silent backend. Named
+    builder/spawn APIs validate device IDs and daemon state passes canonical
+    runtime identity. Lead removes empty input-target property and adds
+    deterministic absent/regular/symlink/socket CUPS fixtures. Bounded argument
+    construction, cleanup/capacity, alpha/beta routing names, AV endpoint
+    uniqueness and QMP/process fixtures pass normally and under ASan/LSan/UBSan.
+    The 30% argv/build allocation is refined into two 15% subtasks; only argv
+    earns credit. PipeWire-disabled source-build configuration and unresolved
+    discard-target routing are concrete open build/#23 requirements; no native
+    audio or complete VM lifecycle acceptance is claimed.
+    `HEAD` identifies this containing QEMU integration commit.
