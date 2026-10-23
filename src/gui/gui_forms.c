@@ -335,26 +335,41 @@ static void confirmation_free(gpointer context, GClosure *closure) {
     (void)closure; confirmation_t *confirmation = context;
     g_free(confirmation->device); g_free(confirmation->label); g_strfreev(confirmation->argv); g_free(confirmation);
 }
-static void confirmation_response(AdwMessageDialog *dialog, const char *response, gpointer context) {
+static void confirmation_response(gpointer dialog, const char *response, gpointer context) {
     (void)dialog; confirmation_t *confirmation = context;
     if (!strcmp(response, "apply")) gui_run(confirmation->gui, confirmation->label, confirmation->device, (const char *const *)confirmation->argv);
 }
 void gui_confirm(gui_t *gui, const char *title, const char *description, const char *label, const char *device, const char *const *arguments) {
     confirmation_t *confirmation = g_new0(confirmation_t, 1);
     confirmation->gui = gui; confirmation->device = g_strdup(device); confirmation->label = g_strdup(label); confirmation->argv = g_strdupv((char **)arguments);
+#if ADW_CHECK_VERSION(1, 5, 0)
+    AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(title, description));
+    adw_alert_dialog_add_responses(dialog, "cancel", "Cancel", "apply", "Apply", NULL);
+    adw_alert_dialog_set_response_appearance(dialog, "apply", ADW_RESPONSE_DESTRUCTIVE);
+    adw_alert_dialog_set_default_response(dialog, "cancel"); adw_alert_dialog_set_close_response(dialog, "cancel");
+    g_signal_connect_data(dialog, "response", G_CALLBACK(confirmation_response), confirmation, confirmation_free, 0);
+    adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(gui->window));
+#else
     GtkWidget *dialog = adw_message_dialog_new(gui->window, title, description);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(dialog), TRUE);
-    adw_message_dialog_add_responses(ADW_MESSAGE_DIALOG(dialog), "cancel", "Cancel", "apply", "Apply reviewed operation", NULL);
+    adw_message_dialog_add_responses(ADW_MESSAGE_DIALOG(dialog), "cancel", "Cancel", "apply", "Apply", NULL);
     adw_message_dialog_set_response_appearance(ADW_MESSAGE_DIALOG(dialog), "apply", ADW_RESPONSE_DESTRUCTIVE);
     adw_message_dialog_set_default_response(ADW_MESSAGE_DIALOG(dialog), "cancel");
     adw_message_dialog_set_close_response(ADW_MESSAGE_DIALOG(dialog), "cancel");
     g_signal_connect_data(dialog, "response", G_CALLBACK(confirmation_response), confirmation, confirmation_free, 0);
     gtk_window_present(GTK_WINDOW(dialog));
+#endif
 }
 static void unavailable(gui_t *gui, const char *title, const char *reason) {
+#if ADW_CHECK_VERSION(1, 5, 0)
+    AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(title, reason));
+    adw_alert_dialog_add_response(dialog, "close", "Close");
+    adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(gui->window));
+#else
     GtkWidget *dialog = adw_message_dialog_new(gui->window, title, reason);
     gtk_window_set_destroy_with_parent(GTK_WINDOW(dialog), TRUE);
     adw_message_dialog_add_response(ADW_MESSAGE_DIALOG(dialog), "close", "Close"); gtk_window_present(GTK_WINDOW(dialog));
+#endif
 }
 static gboolean require_device(gui_t *gui) {
     if (!gui->selected || !gui_device_data(gui, gui->selected)) { gui_message(gui, "Select a device first. No operation has been started."); return FALSE; }
@@ -472,7 +487,7 @@ void gui_dispatch(gui_t *gui, const char *action) {
     if (!strcmp(action, "terminal")) { gui_terminal_open(gui); return; }
     if (!strcmp(action, "terminal-external")) { gui_terminal_external(gui, gui->selected, NULL); return; }
     if (!strcmp(action, "desktop") || !strcmp(action, "pause") || !strcmp(action, "resume")) {
-        unavailable(gui, !strcmp(action, "desktop") ? "Full desktop view is unavailable" : "Execution pause/resume is unavailable",
+        unavailable(gui, !strcmp(action, "desktop") ? "Desktop unavailable" : "Pause / resume unavailable",
             !strcmp(action, "desktop") ? "This Waddle version exposes only per-process managed AV capture. A full desktop target and its input lease must be added to the existing AV backend before this control can connect. Use Graphics & Display → Attach to process for seamless application viewing. No device state has changed." :
             "The current daemon protocol has no pause/resume execution operation. Disconnecting a viewer is not a pause. This control requires a supported backend lifecycle interface; no device state has changed."); return;
     }

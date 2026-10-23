@@ -46,6 +46,7 @@ GtkWidget *gui_button(const char *label, const char *icon, const char *action, g
 GtkWidget *gui_label(GtkWidget *box, const char *text, const char *css) {
     GtkWidget *label = gtk_label_new(text);
     gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
     gtk_label_set_xalign(GTK_LABEL(label), 0);
     gtk_label_set_selectable(GTK_LABEL(label), TRUE);
     if (css) gtk_widget_add_css_class(label, css);
@@ -217,6 +218,8 @@ static void selection_summary(gui_t *gui) {
         !strcmp(state, "stopped") ? "Device is stopped. Start it or open a terminal when you are ready." :
         "Readiness is unknown. Refresh or inspect diagnostics before acting.");
     gtk_label_set_text(gui->summary, summary);
+    char *window_title = g_strdup_printf("%s — Waddle", gui->selected);
+    gtk_window_set_title(gui->window, window_title); g_free(window_title);
     adw_window_title_set_title(gui->title, gui->selected);
     adw_window_title_set_subtitle(gui->title, state);
     g_free(summary); g_free(memory); g_free(cpus);
@@ -231,6 +234,8 @@ void gui_select(gui_t *gui, const char *name) {
     char *copy = g_strdup(name);
     g_free(gui->selected); gui->selected = copy;
     selection_summary(gui);
+    for (GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(gui->devices)); row; row = gtk_widget_get_next_sibling(row))
+        if (g_strcmp0(g_object_get_data(G_OBJECT(row), "device"), name) == 0) gtk_list_box_select_row(gui->devices, GTK_LIST_BOX_ROW(row));
     gtk_stack_set_visible_child_name(gui->pages, "devices");
     if (changed) {
         gui->loading_config = TRUE;

@@ -6,6 +6,7 @@
 typedef struct gui_store_t {
     GKeyFile *keys; /**< Owned preferences and launcher string lists. */
     char *path; /**< Owned absolute configuration filename. */
+    gboolean writable; /**< False after malformed/oversized input, protecting recovery data. */
 } gui_store_t;
 /** @brief Load bounded optional XDG file; return owned store, including on parse failure.
  * @param[out] error Optional caller-owned diagnostic; malformed input is never overwritten automatically.

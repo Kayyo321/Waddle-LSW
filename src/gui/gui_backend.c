@@ -9,6 +9,7 @@
 /** @brief Private job storage, freed only after both stream EOF and child reap. */
 struct gui_job_t {
     GSubprocess *process;
+    GCancellable *reader;
     GString *output;
     gui_output_fn_t on_output;
     gui_complete_fn_t on_complete;
@@ -26,6 +27,7 @@ static void job_finish(gui_job_t *job) {
     job->on_complete(job->status, job->output->str,
         job->error ? job->error : (job->truncated ? "Output exceeded 2 MiB; only its tail is retained." : NULL), job->context);
     g_clear_object(&job->process);
+    g_clear_object(&job->reader);
     g_string_free(job->output, TRUE);
     g_free(job->error);
     g_free(job);
@@ -47,7 +49,7 @@ static void job_read(GObject *source, GAsyncResult *result, gpointer context) {
             job->on_output(valid, job->context);
             g_free(valid);
         }
-        g_input_stream_read_bytes_async(G_INPUT_STREAM(source), 8192, G_PRIORITY_DEFAULT, NULL, job_read, job);
+        g_input_stream_read_bytes_async(G_INPUT_STREAM(source), 8192, G_PRIORITY_DEFAULT, job->reader, job_read, job);
     } else {
         job->eof = TRUE;
         if (error && !job->error) job->error = g_strdup(error->message);
@@ -76,12 +78,13 @@ gui_job_t *gui_job_start(const char *const *argv, gui_output_fn_t output,
     if (!process) return NULL;
     gui_job_t *job = g_new0(gui_job_t, 1);
     job->process = process;
+    job->reader = g_cancellable_new();
     job->output = g_string_new(NULL);
     job->on_output = output;
     job->on_complete = complete;
     job->context = context;
     g_input_stream_read_bytes_async(g_subprocess_get_stdout_pipe(process), 8192,
-        G_PRIORITY_DEFAULT, NULL, job_read, job);
+        G_PRIORITY_DEFAULT, job->reader, job_read, job);
     g_subprocess_wait_async(process, NULL, job_wait, job);
     return job;
 }
@@ -92,7 +95,7 @@ static gboolean job_escalate(gpointer context) {
         g_subprocess_force_exit(job->process);
     }
     /* A descendant may still own the output pipe after its direct parent exits. */
-    if (!job->eof) g_input_stream_close(g_subprocess_get_stdout_pipe(job->process), NULL, NULL);
+    if (!job->eof) g_cancellable_cancel(job->reader);
     job->stop_timer = 0;
     return G_SOURCE_REMOVE;
 }

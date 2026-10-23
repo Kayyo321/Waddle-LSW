@@ -1,9 +1,9 @@
 # Native GUI uses system libraries; explicit CLI commands stay display-independent.
 GuiPackages = gtk4 >= 4.8 libadwaita-1 >= 1.2 json-glib-1.0 vte-2.91-gtk4 >= 0.70
 GuiPkgNames = gtk4 libadwaita-1 json-glib-1.0 vte-2.91-gtk4
-GuiSources = src/gui/gui_main.c src/gui/gui_backend.c src/gui/gui_store.c
-GuiHeaders = src/gui/gui_backend.h src/gui/gui_store.h
-GuiFlags = $(shell pkg-config --cflags $(GuiPkgNames) 2>/dev/null)
+GuiSources = src/gui/gui_main.c src/gui/gui_backend.c src/gui/gui_store.c src/gui/gui_window.c src/gui/gui_forms.c src/gui/gui_terminal.c src/gui/gui_library.c
+GuiHeaders = src/gui/gui_private.h src/gui/gui_backend.h src/gui/gui_store.h
+GuiFlags = -DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_8 -DADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_2 $(shell pkg-config --cflags $(GuiPkgNames) 2>/dev/null)
 GuiLibraries = $(shell pkg-config --libs $(GuiPkgNames) 2>/dev/null)
 PREFIX ?= /usr/local
 DESTDIR ?=
@@ -23,3 +23,14 @@ gui-install: gui
 	install -Dm755 build/waddle-gui $(DESTDIR)$(PREFIX)/bin/waddle-gui
 	install -Dm644 data/io.github.Kayyo321.Waddle.desktop $(DESTDIR)$(PREFIX)/share/applications/io.github.Kayyo321.Waddle.desktop
 	install -Dm644 imgs/logo.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/256x256/apps/io.github.Kayyo321.Waddle.png
+
+build/gui_backend_test: tests/gui/backend.c src/gui/gui_backend.c src/gui/gui_store.c $(GuiHeaders) | build gui-deps
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GuiFlags) -Isrc/gui tests/gui/backend.c src/gui/gui_backend.c src/gui/gui_store.c $(LDFLAGS) $(GuiLibraries) -o $@
+
+build/gui_window_test: tests/gui/window.c $(filter-out src/gui/gui_main.c,$(GuiSources)) $(GuiHeaders) | build gui-deps
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(GuiFlags) -Isrc/gui tests/gui/window.c $(filter-out src/gui/gui_main.c,$(GuiSources)) $(LDFLAGS) $(GuiLibraries) -o $@
+
+gui-test: gui build/gui_backend_test build/gui_window_test
+	./build/gui_backend_test
+	GTK_A11Y=none GSK_RENDERER=cairo dbus-run-session -- xvfb-run -a ./build/gui_window_test
+	python3 tests/gui/dispatch.py
