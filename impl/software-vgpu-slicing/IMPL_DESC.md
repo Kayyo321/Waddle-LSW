@@ -1,6 +1,12 @@
 # Implementation Description: Software vGPU Slicing
 
-M2 WSI/window ownership is qualified at100%; [closure and boundaries](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md). This does not complete the parent OpenCL/DXVK gates or make PR#6 merge-ready.
+Software vGPU slicing acceptance is complete at100% for the documented scope as of
+2026-10-23. M2 WSI/window ownership, physical graphics/DXVK, and rebuilt-candidate OpenCL
+reload/heap gates pass; [M2 closure and boundaries](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md)
+and OpenCL attribution sections18-21 retain the evidence and limitations. Earlier dated
+planning/pending statements below are historical; the current TRACKER task table and final
+qualification sections supersede them. Delivery requires all CI checks on the final pushed
+completion commit before PR#6 is marked ready for review; this continuation does not merge it.
 
 ## 1. Title & High-Level Scope
 - **Title**: Software vGPU Slicing for Non-MDEV Hosts
@@ -7719,3 +7725,20 @@ R13 plus this heap verdict satisfy the OpenCL reload/memory gates for the docume
 compiler-option profile. The diagnostic/statistics-option limitation above remains explicit,
 without claiming an unimplemented private-copy filter or qualification of that path. The source
 implementation and native evidence are complete; parent delivery-head CI closure is separate.
+
+### Final acceptance and delivery boundary (2026-10-23)
+
+All implementation tasks are complete within the previously accepted standalone-development,
+physical graphics, presentation, DXVK and default-option OpenCL qualification boundaries.
+Source/native applicability review at01613b1 verifies the current canonical build receipt's
+14 runtime inputs, candidate81f3fc1d, complete R13 and heap evidence, unchanged README and
+submodule pins, and all12 successful CI checks at source head bffeb41. Later changes are
+qualification documentation only. Final delivery still requires all12 checks on the exact
+completion commit and a ready-for-review, unmerged PR#6.
+
+The review preserves the explicitly documented nonstandard LLVM diagnostic/statistics-option
+teardown limitation. It claims neither a private-copy option filter nor qualification of that
+path. Root follow-up review is labelled as such; the prior independent review is preserved.
+No historical interrupted reload, capture attribution handoff or sandbox failure is rewritten
+as a passing native run. The sole VM/GPU lease is idle, all qualification processes have retired,
+and the existing signed-in VM and evidence remain preserved.

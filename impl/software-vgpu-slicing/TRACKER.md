@@ -2,17 +2,17 @@
 
 - **Contributors / Agents**: Codex Astra (isolated M2 readiness and ownership qualification), Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk), Claude Code (OpenCL implementation; Haiku 5.5 inventory/audit/build-spike workers)
 - **Time Started**: 2026-10-05T18:35:00Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-23T18:13:11Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: Review
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 96% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification explicitly accepted by the user on 2026-10-23). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). Exact-head CI and final review remain open. |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Done | 25% | 100% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification explicitly accepted by the user on 2026-10-23). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). All 12 checks pass on source head bffeb41; final source/native applicability review passes at 01613b1 with no subsequent runtime changes. Delivery requires a further all-green check of the completion commit before PR readiness. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
 | #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | Done | 20% | 100% | Candidate81f3fc1d passes current-source static admission, fresh controls/census, uninterrupted R13 1100-cycle/3300-context reload and guarded heap cf99460c: zero OWNED blocks/bytes at every unload, complete nine-heap/CSR coverage and exact retirement/IFEO restoration. Qualified default compiler-option profile; nonstandard LLVM diagnostic-option limitation is explicitly documented (attribution sections20-21). |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
@@ -23,7 +23,7 @@
 | #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | Done | 0% | 100% | Pinned loader/bootstrap, physical/M2/DXVK acceptance and final OpenCL reload/guarded heap qualification pass; all owned/native/console/debugger processes retire naturally, IFEO is restored exactly, preserved VM remains running. |
 | #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
 
-**Total Feature Completion**: `99.0%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
 
@@ -2663,7 +2663,7 @@ new-candidate guarded heap capture and offline ownership gate still block TODO #
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | docs(opencl): close rebuilt-candidate heap ownership qualification | #5 +30% (+6.0% overall); #11 +40% (+0% overall) | Heap cf99460c: native0, three8-context lives, nine API heaps/zero CSR busy at each stage, eight clean R22 passes, zero OWNED blocks/bytes at every unload, all allocating modules resolved, exact process/pidfd/IFEO retirement; offline review e2fc5fb6 and root review4638f3df PASS. |
+| `01613b1` | docs(opencl): close rebuilt-candidate heap ownership qualification | #5 +30% (+6.0% overall); #11 +40% (+0% overall) | Heap cf99460c: native0, three8-context lives, nine API heaps/zero CSR busy at each stage, eight clean R22 passes, zero OWNED blocks/bytes at every unload, all allocating modules resolved, exact process/pidfd/IFEO retirement; offline review e2fc5fb6 and root review4638f3df PASS. |
 
 The original capture exit1 is retained as the expected source-frame-attribution handoff; the
 prescribed separate offline module-ownership review supplies acceptance. No missing coverage,
@@ -2671,3 +2671,22 @@ unknown allocator or ownership failure is waived. R13 was independently qualifie
 launch. Default compiler-option scope and the documented LLVM diagnostic limitation remain
 explicit. Native gates #5/#11 are complete. Parent moves93.0->99.0%, Review, Time Ended TBD;
 TODO#3's final4% is the final source/evidence and delivery-head CI closure.
+
+### Feature acceptance closure (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit; identified by the git commit containing this row) | docs(vgpu): complete software slicing acceptance tracker | #3 +4% (+1.0% overall); all other tasks +0% | All 12 checks SUCCESS on source head bffeb41; final source/native applicability review PASS at 01613b1, current receipt binds all 14 runtime inputs, R13 and heap root reviews PASS, README/dependency pins unchanged. |
+
+All twelve tasks now reach100%, weighted total100.0%, and the header records the acceptance
+closure time. The final review is a root follow-up to the preserved independent handoff review;
+it is not represented as a newly independent review. The default compiler-option qualification
+and explicit nonstandard LLVM diagnostic-option limitation remain unchanged. Physical hypervisor
+and compositor boundaries previously delegated by the user remain outside the accepted scope.
+Historical pending statements in the commit log describe their dated checkpoints and are
+superseded by the current task table and attribution sections18-21.
+
+This commit changes acceptance documentation only. Before PR#6 is marked ready, its exact
+pushed head must have all twelve provider CI checks successful; the final provider snapshot
+and delivery receipt are retained with the local qualification evidence without another
+source commit. PR#6 must remain open and must not be merged by this continuation.
