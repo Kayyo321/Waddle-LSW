@@ -7635,8 +7635,27 @@ It is not exported and owns no allocation. Its effect is to destroy every LLVM `
 this module image (the `cl::opt` registry, `TimerGlobals`, `DebugCounter`, statistic and timer
 mutexes), then the libstdc++ emergency arena, each exactly once.
 
-**Ordering.** Every clvk, clspv and LLVM static object has been destroyed before step 3. This is the
-same order an `llvm_shutdown_obj` static would give. Nothing runs after step 4.
+**Ordering and conditional limitation.** Every ordinary clvk, clspv and LLVM C++ static object has
+been destroyed before step 3; LLVM ManagedStatics remain for explicit shutdown. This includes
+the local `errs()`/`dbgs()` streams and `getManagedStaticMutex()`'s recursive mutex. Consequently
+every ManagedStatic deleter must avoid these destroyed objects, must not recreate another
+ManagedStatic, and must finish without throwing before step 4. An ordinary `llvm_shutdown_obj`
+does not guarantee this same order: its registration relative to local statics matters.
+
+The handoff review traced the default-option paths through TimerGlobals, CommandLineParser,
+SubCommand/cl::opt, StatLock and DebugCounter and found no deleter accessing a dead static.
+StatisticInfo is not constructed in the release configuration; the linked parallel executor is
+unreachable through the reviewed OpenCL paths. This evidence is conditional on those paths.
+clspv forwards application `clBuildProgram` options to LLVM's command-line parser
+(`submodules/clvk/external/clspv/lib/Compiler.cpp`, ParseOptions). In particular,
+`-print-debug-counter` enables `DebugCounterOwner`'s destructor to print through already-destroyed
+`dbgs()` (`llvm/lib/Support/DebugCounter.cpp`): unloading then has undefined behavior. Diagnostic
+and statistics options that change teardown behavior are outside the qualified default-option
+path. No option filter currently enforces this precondition; the known case remains unqualified.
+
+Filtering inside the private clvk/clspv copy requires separate user approval, a rebuild and fresh
+census, controls, uninterrupted 1100-cycle reload and heap qualification. This documentation does
+not implement that filter or claim the diagnostic path passes. Nothing runs after step 4.
 
 **Admission.** The mandatory link-map policy requires:
 - `__gnu_cxx::__freeres()` from exactly `libstdc++.a(eh_alloc.o)`;

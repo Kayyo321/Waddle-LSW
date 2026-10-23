@@ -35,6 +35,10 @@ extern void waddle_test_runtime_fastfail(void) __attribute__((noreturn));
 extern void runtime_eh_freeres(void) __asm__("_ZN9__gnu_cxx9__freeresEv");
 /** LLVM ABI; definition must be libLLVMSupport.a(ManagedStatic.cpp.obj), verified at link.
  * @ownership Destroys every LLVM ManagedStatic of this module image exactly once.
+ * @pre ManagedStatic deleters must not use already-destroyed C++ local statics,
+ *      including LLVM streams and getManagedStaticMutex(). Default compiler
+ *      options were reviewed; -print-debug-counter enables a deleter that uses
+ *      the destroyed dbgs() stream and is not qualified for this unload order.
  * @thread_safety Only after every LLVM user and C++ destructor of the image retired. */
 extern void runtime_llvm_shutdown(void) __asm__("_ZN4llvm13llvm_shutdownEv");
 #define RuntimeEhAtexit atexit
@@ -58,6 +62,9 @@ static runtime_eh_state_t runtime_eh_state;
  * @return No value; fail-fast on unregistered or repeated invocation.
  * @ownership Destroys LLVM's managed statics, then consumes the GCC arena, after
  *            all static destructors, each exactly once and in that order.
+ * @pre ManagedStatic deletion must not access destroyed streams/local statics or
+ *      recreate a ManagedStatic. Forwarded LLVM diagnostic/statistics options
+ *      require separate review; -print-debug-counter violates this precondition.
  * @thread_safety Loader/CRT serialized; every worker and exception must retire.
  */
 void

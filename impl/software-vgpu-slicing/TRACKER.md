@@ -2576,9 +2576,21 @@ Parent remains 93.0% / In Progress, Time Ended TBD.
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | test(opencl): enforce separate probe and production LLVM admission | #5 +0%; overall +0% | 35 build-driver tests pass in normal/optimized Python outside sandbox ptrace with ASan/LSan enabled. Cached admission asserts llvm_runtime=True; fresh admission wiring requires literal True; probe admission asserts False. |
+| `3c7b105` | test(opencl): enforce separate probe and production LLVM admission | #5 +0%; overall +0% | 35 build-driver tests pass in normal/optimized Python outside sandbox ptrace with ASan/LSan enabled. Cached admission asserts llvm_runtime=True; fresh admission wiring requires literal True; probe admission asserts False. |
 
 Sandbox runs are retained in /tmp/waddle_clvk_build*.log as failures: ptrace prevents LSan
 execution. Host reruns use unchanged leak checks and pass; no failed result is waived.
 The preceding archive regression test fails six cases against the original 22e86e3 auditor.
 No OpenCL.dll rebuild or native acceptance is credited; parent remains 93.0%.
+
+### Codex continuation: managed-static destructor-order boundary (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | docs(opencl): specify the managed-static teardown ordering limitation | #5 +0%; overall +0% | Shim preprocessed C unchanged; existing CRT-double tests pass 6/6 plain and ASan/LSan/UBSan; actual shim coverage 14/14 lines and 6/6 branches. |
+
+The default-option review is conditional: -print-debug-counter can print through a destroyed
+LLVM stream during unload. No filter is implemented and no qualification is claimed for that
+option. IMPL_DESC and Doxygen now state the lifetime precondition and the separate approval
+and complete native requalification required for a private-copy filter. No upstream changes.
+Parent remains 93.0% / In Progress, Time Ended TBD.
