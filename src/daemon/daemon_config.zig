@@ -724,19 +724,17 @@ test "seamless configuration rejects malformed values atomically" {
     try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, seed.ptr, seed.len));
     const before = cfg;
     const invalid = [_][]const u8{
-        "[network]\nmode=bridge\n", "[network]\ncups_forward=yes\n", "[network]\nunknown=1\n",
-        "[usb]\ncontroller=2\n", "[usb]\nunknown=1\n", "[audio]\nbackend=alsa\n",
-        "[audio]\nmicrophone=-1\n", "[audio]\nper_app=TRUE\n", "[input]\nime=system\n",
-        "[input]\ninhibit_shortcuts=always\n", "[input]\nrepeat=guest\n", "[input]\nunknown=1\n",
-        "[clipboard]\nenabled=yes\n", "[clipboard]\nmax_mb=0\n", "[clipboard]\nmax_mb=1025\n",
-        "[clipboard]\nmax_mb=4294967296\n", "[clipboard]\nfiles=2\n", "[clipboard]\nunknown=1\n",
-        "[integration]\nstart_at_login=yes\n", "[integration]\nmenu_apps=some\n",
-        "[integration]\ndesktop_shortcuts=copy\n", "[integration]\nexe_handler=wine\n",
-        "[integration]\nuac=prompt\n", "[integration]\nnotify=2\n", "[integration]\nunknown=1\n",
-        "[usb]\nauto_attach=123:5678\n", "[usb]\nauto_attach=1234:567\n", "[usb]\nauto_attach=123G:5678\n",
-        "[usb]\nauto_attach=1234-5678\n", "[usb]\nauto_attach=1234:5678,1234:5678\n",
-        "[usb]\nauto_attach=1234:5678,1234:5678,1234:5678\n",
-        "[usb]\nauto_attach=1234:5678,,abcd:ef01\n",
+        "[network]\nmode=bridge\n",                           "[network]\ncups_forward=yes\n",             "[network]\nunknown=1\n",
+        "[usb]\ncontroller=2\n",                              "[usb]\nunknown=1\n",                        "[audio]\nbackend=alsa\n",
+        "[audio]\nmicrophone=-1\n",                           "[audio]\nper_app=TRUE\n",                   "[input]\nime=system\n",
+        "[input]\ninhibit_shortcuts=always\n",                "[input]\nrepeat=guest\n",                   "[input]\nunknown=1\n",
+        "[clipboard]\nenabled=yes\n",                         "[clipboard]\nmax_mb=0\n",                   "[clipboard]\nmax_mb=1025\n",
+        "[clipboard]\nmax_mb=4294967296\n",                   "[clipboard]\nfiles=2\n",                    "[clipboard]\nunknown=1\n",
+        "[integration]\nstart_at_login=yes\n",                "[integration]\nmenu_apps=some\n",           "[integration]\ndesktop_shortcuts=copy\n",
+        "[integration]\nexe_handler=wine\n",                  "[integration]\nuac=prompt\n",               "[integration]\nnotify=2\n",
+        "[integration]\nunknown=1\n",                         "[usb]\nauto_attach=123:5678\n",             "[usb]\nauto_attach=1234:567\n",
+        "[usb]\nauto_attach=123G:5678\n",                     "[usb]\nauto_attach=1234-5678\n",            "[usb]\nauto_attach=1234:5678,1234:5678\n",
+        "[usb]\nauto_attach=1234:5678,1234:5678,1234:5678\n", "[usb]\nauto_attach=1234:5678,,abcd:ef01\n",
     };
     for (invalid) |text| {
         try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, text.ptr, text.len));
@@ -762,8 +760,8 @@ test "seamless configuration rejects malformed values atomically" {
     var boundary: c.daemon_config_t = undefined;
     daemon_config_init_defaults(&boundary);
     const enum_fields = [_]*u32{
-        &boundary.network_mode, &boundary.audio_backend, &boundary.input_ime,
-        &boundary.input_inhibit_shortcuts, &boundary.input_repeat, &boundary.integration_menu_apps,
+        &boundary.network_mode,                  &boundary.audio_backend,           &boundary.input_ime,
+        &boundary.input_inhibit_shortcuts,       &boundary.input_repeat,            &boundary.integration_menu_apps,
         &boundary.integration_desktop_shortcuts, &boundary.integration_exe_handler, &boundary.integration_uac,
     };
     for (enum_fields) |field| {
@@ -773,8 +771,8 @@ test "seamless configuration rejects malformed values atomically" {
         field.* = saved;
     }
     const bool_fields = [_]*u32{
-        &boundary.network_cups_forward, &boundary.usb_controller, &boundary.audio_microphone,
-        &boundary.audio_per_app, &boundary.clipboard_enabled, &boundary.clipboard_files,
+        &boundary.network_cups_forward,       &boundary.usb_controller,     &boundary.audio_microphone,
+        &boundary.audio_per_app,              &boundary.clipboard_enabled,  &boundary.clipboard_files,
         &boundary.integration_start_at_login, &boundary.integration_notify,
     };
     for (bool_fields) |field| {
@@ -973,15 +971,15 @@ test "qualified seamless config edits support every new key and reset default" {
     const original = "# retained\n[av]\nenabled=0\n[clipboard]\nenabled=true\n[clipboard]\nmax_mb=64\n";
     var first: [8192]u8 = undefined;
     const first_len = try edit_config(original, &.{
-        "network.mode=none", "network.cups_forward=false", "usb.controller=0", "usb.auto_attach=1234:abcd",
-        "audio.backend=none", "audio.microphone=0", "audio.per_app=0", "input.ime=host",
+        "network.mode=none",             "network.cups_forward=false", "usb.controller=0", "usb.auto_attach=1234:abcd",
+        "audio.backend=none",            "audio.microphone=0",         "audio.per_app=0",  "input.ime=host",
         "input.inhibit_shortcuts=never", "input.repeat=off",
     }, false, &first);
     var second: [8192]u8 = undefined;
     const second_len = try edit_config(first[0..first_len], &.{
-        "clipboard.enabled=false", "clipboard.max_mb=1", "clipboard.files=false", "integration.start_at_login=true",
-        "integration.menu_apps=none", "integration.desktop_shortcuts=off", "integration.exe_handler=off",
-        "integration.uac=auto", "integration.notify=false",
+        "clipboard.enabled=false",    "clipboard.max_mb=1",                "clipboard.files=false",       "integration.start_at_login=true",
+        "integration.menu_apps=none", "integration.desktop_shortcuts=off", "integration.exe_handler=off", "integration.uac=auto",
+        "integration.notify=false",
     }, false, &second);
     var cfg: c.daemon_config_t = undefined;
     daemon_config_init_defaults(&cfg);
@@ -1010,13 +1008,14 @@ test "qualified seamless config edits support every new key and reset default" {
 
     var reset_output: [8192]u8 = undefined;
     const reset_len = try edit_config(second[0..second_len], &.{
-        "network.mode", "network.cups_forward", "usb.controller", "usb.auto_attach", "audio.backend",
-        "audio.microphone", "audio.per_app", "input.ime", "input.inhibit_shortcuts", "input.repeat",
+        "network.mode",     "network.cups_forward", "usb.controller", "usb.auto_attach",         "audio.backend",
+        "audio.microphone", "audio.per_app",        "input.ime",      "input.inhibit_shortcuts", "input.repeat",
     }, true, &reset_output);
     var final_output: [8192]u8 = undefined;
     const final_len = try edit_config(reset_output[0..reset_len], &.{
-        "clipboard.enabled", "clipboard.max_mb", "clipboard.files", "integration.start_at_login",
-        "integration.menu_apps", "integration.desktop_shortcuts", "integration.exe_handler", "integration.uac", "integration.notify",
+        "clipboard.enabled",     "clipboard.max_mb",              "clipboard.files",         "integration.start_at_login",
+        "integration.menu_apps", "integration.desktop_shortcuts", "integration.exe_handler", "integration.uac",
+        "integration.notify",
     }, true, &final_output);
     try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &final_output, final_len));
     try std.testing.expectEqual(@as(u32, c.NetworkModeUser), cfg.network_mode);
@@ -1083,15 +1082,15 @@ test "config editor rejects duplicate aliases and enforces ten-change cap" {
     var output: [8192]u8 = undefined;
     try std.testing.expectError(error.Invalid, edit_config(source, &.{ "enabled=0", "av.enabled=0" }, false, &output));
     const ten_changes = [_][]const u8{
-        "network.mode=none", "network.cups_forward=false", "usb.controller=false", "usb.auto_attach=",
-        "audio.backend=none", "audio.microphone=false", "audio.per_app=false", "input.ime=host",
+        "network.mode=none",             "network.cups_forward=false", "usb.controller=false", "usb.auto_attach=",
+        "audio.backend=none",            "audio.microphone=false",     "audio.per_app=false",  "input.ime=host",
         "input.inhibit_shortcuts=never", "input.repeat=off",
     };
     _ = try edit_config(source, &ten_changes, false, &output);
     try std.testing.expectError(error.Invalid, edit_config(source, &.{
-        "network.mode=none", "network.cups_forward=false", "usb.controller=false", "usb.auto_attach=",
-        "audio.backend=none", "audio.microphone=false", "audio.per_app=false", "input.ime=host",
-        "input.inhibit_shortcuts=never", "input.repeat=off", "clipboard.enabled=false",
+        "network.mode=none",             "network.cups_forward=false", "usb.controller=false",    "usb.auto_attach=",
+        "audio.backend=none",            "audio.microphone=false",     "audio.per_app=false",     "input.ime=host",
+        "input.inhibit_shortcuts=never", "input.repeat=off",           "clipboard.enabled=false",
     }, false, &output));
 }
 
@@ -1116,9 +1115,9 @@ test "AV device configuration is bounded and transactional" {
     try std.testing.expectEqual(@as(u32, 1), cfg.av_enabled);
     const before = cfg;
     for ([_][]const u8{
-        "[av]\nenabled=2\n", "[av]\nuefi=2\n",            "[av]\nshm_path=relative\n",    "[av]\nshm_path=/tmp/x,share=off\n",
-        "[av]\ngpu_bdf=0000:0e:ff.0\n", "[av]\ngpu_bdf=0000:0e:00.8\n", "[av]\nunknown=1\n",
-        "[av]\ngpu_bdf=invalid\n",      "[av]\nshm_path=\n",
+        "[av]\nenabled=2\n",            "[av]\nuefi=2\n",               "[av]\nshm_path=relative\n", "[av]\nshm_path=/tmp/x,share=off\n",
+        "[av]\ngpu_bdf=0000:0e:ff.0\n", "[av]\ngpu_bdf=0000:0e:00.8\n", "[av]\nunknown=1\n",         "[av]\ngpu_bdf=invalid\n",
+        "[av]\nshm_path=\n",
     }) |invalid| {
         try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, invalid.ptr, invalid.len));
         try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&cfg));

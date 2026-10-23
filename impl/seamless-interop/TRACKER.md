@@ -261,7 +261,7 @@ runner is granted by these assignments. Shared build targets run serially.
     page-oracle operations. Capturer/compositor pins and growth/reconnect
     ownership remain runtime subtasks.
 
-- **Commit `HEAD`**: `feat(interop): parse owned bounded integration manifests`
+- **Commit `d942bb0`**: `feat(interop): parse owned bounded integration manifests`
   - **Task Impact**: +15% to TODO #33 (+0.45% overall; total 12.10%).
   - **Summary**: Luna adds bounded strict schema-1 parsing, known-kind/prior
     validation, duplicate ID/key rejection and one explicit document arena.
@@ -270,4 +270,11 @@ runner is granted by these assignments. Shared build targets run serially.
     coverage, twelve tests including valid/invalid allocation-failure sweeps
     pass 92.75% branch (179/193), 100% production line (124/124). The codec
     neither authorizes paths nor writes artifacts; journal/locks/commands and
-    full lifecycle remain pending. `HEAD` is this containing commit.
+    full lifecycle remain pending.
+
+- **Commit `HEAD`**: `chore(interop): format the configuration extension with Zig`
+  - **Task Impact**: +0% to TODO #8 (+0% overall; total 12.10%).
+  - **Summary**: Applies Zig's formatter to the feature-owned config extension;
+    no behavior change. Restricted-executor formatting returned Unexpected;
+    host-access formatting succeeds and all nineteen config tests pass again.
+    `HEAD` identifies this containing formatting commit.
