@@ -72,7 +72,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
-| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; C ABI+native atomic adapters 10%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
+| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config 25%; typed CLI get/set/reset 5%; isolated CLI integration passes |
 | #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
@@ -288,7 +288,7 @@ runner is granted by these assignments. Shared build targets run serially.
     Path-option regressions pass again. Export/import/clone persistence remains
     a separate 5% subtask; no QEMU/native device behavior is credited.
 
-- **Commit `HEAD`**: `test(interop): qualify foundation units on Linux and native Windows`
+- **Commit `bbccef0`**: `test(interop): qualify foundation units on Linux and native Windows`
   - **Task Impact**: +0% to TODO #5/#33/#34 (+0% overall; total 12.25%).
   - **Summary**: Extends aggregate sanitizer/testing-allocator and Windows CI
     execution to layout, heap and manifest; all Linux interop gates and Windows
@@ -299,4 +299,14 @@ runner is granted by these assignments. Shared build targets run serially.
     prevent integrated M0/session acceptance. No live mapping/GUI/audio/input,
     native atomic proof or hosted CI result is claimed. Independent Luna
     read-only review finds no additional primitive correctness defects.
-    `HEAD` identifies this containing foundation test/evidence commit.
+
+- **Commit `HEAD`**: `docs(interop): define layout C boundary and settings persistence`
+  - **Task Impact**: +0% to TODO #5/#8 (#5 ABI/atomic allocation split 5%/5%;
+    total remains 12.25%).
+  - **Summary**: Publishes the fixed C boundary before consumer implementation,
+    with private snapshots, transactional outputs, alias/alignment/range checks
+    and exact ABI layouts. Defines additive backup settings compatibility and
+    clone/import host-mount boundaries. Clarifies QEMU silent HDA, default input
+    source and validated named sink identity; routing and native gates remain
+    pending. No implementation acceptance is claimed by this contract commit.
+    `HEAD` identifies this containing API/contract commit.

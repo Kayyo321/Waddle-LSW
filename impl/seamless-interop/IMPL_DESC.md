@@ -1605,7 +1605,7 @@ for non-native executables).
   `application.icon-name=waddle.<device>.<app_key>`,
   `media.category=Playback`, `media.role=Music`, and the same backlog trimming
   as `av_pipewire.c` (384 frames).
-- Microphone: QEMU `-audiodev pipewire,id=waddle_audio,out.name=waddle-discard.<device>,in.name=<empty: default source>`
+- Microphone: QEMU `-audiodev pipewire,id=waddle_audio,out.name=waddle-discard.<device> (in.name omitted: default source)`
   with `ich9-intel-hda` + `hda-duplex,audiodev=waddle_audio`. `waddle-session`
   creates the sink `waddle-discard.<device>` at start through
   `pw_core_create_object("adapter", factory.name=support.null-audio-sink,
@@ -2119,6 +2119,24 @@ unqualified editor keys retain their old meaning. Config changes alone do not
 change VM devices or claim native support. QEMU args/build features and config
 CLI serialization/get are separately integrated and tested before #8 closes.
 
+The previously unspecified `audio.backend=none` selects the silent QEMU
+`none,id=waddle_audio` backend with one HDA controller/duplex endpoint. This
+preserves a guest render endpoint for legacy AV process loopback without host
+playback/capture; audio.microphone has no effect on that silent backend. The
+PipeWire backend uses one HDA controller/endpoint and disables capture voices
+with in.voices=0 when microphone=false. No duplicate legacy silent HDA is added.
+PipeWire routing/discard-sink and per-PID duplication prevention remain #23
+integration requirements; argv tests alone cannot qualify audible behavior.
+The named QEMU builder/spawn APIs require the registry's 1..63-byte ASCII
+letter/digit/hyphen/underscore identifier, and derive only the fixed sink name
+waddle-discard.<device> from it. The daemon passes the canonical registered
+runtime/socket identity; legacy/unmanaged callers use the compatibility identity
+default. Microphone input omits in.name so PipeWire selects its default source;
+an empty string is not used because QEMU forwards it as target.object. Tests
+inject absent, regular, symlink and socket lstat results for the fixed CUPS path;
+only an actual socket qualifies for forwarding. Runtime CUPS disappearance can
+still fail QEMU startup and must follow normal start rollback.
+
 For #9, translation must reflect actual configured exports: canonical longest
 component-prefix match, no fallback root export when none is configured, and
 zero configured mounts means no host path is shared. Existing explicit root
@@ -2164,3 +2182,33 @@ and a per-direction reservation budget equal to configured clipboard.max_mb
 (including icons/cursors); over-budget admission returns Busy, individual
 over-limit payloads return TooLarge. Cancellation/EOF returns each reservation
 once. This is a local resource bound, not a wire/schema change.
+
+### 8.4 Pure layout C boundary and persisted settings refinement
+
+The allocation-free C boundary is src/interop/interop_layout.h with four
+interop_layout_* functions: private header snapshot validation, private Ready
+slot snapshot validation, checked capture geometry and fixed audio bounds.
+Its fixed-width output structs and every offset/size are asserted for the
+supported x86_64 Linux/Windows ABIs. Return values are Ok=0,
+InvalidArgument=1 (null/wrong-sized/unaligned/overflowing/aliased pointer ranges)
+and InvalidLayout=2 (invalid mapping facts/contents, geometry or ring). The
+wrappers reuse the pure Zig validators, stage results locally and publish output
+only on success. They check pointer alignment/range arithmetic before creating
+slices or loading typed inputs; callers still supply accessible memory of the
+stated size. They own no memory and do not retain pointers. Private snapshot
+bytes must never alias live atomic fields; these APIs do not claim native
+acquire/release or mapping initialization. Header input is a previously
+validated immutable value, and outputs are disjoint from both input ranges.
+
+The #5 allocation is refined before implementation: pure C ABI wrappers/tests
+5% and native atomic adapters/proof 5% replace the combined 10% ABI/atomic
+subtask; totals and accepted progress are unchanged. Live capture/compositor
+pins, growth/reconnect and qualification remain separate.
+
+Device backup schema version 1 accepts the new seamless settings as optional
+additive keys with exactly the frozen §3.5 defaults when absent. Export writes
+all of them; import validates enum strings, booleans, limits and the at-most-16
+unique USB selectors before any published device mutation. This preserves old
+schema-1 backups while round-tripping new settings. Clone retains host mounts;
+import continues to suppress host mounts and unrelated host-local paths. The
+backup manifest is distinct from the integration ownership manifest in §3.12.
