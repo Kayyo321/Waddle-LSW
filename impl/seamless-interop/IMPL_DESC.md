@@ -2199,6 +2199,10 @@ stated size. They own no memory and do not retain pointers. Private snapshot
 bytes must never alias live atomic fields; these APIs do not claim native
 acquire/release or mapping initialization. Header input is a previously
 validated immutable value, and outputs are disjoint from both input ranges.
+The header validator also checks the actual mapping range without dereferencing
+it: address+length overflow or either private input/output overlapping the
+mapping returns InvalidArgument. Descriptor calls have no mapping pointer;
+callers guarantee private copied storage and a validated immutable header.
 
 The #5 allocation is refined before implementation: pure C ABI wrappers/tests
 5% and native atomic adapters/proof 5% replace the combined 10% ABI/atomic

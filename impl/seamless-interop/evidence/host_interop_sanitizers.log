@@ -1,0 +1,72 @@
+zig test src/interop/interop_layout.zig -Iinclude -lc
+1/8 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+2/8 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+3/8 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+4/8 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+5/8 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+6/8 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+7/8 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+8/8 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 8 tests passed.
+zig test src/interop/interop_heap.zig -lc
+1/17 interop_heap.test.initialization and capacity errors preserve outputs...OK
+2/17 interop_heap.test.first fit skips a partially occupied candidate...OK
+3/17 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+4/17 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+5/17 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+6/17 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+7/17 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+8/17 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+9/17 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+10/17 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+11/17 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+12/17 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+13/17 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+14/17 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+15/17 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+16/17 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+17/17 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 17 tests passed.
+zig test src/interop/manifest.zig -lc
+1/12 manifest.test.schema one parses all host and guest record kinds with owned borrowed views...OK
+2/12 manifest.test.all frozen schema one kinds parse with their kind-specific fields...OK
+3/12 manifest.test.rejects malformed schema duplicate keys and duplicate record ids...OK
+4/12 manifest.test.rejects root type omissions and malformed JSON paths...OK
+5/12 manifest.test.rejects each required record field when missing or mistyped...OK
+6/12 manifest.test.validates prior variants and optional record values...OK
+7/12 manifest.test.rejects record kind field prior hash UTF8 and string bound violations...OK
+8/12 manifest.test.enforces input record string and nesting bounds...OK
+9/12 manifest.test.valid parse releases every arena allocation...OK
+10/12 manifest.test.document owns strings independently of input and deinit is idempotent...OK
+11/12 manifest.test.invalid parse frees partial allocations under allocation failure...OK
+12/12 manifest.test.allocation failures cover record and duplicate-index growth...OK
+All 12 tests passed.
+ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 make -B interop-codec-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+make[1]: Entering directory '/home/dev/Waddle-LSW'
+mkdir -p build
+zig build-obj src/interop/interop_codec.zig -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=build/interop_codec.o
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer -UNDEBUG tests/interop/codec_abi.c build/interop_codec.o -fsanitize=address,leak,undefined -o build/interop_codec_abi_test
+zig test src/interop/interop_codec.zig -Iinclude -lc
+1/19 interop_codec.test.AUMID keys reserve suffix space and preserve outputs on every error...OK
+2/19 interop_codec.test.window minimum sizes are independent of current geometry and bounded per axis...OK
+3/19 interop_codec.test.menu trigger serials are protocol references and local stop frames never cross VSOCK...OK
+4/19 interop_codec.test.hello round trip, header decode and typed field access...OK
+5/19 interop_codec.test.header rejects magic, version, length and short input...OK
+6/19 interop_codec.test.structural defects: order, duplicates, padding, criticality, unknown tags...OK
+7/19 interop_codec.test.field present but not allowed for the message type is malformed...OK
+8/19 interop_codec.test.writer rejects order, values, capacity and poisons itself...OK
+9/19 interop_codec.test.window announce with every field, parent pairing and string rules...OK
+10/19 interop_codec.test.every field value rule accepts its boundary and rejects one past it...OK
+11/19 interop_codec.test.launch requests require exactly one target kind...OK
+12/19 interop_codec.test.icon requests pair window and generation...OK
+13/19 interop_codec.test.display config repeats outputs 1..8 times and nowhere else...OK
+14/19 interop_codec.test.field count limit is enforced by writer and validator...OK
+15/19 interop_codec.test.transfers: contiguity, bounds, digest and cancellation...OK
+16/19 interop_codec.test.every message type has a buildable minimal frame and rejects the wrong direction...OK
+17/19 interop_codec.test.deterministic mutation fuzz never crashes and keeps outputs unchanged on error...OK
+18/19 interop_codec.test.every registered tag reaches a value rule without hitting the unreachable default...OK
+19/19 interop_codec.test.runtime inputs exercise defensive branches of every export...OK
+All 19 tests passed.
+./build/interop_codec_abi_test
+interop codec ABI: header, fields, writer and transfers agree across C and Zig
+make[1]: Leaving directory '/home/dev/Waddle-LSW'

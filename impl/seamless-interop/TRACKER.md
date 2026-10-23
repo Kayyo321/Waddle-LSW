@@ -77,11 +77,12 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
-Luna `luna_foundations` owns new layout Zig source/tests; Luna
-`luna_integration` owns config source/header/focused config tests; Luna
-`luna_acceptance` owns new manifest Zig source/tests. Lead owns shared ABI,
-build/workflow wiring, docs/tracker, Git and final review. No Windows/GPU
-runner is granted by these assignments. Shared build targets run serially.
+Execution stopped at the user's request on 2026-10-23. All three Luna workers
+returned ownership and are stopped. Lead retains shared ABI, build/workflow,
+docs/tracker, Git and runner ownership. Resume instructions, saved unaccepted
+C wrapper draft, checks and native/build gaps are in
+[checkpoint_2026_10_23.md](checkpoint_2026_10_23.md). No progress is awarded for
+the draft or checkpoint. Shared build targets must remain serial.
 
 ## Commit History & Progress Log
 
@@ -324,7 +325,7 @@ runner is granted by these assignments. Shared build targets run serially.
     discard-target routing are concrete open build/#23 requirements; no native
     audio or complete VM lifecycle acceptance is claimed.
 
-- **Commit `HEAD`**: `fix(interop): preserve seamless settings in device backups`
+- **Commit `91afd85`**: `fix(interop): preserve seamless settings in device backups`
   - **Task Impact**: +5% to TODO #8 (+0.15% overall; total 12.85%).
   - **Summary**: Fixes reproduced export/import loss of all new settings by
     adding typed optional schema-1 keys with legacy defaults, exact enum/range
@@ -337,4 +338,14 @@ runner is granted by these assignments. Shared build targets run serially.
     ASan/LSan/UBSan integration passes with leak detection enabled; Zig objects
     retain ReleaseSafe bounds checks and testing-allocator tests. No complete
     source-QEMU build or guest device/audio qualification is claimed.
-    `HEAD` identifies this containing persistence fix commit.
+
+- **Commit `HEAD`**: `docs(interop): save a verified recoverable implementation checkpoint`
+  - **Task Impact**: +0% to TODO #1-#34 (+0% overall; total 12.85%).
+  - **Summary**: Stops workers at user request, preserves the uncompiled C ABI
+    draft as an unapplied patch, tightens mapping-overlap boundary documentation
+    and records complete resume/runner/build instructions. Preserves hashed
+    host test logs, native Windows evidence and explicit QEMU build/audio gaps.
+    Header ABI assertions compile on Linux/Windows; draft apply-check passes.
+    No C wrapper/runtime implementation, source-QEMU build or additional native
+    acceptance is credited. README is unchanged and the running Windows VM is preserved.
+    `HEAD` identifies this containing checkpoint commit.

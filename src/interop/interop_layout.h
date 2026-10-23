@@ -6,8 +6,8 @@
  *
  * These calls parse caller-owned private snapshots and calculate mapping-relative
  * bounds. They never dereference a live mapping, perform atomics, retain pointers,
- * allocate memory, or own mappings. Callers must acquire descriptor Ready and
- * copy its bytes before validation. Distinct call state is thread-safe; each
+ * allocate memory, or own mappings. Callers acquire-load descriptor state Ready and copy its immutable metadata
+ * into private storage; native adapters own the live ownership transitions. Distinct call state is thread-safe; each
  * output object must be exclusively owned for the duration of its call.
  */
 #include <stddef.h>
@@ -100,14 +100,16 @@ _Static_assert(offsetof(interop_audio_ring_bounds_t, capacity_frames) == 28, "au
 
 /**
  * @brief Validate one private 4096-byte header snapshot against actual mapping facts.
- * @param[in] header_bytes Non-NULL readable private bytes; must not alias live mapping atomics.
+ * @param[in] header_bytes Non-NULL readable private bytes; disjoint from the actual mapping range.
  * @param[in] header_length Exactly 4096, otherwise InvalidArgument.
  * @param[in] mapping_address Actual non-NULL borrowed mapping base address; never dereferenced.
  * @param[in] mapping_length Actual mapped byte length, expected to be 2 GiB.
  * @param[in] expected_session_epoch Nonzero epoch negotiated by Hello.
- * @param[out] snapshot Non-NULL aligned caller-owned output, disjoint from header_bytes.
+ * @param[out] snapshot Non-NULL aligned caller-owned output, disjoint from header_bytes
+ *                      and from the actual mapping range.
  * @return Ok on success, InvalidArgument for invalid pointers/length/alias/overflow,
- *         or InvalidLayout when snapshot or mapping facts violate layout v3.
+ *         including mapping-range overflow or either snapshot range overlapping
+ *         the actual mapping, or InvalidLayout for invalid layout-v3 facts.
  * @note Allocation-free, does not retain pointers or perform atomic access. No shared
  *       mutable state; output is unchanged on failure. Caller owns all memory and
  *       serializes access to snapshot. Concurrent calls are safe for disjoint outputs.

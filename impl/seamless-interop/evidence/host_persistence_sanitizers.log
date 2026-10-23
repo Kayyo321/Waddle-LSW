@@ -1,0 +1,3 @@
+device_commands: isolated JSON, selection, inspection, malformed and raw-transport cases passed
+device persistence: seamless values survive clone/export/import; mount policy is preserved
+device confirmation: exact name removes; SIGINT/mismatch/overlong cancel and preserve device

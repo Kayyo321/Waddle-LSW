@@ -1,0 +1,67 @@
+{
+  "completed_utc": "2026-10-23T20:33:21.196154+00:00",
+  "implementation_head": "91afd85",
+  "source_sha256": {
+    "src/daemon/daemon_config.zig": "16c2198ca15102a2ec2a4446339d86b94388d8dcbbaeda0eb89eb80a3976650b",
+    "src/daemon/daemon_config.h": "1e3e44aeb7e3049bc7a904c4193976e3a6b1a02d7b613ec421dbeb1349a35605",
+    "src/cli/device_commands.zig": "e94fff0c481341437f140ae6bcc300204c00ee2d650619b5f63c74e7475fdea2",
+    "src/daemon/device_storage.zig": "4e1b15d0ae81c0b829bd55d37603503bcdfa3dcd063906ed987ba4e681139567",
+    "src/daemon/daemon_qemu.c": "8b54e8b61552997986960a15d52acc45b16140bae2a75eea003f2b66928f0e1a",
+    "src/daemon/daemon_qemu.h": "6b9c3e5af2d221760237cd42659af51f22a1fd82fb91888a8db17e2a3dc28ab2",
+    "src/daemon/daemon_state.c": "ca21d5999d6026f506e75d8e24c34ffc7a59c13aff9421ca255dbfebff442a51",
+    "tests/daemon/test_daemon_qemu.c": "ade2d9349545cff901c05604702347e1541da0670cfaba1bfb2a53aabd89f20d",
+    "tests/integration/device_commands.py": "c17052125f630d4ab30a23e444c9f1534eaf01ee3fa0ad51af9082d7faade053",
+    "src/interop/interop_layout.zig": "493f9be29202afd544ac661ac945301cb4ddd9c0ee5c02847fff9e1847e4b916",
+    "src/interop/interop_heap.zig": "b4c39c304006936f44b1bb76865bb836b3e19990a32e42d217465c975a753b91",
+    "src/interop/manifest.zig": "cdb6ce1ab125cc853f11c0a1768c86903dce1448c9868b0bb195d7a00eb30614"
+  },
+  "logs": {
+    "host_full_test.log": "2bfda15c9f88c3b78df2fdc34189a968de08af1846b03fc9b291ebfc7c2f2867",
+    "host_av_test.log": "a5323b940f7d754c7c002effd879ce21e33ab614831eedbb6b88c64636737eb9",
+    "host_interop_sanitizers.log": "7cc2a50d22495a2826ad2540def6595e3f4b4b656e0054688106f9b8733ac6ef",
+    "host_interop_test.log": "7e35ed14413aa5406a3a028a8ae7a196009e5c20a705c532168534b6ac62df87",
+    "host_qemu_sanitizers.log": "61f059d25ce17f22b22649a1292fd2f182f4b0c48e3bb2f69fd2db0497be6f87",
+    "host_persistence_sanitizers.log": "2db53be60ae62986940a3ce6496fe5c99150e6a425152a6a6de85ce5b64bf22a"
+  },
+  "cwd": "/home/dev/Waddle-LSW",
+  "environment": {
+    "ZIG_GLOBAL_CACHE_DIR": "/tmp/seamless_review_zig_cache",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "execution": "host access for UNIX sockets and LSan; no clean target"
+  },
+  "commands": [
+    {
+      "command": "make test",
+      "exit": 0,
+      "log": "host_full_test.log"
+    },
+    {
+      "command": "make -B av-test",
+      "exit": 0,
+      "log": "host_av_test.log"
+    },
+    {
+      "command": "make -B interop-test",
+      "exit": 0,
+      "log": "host_interop_test.log"
+    },
+    {
+      "command": "make interop-sanitizers",
+      "exit": 0,
+      "log": "host_interop_sanitizers.log"
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 /tmp/interop_native_review/qemu_test",
+      "exit": 0,
+      "log": "host_qemu_sanitizers.log",
+      "scope": "C QEMU/QMP fixture with ASan/LSan/UBSan; checked Zig config object"
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 WADDLE_TEST_EXECUTABLE=/tmp/interop_native_review/waddle_storage_sanitized python3 tests/integration/device_commands.py",
+      "exit": 0,
+      "log": "host_persistence_sanitizers.log",
+      "scope": "C CLI consumer with ASan/LSan/UBSan; ReleaseSafe Zig objects; separate seven Zig storage allocator tests in make test"
+    }
+  ],
+  "limits": "No end-to-end Windows session, source-QEMU build, discard routing, compositor matrix or peripheral acceptance; saved C ABI draft is uncompiled and unaccepted."
+}
