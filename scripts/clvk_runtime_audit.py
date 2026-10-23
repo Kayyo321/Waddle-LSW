@@ -754,9 +754,18 @@ def _symbol_input(map_lines: Sequence[str], symbol: str) -> str:
 
 
 def _source_matches(source: str, expected: str) -> bool:
-    """Match a direct object or the same object as a GNU archive member."""
+    """Match a borrowed map owner; explicit archive/member pairs bind both names.
+
+    Bare object policies also allow GNU's archive-member prefix convention.
+    Explicit archive policies require the exact member and archive basenames;
+    their directory is bound separately by the build provenance. No I/O, owned
+    allocation or shared mutation; return False on a different owner.
+    """
     normalized = source.strip().replace("\\", "/")
     basename = normalized.rsplit("/", 1)[-1]
+    expected = expected.replace("\\", "/").rsplit("/", 1)[-1]
+    if "(" in expected:
+        return basename == expected
     if basename == expected:
         return True
     if "(" not in basename or not basename.endswith(")"):
@@ -834,8 +843,13 @@ def verify_runtime_link(
     eh_pool_object: str = "clvk_runtime_eh_pool.o",
     runtime_policy: Mapping | None = None,
     map_working_directory: str | os.PathLike[str] | None = None,
+    llvm_runtime: bool = True,
 ) -> dict:
     """Prove link-map output identity, ABI member ownership, and CRT policy.
+
+    llvm_runtime is True for OpenCL.dll: the EH-pool callback's llvm::llvm_shutdown()
+    must then resolve from LLVM's own ManagedStatic object. Only the LLVM-free runtime
+    probe DLL passes False; a runtime policy file can never change it.
 
     The link map and DLL are borrowed inputs. Caller must produce both in the
     same fresh build invocation and bind this result with their receipt; a GNU
@@ -873,13 +887,15 @@ def verify_runtime_link(
         },
         "required_map_symbols": {
             "atexit": "dllcrt2.o",
-            "__gnu_cxx::__freeres()": "eh_alloc.o",
+            "__gnu_cxx::__freeres()": "libstdc++.a(eh_alloc.o)",
             "waddle_clvk_eh_pool_register": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_release": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_initializer": Path(eh_pool_object).name,
             "waddle_clvk_runtime_tls_limits": Path(shim_object).name,
         },
     }
+    if llvm_runtime:
+        mandatory_policy["required_map_symbols"]["llvm::llvm_shutdown()"] = "libLLVMSupport.a(ManagedStatic.cpp.obj)"
     for key, required in mandatory_policy.items():
         if key in policy and policy[key] != required:
             raise audit_error_t(f"runtime policy cannot weaken mandatory {key} checks")

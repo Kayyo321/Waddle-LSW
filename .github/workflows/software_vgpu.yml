@@ -17,6 +17,10 @@ jobs:
           persist-credentials: false
       - name: Install vendor-boundary test tools
         run: |
+          # The Azure mirror exhausted the job budget before any test ran.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends git g++ python3 gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
       - name: Check out only pinned admission-test source and headers
@@ -53,7 +57,7 @@ jobs:
       - name: Verify exact-target FLS certificate with API doubles and strict coverage
         run: make vgpu-opencl-fls-test vgpu-opencl-fls-sanitizers vgpu-opencl-fls-coverage
       - name: Verify bounded full reload ownership with API doubles and strict output receipts
-        run: make vgpu-opencl-reload-test vgpu-opencl-reload-sanitizers vgpu-opencl-reload-coverage
+        run: make vgpu-opencl-reload-test vgpu-opencl-reload-sanitizers vgpu-opencl-reload-coverage vgpu-opencl-os-preinit-test vgpu-opencl-os-preinit-sanitizers vgpu-opencl-os-preinit-coverage
       - name: Verify actual OpenCL cancellation call and reverse owner release
         run: make vgpu-opencl-cancellation-test
       - name: Require buffer production line and directional branch coverage
@@ -114,6 +118,8 @@ jobs:
           WADDLE_RECORDER_SANITIZERS=1 python3 -B tests/av/coverage_recorder_test.py -v
       - name: Check out immutable renderer and Mesa dependencies
         run: git submodule update --init --depth 1 submodules/virglrenderer submodules/looking_glass submodules/venus_protocol submodules/vulkan_loader submodules/mesa
+      - name: Verify tracked Windows loader patch applies to the exact pin
+        run: make vgpu-loader-patch-test
       - name: Cross-build native M2 diagnostics and full GPU fixture
         run: make vgpu-handle-diag-native-build vgpu-m2-ownership-native-build vgpu-m2-qualification-build build/vgpu_tcp_gpu_windows_draft.exe
       - name: Verify Mesa CPU topology allocation ownership
@@ -650,7 +656,9 @@ jobs:
         run: |
           $icd_oracles = @('features_query', 'features_reply', 'render_wire', 'descriptor_wire', 'compute_wire', 'graphics_wire', 'graphics_pipeline_wire', 'graphics_command_wire', 'device_wire', 'extensions_wire', 'extensions_reply', 'shader', 'extra_objects', 'requirements2_query', 'requirements2_reply', 'sampler_descriptor_wire', 'graphics_dynamic_wire', 'modern_sync', 'image_transfer_wire', 'dynamic_rendering_wire', 'graphics_general_wire', 'properties_query', 'properties_reply') | ForEach-Object { "build/owned_native_oracles/$_.obj" }
           $loader_include = (Resolve-Path scripts/vulkan_loader.cmake).Path
-          cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_windows -A x64 "-DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$loader_include" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON
+          python scripts/vulkan_loader_private_source.py build/vendor/vulkan_loader_private
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake -S build/vendor/vulkan_loader_private -B build/vendor/vulkan_loader_windows -A x64 "-DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE=$loader_include" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/vendor/vulkan_loader_windows --config Release --parallel 4
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

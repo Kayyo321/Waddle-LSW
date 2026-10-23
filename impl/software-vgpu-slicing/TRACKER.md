@@ -2,28 +2,28 @@
 
 - **Contributors / Agents**: Codex Astra (isolated M2 readiness and ownership qualification), Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk), Claude Code (OpenCL implementation; Haiku 5.5 inventory/audit/build-spike workers)
 - **Time Started**: 2026-10-05T18:35:00Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-23T18:13:11Z
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 90% | Current ICD399-case aggregate and90.42% branch /98.56% line gates pass; current37-module ASan/LSan seam and15-case Linux physical matrix pass. Final DXVK native heap, exact-head CI and final review remain open; final Windows physical and M2 owned/WSI workloads pass; see QUALIFICATION_CONTINUATION_2026_10_21.md. |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Done | 25% | 100% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification explicitly accepted by the user on 2026-10-23). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). All 12 checks pass on source head bffeb41; final source/native applicability review passes at 01613b1 with no subsequent runtime changes. Delivery requires a further all-green check of the completion commit before PR readiness. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 40% | Historical exact native GPU kernels pass. Approved owned Win32 TLS/EH correction passes isolated2048-reload measurement; new full DLL static build/admission and native TLS/FLS controls pass; complete-input actual cancellation passes. Functional Linux GPU overlap passes; final native heap/full reload remain open. Earlier leaking candidates are preserved failures; see current qualification checkpoint. |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | Done | 20% | 100% | Candidate81f3fc1d passes current-source static admission, fresh controls/census, uninterrupted R13 1100-cycle/3300-context reload and guarded heap cf99460c: zero OWNED blocks/bytes at every unload, complete nine-heap/CSR coverage and exact retirement/IFEO restoration. Qualified default compiler-option profile; nonstandard LLVM diagnostic-option limitation is explicitly documented (attribution sections20-21). |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
 | #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
-| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned loader, medium-integrity bootstrap/receiver and real GPU/DXVK execution verified; final native heap teardown qualification pending |
+| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | Done | 0% | 100% | Pinned loader/bootstrap, physical/M2/DXVK acceptance and final OpenCL reload/guarded heap qualification pass; all owned/native/console/debugger processes retire naturally, IFEO is restored exactly, preserved VM remains running. |
 | #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
 
-**Total Feature Completion**: `85.5%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
 
@@ -2171,3 +2171,535 @@ M2 stays100% / Completed in54ee9c4; parent85.5% / In Progress, Time Ended TBD.
 Final OpenCL reload/native heap, DXVK heap, final review and exact-head CI remain.
 Atomic unit `docs(vgpu): preserve recoverable Fable qualification handoff`: all
 tasks +0%, overall +0%. Commit `cbae0a9` corrects the212-file source count (+0%).
+
+### OpenCL first-cycle retention attribution (2026-10-22)
+
+Atomic unit `docs(opencl): attribute first-cycle reload retention`. Continuation
+took the sole VM lease with explicit user permission and a user-approved
+owner-only lease wrapper. Census R5 completes one ordinary eight-context GPU
+life with natural exit and retired host, and reproduces R7's +83 handles,
++3 TLS and +3 FLS. All 83 handles are typed; every retained module is a Windows
+component. Sixteen component controls attribute the state to USER32/win32k
+connection, Winsock, bcrypt, the C runtime and an upstream Vulkan loader
+reference leak (`LoadLibrary` of dxgi/gdi32 without `FreeLibrary`); none grows
+on a second cycle. Three failed census attempts (runner batch line, stage
+directory, non-duplicable handles) are preserved with corrected R3-R5 revisions.
+[Attribution](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md). The no-warm-up reload
+contract conflicts with Windows first-use state; it is unchanged pending a human
+decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved OS-only reload pre-initialization (2026-10-22)
+
+Atomic unit `docs(opencl): record approved OS-only reload pre-initialization`.
+The user approved four Windows-only first-use operations before the persistent
+reload baseline (USER32 load/free, Winsock startup/socket/cleanup, bcrypt
+load/free, DXGI factory create/release) with exact equality kept on every
+reload, including the first. A diagnostic census must prove zero residual
+first. [Amendment](OPENCL_RELOAD_CONTRACT.md#approved-amendment-os-only-pre-initialization-2026-10-22).
+Commit `aa1b025` attributes the first-cycle retention (+0% all tasks). All
+tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### OS pre-initialization implementation and diagnostic census (2026-10-22)
+
+Commit `d029a7a` (`test(opencl): add approved OS-only pre-initialization with API
+doubles`) adds the four-step include with 58/58 lines and 46/46 branches under
+API doubles and ASan/LSan/UBSan, run in CI (+0%). Commit `5bb843b` (`test(opencl):
+add diagnostic OS pre-initialization switch to heap audits`) enables it for
+diagnostic heap audits only (+0%). Atomic unit `docs(opencl): record diagnostic
+census after approved pre-initialization` records census R6: TLS/FLS/thread
+deltas are now zero but +34 handles and seven modules remain. Controls attribute
+the residual to standard-search DLL resolution, an OS package query and the
+upstream loader's leaked dxgi/gdi32 references; a scratch-evaluated loader patch
+plus two more OS-only steps reach exact zero. Each needs a human decision.
+[Evidence](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#7-diagnostic-census-after-the-approved-pre-initialization-2026-10-22).
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved second amendment: OS steps 5-6 and loader patch (2026-10-22)
+
+Atomic unit `docs(opencl): record approved second reload pre-initialization
+amendment`. The user approved a bare-name System32 `dwmapi.dll` load/free with a
+fail-closed path check, one `GetPackagesByPackageFamily` size query, and the
+76-line Vulkan loader module-reference patch through a tracked private build,
+with M2, Windows physical and DXVK requalification on the patched loader.
+[Amendment 2](OPENCL_RELOAD_CONTRACT.md#approved-amendment-2-two-more-os-steps-and-the-loader-patch-2026-10-22).
+Commit `3459a1e` records the diagnostic census after the first amendment (+0%).
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Tracked Windows Vulkan loader patch (2026-10-22)
+
+Commit `f871b9e` (`test(opencl): add approved search-order and package-family
+pre-initialization`) adds OS steps 5-6 with 77/77 lines and 72/72 branches and
+native zero-residual controls (+0%). Atomic unit `chore(deps): build Windows
+Vulkan loader from tracked private patch` adds the approved module-reference
+patch, a pin-verifying private-source builder, its CI test, and switches the
+MinGW and native Windows loader builds to the private tree. The submodule pin is
+unchanged; Linux loader builds are unaffected. Requalification on the patched
+loader `8a9e3d32…` (local MinGW build) is still required. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
+
+### Reload pre-initialization wiring and residual narrowing (2026-10-22)
+
+Commit `5682038` (`chore(deps): build Windows Vulkan loader from tracked private
+patch`) adds the approved loader patch build and its CI test (+0%). Commit
+`402c2e2` (`test(opencl): run approved OS pre-initialization before reload
+baselines`) wires the six steps into reload mode and the verifier (+0%). Atomic
+unit `docs(opencl): record residual after six-step pre-initialization` records
+censuses R7-R9: with the patched loader, modules/TLS/FLS/threads are exactly
+zero; a DBWinMutex came from the harness's own loader debug logging, and one
+IoCompletion remains from Winsock's first nonblocking connect, which needs a
+human decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved third amendment: loopback connect step (2026-10-22)
+
+Atomic unit `docs(opencl): record approved loopback connect pre-initialization
+step`. The user approved a seventh OS-only step, one nonblocking 127.0.0.1
+connect completed with select and fully closed, and dropping `VK_LOADER_DEBUG`
+from qualification batches.
+[Amendment 3](OPENCL_RELOAD_CONTRACT.md#approved-amendment-3-loopback-connect-and-loader-logging-2026-10-22).
+Commit `1182579` records censuses R7-R9 (+0%). All tasks +0%; parent 85.5% / In
+Progress, Time Ended TBD.
+
+### Seven-step pre-initialization and zero-residual proof (2026-10-22)
+
+Commit `65ba629` records amendment 3 (+0%). Commit `4ce7a3e` (`test(opencl): add
+approved loopback connect pre-initialization step`) adds step 7 with 133/133
+lines and 146/146 branches (+0%). Commit `4dd24d1` (`fix(opencl): accept the
+seven-step pre-initialization witness`) raises the reload witness bound that the
+79-character witness would have exceeded (+0%). Atomic unit `docs(opencl): record
+zero-residual census` records census R10: one full GPU life leaves handles, TLS,
+FLS, modules and threads exactly unchanged. The 1100-cycle reload is next. All
+tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Promoted core structure specification (2026-10-22)
+
+Commit `32bbf08` records census R10 (+0%). The 1100-cycle reload attempt with
+the R8 runner failed in cycle 2: clvk read stale bytes from an unwritten
+`VkPhysicalDeviceDriverProperties`. Root cause: the ICD advertises Vulkan 1.3
+but leaves every promoted core property and feature structure unwritten, and
+device creation skips promoted feature requests. Atomic unit `docs(vgpu):
+specify promoted core structure publication` adds the
+[IMPL_DESC section](IMPL_DESC.md#promoted-core-structure-publication-2026-10-22).
+The failed attempt stays preserved under
+`build/qualification_feature_20261021/opencl_reload_final_r8/`. All tasks +0%;
+parent 85.5% / In Progress, Time Ended TBD.
+
+### Promoted structure fix and overnight stopping point (2026-10-22)
+
+Commit `320c697` specifies the fix (+0%). Commits `5c8a557` (Properties2),
+`1614757` (Features2) and `b271730` (device creation) implement it, each with
+module coverage of at least 97% branches and ICD units 415/415 Debug and
+ReleaseSafe (+0%). Commit `c13e360` refreshes the local sanitizer pins
+(+0%). Its message misdates the physical run; the correct run is
+`build/icd_physical_coherent_owned_safety_37/run-20261022T023008133960Z-1408837`.
+
+| Gate | Result |
+|:--|:--|
+| ICD coverage | 90.45% branches, 98.54% lines |
+| 37-module ASan/LSan seam | Pass, 415 ICD + 29 standalone units, zero findings |
+| Linux physical coherent matrix | Pass, 144 GPU lives + 6 expected cleanup failures |
+| Device/Features2 sanitizers, Windows cross-compiles | Pass |
+
+Atomic unit `docs(opencl): record promoted ICD fix and overnight checkpoint`
+pauses work at the user's request.
+[Attribution section 11](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#11-reload-attempt-r8-and-the-promoted-structure-icd-defect-2026-10-22)
+lists the prepared census and R9 runner, which are **not run**. The lease is
+idle and the VM was not touched after the R8 attempt.
+
+Resume order: run the promoted-ICD census and require zero residual; write the
+R9 composite with the census record; run the 1100-cycle reload. Then finish the
+guard fixture and R14 integration, run native heap qualification, and
+requalify M2, the Windows physical matrix and DXVK on the patched loader and
+fixed ICD. Exact-head CI and the final review follow. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
+
+### Host reboot recovery and promoted-ICD census (2026-10-22)
+
+The host restarted overnight. The VM was booted from its preserved artifacts
+with no reset, and the user signed in at the console. The lease records the new
+QEMU and swtpm identities.
+
+The reboot cleared tmpfs `/tmp`. 302 hash-pinned frozen inputs were restored from
+byte-identical preserved copies, and three of them were rebuilt from session
+transcripts. Each one was admitted only on exact SHA-256 equality
+([attribution section 12](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#12-host-reboot-recovery-and-promoted-icd-census-2026-10-22)).
+
+| Gate | Result |
+|:--|:--|
+| Native TLS/FLS and malformed-input controls on the new VM instance | Pass, `opencl_reload_controls_native_06d96b57` |
+| Promoted-ICD census, one ordinary life | Zero residual, `opencl_census_483f3b38` |
+
+Next: prepare and run the R9 1100-cycle reload. All tasks +0%; parent 85.5% /
+In Progress, Time Ended TBD.
+
+### Reload R9 attribution and guard review (2026-10-22)
+
+R9 passes cycles 1 and 2 with exact equality. Cycle 3 adds one Thread and one Event, identically in
+two attempts. Kernel handle tracing attributes both to RPCRT4 per-thread state created by an ntdll
+thread-pool timer callback. The RPC connections come from the Windows Vulkan loader's DXGI/DXCore
+adapter enumeration ([attribution section 13](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#13-reload-r9-and-the-rpc-timer-residual-2026-10-22)).
+The resolution needs a human decision.
+
+An offline review of the frozen CDB guard R14 found that its 309 KB worker upload takes about 120 s
+against a 60 s stage. R14 also imports an inventory module that the reboot wiped, with no preserved
+copy. R14 and the native guard fixture each need a reviewed revision before native guard controls
+(`build/qualification_feature_20261021/guard_native_control_r1/REVIEW_FINDINGS_20261022.md`).
+
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Reload R10 started; CDB guard R15 prepared (2026-10-22)
+
+Loader patch 0002 and the ten-step pre-initialization (amendment 4) remove the R9 residual: traced
+six-life census `opencl_census_709beb33` shows zero handle, module, TLS and FLS change in every life.
+Native TLS/FLS controls pass on fixture `27cfb403`, and R10 (composite `e769dd0f…`) is running the
+1100-cycle reload. It has already passed the cycle where R9 failed.
+
+CDB guard R15 and the native guard controls are implemented and pass all offline gates
+([IMPL_DESC](IMPL_DESC.md#cdb-suspend-guard-r15-and-native-guard-controls-2026-10-22)). The two wiped
+R12 inputs were rebuilt by exact hash (inventory replay `3ca2e4e3…`, wrapper-mapping report
+`f370ea1e…`), and R12's 33 tests pass. The native guard controls run after R10 releases the lease.
+
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Commit hash backfill (2026-10-22)
+
+The independent pre-review found 98 branch commits that this log never recorded by hash,
+plus the IMPL_DESC commit `713ef8e` made just before this backfill. Many were recorded only by subject,
+because a commit cannot contain its own hash, or only in another feature's tracker. The task and
+overall deltas in the table at the top of this log already sum to exactly 85.5%, the current
+total. So every commit below carries +0% overall. Its work is credited in the adjacent logged rows
+or, for separate features, in that feature's own tracker. The table lists the 99 commits
+newest first.
+
+| Commit | Date | Change | Task / overall impact | Also recorded in |
+|:--|:--|:--|:--|:--|
+| `713ef8e` | 2026-10-22 | docs(opencl): specify the ten-step reload pre-initialization in IMPL_DESC | #5 +0%; overall +0% | not recorded elsewhere |
+| `df4d25d` | 2026-10-22 | docs(vgpu): specify CDB guard R15 and the native guard controls | #3 +0%; overall +0% | not recorded elsewhere |
+| `d2ba4a4` | 2026-10-22 | fix(opencl): absorb user-hive, RNG and D3DKMT first use in pre-initialization | #5 +0%; overall +0% | software-vgpu-slicing/IMPL_DESC.md |
+| `408752e` | 2026-10-22 | docs(opencl): add pre-initialization steps 8-10 and their attribution | #5 +0%; overall +0% | not recorded elsewhere |
+| `cfb951e` | 2026-10-22 | fix(opencl): narrow pre-initialization step 4 to a dxgi.dll load | #5 +0%; overall +0% | not recorded elsewhere |
+| `448f608` | 2026-10-22 | fix(vgpu): skip DXGI adapter sorting for explicit Vulkan loader driver lists | #3 +0%; overall +0% | not recorded elsewhere |
+| `f930eee` | 2026-10-22 | docs(opencl): specify loader patch 0002 and reload contract amendment 4 | #5 +0%; overall +0% | not recorded elsewhere |
+| `0541b3e` | 2026-10-22 | docs(opencl): attribute the R9 cycle-3 handle residual to RPC timer state | #5 +0%; overall +0% | not recorded elsewhere |
+| `901751f` | 2026-10-22 | docs(opencl): count the third transcript-rebuilt evidence file | #5 +0%; overall +0% | not recorded elsewhere |
+| `bbbdaee` | 2026-10-22 | docs(opencl): record reboot recovery and zero-residual promoted-ICD census | #5 +0%; overall +0% | not recorded elsewhere |
+| `d249a07` | 2026-10-21 | docs(opencl): record promoted ICD fix and overnight checkpoint | #5 +0%; overall +0% | this tracker, by subject |
+| `3997f55` | 2026-10-21 | docs(opencl): record approved second reload pre-initialization amendment | #5 +0%; overall +0% | not recorded elsewhere |
+| `800a5d6` | 2026-10-21 | docs(opencl): record approved OS-only reload pre-initialization | #5 +0%; overall +0% | this tracker, by subject |
+| `8a6e25e` | 2026-10-21 | docs(vgpu): preserve recoverable Fable qualification handoff | #3 +0%; overall +0% | this tracker, by subject; software-vgpu-slicing/CODEX_HANDOFF.md |
+| `8b964ab` | 2026-10-21 | fix(vgpu-tests): retire OpenCL owners before ICD abandonment | #5 +0%; overall +0% | this tracker, by subject |
+| `1ea8364` | 2026-10-21 | docs(vgpu): record loaded-host M2 ownership qualification | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `3e3d205` | 2026-10-21 | docs(vgpu): record physical matrix and allocator calibration | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `24f766b` | 2026-10-21 | test(vgpu): make preflight admission independent of local artifacts | #3 +0%; overall +0% | software-vgpu-slicing/QUALIFICATION_CONTINUATION_2026_10_21.md |
+| `2c3ca25` | 2026-10-21 | test(vgpu): calibrate first-load malloc leak detection | #3 +0%; overall +0% | not recorded elsewhere |
+| `4116250` | 2026-10-21 | test(vgpu): qualify in-flight OpenCL transport-loss ownership | #5 +0%; overall +0% | this tracker, by subject; software-vgpu-slicing/CODEX_HANDOFF.md |
+| `b374f69` | 2026-10-21 | test(vgpu): verify the actual outlined runtime TLS accessor | #3 +0%; overall +0% | this tracker, by subject |
+| `ca00ad7` | 2026-10-21 | docs(wsi): record independent Codex review and qualification blocker | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `52a1a29` | 2026-10-17 | docs(vgpu): retain final recursive checkout inventory limitation | #3 +0%; overall +0% | software-vgpu-slicing/CHECKPOINT_2026_10_21.md; software-vgpu-slicing/CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md |
+| `eb88c71` | 2026-10-17 | docs(vgpu): record qualification blockers and retired owned runners | #3 +0%; overall +0% | not recorded elsewhere |
+| `0c57b69` | 2026-10-17 | docs(wsi): clarify native acceptance in verification gate accounting | #3 +0%; overall +0% | not recorded elsewhere |
+| `2933aa6` | 2026-10-17 | docs(vgpu): record fresh qualification gates and native heap growth | #3 +0%; overall +0% | not recorded elsewhere |
+| `3ec4908` | 2026-10-17 | docs(tracker): record OpenCL implementation honestly as unverified at TODO #5 40% | #5 +0%; overall +0% | software-vgpu-slicing/CODEX_HANDOFF.md |
+| `de518b4` | 2026-10-09 | docs: bind reviewed input lease and terminal recovery handoff | No task delta; overall +0% | software-vgpu-slicing/CODEX_HANDOFF.md |
+| `d714621` | 2026-10-09 | fix(av): retain failed releases for bounded teardown retry | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `8d8d4df` | 2026-10-09 | test(av): exercise actual poll boundary across EINTR | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `8650e12` | 2026-10-09 | docs(cli): record reviewed terminal race implementation | No task here (separate feature); overall +0% | not recorded elsewhere |
+| `3884af7` | 2026-10-09 | fix(cli): drain terminal frames after peer write shutdown | No task here (separate feature); overall +0% | auto-terminal-race/TRACKER.md |
+| `26a73cb` | 2026-10-09 | feat(av): integrate revocable input leases across native peers | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `461f7c5` | 2026-10-09 | test(av): wire lease coverage and frozen V2 compatibility gate | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `efee605` | 2026-10-09 | feat(av): add canonical epoch protocol and portable lease authority | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `414d7e4` | 2026-10-09 | docs: preserve exact green native CI checkpoint | No task delta; overall +0% | REVIEW_CHECKLIST.md; auto-terminal-race/IMPL_DESC.md |
+| `879d0c3` | 2026-10-09 | docs(test): correct sanitizer implementation receipt hash | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; CI_GREEN_CHECKPOINT_2026-10-10.md |
+| `34c9d3e` | 2026-10-09 | docs(test): bind fail-closed sanitizer review receipt | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `01c30f7` | 2026-10-09 | docs: retain worker query and fatal sanitizer acceptance gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1b7cd17` | 2026-10-09 | test: make coverage sanitizer probes fail closed | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; coverage-recorder-integrity/TRACKER.md |
+| `50ca9bd` | 2026-10-09 | docs(vgpu): bind worker query runtime correction receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `3d3267d` | 2026-10-09 | test(vgpu): enable legal KHR queries in worker acceptance | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-runtime/TRACKER.md |
+| `f62cf52` | 2026-10-09 | docs: add exact coverage recorder replay and diagnostic handoff | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1e49a8e` | 2026-10-09 | docs: trace native fixture and recorder publication | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `51583f9` | 2026-10-09 | docs(test): bind native recorder integrity verification receipt | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `8d2dd4f` | 2026-10-09 | fix(test): retain every native coverage site within recorder budget | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `6f9494c` | 2026-10-09 | docs(vgpu): bind native WSI capability verification receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `0c65763` | 2026-10-09 | docs: record native lifecycle CI and remaining WSI gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `337021a` | 2026-10-09 | test(vgpu): opt native WSI fixtures into swapchain capability | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; native-wsi-test-capabilities/TRACKER.md |
+| `f04e358` | 2026-10-09 | docs: trace the bounded worker link repair and pending execution | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-runtime/TRACKER.md |
+| `d6be1c1` | 2026-10-09 | docs(vgpu): bind presented worker link correction receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `37df949` | 2026-10-09 | fix(vgpu): link native WSI sink into worker acceptance binaries | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-link/TRACKER.md |
+| `ec8bf07` | 2026-10-09 | docs: preserve lifecycle upgrade and native verification handoff | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `7c26f20` | 2026-10-09 | docs(av): bind synthetic callback correction verification receipt | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `f6e5695` | 2026-10-09 | test(av): accept validated input in synthetic platform fixture | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `f8163d9` | 2026-10-09 | docs(vgpu): record native extension oracle coverage receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `efc09c8` | 2026-10-09 | docs(av): record exact generation lifecycle verification receipt | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1337fe5` | 2026-10-09 | feat(av): gate native lifecycle effects on admitted window generations | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `b317c05` | 2026-10-09 | test(vgpu): verify exact native extension projections | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; native-icd-extension-oracle/TRACKER.md |
+| `580349c` | 2026-10-09 | feat(av): add explicit lifecycle capability and identity effect gate | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `c11ce21` | 2026-10-09 | docs(vgpu): record exact sanitizer inventory repair evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; coverage-recorder-integrity/TRACKER.md |
+| `cf1ca1e` | 2026-10-09 | docs(av): specify generation-safe lifecycle capability contract | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `dfe7969` | 2026-10-09 | docs: link the portability checkpoint and remaining sanitizer gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `3cf2faa` | 2026-10-09 | fix(vgpu): account for device sanitizer helper closure | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; owned-sanitizer-inventory/TRACKER.md |
+| `e9b0663` | 2026-10-09 | docs(vgpu): attribute portable ICD test environment evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `37970ae` | 2026-10-09 | test(vgpu): make ICD environment fixtures portable on Windows | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; windows-icd-test-environment/TRACKER.md |
+| `b7c5912` | 2026-10-09 | docs(av): record native CI and leak-enabled input acceptance | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `622e79e` | 2026-10-09 | docs: map the verified coverage follow-on publication | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `4e07ac8` | 2026-10-09 | docs: add a concise prioritized home-validation index | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1de3fdd` | 2026-10-09 | docs(vgpu): record restored whole-ICD coverage evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/EVIDENCE.md |
+| `96291c5` | 2026-10-09 | docs: record restored ICD coverage without hardware acceptance credit | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `2d97603` | 2026-10-09 | test(vgpu): cover queue-side WSI failure transactions | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; wsi-window-lifetime/TRACKER.md |
+| `b137f3e` | 2026-10-09 | docs: map published checkpoints and retain the full coverage failure | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `78ed9d1` | 2026-10-09 | ci(vgpu): include full ICD queue regression units in both modes | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `f130306` | 2026-10-09 | docs(vgpu): record reviewed WSI lifetime verification | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; HARDWARE_TEST_HANDOFF.md |
+| `6a4e65a` | 2026-10-09 | ci(vgpu): exercise WSI lifetime and repair native ICD link parity | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `51ee17b` | 2026-10-09 | fix(vgpu): harden Win32 swapchain retirement and resize lifetimes | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `272f030` | 2026-10-09 | docs(av): correct measured cloud compiler version | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `c854a79` | 2026-10-09 | test(av): record input verification and native DPI assertions | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `2d4cb16` | 2026-10-09 | ci(av): verify desktop input on the shared GPU branch | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `388b7b3` | 2026-10-09 | feat(av): connect Wayland seat input to tracked guest injection | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `887c5f7` | 2026-10-09 | feat(av): validate bounded input and track held ownership | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `c4a4d39` | 2026-10-09 | docs(av): specify ordinary-window input contract | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `9cdb6b6` | 2026-10-09 | test(vgpu): add Properties2 sanitizer gate and DXVK shader tooling | #3 +0%; overall +0% | not recorded elsewhere |
+| `c6cf98c` | 2026-10-08 | docs: add shared GPU Windows desktop roadmap | No task delta; overall +0% | not recorded elsewhere |
+| `cb0b0d5` | 2026-10-07 | docs(vgpu): record final ICD and real Windows Vulkan qualification | #3 +0%; overall +0% | SHARED_GPU_DESKTOP_ROADMAP.md |
+| `c390a74` | 2026-10-07 | test(dxvk): exercise genuine recorded submission transport loss | #3 +0%; overall +0% | not recorded elsewhere |
+| `e24733e` | 2026-10-07 | docs(vgpu): record real compute acceptance and remaining presentation gate | #3 +0%; overall +0% | not recorded elsewhere |
+| `5407cfc` | 2026-10-07 | docs(vgpu): record real DXVK pixel acceptance and remaining compute failure | #3 +0%; overall +0% | not recorded elsewhere |
+| `357d6e4` | 2026-10-07 | docs(vgpu): record integrated transport and honest qualification gaps | #3 +0%; overall +0% | not recorded elsewhere |
+| `e6687ad` | 2026-10-07 | test(vgpu): preserve all final coverage attempts and track qualification scope | #3 +0%; overall +0% | not recorded elsewhere |
+| `8083c76` | 2026-10-07 | chore(vgpu): describe Vulkan 1.3 ceiling and coherent integration milestone | #3 +0%; overall +0% | not recorded elsewhere |
+| `393b2f3` | 2026-10-07 | feat(vgpu): support bounded full-size DXVK shader packets | #3 +0%; overall +0% | not recorded elsewhere |
+| `081989b` | 2026-10-07 | chore(vgpu): integrate modern Vulkan module builds and targeted checks | #3 +0%; overall +0% | not recorded elsewhere |
+| `75c0954` | 2026-10-07 | fix(vgpu): freeze every Properties2 SDK member type explicitly | #3 +0%; overall +0% | not recorded elsewhere |
+| `4ae52ec` | 2026-10-07 | docs(vgpu): record exact native SDK owner attribution | #3 +0%; overall +0% | not recorded elsewhere |
+| `7bfb191` | 2026-10-07 | feat(vgpu): forward immutable guest caps with absolute deadlines | #3 +0%; overall +0% | not recorded elsewhere |
+| `12bdbac` | 2026-10-07 | feat(vgpu): expose exact validated extension backend status | #3 +0%; overall +0% | this tracker, by subject |
+| `640ea9a` | 2026-10-07 | feat(vgpu): publish modern native Properties2 payloads transactionally | #3 +0%; overall +0% | not recorded elsewhere |
+
+Later commits are recorded by hash in the section that follows each one. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
+
+### Reload R10 passes 1100 cycles (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `98d0211` | docs(tracker): backfill 99 unlogged commit hashes for software-vgpu-slicing | No task delta; overall +0% | Logged deltas re-summed to 85.5% |
+| `23e4d3b` | docs(vgpu): record where the R15 guard sources live and their hashes | #3, #5 +0%; overall +0% | 16 hashes recomputed from the files |
+| `63f0c80` | docs(opencl): record the passing 1100-cycle reload R10 | #5 +30%; overall +6% | R10 exit 0, verdict PASS; independent verifier rerun PASS; 1100 cycles at 104/1083/4075 |
+| `952583e` | docs(opencl): cite amendments 1-4 for the reload verifier witness | #5 +0%; overall +0% | Verifier tests 13/13 |
+| `1c3df0c` | docs(opencl): make reload amendment 4's approval basis and scope exact | #5 +0%; overall +0% | Wording only |
+
+R10 ([attribution section 15](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#15-reload-r10-passes-1100-cycles-2026-10-22))
+is the full-reload acceptance for TODO #5, so #5 moves from 40% to 70% (+6% overall). The remaining
+30% of #5 is guarded native heap qualification (20%), then exact-head CI and the final review (10%).
+Patch 0002 and steps 8-10 still need the user's explicit ratification before merge (contract
+amendment 4). The native CDB guard controls are running now; the Windows physical matrix, M2 and the
+DXVK and OpenCL heap runs follow. Parent 91.5% / In Progress, Time Ended TBD.
+
+### CDB guard R16-R18 and passing native guard controls (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `dc7ca79` | docs(tracker): credit the passing 1100-cycle reload R10 to TODO #5 | #5 +0% (records the +30% above); overall +0% | Logged deltas re-summed to 91.5% |
+| `90bc5c5` | docs(vgpu): specify CDB guard R16-R18 and the passing native guard controls | #3, #5 +0%; overall +0% | Native controls r5 `run_b85ce051` PASS: normal, inject (slot 0 recovered), fresh (FRESH reported, never resumed), timeout (all six restored, `GuardTimeoutCleaned`); every fixture TERMINAL 0 with equal handles and absent |
+
+R15, R16 and R17 each failed the native guard controls once, on a WinRM command-line limit, a
+stage-capped cleanup deadline, and an exit-time identity re-read plus a PowerShell CRLF on the
+result. Controls r4 also showed that the inject hook fired too late. Each failure is preserved and
+fixed in a new revision ([IMPL_DESC](IMPL_DESC.md#cdb-suspend-guard-r16-r18-and-passing-native-guard-controls-2026-10-22)).
+The R16 timeout control left one CPU-only control fixture suspended in the guest (pid 7984). It is
+retained, not terminated, and recorded in the lease. The guard is now cleared for the heap runs. The
+Windows physical matrix revision 2 is running. All tasks +0%; parent 91.5% / In Progress, Time
+Ended TBD.
+
+### Physical matrix, guarded heap runs and M2 revision 4 (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `09ff98e` | docs(tracker): record CDB guard R16-R18 and the passing native controls | No task delta; overall +0% | - |
+| `fce4e28` | docs(opencl): correct the pre-initialization comments to ten steps and four amendments | #5 +0%; overall +0% | Comment-only; pre-initialization coverage 100% |
+| `59c06e2` | docs(vgpu): record guard R19-R22, the heap residual review and both heap results | #3 +4%; overall +1% | Windows physical r2: 12/12 PASS. DXVK heap revision 11: three lifetimes, native exit 0, review PASS with zero OWNED blocks; guard controls r6/r8/r9 PASS; review tool tests 7/7 |
+| `2e411c4` | docs(opencl): attribute the guarded heap run's owned per-load leaks | #5 +0%; overall +0% | OpenCL heap r3: three lives complete, review FAIL (27 OWNED blocks per load) |
+
+TODO #3 moves from 90% to 94% (+1% overall). The Windows physical matrix requalified 12/12 on the
+patched loader, and the DXVK heap qualification shows zero owned leaks. Classifying DXVK's own
+statically linked runtime residue as CLIENT rather than OWNED was Claude's decision under the user's
+autonomy instruction. It follows the handoff criterion "zero owned leaks" and is flagged for the
+user's review. The remaining 6% of #3 is M2 on the patched loader (running as revision 4; revision 3
+refused before native work because its owner check named the previous lease owner), exact-head CI
+and the final review.
+
+TODO #5 stays at 70%. The OpenCL heap run proves per-load owned leaks in OpenCL.dll, which block
+heap acceptance until a user-approved teardown fix, rebuild and requalification. The R16 control
+fixture (pid 7984) remains suspended in the guest. Parent 92.5% / In Progress, Time Ended TBD.
+
+### M2 revision 4 passes on the patched loader (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `9228a01` | docs(tracker): credit physical requalification and DXVK heap, record the OpenCL heap failure | #3 +0% (records the +4% above); overall +0% | Logged deltas re-summed to 92.5% |
+| (this commit) | docs(tracker): record the passing M2 revision 4 requalification | #3 +2%; overall +0.5% | `m2_owned_runs_2e411c4_revision4/results.json` (`515f17cb…`): status PASS; triangle_present (eight lifetimes) and wsi_lifetime (eight lifetimes) PASS on exact RTX 5080; guest pre/postflight PASS; no host survivors; retirement and VM preservation PASS |
+
+Package `m2_owned_candidate_2e411c4_r4` (manifest `63f66a5b…`) was frozen by plan revision 4
+(`build/qualification_feature_20261021/m2_root_plan_r4`). That revision differs from revision 3
+only in the sole-owner string its lease check requires and in its regenerated plan manifest.
+Revision 3 refused before any native work (status NOT_RUN). Amendment 2 item 4 (requalify every
+Windows workload that loads the patched `vulkan-1.dll`) is now complete for M2, the Windows physical
+matrix and DXVK. TODO #3 moves from 94% to 96% (+0.5% overall). Its remaining 4% is exact-head CI and
+the final review. TODO #5 stays blocked on the OpenCL.dll per-load leak fix, which awaits the user's
+decision. Parent 93.0% / In Progress, Time Ended TBD.
+
+### OpenCL.dll llvm_shutdown teardown fix (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `46f623a` | docs(tracker): record the passing M2 revision 4 requalification | #3 +0% (records the +2% above); overall +0% | Logged deltas re-summed to 93.0% |
+| `23e9275` | fix(opencl): destroy LLVM managed statics before releasing the GCC arena | #5 +0%; overall +0% | EH-pool unit test plain/ASan/LSan/UBSan; 100% line and branch coverage |
+| `99d333a` | test(opencl): require llvm_shutdown to resolve from LLVM's ManagedStatic object | #5 +0%; overall +0% | Audit tests; current map satisfies the gate |
+| `9f40010` | fix(opencl): give the LLVM-free runtime probe its own llvm_shutdown stand-in | #5 +0%; overall +0% | Audit, build-driver (34) and probe-build tests; rebuilt candidate 8552b3a1 admitted statically |
+| `8fb0b93` | docs(opencl): record the llvm_shutdown teardown fix and the critical-section analysis | #5 +0%; overall +0% | Census r6 zero handle/module/TLS/FLS change; controls r8 PASS |
+
+The user approved this fix and its requalification on 2026-10-22. Reload R11 (1100 cycles) and the
+guarded heap run r4 are running or queued. TODO #5 stays at 70% until both pass. Parent 93.0% / In
+Progress, Time Ended TBD.
+
+
+### Codex continuation: exact runtime archive admission (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `22e86e3` | docs(vgpu): specify the OpenCL.dll llvm_shutdown teardown and log its commits | #3/#5 +0%; overall +0% | Prior documentation checkpoint; no additional native acceptance |
+| `e5c39a2` | fix(opencl): bind teardown symbols to their exact runtime archives | #5 +0%; overall +0% | 22 audit tests pass in normal/optimized Python, including archive-only spoofs, standalone/prefixed members and policy override rejection. Preserved real map c5af0bdc passes the stricter gate with candidate 8552b3a1 unchanged. |
+
+Both archive and member names are now required, matching the shim and admission documentation.
+The auditor is a build-cache input; a later build must use a new cache key. This read-only map
+recheck does not refresh the historical build receipt or credit a rebuild/native qualification.
+Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: probe and production LLVM policy wiring (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `3c7b105` | test(opencl): enforce separate probe and production LLVM admission | #5 +0%; overall +0% | 35 build-driver tests pass in normal/optimized Python outside sandbox ptrace with ASan/LSan enabled. Cached admission asserts llvm_runtime=True; fresh admission wiring requires literal True; probe admission asserts False. |
+
+Sandbox runs are retained in /tmp/waddle_clvk_build*.log as failures: ptrace prevents LSan
+execution. Host reruns use unchanged leak checks and pass; no failed result is waived.
+The preceding archive regression test fails six cases against the original 22e86e3 auditor.
+No OpenCL.dll rebuild or native acceptance is credited; parent remains 93.0%.
+
+### Codex continuation: managed-static destructor-order boundary (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `881b40f` | docs(opencl): specify the managed-static teardown ordering limitation | #5 +0%; overall +0% | Shim preprocessed C unchanged; existing CRT-double tests pass 6/6 plain and ASan/LSan/UBSan; actual shim coverage 14/14 lines and 6/6 branches. |
+
+The default-option review is conditional: -print-debug-counter can print through a destroyed
+LLVM stream during unload. No filter is implemented and no qualification is claimed for that
+option. IMPL_DESC and Doxygen now state the lifetime precondition and the separate approval
+and complete native requalification required for a private-copy filter. No upstream changes.
+Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: nonthrowing LLVM-free probe stand-in (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `ea2ffa4` | test(opencl): declare the probe llvm_shutdown stand-in noexcept | #5 +0%; overall +0% | Three probe cross-build boundary tests pass. This affects only the LLVM-free probe; no production DLL rebuild or native acceptance is credited. |
+
+Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: reviewed lease-owner wrapper r2 (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `7eafbff` | chore(qualification): prepare exact Codex lease-owner wrapper r2 | #3/#5/#11 +0%; overall +0% | Eleven offline tests pass in normal/optimized Python against frozen executor b571dbbe; inverse patch exactly recovers wrapper r1 94a367b8. Native use awaits explicit approval. |
+
+[Approval request](lease_owner_wrapper_r2/approval_request.md) records the exact owner chain and
+wrapper hash a08bf833. An ignored r5 heap launcher pins this wrapper and preserves r4 runner
+bytes d276f589. Newly launched VM identities require a separate runner revision. No owner
+impersonation, predicate waiver or native qualification is included. Parent remains 93.0%.
+
+### Codex continuation: approvals and VM recovery checkpoint (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `608f0ee` | docs(vgpu): record ratified contracts and preserved VM recovery | #3/#5/#11 +0%; overall +0% | Explicit amendment-4, DXVK CLIENT and wrapper-r2 approvals; preserved disk check clean; new QEMU/swtpm identities and console sign-in observed. R11/R12 remain incomplete; no new native acceptance. |
+
+The supplied handoff is retained as historical context. Its RESULT_R12_PLACEHOLDER is superseded
+by attribution section 18, not filled with a fabricated result. All current review nits are
+addressed. TODO #5's note now reflects the already approved/implemented fix. Parent remains
+93.0% / In Progress, Time Ended TBD until fresh native gates and final exact-head CI pass.
+
+### CI package-download timeout correction (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `ea40d8a` | ci(vgpu): use the official Ubuntu archive for admission tools | #3/#5 +0%; overall +0% | Job 120451134378 in run 39964621955 at 608f0ee exhausted 15 minutes during Azure-mirror downloads before tests. Workflow YAML/shell syntax pass; test steps, package list, other jobs and timeout are unchanged. |
+
+The same-head push admission job passed, but the cancelled PR job is not called green. The
+new commit changes the concrete failing download source instead of rerunning an unexplained
+failure. Raw installation log is preserved under codex_continuation_20261023. Parent remains
+93.0% / In Progress, Time Ended TBD; fresh-head CI and native gates remain open.
+
+### Current-source OpenCL build and native prerequisites (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `bffeb41` | docs(opencl): record current-source build and new-boot native prerequisites | #5/#11 +0%; overall +0% | Build 2738/2738 and static admission PASS; candidate 81f3fc1d; native controls c5d11649 PASS; six-life census 680adacd completes with zero handle/module/TLS/FLS deltas, native exit 0 and exact host/native retirement. |
+
+Six normal/optimized revision groups and both supervisor self-tests pass. All 1225 preserved
+input paths were rechecked; only the approved shim documentation and new canonical receipt are
+rebound, with all other old bindings exact. New runners preserve prior revisions and bind the
+approved owner/new VM boot. Reload R13 and guarded heap remain open. Parent 93.0%, Time Ended TBD.
+
+### Rebuilt OpenCL candidate R13 reload qualification (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `52f2f75` | docs(opencl): record the independently verified R13 reload pass | #5/#11 +0%; overall +0% | R13 attempt2 executor exit0, exactly1100 cycles/3300 contexts, handles104/TLS1083/FLS4075 on every cycle, one cleanup-complete record, exact host/native retirement, independently rerun frozen verifier PASS. |
+
+All 12 CI checks pass on exact source head bffeb41. The earlier plan preparation failed only
+because sandbox sockets were denied, before native work; its evidence is retained and no
+native failed run was retried into this result. R13's heap_acceptance remains false. The
+new-candidate guarded heap capture and offline ownership gate still block TODO #5, which stays
+70%, and TODO #11, which stays60%. Parent remains93.0% / In Progress, Time Ended TBD.
+
+### Final rebuilt-candidate heap and native bootstrap acceptance (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `01613b1` | docs(opencl): close rebuilt-candidate heap ownership qualification | #5 +30% (+6.0% overall); #11 +40% (+0% overall) | Heap cf99460c: native0, three8-context lives, nine API heaps/zero CSR busy at each stage, eight clean R22 passes, zero OWNED blocks/bytes at every unload, all allocating modules resolved, exact process/pidfd/IFEO retirement; offline review e2fc5fb6 and root review4638f3df PASS. |
+
+The original capture exit1 is retained as the expected source-frame-attribution handoff; the
+prescribed separate offline module-ownership review supplies acceptance. No missing coverage,
+unknown allocator or ownership failure is waived. R13 was independently qualified before heap
+launch. Default compiler-option scope and the documented LLVM diagnostic limitation remain
+explicit. Native gates #5/#11 are complete. Parent moves93.0->99.0%, Review, Time Ended TBD;
+TODO#3's final4% is the final source/evidence and delivery-head CI closure.
+
+### Feature acceptance closure (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `19bb1a6` | docs(vgpu): complete software slicing acceptance tracker | #3 +4% (+1.0% overall); all other tasks +0% | All 12 checks SUCCESS on source head bffeb41; final source/native applicability review PASS at 01613b1, current receipt binds all 14 runtime inputs, R13 and heap root reviews PASS, README/dependency pins unchanged. |
+
+All twelve tasks now reach100%, weighted total100.0%, and the header records the acceptance
+closure time. The final review is a root follow-up to the preserved independent handoff review;
+it is not represented as a newly independent review. The default compiler-option qualification
+and explicit nonstandard LLVM diagnostic-option limitation remain unchanged. Physical hypervisor
+and compositor boundaries previously delegated by the user remain outside the accepted scope.
+Historical pending statements in the commit log describe their dated checkpoints and are
+superseded by the current task table and attribution sections18-21.
+
+This commit changes acceptance documentation only. Before PR#6 is marked ready, its exact
+pushed head must have all twelve provider CI checks successful; the final provider snapshot
+and delivery receipt are retained with the local qualification evidence without another
+source commit. PR#6 must remain open and must not be merged by this continuation.
+
+### Historical merge attribution audit (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `7fc3c81` | test(vgpu): integrate independently reviewed M2 ownership readiness | All tasks +0%; overall +0% | Merge preserves both isolated M2 and runtime/cancellation histories. Original checkpoint records 156 Unit D bindings and portable gates, with native/current-head acceptance still open then; no duplicate progress credit. |
+| `2568c0b` | chore(vgpu): preserve existing remote PR history | All tasks +0%; overall +0% | Merge preserves remote review-controller source/documentation and 47 offline controls without rewriting history. Original checkpoint explicitly gives no current-candidate CI/runtime credit. |
+| (this commit; identified by the git commit containing this row) | docs(tracker): attribute preserved feature integration commits | All tasks +0%; overall +0% | Complete feature-range hash audit finds every preceding commit represented, including the two historical merges above and acceptance closure19bb1a6. No implementation or qualification verdict changes. |
+
+This closes attribution gaps found by comparing all feature-range commits against the parent
+tracker, rather than assigning their already integrated work additional progress. Total remains
+100.0% and the acceptance end time remains unchanged. The exact delivery-head CI requirement
+applies to this documentation follow-up before PR readiness; superseded CI is not final evidence.

@@ -82,6 +82,12 @@ const FeatureTags = [_]u32{
     c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
 };
 const FeatureCounts = [_]u8{ 12, 47, 15, 1, 1, 2, 3, 1 };
+// Features2 publication and device creation must recognize the same promoted structures.
+comptime {
+    if (!std.mem.eql(u32, &features_native.PromotedTags, &device_native.PromotedTags) or
+        !std.mem.eql(u8, &features_native.PromotedCores, &device_native.PromotedCores))
+        @compileError("Promoted feature registries differ between Features2 and device creation");
+}
 fn boolean_mask(comptime native_t: type, comptime first: []const u8, comptime count: usize, comptime names: anytype) [count]u32 {
     var result = [_]u32{0} ** count;
     const start = @offsetOf(native_t, first);
@@ -1784,7 +1790,7 @@ fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv
     const chain = features_native.collect_chain(output.pNext) catch return;
     var nodes = zero_feature_nodes(&chain);
     const zero_core = [_]u32{0} ** features_wire.CoreFlags;
-    features_native.validate_features2(output_address, &chain, nodes[0..chain.count], &zero_core) catch return;
+    features_native.validate_features2(output_address, &chain, nodes[0..chain.count], &zero_core, &features_native.promoted_source_t{}) catch return;
     const raw = ensure_raw_features(physical) orelse return;
     const core = project_core(&raw.core);
     var supported_names: [4][]const u8 = undefined;
@@ -1800,9 +1806,21 @@ fn features2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv
             break;
         }
     }
-    features_native.publish_features2(output_address, &chain, nodes[0..chain.count], &core) catch return;
+    const entry = physical_features_cache(physical).?; // ensure_raw_features cached the actual API.
+    const source = promoted_feature_source(raw, supported_names[0..supported_count], visible_api_version(entry.actual_api_version));
+    features_native.publish_features2(output_address, &chain, nodes[0..chain.count], &core, &source) catch return;
+}
+// Promoted structures mirror the same projected aggregates that device creation admits.
+fn promoted_feature_source(raw: *const features_wire.result_t, names: []const []const u8, api: u32) features_native.promoted_source_t {
+    var source = features_native.promoted_source_t{ .api_version = api };
+    if (!reply_profile_ready) return source;
+    const projected = project_device_feature_nodes(raw, names);
+    for (&source.flags, projected[0..3], FeatureCounts[0..3]) |*flags, node, count| @memcpy(flags[0..count], node.flags[0..count]);
+    return source;
 }
 /// Query modern typed physical properties; caller owns initialized exclusive root/chain storage.
+/// Promoted core structures are filled from their parent aggregates under the visible API gate;
+/// a cold actual-API cache with promoted structures first issues the core properties query.
 /// Invalid topology or malformed replies preserve all output bytes. No retained caller pointers;
 /// the process mutex serializes transport and publication. Unknown payloads remain untouched.
 fn properties2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callconv(.C) void {
@@ -1814,14 +1832,17 @@ fn properties2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callco
     const output: *c.VkPhysicalDeviceProperties2 = @ptrCast(@alignCast(address));
     if (output.sType != c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2) return;
     const chain = properties_native.collect_chain(output.pNext) catch return;
+    const entry = physical_features_cache(physical).?;
+    if (chain.promoted_count != 0 and !entry.actual_api_ready) _ = raw_properties(physical) orelse return;
+    const visible = if (entry.actual_api_ready) visible_api_version(entry.actual_api_version) else c.VK_API_VERSION_1_0;
+    const request = properties_native.request_tags(&chain, visible) catch return;
     const record = object(@intFromPtr(physical.?), c.VK_OBJECT_TYPE_PHYSICAL_DEVICE).?;
-    const encoded = properties_wire.query(record.id, chain.tags[0..chain.count]) catch return;
+    const encoded = properties_wire.query(record.id, request.tags[0..request.count]) catch return;
     const reply = transact(encoded.bytes[0..encoded.used]) orelse return;
-    var staged = properties_wire.decode(reply, chain.tags[0..chain.count]) catch {
+    var staged = properties_wire.decode(reply, request.tags[0..request.count]) catch {
         _ = failure(c.RingCorrupt);
         return;
     };
-    const entry = physical_features_cache(physical).?;
     if (staged.properties.apiVersion >> 29 != 0 or
         ((staged.properties.apiVersion >> 22) & 0x7f) != 1 or
         (entry.actual_api_ready and entry.actual_api_version != staged.properties.apiVersion)) {
@@ -1834,6 +1855,11 @@ fn properties2(physical: c.VkPhysicalDevice, output_address: ?*anyopaque) callco
     entry.actual_api_version = actual_api;
     entry.actual_api_ready = true;
 }
+// Public API version for one actual host version: the implemented ceiling under a ready reply
+// profile, otherwise Vulkan1.0. Promoted structure gates and every property projection share it.
+fn visible_api_version(actual: u32) u32 {
+    return if (reply_profile_ready) @min(actual, ImplementedApiVersion) else c.VK_API_VERSION_1_0;
+}
 // All physical property entrypoints use the same guest implementation limits.
 fn project_properties(staged: *c.VkPhysicalDeviceProperties) void {
     staged.limits.maxBoundDescriptorSets = @min(staged.limits.maxBoundDescriptorSets, profiles.MaxSets);
@@ -1842,7 +1868,7 @@ fn project_properties(staged: *c.VkPhysicalDeviceProperties) void {
     staged.limits.maxViewports = @min(staged.limits.maxViewports, 16);
     staged.limits.maxColorAttachments = @min(staged.limits.maxColorAttachments, 8);
     staged.limits.maxPushConstantsSize = @min(staged.limits.maxPushConstantsSize, profiles.MaxPushBytes);
-    staged.apiVersion = if (reply_profile_ready) @min(staged.apiVersion, ImplementedApiVersion) else c.VK_API_VERSION_1_0;
+    staged.apiVersion = visible_api_version(staged.apiVersion);
     staged.limits.nonCoherentAtomSize = 1;
     staged.limits.minMemoryMapAlignment = 4096;
 }
@@ -9991,6 +10017,60 @@ test "Features2 cached raw137 one-hots are immutable while public flags stay fal
         try std.testing.expectEqual(@as(u32, 2), fixture.commands);
     }
 }
+test "public Features2 promoted structures mirror projected aggregates for every raw aggregate one-hot" {
+    @setEvalBranchQuota(1000000);
+    const capabilities = feature_test_capabilities();
+    const Promoted = features_native.Promoted;
+    const storage_t = extern struct { value: [128]u8 align(8) };
+    var promoted_ones: usize = 0;
+    for ([_]bool{ false, true }) |profile| for (55..55 + 12 + 47 + 15) |selected| {
+        var fixture = feature_fixture_t{ .hot = selected };
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        const prior = reply_profile_ready;
+        reply_profile_ready = profile;
+        defer reply_profile_ready = prior;
+        // Empty raw device extension cache: aggregates need no extension.
+        extension_caches[0] = .{ .handle = @intFromPtr(physical.?), .ready = true };
+        var vulkan11 = std.mem.zeroes(c.VkPhysicalDeviceVulkan11Features);
+        var vulkan12 = std.mem.zeroes(c.VkPhysicalDeviceVulkan12Features);
+        var vulkan13 = std.mem.zeroes(c.VkPhysicalDeviceVulkan13Features);
+        vulkan11.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES;
+        vulkan12.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+        vulkan13.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+        vulkan11.pNext = &vulkan12;
+        vulkan12.pNext = &vulkan13;
+        var promoted: [Promoted.len]storage_t = undefined;
+        @memset(std.mem.asBytes(&promoted), 0xa5);
+        inline for (Promoted, 0..) |record, index| {
+            const header: *c.VkBaseOutStructure = @ptrCast(&promoted[index].value);
+            header.sType = record.tag;
+            header.pNext = if (index + 1 < Promoted.len) @ptrCast(&promoted[index + 1].value) else null;
+        }
+        vulkan13.pNext = @ptrCast(&promoted[0].value);
+        const before = promoted;
+        var outer = std.mem.zeroes(c.VkPhysicalDeviceFeatures2);
+        outer.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        outer.pNext = &vulkan11;
+        features2(physical, &outer);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        if (!profile) {
+            // Visible API1.0: promoted structures stay byte-for-byte unchanged.
+            try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&promoted));
+            continue;
+        }
+        inline for (Promoted, 0..) |record, index| {
+            const value: *const record.native_t = @ptrCast(@alignCast(&promoted[index].value));
+            const aggregate = if (record.core == 0) &vulkan11 else if (record.core == 1) &vulkan12 else &vulkan13;
+            inline for (@typeInfo(record.native_t).Struct.fields[2..]) |field| {
+                try std.testing.expectEqual(@field(aggregate.*, field.name), @field(value.*, field.name));
+                promoted_ones += @field(value.*, field.name);
+            }
+        }
+    };
+    // Projected allowlist entries that a promoted structure also names: eight Vulkan12, five Vulkan13.
+    try std.testing.expectEqual(@as(usize, 13), promoted_ones);
+}
 test "Features2 actual API gates aggregates correctly and never147 on API1.0" {
     const capabilities = feature_test_capabilities();
     for ([_]u32{ c.VK_API_VERSION_1_0, c.VK_API_VERSION_1_1, c.VK_API_VERSION_1_2, c.VK_API_VERSION_1_3 }) |api| {
@@ -10379,6 +10459,52 @@ test "public device ACK owns immutable canonical state and exact independent min
     try std.testing.expectEqualDeep([_]device_cache_t{.{}} ** 16, device_caches);
 }
 
+test "public device promoted buffer device address request sends and enables the Vulkan12 aggregate" {
+    const word = (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "bufferDeviceAddress") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4;
+    var fixture = feature_fixture_t{ .hot = 55 + 12 + word };
+    const physical = try feature_test_physical(&fixture, &feature_test_capabilities());
+    defer venus_icd_abandon();
+    const prior = reply_profile_ready;
+    reply_profile_ready = true;
+    defer reply_profile_ready = prior;
+    extension_caches[0] = .{ .handle = @intFromPtr(physical.?), .ready = true };
+    var priorities = [_]f32{1};
+    var queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
+    var info = device_test_info(&queues);
+    var promoted = std.mem.zeroes(c.VkPhysicalDeviceBufferDeviceAddressFeatures);
+    promoted.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+    promoted.bufferDeviceAddress = 1;
+    info.pNext = &promoted;
+    var aggregate = std.mem.zeroes(c.VkPhysicalDeviceVulkan12Features);
+    aggregate.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    aggregate.bufferDeviceAddress = 1;
+    var expected = info;
+    expected.pNext = &aggregate;
+    fixture.expected_device_info = &expected;
+    var device: c.VkDevice = null;
+    try std.testing.expectEqual(@as(c_int, c.VK_SUCCESS), create_device(physical, &info, null, @ptrCast(&device)));
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    const entry = device_cache(@intFromPtr(device.?)).?;
+    for (entry.enabled_state.features.nodes[1].flags[0..47], 0..) |flag, index| try std.testing.expectEqual(@as(u32, @intFromBool(index == word)), flag);
+    try std.testing.expectEqualDeep([_]u32{0} ** 47, entry.enabled_state.features.nodes[0].flags[0..47].*);
+    // A promoted word outside the projected policy is not present.
+    promoted.bufferDeviceAddressCaptureReplay = 1;
+    var rejected: c.VkDevice = @ptrFromInt(8);
+    const commands = fixture.commands;
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_FEATURE_NOT_PRESENT), create_device(physical, &info, null, @ptrCast(&rejected)));
+    try std.testing.expect(rejected == null);
+    try std.testing.expectEqual(commands, fixture.commands);
+    // The aggregate together with a structure promoted into it is invalid usage.
+    promoted.bufferDeviceAddressCaptureReplay = 0;
+    aggregate.pNext = &promoted;
+    info.pNext = &aggregate;
+    rejected = @ptrFromInt(8);
+    try std.testing.expectEqual(@as(c_int, c.VK_ERROR_INITIALIZATION_FAILED), create_device(physical, &info, null, @ptrCast(&rejected)));
+    try std.testing.expect(rejected == null);
+    try std.testing.expectEqual(commands, fixture.commands);
+    destroy_device(device, null);
+    try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+}
 test "public device explicit failure rolls back while uncertain create retains only opaque owners" {
     const priorities = [_]f32{1};
     const queues = [_]c.VkDeviceQueueCreateInfo{device_test_queue(&priorities)};
@@ -10616,6 +10742,88 @@ test "public Properties2 preserves headers and shares legacy guest limit project
     try std.testing.expectEqualDeep(before, output);
 }
 
+test "public Properties2 fills promoted structures from parent aggregates behind the visible API gate" {
+    for ([_]bool{ false, true }) |profile| for ([_]u32{ c.VK_API_VERSION_1_1, c.VK_API_VERSION_1_2, c.VK_API_VERSION_1_3 | 280 }) |api| {
+        var fixture = feature_fixture_t{ .api = api };
+        const capabilities = feature_test_capabilities();
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        const prior = reply_profile_ready;
+        reply_profile_ready = profile;
+        defer reply_profile_ready = prior;
+        var driver: c.VkPhysicalDeviceDriverProperties = undefined;
+        var subgroup: c.VkPhysicalDeviceSubgroupProperties = undefined;
+        var dot: c.VkPhysicalDeviceShaderIntegerDotProductProperties = undefined;
+        @memset(std.mem.asBytes(&driver), 0xa5);
+        @memset(std.mem.asBytes(&subgroup), 0xa5);
+        @memset(std.mem.asBytes(&dot), 0xa5);
+        driver.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+        driver.pNext = &subgroup;
+        subgroup.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES;
+        subgroup.pNext = &dot;
+        dot.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_PROPERTIES;
+        dot.pNext = null;
+        const untouched = .{ driver, subgroup, dot };
+        var output = std.mem.zeroes(c.VkPhysicalDeviceProperties2);
+        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        output.pNext = &driver;
+        const calls = fixture.commands;
+        properties2(physical, &output);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+        // Cold actual-API cache: core properties command6 precedes command148.
+        try std.testing.expectEqual(calls + 2, fixture.commands);
+        const visible: u32 = if (profile) @min(api, ImplementedApiVersion) else c.VK_API_VERSION_1_0;
+        try std.testing.expectEqual(visible, output.properties.apiVersion);
+        const parents = [_]u32{ c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES, c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES };
+        var levels: usize = 0;
+        for ([_]u32{ c.VK_API_VERSION_1_1, c.VK_API_VERSION_1_2, c.VK_API_VERSION_1_3 }) |version| levels += @intFromBool(visible >= version);
+        var core: c.VkPhysicalDeviceProperties = undefined;
+        var nodes: [5]properties_wire.data_t = undefined;
+        venus_properties_test_fixture(&parents, levels, &core, &nodes);
+        if (levels >= 1) {
+            try std.testing.expectEqual(nodes[0].core11.subgroupSize, subgroup.subgroupSize);
+            try std.testing.expectEqual(nodes[0].core11.subgroupSupportedStages, subgroup.supportedStages);
+            try std.testing.expectEqual(nodes[0].core11.subgroupSupportedOperations, subgroup.supportedOperations);
+            try std.testing.expectEqual(nodes[0].core11.subgroupQuadOperationsInAllStages, subgroup.quadOperationsInAllStages);
+        } else try std.testing.expectEqualDeep(untouched[1], subgroup);
+        if (levels >= 2) {
+            try std.testing.expectEqual(nodes[1].core12.driverID, driver.driverID);
+            try std.testing.expectEqualSlices(u8, &nodes[1].core12.driverName, &driver.driverName);
+            try std.testing.expectEqualSlices(u8, &nodes[1].core12.driverInfo, &driver.driverInfo);
+            try std.testing.expectEqualDeep(nodes[1].core12.conformanceVersion.major, driver.conformanceVersion.major);
+            try std.testing.expectEqualDeep(nodes[1].core12.conformanceVersion.patch, driver.conformanceVersion.patch);
+            try std.testing.expect(std.mem.indexOfScalar(u8, &driver.driverName, 0) != null);
+        } else try std.testing.expectEqualDeep(untouched[0], driver);
+        if (levels >= 3) {
+            try std.testing.expectEqual(nodes[2].core13.integerDotProduct8BitUnsignedAccelerated, dot.integerDotProduct8BitUnsignedAccelerated);
+            try std.testing.expectEqual(nodes[2].core13.integerDotProductAccumulatingSaturating64BitMixedSignednessAccelerated, dot.integerDotProductAccumulatingSaturating64BitMixedSignednessAccelerated);
+        } else try std.testing.expectEqualDeep(untouched[2], dot);
+        try std.testing.expect(driver.pNext == @as(?*anyopaque, @ptrCast(&subgroup)) and subgroup.pNext == @as(?*anyopaque, @ptrCast(&dot)) and dot.pNext == null);
+        // Warm cache: exactly one command148.
+        properties2(physical, &output);
+        try std.testing.expectEqual(calls + 3, fixture.commands);
+        try std.testing.expectEqual(@as(c_int, c.RingOk), lost);
+    };
+}
+test "public Properties2 cold API query failure leaves promoted output unchanged" {
+    for ([_]u32{ 6, 148 }) |failed| {
+        var fixture = feature_fixture_t{ .fail_command = failed };
+        const capabilities = feature_test_capabilities();
+        const physical = try feature_test_physical(&fixture, &capabilities);
+        defer venus_icd_abandon();
+        var driver = std.mem.zeroes(c.VkPhysicalDeviceDriverProperties);
+        driver.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES;
+        driver.driverID = 77;
+        var output = std.mem.zeroes(c.VkPhysicalDeviceProperties2);
+        output.sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+        output.pNext = &driver;
+        output.properties.vendorID = 99;
+        const before = .{ output, driver };
+        properties2(physical, &output);
+        try std.testing.expectEqualDeep(before, .{ output, driver });
+        try std.testing.expectEqual(@as(c_int, c.RingClosed), lost);
+    }
+}
 test "timed callback completion at whole deadline is sticky and never publishes its reply" {
     var fixture = timed_fixture_t{ .expire_reply = true };
     const capabilities = feature_test_capabilities();

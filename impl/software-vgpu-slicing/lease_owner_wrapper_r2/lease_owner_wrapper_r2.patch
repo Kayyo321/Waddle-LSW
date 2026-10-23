@@ -1,0 +1,29 @@
+--- lease_owner_wrapper_r1/lease_owner_wrapper.py
++++ lease_owner_wrapper_r2/lease_owner_wrapper.py
+@@ -1 +1 @@
+-"""Lease-owner wrapper revision 1 for frozen root runners (user-approved 2026-10-21).
++"""Lease-owner wrapper revision 2; prepared for explicit user approval.
+@@ -3,9 +3,5 @@
+-Frozen runners validate build/qualification_20261020/vm_lease.json through
+-opencl_reload_execute.validate_vm_lease, which requires the previous owner
+-string.  The lease was deliberately transferred to ContinuationOwner on
+-2026-10-21 with explicit user permission, and the user explicitly approved
+-this wrapper.  It changes only that one equality: it requires the lease owner
+-to equal ContinuationOwner exactly and previous_owner to equal the frozen
+-owner, then delegates to the unchanged original validator with the owner field
+-mapped to the frozen expected value, so idle state, identity set, PID and
+-start-tick checks all still run.  No other module attribute is altered.
++Require the exact Codex continuation owner and the exact Claude prior owner.
++Delegate to the unchanged frozen validator after mapping only its owner field;
++idle-state, identity-set, PID and start-tick checks remain mandatory. This module
++never writes the lease, starts processes or changes the frozen TargetOwner.
++Approval applies to using the wrapper, not merely importing/testing it offline.
+@@ -17 +13,2 @@
+-ContinuationOwner = 'Claude Opus 5.5 Fable-handoff continuation (sole VM/GPU runner)'
++ContinuationOwner = 'Codex software-vgpu-slicing continuation (sole VM/GPU runner)'
++PreviousOwner = 'Claude Opus 5.5 Fable-handoff continuation (sole VM/GPU runner)'
+@@ -40,2 +37,2 @@
+-        require(lease.get('previous_owner') == frozen_owner,
+-                'VM lease transfer does not record the frozen previous owner')
++        require(lease.get('previous_owner') == PreviousOwner,
++                'VM lease transfer does not record the exact Claude previous owner')

@@ -247,7 +247,10 @@ static void test_probes(void) {
     reset();for(fake_module_mode=0;fake_module_mode<4;++fake_module_mode)
         Check(reload_module_exact((HMODULE)(uintptr_t)3,L"c:\\candidate\\OPENCL.DLL")==!fake_module_mode);
 }
-typedef struct run_state_t { unsigned cycles,stage_calls,absent_calls;int bad_cycle,bad_stage,bad_absent; } run_state_t;
+typedef struct run_state_t { unsigned cycles,stage_calls,absent_calls,preinit_calls;int bad_cycle,bad_stage,bad_absent,bad_preinit;
+    const char *record;int custom_record; } run_state_t;
+static const char FakePreinitRecord[]="user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters";
+static char fake_run_head[4096];
 static int cycle_call(void *opaque,reload_cycle_result_t *result) {
     run_state_t *state=opaque;++state->cycles;
     assert(fake_live()==ReloadIdleThreads*3);assert(fake_module_live==1);
@@ -266,12 +269,26 @@ static int stage_call(void *opaque,const char *stage) {
     run_state_t *state=opaque;++state->stage_calls;
     Check(!strncmp(stage,"reload_",7));return state->stage_calls==(unsigned)state->bad_stage;
 }
+/** Pre-initialization must run before any measurement, idle thread or module reference. */
+static int preinit_call(void *opaque) {
+    run_state_t *state=opaque;++state->preinit_calls;
+    Check(atomic_load(&fake_calls[FakeHandles])==0);Check(atomic_load(&fake_calls[FakeTlsAlloc])==0);
+    Check(atomic_load(&fake_calls[FakeFlsAlloc])==0);Check(atomic_load(&fake_calls[FakeTime])==0);
+    Check(!fake_live());Check(!fake_module_live);Check(state->cycles==0 && state->stage_calls==0);
+    return state->bad_preinit;
+}
 static int run_case(run_state_t *state,const wchar_t *path) {
-    reload_api_t api={cycle_call,absent_call,stage_call,state};FILE *output=tmpfile();assert(output);
-    fake_output=output;int result=reload_run(&api,path,output);assert(!fclose(output));fake_output=NULL;return result;
+    reload_api_t api={cycle_call,absent_call,stage_call,preinit_call,state->custom_record ? state->record : FakePreinitRecord,state};
+    FILE *output=tmpfile();assert(output);
+    fake_output=output;int result=reload_run(&api,path,output);
+    rewind(output);size_t got=fread(fake_run_head,1,sizeof fake_run_head-1,output);fake_run_head[got]='\0';
+    assert(!fclose(output));fake_output=NULL;return result;
 }
 static void test_run(void) {
     ++groups;reset();run_state_t state={0};Check(!run_case(&state,L"C:\\candidate\\OpenCL.dll"));Check(state.cycles==1100);Check(state.stage_calls==2201);Check(!fake_live());
+    Check(state.preinit_calls==1);
+    Check(!strncmp(fake_run_head,"OPENCL_RELOAD_V1 {\"event\":\"baseline\"",33));
+    Check(strstr(fake_run_head,",\"os_preinit\":\"user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters\",\"module_utf16\":\"")!=NULL);
     const wchar_t *invalid[]={L"",L"C:",L"relative",L"C:/bad"};
     for(unsigned i=0;i<4;++i){reset();state=(run_state_t){0};Check(run_case(&state,invalid[i])==1);Check(state.cycles==0);}
     wchar_t *long_path=calloc(ReloadPathCapacity+1,sizeof *long_path);assert(long_path);
@@ -343,7 +360,30 @@ static void test_failure_diagnostics(void) {
     Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=cleanup_final cycle=1100 predicate=api->stage(api->context,\"reload_cleanup\")"));
     Check(!fake_live());Check(!fake_module_live);
 }
+static void test_preinit(void) {
+    ++groups;reset();run_state_t state={.bad_preinit=1};
+    Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+    Check(state.preinit_calls==1);Check(state.cycles==0);Check(state.stage_calls==0);
+    Check(atomic_load(&fake_calls[FakeHandles])==0);Check(atomic_load(&fake_calls[FakeTime])==0);
+    Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=os_preinit cycle=0 predicate=api->preinit(api->context)!=0"));
+    Check(!strstr(fake_run_head,"\"event\":\"baseline\""));Check(strstr(fake_run_head,"OpenCL reload FAILED"));
+    Check(!fake_live());Check(!fake_module_live);
+    char long_record[130];memset(long_record,'a',129);long_record[129]='\0';
+    const char *unsafe[]={NULL,"","Upper","a\"b","user32;x","a b",long_record};
+    for(unsigned i=0;i<sizeof unsafe/sizeof unsafe[0];++i) {
+        reset();state=(run_state_t){.record=unsafe[i],.custom_record=1};
+        Check(run_case(&state,L"C:\\candidate\\OpenCL.dll")==1);
+        Check(state.preinit_calls==0);Check(state.cycles==0);Check(atomic_load(&fake_calls[FakeHandles])==0);
+        Check(fake_diagnostic_count==1);Check(strstr(fake_diagnostics,"stage=entry cycle=0 predicate=!reload_record_safe(api->preinit_record)"));
+    }
+    long_record[128]='\0';
+    reset();state=(run_state_t){.record=long_record,.custom_record=1};
+    Check(!run_case(&state,L"C:\\candidate\\OpenCL.dll"));Check(state.preinit_calls==1);Check(state.cycles==1100);
+    Check(strstr(fake_run_head,long_record)!=NULL);
+    reset();state=(run_state_t){.record="a_0,z9",.custom_record=1};
+    Check(!run_case(&state,L"C:\\candidate\\OpenCL.dll"));Check(state.cycles==1100);
+}
 int main(void) {
-    test_pools();test_probes();test_run();test_fatal();test_failure_diagnostics();reset();
+    test_pools();test_probes();test_run();test_fatal();test_failure_diagnostics();test_preinit();reset();
     printf("OPENCL_RELOAD_HOST groups=%u checks=%u PASS (API doubles only)\n",groups,checks);return 0;
 }

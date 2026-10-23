@@ -16,7 +16,8 @@ pub const owned_request_t = struct {
     priorities: [64]f32 = [_]f32{0} ** 64,
     /// Owned55 legacy flags, all false under current policy; initialized unused storage zero.
     legacy: [55]u32 = [_]u32{0} ** 55,
-    /// Owned parsed feature storage, scrubbed after current false-node selection.
+    /// Owned parsed feature storage, scrubbed after current false-node selection. Promoted
+    /// structures with a true word appear as their merged aggregate record after recognized nodes.
     nodes: [9]wire.feature_node_t = [_]wire.feature_node_t{.{}} ** 9,
     /// Compiled registry IDs; current empty admission always leaves all entries zero.
     extension_ids: [32]u8 = [_]u8{0} ** 32,
@@ -34,11 +35,112 @@ pub const owned_request_t = struct {
     features2_present: bool = false,
 };
 const MaxHeaders: usize = 64;
+/// Thirty promoted Vulkan1.1-1.3 feature structures recognized in device-create chains.
+pub const MaxPromoted: usize = 30;
 const preflight_scratch_t = struct {
     request: owned_request_t = .{},
     seen: [MaxHeaders]usize = [_]usize{0} ** MaxHeaders,
     header_count: u8 = 0,
+    /// Registry-index bit for each promoted structure already copied.
+    promoted_mask: u32 = 0,
+    /// Merged promoted words per aggregate level in aggregate declaration order.
+    promoted_flags: [3][55]u32 = [_][55]u32{[_]u32{0} ** 55} ** 3,
 };
+// Comptime-only registry, identical to venus_features_native (the ICD proves equality). Every
+// promoted Boolean keeps its aggregate member name; core is the level (0=1.1, 1=1.2, 2=1.3).
+const promoted_t = struct { native_t: type, tag: u32, core: usize };
+const CoreTags = [_]u32{
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+};
+const CoreCounts = [_]u8{ 12, 47, 15 };
+const CoreTypes = .{ c.VkPhysicalDeviceVulkan11Features, c.VkPhysicalDeviceVulkan12Features, c.VkPhysicalDeviceVulkan13Features };
+const CoreFirst = .{ "storageBuffer16BitAccess", "samplerMirrorClampToEdge", "robustImageAccess" };
+// Canonical standalone structure promoted into each level and its aggregate word; none for 1.3.
+const StandaloneTags = [_]u32{
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+    c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES,
+    0,
+};
+const StandaloneWords = [_]usize{
+    (@offsetOf(c.VkPhysicalDeviceVulkan11Features, "shaderDrawParameters") - @offsetOf(c.VkPhysicalDeviceVulkan11Features, "storageBuffer16BitAccess")) / 4,
+    (@offsetOf(c.VkPhysicalDeviceVulkan12Features, "hostQueryReset") - @offsetOf(c.VkPhysicalDeviceVulkan12Features, "samplerMirrorClampToEdge")) / 4,
+    0,
+};
+const Promoted = [_]promoted_t{
+    .{ .native_t = c.VkPhysicalDevice16BitStorageFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES, .core = 0 },
+    .{ .native_t = c.VkPhysicalDeviceMultiviewFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTIVIEW_FEATURES, .core = 0 },
+    .{ .native_t = c.VkPhysicalDeviceVariablePointersFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VARIABLE_POINTERS_FEATURES, .core = 0 },
+    .{ .native_t = c.VkPhysicalDeviceProtectedMemoryFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROTECTED_MEMORY_FEATURES, .core = 0 },
+    .{ .native_t = c.VkPhysicalDeviceSamplerYcbcrConversionFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SAMPLER_YCBCR_CONVERSION_FEATURES, .core = 0 },
+    .{ .native_t = c.VkPhysicalDevice8BitStorageFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceShaderAtomicInt64Features, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceShaderFloat16Int8Features, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceDescriptorIndexingFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceScalarBlockLayoutFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceImagelessFramebufferFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceUniformBufferStandardLayoutFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_UNIFORM_BUFFER_STANDARD_LAYOUT_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceShaderSubgroupExtendedTypesFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SUBGROUP_EXTENDED_TYPES_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceSeparateDepthStencilLayoutsFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SEPARATE_DEPTH_STENCIL_LAYOUTS_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceTimelineSemaphoreFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceBufferDeviceAddressFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceVulkanMemoryModelFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES, .core = 1 },
+    .{ .native_t = c.VkPhysicalDeviceImageRobustnessFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_ROBUSTNESS_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceInlineUniformBlockFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INLINE_UNIFORM_BLOCK_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDevicePipelineCreationCacheControlFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_CREATION_CACHE_CONTROL_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDevicePrivateDataFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIVATE_DATA_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceShaderTerminateInvocationFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceSubgroupSizeControlFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceSynchronization2Features, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceTextureCompressionASTCHDRFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TEXTURE_COMPRESSION_ASTC_HDR_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceZeroInitializeWorkgroupMemoryFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ZERO_INITIALIZE_WORKGROUP_MEMORY_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceDynamicRenderingFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceShaderIntegerDotProductFeatures, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_INTEGER_DOT_PRODUCT_FEATURES, .core = 2 },
+    .{ .native_t = c.VkPhysicalDeviceMaintenance4Features, .tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES, .core = 2 },
+};
+/// Immutable promoted tags in registry order, for the ICD cross-module consistency proof.
+pub const PromotedTags: [MaxPromoted]u32 = tags: {
+    var tags: [MaxPromoted]u32 = undefined;
+    for (Promoted, 0..) |entry, index| tags[index] = entry.tag;
+    break :tags tags;
+};
+/// Immutable promoted aggregate levels (0=1.1, 1=1.2, 2=1.3) in registry order.
+pub const PromotedCores: [MaxPromoted]u8 = cores: {
+    var cores: [MaxPromoted]u8 = undefined;
+    for (Promoted, 0..) |entry, index| cores[index] = entry.core;
+    break :cores cores;
+};
+// Registry bits of each level.
+const CoreMasks = masks: {
+    var masks = [_]u32{0} ** 3;
+    for (Promoted, 0..) |entry, index| masks[entry.core] |= @as(u32, 1) << index;
+    break :masks masks;
+};
+comptime {
+    @setEvalBranchQuota(200000);
+    if (Promoted.len != MaxPromoted or MaxPromoted > 32) @compileError("Promoted device feature inventory changed");
+    var used = [_][55]bool{[_]bool{false} ** 55} ** 3;
+    for (Promoted, 0..) |entry, index| {
+        if (@alignOf(entry.native_t) != 8 or @offsetOf(entry.native_t, "sType") != 0 or @offsetOf(entry.native_t, "pNext") != 8)
+            @compileError("Promoted device feature header ABI changed");
+        for (Promoted[0..index]) |previous| if (previous.tag == entry.tag) @compileError("Duplicate promoted device feature tag");
+        for (Tags) |tag| if (tag == entry.tag) @compileError("Promoted tag aliases a canonical device node");
+        const aggregate_t = CoreTypes[entry.core];
+        for (@typeInfo(entry.native_t).Struct.fields[2..]) |field| {
+            if (field.type != c.VkBool32 or !@hasField(aggregate_t, field.name)) @compileError("Promoted device feature has no aggregate Boolean: " ++ field.name);
+            const offset = @offsetOf(aggregate_t, field.name) - @offsetOf(aggregate_t, CoreFirst[entry.core]);
+            if (offset % 4 != 0 or offset / 4 >= CoreCounts[entry.core]) @compileError("Promoted device feature outside aggregate extent");
+            if (used[entry.core][offset / 4]) @compileError("Two promoted device structures share one aggregate Boolean");
+            used[entry.core][offset / 4] = true;
+        }
+    }
+    for (CoreTags, CoreCounts, 0..) |tag, count, core| {
+        if (Tags[core + 1] != tag or Counts[core + 1] != count) @compileError("Aggregate device schema changed");
+        if (core < 2 and used[core][StandaloneWords[core]]) @compileError("Standalone word also promoted");
+    }
+}
 const NativeTypes = .{
     c.VkPhysicalDeviceFeatures2,                    c.VkPhysicalDeviceVulkan11Features,
     c.VkPhysicalDeviceVulkan12Features,             c.VkPhysicalDeviceVulkan13Features,
@@ -84,6 +186,52 @@ fn copy_node(header: *const c.VkBaseInStructure, node: *wire.feature_node_t) !bo
         }
     }
     return false;
+}
+// Copy one promoted structure into its level's merged words. Header alignment is already proven.
+fn copy_promoted(header: *const c.VkBaseInStructure, scratch: *preflight_scratch_t) !void {
+    inline for (Promoted, 0..) |entry, index| {
+        if (header.sType == entry.tag) {
+            const input: *const entry.native_t = @ptrCast(@alignCast(header));
+            const bit = @as(u32, 1) << index;
+            if (scratch.promoted_mask & bit != 0) return error.Invalid;
+            scratch.promoted_mask |= bit;
+            const aggregate_t = CoreTypes[entry.core];
+            inline for (@typeInfo(entry.native_t).Struct.fields[2..]) |field| {
+                const flag = @field(input.*, field.name);
+                if (flag > 1) return error.Invalid;
+                const word = comptime (@offsetOf(aggregate_t, field.name) - @offsetOf(aggregate_t, CoreFirst[entry.core])) / 4;
+                scratch.promoted_flags[entry.core][word] = flag;
+            }
+            return;
+        }
+    }
+}
+// Reject aggregate+promoted pairs, then append one merged aggregate per level with a true word,
+// folding that level's canonical standalone record into it.
+fn merge_promoted(scratch: *preflight_scratch_t) !void {
+    const request = &scratch.request;
+    for (CoreTags, CoreCounts, CoreMasks, StandaloneTags, StandaloneWords, 0..) |tag, count, mask, standalone, word, core| {
+        if (scratch.promoted_mask & mask == 0) continue;
+        for (request.nodes[0..request.node_count]) |node| if (node.type_tag == tag) return error.Invalid;
+        var flags = scratch.promoted_flags[core];
+        var active = false;
+        for (flags[0..count]) |flag| {
+            if (flag != 0) active = true;
+        }
+        if (!active) continue;
+        for (request.nodes[0..request.node_count], 0..) |node, index| {
+            if (node.type_tag != standalone) continue;
+            flags[word] = node.flags[0];
+            std.mem.copyForwards(wire.feature_node_t, request.nodes[index .. request.node_count - 1], request.nodes[index + 1 .. request.node_count]);
+            request.node_count -= 1;
+            request.nodes[request.node_count] = .{};
+            break;
+        }
+        // Each appended aggregate tag is absent from the chain, so nine unique tags bound this index.
+        std.debug.assert(request.node_count < request.nodes.len);
+        request.nodes[request.node_count] = .{ .type_tag = tag, .flag_count = count, .flags = flags };
+        request.node_count += 1;
+    }
 }
 fn promotion_conflict(first: u32, second: u32) bool {
     return (first == c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES and
@@ -147,7 +295,10 @@ fn copy_chain(first: ?*const anyopaque, scratch: *preflight_scratch_t) !void {
         scratch.header_count += 1;
         next = @ptrCast(header.pNext);
         var node = wire.feature_node_t{};
-        if (!try copy_node(header, &node)) continue;
+        if (!try copy_node(header, &node)) {
+            try copy_promoted(header, scratch);
+            continue;
+        }
         for (scratch.request.nodes[0..scratch.request.node_count]) |previous| {
             if (previous.type_tag == node.type_tag or promotion_conflict(previous.type_tag, node.type_tag) or
                 promotion_conflict(node.type_tag, previous.type_tag)) return error.Invalid;
@@ -159,11 +310,14 @@ fn copy_chain(first: ?*const anyopaque, scratch: *preflight_scratch_t) !void {
         if (node.type_tag == c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2)
             scratch.request.features2_present = true;
     }
+    try merge_promoted(scratch);
 }
 /// Snapshot and preflight one native request. [in] info_address nullable; nonnull inputs, arrays,
 /// structs, feature objects and256-byte bounded names are accessible initialized immutable and
 /// externally synchronized for this call, with valid extents/disjoint storage. Unknown accessible
-/// aligned16-byte headers count toward64; payloads are never accessed. No arbitrary-address
+/// aligned16-byte headers count toward64; payloads are never accessed. The thirty promoted
+/// Vulkan1.1-1.3 feature structures are read as full objects and merge into their aggregate
+/// record; an aggregate together with a structure promoted into it is Invalid. No arbitrary-address
 /// accessibility proof is made. Returns owned2696-byte scalar request or Invalid for null/alignment,
 /// shape/value/name/cycle/quota/duplicate/promotion/legacy-plus-Features2, LayerNotPresent at the
 /// early layer check, FeatureNotPresent for any structurally valid requested true, then
@@ -266,9 +420,11 @@ pub fn preflight_supported(info_address: ?*const anyopaque, policy: *const suppo
     }
     return scratch.request;
 }
+// Original 3216-byte scratch plus the promoted mask and three merged 55-word levels.
+const PinnedScratchBytes: usize = 3880;
 comptime {
     if (@sizeOf(owned_request_t) != 2696 or @alignOf(owned_request_t) != 4 or
-        @sizeOf(preflight_scratch_t) != 3216 or @alignOf(preflight_scratch_t) != 8)
+        @sizeOf(preflight_scratch_t) != PinnedScratchBytes or @alignOf(preflight_scratch_t) != 8)
         @compileError("Owned native device snapshot ABI changed");
     if (@sizeOf(c.VkBaseInStructure) != 16 or @alignOf(c.VkBaseInStructure) != 8 or
         @sizeOf(c.VkPhysicalDeviceFeatures) != 220 or @alignOf(c.VkPhysicalDeviceFeatures) != 4)
@@ -700,4 +856,170 @@ test "supported policy rejects malformed policy and native structure before admi
     modern.flags[0]=1;try std.testing.expectError(error.FeatureNotPresent,preflight_supported(&info,&policy));
     modern.flags[0]=0;modern.type_tag=Tags[0];var legacy=c.VkPhysicalDeviceFeatures{};info.pEnabledFeatures=&legacy;
     try std.testing.expectError(error.Invalid,preflight_supported(&info,&policy));
+}
+fn promoted_word(comptime entry: promoted_t, comptime name: []const u8) usize {
+    const aggregate_t = CoreTypes[entry.core];
+    return (@offsetOf(aggregate_t, name) - @offsetOf(aggregate_t, CoreFirst[entry.core])) / 4;
+}
+fn all_supported() [8]wire.feature_node_t {
+    var nodes: [8]wire.feature_node_t = undefined;
+    for (Tags[1..], Counts[1..], &nodes) |tag, count, *node| {
+        node.* = .{ .type_tag = tag, .flag_count = count };
+        @memset(node.flags[0..count], 1);
+    }
+    return nodes;
+}
+fn expect_aggregate_oracle(request: *const owned_request_t, queues: []const c.VkDeviceQueueCreateInfo, aggregates: []native_node_t) !void {
+    var info = basic_info(queues);
+    for (aggregates, 0..) |*node, index| node.next = if (index + 1 < aggregates.len) &aggregates[index + 1] else null;
+    info.pNext = if (aggregates.len != 0) &aggregates[0] else null;
+    var expected: [8192]u8 = undefined;
+    const length = venus_device_test_encode(&info, 7, 42, &expected);
+    const actual = try encode_owned(request);
+    try std.testing.expectEqualSlices(u8, expected[0..length], actual.bytes[0..actual.used]);
+}
+test "native device every promoted Boolean one-hot merges into its exact aggregate record" {
+    @setEvalBranchQuota(1000000);
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{basic_queue(&priorities)};
+    var info = basic_info(&queues);
+    var supported = all_supported();
+    const policy = support_policy_t{ .legacy = [_]u32{1} ** 55, .nodes = &supported };
+    var checked: usize = 0;
+    inline for (Promoted) |entry| {
+        var native = native_node_t{ .type_tag = entry.tag };
+        info.pNext = &native;
+        const empty = try preflight(&info);
+        try std.testing.expectEqual(@as(u8, 0), empty.node_count);
+        try std.testing.expectEqual(@as(u8, 0), (try preflight_supported(&info, &policy)).node_count);
+        inline for (@typeInfo(entry.native_t).Struct.fields[2..], 0..) |field, index| {
+            native.flags[index] = 2;
+            try expect_invalid(&info);
+            try std.testing.expectError(error.Invalid, preflight_supported(&info, &policy));
+            native.flags[index] = 1;
+            const before = std.mem.asBytes(&native).*;
+            try std.testing.expectError(error.FeatureNotPresent, preflight(&info));
+            const request = try preflight_supported(&info, &policy);
+            try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&native));
+            try std.testing.expectEqual(@as(u8, 1), request.node_count);
+            const word = comptime promoted_word(entry, field.name);
+            var expected = wire.feature_node_t{ .type_tag = CoreTags[entry.core], .flag_count = CoreCounts[entry.core] };
+            expected.flags[word] = 1;
+            try std.testing.expectEqualDeep(expected, request.nodes[0]);
+            var aggregate = [_]native_node_t{.{ .type_tag = CoreTags[entry.core] }};
+            aggregate[0].flags[word] = 1;
+            try expect_aggregate_oracle(&request, &queues, &aggregate);
+            supported[entry.core].flags[word] = 0;
+            try std.testing.expectError(error.FeatureNotPresent, preflight_supported(&info, &policy));
+            supported[entry.core].flags[word] = 1;
+            native.flags[index] = 0;
+            checked += 1;
+        }
+    }
+    // 74 aggregate words minus nine without a promoted structure: shaderDrawParameters,
+    // samplerMirrorClampToEdge, drawIndirectCount, descriptorIndexing, samplerFilterMinmax,
+    // hostQueryReset, shaderOutputViewportIndex, shaderOutputLayer, subgroupBroadcastDynamicId.
+    try std.testing.expectEqual(@as(usize, 65), checked);
+}
+test "native device aggregate with any structure promoted into it rejects both orders even false" {
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{basic_queue(&priorities)};
+    var info = basic_info(&queues);
+    const supported = all_supported();
+    const policy = support_policy_t{ .legacy = [_]u32{1} ** 55, .nodes = &supported };
+    inline for (Promoted) |entry| {
+        var aggregate = native_node_t{ .type_tag = CoreTags[entry.core] };
+        var promoted = native_node_t{ .type_tag = entry.tag };
+        for ([_]bool{ false, true }) |reverse| {
+            if (reverse) {
+                promoted.next = &aggregate;
+                aggregate.next = null;
+                info.pNext = &promoted;
+            } else {
+                aggregate.next = &promoted;
+                promoted.next = null;
+                info.pNext = &aggregate;
+            }
+            try expect_invalid(&info);
+            try std.testing.expectError(error.Invalid, preflight_supported(&info, &policy));
+        }
+        // A promoted structure of another level is legal beside this aggregate.
+        aggregate.type_tag = CoreTags[(entry.core + 1) % 3];
+        _ = try preflight(&info);
+        // The same promoted structure twice is a duplicate.
+        aggregate.type_tag = entry.tag;
+        try expect_invalid(&info);
+        try std.testing.expectError(error.Invalid, preflight_supported(&info, &policy));
+    }
+}
+test "native device promoted structures of every level merge in level order after recognized nodes" {
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{basic_queue(&priorities)};
+    var info = basic_info(&queues);
+    const supported = all_supported();
+    const policy = support_policy_t{ .legacy = [_]u32{1} ** 55, .nodes = &supported };
+    var nodes = [_]native_node_t{
+        .{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES },
+        .{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES },
+        .{ .type_tag = 0x7ffffff0 },
+        .{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT },
+        .{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES },
+        .{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES },
+        .{ .type_tag = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES },
+    };
+    nodes[0].flags[0] = 1; // synchronization2
+    nodes[1].flags[0] = 1; // bufferDeviceAddress
+    nodes[3].flags[2] = 1; // nullDescriptor
+    nodes[4].flags[2] = 1; // vulkanMemoryModelAvailabilityVisibilityChains
+    nodes[5].flags[3] = 1; // storageInputOutput16
+    for (nodes[0 .. nodes.len - 1], 0..) |*node, index| node.next = &nodes[index + 1];
+    info.pNext = &nodes[0];
+    const request = try preflight_supported(&info, &policy);
+    try std.testing.expectEqual(@as(u8, 4), request.node_count);
+    const order = [_]u32{ Tags[7], Tags[1], Tags[2], Tags[3] };
+    for (order, request.nodes[0..4]) |tag, node| try std.testing.expectEqual(tag, node.type_tag);
+    var expected = [_]native_node_t{ .{ .type_tag = Tags[7] }, .{ .type_tag = Tags[1] }, .{ .type_tag = Tags[2] }, .{ .type_tag = Tags[3] } };
+    expected[0].flags[2] = 1;
+    expected[1].flags[3] = 1;
+    expected[2].flags[(@offsetOf(c.VkPhysicalDeviceVulkan12Features, "bufferDeviceAddress") - 16) / 4] = 1;
+    expected[2].flags[(@offsetOf(c.VkPhysicalDeviceVulkan12Features, "vulkanMemoryModelAvailabilityVisibilityChains") - 16) / 4] = 1;
+    expected[3].flags[(@offsetOf(c.VkPhysicalDeviceVulkan13Features, "synchronization2") - 16) / 4] = 1;
+    try expect_aggregate_oracle(&request, &queues, &expected);
+    try std.testing.expectError(error.FeatureNotPresent, preflight(&info));
+}
+test "native device standalone draw parameters and host query reset fold into merged aggregates" {
+    const priorities = [_]f32{1};
+    const queues = [_]c.VkDeviceQueueCreateInfo{basic_queue(&priorities)};
+    var info = basic_info(&queues);
+    const supported = all_supported();
+    const policy = support_policy_t{ .legacy = [_]u32{1} ** 55, .nodes = &supported };
+    const cases = [_]struct { standalone: u32, promoted: u32, core: usize }{
+        .{ .standalone = Tags[4], .promoted = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES, .core = 0 },
+        .{ .standalone = Tags[5], .promoted = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES, .core = 1 },
+    };
+    for (cases) |case| for ([_]u32{ 0, 1 }) |standalone_flag| for ([_]u32{ 0, 1 }) |promoted_flag| {
+        var nodes = [_]native_node_t{ .{ .type_tag = Tags[8] }, .{ .type_tag = case.standalone }, .{ .type_tag = Tags[7] }, .{ .type_tag = case.promoted } };
+        nodes[1].flags[0] = standalone_flag;
+        nodes[3].flags[0] = promoted_flag;
+        for (nodes[0..3], 0..) |*node, index| node.next = &nodes[index + 1];
+        info.pNext = &nodes[0];
+        const request = try preflight_supported(&info, &policy);
+        if (promoted_flag == 0) {
+            // Nothing promoted is requested: the standalone record stays and no aggregate is added.
+            try std.testing.expectEqual(@as(u8, 3), request.node_count);
+            try std.testing.expectEqual(case.standalone, request.nodes[1].type_tag);
+            try std.testing.expectEqual(standalone_flag, request.nodes[1].flags[0]);
+            continue;
+        }
+        try std.testing.expectEqual(@as(u8, 3), request.node_count);
+        try std.testing.expectEqual(Tags[8], request.nodes[0].type_tag);
+        try std.testing.expectEqual(Tags[7], request.nodes[1].type_tag);
+        try std.testing.expectEqual(CoreTags[case.core], request.nodes[2].type_tag);
+        try std.testing.expectEqualDeep(wire.feature_node_t{}, request.nodes[3]);
+        try std.testing.expectEqual(standalone_flag, request.nodes[2].flags[StandaloneWords[case.core]]);
+        var expected = [_]native_node_t{ .{ .type_tag = Tags[8] }, .{ .type_tag = Tags[7] }, .{ .type_tag = CoreTags[case.core] } };
+        expected[2].flags[StandaloneWords[case.core]] = standalone_flag;
+        expected[2].flags[if (case.core == 0) 0 else 2] = 1;
+        try expect_aggregate_oracle(&request, &queues, &expected);
+    };
 }

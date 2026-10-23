@@ -129,6 +129,17 @@ BOOL wait_and_close_thread(HANDLE thread_handle) noexcept
 
 } // namespace
 
+namespace llvm {
+/**
+ * @brief Probe stand-in for LLVM's managed-static teardown (no LLVM is linked here).
+ * @return No value; the shared EH-pool callback calls it once after every static
+ *         destructor of this probe image, exactly as OpenCL.dll calls the real one.
+ * @ownership Owns nothing; the probe has no LLVM managed statics.
+ * @thread_safety Loader/CRT serialized final callback only.
+ */
+void llvm_shutdown() noexcept {}
+} // namespace llvm
+
 /**
  * @brief Exercise C++ runtime state and thread retirement for one DLL load.
  * @param[in] api_version Must equal ApiVersion; scalar and non-null by value.

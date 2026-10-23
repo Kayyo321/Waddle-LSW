@@ -114,3 +114,136 @@ production inputs are unchanged. Fresh native diagnostics, full1100-cycle
 qualification, heap ownership, final CI and independent review remain open.
 
 Native R7 diagnostic outcome: [measured first-cycle retention](OPENCL_NATIVE_RETENTION_2026_10_21.md). The exact post-cycle comparison rejects+83handles/threeTLS/threeFLS; zero strict cycles accepted. No count or ownership waiver follows.
+
+## Approved amendment: OS-only pre-initialization (2026-10-22)
+
+The user approved this amendment on 2026-10-22 after the retention
+[attribution](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md) showed that Windows keeps
+process-lifetime state after the first use of USER32, Winsock, bcrypt and DXGI.
+
+1. **Exact operations.** Before the entry baseline, the fixture performs these four steps,
+   in this order, and nothing else:
+   - Load and free System32 `user32.dll`.
+   - Load System32 `ws2_32.dll`, call `WSAStartup(2.2)`, open one IPv4 TCP socket, close it,
+     call `WSACleanup`, then free the module.
+   - Load and free System32 `bcrypt.dll`.
+   - Load System32 `dxgi.dll`, create one `IDXGIFactory1`, release it, then free the module.
+     There is no adapter enumeration.
+2. **No product code.** No Waddle, clvk or Vulkan loader code runs during pre-initialization.
+   All modules load with `LOAD_LIBRARY_SEARCH_SYSTEM32`. Every module reference, Winsock
+   startup, socket and COM reference it acquires is released before return on every path.
+   Any failure stops the run before the entry baseline is measured.
+3. **Equality is unchanged.** The entry and persistent baselines are measured after
+   pre-initialization. Exact handle/TLS/FLS equality is still required before and after
+   every one of the 1100 reloads, including the first candidate load, and the final cleanup
+   must still return to the entry baseline. No allowance, tolerance or baseline reset is added.
+4. **Evidence.** The baseline record states the completed operations, and the output verifier
+   requires that statement.
+5. **Proof first.** Before any reload run uses it, a diagnostic census must show that an
+   ordinary eight-context GPU life after pre-initialization leaves no handle, TLS or FLS delta.
+   Heap-audit mode enables pre-initialization only through an explicit diagnostic switch, so
+   heap qualification is unchanged unless separately approved.
+6. **Upstream loader.** The Vulkan loader's leaked `dxgi.dll`/`gdi32.dll` references are not
+   approved for change here; any loader patch needs its own approval.
+
+## Approved amendment 2: two more OS steps and the loader patch (2026-10-22)
+
+The diagnostic census after the first amendment left +34 handles (see
+[attribution sections 7-8](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#7-diagnostic-census-after-the-approved-pre-initialization-2026-10-22)).
+The user then approved two more OS-only steps and one upstream change on 2026-10-22.
+
+1. **Step 5, standard-search resolution.** Load System32 `dwmapi.dll` by bare name with
+   `LoadLibraryW`, so ntdll resolves one module through the default search order and opens its
+   `Session Manager` key, then free it. A full-path load does not trigger this, so the bare name is
+   required. Because a bare name searches the application directory first, the step fails closed
+   unless the loaded module's path is exactly System32 `dwmapi.dll`.
+2. **Step 6, package-family query.** Call kernel32 `GetPackagesByPackageFamily` once for
+   `Microsoft.D3DMappingLayers_8wekyb3d8bbwe` with no output buffers (size query only). Only
+   `ERROR_SUCCESS` and `ERROR_INSUFFICIENT_BUFFER` are accepted. kernel32 is borrowed with
+   `GetModuleHandleW`; no reference is taken.
+3. **Loader patch.** Apply the 76-line Vulkan loader correction (tracked as the 78-line
+   `0001-release-windows-initialization-module-references.patch`; the extra two lines are patch
+   header lines) that stores the `gdi32.dll` and
+   `dxgi.dll` references taken by `windows_initialization` and frees them in `loader_release()`,
+   through a tracked `patches/vulkan_loader/` private build. The submodule pin does not change.
+4. **Regression reruns.** Every Windows workload that loads the patched `vulkan-1.dll` is
+   requalified on it: the M2 regression workloads, the Windows physical matrix and the DXVK checks.
+
+The baseline witness becomes `user32,winsock,bcrypt,dxgi_factory,search_order,package_family`.
+All other rules of the first amendment are unchanged, including exact equality on every reload.
+
+## Approved amendment 3: loopback connect and loader logging (2026-10-22)
+
+Censuses R7-R9 ([attribution section 9](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#9-six-step-pre-initialization-with-the-patched-loader-2026-10-22))
+left one IoCompletion created by Winsock's first nonblocking connect. The user approved two
+changes on 2026-10-22.
+
+1. **Step 7, nonblocking loopback connect.** Load System32 `ws2_32.dll` and call `WSAStartup(2.2)`.
+   Open one listener bound to `127.0.0.1` on an ephemeral port and listen. Open one client socket,
+   set `TCP_NODELAY` and nonblocking mode, and connect it to the listener. Accept only an immediate
+   success or `WSAEWOULDBLOCK`. Wait with `select` (bounded to 2 seconds) until the client is
+   writable. Then close both sockets, call `WSACleanup` and free the module. There is no accept and
+   no data transfer, and no Waddle, clvk or loader code runs.
+2. **No loader debug logging in qualification batches.** Qualification batches no longer set
+   `VK_LOADER_DEBUG`. The loader copies every emitted message to `OutputDebugString`, which makes
+   Windows open and cache `DBWinMutex`, and no qualification check reads loader log output.
+
+The baseline witness becomes
+`user32,winsock,bcrypt,dxgi_factory,search_order,package_family,winsock_connect`. All other rules of
+amendments 1 and 2 are unchanged, including exact equality on every reload.
+
+## Amendment 4: explicit driver lists skip DXGI, step 4 loads dxgi.dll only, steps 8-10 (2026-10-22)
+
+R9 failed cycle 3 with one Thread and one Event. Kernel handle tracing attributes both to RPCRT4
+per-thread state created by a thread-pool timer callback
+([attribution sections 13-14](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#13-reload-r9-and-the-rpc-timer-residual-2026-10-22)).
+Claude recommended a loader patch that skips DXGI/DXCore enumeration for explicit driver lists, to
+be A/B tested and then integrated. On 2026-10-22 the user replied: "Go with your recommended option,
+also make sure to work autonomous because im away. If you hit a roadblock you must be the one to
+find a way around it." Under that instruction Claude integrates the three changes below. Item 6 of
+amendment 1 requires separate approval for any loader patch; this amendment rests on the reply
+above, and the user is asked to ratify patch 0002 and steps 8-10 explicitly before the branch
+merges. None of the three changes alters a predicate, threshold, baseline or count policy.
+
+1. **Loader patch 0002.** When `VK_DRIVER_FILES` or `VK_ICD_FILENAMES` is set, which is the same
+   override that already makes the loader skip the registry, `windows_initialize_dxgi` and
+   `windows_read_sorted_physical_devices` create no DXGI factory. The loader behaves exactly as it
+   already does when DXGI factory creation fails: no physical-device sorting feature and no sorted
+   list. The fixture always sets `VK_DRIVER_FILES` to the Waddle manifest.
+2. **Step 4 narrowed to a module load.** Step 4 now loads System32 `dxgi.dll` and frees it. It no
+   longer creates and releases an `IDXGIFactory1`. A native per-step control shows that factory
+   creation is the only pre-initialization step that opens RPC/ALPC client connections, and that a
+   plain load and free opens none. With patch 0002 no cycle creates a factory, while the loader still
+   loads and frees `dxgi.dll` each cycle. The narrowed step is a strict subset of the operation the
+   user approved in amendment 1.
+
+3. **Steps 8-10.** Without the factory, the first life left three OS first-use residuals that the
+   factory used to absorb ([attribution section 14](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#14-loader-patch-0002-and-the-ten-step-pre-initialization-2026-10-22)).
+   Each new step repeats, once, an operation a cycle already performs. Each runs only Windows code
+   and releases everything it acquires.
+   - **Step 8, user hive.** Load System32 `advapi32.dll`, open `HKEY_CURRENT_USER\Software` for
+     reading and close it, then free the module. The loader's settings lookup reads HKCU, and the
+     first current-user access opens and caches the `HKU\<SID>` key. The predefined
+     `HKEY_CURRENT_USER` handle is never closed.
+   - **Step 9, random.** Load System32 `bcrypt.dll`, open the `RNG` provider of
+     `Microsoft Primitive Provider`, generate 16 bytes, close the provider and free the module. These
+     are exactly the calls `venus_tcp_random` makes. The first open keeps `bcryptprimitives.dll`
+     loaded with two ETW registrations and one device file.
+   - **Step 10, D3DKMT adapters.** Load System32 `gdi32.dll`, call `D3DKMTEnumAdapters2` once with a
+     zero count and no array, then free the module. The loader's driver-store implicit-layer scan
+     makes this call, and the first one keeps `dxcore.dll` loaded with two ETW registrations.
+
+A native per-step control shows that none of the ten steps opens an RPC/ALPC connection.
+
+The baseline witness becomes
+`user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters`,
+and verifiers reject both the previous `dxgi_factory` witness and the seven-step prefix. All other
+rules of amendments 1-3 are unchanged, including exact equality on every reload.
+
+**Outcome (2026-10-22).** Reload R10 passed all 1100 cycles with exact equality on this amendment
+([attribution section 15](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#15-reload-r10-passes-1100-cycles-2026-10-22)).
+
+**Explicit ratification (2026-10-23).** In this continuation chat the user explicitly selected
+"Ratify amendment 4" for loader patch 0002, narrowed step 4 and OS-only steps 8-10. The previous
+request for ratification is therefore satisfied. The 1100-cycle equality and independent heap
+gates remain unchanged; this approval is not qualification evidence.

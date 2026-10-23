@@ -1,6 +1,12 @@
 # Implementation Description: Software vGPU Slicing
 
-M2 WSI/window ownership is qualified at100%; [closure and boundaries](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md). This does not complete the parent OpenCL/DXVK gates or make PR#6 merge-ready.
+Software vGPU slicing acceptance is complete at100% for the documented scope as of
+2026-10-23. M2 WSI/window ownership, physical graphics/DXVK, and rebuilt-candidate OpenCL
+reload/heap gates pass; [M2 closure and boundaries](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md)
+and OpenCL attribution sections18-21 retain the evidence and limitations. Earlier dated
+planning/pending statements below are historical; the current TRACKER task table and final
+qualification sections supersede them. Delivery requires all CI checks on the final pushed
+completion commit before PR#6 is marked ready for review; this continuation does not merge it.
 
 ## 1. Title & High-Level Scope
 - **Title**: Software vGPU Slicing for Non-MDEV Hosts
@@ -7096,3 +7102,643 @@ API completion and exact guest/host/module retirement pass;41rawfiles rehashed.
 and exact final CI/review remain required. All tasks +0%; total85.5%, M2 94%,
 Time Ended TBD. Commit `4688cf8` records complete API-heap snapshots, all tasks
 +0%, overall +0%.
+
+### Tracked Windows Vulkan loader private patch (approved 2026-10-22)
+
+This supersedes "make no vendor source edits" for Windows loader builds only. The user
+approved one correction on 2026-10-22 after the OpenCL retention attribution
+([OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md),
+sections 7-8).
+
+- **Defect.** Upstream `windows_initialization` (pin `0508dee4ff864f5034ae6b7f68d34cb2822b827d`,
+  v1.4.307) calls `LoadLibraryEx("gdi32.dll")` and `LoadLibraryW(<System32>\dxgi.dll)` and never
+  frees either. It runs once per loaded `vulkan-1.dll` instance, so every dynamic reload adds one
+  more reference and `dxgi.dll` with its dependencies can never unload.
+- **Correction.** `patches/vulkan_loader/0001-release-windows-initialization-module-references.patch`
+  (25 changed lines in `loader/loader.c`, `loader/loader_windows.c`, `loader/loader_windows.h`)
+  stores both module handles and frees them in a new `windows_teardown()`. `loader_release()`
+  calls it under `_WIN32`, after `loader_unload_preloaded_icds()` and before the mutexes are
+  deleted. That is the same `DLL_PROCESS_DETACH` path (dynamic unload only, `reserved == NULL`)
+  where upstream already frees preloaded ICD libraries. Both references stay valid for the
+  loader's lifetime, because a later `GetModuleHandle("gdi32.dll")` and `fpCreateDXGIFactory1`
+  depend on them.
+- **Build boundary.** `scripts/vulkan_loader_private_source.py` verifies that the submodule checkout
+  equals the superproject gitlink, extracts that tree with `git archive`, applies the reviewed patch
+  set with `git apply --check` and proves it present with a reverse check. Git discovery is bounded
+  with `GIT_CEILING_DIRECTORIES`, because inside the superproject an unbounded `git apply` reports
+  success while changing nothing. The MinGW target `vgpu-native-loader-win64` and the native Windows
+  CI loader build compile `build/vendor/vulkan_loader_private`. Linux builds keep using the submodule:
+  every patched line is Windows-only. The pin, `.gitmodules` and the submodule tree are unchanged.
+- **License.** The upstream file headers stay Apache-2.0 and the patch is distributed under the same
+  terms, compatible with this repository's GPL-3.0 distribution.
+- **Verification.** `make vgpu-loader-patch-test` (CI transport job) checks the exact patch scope, an
+  applied tree that differs from the pin in exactly the three files, a fail-closed preimage mismatch
+  and rejection of an unreviewed patch. Native A/B in `build/qualification_feature_20261021/loader_release_eval/`
+  shows the dxgi closure retained by the unpatched loader and zero residual for the patched one after
+  OS pre-initialization. Every Windows workload that loads the patched `vulkan-1.dll` is requalified:
+  the M2 regression workloads, the Windows physical matrix and the DXVK checks.
+
+### Promoted core structure publication (2026-10-22)
+
+The 1100-cycle OpenCL reload run (`build/qualification_feature_20261021/opencl_reload_final_r8/`)
+failed in cycle 2. clvk logged non-UTF-8 bytes from `VkPhysicalDeviceDriverProperties.driverName`.
+The ICD advertises `VK_API_VERSION_1_3` (`ImplementedApiVersion`). It fills only the Vulkan 1.1, 1.2
+and 1.3 aggregate structures, robustness2 and maintenance5 in `vkGetPhysicalDeviceProperties2`. Every
+structure promoted into core 1.1-1.3 stays unwritten. clvk does not value-initialize its driver, ID,
+PCI or maintenance3 property members, so cycle 2 read stale heap bytes. The same gap exists for
+promoted feature structures in `vkGetPhysicalDeviceFeatures2`. `vkCreateDevice` silently skipped them
+as unknown headers, so a requested true promoted feature was neither enabled nor rejected.
+
+**Scope.** The fix covers exactly the structures promoted into Vulkan 1.1, 1.2 and 1.3 that are not
+already canonical nodes. It changes no allowlist, no advertised API version and no extension list.
+Each promoted structure reports the same values as its aggregate: the projected aggregate policy is
+the only source. Promoted structures of version 1.4 and later, and structures of extensions the ICD
+does not advertise, stay unknown headers.
+
+**Version gate.** A promoted structure is written only when the visible API version is at least its
+promotion version. The visible API version is `min(actual, ImplementedApiVersion)` under a ready reply
+profile and `VK_API_VERSION_1_0` otherwise; `project_properties` and Features2 share this rule. A
+promoted structure above the visible version is left byte-for-byte unchanged.
+
+#### Properties2 (`venus_properties_native.zig`)
+
+Seventeen promoted property structures. Each maps every named field to the same-named field of its
+aggregate, except the subgroup renames listed. Comptime checks prove each target field exists with an
+identical type.
+
+| Aggregate | Structures |
+|:--|:--|
+| `VkPhysicalDeviceVulkan11Properties` | ID; Subgroup (`supportedStages`, `supportedOperations`, `quadOperationsInAllStages` map to the `subgroup`-prefixed aggregate names); PointClipping; Multiview; ProtectedMemory; Maintenance3 |
+| `VkPhysicalDeviceVulkan12Properties` | Driver; FloatControls; DescriptorIndexing; DepthStencilResolve; SamplerFilterMinmax; TimelineSemaphore |
+| `VkPhysicalDeviceVulkan13Properties` | SubgroupSizeControl; InlineUniformBlock; TexelBufferAlignment; ShaderIntegerDotProduct; Maintenance4 |
+
+- `chain_t` gains `promoted_count` (0..17), `promoted_tags` and `promoted_addresses` in forward order.
+  `collect_chain` range-checks each promoted object at its full native size and rejects a repeated
+  promoted tag. Promoted headers still count toward the 64-header walk quota.
+- `request_tags(chain, api_version)` returns the wire request: the chain's canonical tags in forward
+  order, then each missing parent aggregate in 1.1, 1.2, 1.3 order. A parent is added only when at
+  least one promoted structure of that level is present and the API gate admits it. The result never
+  exceeds the existing five-tag wire profile because every parent is one of the five canonical tags.
+  A forged snapshot whose additions would exceed five returns `Invalid`.
+- `publish_properties2` derives the gate from the projected `value.properties.apiVersion`, recomputes
+  the request and validates the reply against it. Promoted targets join the existing range proof:
+  they must not overlap the root, the snapshot, the reply, any canonical target, each other or any
+  unknown header. The topology re-collection compares promoted arrays as well. All checks finish
+  before the first write. The canonical nodes occupy the first `chain.count` reply nodes, so their
+  publication is unchanged. Each admitted promoted target receives only its named fields from the
+  parent aggregate node. Headers, links, padding and unknown objects stay unchanged.
+- ICD `properties2`: when the chain holds a promoted structure and the actual API version is not
+  cached yet, it first issues the existing command 6 core-properties query through `raw_properties`.
+  That query's failure leaves the output unchanged with the usual loss handling. Chains without
+  promoted structures issue exactly the same commands as before.
+
+#### Features2 (`venus_features_native.zig`)
+
+Thirty promoted feature structures; every field keeps its aggregate name. `ShaderDrawParameters` and
+`HostQueryReset` stay canonical nodes.
+
+| Aggregate | Structures |
+|:--|:--|
+| `VkPhysicalDeviceVulkan11Features` | 16BitStorage; Multiview; VariablePointers; ProtectedMemory; SamplerYcbcrConversion |
+| `VkPhysicalDeviceVulkan12Features` | 8BitStorage; ShaderAtomicInt64; ShaderFloat16Int8; DescriptorIndexing; ScalarBlockLayout; ImagelessFramebuffer; UniformBufferStandardLayout; ShaderSubgroupExtendedTypes; SeparateDepthStencilLayouts; TimelineSemaphore; BufferDeviceAddress; VulkanMemoryModel |
+| `VkPhysicalDeviceVulkan13Features` | ImageRobustness; InlineUniformBlock; PipelineCreationCacheControl; PrivateData; ShaderDemoteToHelperInvocation; ShaderTerminateInvocation; SubgroupSizeControl; Synchronization2; TextureCompressionASTCHDR; ZeroInitializeWorkgroupMemory; DynamicRendering; ShaderIntegerDotProduct; Maintenance4 |
+
+- `chain_t` gains `promoted_count` (0..30), `promoted_tags` and `promoted_addresses`; its pinned x64
+  size changes from 104 to 472 bytes. A repeated promoted tag is `Invalid`.
+- New owned `promoted_source_t` carries the visible `api_version` and the projected Vulkan 1.1/1.2/1.3
+  aggregate words (extents 12, 47 and 15, zero suffix). `validate_features2` and `publish_features2`
+  take it as a fifth argument. Validation rejects a non-Boolean word or nonzero suffix, a canonical
+  aggregate node whose words differ from the source, and a promoted target that is null, misaligned,
+  re-tagged, overflowing or overlapping the outer object, a canonical target or another promoted
+  target. Validation of promoted targets does not depend on the API gate. `publish_batch` keeps its
+  canonical-only contract.
+- ICD `features2` builds the source from `project_device_feature_nodes`, the same projection that
+  device creation uses, zeroed without a ready reply profile. Its structural preflight before any
+  command passes an all-zero source.
+
+#### Device creation (`venus_device_native.zig`)
+
+- The same thirty promoted feature structures are recognized. Each word must be 0 or 1, and a
+  repeated promoted tag is `Invalid`.
+- Vulkan `VkDeviceCreateInfo` valid usage forbids an aggregate together with any structure promoted
+  into it (VUIDs 02829, 02830 and 06532). Any such pair is `Invalid` in either order, even when every
+  word is false.
+- After the walk, promoted words of one level merge into one owned aggregate record, because the
+  structures of one level cover disjoint aggregate fields. A level with at least one true word appends
+  that aggregate record after the recognized nodes, in 1.1, 1.2, 1.3 order. An all-false level adds
+  nothing, which matches the existing omission of all-false records. If the record for level 1.1 is
+  appended while a standalone `ShaderDrawParameters` record is present, the standalone word moves into
+  the aggregate's `shaderDrawParameters` word and the standalone record is removed. Level 1.2 does the
+  same with `HostQueryReset`. The host therefore never receives an aggregate together with its
+  promoted standalone structure.
+- Appended records use canonical tags absent from the chain, so the nine-record bound and the
+  2696-byte owned request are unchanged. `preflight` reports `FeatureNotPresent` for an appended true
+  word. `preflight_supported` checks it against the projected aggregate policy. The enabled-device
+  state records it under the aggregate tag, which keeps later feature gates exact.
+- The ICD cross-checks at compile time that the feature and device modules list identical promoted
+  tags and levels.
+
+#### Verification
+
+- Properties: every promoted structure alone, with its aggregate, after unknown headers and in a
+  combined chain, under visible API 1.0, 1.1, 1.2 and 1.3. Named fields equal the aggregate, and every
+  other byte, header, link and canary is unchanged. Gated structures stay unchanged. Duplicate,
+  overflowing, overlapping and forged-request cases return `Invalid` with zero output bytes changed.
+- Features: every promoted field one-hot through the source; API gating; inconsistent aggregate node;
+  every promoted alias and alignment error.
+- Device: every promoted field one-hot true, giving `FeatureNotPresent` from `preflight` and an exact
+  aggregate record from `preflight_supported`; all-false omission; every aggregate/promoted conflict in
+  both orders; the ShaderDrawParameters and HostQueryReset folds; duplicates and malformed Booleans.
+- ICD: Properties2 with a cold API cache issues command 6 before command 148 and publishes driver
+  properties identical to the Vulkan12 aggregate; Features2 promoted structures match the aggregate;
+  device creation with a promoted BufferDeviceAddress request sends the equivalent Vulkan12 aggregate
+  and records it in the enabled state.
+- Gates: Debug and ReleaseSafe units, owned sanitizers with zero leaks, production coverage at least
+  90% for each changed module, the Windows cross-compiles, then the rebuilt ICD in the census and the
+  full 1100-cycle reload.
+
+### Explicit driver lists skip DXGI sorting (loader patch 0002, 2026-10-22)
+
+**Scope.** `patches/vulkan_loader/0002-skip-dxgi-sorting-for-explicit-driver-lists.patch` changes
+three Windows-only loader files on top of patch 0001. Linux builds keep using the submodule
+unchanged. The submodule pin does not change.
+
+**Behavior.**
+
+- `bool windows_explicit_driver_list(const struct loader_instance *inst)` returns true when
+  `loader_secure_getenv` yields `VK_DRIVER_FILES`, or else `VK_ICD_FILENAMES`. It frees the value
+  with `loader_free_getenv`. This is exactly the condition under which `loader_get_data_files`
+  marks the driver override active and skips the registry.
+- `windows_initialize_dxgi(const struct loader_instance *inst)` returns 0 (no
+  `VK_LOADER_FEATURE_PHYSICAL_DEVICE_SORTING`) without creating a factory when the list is explicit.
+  `loader_create_instance_chain` passes its `inst`.
+- `windows_read_sorted_physical_devices` logs at info level and returns `VK_SUCCESS` with a zero
+  count and a NULL array, the same result as its existing factory-creation failure path.
+- `dxgi.dll` is still loaded by `windows_initialization` and released by patch 0001's
+  `windows_teardown`.
+
+**Why.** Each `IDXGIFactory` creation pulls in dxcore and directxdatabasehelper, which open RPC/ALPC
+client connections. RPCRT4 later closes idle connections from a thread-pool timer callback and
+attaches per-thread state (a duplicated thread handle and an event) to that pool worker until the
+worker retires. That broke exact handle equality in reload cycle 3. With an explicit driver list,
+adapter-preference sorting has no work to do for the single listed Waddle driver.
+
+**Error handling.** Allocation failure inside `loader_secure_getenv` yields NULL, which is treated as
+"no explicit list", so the original DXGI path runs. Nothing new can fail.
+
+**Verification.**
+
+- `tests/vgpu/vulkan_loader_patch_test.py` pins the exact patch set, the files it touches, the four
+  removed lines and the ordering of the explicit-list check before every `fpCreateDXGIFactory1` call.
+  It also proves every other pinned file stays byte-identical.
+- `make vgpu-native-loader-win64` builds with `BUILD_WERROR=ON`. The import table is unchanged.
+- Native evidence: the traced six-life census `opencl_census_55d8a20f` shows that no life opens an
+  ALPC port with the patched loader. Final acceptance is the 1100-cycle reload with the ten-step
+  pre-initialization below (reload contract amendment 4).
+- Pinned patch files: 0001 is 78 lines, SHA-256
+  `29594d9caf3a70f8de8327b8debe0911d298db79aa592727fa78081fe7c6fa16`; 0002 is 81 lines, SHA-256
+  `5ed9a21f33821d351136da2370a258e94241f0110fc4eb2130dcc2293cc28f38`. The built Windows
+  `vulkan-1.dll` with both patches is `c04164e1d7061c850ee9009bfb3b0e07bc41ee98e6f7e303cf9164340670d3c2`.
+
+### OpenCL reload OS pre-initialization, ten steps (amendments 1-4, 2026-10-22)
+
+**Scope.** `tests/vgpu/opencl_os_preinit_windows.inc` is included only by the Windows OpenCL
+fixture `tests/vgpu/opencl_integration.c`. It runs before the entry baseline of a reload run and
+in heap-audit mode only through the explicit diagnostic switch (`audit_os_preinit_requested`). It
+is test-fixture code: no Waddle, clvk or Vulkan loader code runs inside it, and nothing in the
+shipped ICD or OpenCL layer calls it.
+
+**Interface.**
+
+- `static int os_preinitialize(void)` runs the ten steps below with short-circuit `||`, in this
+  order, and returns zero only when all ten succeed. It stops at the first failing step.
+- Each step is `static int os_preinit_<name>(void)`, returning zero on success. A nonzero return
+  means the step has already released everything it acquired.
+- `reload_fixture_preinit` calls `os_preinitialize`; a nonzero result stops the run before any
+  baseline is measured.
+- `OsPreinitRecord` is the witness written into the baseline record:
+  `user32,winsock,bcrypt,dxgi_module,search_order,package_family,winsock_connect,user_hive,random,d3dkmt_adapters`.
+  `scripts/opencl_reload_output.py` requires exact string equality and rejects any prefix, any
+  suffix, the earlier `dxgi_factory` witness, an empty value and a missing value.
+
+**Steps, with the resources each one acquires and releases.** Every module is loaded from System32
+(`LOAD_LIBRARY_SEARCH_SYSTEM32`), except the deliberate bare-name load in step 5.
+
+| Step | Witness | Operation | Acquired, then released by the same step |
+|:-:|:--|:--|:--|
+| 1 | `user32` | Load and free `user32.dll` | 1 module reference |
+| 2 | `winsock` | `WSAStartup(2.2)`, open and close one IPv4 TCP socket, `WSACleanup` | module, startup, socket |
+| 3 | `bcrypt` | Load and free `bcrypt.dll` | 1 module reference |
+| 4 | `dxgi_module` | Load and free `dxgi.dll`; no factory is created | 1 module reference |
+| 5 | `search_order` | `LoadLibraryW(L"dwmapi.dll")` by bare name; fails unless the loaded path is System32 `dwmapi.dll` | 1 module reference |
+| 6 | `package_family` | Size-only `GetPackagesByPackageFamily` for `Microsoft.D3DMappingLayers_8wekyb3d8bbwe`; accepts `ERROR_SUCCESS` and `ERROR_INSUFFICIENT_BUFFER` | none (kernel32 borrowed via `GetModuleHandleW`) |
+| 7 | `winsock_connect` | Listener on `127.0.0.1`, nonblocking `TCP_NODELAY` client connect, `select` writable within 2 s; no accept, no data | module, startup, 2 sockets |
+| 8 | `user_hive` | `RegOpenKeyExW(HKEY_CURRENT_USER, L"Software", 0, KEY_READ)`, then `RegCloseKey` | `advapi32.dll` reference, 1 key; the predefined HKCU handle is never closed |
+| 9 | `random` | `BCryptOpenAlgorithmProvider(L"RNG", L"Microsoft Primitive Provider", 0)`, `BCryptGenRandom` of 16 bytes, `BCryptCloseAlgorithmProvider(h, 0)` | `bcrypt.dll` reference, 1 provider |
+| 10 | `d3dkmt_adapters` | `D3DKMTEnumAdapters2` with `{NumAdapters = 0, pAdapters = NULL}` | `gdi32.dll` reference |
+
+The include declares the Win32 constants it needs itself, because `winsock2.h`, `winreg.h`,
+`bcrypt.h` and `d3dkmthk.h` are not included after `windows.h`. HKCU is the sign-extended predefined
+handle value `0x80000001`, `KEY_READ` is `0x20019`, and `D3DKMT_ENUMADAPTERS2` uses its 16-byte x64
+layout (a 32-bit count, padding, then the array pointer).
+
+**Why each step exists.** Each step performs once, before the baseline, a Windows first use that
+an ordinary reload cycle triggers and that Windows then keeps for the life of the process. Steps 1-4
+come from amendment 1, steps 5-6 from amendment 2, step 7 from amendment 3, and steps 8-10 from
+amendment 4. Attribution sections 6-14 of `OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md` give the
+measured residual and the kernel stacks behind each one. Steps 8-10 absorb first uses that the
+`IDXGIFactory1` creation in the old step 4 used to trigger: the current-user hive key, the
+`bcryptprimitives.dll` RNG provider and the `dxcore.dll` load from D3DKMT enumeration.
+
+**Equality is unchanged.** Exact handle, TLS and FLS equality is still required before and after
+every one of the 1100 reloads and at final cleanup. Pre-initialization adds no tolerance and no
+baseline reset.
+
+**Concurrency.** Runs on the fixture's main thread before any fixture worker thread exists. Not
+reentrant.
+
+**Failure modes.** Any failed load, export lookup, startup, socket call, registry open, provider
+open, random generation or D3DKMT call releases what the step holds and returns nonzero. The fixture
+then exits before measuring a baseline, so a partial pre-initialization can never become a baseline.
+
+**Verification.**
+
+- `tests/vgpu/opencl_os_preinit_test.c` runs the include against Win32 doubles
+  (`tests/vgpu/win32_fake/opencl_os_preinit_fake.h`). The success trace has exactly 69 operations.
+  Failing each operation in turn, plus the three planted-`dwmapi.dll` path cases (80 failure
+  paths in all), proves that every owner counter (module
+  references, Winsock startups, sockets, registry keys, RNG providers) returns to zero on every path.
+- `tests/vgpu/opencl_os_preinit_coverage.py` measures branch coverage of the include against the
+  90% project gate; the measured result at commit `d2ba4a4` is 100%.
+- The test runs under ASan, LSan and UBSan with zero findings.
+- `tests/vgpu/opencl_reload_output_test.py` covers the witness rules above.
+- Native evidence: the traced six-life census `opencl_census_709beb33` shows zero handle, module,
+  TLS and FLS change in every life, and a per-step native control shows that none of the ten steps
+  opens an RPC/ALPC connection. Final acceptance is the 1100-cycle reload R10.
+
+### CDB suspend guard R15 and native guard controls (2026-10-22)
+
+**Scope.** Native heap captures run CDB non-invasively (`-pvs`), which suspends every target thread
+for the pass. If CDB is killed on its 15 s bound, those increments remain. The guard worker records
+each original thread's baseline suspend count before a pass, and after proven CDB retirement it
+removes exactly one debugger-owned increment from threads that still carry it. R15 is the reviewed
+revision of R14 (`build/qualification_feature_20261021/cdb_guard_r15/`, receipt `fc0edec2…`).
+
+**Changes from R14.** The worker sources and executable (`2da53bdf…`), the C core and every protocol
+parser are byte-identical.
+
+1. `stage_worker()` uploads the hash-bound worker to `<guest>\guard_worker_<sha16>.exe` before any
+   timed stage. It reuses an identical file and refuses a different one. `run_guarded_capture` takes
+   that path (`staged_worker_guest`) and each pass only re-verifies its hash. R14 re-uploaded 309 KB
+   through 1200-character WinRM chunks on every pass, about 120 s against a 60 s stage.
+2. The worker starts through `Win32_Process.Create`. R12 opens and closes a WinRM shell per
+   PowerShell call, so a `Start-Process` child belongs to a shell that closes immediately. The
+   worker's image is read from the live process, not assumed.
+3. When CDB times out and the guard proves every original count restored, the RESULT JSON is persisted
+   and `GuardTimeoutCleaned` (a `TimeoutError`) is raised. The stage still fails. R14 reported this
+   case as "cleanup not proven".
+4. The capture binding schema is `suspend_guard_r15_capture_v1` and records the staged path.
+5. Three R14 helpers that nothing called are removed.
+
+**Native controls** (`guard_native_control_r1/`, offline only until run). The fixture revision 2
+(`guard_cdb_control_r2.c`) starts three running threads and one `CREATE_SUSPENDED` thread (count 1).
+It writes READY, FRESH and TERMINAL records to marker files, has a 600 s budget and resets its
+done-events per request. `guard_fixture_capture.py` reuses R12's CDB machinery by hash and replaces
+only `capture()`. `guard_control_runner.py --native` runs four controls, each on a fresh fixture:
+
+| Control | Expected outcome |
+|:--|:--|
+| normal | cleanup proven, nothing recovered, every thread at its baseline (suspended thread stays at 1) |
+| inject | after both passes the fixture suspends slot 0 once; the guard recovers exactly that thread |
+| timeout | `.sleep 30000` hits the real 15 s bound; all threads restored; `GuardTimeoutCleaned` |
+| fresh | a thread created before the passes is reported FRESH, never resumed; the stage fails |
+
+Each control must end with the fixture exiting naturally: TERMINAL code 0, equal entry and final
+handle counts, and process absence by PID and exact creation time.
+
+**Verification (offline).**
+
+| Gate | Result |
+|:--|:--|
+| R15 tests, normal and -O | 27 pass |
+| R15 coverage | 98.69% lines, 96.55% branch outcomes |
+| Guard C core, ASan/LSan/UBSan with leak detection enabled | Pass |
+| Runner and adapter fakes, normal and -O | 15 pass |
+| Runner coverage | 96.22% lines, 91.67% branch outcomes |
+| Adapter coverage | 100% lines, 94.44% branch outcomes |
+| Fixture revision 2, private GCC14 cross-build with -Werror -Wconversion -Wshadow | Pass |
+
+Branch outcomes come from `cdb_guard_r15/branch_coverage.py`. It counts both directions of every
+if, while and for statement from traced line arcs, including server threads. Native controls must
+pass before any heap acceptance use.
+
+**Where the code lives.** Like every native qualification harness on this branch (R8-R14, the
+census and reload runners), the guard is evidence tooling, not product or CI code. It lives under
+the git-ignored `build/qualification_feature_20261021/`, and each runner admits it only by
+SHA-256. These are the hashes of the reviewed R15 and control sources, so reviewers can identify
+the exact files:
+
+| File (under `build/qualification_feature_20261021/`) | SHA-256 |
+|:--|:--|
+| `cdb_guard_r15/guarded_capture.py` | `db59cba781aaef6bad008b5d753e4d605cbeabf32dbbf90481041bd0d7039a29` |
+| `cdb_guard_r15/guarded_capture_r15.patch` (R14 to R15) | `6c30879b703a239a4ccdc86e59de0b0f0b4bc52b4b1d97985d1cbfc9dde6f9c2` |
+| `cdb_guard_r15/test_guarded_capture.py` | `30071b50de5ee6a2eeb520af072b5919380e5b4f563ba0ddbba24aad57489cfc` |
+| `cdb_guard_r15/test_guarded_capture_paths.py` | `e075a35165cf1afbd07b41f82620998c69f917a7aa9ed45d48da319e8ce10766` |
+| `cdb_guard_r15/branch_coverage.py` | `f9cc5b506646812166701030d961fdd0cc98d75819fd39ab4fce309cbf6d21df` |
+| `cdb_guard_r15/receipt.json` | `fc0edec2dedf9f8d1d95ec438fe941f5615735b7a773b5e1c653e40f5eb05987` |
+| `cdb_guard_r15/suspend_guard.c` (C core, unchanged from R14) | `7ab14f7d00e93565c9b5ae6136232940d45fed08a5be61d08b988f6312117d6c` |
+| `cdb_guard_r15/suspend_guard.h` | `25e565be9968b356f76d25c1ec0cd8ad1594cb83ed2652c9a3b0f88e07fb73e1` |
+| `cdb_guard_r15/suspend_guard_worker.c` | `ba582b995b926e07b2da311906db2c4eb6f23307d221f095dec801030694bcb2` |
+| `cdb_guard_r15/test_suspend_guard.c` | `b5b81624bab67b795e2c28ca7a8addd61d43433fccaa65ae3d484987b690d774` |
+| `cdb_guard_r15/suspend_guard_worker.exe` (unchanged from R14) | `2da53bdfa799750b38a1815f7eb1af80d866ffc85e2bef5d6b359fca84c1d271` |
+| `guard_native_control_r1/guard_cdb_control_r2.c` | `4260f02c5fa84c03510a5cebf4dc98ec2d79739c3925cf999be92c1a16c3a964` |
+| `guard_native_control_r1/build_r2/guard_cdb_control.exe` | `52c668c8861afb6cf635e7694b4b054f041a63c4de66f8b577e8baa1ee61b6fd` |
+| `guard_native_control_r1/guard_fixture_capture.py` | `72df3a1734a37c7ec944d307cfc7ebc4adc18e590d4957ac0af72af0aae12bde` |
+| `guard_native_control_r1/guard_control_runner.py` | `5f8f19435b7a78f91f6ff9fcd413e9ba80e376bd69bee750574f757d13b565f5` |
+| `guard_native_control_r1/test_guard_control_runner.py` | `c9d306631a24d069ebb0fe9e4bb84c85cb009bfaadd3c2f45273b917b22e3d64` |
+
+The guard touches only the debugger and the qualification target's suspend counts. It runs only
+during native heap captures, and no shipped component links or calls it.
+
+### CDB suspend guard R16-R18 and passing native guard controls (2026-10-22)
+
+R15 and the first control runners failed natively in five distinct ways. Each one was fixed in a new
+revision directory, and the failed run was kept as evidence. Every revision keeps the worker
+executable `2da53bdf…` and the C core byte-identical to R14 and R15.
+
+| Native run | Failure | Fix |
+|:--|:--|:--|
+| `guard_native_control_r1/run_c9e1182e` (R15) | Every control: "The command line is too long". The worker start script embedded the 4398-character base64 C# marker reader. R12 sends each script as `powershell -encodedcommand <base64(UTF-16LE)>`, which made it 16627 characters against the 8191-character Windows limit. | **R16:** `stage_worker()` also stages the marker reader as `guard_marker_reader_<sha16>.cs` beside the worker, before any timed stage. The start and signal scripts read it once, check its SHA-256 in memory, then `Add-Type` it, which brings them to 5979 and 4667 encoded characters. `_run_powershell` refuses any command whose encoded form exceeds `MaxWinrmCommandChars` (8000). |
+| `guard_native_control_r2/run_03ab77e8` (R16) | Every post-pass worker signal: "original capture-stage deadline is exhausted". Cleanup had `min(stage deadline, now + 6 s)`, but each R12 PowerShell call keeps 4 s for its own cleanup and needs 2 s more. The worker then waited out its stage-sized `wait_ms` and aborted without reconciling. | **R17:** cleanup gets its own deadline, `now + GuardCleanupSeconds` (20 s), never capped by the stage. The worker always waits `MaxWorkerWaitMs` (60000) for its signal. The pass-1 precheck reserves only R12's own `reserve_after` (at least 19 s). A cleanup that outlasts the stage still fails the stage, but the worker always gets its signal. |
+| `guard_native_control_r3/run_60f05c3c` (R17) | All four fixtures exited naturally, but (a) the wait re-read `MainModule.FileName` while the worker was exiting, giving "suspend worker identity changed", and (b) the result came back with PowerShell's appended CRLF, giving "unknown worker result record". The fresh control's thread was created before the READY census. | **R18:** proves the worker's identity once while it is alive, holds that `Process` handle, writes the signal and waits with `WaitForExit` on the held handle. The result travels base64-encoded and decodes to the exact bytes. **Controls r4:** the fresh hook fires inside pass 1, after the READY census. |
+| `guard_native_control_r4/run_f87e010c` (R18) | normal, fresh and timeout pass. inject fails because the stray suspend was injected after both passes, when no worker was left to recover it. | **Controls r5:** the injection fires inside pass 1, after R12's CDB pass returns and before the guard signals its worker. |
+
+**Native result** (`guard_native_control_r5/run_b85ce051`, R18 `99237ba3…`, runner `634d497f…`, adapter
+`edd1f1c5…`, fixture `52c668c8…`): **PASS.**
+
+| Control | Guard outcome | Fixture retirement |
+|:--|:--|:--|
+| normal | cleanup proven, nothing recovered, every original at its baseline | TERMINAL 0, handles 58/58, absent |
+| inject | exactly slot 0 (tid 7500) recovered | TERMINAL 0, handles 52/52, absent |
+| fresh | `FRESH|tid=6156|…|action=none` (the fixture-created thread), never resumed, stage fails | TERMINAL 0, handles 52/52, absent |
+| timeout | the real 15 s CDB bound is hit and all six originals are restored (the CREATE_SUSPENDED slot back to 1); `GuardTimeoutCleaned` | TERMINAL 0, handles 52/52, absent |
+
+**Retained process.** In run `03ab77e8` the R16 timeout control left fixture `guard_cdb_control.exe`
+pid 7984 (creation `01dd62614fecac33`) with all six threads suspended. A read-only liveness query
+found no CDB or worker process alive. The handoff forbids force kills and arbitrary
+`ResumeThread`, and a new worker cannot restore it, because its baselines would be the current
+counts. So the process stays in the guest, CPU-only and outside every qualification image name,
+and the lease records it. Removing it is left to the user.
+
+**Offline gates (R18).** 30 tests (22 + 8) pass, normal and `-O`; 98.38% lines and 96.7% branch
+outcomes (176/182). The fake PowerShell now models R12's 4 s + 2 s per-call reserve, the
+8191-character command line and PowerShell's CRLF. The same tests fail 6 cases against R16 and
+8 against R17. The control runner and adapter pass 17 tests, normal and `-O`. The DXVK heap runner
+revision 9 and OpenCL heap runner r2 pin R18 and differ from revision 8 and r1 only in that pin
+(exact inverse patches, tests pass).
+
+| File (under `build/qualification_feature_20261021/`) | SHA-256 |
+|:--|:--|
+| `cdb_guard_r18/guarded_capture.py` | `99237ba334e57391774ec37d2d74f5107eeb43c8409c158cef427f766f758d91` |
+| `cdb_guard_r18/receipt.json` | `e6a26730f32fbeb2fdb424a3c3ffc9f3d99432e5906b23fd9f299d40078d8e70` |
+| `cdb_guard_r18/guarded_capture_r16.patch` | `b10bbcde29d7a73d3dd3789ff940f14dc1e6a1fe92f5800c7d192c5118db4e66` |
+| `cdb_guard_r18/guarded_capture_r17.patch` | `4fbc8a92ea3f6d2747e1267ca85860409fc9fb1333ac2a1ad9171ddc816163e6` |
+| `cdb_guard_r18/guarded_capture_r18.patch` | `32f411d6b30332e972ac4ff156604993c712e0bd4e44bf7915d40707c5af820b` |
+| `cdb_guard_r18/test_guarded_capture.py` | `be8dd8a042dbf57dfa7cce5e7b5a751131f9670f12c88b13227dd01f939d8f8a` |
+| `cdb_guard_r18/test_guarded_capture_paths.py` | `4c51a45d2bd44ec7d09ee22c0ce40d6e7d87114da70e4fce6851889959437091` |
+| `guard_native_control_r5/guard_control_runner.py` | `634d497fb7f198672f157fcb3d4ad9e8a8c31be1a452b21845c4cf9534c7457d` |
+| `guard_native_control_r5/guard_fixture_capture.py` | `edd1f1c51ba384931f1fd960f86696aeca30970d5caebc6b713b0d076ca07da0` |
+| `guard_native_control_r5/test_guard_control_runner.py` | `193e800e4c3f722126e045cb7d79eee5b35f7e273bba39a349bb1cede543ceab` |
+| `dxvk_heap_runner_revision9/dxvk_pageheap.py` | `ac1fcea9fc3f2b14f8e9b9502b7b3323dea5e5422e14ce163e840b920ebb24f9` |
+| `run_dxvk_final_heap_revision9.py` | `2b300d8c1542cac87f2cf7a509e134b8f0189bd602190a78ae6d6b58516778ae` |
+| `opencl_heap_runner_r2/runner.py` | `f9cec92659f734b548e4a6dc97ae70a6630066917d5bacc255cbc509b7f175cf` |
+| `opencl_heap_runner_r2/run_heap.py` | `25cfda4dbaf54b2f855f508ea428267b8a3eea655d24ba50986c068d679fa41b` |
+
+The guard has now passed its native controls, so heap acceptance runs may use it.
+
+### Native heap qualification: guard R19-R22, residual review, DXVK and OpenCL results (2026-10-22)
+
+**Guard revisions forced by the real heap targets.** Each one was found by a native failure, which
+is preserved. Each passed the four native controls before use (controls r6, r8 and r9; normal,
+inject, fresh and timeout all PASS).
+
+| Revision | Native failure that forced it | Change |
+|:--|:--|:--|
+| R19 | DXVK revision 9 (`dxvk_heap_6da665cd6f4f9a1e`, stage `unloaded_1`): every original thread was restored, but the worker reported two FRESH threads that Windows created in the target during the pass, so `cleanup_ok=0` | A completed pass whose only open item is FRESH threads is accepted when a read-only query proves each FRESH thread exited or is an unsuspended OS thread. |
+| R20 | DXVK revision 10 (`dxvk_heap_12144d0af8939cc7`): R19's start check rejected the FRESH threads and recorded nothing | The full observation is written to `<stem>.fresh_proof_observed.json` before any verdict. A FRESH thread is accepted when its start lies in a module loaded from System32. |
+| R21 | Controls r7: the fresh control passed, because .NET `ProcessThread.StartAddress` is `ntdll!RtlUserThreadStart` (ntdll+0x7ee20) for every thread | The staged, hash-verified helper gains `win32_start(tid)`: `OpenThread(THREAD_QUERY_INFORMATION)`, `GetThreadTimes` (exact creation, so TID reuse cannot alias), and `NtQueryInformationThread(ThreadQuerySetWin32StartAddress)`. It was checked natively with Add-Type before use (`cdb_guard_r21/native_compile_check.py`). |
+| R22 | OpenCL heap r2 (`opencl_heap_daf789f5`): R12's pass-1 precheck refused the baseline pass, because pass 1 was measured against stage − 7 s, a reserve that only existed for the pre-R17 in-stage cleanup | Pass 1 is measured against stage − 1 s, like pass 2. A pass that cannot fit still fails R12's precheck before CDB starts. |
+
+In controls r8 and r9 the fresh control fails for exactly the intended reason: "a FRESH thread does not
+start in a System32 module: guard_cdb_control.exe". Every failed heap run was retired the same way:
+1. a read-only process review (`heap_run_liveness.py`; per-run scripts for DXVK revisions 9-11);
+2. exact IFEO restoration through `pageheap_flags_t.restore` (`heap_run_retire.py`), which asserts
+   the current key equals the recorded post-enable state and the restored key equals the recorded
+   absent state;
+3. a `root_failed_run_retirement.json` per run.
+
+**Residual review (`build/qualification_feature_20261021/heap_residual_review.py`).** Offline and
+read-only.
+- **Residual blocks.** A busy DPH block (user address, size, allocation stack) that is busy at
+  `unloaded_N` and was not busy at baseline is a residual of lifetime N.
+- **Frame mapping.** Frames map to modules through CDB's own `lm` table, including the
+  "Unloaded modules" ranges, because the project DLLs are unloaded at every `unloaded_N`.
+- **Allocating module.** The module of the first frame above the allocator. Skipped frames:
+  verifier.dll; ntdll heap internals, named by the pinned ntdll publics (`ntdll_c93f4614_publics.json`);
+  every consecutive ucrtbase/msvcrt frame; and only those kernelbase frames that the pinned
+  kernelbase publics name `Local`/`Global`/`Heap(Re)Alloc`. A kernelbase API such as
+  `LoadLibraryExW` is never skipped.
+- **Categories.**
+  - **OWNED:** the allocating module is a Waddle module: the ICD, the TCP bootstrap, the
+    project-built patched loader, OpenCL.dll, or the fixture executable.
+  - **CLIENT:** the allocating module is DXVK's application-directory `d3d11.dll`/`dxgi.dll`. The
+    fixture's printed module bases identify these and are cross-checked against `lm`.
+  - **OS:** any other allocating module.
+- **Verdict.** PASS requires zero OWNED residual blocks at every unloaded stage, including the
+  first. CLIENT and OS residue is listed with full stacks and per-lifetime growth for review.
+
+The tool's own tests (`test_heap_residual_review.py`, 7 tests, normal and `-O`) prove the
+following, with 96.97% directional branch coverage (the uncovered outcomes are the `__main__`
+guard):
+- a `malloc` leak through two CRT frames is OWNED;
+- an OS allocation under a project call (`LoadLibraryExW` → `LdrpHandleTlsData`, or a Winsock
+  `LocalAlloc`) is OS;
+- client-runtime residue and growth are counted;
+- malformed inputs are rejected.
+
+This classification follows the handoff's acceptance criterion, "zero owned leaks". Claude adopted
+it under the user's autonomy instruction, and it is flagged for the user's review.
+
+**DXVK result** (`build/windows11_vm/dxvk_heap_ab2efe3cbec4fc1f`, revision 11, guard R21): all three
+GPU lifetimes completed, the native exit was 0, combined API heap coverage was complete, and the
+runner restored the IFEO key. Review `d0a41da2…`: **PASS, zero OWNED blocks at every stage.**
+
+| Stage | OS residual (blocks / bytes) | CLIENT residual (blocks / bytes) |
+|:--|--:|--:|
+| `unloaded_1` | 801 / 173,177 | 11 / 181,400 |
+| `unloaded_2` | 854 / 186,285 | 19 / 362,680 |
+| `unloaded_3` | 861 / 188,821 | 27 / 543,960 |
+
+Steady-state attribution (lifetime 2 → 3), symbolized with the snapshot binaries and pinned PDBs:
+- **CLIENT, 2 × 90,112 B per lifetime.** The libstdc++ emergency exception pool (0x16000) that DXVK's
+  statically linked runtime allocates in `__do_global_ctors` and never frees on unload. Also 480 B
+  and 24 B per DLL for winpthreads' `pop_pthread_mem`/mutex state, reached through `std::locale` in
+  `dxvk::Logger`, and two 24 B `__cxa_guard_acquire` mutexes. This is the same toolchain-runtime
+  class that OpenCL.dll's runtime V2 removes for the project's own DLL.
+- **OS.**
+  - 5 × 24 B from `ntdll!LdrpHandleTlsData` inside `kernelbase!LoadLibraryExW`, called by the
+    loader's `windows_initialization`.
+  - 304 B from `bcryptprimitives`, under the balanced open/generate/close in `venus_tcp_random`.
+  - 2 × 256 B from Winsock `GlobalAlloc`, under the balanced `WSAStartup`/`WSACleanup` path.
+  - TSF/IME (`msctf`, `imm32`) allocations during window creation and thread exit.
+
+OS growth shrinks from 801 to 854 to 861 blocks, so most of it is one-time first use.
+
+**OpenCL result** (`build/qualification_feature_20261021/opencl_heap_1e336986`, r3, guard R22): all
+three lives completed, the native exit was 0, the process was naturally absent, and the IFEO key was
+restored. Review `21f569da…`: **FAIL**, with 27 OWNED blocks (107,842 B) per load, all allocated by
+OpenCL.dll (candidate `70ca4fdb…`):
+- **LLVM `ManagedStatic` objects never destroyed.** These are created by clspv's
+  `ParseCommandLineOptions`, by `cl::opt` global constructors and by `TimePassesHandler`. They include
+  the 98,831 B `cl::Option` `DenseMap`, `CommandLineParser`, `TimerGlobals`, `DebugCounter`,
+  `SubCommand`, the `TimerGroup` names and `SmartMutex` objects. Nothing calls `llvm_shutdown()`
+  before OpenCL.dll unloads.
+- **48 B CRITICAL_SECTION debug-info records.** One for each clvk object that owns a `std::mutex`
+  (`cvk_buffer`, `cvk_kernel`, `cvk_event_command`, `cvk_program::get_entry_point`). The GCC
+  win32-thread-model mutex never calls `DeleteCriticalSection`, and the verifier forces debug info,
+  so each destroyed object leaves its record behind.
+
+Both are owned leaks under the reload contract. Fixing them needs an OpenCL.dll teardown change:
+`llvm_shutdown()` ordered after clvk's own destructors, and a mutex implementation that deletes its
+critical section. That change requires the user's approval of a private-copy change (handoff rule),
+a multi-hour OpenCL.dll rebuild, and then a new 1100-cycle reload and a new heap run.
+
+| File (under `build/qualification_feature_20261021/` unless stated) | SHA-256 |
+|:--|:--|
+| `cdb_guard_r22/guarded_capture.py` | `525fc26812ff7d1f8d5b2fdf79e3ac104752a9252311af4f91f2c7673fe2bd75` |
+| `cdb_guard_r22/receipt.json` | `107784a8c9b8e631d791a83e28490808b019168a79444b17a4cc5e830a6bb78e` |
+| `heap_residual_review.py` | `af069c0b5b0f8b7f1d8c028b32ee3a4360a2085049e81177ef2382fdc7e943ca` |
+| `test_heap_residual_review.py` | `046c35f8e83f1be327fb548d1090194ebe9339ab76e1a6a8894e5fc056eb5e2c` |
+| `ntdll_c93f4614_publics.json` | `d90d2d86c93554415177edda2f13b6202d1f896aa0e01a9c19256f9c58711cec` |
+| `kernelbase_pinned_publics.json` | `c9f98370056f26dc0f8afacca0942ba504a722ab52a9276f9f698be7a1752585` |
+| `guard_native_control_r9/guard_control_runner.py` | `ad4fb95fde869352deac32aa4c58114d8016aaedeb625e7d1ecd1fd33fd3fe73` |
+| `dxvk_heap_runner_revision11/dxvk_pageheap.py` | `bfe6dbdfb3699ffcf78c80be5fd0e4239a655d21531d09eb3eb44e4254ecfd7b` |
+| `opencl_heap_runner_r3/runner.py` | `c7365238261f24aa652bf5ef4ae9fd2040394a8ffecabb5704c26fd5cac378dd` |
+| `build/windows11_vm/dxvk_heap_ab2efe3cbec4fc1f/heap_residual_review.json` | `d0a41da25e16c4de7677018f443cfa4a8cfb0dc05892ecba685af840bfcd1088` |
+| `opencl_heap_1e336986/heap_residual_review.json` | `21f569dacb08265c670495dc6350610bd92ffb3b1604fbbf30f1d0169bc32270` |
+
+### OpenCL.dll final teardown: llvm_shutdown before the arena release (2026-10-22)
+
+**Interface.** `waddle_clvk_eh_pool_release(void)` in `src/vgpu/clvk_runtime_eh_pool.c` is the final
+DLL-local atexit callback of OpenCL.dll. It is registered by the `.CRT$XCAWDL` initializer before any
+C++ constructor, so it runs after every static destructor. Its body is:
+1. fail fast unless the state is `RuntimeEhRegistered`;
+2. set the state to `RuntimeEhReleased`;
+3. call `llvm::llvm_shutdown()` (`_ZN4llvm13llvm_shutdownEv`);
+4. call `__gnu_cxx::__freeres()`.
+
+It is not exported and owns no allocation. Its effect is to destroy every LLVM `ManagedStatic` of
+this module image (the `cl::opt` registry, `TimerGlobals`, `DebugCounter`, statistic and timer
+mutexes), then the libstdc++ emergency arena, each exactly once.
+
+**Ordering and conditional limitation.** Every ordinary clvk, clspv and LLVM C++ static object has
+been destroyed before step 3; LLVM ManagedStatics remain for explicit shutdown. This includes
+the local `errs()`/`dbgs()` streams and `getManagedStaticMutex()`'s recursive mutex. Consequently
+every ManagedStatic deleter must avoid these destroyed objects, must not recreate another
+ManagedStatic, and must finish without throwing before step 4. An ordinary `llvm_shutdown_obj`
+does not guarantee this same order: its registration relative to local statics matters.
+
+The handoff review traced the default-option paths through TimerGlobals, CommandLineParser,
+SubCommand/cl::opt, StatLock and DebugCounter and found no deleter accessing a dead static.
+StatisticInfo is not constructed in the release configuration; the linked parallel executor is
+unreachable through the reviewed OpenCL paths. This evidence is conditional on those paths.
+clspv forwards application `clBuildProgram` options to LLVM's command-line parser
+(`submodules/clvk/external/clspv/lib/Compiler.cpp`, ParseOptions). In particular,
+`-print-debug-counter` enables `DebugCounterOwner`'s destructor to print through already-destroyed
+`dbgs()` (`llvm/lib/Support/DebugCounter.cpp`): unloading then has undefined behavior. Diagnostic
+and statistics options that change teardown behavior are outside the qualified default-option
+path. No option filter currently enforces this precondition; the known case remains unqualified.
+
+Filtering inside the private clvk/clspv copy requires separate user approval, a rebuild and fresh
+census, controls, uninterrupted 1100-cycle reload and heap qualification. This documentation does
+not implement that filter or claim the diagnostic path passes. Nothing runs after step 4.
+
+**Admission.** The mandatory link-map policy requires:
+- `__gnu_cxx::__freeres()` from exactly `libstdc++.a(eh_alloc.o)`;
+- `llvm::llvm_shutdown()` from exactly `libLLVMSupport.a(ManagedStatic.cpp.obj)`;
+- the existing EH-pool and TLS symbols.
+
+`verify_runtime_link(..., llvm_runtime=True)` is the default. Only the LLVM-free runtime probe passes
+`llvm_runtime=False`; it defines its own documented no-op stand-in in
+`tests/vgpu/clvk_runtime_windows.cpp`. A runtime policy file cannot change either gate.
+Archive and member basenames are both mandatory for these two runtime symbols. A matching
+member inside a foreign archive, a standalone member, or a prefixed member is rejected.
+Directories remain bound by the separate build-provenance receipt. Bare-object CRT policies
+retain their existing MinGW archive-prefix handling.
+
+**Verification.**
+- **Unit test.** `tests/vgpu/clvk_runtime_eh_pool_test.c` proves `llvm_shutdown` runs after every
+  registered destructor and before the arena release, exactly once each. Plain, ASan/LSan/UBSan and
+  100% line and branch coverage pass.
+- **Audit tests.** `tests/vgpu/clvk_runtime_audit_test.py` (both modes) rejects a foreign owner and
+  a missing definition.
+- **Native.** The rebuilt candidate OpenCL.dll `8552b3a1…` passes census revision 6 and native
+  controls revision 8, and is under 1100-cycle reload R11 and the guarded heap run (attribution
+  section 17).
+
+### Codex continuation qualification state (2026-10-23)
+
+The user explicitly ratified reload amendment 4 and stack-proven DXVK static-runtime CLIENT
+classification, and approved exact Codex lease-owner wrapper r2. See attribution section 18 for
+the interrupted R11/R12 records, new VM process identities and preserved-artifact launch.
+R12 contains only eight completed cycles and no verdict, so it contributes no reload acceptance.
+Fresh builds and native runners must freeze the current auditor/source hashes and new VM boot.
+Existing successful historical results remain historical; the OpenCL heap gate remains open.
+
+### Current-source OpenCL candidate qualification (2026-10-23)
+
+The review-fix build is candidate 81f3fc1d (receipt 4c0436a7), superseding 8552b3a1 for new native
+qualification. It passes static admission, new-boot native controls r9 and six-life census r7
+with zero handle/module/TLS/FLS deltas. The census proves attribution and functional retirement
+only. Attribution section 19 records exact hashes, applicability and natural retirement. Fresh
+1100-cycle reload R13 and guarded three-life heap runner r6 remain mandatory and uncredited.
+
+### Rebuilt candidate uninterrupted reload gate (2026-10-23)
+
+Candidate 81f3fc1d passes R13: exactly 1100 DLL lives/3300 GPU contexts, exact per-cycle
+handle/TLS/FLS equality and module retirement, final cleanup to entry, natural native/console
+and host retirement, and an independent rerun of the frozen strict verifier. Attribution
+section 20 records full immutable evidence hashes. The heap verdict is explicitly separate
+and remains pending; no reload result alone grants heap acceptance.
+
+### Rebuilt candidate heap acceptance (2026-10-23)
+
+The final heap run cf99460c on candidate81f3fc1d completes three ordinary eight-context lives
+with full PageHeap/UST, nine-heap coverage, zero CSR user-busy allocations and eight clean R22
+guard passes. Native/controller/worker exits are natural0; all owned groups/pidfds retire and
+IFEO returns exactly to its absent pre-run state. The capture tool's source-frame handoff remains
+a recorded denial; the separate prescribed offline ownership review supplies PASS with zero
+OWNED blocks/bytes at every unload and no unknown allocating module. OS residue retains full
+raw stacks and pinned-symbol attribution. Attribution section21 records counts and full hashes.
+
+R13 plus this heap verdict satisfy the OpenCL reload/memory gates for the documented default
+compiler-option profile. The diagnostic/statistics-option limitation above remains explicit,
+without claiming an unimplemented private-copy filter or qualification of that path. The source
+implementation and native evidence are complete; parent delivery-head CI closure is separate.
+
+### Final acceptance and delivery boundary (2026-10-23)
+
+All implementation tasks are complete within the previously accepted standalone-development,
+physical graphics, presentation, DXVK and default-option OpenCL qualification boundaries.
+Source/native applicability review at01613b1 verifies the current canonical build receipt's
+14 runtime inputs, candidate81f3fc1d, complete R13 and heap evidence, unchanged README and
+submodule pins, and all12 successful CI checks at source head bffeb41. Later changes are
+qualification documentation only. Final delivery still requires all12 checks on the exact
+completion commit and a ready-for-review, unmerged PR#6.
+
+The review preserves the explicitly documented nonstandard LLVM diagnostic/statistics-option
+teardown limitation. It claims neither a private-copy option filter nor qualification of that
+path. Root follow-up review is labelled as such; the prior independent review is preserved.
+No historical interrupted reload, capture attribution handoff or sandbox failure is rewritten
+as a passing native run. The sole VM/GPU lease is idle, all qualification processes have retired,
+and the existing signed-in VM and evidence remain preserved.

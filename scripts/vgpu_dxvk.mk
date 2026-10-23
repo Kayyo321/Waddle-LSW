@@ -19,12 +19,22 @@ vgpu-dxvk-client-build: vgpu-dxvk-pin scripts/build_dxvk_client.py patches/dxvk/
 
 # Private immutable loader crossbuild: native discovery remains a separate gate.
 .PHONY: vgpu-native-loader-win64
-vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan_loader.cmake scripts/vulkan_loader_win64.cmake
-	cmake -S submodules/vulkan_loader -B build/vendor/vulkan_loader_win64 -G Ninja -DCMAKE_TOOLCHAIN_FILE="$(CURDIR)/scripts/vulkan_loader_win64.cmake" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE="$(CURDIR)/scripts/vulkan_loader.cmake" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DUSE_GAS=ON
-	cmake --build build/vendor/vulkan_loader_win64 --parallel 4
-	test -s build/vendor/vulkan_loader_win64/loader/vulkan-1.dll
-	x86_64-w64-mingw32-objdump -f build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'file format pei-x86-64'
-	x86_64-w64-mingw32-objdump -p build/vendor/vulkan_loader_win64/loader/vulkan-1.dll | grep 'DLL Name:'
+# Windows loaders build from a private copy of the pin with the tracked patches applied
+# (patches/vulkan_loader/, approved 2026-10-22); the submodule itself is never modified.
+VgpuLoaderPatches = patches/vulkan_loader/0001-release-windows-initialization-module-references.patch \
+	patches/vulkan_loader/0002-skip-dxgi-sorting-for-explicit-driver-lists.patch
+vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan_loader.cmake scripts/vulkan_loader_win64.cmake scripts/vulkan_loader_private_source.py $(VgpuLoaderPatches)
+	python3 -B scripts/vulkan_loader_private_source.py build/vendor/vulkan_loader_private
+	cmake -S build/vendor/vulkan_loader_private -B build/vendor/vulkan_loader_win64_private -G Ninja -DCMAKE_TOOLCHAIN_FILE="$(CURDIR)/scripts/vulkan_loader_win64.cmake" -DCMAKE_BUILD_TYPE=Release -DCMAKE_PROJECT_VULKAN_LOADER_INCLUDE="$(CURDIR)/scripts/vulkan_loader.cmake" -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF -DLOADER_CODEGEN=OFF -DBUILD_WERROR=ON -DUSE_GAS=ON
+	cmake --build build/vendor/vulkan_loader_win64_private --parallel 4
+	test -s build/vendor/vulkan_loader_win64_private/loader/vulkan-1.dll
+	x86_64-w64-mingw32-objdump -f build/vendor/vulkan_loader_win64_private/loader/vulkan-1.dll | grep 'file format pei-x86-64'
+	x86_64-w64-mingw32-objdump -p build/vendor/vulkan_loader_win64_private/loader/vulkan-1.dll | grep 'DLL Name:'
+
+.PHONY: vgpu-loader-patch-test
+vgpu-loader-patch-test:
+	python3 -B tests/vgpu/vulkan_loader_patch_test.py
+	python3 -O -B tests/vgpu/vulkan_loader_patch_test.py
 
 # OpenCL (TODO #5): pinned clvk + clspv/LLVM cross-built for Windows. Not part of the
 # default vgpu-windows aggregate because the LLVM build is long; cross-compilation is
@@ -169,6 +179,30 @@ vgpu-native-heap-stage-coverage:
 	python3 -B tests/vgpu/dxvk_heap_audit_coverage_test.py
 	python3 -O -B tests/vgpu/dxvk_heap_audit_coverage_test.py
 	python3 -B scripts/dxvk_heap_audit_coverage.py
+
+# Approved OS-only first-use initialization before reload baselines (2026-10-22 amendment).
+# Actual include under Win32 API doubles; native behavior is a separate census/run gate.
+VgpuOpenclOsPreinitFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -Itests/vgpu
+VgpuOpenclOsPreinitSources = tests/vgpu/opencl_os_preinit_test.c
+VgpuOpenclOsPreinitHeaders = tests/vgpu/opencl_os_preinit_windows.inc tests/vgpu/win32_fake/opencl_os_preinit_fake.h
+build/opencl-os-preinit: | build
+	mkdir -p $@
+
+build/opencl-os-preinit/host: $(VgpuOpenclOsPreinitSources) $(VgpuOpenclOsPreinitHeaders) | build/opencl-os-preinit
+	$(CC) $(VgpuOpenclOsPreinitFlags) -O2 $< -o $@
+
+build/vgpu_opencl_integration.exe: tests/vgpu/opencl_os_preinit_windows.inc
+
+.PHONY: vgpu-opencl-os-preinit-test vgpu-opencl-os-preinit-sanitizers vgpu-opencl-os-preinit-coverage
+vgpu-opencl-os-preinit-test: build/opencl-os-preinit/host
+	./build/opencl-os-preinit/host
+
+vgpu-opencl-os-preinit-sanitizers: | build/opencl-os-preinit
+	$(CC) $(VgpuOpenclOsPreinitFlags) -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer $(VgpuOpenclOsPreinitSources) -o build/opencl-os-preinit/host_sanitized
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1 ./build/opencl-os-preinit/host_sanitized
+
+vgpu-opencl-os-preinit-coverage:
+	python3 -B tests/vgpu/opencl_os_preinit_coverage.py
 
 # Separate actual-DLL1100-reload stress. Native execution is root-supervised.
 VgpuOpenclReloadFlags = -std=c11 -Wall -Wextra -Wpedantic -Werror -pthread
