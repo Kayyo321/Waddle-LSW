@@ -18,9 +18,10 @@ gui-deps:
 build/waddle-gui: $(GuiSources) $(GuiHeaders) | build gui-deps
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(GuiFlags) $(GuiSources) $(LDFLAGS) $(GuiLibraries) -o $@
 
-gui-install: gui
+gui-install: gui build/waddled
 	install -Dm755 build/waddle $(DESTDIR)$(PREFIX)/bin/waddle
 	install -Dm755 build/waddle-gui $(DESTDIR)$(PREFIX)/bin/waddle-gui
+	install -Dm755 build/waddled $(DESTDIR)$(PREFIX)/bin/waddled
 	install -Dm644 data/io.github.Kayyo321.Waddle.desktop $(DESTDIR)$(PREFIX)/share/applications/io.github.Kayyo321.Waddle.desktop
 	install -Dm644 imgs/logo.png $(DESTDIR)$(PREFIX)/share/icons/hicolor/256x256/apps/io.github.Kayyo321.Waddle.png
 
@@ -34,3 +35,17 @@ gui-test: gui build/gui_backend_test build/gui_window_test
 	./build/gui_backend_test
 	GTK_A11Y=none GSK_RENDERER=cairo dbus-run-session -- xvfb-run -a ./build/gui_window_test
 	python3 tests/gui/dispatch.py
+	GTK_A11Y=none GSK_RENDERER=cairo dbus-run-session -- xvfb-run -a python3 tests/gui/instance.py
+
+.PHONY: gui-sanitizers
+GuiSanitizerFlags = -O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer
+
+build/gui_backend_sanitized: tests/gui/backend.c src/gui/gui_backend.c src/gui/gui_store.c $(GuiHeaders) | build gui-deps
+	$(CC) $(CPPFLAGS) $(GuiSanitizerFlags) $(GuiFlags) -Isrc/gui tests/gui/backend.c src/gui/gui_backend.c src/gui/gui_store.c $(GuiLibraries) -o $@
+
+build/gui_window_sanitized: tests/gui/window.c $(filter-out src/gui/gui_main.c,$(GuiSources)) $(GuiHeaders) | build gui-deps
+	$(CC) $(CPPFLAGS) $(GuiSanitizerFlags) $(GuiFlags) -Isrc/gui tests/gui/window.c $(filter-out src/gui/gui_main.c,$(GuiSources)) $(GuiLibraries) -o $@
+
+gui-sanitizers: build/gui_backend_sanitized build/gui_window_sanitized
+	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 ./build/gui_backend_sanitized
+	GTK_A11Y=none GSK_RENDERER=cairo ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:fast_unwind_on_malloc=0 LSAN_OPTIONS=suppressions=$(CURDIR)/tests/gui/lsan.supp dbus-run-session -- xvfb-run -a ./build/gui_window_sanitized

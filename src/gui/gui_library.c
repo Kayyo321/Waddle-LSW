@@ -325,6 +325,11 @@ static void palette_enter(GtkSearchEntry *entry, gpointer context) {
     for (GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(palette->list)); row; row = gtk_widget_get_next_sibling(row))
         if (gtk_widget_get_child_visible(row)) { palette_activate(palette->list, GTK_LIST_BOX_ROW(row), palette); break; }
 }
+static gboolean palette_key(GtkEventControllerKey *controller, guint key, guint code, GdkModifierType modifiers, gpointer context) {
+    (void)controller; (void)code; (void)modifiers;
+    if (key != GDK_KEY_Escape) return FALSE;
+    gtk_window_destroy(((palette_t *)context)->window); return TRUE;
+}
 void gui_palette_open(gui_t *gui) {
     palette_t *palette = g_new0(palette_t, 1); palette->gui = gui; palette->device = g_strdup(gui->selected);
     palette->window = GTK_WINDOW(adw_window_new()); gtk_window_set_transient_for(palette->window, gui->window);
@@ -342,6 +347,10 @@ void gui_palette_open(gui_t *gui) {
         g_object_set_data_full(G_OBJECT(row), "action", g_strdup(actions[i]), g_free); gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
         gtk_list_box_append(palette->list, GTK_WIDGET(row));
     }
+    GtkEventController *keys = gtk_event_controller_key_new();
+    gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+    g_signal_connect(keys, "key-pressed", G_CALLBACK(palette_key), palette);
+    gtk_widget_add_controller(GTK_WIDGET(palette->window), keys);
     g_signal_connect(palette->search, "search-changed", G_CALLBACK(palette_search), palette);
     g_signal_connect(palette->search, "activate", G_CALLBACK(palette_enter), palette);
     g_signal_connect(palette->list, "row-activated", G_CALLBACK(palette_activate), palette);

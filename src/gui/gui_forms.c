@@ -215,9 +215,15 @@ static void operation_submit(GtkButton *button, gpointer context) {
         if (!valid_name(form, 0)) return;
         args = gui_args_new("device", action); gui_args_add(args, form->device); gui_args_add(args, field(form, 0));
     } else if (!strcmp(action, "export") || !strcmp(action, "import")) {
-        if (!valid_path(form, 0, TRUE) || (!strcmp(action, "import") && !valid_name(form, 1))) return;
+        if (!valid_path(form, 0, TRUE) || !valid_name(form, 1)) return;
         args = gui_args_new("device", action); gui_args_add(args, !strcmp(action, "import") ? field(form, 1) : form->device);
-        gui_args_add(args, !strcmp(action, "import") ? "--input" : "--output"); gui_args_add(args, field(form, 0));
+        gui_args_add(args, !strcmp(action, "import") ? "--input" : "--output");
+        char *destination = !strcmp(action, "export") ? g_build_filename(field(form, 0), field(form, 1), NULL) : g_strdup(field(form, 0));
+        if (!strcmp(action, "export") && g_file_test(destination, G_FILE_TEST_EXISTS)) {
+            form_error(form, "The backup directory already exists. Choose a new name; exports never overwrite a backup.");
+            g_free(destination); g_ptr_array_unref(args); return;
+        }
+        gui_args_add(args, destination); g_free(destination);
     } else if (!strcmp(action, "remove")) {
         if (strcmp(field(form, 0), form->device)) { form_error(form, "Type the exact device name before previewing or removing it."); return; }
         args = gui_args_new("device", "remove"); gui_args_add(args, form->device); gui_args_add(args, "--yes");
@@ -267,12 +273,12 @@ static void operation_build(form_t *form, GtkWidget *box) {
     if (!strcmp(action, "rename") || !strcmp(action, "clone")) {
         form_entry(form, box, 0, "New device name", ""); storage = TRUE;
     } else if (!strcmp(action, "export") || !strcmp(action, "import")) {
-        form_entry(form, box, 0, !strcmp(action, "export") ? "Export directory" : "Backup directory", ""); form_picker(form, 0, TRUE);
-        if (!strcmp(action, "import")) form_entry(form, box, 1, "New device name", "");
+        form_entry(form, box, 0, !strcmp(action, "export") ? "Parent directory for backup" : "Backup directory", ""); form_picker(form, 0, TRUE);
+        form_entry(form, box, 1, !strcmp(action, "export") ? "New backup folder name (letters, digits, - or _)" : "New device name", !strcmp(action, "export") ? "backup" : "");
         gui_label(box, "Imports disable host sharing. Exports are portable backups of a stopped device. The backend validates directory ownership and contents.", "dim-label"); storage = TRUE;
     } else if (!strcmp(action, "remove")) {
         JsonObject *data = gui_device_data(form->gui, form->device);
-        char *warning = g_strdup_printf("Remove %s?\nOwned disk: %s\nState: %s\n\nHost folders shared into Windows are not device-owned and are never removed. Preview the affected resources first. Retaining data leaves it at the state location shown above and reported in Activity.",
+        char *warning = g_strdup_printf("Remove %s?\nOwned disk: %s\nState: %s\n\nHost folders shared into Windows are not device-owned and are never removed. Preview the affected resources first. Activity reports the exact retained-data location after removal; it may differ from the current state path above.",
             form->device, gui_json_text(data, "disk_image", "unavailable"), gui_json_text(data, "state_dir", "unavailable"));
         gui_label(box, warning, NULL); g_free(warning);
         form_entry(form, box, 0, "Type the device name to confirm", "");
@@ -406,7 +412,7 @@ static void read_logs(gui_t *gui) {
     GPtrArray *args = gui_args_new("logs", gui->selected);
     gui_args_add(args, "--target"); gui_args_add(args, targets[MIN(gtk_drop_down_get_selected(gui->log_target), 3)]);
     gui_args_add(args, "--lines"); gui_args_add(args, lines);
-    if (gtk_check_button_get_active(gui->log_follow)) gui_args_add(args, "--follow");
+    gui_args_add(args, gtk_check_button_get_active(gui->log_follow) ? "--follow" : "--json");
     gui_run_args(gui, "Read logs", gui->selected, args);
 }
 /** @brief Batch form owns checkbox names; one existing CLI call at a time. */
@@ -457,7 +463,12 @@ static void batch_next(gui_t *gui) {
     if (names && count) {
         char *operation = gui_store_text(gui->store, "Session", "batch_operation", "status");
         g_key_file_set_string_list(gui->store->keys, "Session", "batch_names", (const char *const *)(names + 1), count - 1);
-        const char *args[] = {operation, names[0], "--json", NULL}; gui_run(gui, operation, names[0], args); g_free(operation);
+        const char *args[] = {operation, names[0], "--json", NULL};
+        if (!gui_run(gui, operation, names[0], args)) {
+            g_key_file_remove_group(gui->store->keys, "Session", NULL);
+            gui_message(gui, "Batch could not start. Remaining device operations were not submitted.");
+        }
+        g_free(operation);
     }
     g_strfreev(names);
 }

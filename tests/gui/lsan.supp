@@ -1,0 +1,9 @@
+# Fontconfig retains a process-wide cache after GTK/Pango teardown.
+# No Waddle allocation or generic allocator is suppressed.
+leak:libfontconfig.so.1
+# Debian GTK 4.18.6 leaks the temporary GList created when installing entry-row
+# mnemonic labels. Slow ASan unwinding identifies this precise library root.
+leak:gtk_widget_list_mnemonic_labels
+# VTE 0.80.1 search selection constructs an unfreed GTK clipboard formats builder.
+# Waddle never calls this factory; this names the observed system allocation root.
+leak:gdk_content_formats_builder_new

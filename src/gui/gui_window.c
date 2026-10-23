@@ -68,7 +68,10 @@ GtkWidget *gui_page(GtkWidget **box, const char *title, const char *description)
     return scroll;
 }
 void gui_message(gui_t *gui, const char *message) {
-    if (!gui->closing && gui->toasts) adw_toast_overlay_add_toast(gui->toasts, adw_toast_new(message));
+    if (!gui->closing && gui->toasts) {
+        char *safe = g_markup_escape_text(message ? message : "Unknown error", -1);
+        adw_toast_overlay_add_toast(gui->toasts, adw_toast_new(safe)); g_free(safe);
+    }
 }
 static void text_append(GtkTextView *view, const char *text) {
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(view);
@@ -109,6 +112,21 @@ static void operation_done(int status, const char *output, const char *error, gp
     gui_t *gui = context;
     gui->job = NULL;
     if (!gui->closing) {
+        if (status == 0 && gui->stream_logs && g_strcmp0(gui->selected, gui->operation_device) == 0) {
+            gboolean json = FALSE;
+            for (guint i = 0; gui->last_argv && gui->last_argv[i]; ++i) json |= !strcmp(gui->last_argv[i], "--json");
+            if (json) {
+                JsonParser *parser = gui_result_parse(output, NULL);
+                if (parser) {
+                    JsonArray *results = json_object_get_array_member(json_node_get_object(json_parser_get_root(parser)), "results");
+                    if (json_array_get_length(results)) {
+                        JsonObject *data = json_object_get_object_member(json_array_get_object_element(results, 0), "data");
+                        gtk_text_buffer_set_text(gtk_text_view_get_buffer(gui->logs), gui_json_text(data, "text", ""), -1);
+                    }
+                    g_object_unref(parser);
+                }
+            }
+        }
         char *result = g_strdup_printf("%s · %s · %s (exit %d)", gui->operation,
             gui->operation_device ? gui->operation_device : "explicit command", status == 0 ? "Completed" : "Failed / interrupted", status);
         gtk_spinner_stop(gui->spinner);

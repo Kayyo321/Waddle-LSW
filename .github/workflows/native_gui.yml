@@ -1,0 +1,39 @@
+name: Native GTK GUI verification
+on:
+  push:
+    branches: [feature/native-gui]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  gui:
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:trixie-slim
+      options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+    timeout-minutes: 25
+    steps:
+      - name: Install native build and display-test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git curl ca-certificates xz-utils build-essential pkg-config libgtk-4-dev libadwaita-1-dev libjson-glib-dev libvte-2.91-gtk4-dev librsvg2-common xvfb xauth xdotool dbus-x11 python3 qemu-utils
+          git config --global --add safe.directory '*'
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+          persist-credentials: false
+      - name: Install verified Zig 0.13
+        run: |
+          curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "d45312e61ebcc48032b77bc4cf7fd6915c11fa16e4aad116b66c9468211230ea  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-linux-x86_64-0.13.0" >> "$GITHUB_PATH"
+      - name: Verify argv routing, GApplication forwarding and native GTK workflows
+        run: make gui-test
+      - name: Verify GUI ownership under ASan, LSan and UBSan
+        run: make gui-sanitizers
+      - name: Exercise native widgets at double scale
+        run: GTK_A11Y=none GDK_SCALE=2 GSK_RENDERER=cairo dbus-run-session -- xvfb-run -a -s '-screen 0 2560x1800x24' ./build/gui_window_test
+      - name: Verify distributable requires the native GUI
+        run: python3 tests/av/package.py
