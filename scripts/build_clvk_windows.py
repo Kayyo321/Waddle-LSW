@@ -526,7 +526,7 @@ def _admit_recorded_runtime(root, record, *, nm, runtime_policy):
         raise SystemExit('cached published DLL differs from admitted linked DLL')
     admission = build_admission(root, linked, link_map, nm=nm,
                                 map_working_directory=record['link_map']['working_directory'],
-                                runtime_policy=runtime_policy)
+                                runtime_policy=runtime_policy, llvm_runtime=True)
     return admission
 
 
@@ -887,7 +887,7 @@ def main(argv=None):
         _verify_inputs_unchanged(root, selected['inputs'])
         admission = build_admission(root, linked_dll, link_map, nm=selected['nm'],
                                     map_working_directory=cross,
-                                    runtime_policy=selected['runtime_policy'])
+                                    runtime_policy=selected['runtime_policy'], llvm_runtime=True)
         imports, built_exports = inspect_dll(linked_dll, exports, objdump=selected['objdump'])
         output = folder / 'out'
         output.mkdir()

@@ -2565,9 +2565,20 @@ Progress, Time Ended TBD.
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
 | `22e86e3` | docs(vgpu): specify the OpenCL.dll llvm_shutdown teardown and log its commits | #3/#5 +0%; overall +0% | Prior documentation checkpoint; no additional native acceptance |
-| (this commit) | fix(opencl): bind teardown symbols to their exact runtime archives | #5 +0%; overall +0% | 22 audit tests pass in normal/optimized Python, including archive-only spoofs, standalone/prefixed members and policy override rejection. Preserved real map c5af0bdc passes the stricter gate with candidate 8552b3a1 unchanged. |
+| `e5c39a2` | fix(opencl): bind teardown symbols to their exact runtime archives | #5 +0%; overall +0% | 22 audit tests pass in normal/optimized Python, including archive-only spoofs, standalone/prefixed members and policy override rejection. Preserved real map c5af0bdc passes the stricter gate with candidate 8552b3a1 unchanged. |
 
 Both archive and member names are now required, matching the shim and admission documentation.
 The auditor is a build-cache input; a later build must use a new cache key. This read-only map
 recheck does not refresh the historical build receipt or credit a rebuild/native qualification.
 Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: probe and production LLVM policy wiring (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | test(opencl): enforce separate probe and production LLVM admission | #5 +0%; overall +0% | 35 build-driver tests pass in normal/optimized Python outside sandbox ptrace with ASan/LSan enabled. Cached admission asserts llvm_runtime=True; fresh admission wiring requires literal True; probe admission asserts False. |
+
+Sandbox runs are retained in /tmp/waddle_clvk_build*.log as failures: ptrace prevents LSan
+execution. Host reruns use unchanged leak checks and pass; no failed result is waived.
+The preceding archive regression test fails six cases against the original 22e86e3 auditor.
+No OpenCL.dll rebuild or native acceptance is credited; parent remains 93.0%.

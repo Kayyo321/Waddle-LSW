@@ -4,8 +4,10 @@ All temporary files and child processes belong to this serial test runner. Fake
 git responses test shell control flow only; the real pinned export comparison is
 also executed. These tests provide no Windows or GPU acceptance evidence.
 """
+import ast
 import dataclasses
 import importlib.util
+import inspect
 import hashlib
 import json
 import os
@@ -492,7 +494,8 @@ class runtime_driver_tests_t(unittest.TestCase):
                                                                 runtime_policy=policy),
                                  {'fresh': True})
             admit.assert_called_once_with(Root, linked, link_map, nm='/private/nm',
-                                          map_working_directory=directory, runtime_policy=policy)
+                                          map_working_directory=directory, runtime_policy=policy,
+                                          llvm_runtime=True)
             link_map.write_bytes(b'tampered map')
             with self.assertRaisesRegex(SystemExit, 'link map hash'):
                 Driver._admit_recorded_runtime(Root, record, nm='/private/nm', runtime_policy=policy)
@@ -566,6 +569,7 @@ class runtime_driver_tests_t(unittest.TestCase):
             self.assertIn('__at_thread_exit', report['rejection'])
             self.assertEqual(auditor.link_args[1]['runtime_policy'], selected['probe_runtime_policy'])
             self.assertEqual(auditor.link_args[1]['expected_output_name'], 'runtime_v2_probe.dll')
+            self.assertIs(auditor.link_args[1]['llvm_runtime'], False)
             dll_command = next(command for command in commands if str(command[0]).endswith('gxx-win32'))
             for flag in ('-Wpedantic', '-Wl,--gc-sections',
                          '-Wl,--undefined=waddle_clvk_runtime_tls_limits',
@@ -575,6 +579,17 @@ class runtime_driver_tests_t(unittest.TestCase):
                          '-Wl,--wrap=_ZNSt13__future_base13_State_baseV211_Make_ready6_M_setEv',
                          '-Wl,--wrap=_ZSt25notify_all_at_thread_exitRSt18condition_variableSt11unique_lockISt5mutexE'):
                 self.assertIn(flag, dll_command)
+
+    def test_production_admission_explicitly_requires_llvm_runtime(self):
+        """Check fresh-build wiring without starting the multi-hour LLVM build."""
+        tree = ast.parse(inspect.getsource(Driver.main))
+        calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Name) and node.func.id == 'build_admission']
+        self.assertEqual(len(calls), 1)
+        arguments = {item.arg: item.value for item in calls[0].keywords}
+        self.assertIn('llvm_runtime', arguments)
+        self.assertIsInstance(arguments['llvm_runtime'], ast.Constant)
+        self.assertIs(arguments['llvm_runtime'].value, True)
 
     def test_native_llvm_key_excludes_mingw_but_binds_host_tools(self):
         build_tools = {name: {'sha256': name + '-hash'}
