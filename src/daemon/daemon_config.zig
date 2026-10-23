@@ -50,6 +50,47 @@ fn parse_u32(s: []const u8) !u32 {
     return @intCast(val);
 }
 
+/// Parses one frozen seamless boolean spelling; borrowed input, no allocation.
+fn parse_config_bool(value: []const u8) !u32 {
+    if (std.mem.eql(u8, value, "1") or std.mem.eql(u8, value, "true")) return 1;
+    if (std.mem.eql(u8, value, "0") or std.mem.eql(u8, value, "false")) return 0;
+    return error.InvalidBoolean;
+}
+
+/// Parses a bounded comma-separated USB vendor/product list into embedded config storage.
+fn parse_usb_auto_attach(value: []const u8, cfg: *c.daemon_config_t) !void {
+    @memset(std.mem.asBytes(&cfg.usb_auto_attach), 0);
+    cfg.usb_auto_attach_count = 0;
+    if (value.len == 0) return;
+
+    var items = std.mem.splitScalar(u8, value, ',');
+    while (items.next()) |raw_item| {
+        if (cfg.usb_auto_attach_count >= c.ConfigMaxUsbAutoAttach) return error.TooManyUsbIds;
+        const item = std.mem.trim(u8, raw_item, " \t");
+        if (item.len != 9 or item[4] != ':') return error.InvalidUsbId;
+        for (item[0..4]) |digit| if (!std.ascii.isHex(digit)) return error.InvalidUsbId;
+        for (item[5..9]) |digit| if (!std.ascii.isHex(digit)) return error.InvalidUsbId;
+        const vendor_id = std.fmt.parseInt(u16, item[0..4], 16) catch return error.InvalidUsbId;
+        const product_id = std.fmt.parseInt(u16, item[5..9], 16) catch return error.InvalidUsbId;
+        for (cfg.usb_auto_attach[0..cfg.usb_auto_attach_count]) |existing| {
+            if (existing.vendor_id == vendor_id and existing.product_id == product_id) return error.DuplicateUsbId;
+        }
+        cfg.usb_auto_attach[cfg.usb_auto_attach_count] = .{ .vendor_id = vendor_id, .product_id = product_id };
+        cfg.usb_auto_attach_count += 1;
+    }
+}
+
+/// Validates USB selector count and uniqueness for caller-constructed configs.
+fn usb_auto_attach_valid(cfg: *const c.daemon_config_t) bool {
+    if (cfg.usb_auto_attach_count > c.ConfigMaxUsbAutoAttach) return false;
+    for (cfg.usb_auto_attach[0..cfg.usb_auto_attach_count], 0..) |item, index| {
+        for (cfg.usb_auto_attach[0..index]) |prior| {
+            if (prior.vendor_id == item.vendor_id and prior.product_id == item.product_id) return false;
+        }
+    }
+    return true;
+}
+
 /// Parses an export specification: <host_path>:<guest_drive>[:<rw|ro>]
 fn parse_export_internal(line: []const u8, mount: *c.waddle_daemon_fs_mount_t) !void {
     const trimmed = std.mem.trim(u8, line, " \t\r\n");
@@ -134,6 +175,25 @@ export fn daemon_config_init_defaults(config: ?*c.daemon_config_t) void {
     copy_to_c_buf(&cfg.mounts[0].host_path, home);
     copy_to_c_buf(&cfg.mounts[0].guest_drive, "Z:\\");
     cfg.mounts[0].read_only = 0;
+
+    cfg.network_mode = c.NetworkModeUser;
+    cfg.network_cups_forward = 1;
+    cfg.usb_controller = 1;
+    cfg.audio_backend = c.AudioBackendPipewire;
+    cfg.audio_microphone = 1;
+    cfg.audio_per_app = 1;
+    cfg.input_ime = c.InputImeGuest;
+    cfg.input_inhibit_shortcuts = c.InputInhibitShortcutsFullscreen;
+    cfg.input_repeat = c.InputRepeatHost;
+    cfg.clipboard_enabled = 1;
+    cfg.clipboard_max_mb = 64;
+    cfg.clipboard_files = 1;
+    cfg.integration_start_at_login = 0;
+    cfg.integration_menu_apps = c.IntegrationMenuAppsInstalled;
+    cfg.integration_desktop_shortcuts = c.IntegrationDesktopShortcutsMirror;
+    cfg.integration_exe_handler = c.IntegrationExeHandlerWaddle;
+    cfg.integration_uac = c.IntegrationUacWindow;
+    cfg.integration_notify = 1;
 }
 
 /// Validates all fields of a daemon_config_t structure against allowed bounds.
@@ -183,6 +243,17 @@ export fn daemon_config_validate(config: ?*const c.daemon_config_t) c_int {
     const uuid_end = std.mem.indexOfScalar(u8, &cfg.av_gpu_mdev_uuid, 0) orelse return -1;
     if (uuid_end != 0 and !av_uuid_valid(cfg.av_gpu_mdev_uuid[0..uuid_end])) return -1;
 
+    if (cfg.network_mode > c.NetworkModeNone or cfg.network_cups_forward > 1 or cfg.usb_controller > 1 or
+        !usb_auto_attach_valid(cfg) or cfg.audio_backend > c.AudioBackendNone or cfg.audio_microphone > 1 or
+        cfg.audio_per_app > 1 or cfg.input_ime > c.InputImeHost or
+        cfg.input_inhibit_shortcuts > c.InputInhibitShortcutsFocused or cfg.input_repeat > c.InputRepeatOff or
+        cfg.clipboard_enabled > 1 or cfg.clipboard_max_mb < 1 or cfg.clipboard_max_mb > 1024 or
+        cfg.clipboard_files > 1 or cfg.integration_start_at_login > 1 or
+        cfg.integration_menu_apps > c.IntegrationMenuAppsNone or
+        cfg.integration_desktop_shortcuts > c.IntegrationDesktopShortcutsOff or
+        cfg.integration_exe_handler > c.IntegrationExeHandlerOff or cfg.integration_uac > c.IntegrationUacNative or
+        cfg.integration_notify > 1) return -1;
+
     return 0;
 }
 
@@ -230,7 +301,7 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
     if (!std.unicode.utf8ValidateSlice(data) or std.mem.indexOfScalar(u8, data, 0) != null) return -1;
 
     var mounts_cleared = false;
-    var current_section: enum { none, subsystem, filesystem, timeouts, av } = .none;
+    var current_section: enum { None, Subsystem, Filesystem, Timeouts, Av, Network, Usb, Audio, Input, Clipboard, Integration } = .None;
 
     var line_iter = std.mem.splitScalar(u8, data, '\n');
     while (line_iter.next()) |raw_line| {
@@ -244,19 +315,31 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
             if (line[line.len - 1] != ']') return -1;
             const sec_name = std.mem.trim(u8, line[1 .. line.len - 1], " \t");
             if (std.mem.eql(u8, sec_name, "subsystem")) {
-                current_section = .subsystem;
+                current_section = .Subsystem;
             } else if (std.mem.eql(u8, sec_name, "filesystem")) {
-                current_section = .filesystem;
+                current_section = .Filesystem;
                 if (!mounts_cleared) {
                     cfg.mount_count = 0;
                     mounts_cleared = true;
                 }
             } else if (std.mem.eql(u8, sec_name, "av")) {
-                current_section = .av;
+                current_section = .Av;
             } else if (std.mem.eql(u8, sec_name, "timeouts")) {
-                current_section = .timeouts;
+                current_section = .Timeouts;
+            } else if (std.mem.eql(u8, sec_name, "network")) {
+                current_section = .Network;
+            } else if (std.mem.eql(u8, sec_name, "usb")) {
+                current_section = .Usb;
+            } else if (std.mem.eql(u8, sec_name, "audio")) {
+                current_section = .Audio;
+            } else if (std.mem.eql(u8, sec_name, "input")) {
+                current_section = .Input;
+            } else if (std.mem.eql(u8, sec_name, "clipboard")) {
+                current_section = .Clipboard;
+            } else if (std.mem.eql(u8, sec_name, "integration")) {
+                current_section = .Integration;
             } else {
-                current_section = .none;
+                current_section = .None;
             }
             continue;
         }
@@ -267,7 +350,7 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
         const val = std.mem.trim(u8, line[eq_pos + 1 ..], " \t");
 
         switch (current_section) {
-            .subsystem => {
+            .Subsystem => {
                 if (std.mem.eql(u8, key, "memory_mb")) {
                     cfg.memory_mb = parse_u32(val) catch return -1;
                 } else if (std.mem.eql(u8, key, "vcpus")) {
@@ -286,7 +369,7 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                     copy_to_c_buf(&cfg.default_shell, val);
                 }
             },
-            .filesystem => {
+            .Filesystem => {
                 // If user specifies mounts in INI, clear defaults on first mount
                 if (!mounts_cleared) {
                     cfg.mount_count = 0;
@@ -299,14 +382,14 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                     return -1; // Exceeded WaddleMaxMounts
                 }
             },
-            .timeouts => {
+            .Timeouts => {
                 if (std.mem.eql(u8, key, "start_timeout")) {
                     cfg.start_timeout_sec = parse_u32(val) catch return -1;
                 } else if (std.mem.eql(u8, key, "stop_timeout")) {
                     cfg.stop_timeout_sec = parse_u32(val) catch return -1;
                 }
             },
-            .av => {
+            .Av => {
                 if (std.mem.eql(u8, key, "uefi")) {
                     cfg.av_uefi = parse_u32(val) catch return -1;
                     if (cfg.av_uefi > 1) return -1;
@@ -328,7 +411,63 @@ export fn daemon_config_parse_string(config: ?*c.daemon_config_t, ini_data: ?[*]
                     copy_to_c_buf(&cfg.av_gpu_bdf, val);
                 } else return -1;
             },
-            .none => {},
+            .Network => {
+                if (std.mem.eql(u8, key, "mode")) {
+                    if (std.mem.eql(u8, val, "user")) cfg.network_mode = c.NetworkModeUser else if (std.mem.eql(u8, val, "none")) cfg.network_mode = c.NetworkModeNone else return -1;
+                } else if (std.mem.eql(u8, key, "cups_forward")) {
+                    cfg.network_cups_forward = parse_config_bool(val) catch return -1;
+                } else return -1;
+            },
+            .Usb => {
+                if (std.mem.eql(u8, key, "controller")) {
+                    cfg.usb_controller = parse_config_bool(val) catch return -1;
+                } else if (std.mem.eql(u8, key, "auto_attach")) {
+                    parse_usb_auto_attach(val, cfg) catch return -1;
+                } else return -1;
+            },
+            .Audio => {
+                if (std.mem.eql(u8, key, "backend")) {
+                    if (std.mem.eql(u8, val, "pipewire")) cfg.audio_backend = c.AudioBackendPipewire else if (std.mem.eql(u8, val, "none")) cfg.audio_backend = c.AudioBackendNone else return -1;
+                } else if (std.mem.eql(u8, key, "microphone")) {
+                    cfg.audio_microphone = parse_config_bool(val) catch return -1;
+                } else if (std.mem.eql(u8, key, "per_app")) {
+                    cfg.audio_per_app = parse_config_bool(val) catch return -1;
+                } else return -1;
+            },
+            .Input => {
+                if (std.mem.eql(u8, key, "ime")) {
+                    if (std.mem.eql(u8, val, "guest")) cfg.input_ime = c.InputImeGuest else if (std.mem.eql(u8, val, "host")) cfg.input_ime = c.InputImeHost else return -1;
+                } else if (std.mem.eql(u8, key, "inhibit_shortcuts")) {
+                    if (std.mem.eql(u8, val, "never")) cfg.input_inhibit_shortcuts = c.InputInhibitShortcutsNever else if (std.mem.eql(u8, val, "fullscreen")) cfg.input_inhibit_shortcuts = c.InputInhibitShortcutsFullscreen else if (std.mem.eql(u8, val, "focused")) cfg.input_inhibit_shortcuts = c.InputInhibitShortcutsFocused else return -1;
+                } else if (std.mem.eql(u8, key, "repeat")) {
+                    if (std.mem.eql(u8, val, "host")) cfg.input_repeat = c.InputRepeatHost else if (std.mem.eql(u8, val, "off")) cfg.input_repeat = c.InputRepeatOff else return -1;
+                } else return -1;
+            },
+            .Clipboard => {
+                if (std.mem.eql(u8, key, "enabled")) {
+                    cfg.clipboard_enabled = parse_config_bool(val) catch return -1;
+                } else if (std.mem.eql(u8, key, "max_mb")) {
+                    cfg.clipboard_max_mb = parse_u32(val) catch return -1;
+                } else if (std.mem.eql(u8, key, "files")) {
+                    cfg.clipboard_files = parse_config_bool(val) catch return -1;
+                } else return -1;
+            },
+            .Integration => {
+                if (std.mem.eql(u8, key, "start_at_login")) {
+                    cfg.integration_start_at_login = parse_config_bool(val) catch return -1;
+                } else if (std.mem.eql(u8, key, "menu_apps")) {
+                    if (std.mem.eql(u8, val, "installed")) cfg.integration_menu_apps = c.IntegrationMenuAppsInstalled else if (std.mem.eql(u8, val, "all")) cfg.integration_menu_apps = c.IntegrationMenuAppsAll else if (std.mem.eql(u8, val, "none")) cfg.integration_menu_apps = c.IntegrationMenuAppsNone else return -1;
+                } else if (std.mem.eql(u8, key, "desktop_shortcuts")) {
+                    if (std.mem.eql(u8, val, "mirror")) cfg.integration_desktop_shortcuts = c.IntegrationDesktopShortcutsMirror else if (std.mem.eql(u8, val, "off")) cfg.integration_desktop_shortcuts = c.IntegrationDesktopShortcutsOff else return -1;
+                } else if (std.mem.eql(u8, key, "exe_handler")) {
+                    if (std.mem.eql(u8, val, "waddle")) cfg.integration_exe_handler = c.IntegrationExeHandlerWaddle else if (std.mem.eql(u8, val, "off")) cfg.integration_exe_handler = c.IntegrationExeHandlerOff else return -1;
+                } else if (std.mem.eql(u8, key, "uac")) {
+                    if (std.mem.eql(u8, val, "window")) cfg.integration_uac = c.IntegrationUacWindow else if (std.mem.eql(u8, val, "auto")) cfg.integration_uac = c.IntegrationUacAuto else if (std.mem.eql(u8, val, "native")) cfg.integration_uac = c.IntegrationUacNative else return -1;
+                } else if (std.mem.eql(u8, key, "notify")) {
+                    cfg.integration_notify = parse_config_bool(val) catch return -1;
+                } else return -1;
+            },
+            .None => {},
         }
     }
 
@@ -385,6 +524,7 @@ export fn daemon_config_load_file(config: ?*c.daemon_config_t, path: ?[*:0]const
     return daemon_config_parse_string(cfg, &file_buf, bytes_read);
 }
 
+// Test-only fixtures. Production configuration parsing and edit logic end above.
 test "daemon_config: defaults and validation" {
     var cfg: c.daemon_config_t = undefined;
     daemon_config_init_defaults(&cfg);
@@ -520,26 +660,189 @@ test "daemon_config: full width vsock port and empty export section" {
     try std.testing.expectEqual(@as(u32, 0), cfg.mount_count);
 }
 
+test "seamless configuration defaults and all frozen keys parse" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(u32, c.NetworkModeUser), cfg.network_mode);
+    try std.testing.expectEqual(@as(u32, 1), cfg.network_cups_forward);
+    try std.testing.expectEqual(@as(u32, 1), cfg.usb_controller);
+    try std.testing.expectEqual(@as(u32, 0), cfg.usb_auto_attach_count);
+    try std.testing.expectEqual(@as(u32, c.AudioBackendPipewire), cfg.audio_backend);
+    try std.testing.expectEqual(@as(u32, 1), cfg.audio_microphone);
+    try std.testing.expectEqual(@as(u32, 1), cfg.audio_per_app);
+    try std.testing.expectEqual(@as(u32, c.InputImeGuest), cfg.input_ime);
+    try std.testing.expectEqual(@as(u32, c.InputInhibitShortcutsFullscreen), cfg.input_inhibit_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.InputRepeatHost), cfg.input_repeat);
+    try std.testing.expectEqual(@as(u32, 1), cfg.clipboard_enabled);
+    try std.testing.expectEqual(@as(u32, 64), cfg.clipboard_max_mb);
+    try std.testing.expectEqual(@as(u32, 1), cfg.clipboard_files);
+    try std.testing.expectEqual(@as(u32, 0), cfg.integration_start_at_login);
+    try std.testing.expectEqual(@as(u32, c.IntegrationMenuAppsInstalled), cfg.integration_menu_apps);
+    try std.testing.expectEqual(@as(u32, c.IntegrationDesktopShortcutsMirror), cfg.integration_desktop_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.IntegrationExeHandlerWaddle), cfg.integration_exe_handler);
+    try std.testing.expectEqual(@as(u32, c.IntegrationUacWindow), cfg.integration_uac);
+    try std.testing.expectEqual(@as(u32, 1), cfg.integration_notify);
+
+    const ini =
+        "[network]\nmode=none\ncups_forward=false\n" ++
+        "[usb]\ncontroller=0\nauto_attach=046D:C534, 1234:ABCD\n" ++
+        "[audio]\nbackend=none\nmicrophone=0\nper_app=false\n" ++
+        "[input]\nime=host\ninhibit_shortcuts=focused\nrepeat=off\n" ++
+        "[clipboard]\nenabled=0\nmax_mb=1024\nfiles=false\n" ++
+        "[integration]\nstart_at_login=true\nmenu_apps=all\ndesktop_shortcuts=off\nexe_handler=off\nuac=native\nnotify=0\n" ++
+        "[audio]\nbackend=pipewire\n";
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, ini.ptr, ini.len));
+    try std.testing.expectEqual(@as(u32, c.NetworkModeNone), cfg.network_mode);
+    try std.testing.expectEqual(@as(u32, 0), cfg.network_cups_forward);
+    try std.testing.expectEqual(@as(u32, 0), cfg.usb_controller);
+    try std.testing.expectEqual(@as(u32, 2), cfg.usb_auto_attach_count);
+    try std.testing.expectEqual(@as(u16, 0x046d), cfg.usb_auto_attach[0].vendor_id);
+    try std.testing.expectEqual(@as(u16, 0xc534), cfg.usb_auto_attach[0].product_id);
+    try std.testing.expectEqual(@as(u16, 0x1234), cfg.usb_auto_attach[1].vendor_id);
+    try std.testing.expectEqual(@as(u16, 0xabcd), cfg.usb_auto_attach[1].product_id);
+    try std.testing.expectEqual(@as(u32, c.AudioBackendPipewire), cfg.audio_backend);
+    try std.testing.expectEqual(@as(u32, 0), cfg.audio_microphone);
+    try std.testing.expectEqual(@as(u32, 0), cfg.audio_per_app);
+    try std.testing.expectEqual(@as(u32, c.InputImeHost), cfg.input_ime);
+    try std.testing.expectEqual(@as(u32, c.InputInhibitShortcutsFocused), cfg.input_inhibit_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.InputRepeatOff), cfg.input_repeat);
+    try std.testing.expectEqual(@as(u32, 0), cfg.clipboard_enabled);
+    try std.testing.expectEqual(@as(u32, 1024), cfg.clipboard_max_mb);
+    try std.testing.expectEqual(@as(u32, 0), cfg.clipboard_files);
+    try std.testing.expectEqual(@as(u32, 1), cfg.integration_start_at_login);
+    try std.testing.expectEqual(@as(u32, c.IntegrationMenuAppsAll), cfg.integration_menu_apps);
+    try std.testing.expectEqual(@as(u32, c.IntegrationDesktopShortcutsOff), cfg.integration_desktop_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.IntegrationExeHandlerOff), cfg.integration_exe_handler);
+    try std.testing.expectEqual(@as(u32, c.IntegrationUacNative), cfg.integration_uac);
+    try std.testing.expectEqual(@as(u32, 0), cfg.integration_notify);
+}
+
+test "seamless configuration rejects malformed values atomically" {
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    const seed = "[network]\nmode=none\n[usb]\nauto_attach=1234:5678\n[clipboard]\nmax_mb=128\n";
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, seed.ptr, seed.len));
+    const before = cfg;
+    const invalid = [_][]const u8{
+        "[network]\nmode=bridge\n", "[network]\ncups_forward=yes\n", "[network]\nunknown=1\n",
+        "[usb]\ncontroller=2\n", "[usb]\nunknown=1\n", "[audio]\nbackend=alsa\n",
+        "[audio]\nmicrophone=-1\n", "[audio]\nper_app=TRUE\n", "[input]\nime=system\n",
+        "[input]\ninhibit_shortcuts=always\n", "[input]\nrepeat=guest\n", "[input]\nunknown=1\n",
+        "[clipboard]\nenabled=yes\n", "[clipboard]\nmax_mb=0\n", "[clipboard]\nmax_mb=1025\n",
+        "[clipboard]\nmax_mb=4294967296\n", "[clipboard]\nfiles=2\n", "[clipboard]\nunknown=1\n",
+        "[integration]\nstart_at_login=yes\n", "[integration]\nmenu_apps=some\n",
+        "[integration]\ndesktop_shortcuts=copy\n", "[integration]\nexe_handler=wine\n",
+        "[integration]\nuac=prompt\n", "[integration]\nnotify=2\n", "[integration]\nunknown=1\n",
+        "[usb]\nauto_attach=123:5678\n", "[usb]\nauto_attach=1234:567\n", "[usb]\nauto_attach=123G:5678\n",
+        "[usb]\nauto_attach=1234-5678\n", "[usb]\nauto_attach=1234:5678,1234:5678\n",
+        "[usb]\nauto_attach=1234:5678,1234:5678,1234:5678\n",
+        "[usb]\nauto_attach=1234:5678,,abcd:ef01\n",
+    };
+    for (invalid) |text| {
+        try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, text.ptr, text.len));
+        try std.testing.expectEqualSlices(u8, std.mem.asBytes(&before), std.mem.asBytes(&cfg));
+    }
+    var usb_boundary: [200]u8 = undefined;
+    var stream = std.io.fixedBufferStream(&usb_boundary);
+    try stream.writer().writeAll("[usb]\nauto_attach=");
+    for (0..16) |index| {
+        if (index > 0) try stream.writer().writeAll(",");
+        try stream.writer().print("{x:0>4}:{x:0>4}", .{ index + 1, index + 1 });
+    }
+    try stream.writer().writeAll("\n");
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &usb_boundary, stream.pos));
+    try std.testing.expectEqual(@as(u32, 16), cfg.usb_auto_attach_count);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_validate(&cfg));
+    const usb_before = cfg;
+    stream.pos -= 1;
+    try stream.writer().print(",{x:0>4}:{x:0>4}\n", .{ 17, 17 });
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_parse_string(&cfg, &usb_boundary, stream.pos));
+    try std.testing.expectEqualSlices(u8, std.mem.asBytes(&usb_before), std.mem.asBytes(&cfg));
+
+    var boundary: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&boundary);
+    const enum_fields = [_]*u32{
+        &boundary.network_mode, &boundary.audio_backend, &boundary.input_ime,
+        &boundary.input_inhibit_shortcuts, &boundary.input_repeat, &boundary.integration_menu_apps,
+        &boundary.integration_desktop_shortcuts, &boundary.integration_exe_handler, &boundary.integration_uac,
+    };
+    for (enum_fields) |field| {
+        const saved = field.*;
+        field.* = std.math.maxInt(u32);
+        try std.testing.expectEqual(@as(c_int, -1), daemon_config_validate(&boundary));
+        field.* = saved;
+    }
+    const bool_fields = [_]*u32{
+        &boundary.network_cups_forward, &boundary.usb_controller, &boundary.audio_microphone,
+        &boundary.audio_per_app, &boundary.clipboard_enabled, &boundary.clipboard_files,
+        &boundary.integration_start_at_login, &boundary.integration_notify,
+    };
+    for (bool_fields) |field| {
+        const saved = field.*;
+        field.* = 2;
+        try std.testing.expectEqual(@as(c_int, -1), daemon_config_validate(&boundary));
+        field.* = saved;
+    }
+    boundary.usb_auto_attach_count = 17;
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_validate(&boundary));
+    daemon_config_init_defaults(&boundary);
+    boundary.usb_auto_attach_count = 2;
+    boundary.usb_auto_attach[0] = .{ .vendor_id = 0x1234, .product_id = 0x5678 };
+    boundary.usb_auto_attach[1] = .{ .vendor_id = 0x1234, .product_id = 0x5678 };
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_validate(&boundary));
+    daemon_config_init_defaults(&boundary);
+    boundary.clipboard_max_mb = 0;
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_validate(&boundary));
+    boundary.clipboard_max_mb = 1025;
+    try std.testing.expectEqual(@as(c_int, -1), daemon_config_validate(&boundary));
+}
+
 /// Mutable key schema; immutable storage borrowed by the editor.
-const edit_key_t = struct { name: []const u8, section: []const u8, default: []const u8 };
+const edit_key_t = struct { name: []const u8, section: []const u8, default: []const u8, legacy_unqualified: bool = false };
 /// The supported mutable settings and their exact reset representations.
 const EditKeys = [_]edit_key_t{
-    .{ .name = "memory_mb", .section = "subsystem", .default = "4096" },
-    .{ .name = "vcpus", .section = "subsystem", .default = "4" },
-    .{ .name = "default_shell", .section = "subsystem", .default = "powershell.exe" },
-    .{ .name = "vsock_port", .section = "subsystem", .default = "5242" },
-    .{ .name = "start_timeout", .section = "timeouts", .default = "60" },
-    .{ .name = "stop_timeout", .section = "timeouts", .default = "15" },
-    .{ .name = "enabled", .section = "av", .default = "0" },
-    .{ .name = "uefi", .section = "av", .default = "0" },
-    .{ .name = "shm_path", .section = "av", .default = "/dev/kvmfr0" },
-    .{ .name = "gpu_bdf", .section = "av", .default = "" },
-    .{ .name = "gpu_mdev_uuid", .section = "av", .default = "" },
+    .{ .name = "memory_mb", .section = "subsystem", .default = "4096", .legacy_unqualified = true },
+    .{ .name = "vcpus", .section = "subsystem", .default = "4", .legacy_unqualified = true },
+    .{ .name = "default_shell", .section = "subsystem", .default = "powershell.exe", .legacy_unqualified = true },
+    .{ .name = "vsock_port", .section = "subsystem", .default = "5242", .legacy_unqualified = true },
+    .{ .name = "start_timeout", .section = "timeouts", .default = "60", .legacy_unqualified = true },
+    .{ .name = "stop_timeout", .section = "timeouts", .default = "15", .legacy_unqualified = true },
+    .{ .name = "enabled", .section = "av", .default = "0", .legacy_unqualified = true },
+    .{ .name = "uefi", .section = "av", .default = "0", .legacy_unqualified = true },
+    .{ .name = "shm_path", .section = "av", .default = "/dev/kvmfr0", .legacy_unqualified = true },
+    .{ .name = "gpu_bdf", .section = "av", .default = "", .legacy_unqualified = true },
+    .{ .name = "gpu_mdev_uuid", .section = "av", .default = "", .legacy_unqualified = true },
+    .{ .name = "mode", .section = "network", .default = "user" },
+    .{ .name = "cups_forward", .section = "network", .default = "true" },
+    .{ .name = "controller", .section = "usb", .default = "true" },
+    .{ .name = "auto_attach", .section = "usb", .default = "" },
+    .{ .name = "backend", .section = "audio", .default = "pipewire" },
+    .{ .name = "microphone", .section = "audio", .default = "true" },
+    .{ .name = "per_app", .section = "audio", .default = "true" },
+    .{ .name = "ime", .section = "input", .default = "guest" },
+    .{ .name = "inhibit_shortcuts", .section = "input", .default = "fullscreen" },
+    .{ .name = "repeat", .section = "input", .default = "host" },
+    .{ .name = "enabled", .section = "clipboard", .default = "true" },
+    .{ .name = "max_mb", .section = "clipboard", .default = "64" },
+    .{ .name = "files", .section = "clipboard", .default = "true" },
+    .{ .name = "start_at_login", .section = "integration", .default = "false" },
+    .{ .name = "menu_apps", .section = "integration", .default = "installed" },
+    .{ .name = "desktop_shortcuts", .section = "integration", .default = "mirror" },
+    .{ .name = "exe_handler", .section = "integration", .default = "waddle" },
+    .{ .name = "uac", .section = "integration", .default = "window" },
+    .{ .name = "notify", .section = "integration", .default = "true" },
 };
+
+/// Matches an exact section.key spelling without allocation.
+fn qualified_edit_key_matches(key: edit_key_t, name: []const u8) bool {
+    return name.len == key.section.len + 1 + key.name.len and
+        std.mem.startsWith(u8, name, key.section) and name[key.section.len] == '.' and
+        std.mem.eql(u8, name[key.section.len + 1 ..], key.name);
+}
 
 /// Bounded all-or-none validation; output remains caller-owned and is never allocated.
 fn edit_config(data: []const u8, changes: []const []const u8, reset: bool, output: []u8) !usize {
-    if (data.len == 0 or data.len > 65536 or changes.len == 0 or changes.len > EditKeys.len) return error.Invalid;
+    if (data.len == 0 or data.len > 65536 or changes.len == 0 or changes.len > c.ConfigEditMaxChanges) return error.Invalid;
     var cfg: c.daemon_config_t = undefined;
     daemon_config_init_defaults(&cfg);
     if (daemon_config_parse_string(&cfg, data.ptr, data.len) != 0) return error.Invalid;
@@ -550,19 +853,35 @@ fn edit_config(data: []const u8, changes: []const []const u8, reset: bool, outpu
         const name = if (eq) |at| change[0..at] else change;
         var index: ?usize = null;
         for (EditKeys, 0..) |key, i| {
-            if (std.mem.eql(u8, key.name, name)) index = i;
+            if (qualified_edit_key_matches(key, name)) {
+                index = i;
+                break;
+            }
+        }
+        if (index == null) {
+            for (EditKeys, 0..) |key, i| {
+                if (key.legacy_unqualified and std.mem.eql(u8, key.name, name)) {
+                    index = i;
+                    break;
+                }
+            }
         }
         const i = index orelse return error.Invalid;
         if (values[i] != null) return error.Invalid;
         const value = if (reset) EditKeys[i].default else change[eq.? + 1 ..];
-        if ((value.len == 0 and !std.mem.eql(u8, name, "gpu_bdf") and !std.mem.eql(u8, name, "gpu_mdev_uuid")) or
-            value.len > (if (std.mem.eql(u8, name, "shm_path")) @as(usize, 1023) else 255) or !std.unicode.utf8ValidateSlice(value) or
+        const key = EditKeys[i];
+        const is_av_key = std.mem.eql(u8, key.section, "av");
+        const is_usb_auto_attach = std.mem.eql(u8, key.section, "usb") and std.mem.eql(u8, key.name, "auto_attach");
+        const allows_empty = is_usb_auto_attach or (is_av_key and
+            (std.mem.eql(u8, key.name, "gpu_bdf") or std.mem.eql(u8, key.name, "gpu_mdev_uuid")));
+        const max_value_len: usize = if (is_av_key and std.mem.eql(u8, key.name, "shm_path")) 1023 else 255;
+        if ((value.len == 0 and !allows_empty) or value.len > max_value_len or !std.unicode.utf8ValidateSlice(value) or
             std.mem.indexOfAny(u8, value, "\x00\r\n") != null or
             !std.mem.eql(u8, std.mem.trim(u8, value, " \t"), value)) return error.Invalid;
         values[i] = value;
     }
     // Validate the combined request before rendering even a partial replacement.
-    var patch: [2048]u8 = undefined;
+    var patch: [8192]u8 = undefined;
     var patch_stream = std.io.fixedBufferStream(&patch);
     for (EditKeys, values) |key, value| {
         if (value) |v| try patch_stream.writer().print("[{s}]\n{s}={s}\n", .{ key.section, key.name, v });
@@ -614,9 +933,9 @@ fn edit_config(data: []const u8, changes: []const []const u8, reset: bool, outpu
 export fn daemon_config_edit(data: ?[*]const u8, length: usize, changes: ?[*]const ?[*:0]const u8, count: usize, reset: c_int, output: ?[*]u8, capacity: usize, output_length: ?*usize) c_int {
     const result = output_length orelse return -1;
     result.* = 0;
-    if (count == 0 or count > EditKeys.len) return -1;
+    if (count == 0 or count > c.ConfigEditMaxChanges) return -1;
     const args = changes orelse return -1;
-    var slices: [EditKeys.len][]const u8 = undefined;
+    var slices: [c.ConfigEditMaxChanges][]const u8 = undefined;
     for (args[0..count], 0..) |arg, i| slices[i] = std.mem.span(arg orelse return -1);
     result.* = edit_config((data orelse return -1)[0..length], slices[0..count], reset != 0, (output orelse return -1)[0..capacity]) catch return -1;
     return 0;
@@ -648,6 +967,144 @@ test "config editor rejects invalid complete requests and bounded output" {
     try std.testing.expectError(error.NoSpaceLeft, edit_config(source, &.{"vcpus=2"}, false, output[0..4]));
     const length = try edit_config(source, &.{ "vsock_port=4294967295", "default_shell=日本語.exe" }, false, &output);
     try std.testing.expect(std.mem.indexOf(u8, output[0..length], "日本語.exe") != null);
+}
+
+test "qualified seamless config edits support every new key and reset default" {
+    const original = "# retained\n[av]\nenabled=0\n[clipboard]\nenabled=true\n[clipboard]\nmax_mb=64\n";
+    var first: [8192]u8 = undefined;
+    const first_len = try edit_config(original, &.{
+        "network.mode=none", "network.cups_forward=false", "usb.controller=0", "usb.auto_attach=1234:abcd",
+        "audio.backend=none", "audio.microphone=0", "audio.per_app=0", "input.ime=host",
+        "input.inhibit_shortcuts=never", "input.repeat=off",
+    }, false, &first);
+    var second: [8192]u8 = undefined;
+    const second_len = try edit_config(first[0..first_len], &.{
+        "clipboard.enabled=false", "clipboard.max_mb=1", "clipboard.files=false", "integration.start_at_login=true",
+        "integration.menu_apps=none", "integration.desktop_shortcuts=off", "integration.exe_handler=off",
+        "integration.uac=auto", "integration.notify=false",
+    }, false, &second);
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &second, second_len));
+    try std.testing.expectEqual(@as(u32, c.NetworkModeNone), cfg.network_mode);
+    try std.testing.expectEqual(@as(u32, 0), cfg.network_cups_forward);
+    try std.testing.expectEqual(@as(u32, 0), cfg.usb_controller);
+    try std.testing.expectEqual(@as(u16, 0x1234), cfg.usb_auto_attach[0].vendor_id);
+    try std.testing.expectEqual(@as(u16, 0xabcd), cfg.usb_auto_attach[0].product_id);
+    try std.testing.expectEqual(@as(u32, c.AudioBackendNone), cfg.audio_backend);
+    try std.testing.expectEqual(@as(u32, 0), cfg.audio_microphone);
+    try std.testing.expectEqual(@as(u32, 0), cfg.audio_per_app);
+    try std.testing.expectEqual(@as(u32, c.InputImeHost), cfg.input_ime);
+    try std.testing.expectEqual(@as(u32, c.InputInhibitShortcutsNever), cfg.input_inhibit_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.InputRepeatOff), cfg.input_repeat);
+    try std.testing.expectEqual(@as(u32, 0), cfg.clipboard_enabled);
+    try std.testing.expectEqual(@as(u32, 1), cfg.clipboard_max_mb);
+    try std.testing.expectEqual(@as(u32, 0), cfg.clipboard_files);
+    try std.testing.expectEqual(@as(u32, 1), cfg.integration_start_at_login);
+    try std.testing.expectEqual(@as(u32, c.IntegrationMenuAppsNone), cfg.integration_menu_apps);
+    try std.testing.expectEqual(@as(u32, c.IntegrationDesktopShortcutsOff), cfg.integration_desktop_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.IntegrationExeHandlerOff), cfg.integration_exe_handler);
+    try std.testing.expectEqual(@as(u32, c.IntegrationUacAuto), cfg.integration_uac);
+    try std.testing.expectEqual(@as(u32, 0), cfg.integration_notify);
+    try std.testing.expect(std.mem.startsWith(u8, second[0..second_len], "# retained\n"));
+
+    var reset_output: [8192]u8 = undefined;
+    const reset_len = try edit_config(second[0..second_len], &.{
+        "network.mode", "network.cups_forward", "usb.controller", "usb.auto_attach", "audio.backend",
+        "audio.microphone", "audio.per_app", "input.ime", "input.inhibit_shortcuts", "input.repeat",
+    }, true, &reset_output);
+    var final_output: [8192]u8 = undefined;
+    const final_len = try edit_config(reset_output[0..reset_len], &.{
+        "clipboard.enabled", "clipboard.max_mb", "clipboard.files", "integration.start_at_login",
+        "integration.menu_apps", "integration.desktop_shortcuts", "integration.exe_handler", "integration.uac", "integration.notify",
+    }, true, &final_output);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &final_output, final_len));
+    try std.testing.expectEqual(@as(u32, c.NetworkModeUser), cfg.network_mode);
+    try std.testing.expectEqual(@as(u32, 1), cfg.network_cups_forward);
+    try std.testing.expectEqual(@as(u32, 1), cfg.usb_controller);
+    try std.testing.expectEqual(@as(u32, 0), cfg.usb_auto_attach_count);
+    try std.testing.expectEqual(@as(u32, c.AudioBackendPipewire), cfg.audio_backend);
+    try std.testing.expectEqual(@as(u32, 1), cfg.audio_microphone);
+    try std.testing.expectEqual(@as(u32, 1), cfg.audio_per_app);
+    try std.testing.expectEqual(@as(u32, c.InputImeGuest), cfg.input_ime);
+    try std.testing.expectEqual(@as(u32, c.InputInhibitShortcutsFullscreen), cfg.input_inhibit_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.InputRepeatHost), cfg.input_repeat);
+    try std.testing.expectEqual(@as(u32, 1), cfg.clipboard_enabled);
+    try std.testing.expectEqual(@as(u32, 64), cfg.clipboard_max_mb);
+    try std.testing.expectEqual(@as(u32, 1), cfg.clipboard_files);
+    try std.testing.expectEqual(@as(u32, 0), cfg.integration_start_at_login);
+    try std.testing.expectEqual(@as(u32, c.IntegrationMenuAppsInstalled), cfg.integration_menu_apps);
+    try std.testing.expectEqual(@as(u32, c.IntegrationDesktopShortcutsMirror), cfg.integration_desktop_shortcuts);
+    try std.testing.expectEqual(@as(u32, c.IntegrationExeHandlerWaddle), cfg.integration_exe_handler);
+    try std.testing.expectEqual(@as(u32, c.IntegrationUacWindow), cfg.integration_uac);
+    try std.testing.expectEqual(@as(u32, 1), cfg.integration_notify);
+}
+
+test "qualified editor names disambiguate AV enabled and clipboard enabled" {
+    const source = "[av]\nenabled=0\n[clipboard]\nenabled=true\n";
+    var output: [4096]u8 = undefined;
+    const length = try edit_config(source, &.{ "enabled=1", "shm_path=/dev/shm/av-test", "clipboard.enabled=false" }, false, &output);
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &output, length));
+    try std.testing.expectEqual(@as(u32, 1), cfg.av_enabled);
+    try std.testing.expectEqual(@as(u32, 0), cfg.clipboard_enabled);
+    var reset_output: [4096]u8 = undefined;
+    const reset_len = try edit_config(output[0..length], &.{"clipboard.enabled"}, true, &reset_output);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, &reset_output, reset_len));
+    try std.testing.expectEqual(@as(u32, 1), cfg.clipboard_enabled);
+}
+
+test "qualified AV path edit uses its section-specific 1023-byte bound" {
+    const source = "[av]\nenabled=0\n";
+    const prefix = "av.shm_path=";
+    var assignment: [1040]u8 = undefined;
+    @memcpy(assignment[0..prefix.len], prefix);
+    assignment[prefix.len] = '/';
+    @memset(assignment[prefix.len + 1 .. prefix.len + 512], 'a');
+    var output: [4096]u8 = undefined;
+    const accepted_len = try edit_config(source, &.{assignment[0 .. prefix.len + 512]}, false, &output);
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, output[0..accepted_len].ptr, accepted_len));
+    try std.testing.expectEqual(@as(usize, 512), std.mem.sliceTo(&cfg.av_shm_path, 0).len);
+
+    @memset(assignment[prefix.len + 1 .. prefix.len + 1023], 'b');
+    const max_len = try edit_config(source, &.{assignment[0 .. prefix.len + 1023]}, false, &output);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, output[0..max_len].ptr, max_len));
+    try std.testing.expectEqual(@as(usize, 1023), std.mem.sliceTo(&cfg.av_shm_path, 0).len);
+
+    @memset(assignment[prefix.len + 1 .. prefix.len + 1024], 'c');
+    try std.testing.expectError(error.Invalid, edit_config(source, &.{assignment[0 .. prefix.len + 1024]}, false, &output));
+}
+
+test "config editor rejects duplicate aliases and enforces ten-change cap" {
+    const source = "[av]\nenabled=0\n";
+    var output: [8192]u8 = undefined;
+    try std.testing.expectError(error.Invalid, edit_config(source, &.{ "enabled=0", "av.enabled=0" }, false, &output));
+    const ten_changes = [_][]const u8{
+        "network.mode=none", "network.cups_forward=false", "usb.controller=false", "usb.auto_attach=",
+        "audio.backend=none", "audio.microphone=false", "audio.per_app=false", "input.ime=host",
+        "input.inhibit_shortcuts=never", "input.repeat=off",
+    };
+    _ = try edit_config(source, &ten_changes, false, &output);
+    try std.testing.expectError(error.Invalid, edit_config(source, &.{
+        "network.mode=none", "network.cups_forward=false", "usb.controller=false", "usb.auto_attach=",
+        "audio.backend=none", "audio.microphone=false", "audio.per_app=false", "input.ime=host",
+        "input.inhibit_shortcuts=never", "input.repeat=off", "clipboard.enabled=false",
+    }, false, &output));
+}
+
+test "qualified editor replacement preserves repeated-section effective value" {
+    const source = "# keep this\n[audio]\nbackend=none\n[audio]\nbackend=none\n";
+    var output: [4096]u8 = undefined;
+    const length = try edit_config(source, &.{"audio.backend=pipewire"}, false, &output);
+    var cfg: c.daemon_config_t = undefined;
+    daemon_config_init_defaults(&cfg);
+    try std.testing.expectEqual(@as(c_int, 0), daemon_config_parse_string(&cfg, output[0..length].ptr, length));
+    try std.testing.expectEqual(@as(u32, c.AudioBackendPipewire), cfg.audio_backend);
+    try std.testing.expectEqual(@as(usize, 2), std.mem.count(u8, output[0..length], "backend=pipewire"));
+    try std.testing.expect(std.mem.startsWith(u8, output[0..length], "# keep this\n"));
 }
 
 test "AV device configuration is bounded and transactional" {

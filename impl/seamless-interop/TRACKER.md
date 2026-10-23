@@ -15,7 +15,8 @@ Original base: `feature/software-vgpu-slicing` at `8a6e25e`; synchronized with
 Original review and its follow-up resolutions:
 [status_2026_10_23.md](status_2026_10_23.md). Contract corrections supersede
 the original protocol v1/layout v2 freeze with protocol v2/layout v3. Completion
-stays at 9.6%; hardware evidence and the remaining implementation are pending.
+is tracked in the task table below; hardware evidence and runtime integration
+remain pending.
 
 Execution plan: [completion_plan.md](completion_plan.md), reviewed with three
 parallel Luna audits on 2026-10-23. It defines exclusive implementation lanes,
@@ -34,7 +35,7 @@ acceptance remain pending.
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 0% | Luna foundation lane: bounded snapshot validator/geometry first; runtime/pins/native gates remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
-| #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 0% | Luna VM lane: transactional config first; QEMU/devices/native gates remain open |
+| #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 25% | Config defaults/parse/validate/edit-reset accepted; QEMU/devices/CLI persistence/native gates remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | Pending | 1% | 0% | - |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
@@ -62,17 +63,17 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 0% | Luna manifest lane: bounded schema codec first; accepted journal/artifact API later unblocks #28/#31; final closure waits on all producers |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
-**Total Feature Completion**: `9.6%`
+**Total Feature Completion**: `10.35%`
 
 ## Active Foundation Subtasks and Ownership
 
 Subtask percentages sum to 100% of each parent task, not overall feature weight.
-All start at 0%; a design assignment is not completion evidence.
+Design assignments earn no credit; only accepted implementation is recorded.
 
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; C ABI+native atomic adapters 10%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | None |
-| #8 | Config parse/validate/edit-reset 25%; config CLI serialization/get 10%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | None |
+| #8 | Config parse/validate/edit-reset 25%; config CLI serialization/get 10%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config parse/validate/edit-reset 25%; 19 Zig tests and C ABI/sanitizer fixture |
 | #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; canonical translation/root fix 20%; fault/restart/native qualification 20% | None |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | None |
 
@@ -208,7 +209,7 @@ runner is granted by these assignments. Shared build targets run serially.
     feature-commit attribution; `git diff --check` passes. No fresh hardware,
     sanitizer or coverage result is claimed.
 
-- **Commit `HEAD`**: `docs(interop): specify foundation ownership and acceptance boundaries`
+- **Commit `9b4078c`**: `docs(interop): specify foundation ownership and acceptance boundaries`
   - **Task Impact**: +0% to TODO #5/#8/#9/#33 (+0% overall); implementation
     contracts and acceptance allocation, no accepted runtime work yet.
   - **Summary**: Specifies bounded layout snapshots, mapping initialization
@@ -216,4 +217,14 @@ runner is granted by these assignments. Shared build targets run serially.
     ownership, transaction/lock order and transfer reservation budgets. Assigns
     exclusive Luna implementation lanes and weighted subtasks before code.
     Existing feature completion remains 9.6%; native/hardware gates stay open.
-    `HEAD` identifies this containing contract commit until next update.
+
+- **Commit `HEAD`**: `feat(interop): add transactional seamless configuration settings`
+  - **Task Impact**: +25% to TODO #8 (+0.75% overall; total 10.35%).
+  - **Summary**: Luna implements all frozen config keys/defaults, bounded unique
+    USB selectors and qualified edit/reset while retaining unqualified legacy
+    names. Lead review fixes qualified AV path-length handling and exact empty
+    values; tests cover alias collisions, ten-edit limit, rollback and repeated
+    sections. Nineteen Zig tests and the C config fixture pass; focused C
+    ASan/LSan/UBSan runs pass with leak detection enabled. Config data only:
+    QEMU/device behavior, CLI persistence and native qualification stay pending.
+    `HEAD` identifies this containing implementation commit until next update.

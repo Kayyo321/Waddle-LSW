@@ -152,12 +152,69 @@ static void test_validation_ranges(void) {
     assert(daemon_config_validate(&cfg) == 0);
 }
 
+static void test_seamless_settings(void) {
+    daemon_config_t cfg;
+    daemon_config_init_defaults(&cfg);
+    assert(cfg.network_mode == NetworkModeUser);
+    assert(cfg.network_cups_forward == 1);
+    assert(cfg.usb_controller == 1);
+    assert(cfg.usb_auto_attach_count == 0);
+    assert(cfg.audio_backend == AudioBackendPipewire);
+    assert(cfg.audio_microphone == 1 && cfg.audio_per_app == 1);
+    assert(cfg.input_ime == InputImeGuest);
+    assert(cfg.input_inhibit_shortcuts == InputInhibitShortcutsFullscreen);
+    assert(cfg.input_repeat == InputRepeatHost);
+    assert(cfg.clipboard_enabled == 1 && cfg.clipboard_max_mb == 64 && cfg.clipboard_files == 1);
+    assert(cfg.integration_start_at_login == 0);
+    assert(cfg.integration_menu_apps == IntegrationMenuAppsInstalled);
+    assert(cfg.integration_desktop_shortcuts == IntegrationDesktopShortcutsMirror);
+    assert(cfg.integration_exe_handler == IntegrationExeHandlerWaddle);
+    assert(cfg.integration_uac == IntegrationUacWindow && cfg.integration_notify == 1);
+
+    const char *ini =
+        "[network]\nmode=none\ncups_forward=true\n"
+        "[usb]\ncontroller=false\nauto_attach=046D:C534,1234:ABCD\n"
+        "[audio]\nbackend=none\nmicrophone=0\nper_app=false\n"
+        "[input]\nime=host\ninhibit_shortcuts=never\nrepeat=off\n"
+        "[clipboard]\nenabled=false\nmax_mb=1\nfiles=0\n"
+        "[integration]\nstart_at_login=1\nmenu_apps=all\ndesktop_shortcuts=off\n"
+        "exe_handler=off\nuac=auto\nnotify=false\n";
+    assert(daemon_config_parse_string(&cfg, ini, strlen(ini)) == 0);
+    assert(cfg.network_mode == NetworkModeNone && cfg.network_cups_forward == 1);
+    assert(cfg.usb_controller == 0 && cfg.usb_auto_attach_count == 2);
+    assert(cfg.usb_auto_attach[0].vendor_id == 0x046d && cfg.usb_auto_attach[0].product_id == 0xc534);
+    assert(cfg.usb_auto_attach[1].vendor_id == 0x1234 && cfg.usb_auto_attach[1].product_id == 0xabcd);
+    assert(cfg.audio_backend == AudioBackendNone && cfg.audio_microphone == 0 && cfg.audio_per_app == 0);
+    assert(cfg.input_ime == InputImeHost && cfg.input_inhibit_shortcuts == InputInhibitShortcutsNever);
+    assert(cfg.input_repeat == InputRepeatOff);
+    assert(cfg.clipboard_enabled == 0 && cfg.clipboard_max_mb == 1 && cfg.clipboard_files == 0);
+    assert(cfg.integration_start_at_login == 1 && cfg.integration_menu_apps == IntegrationMenuAppsAll);
+    assert(cfg.integration_desktop_shortcuts == IntegrationDesktopShortcutsOff);
+    assert(cfg.integration_exe_handler == IntegrationExeHandlerOff);
+    assert(cfg.integration_uac == IntegrationUacAuto && cfg.integration_notify == 0);
+
+    daemon_config_t before = cfg;
+    const char *invalid[] = {
+        "[network]\nmode=bridge\n", "[network]\ncups_forward=yes\n", "[network]\nunknown=1\n",
+        "[usb]\ncontroller=2\n", "[usb]\nauto_attach=1234:5678,1234:5678\n", "[usb]\nunknown=1\n",
+        "[audio]\nbackend=alsa\n", "[audio]\nper_app=TRUE\n", "[audio]\nunknown=1\n",
+        "[input]\nime=system\n", "[input]\ninhibit_shortcuts=always\n", "[input]\nrepeat=guest\n",
+        "[clipboard]\nmax_mb=0\n", "[clipboard]\nmax_mb=1025\n", "[clipboard]\nfiles=2\n",
+        "[integration]\nmenu_apps=some\n", "[integration]\nuac=prompt\n", "[integration]\nnotify=2\n",
+    };
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        assert(daemon_config_parse_string(&cfg, invalid[i], strlen(invalid[i])) == -1);
+        assert(memcmp(&cfg, &before, sizeof(cfg)) == 0);
+    }
+}
+
 int main(void) {
     test_defaults();
     test_parse_string();
     test_export_parser();
     test_file_loading();
     test_validation_ranges();
+    test_seamless_settings();
     printf("test_daemon_config: all daemon configuration and INI parsing tests passed\n");
     return 0;
 }
