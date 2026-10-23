@@ -61,8 +61,8 @@ int main(void) {
     assert(interop_put_bytes(&writer, InteropTagAppKey, "a-Microsoft_Windows_Explorer", 28) == 0);
     assert(interop_put_uint(&writer, InteropTagState, InteropStateResizable | InteropStateMaximizable) == 0);
     assert(interop_put_uint(&writer, InteropTagDpi, 120) == 0);
-    const uint8_t minimum[8] = {64, 1, 0, 0, 200, 0, 0, 0}; /* 320 x 200. */
-    assert(interop_put_bytes(&writer, InteropTagMinSize, minimum, sizeof(minimum)) == 0);
+    const uint8_t Minimum[8] = {64, 1, 0, 0, 200, 0, 0, 0}; /* 320 x 200. */
+    assert(interop_put_bytes(&writer, InteropTagMinSize, Minimum, sizeof(Minimum)) == 0);
     assert(interop_writer_finish(&writer, InteropMsgWindowAnnounce, 0, InteropFromGuest, &length) == 0);
     assert(interop_header_decode(frame, length, &header) == 0);
     int32_t x = 0;
@@ -74,7 +74,7 @@ int main(void) {
     memcpy(&left, rect, sizeof(left));
     assert(rect_length == 16 && left == -8);
     assert(interop_field_get(frame + InteropHeaderBytes, header.length, InteropTagMinSize, 0, &rect, &rect_length) == 0);
-    assert(rect_length == sizeof(minimum) && memcmp(rect, minimum, sizeof(minimum)) == 0);
+    assert(rect_length == sizeof(Minimum) && memcmp(rect, Minimum, sizeof(Minimum)) == 0);
 
     uint8_t key[InteropMaxAppKeyBytes];
     size_t key_length = 0;
@@ -89,14 +89,14 @@ int main(void) {
     assert(writer.failed && interop_put_i32(&writer, InteropTagAxisH120, 0) == InteropErrorMalformedFrame);
 
     /* Transfer reassembly with a sender-side digest. */
-    const char content[] = "clipboard payload";
+    const char Content[] = "clipboard payload";
     uint8_t digest[InteropHashBytes];
-    interop_sha256((const uint8_t *)content, sizeof(content) - 1, digest);
+    interop_sha256((const uint8_t *)Content, sizeof(Content) - 1, digest);
     interop_transfer_t transfer;
     memset(&transfer, 0, sizeof(transfer));
-    assert(interop_transfer_begin(&transfer, 3, sizeof(content) - 1, 1024) == 0);
-    assert(interop_transfer_chunk(&transfer, 0, (const uint8_t *)content, 9) == 0);
-    assert(interop_transfer_chunk(&transfer, 9, (const uint8_t *)content + 9, sizeof(content) - 10) == 0);
+    assert(interop_transfer_begin(&transfer, 3, sizeof(Content) - 1, 1024) == 0);
+    assert(interop_transfer_chunk(&transfer, 0, (const uint8_t *)Content, 9) == 0);
+    assert(interop_transfer_chunk(&transfer, 9, (const uint8_t *)Content + 9, sizeof(Content) - 10) == 0);
     assert(interop_transfer_end(&transfer, digest) == 0 && transfer.state == 2);
     interop_transfer_cancel(&transfer);
     assert(transfer.id == 0 && transfer.state == 0);

@@ -1512,6 +1512,35 @@ uses existing CLI device errors. `waddle stop` still shuts down the whole device
 its existing daemon/VM shutdown causes session cleanup through disconnect.
 Runtime command dispatch and socket credential enforcement remain TODO #7.
 
+#### 3.12.6 Implemented codec interface rules
+
+Every C declaration and Zig export documents each input/output direction,
+non-NULL requirements, permitted zero-length NULL buffers, return codes,
+ownership and threading. Callers own frame, payload, writer, transfer and hash
+storage; these functions allocate nothing. Field readers return borrowed views
+valid only while the validated payload is unchanged. Except for the AUMID key
+helper's explicitly supported overlapping byte buffers, outputs/state must be
+disjoint from inputs and other output objects.
+
+Readers, AUMID generation and transfer updates leave outputs unchanged on
+failure. Writer failure is intentionally different: it sets a sticky `failed`
+flag, preserves previously accepted frame bytes, and prevents publication.
+Only successful finish writes the header. Init borrows frame storage until the
+writer is reset or discarded; successful finish does not free or take ownership
+of it. Transfer helpers account/hash bytes but do not own payload storage or
+enforce the future connection's concurrent-transfer quota. Callers serialize
+shared writer/frame or transfer state; independent instances are thread-safe.
+
+Owned Zig types, including namespace type aliases, use `snake_case_t`; registry
+arrays, message tables, tag constants and compile-time fixtures use PascalCase.
+Runtime locals, members, functions and generic type parameters use snake_case
+(type parameters also end in `_t`). Vendor standard-library and imported C ABI
+member spellings remain unchanged. The public C symbol names and ABI layout are
+unchanged by this naming/documentation cleanup. Declaration checks verify all
+18 public C functions and all 18 Zig exports have structured documentation;
+existing codec, C ABI, coverage, sanitizer and Windows cross-link gates exercise
+the renamed implementation.
+
 ### 3.13 binfmt_misc (Frozen)
 
 - File `data/binfmt.d/waddle.conf`, installed to `/usr/lib/binfmt.d/` by the

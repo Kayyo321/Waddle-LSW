@@ -145,7 +145,7 @@ stays at 9.6%; hardware evidence and the remaining implementation are pending.
     listener/allocation failures and teardown. IMPL_DESC section 2.6 specifies
     ownership, ordering and fallback. Normal and ASan/LSan/UBSan callback tests pass.
 
-- **Commit `HEAD`**: `fix(interop): version corrected memory and session contracts`
+- **Commit `f2b4d32`**: `fix(interop): version corrected memory and session contracts`
   - **Task Impact**: +0% to TODO #1/#4/#5/#7/#11/#12/#27/#33 (+0% overall);
     repairs existing contracts and adds ABI declarations without claiming the
     pending allocator, session, catalog or integration runtime.
@@ -154,5 +154,17 @@ stays at 9.6%; hardware evidence and the remaining implementation are pending.
     AUMID keys, independent window minima, menu trigger references and local-only
     stop frames. Specify serial translation, stop lifecycle and repair --force.
     Nineteen Zig tests and C ABI tests pass; coverage 97.23% branch/96.65% line,
-    sanitizers clean and Windows ABI cross-link passes. `HEAD` identifies this
-    containing commit until the next tracker update resolves the hash.
+    sanitizers clean and Windows ABI cross-link passes.
+
+- **Commit `HEAD`**: `refactor(interop): enforce codec naming and public interface contracts`
+  - **Task Impact**: +0% to TODO #1/#4 (+0% overall); audit corrections to
+    already credited code, no new runtime milestone completion.
+  - **Summary**: Rename owned Zig types/constants and fixtures, preserve vendor
+    member spellings and public ABI, and document every parameter, ownership,
+    nullability, error and threading rule on all 18 C/Zig exports. Correct the
+    misleading unchanged-on-failure claim for sticky writer errors. All code
+    and test literals are preserved. IMPL_DESC section 3.12.6 records the audit;
+    final interop-test, rebuilt av-test, both sanitizer suites and the Windows
+    ABI cross-link pass. Coverage stays 97.23% branch/96.65% line; formatting and
+    declaration documentation checks pass. `HEAD` identifies this containing
+    commit until the next tracker update.
