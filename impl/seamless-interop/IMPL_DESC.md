@@ -200,6 +200,37 @@ LINUX HOST (user session)                                   WINDOWS GUEST (inter
 
 ---
 
+### 2.6 Decoration configure lifecycle (implemented AV fix, TODO #3)
+
+The event thread owns each decoration object and its window context. Creation
+registers the `zxdg_toplevel_decoration_v1.configure` listener before requesting
+client-side mode or committing the initial empty surface. Listener registration
+or object creation failure follows `free_window`; the decoration is destroyed
+before its toplevel and no window remains admitted. No allocation is introduced.
+
+The decoration event stages a mode; it does not acknowledge a surface or allow
+the first frame to attach. The following `xdg_surface.configure` acknowledges
+its serial and applies the staged mode. Subsequent surface configurations may
+reuse the last applied mode. A decorated surface's first configuration without
+a mode, or a decoration mode other than client/server, terminates delivery;
+buffers remain ineligible until a valid initial configuration completes.
+
+Windows frames are already drawn into the guest buffer. If the compositor
+selects server-side mode, acknowledge the corresponding surface configuration,
+then destroy the decoration extension. Its protocol-defined destructor switches
+back to no server decoration at the next surface commit. Do not strip guest
+pixels, repeatedly request a rejected mode, or attach a double-framed buffer.
+The surface remains configured and renders its full guest frame on the next
+normal buffer commit. Destruction clears the pointer; queued events from an old
+decoration, retired window, failed session or shutdown have no effect.
+
+The same lifecycle is required when TODO #11 extracts the host window manager.
+`tests/av/wayland_state.c` delivers the registered decoration and surface
+listeners and verifies staging, acknowledgement order, repeated configurations,
+server fallback, stale events, invalid/missing modes, creation/listener failures,
+title changes and decoration-before-toplevel destruction. Real GNOME/KDE
+acceptance remains TODO #3; these callback fixtures do not replace it.
+
 ## 3. Data Structures, Protocols & Memory Layouts
 
 All multi-byte integers on the wire and in shared memory are **little-endian**.

@@ -53,6 +53,7 @@ reference the evidence directory (`pw-dump-*.json`, `av_run.err`,
 |---|---|
 | `d5dcc25` | Request client-side decorations through `zxdg_decoration_manager_v1`, so KWin does not draw a second frame around the Windows frame |
 | `23dd01f` | Re-issue `xdg_toplevel.set_title` when the guest title changes |
+| `fix(av): handle decoration configure events before presenting frames` | Deliver and stage decoration configuration; acknowledge the surface before falling back from a forced server frame; test failure and teardown paths |
 
 ## Results
 

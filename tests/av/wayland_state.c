@@ -29,6 +29,12 @@ static unsigned title_requests, decoration_modes, destroy_count;
 static char last_title[256];
 static uint32_t last_decoration_mode;
 static const char *destroy_log[16];
+static const struct zxdg_toplevel_decoration_v1_listener *decoration_listeners[4096];
+static const struct xdg_surface_listener *surface_listeners[4096];
+static void *decoration_contexts[4096], *surface_contexts[4096];
+static int decoration_listener_failure, decoration_creation_failure;
+static unsigned surface_acks, decoration_destroy_ack;
+static uint32_t last_surface_serial;
 static unsigned proxy_index(struct wl_proxy *proxy) {
     uintptr_t address = (uintptr_t)proxy;
     uintptr_t base = (uintptr_t)proxy_storage;
@@ -50,6 +56,15 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
     const char *target = proxy_name(proxy);
     if (target && (flags & WL_MARSHAL_FLAG_DESTROY) && destroy_count < 16)
         destroy_log[destroy_count++] = target;
+    if (target && !strcmp(target, "zxdg_toplevel_decoration_v1") &&
+        (flags & WL_MARSHAL_FLAG_DESTROY)) decoration_destroy_ack = surface_acks;
+    if (target && !strcmp(target, "xdg_surface") && opcode == XDG_SURFACE_ACK_CONFIGURE) {
+        va_list arguments;
+        va_start(arguments, flags);
+        last_surface_serial = va_arg(arguments, uint32_t);
+        va_end(arguments);
+        ++surface_acks;
+    }
     if (target && !strcmp(target, "xdg_toplevel") && opcode == XDG_TOPLEVEL_SET_TITLE) {
         va_list arguments;
         va_start(arguments, flags);
@@ -67,6 +82,8 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
         ++decoration_modes;
     }
     if (!interface) return NULL;
+    if (!strcmp(interface->name, "zxdg_toplevel_decoration_v1") &&
+        decoration_creation_failure) return NULL;
     int callback = !strcmp(interface->name, "wl_callback");
     if (callback) {
         ++syncs;
@@ -80,6 +97,16 @@ struct wl_proxy *__wrap_wl_proxy_marshal_flags(struct wl_proxy *proxy, uint32_t 
 uint32_t __wrap_wl_proxy_get_version(struct wl_proxy *proxy) { (void)proxy; return 1; }
 int __wrap_wl_proxy_add_listener(struct wl_proxy *proxy, void (**implementation)(void), void *data) {
     unsigned index = proxy_index(proxy);
+    const char *name = proxy_names[index];
+    if (name && !strcmp(name, "zxdg_toplevel_decoration_v1")) {
+        if (decoration_listener_failure) return -1;
+        decoration_listeners[index] = (const struct zxdg_toplevel_decoration_v1_listener *)implementation;
+        decoration_contexts[index] = data;
+    }
+    if (name && !strcmp(name, "xdg_surface")) {
+        surface_listeners[index] = (const struct xdg_surface_listener *)implementation;
+        surface_contexts[index] = data;
+    }
     if (callback_proxies[index]) {
         if (listener_failure) return -1;
         callback_listeners[index] = (const struct wl_callback_listener *)implementation;
@@ -802,6 +829,21 @@ static void decoration_callbacks(void) {
     video_window_t *window = find_window(&client, 9);
     assert(window && window->decoration && decoration_modes == modes + 1);
     assert(last_decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    unsigned decoration_index = proxy_index((struct wl_proxy *)window->decoration);
+    unsigned surface_index = proxy_index((struct wl_proxy *)window->xdg_surface);
+    const struct zxdg_toplevel_decoration_v1_listener *listener = decoration_listeners[decoration_index];
+    const struct xdg_surface_listener *surface_listener = surface_listeners[surface_index];
+    assert(listener && surface_listener && decoration_contexts[decoration_index] == window);
+    unsigned acks = surface_acks;
+    listener->configure(window, window->decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    assert(!window->configured && !window->decoration_mode && surface_acks == acks);
+    surface_listener->configure(surface_contexts[surface_index], window->xdg_surface, 400);
+    assert(window->configured && last_surface_serial == 400 && surface_acks == acks + 1);
+    assert(window->decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    assert(!window->pending_decoration_mode);
+    /* A surface-only resize retains the applied mode. */
+    surface_listener->configure(window, window->xdg_surface, 401);
+    assert(window->decoration && surface_acks == acks + 2);
     /* Geometry with an unchanged title does not re-issue it; a change does. */
     av_message_t geometry = window->geometry;
     geometry.type = MsgWindowGeometry; geometry.width = 32;
@@ -817,6 +859,49 @@ static void decoration_callbacks(void) {
     assert(!window->decoration && !window->toplevel && destroy_count >= 2);
     assert(!strcmp(destroy_log[0], "zxdg_toplevel_decoration_v1"));
     assert(!strcmp(destroy_log[1], "xdg_toplevel"));
+    unsigned effects = native_effects;
+    listener->configure(window, NULL, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    surface_listener->configure(window, NULL, 402);
+    assert(native_effects == effects); /* Retired callbacks cannot resurrect a surface. */
     free_window(window);
-    puts("AV Wayland decorations: client-side mode, title change re-issue and destroy order passed");
+    /* A forced server-side mode is staged until its surface ack. Destroying the
+     * extension then disables server decoration at the next content commit. */
+    create.sequence = 32;
+    assert(av_wayland_create(&client, &create, 1, 16384, pointers, offsets, 4096) == 0);
+    window = find_window(&client, 9);
+    struct zxdg_toplevel_decoration_v1 *old_decoration = window->decoration;
+    decoration_index = proxy_index((struct wl_proxy *)old_decoration);
+    listener = decoration_listeners[decoration_index];
+    acks = surface_acks;
+    listener->configure(window, old_decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    assert(window->decoration == old_decoration && !window->configured && surface_acks == acks);
+    surface_configure(window, window->xdg_surface, 500);
+    assert(!window->decoration && window->configured && surface_acks == acks + 1);
+    assert(decoration_destroy_ack == surface_acks && last_surface_serial == 500);
+    listener->configure(window, old_decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+    assert(!window->pending_decoration_mode); /* Queued event from destroyed object. */
+    surface_configure(window, window->xdg_surface, 501);
+    free_window(window);
+    /* Missing initial mode, invalid modes, and listener/allocation failures fail
+     * closed without leaving an admitted window or negotiated object alive. */
+    for (unsigned failure = 0; failure < 4; ++failure) {
+        create.sequence = 33 + failure;
+        decoration_listener_failure = failure == 2;
+        decoration_creation_failure = failure == 3;
+        int result = av_wayland_create(&client, &create, 1, 16384, pointers, offsets, 4096);
+        if (failure >= 2) {
+            assert(result == -1 && !find_window(&client, 9));
+        } else {
+            assert(result == 0);
+            window = find_window(&client, 9);
+            acks = surface_acks;
+            if (failure == 0) surface_configure(window, window->xdg_surface, 600);
+            else decoration_configure(window, window->decoration, 99);
+            assert(client.delivery_failed && !window->configured && surface_acks == acks);
+            free_window(window);
+            client.delivery_failed = 0;
+        }
+    }
+    decoration_listener_failure = decoration_creation_failure = 0;
+    puts("AV Wayland decorations: delivered configure, staged modes, server fallback, failures and teardown passed");
 }

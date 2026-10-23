@@ -23,7 +23,7 @@ are still pending.
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1  | IMPL_DESC.md + TRACKER.md, contract freeze (protocol v1, layout v2, manifest schema, config keys) | Done | 2% | 100% | Contracts frozen in IMPL_DESC §3 |
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **hardware run by user pending** (`scripts/interop_verify_m0.sh audio`) |
-| #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | CSD + title fixes, script and template done; **GNOME and KDE hardware runs by user pending** |
+| #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE hardware runs by user pending** |
 | #4  | Interop protocol v1 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | Codec 96.97% branch / 96.35% line; sanitizers clean; Windows lib + ABI link; CI configured |
 | #5  | IVSHMEM layout v2 (slot heap, 64 windows, 8 audio rings) | Pending | 3% | 0% | Waits on #4 |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
@@ -129,10 +129,18 @@ are still pending.
     coverage and Windows ABI cross-link pass. Upstream commits retain their
     existing software-vGPU tracker attribution; they do not advance this feature.
 
-- **Commit `HEAD`**: `docs(seamless-interop): record synchronized branch review and next steps`
+- **Commit `e99c103`**: `docs(seamless-interop): record synchronized branch review and next steps`
   - **Task Impact**: +0% to TODO #1-#34 (+0% overall); research and bookkeeping.
   - **Summary**: Adds the current-source status report, distinguishes codec
     completion from pending runtime work, records verification and contract
-    gaps, and orders the next tasks. `HEAD` denotes this containing commit
-    until the next tracker update resolves its hash. No hardware acceptance
+    gaps, and orders the next tasks. No hardware acceptance
     or additional feature implementation is claimed.
+
+- **Commit `HEAD`**: `fix(av): handle decoration configure events before presenting frames`
+  - **Task Impact**: +0% to TODO #3 (+0% overall); corrects already credited
+    negotiation work, with real compositor acceptance still pending.
+  - **Summary**: Registers and delivers the configure listener, stages modes
+    until the surface acknowledgement, handles forced server-side decoration
+    through the protocol destructor, and tests invalid/missing/stale events,
+    listener/allocation failures and teardown. IMPL_DESC section 2.6 specifies
+    ownership, ordering and fallback. `HEAD` identifies this containing commit.

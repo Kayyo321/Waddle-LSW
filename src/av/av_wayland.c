@@ -34,6 +34,8 @@ typedef struct video_window_t {
     struct xdg_toplevel *toplevel;
     /** Optional client-side decoration request; destroyed before the toplevel. */
     struct zxdg_toplevel_decoration_v1 *decoration;
+    /** Modes are staged by decoration.configure and applied by surface.configure. */
+    uint32_t pending_decoration_mode, decoration_mode;
     struct wl_shm_pool *pool;
     video_buffer_t buffers[3];
     size_t capacity;
@@ -513,10 +515,46 @@ static void rejected_buffer(void *context, struct zwp_linux_buffer_params_v1 *pa
 }
 static const struct zwp_linux_buffer_params_v1_listener ParamsEvents = {
     .created = imported_buffer, .failed = rejected_buffer};
+/** @brief Stage a borrowed decoration event on the Wayland event thread.
+ * @param[in,out] context Non-NULL window owned by the client until teardown.
+ * @param[in] decoration Borrowed event source; stale sources are ignored.
+ * @param[in] mode Client-side or server-side; invalid values fail the session.
+ * @note No allocations or ownership transfer; surface.configure applies the mode.
+ */
+static void decoration_configure(void *context,
+    struct zxdg_toplevel_decoration_v1 *decoration, uint32_t mode) {
+    video_window_t *window = context;
+    if (!window_active(window) || decoration != window->decoration) return;
+    if (mode != ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE &&
+        mode != ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE) {
+        mark_delivery_failed(window->client);
+        return;
+    }
+    window->pending_decoration_mode = mode;
+}
+/** @brief Immutable listener; contexts remain client-owned on the event thread. */
+static const struct zxdg_toplevel_decoration_v1_listener DecorationEvents = {
+    .configure = decoration_configure};
 static void surface_configure(void *context, struct xdg_surface *surface, uint32_t serial) {
     video_window_t *window = context;
     if (!window_active(window)) return;
+    if (window->decoration && !window->pending_decoration_mode && !window->decoration_mode) {
+        mark_delivery_failed(window->client);
+        return; /* A decorated surface cannot accept buffers before its mode. */
+    }
     xdg_surface_ack_configure(surface, serial);
+    if (window->pending_decoration_mode) {
+        window->decoration_mode = window->pending_decoration_mode;
+        window->pending_decoration_mode = 0;
+    }
+    if (window->decoration &&
+        window->decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE) {
+        /* The guest frame is part of its pixels. The protocol's destroy request
+         * switches back to no server decoration at the next surface commit. */
+        zxdg_toplevel_decoration_v1_destroy(window->decoration);
+        window->decoration = NULL;
+        window->decoration_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+    }
     window->configured = 1;
 }
 static const struct xdg_surface_listener SurfaceEvents = {.configure = surface_configure};
@@ -804,6 +842,9 @@ int av_wayland_create(av_wayland_t *client, const av_message_t *message, int fd,
         window->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
             client->decoration_manager, window->toplevel);
         if (!window->decoration)
+            goto fail;
+        if (zxdg_toplevel_decoration_v1_add_listener(window->decoration,
+                                                    &DecorationEvents, window) != 0)
             goto fail;
         zxdg_toplevel_decoration_v1_set_mode(window->decoration,
                                              ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
