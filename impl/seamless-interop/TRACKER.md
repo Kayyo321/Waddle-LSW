@@ -60,10 +60,10 @@ acceptance remain pending.
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
 | #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | Pending | 2% | 0% | Waits on #29 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
-| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 0% | Luna manifest lane: bounded schema codec first; accepted journal/artifact API later unblocks #28/#31; final closure waits on all producers |
+| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
-**Total Feature Completion**: `11.65%`
+**Total Feature Completion**: `12.10%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -75,7 +75,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; C ABI+native atomic adapters 10%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
 | #8 | Config parse/validate/edit-reset 25%; config CLI serialization/get 10%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config parse/validate/edit-reset 25%; 19 Zig tests and C ABI/sanitizer fixture |
 | #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
-| #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | None |
+| #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Luna `luna_foundations` owns new layout Zig source/tests; Luna
 `luna_integration` owns config source/header/focused config tests; Luna
@@ -250,7 +250,7 @@ runner is granted by these assignments. Shared build targets run serially.
     test/coverage targets now include layout. No C ABI/native atomic transition,
     allocator, mapping initialization or live slot ownership is claimed.
 
-- **Commit `HEAD`**: `feat(interop): reserve heap pages with epoch-bound ownership tickets`
+- **Commit `e368647`**: `feat(interop): reserve heap pages with epoch-bound ownership tickets`
   - **Task Impact**: +20% to TODO #5 (+0.60% overall; total 11.65%).
   - **Summary**: Luna adds a fixed-size first-fit page map/reservation ledger
     with exact epoch/ticket/run matching, no-wrap tickets and transactional
@@ -259,4 +259,15 @@ runner is granted by these assignments. Shared build targets run serially.
     exhaustion/corruption tests pass 97.92% branch (47/48), 100% line (44/44),
     nine allocator tests plus eight imported layout tests and 4,000 independent
     page-oracle operations. Capturer/compositor pins and growth/reconnect
-    ownership remain runtime subtasks. `HEAD` is this containing commit.
+    ownership remain runtime subtasks.
+
+- **Commit `HEAD`**: `feat(interop): parse owned bounded integration manifests`
+  - **Task Impact**: +15% to TODO #33 (+0.45% overall; total 12.10%).
+  - **Summary**: Luna adds bounded strict schema-1 parsing, known-kind/prior
+    validation, duplicate ID/key rejection and one explicit document arena.
+    Lead review corrects nested-arena lifetime, enum naming and preservation
+    of empty prior registry strings. After rejecting initial 77.95% branch
+    coverage, twelve tests including valid/invalid allocation-failure sweeps
+    pass 92.75% branch (179/193), 100% production line (124/124). The codec
+    neither authorizes paths nor writes artifacts; journal/locks/commands and
+    full lifecycle remain pending. `HEAD` is this containing commit.

@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -26,6 +26,7 @@ interop-coverage:
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
 	python3 tests/av/coverage.py interop_heap
+	python3 tests/av/coverage.py manifest
 # Windows link check of the same C ABI test (executed by guest_windows CI).
 build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@
@@ -44,3 +45,10 @@ interop-heap-test:
 	$(ZIG) test src/interop/interop_heap.zig -lc
 interop-heap-coverage:
 	python3 tests/av/coverage.py interop_heap
+
+.PHONY: interop-manifest-test interop-manifest-coverage
+# Owned JSON parsing; testing allocator checks every allocation failure path.
+interop-manifest-test:
+	$(ZIG) test src/interop/manifest.zig -lc
+interop-manifest-coverage:
+	python3 tests/av/coverage.py manifest
