@@ -7679,3 +7679,12 @@ retain their existing MinGW archive-prefix handling.
 - **Native.** The rebuilt candidate OpenCL.dll `8552b3a1…` passes census revision 6 and native
   controls revision 8, and is under 1100-cycle reload R11 and the guarded heap run (attribution
   section 17).
+
+### Codex continuation qualification state (2026-10-23)
+
+The user explicitly ratified reload amendment 4 and stack-proven DXVK static-runtime CLIENT
+classification, and approved exact Codex lease-owner wrapper r2. See attribution section 18 for
+the interrupted R11/R12 records, new VM process identities and preserved-artifact launch.
+R12 contains only eight completed cycles and no verdict, so it contributes no reload acceptance.
+Fresh builds and native runners must freeze the current auditor/source hashes and new VM boot.
+Existing successful historical results remain historical; the OpenCL heap gate remains open.

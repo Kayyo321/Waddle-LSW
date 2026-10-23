@@ -499,3 +499,41 @@ rebuilt fixture `d519743e…` and candidate `8552b3a1…`. Every life shows zero
 FLS change, with only thread-pool churn, and the native exit is 0. Native controls revision 8
 (`opencl_reload_controls_native_cdefffa2`) pass. Reload R11 (composite `e5d6c2df…`) and the guarded
 heap run r4 follow.
+
+## 18. Codex continuation, interrupted reloads and preserved-VM restart (2026-10-23)
+
+R11 was interrupted after cycle 346, as documented in
+[the supplied handoff](CODEX_HANDOFF_2026_10_22.md). Its guest fixture self-exited on its own
+deadline; no 1100-cycle acceptance is credited. The preserved R12 folder contains eight complete
+`OPENCL_RELOAD_V1` cycle records (all at handles 104, TLS 1083 and FLS 4075), then partial cycle-nine
+output. It has neither `native_result.json` nor `executor_exit.txt` nor a complete event. The old
+VM/TPM identities are absent after the 2026-10-23 host boot. R12 cannot be resumed or counted as a
+pass. Its artifacts are preserved without rewriting the original run.
+
+The user explicitly authorized launching the VM on this machine. Read-only host checks found no
+QEMU/swtpm owner and confirmed KVM and the RTX 5080. `qemu-img check` reported no image errors
+without repair. The existing `windows.qcow2`, `vars.fd` and TPM state were then launched with the
+documented no-install-media command, without provisioning, backup restoration or process signals.
+New identities: QEMU 45036/start ticks 77490; swtpm 45031/start ticks 77483. Both executable paths
+were checked. The lease records Codex as owner and the Claude continuation as previous owner.
+
+Local evidence: `build/qualification_feature_20261021/codex_continuation_20261023/`, including
+`vm_launch.json`, the exact pre-launch lease, guest boot/console observations and a new restoration
+receipt for 28 byte-identical frozen `/tmp` helpers. A guest query after boot found no old OpenCL,
+CDB, guard or suspended-control process. The old retained PID 7984 is not a survivor of this boot;
+Codex did not signal or resume it. The user reports completing console sign-in.
+
+The user explicitly ratified reload amendment 4, accepted stack-proven DXVK static-runtime residue
+as CLIENT, and approved exact lease-owner wrapper r2 (SHA-256
+`a08bf833b11cbfe1ed998202bc33d2350782c763cd189f0cc671673a8827914e`). Its eleven offline tests
+pass normally and with optimized Python; the inverse patch exactly recovers r1. All original
+idle-state and process-identity gates remain mandatory. Fresh runner revisions must bind this
+boot; old runner identity pins are preserved.
+
+The review follow-ups now bind both runtime archive/member names, assert production/probe LLVM
+policy wiring, document the diagnostic-option destructor-order limitation, and declare the
+probe stand-in noexcept. The preserved 8552b3a1 DLL passes the stronger map gate with unchanged
+bytes. These source/auditor changes affect the build cache key, so a fresh build and its actual
+DLL hash must be admitted before new native receipts are frozen. Census, controls, a fresh
+uninterrupted 1100-cycle reload and the rebuilt-DLL guarded heap verdict remain outstanding.
+There is no new heap PASS or feature-progress credit in this checkpoint.

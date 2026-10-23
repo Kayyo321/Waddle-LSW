@@ -19,5 +19,6 @@ no VM/GPU execution in these tests. The r5 heap launcher pins the new wrapper an
 keeps r4's runner bytes unchanged. A separate runner revision must bind the newly
 launched VM identities; the old r4/r5 identity is never edited in place.
 
-Approval status: pending. Preparing, importing and testing these files does not
-constitute native qualification or authorization to use the wrapper.
+Approval status: explicitly approved in this chat on 2026-10-23: "Approve wrapper r2 for native tests".
+Approval authorizes this exact wrapper hash. Preparing, importing and testing
+these files does not constitute native qualification.

@@ -242,3 +242,8 @@ rules of amendments 1-3 are unchanged, including exact equality on every reload.
 
 **Outcome (2026-10-22).** Reload R10 passed all 1100 cycles with exact equality on this amendment
 ([attribution section 15](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#15-reload-r10-passes-1100-cycles-2026-10-22)).
+
+**Explicit ratification (2026-10-23).** In this continuation chat the user explicitly selected
+"Ratify amendment 4" for loader patch 0002, narrowed step 4 and OS-only steps 8-10. The previous
+request for ratification is therefore satisfied. The 1100-cycle equality and independent heap
+gates remain unchanged; this approval is not qualification evidence.

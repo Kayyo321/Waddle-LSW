@@ -12,9 +12,9 @@
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
-| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 96% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification flagged for user review). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). Exact-head CI and final review remain open. |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 96% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification explicitly accepted by the user on 2026-10-23). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). Exact-head CI and final review remain open. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). The guarded three-life heap run (r3, guard R22) completes but FAILS: 27 OWNED blocks (107,842 B) leak per OpenCL.dll load (LLVM ManagedStatics without llvm_shutdown; std::mutex critical sections never deleted). The fix needs user-approved private-copy changes, a rebuild, a new 1100-cycle reload and a new heap run (attribution section 16). |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). The guarded three-life heap run (r3, guard R22) completes but FAILS: 27 OWNED blocks (107,842 B) leak per OpenCL.dll load (LLVM ManagedStatics without llvm_shutdown; std::mutex critical sections never deleted). The user approved the llvm_shutdown fix, implemented in 23e9275 and rebuilt as 8552b3a1; census r6 and controls r8 pass. R11 and R12 are incomplete and grant no new reload acceptance. Review fixes and explicit user ratifications are recorded; a current-source build, new-boot controls/census, uninterrupted 1100-cycle reload and guarded heap pass remain required (attribution sections 17-18). |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
@@ -2607,9 +2607,20 @@ Parent remains 93.0% / In Progress, Time Ended TBD.
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | chore(qualification): prepare exact Codex lease-owner wrapper r2 | #3/#5/#11 +0%; overall +0% | Eleven offline tests pass in normal/optimized Python against frozen executor b571dbbe; inverse patch exactly recovers wrapper r1 94a367b8. Native use awaits explicit approval. |
+| `7eafbff` | chore(qualification): prepare exact Codex lease-owner wrapper r2 | #3/#5/#11 +0%; overall +0% | Eleven offline tests pass in normal/optimized Python against frozen executor b571dbbe; inverse patch exactly recovers wrapper r1 94a367b8. Native use awaits explicit approval. |
 
 [Approval request](lease_owner_wrapper_r2/approval_request.md) records the exact owner chain and
 wrapper hash a08bf833. An ignored r5 heap launcher pins this wrapper and preserves r4 runner
 bytes d276f589. Newly launched VM identities require a separate runner revision. No owner
 impersonation, predicate waiver or native qualification is included. Parent remains 93.0%.
+
+### Codex continuation: approvals and VM recovery checkpoint (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | docs(vgpu): record ratified contracts and preserved VM recovery | #3/#5/#11 +0%; overall +0% | Explicit amendment-4, DXVK CLIENT and wrapper-r2 approvals; preserved disk check clean; new QEMU/swtpm identities and console sign-in observed. R11/R12 remain incomplete; no new native acceptance. |
+
+The supplied handoff is retained as historical context. Its RESULT_R12_PLACEHOLDER is superseded
+by attribution section 18, not filled with a fabricated result. All current review nits are
+addressed. TODO #5's note now reflects the already approved/implemented fix. Parent remains
+93.0% / In Progress, Time Ended TBD until fresh native gates and final exact-head CI pass.
