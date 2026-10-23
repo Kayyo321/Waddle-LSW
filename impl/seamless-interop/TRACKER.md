@@ -31,10 +31,10 @@ acceptance remain pending.
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **hardware run by user pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE hardware runs by user pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
-| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | Pending | 3% | 0% | C ABI sizes/offsets/alignment asserted; runtime validator/allocator still pending |
+| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 0% | Luna foundation lane: bounded snapshot validator/geometry first; runtime/pins/native gates remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
-| #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | Pending | 3% | 0% | - |
+| #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 0% | Luna VM lane: transactional config first; QEMU/devices/native gates remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | Pending | 1% | 0% | - |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
@@ -59,10 +59,28 @@ acceptance remain pending.
 | #30 | Installer flow: UAC modes window/auto/native, secure-desktop safety net, elevated windows, auto entries on install/uninstall | Pending | 3% | 0% | Waits on #6, #28, #29 |
 | #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | Pending | 2% | 0% | Waits on #29 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
-| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | Pending | 3% | 0% | Primitives wait on #1; accepted journal/artifact API unblocks #28/#31; final closure waits on all host/guest artifact producers |
+| #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 0% | Luna manifest lane: bounded schema codec first; accepted journal/artifact API later unblocks #28/#31; final closure waits on all producers |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
 **Total Feature Completion**: `9.6%`
+
+## Active Foundation Subtasks and Ownership
+
+Subtask percentages sum to 100% of each parent task, not overall feature weight.
+All start at 0%; a design assignment is not completion evidence.
+
+| Task | Acceptance allocation | Current accepted subtasks |
+|---|---|---|
+| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; C ABI+native atomic adapters 10%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | None |
+| #8 | Config parse/validate/edit-reset 25%; config CLI serialization/get 10%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | None |
+| #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; canonical translation/root fix 20%; fault/restart/native qualification 20% | None |
+| #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | None |
+
+Luna `luna_foundations` owns new layout Zig source/tests; Luna
+`luna_integration` owns config source/header/focused config tests; Luna
+`luna_acceptance` owns new manifest Zig source/tests. Lead owns shared ABI,
+build/workflow wiring, docs/tracker, Git and final review. No Windows/GPU
+runner is granted by these assignments. Shared build targets run serially.
 
 ## Commit History & Progress Log
 
@@ -174,7 +192,7 @@ acceptance remain pending.
     ABI cross-link pass. Coverage stays 97.23% branch/96.65% line; formatting and
     declaration documentation checks pass.
 
-- **Commit `HEAD`**: `docs(seamless-interop): plan parallel Luna implementation and merge gates`
+- **Commit `288cd9e`**: `docs(seamless-interop): plan parallel Luna implementation and merge gates`
   - **Task Impact**: +0% to TODO #1-#34 (+0% overall); planning and review only.
   - **Summary**: Records three read-only Luna audits, a dependency-ordered plan
     for all 34 tasks, exclusive worker/lead ownership, per-module and native
@@ -188,5 +206,14 @@ acceptance remain pending.
     failed LSan thread inspection. Documentation checks verify all 34 tasks,
     unchanged weights/current progress, wave ceilings, links and existing
     feature-commit attribution; `git diff --check` passes. No fresh hardware,
-    sanitizer or coverage result is claimed. `HEAD` identifies this containing planning commit until
-    the next tracker update.
+    sanitizer or coverage result is claimed.
+
+- **Commit `HEAD`**: `docs(interop): specify foundation ownership and acceptance boundaries`
+  - **Task Impact**: +0% to TODO #5/#8/#9/#33 (+0% overall); implementation
+    contracts and acceptance allocation, no accepted runtime work yet.
+  - **Summary**: Specifies bounded layout snapshots, mapping initialization
+    authority, config editing compatibility, export semantics, manifest parser
+    ownership, transaction/lock order and transfer reservation budgets. Assigns
+    exclusive Luna implementation lanes and weighted subtasks before code.
+    Existing feature completion remains 9.6%; native/hardware gates stay open.
+    `HEAD` identifies this containing contract commit until next update.

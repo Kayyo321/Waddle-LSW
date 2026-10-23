@@ -2062,3 +2062,105 @@ Final (TODO #34), on GNOME, KDE Plasma and Sway:
     terminal with system binfmt installed.
 14. `waddle integration remove --all --guest` restores the prior MIME default,
     guest UAC policies and leaves no Waddle files.
+
+## 8. Foundation implementation boundaries (2026-10-23)
+
+This section refines mechanisms without changing protocol v2, layout v3 or
+manifest schema 1. Each library below is a partial deliverable until connected
+to the host/guest runtime. Native/hardware evidence is not inferred from tests.
+
+### 8.1 Mapping authority and bounded layout primitives (TODO #5)
+
+The host takes the per-device AV command lock before establishing the session
+connection and holds it through draining. The guest session agent at logon
+only listens: it never initializes shared memory in the absence of that
+connection. Before sending Hello on the accepted session connection, the guest
+joins old capture/audio writers, verifies no previous host-owned buffers remain,
+initializes a fresh nonzero epoch and publishes the header. A busy second
+connection cannot initialize or alter it. On disconnect the guest stops and
+joins producers before reclaiming their runs; the host destroys compositor
+buffers before unmapping. Reconnect cannot reinterpret a previous epoch.
+
+The initial Zig module is allocation-free and owns no mapping or OS handle.
+It accepts bounded immutable byte snapshots plus the separately supplied real
+mapping length and expected epoch. Header parsing requires exactly 4096
+readable bytes, mapping length 0x80000000, SMW3/version 3, nonzero matching
+epoch, 192 slots, eight audio rings, heap offset 0x200000, heap length
+0x7FC00000, page size 0x200000 and zero reserved bytes/word. Heartbeat values
+are unconstrained. Descriptor validation accepts one 64-byte snapshot after
+the native adapter acquires Ready; it validates state, format, identity,
+sequence, checked geometry/stride/capacity and heap bounds before exposing
+any pixel range. Pure parsers never perform atomic accesses through byte slices.
+Native adapters later copy the owned immutable metadata after an acquire state
+transition and prove aligned lock-free u32/u64 atomics for x86-64 Linux/Windows.
+
+Geometry is clamped independently to 7680 by 4320, stride rounded to 64 bytes,
+capacity rounded to 2 MiB and every addition/multiplication checked before
+conversion. Zero dimensions are rejected. Audio ring offsets are computed
+only for indices 0..7 and validate the complete header+padding+PCM region.
+The allocator owns only a caller-held 1022-page bitmap and fixed reservation
+metadata, uses first fit, and returns exact run identity; allocation failure
+leaves it unchanged. Free validates the complete owned run and rejects stale,
+overlapping or duplicate release without partial mutation. Runtime slot pins
+and deferred growth releases are a subsequent subtask, not claimed by a plain
+bitmap allocator. Public APIs retain no input/output pointers and document
+nullability, output-on-error and single-owner-thread rules.
+
+### 8.2 Configuration and export boundaries (TODO #8/#9)
+
+The first #8 change adds all §3.5 keys to daemon_config_t, defaults,
+transactional validation/INI parsing/edit-reset and focused tests. Enums use
+documented PascalCase constants and fixed-width C fields. Boolean values
+accept the parser's existing 0/1 convention plus true/false for the new keys.
+USB auto-attach contains at most 16 hexadecimal VID:PID pairs; reject malformed
+or duplicate pairs and retain prior config on failure. Qualified section.key
+editor names disambiguate repeated names such as backend/enabled; legacy
+unqualified editor keys retain their old meaning. Config changes alone do not
+change VM devices or claim native support. QEMU args/build features and config
+CLI serialization/get are separately integrated and tested before #8 closes.
+
+For #9, translation must reflect actual configured exports: canonical longest
+component-prefix match, no fallback root export when none is configured, and
+zero configured mounts means no host path is shared. Existing explicit root
+exports remain valid. Every mount gets one owned virtiofs process/socket/log,
+bounded by WaddleMaxMounts, with deterministic QEMU IDs. Partial start unwinds
+only newly acquired resources in reverse order. Restart and readiness retries
+reuse still-owned resources; teardown stops/reaps every process before clearing
+its state. Guest drive/tag association must be implemented and proven, not
+inferred from a host argv fixture.
+
+### 8.3 Manifest codec and lock/transaction boundaries (TODO #33)
+
+The first manifest module parses schema-1 JSON only; it performs no filesystem,
+policy or guest writes. Input is at most 4 MiB, UTF-8 without embedded NUL,
+with at most 4096 records and bounded 4096-byte strings. Reject duplicate JSON
+keys/record IDs, invalid types, unknown schema/kinds, malformed SHA-256,
+unbounded nesting and unsupported fields. Preserve schema-1 fields in §3.12,
+including mime for MIME records and prior string/integer/null values as
+appropriate to kind. The parser uses an explicit caller-supplied allocator;
+success returns one owned parsed document with a symmetric deinit; every error
+frees all partial allocations. Returned slices live until deinit, never longer.
+Deinit invalidates owned state. Validation is pure and reentrant for independent
+documents. Path/scope authorization and durable journal actions are subsequent
+milestones; successful JSON parsing alone does not authorize an artifact path.
+
+Lock ordering for the later transaction engine is session.lock, then the
+per-device AV command lock, then manifest.lock; never acquire an earlier lock
+while holding a later one. A CLI installer uses manifest.lock only and releases
+it before spawning/waiting for a session or issuing LocalStop. Session stop
+drains local resources without waiting for an installer holding manifest.lock.
+Each bounded artifact transaction journals intended manifest plus recoverable
+actions and prior-state backups, fsyncs before mutation, publishes artifacts,
+atomically replaces/fsyncs manifest, then removes/fsyncs journal. Startup
+recovers under manifest.lock before accepting new mutations. Installation
+commits deployment and host base artifacts, releases the lock, starts the
+session, then catalogs through separate journaled transactions. Failure to
+start the session leaves recorded repairable installation, never unrecorded
+guest policy/file changes. Tests must inject crashes at every durable boundary
+and run concurrent install/start/stop to prove the lock graph.
+
+Incoming/outgoing transfer managers later enforce both the 16-transfer count
+and a per-direction reservation budget equal to configured clipboard.max_mb
+(including icons/cursors); over-budget admission returns Busy, individual
+over-limit payloads return TooLarge. Cancellation/EOF returns each reservation
+once. This is a local resource bound, not a wire/schema change.
