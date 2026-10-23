@@ -7639,13 +7639,17 @@ mutexes), then the libstdc++ emergency arena, each exactly once.
 same order an `llvm_shutdown_obj` static would give. Nothing runs after step 4.
 
 **Admission.** The mandatory link-map policy requires:
-- `__gnu_cxx::__freeres()` from `eh_alloc.o`;
-- `llvm::llvm_shutdown()` from `libLLVMSupport.a(ManagedStatic.cpp.obj)`;
+- `__gnu_cxx::__freeres()` from exactly `libstdc++.a(eh_alloc.o)`;
+- `llvm::llvm_shutdown()` from exactly `libLLVMSupport.a(ManagedStatic.cpp.obj)`;
 - the existing EH-pool and TLS symbols.
 
 `verify_runtime_link(..., llvm_runtime=True)` is the default. Only the LLVM-free runtime probe passes
 `llvm_runtime=False`; it defines its own documented no-op stand-in in
 `tests/vgpu/clvk_runtime_windows.cpp`. A runtime policy file cannot change either gate.
+Archive and member basenames are both mandatory for these two runtime symbols. A matching
+member inside a foreign archive, a standalone member, or a prefixed member is rejected.
+Directories remain bound by the separate build-provenance receipt. Bare-object CRT policies
+retain their existing MinGW archive-prefix handling.
 
 **Verification.**
 - **Unit test.** `tests/vgpu/clvk_runtime_eh_pool_test.c` proves `llvm_shutdown` runs after every

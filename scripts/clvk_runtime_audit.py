@@ -754,9 +754,18 @@ def _symbol_input(map_lines: Sequence[str], symbol: str) -> str:
 
 
 def _source_matches(source: str, expected: str) -> bool:
-    """Match a direct object or the same object as a GNU archive member."""
+    """Match a borrowed map owner; explicit archive/member pairs bind both names.
+
+    Bare object policies also allow GNU's archive-member prefix convention.
+    Explicit archive policies require the exact member and archive basenames;
+    their directory is bound separately by the build provenance. No I/O, owned
+    allocation or shared mutation; return False on a different owner.
+    """
     normalized = source.strip().replace("\\", "/")
     basename = normalized.rsplit("/", 1)[-1]
+    expected = expected.replace("\\", "/").rsplit("/", 1)[-1]
+    if "(" in expected:
+        return basename == expected
     if basename == expected:
         return True
     if "(" not in basename or not basename.endswith(")"):
@@ -878,7 +887,7 @@ def verify_runtime_link(
         },
         "required_map_symbols": {
             "atexit": "dllcrt2.o",
-            "__gnu_cxx::__freeres()": "eh_alloc.o",
+            "__gnu_cxx::__freeres()": "libstdc++.a(eh_alloc.o)",
             "waddle_clvk_eh_pool_register": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_release": Path(eh_pool_object).name,
             "waddle_clvk_eh_pool_initializer": Path(eh_pool_object).name,
@@ -886,7 +895,7 @@ def verify_runtime_link(
         },
     }
     if llvm_runtime:
-        mandatory_policy["required_map_symbols"]["llvm::llvm_shutdown()"] = "ManagedStatic.cpp.obj"
+        mandatory_policy["required_map_symbols"]["llvm::llvm_shutdown()"] = "libLLVMSupport.a(ManagedStatic.cpp.obj)"
     for key, required in mandatory_policy.items():
         if key in policy and policy[key] != required:
             raise audit_error_t(f"runtime policy cannot weaken mandatory {key} checks")

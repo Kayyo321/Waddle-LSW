@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import copy
+import re
 import struct
 import sys
 import tempfile
@@ -504,6 +505,30 @@ class runtime_audit_test_t(unittest.TestCase):
         map_path.unlink()
         with self.assertRaisesRegex(Audit.audit_error_t, "cannot read link map"):
             Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root)
+
+    def test_runtime_archive_members_require_the_exact_archive(self):
+        """A correct object basename cannot authorize a foreign runtime archive."""
+        dll = write_file(self.root / "libOpenCL.dll", make_pe()[0])
+        map_path = self.root / "runtime.map"
+        for symbol, owner, member in (
+                ("llvm::llvm_shutdown()", "libLLVMSupport.a", "ManagedStatic.cpp.obj"),
+                ("__gnu_cxx::__freeres()", "libstdc++.a", "eh_alloc.o")):
+            expected = f"{owner}({member})"
+            for replacement in (f"foreign.a({member})", member,
+                                f"{owner}(foreign-{member})"):
+                map_path.write_text(map_text(output="libOpenCL.dll").replace(expected, replacement))
+                with self.subTest(symbol=symbol, owner=replacement), self.assertRaisesRegex(
+                        Audit.audit_error_t, "expected " + re.escape(expected)):
+                    Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root)
+            for prefix in ("/private/runtime/", "C:\\private\\runtime\\"):
+                self.assertTrue(Audit._source_matches(prefix + expected, expected))
+        map_path.write_text(map_text(output="libOpenCL.dll"))
+        for symbol, owner in (("llvm::llvm_shutdown()", "ManagedStatic.cpp.obj"),
+                              ("__gnu_cxx::__freeres()", "eh_alloc.o")):
+            with self.subTest(symbol=symbol), self.assertRaisesRegex(
+                    Audit.audit_error_t, "cannot weaken mandatory"):
+                Audit.verify_runtime_link(map_path, dll, map_working_directory=self.root,
+                                          runtime_policy={"required_map_symbols": {symbol: owner}})
 
     def test_toolchain_requires_exact_reviewed_14_2_win32_metadata(self):
         compiler = {"resolved_path": "/toolchain/gcc", "sha256": "a" * 64,

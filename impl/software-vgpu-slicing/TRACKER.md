@@ -2559,3 +2559,15 @@ The user approved this fix and its requalification on 2026-10-22. Reload R11 (11
 guarded heap run r4 are running or queued. TODO #5 stays at 70% until both pass. Parent 93.0% / In
 Progress, Time Ended TBD.
 
+
+### Codex continuation: exact runtime archive admission (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `22e86e3` | docs(vgpu): specify the OpenCL.dll llvm_shutdown teardown and log its commits | #3/#5 +0%; overall +0% | Prior documentation checkpoint; no additional native acceptance |
+| (this commit) | fix(opencl): bind teardown symbols to their exact runtime archives | #5 +0%; overall +0% | 22 audit tests pass in normal/optimized Python, including archive-only spoofs, standalone/prefixed members and policy override rejection. Preserved real map c5af0bdc passes the stricter gate with candidate 8552b3a1 unchanged. |
+
+Both archive and member names are now required, matching the shim and admission documentation.
+The auditor is a build-cache input; a later build must use a new cache key. This read-only map
+recheck does not refresh the historical build receipt or credit a rebuild/native qualification.
+Parent remains 93.0% / In Progress, Time Ended TBD.
