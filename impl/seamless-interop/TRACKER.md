@@ -1,15 +1,21 @@
 # Feature Tracker: Seamless Interop
 
-- **Contributors / Agents**: Claude Code (cloud session)
+- **Contributors / Agents**: Claude Code (cloud session), Codex (/root)
 - **Time Started**: 2026-10-22T00:59:49Z
 - **Time Ended**: TBD
 - **Feature Branch**: feat/seamless-interop
 - **Target Merge Branch**: origin
 - **Current Overall Status**: In Progress
 
-Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
+Original base: `feature/software-vgpu-slicing` at `8a6e25e`; synchronized with
+`origin` at `89671de` by merge `e4f9685` on 2026-10-23. Design and frozen contracts:
 [IMPL_DESC.md](IMPL_DESC.md). Manual evidence: [VERIFICATION_M0.md](VERIFICATION_M0.md)
 (created by TODO #2).
+
+Current-source review, verification limits and recommended next work:
+[status_2026_10_23.md](status_2026_10_23.md). Synchronization and research leave
+feature completion at 9.6%; hardware evidence and the remaining implementation
+are still pending.
 
 ## Tasks & Progress
 
@@ -111,7 +117,22 @@ Base: `feature/software-vgpu-slicing` at `8a6e25e`. Design and frozen contracts:
     AV workflow also runs on this branch. Workflow results are recorded when
     observed.
 
-- **Commit `HEAD`**: `docs(seamless-interop): record protocol codec completion`
+- **Commit `f450b3f`**: `docs(seamless-interop): record protocol codec completion`
   - **Task Impact**: +0% (tracker bookkeeping).
-  - **Summary**: Marks TODO #4 Done and resolves earlier HEAD entries. `HEAD`
-    denotes the containing commit until resolved by the next atomic commit.
+  - **Summary**: Marks TODO #4 Done and resolves earlier HEAD entries.
+
+- **Commit `e4f9685`**: `chore(seamless-interop): merge updated origin into public feature branch`
+  - **Task Impact**: +0% to TODO #1-#34 (+0% overall); upstream synchronization.
+  - **Summary**: Merges the 61 missing upstream commits through `89671de`
+    without rewriting the 10 published feature commits. No conflicts; recursive
+    submodules synchronized. Interop/AV tests, both sanitizer targets, codec
+    coverage and Windows ABI cross-link pass. Upstream commits retain their
+    existing software-vGPU tracker attribution; they do not advance this feature.
+
+- **Commit `HEAD`**: `docs(seamless-interop): record synchronized branch review and next steps`
+  - **Task Impact**: +0% to TODO #1-#34 (+0% overall); research and bookkeeping.
+  - **Summary**: Adds the current-source status report, distinguishes codec
+    completion from pending runtime work, records verification and contract
+    gaps, and orders the next tasks. `HEAD` denotes this containing commit
+    until the next tracker update resolves its hash. No hardware acceptance
+    or additional feature implementation is claimed.
