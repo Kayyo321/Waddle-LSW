@@ -2676,7 +2676,7 @@ TODO#3's final4% is the final source/evidence and delivery-head CI closure.
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit; identified by the git commit containing this row) | docs(vgpu): complete software slicing acceptance tracker | #3 +4% (+1.0% overall); all other tasks +0% | All 12 checks SUCCESS on source head bffeb41; final source/native applicability review PASS at 01613b1, current receipt binds all 14 runtime inputs, R13 and heap root reviews PASS, README/dependency pins unchanged. |
+| `19bb1a6` | docs(vgpu): complete software slicing acceptance tracker | #3 +4% (+1.0% overall); all other tasks +0% | All 12 checks SUCCESS on source head bffeb41; final source/native applicability review PASS at 01613b1, current receipt binds all 14 runtime inputs, R13 and heap root reviews PASS, README/dependency pins unchanged. |
 
 All twelve tasks now reach100%, weighted total100.0%, and the header records the acceptance
 closure time. The final review is a root follow-up to the preserved independent handoff review;
@@ -2690,3 +2690,16 @@ This commit changes acceptance documentation only. Before PR#6 is marked ready, 
 pushed head must have all twelve provider CI checks successful; the final provider snapshot
 and delivery receipt are retained with the local qualification evidence without another
 source commit. PR#6 must remain open and must not be merged by this continuation.
+
+### Historical merge attribution audit (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `7fc3c81` | test(vgpu): integrate independently reviewed M2 ownership readiness | All tasks +0%; overall +0% | Merge preserves both isolated M2 and runtime/cancellation histories. Original checkpoint records 156 Unit D bindings and portable gates, with native/current-head acceptance still open then; no duplicate progress credit. |
+| `2568c0b` | chore(vgpu): preserve existing remote PR history | All tasks +0%; overall +0% | Merge preserves remote review-controller source/documentation and 47 offline controls without rewriting history. Original checkpoint explicitly gives no current-candidate CI/runtime credit. |
+| (this commit; identified by the git commit containing this row) | docs(tracker): attribute preserved feature integration commits | All tasks +0%; overall +0% | Complete feature-range hash audit finds every preceding commit represented, including the two historical merges above and acceptance closure19bb1a6. No implementation or qualification verdict changes. |
+
+This closes attribution gaps found by comparing all feature-range commits against the parent
+tracker, rather than assigning their already integrated work additional progress. Total remains
+100.0% and the acceptance end time remains unchanged. The exact delivery-head CI requirement
+applies to this documentation follow-up before PR readiness; superseded CI is not final evidence.
