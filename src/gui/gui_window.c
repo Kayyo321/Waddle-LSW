@@ -87,7 +87,7 @@ static void stream_output(const char *text, gpointer context) {
     gui_t *gui = context;
     if (gui->closing) return;
     text_append(gui->output, text);
-    if (gui->stream_logs) text_append(gui->logs, text);
+    if (gui->stream_logs && g_strcmp0(gui->selected, gui->operation_device) == 0) text_append(gui->logs, text);
 }
 static void history_add(gui_t *gui, const char *record) {
     if (gui->closing) return;
@@ -207,7 +207,10 @@ static void selection_summary(gui_t *gui) {
     JsonObject *data = gui_device_data(gui, gui->selected);
     gtk_widget_set_visible(gui->device_content, data != NULL);
     gtk_widget_set_visible(gui->empty, data == NULL);
-    if (!data) return;
+    if (!data) {
+        adw_window_title_set_title(gui->title, "Waddle"); adw_window_title_set_subtitle(gui->title, "Windows devices");
+        gtk_window_set_title(gui->window, "Waddle"); return;
+    }
     const char *state = gui_json_text(data, "state", "unknown");
     char *memory = scalar_text(data, "memory_mb"), *cpus = scalar_text(data, "vcpus");
     char *summary = g_strdup_printf("%s%s\n%s MiB memory · %s virtual CPUs\n%s",
@@ -225,12 +228,14 @@ static void selection_summary(gui_t *gui) {
     g_free(summary); g_free(memory); g_free(cpus);
 }
 void gui_select(gui_t *gui, const char *name) {
+    if (gui->closing) return;
     if (!gui_device_data(gui, name)) {
         char *message = g_strdup_printf("Device '%s' is not in the registry. Refresh or create/import it.", name ? name : "");
         gui_message(gui, message); g_free(message);
         return;
     }
     gboolean changed = g_strcmp0(gui->selected, name) != 0;
+    if (changed && gui->stream_logs) gui_job_stop(gui->job);
     char *copy = g_strdup(name);
     g_free(gui->selected); gui->selected = copy;
     selection_summary(gui);
@@ -338,6 +343,10 @@ static void list_done(int status, const char *output, const char *error, gpointe
             } else if (!gui_device_data(gui, gui->selected)) {
                 g_clear_pointer(&gui->selected, g_free);
                 if (default_name || first) gui_select(gui, default_name ? default_name : first);
+            }
+            if (gui->initial_page) {
+                if (gtk_stack_get_child_by_name(gui->pages, gui->initial_page)) gtk_stack_set_visible_child_name(gui->pages, gui->initial_page);
+                g_clear_pointer(&gui->initial_page, g_free);
             }
             gtk_label_set_text(gui->notice, json_array_get_length(results) ? "Select a device to inspect it. Opening never starts Windows." : "No devices yet. Create one from a Windows image or import a backup.");
         } else {
@@ -591,7 +600,7 @@ static GtkWidget *device_details(gui_t *gui) {
     gtk_widget_set_vexpand(GTK_WIDGET(gui->details), TRUE);
     GtkWidget *box;
     GtkWidget *page = gui_page(&box, "Device overview", "Start Windows only when you choose an operation that needs it.");
-    gui->summary = GTK_LABEL(gui_label(box, "Select a device", "title-3"));
+    gui->summary = GTK_LABEL(gui_label(box, "Select a device", NULL));
     GtkWidget *row = button_row(box);
     add_button(row, "Start", "media-playback-start-symbolic", "start", TRUE);
     add_button(row, "Shut down", "system-shutdown-symbolic", "stop", FALSE);
@@ -603,7 +612,7 @@ static GtkWidget *device_details(gui_t *gui) {
     add_button(row, "Pause", "media-playback-pause-symbolic", "pause", FALSE);
     add_button(row, "Resume", "media-playback-start-symbolic", "resume", FALSE);
     row = button_row(box);
-    add_button(row, "Set default", "emblem-default-symbolic", "default", FALSE);
+    add_button(row, "Set default", "emblem-ok-symbolic", "default", FALSE);
     add_button(row, "Clear default", "edit-clear-symbolic", "default-clear", FALSE);
     add_button(row, "Pin / unpin", "starred-symbolic", "pin", FALSE);
     add_button(row, "Inspect runtime", "dialog-information-symbolic", "status", FALSE);
@@ -737,6 +746,7 @@ static GtkWidget *diagnostics_page(void) {
     return page;
 }
 void gui_window_present(gui_t *gui) {
+    if (gui->closing) return;
     if (gui->window) { gtk_window_present(gui->window); return; }
     gui->window = GTK_WINDOW(adw_application_window_new(GTK_APPLICATION(gui->application)));
     gtk_window_set_title(gui->window, "Waddle");
@@ -769,6 +779,7 @@ void gui_window_present(gui_t *gui) {
     char *landing = gui_store_text(gui->store, "Preferences", "landing", "devices");
     if (!strcmp(landing, "restore")) { g_free(landing); landing = gui_store_text(gui->store, "Preferences", "last_page", "devices"); }
     if (gtk_stack_get_child_by_name(gui->pages, landing)) gtk_stack_set_visible_child_name(gui->pages, landing);
+    if (!gui->device_requested) gui->initial_page = g_strdup(landing);
     g_free(landing);
     if (!gui->requested) gui->requested = gui_store_text(gui->store, "Preferences", "last_device", NULL);
     gtk_window_present(gui->window);

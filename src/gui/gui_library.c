@@ -104,6 +104,7 @@ GtkWidget *gui_preferences_page(gui_t *gui) {
     preference_text(gui, terminal, "external_terminal", "External terminal executable (blank selects automatically)", "");
     preference_text(gui, terminal, "activity_retention", "Activity records to retain (5–200)", "50");
     preference_toggle(gui, terminal, "log_follow", "Follow logs by default", "Applies when the next Waddle window opens");
+    gtk_box_append(GTK_BOX(box), gui_button("Clear persistent default device", "edit-clear-symbolic", "default-clear", FALSE));
     gui_label(box, "Keyboard shortcuts", "title-3");
     gui_label(box, "Ctrl+K — Command palette\nF5 — Refresh device states\nCtrl+Shift+T — New terminal for selected device\nTerminal: Ctrl+Shift+C / Ctrl+Shift+V — Copy / paste\nUse Tab and Shift+Tab to move through controls; Enter activates focused actions. Animations and reduced motion follow GTK system settings.", NULL);
     GtkWidget *about = gtk_button_new_with_label("About Waddle"); g_signal_connect(about, "clicked", G_CALLBACK(about_clicked), gui); gtk_box_append(GTK_BOX(box), about);
@@ -347,21 +348,38 @@ void gui_palette_open(gui_t *gui) {
     adw_window_set_content(ADW_WINDOW(palette->window), page); g_object_set_data_full(G_OBJECT(palette->window), "palette", palette, palette_free);
     gtk_window_present(palette->window); gtk_widget_grab_focus(GTK_WIDGET(palette->search));
 }
-/** @brief Export owns a text snapshot, so later selection/output changes cannot relabel it. */
-typedef struct export_t { char *text; } export_t;
+/** @brief Export owns snapshot and parent/application refs during async file IO. */
+typedef struct export_t { char *text; GtkWindow *parent; GApplication *application; } export_t;
+static void export_free(export_t *export) {
+    g_free(export->text); g_object_unref(export->parent); g_object_unref(export->application); g_free(export);
+}
+static void export_written(GObject *source, GAsyncResult *result, gpointer context) {
+    export_t *export = context; GError *error = NULL;
+    if (!g_file_replace_contents_finish(G_FILE(source), result, NULL, &error)) {
+        if (gtk_widget_get_visible(GTK_WIDGET(export->parent))) {
+#if ADW_CHECK_VERSION(1, 5, 0)
+            AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new("Could not save output", error->message));
+            adw_alert_dialog_add_response(dialog, "close", "Close"); adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(export->parent));
+#else
+            GtkWidget *dialog = adw_message_dialog_new(export->parent, "Could not save output", error->message);
+            gtk_window_set_destroy_with_parent(GTK_WINDOW(dialog), TRUE);
+            adw_message_dialog_add_response(ADW_MESSAGE_DIALOG(dialog), "close", "Close"); gtk_window_present(GTK_WINDOW(dialog));
+#endif
+        }
+        g_clear_error(&error);
+    }
+    g_application_release(export->application); export_free(export);
+}
 static void export_done(GtkNativeDialog *dialog, int response, gpointer context) {
     export_t *export = context;
-    if (response == GTK_RESPONSE_ACCEPT) {
-        GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
-        if (file) {
-            GError *error = NULL;
-            /* Snapshot is bounded to 200k characters; local save preserves private mode. */
-            char *path = g_file_get_path(file);
-            if (path && !g_file_set_contents_full(path, export->text, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, &error)) g_warning("Cannot save selected output: %s", error->message);
-            g_clear_error(&error); g_free(path); g_object_unref(file);
-        }
-    }
-    gtk_native_dialog_destroy(dialog); g_object_unref(dialog); g_free(export->text); g_free(export);
+    GFile *file = response == GTK_RESPONSE_ACCEPT ? gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog)) : NULL;
+    gtk_native_dialog_destroy(dialog); g_object_unref(dialog);
+    if (file) {
+        g_application_hold(export->application);
+        g_file_replace_contents_async(file, export->text, strlen(export->text), NULL, FALSE,
+            G_FILE_CREATE_PRIVATE | G_FILE_CREATE_REPLACE_DESTINATION, NULL, export_written, export);
+        g_object_unref(file);
+    } else export_free(export);
 }
 void gui_output_export(gui_t *gui, GtkTextView *view, gboolean save) {
     GtkTextIter start, end; GtkTextBuffer *buffer = gtk_text_view_get_buffer(view);
@@ -370,5 +388,6 @@ void gui_output_export(gui_t *gui, GtkTextView *view, gboolean save) {
     GtkFileChooserNative *picker = gtk_file_chooser_native_new("Save reviewed output", gui->window, GTK_FILE_CHOOSER_ACTION_SAVE, "Save", "Cancel");
     gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(picker), "waddle-diagnostics.txt");
     export_t *export = g_new0(export_t, 1); export->text = text;
+    export->parent = g_object_ref(gui->window); export->application = g_object_ref(G_APPLICATION(gui->application));
     g_signal_connect(picker, "response", G_CALLBACK(export_done), export); gtk_native_dialog_show(GTK_NATIVE_DIALOG(picker));
 }

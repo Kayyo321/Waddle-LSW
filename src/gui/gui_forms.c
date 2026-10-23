@@ -95,6 +95,13 @@ static GPtrArray *creation_args(form_t *form) {
     guint source = gtk_drop_down_get_selected(form->choice);
     if (source == 0 && !valid_path(form, 1, FALSE)) return NULL;
     if (source == 2 && !valid_path(form, 1, TRUE)) return NULL;
+    if (source == 1) {
+        const char *size = field(form, 2); char *end = NULL;
+        guint64 amount = g_ascii_strtoull(size, &end, 10);
+        gboolean valid = *size >= '0' && *size <= '9' && amount > 0 && end &&
+            ((*end == 'M' && amount <= 2097152) || (*end == 'G' && amount <= 2048)) && end[1] == '\0';
+        if (!valid) { form_error(form, "Blank disk size must be a decimal M/G size between 1 MiB and 2 TiB."); return NULL; }
+    }
     if (source != 2 && (!valid_uint(form, 3, 512, 65536) || !valid_uint(form, 4, 1, 128))) return NULL;
     GPtrArray *args = gui_args_new("device", source == 2 ? "import" : "init");
     gui_args_add(args, field(form, 0));
@@ -483,6 +490,9 @@ void gui_dispatch(gui_t *gui, const char *action) {
     if (!strcmp(action, "version")) { const char *args[] = {"--version", NULL}; gui_run(gui, "Version", NULL, args); return; }
     if (!strcmp(action, "doctor-all")) { const char *args[] = {"device", "doctor", "--all", "--json", NULL}; gui_run(gui, "Doctor all devices", NULL, args); return; }
     if (!strcmp(action, "launcher-new")) { gui_launcher_edit(gui, NULL); return; }
+    if (!strcmp(action, "default-clear")) {
+        const char *args[] = {"device", "default", "--clear", "--json", NULL}; gui_run(gui, "Clear default device", NULL, args); return;
+    }
     if (!require_device(gui)) return;
     if (!strcmp(action, "terminal")) { gui_terminal_open(gui); return; }
     if (!strcmp(action, "terminal-external")) { gui_terminal_external(gui, gui->selected, NULL); return; }

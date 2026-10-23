@@ -33,13 +33,13 @@ typedef struct gui_t {
     char *originals[GuiSettingCount];
     char *selected, *requested, *cli, *operation, *operation_device;
     char **last_argv;
-    char *pending_av_device, *config_device;
+    char *pending_av_device, *config_device, *initial_page;
     gui_store_t *store;
     JsonParser *registry;
     gui_job_t *job, *list_job, *detail_job;
     GPtrArray *terminals;
     guint refresh_timer;
-    gboolean closing, rebuilding, loading_config, stale, stream_logs;
+    gboolean closing, rebuilding, loading_config, stale, stream_logs, device_requested;
 } gui_t;
 /** @brief Keys and labels, immutable borrowed arrays of GuiSettingCount entries. */
 extern const char *const gui_setting_keys[GuiSettingCount];

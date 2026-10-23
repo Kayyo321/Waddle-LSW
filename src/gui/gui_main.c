@@ -9,6 +9,7 @@ static void activate(GApplication *application, gpointer context) {
 }
 static int command_line(GApplication *application, GApplicationCommandLine *command, gpointer context) {
     gui_t *gui = context;
+    if (gui->closing) { g_application_command_line_printerr(command, "Waddle is closing; retry after its sessions finish detaching.\n"); return 1; }
     GVariantDict *options = g_application_command_line_get_options_dict(command);
     const char *device = NULL;
     if (g_variant_dict_lookup(options, "device", "&s", &device)) {
@@ -16,6 +17,7 @@ static int command_line(GApplication *application, GApplicationCommandLine *comm
             g_application_command_line_printerr(command, "waddle gui: invalid device name\n");
             return 2;
         }
+        gui->device_requested = TRUE;
         g_free(gui->requested);
         gui->requested = g_strdup(device);
     }
@@ -69,7 +71,7 @@ int main(int argc, char **argv) {
     for (guint i = 0; i < GuiSettingCount; ++i) g_free(gui.originals[i]);
     g_strfreev(gui.last_argv);
     g_free(gui.selected); g_free(gui.requested); g_free(gui.cli);
-    g_free(gui.operation); g_free(gui.operation_device); g_free(gui.pending_av_device); g_free(gui.config_device);
+    g_free(gui.operation); g_free(gui.operation_device); g_free(gui.pending_av_device); g_free(gui.config_device); g_free(gui.initial_page);
     g_object_unref(gui.application);
     return status;
 }

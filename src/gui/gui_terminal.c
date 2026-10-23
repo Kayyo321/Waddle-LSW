@@ -4,6 +4,9 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+/* PCRE2 requires this width selector before its system declarations. */
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
 
 /** @brief Session owned by gui terminal array until application shutdown.
  * Terminal and tab are explicitly referenced until session_free; VTE owns PTY/reap. */
@@ -108,7 +111,7 @@ static void terminal_search(GtkSearchEntry *entry, gpointer context) {
     gui_t *gui = context; terminal_session_t *session = current_session(gui); if (!session) return;
     const char *text = gtk_editable_get_text(GTK_EDITABLE(entry));
     char *literal = g_regex_escape_string(text, -1); GError *error = NULL;
-    VteRegex *regex = *text ? vte_regex_new_for_search(literal, -1, 0, &error) : NULL;
+    VteRegex *regex = *text ? vte_regex_new_for_search(literal, -1, PCRE2_MULTILINE, &error) : NULL;
     vte_terminal_search_set_regex(session->terminal, regex, 0);
     vte_terminal_search_set_wrap_around(session->terminal, TRUE);
     if (regex) { vte_terminal_search_find_next(session->terminal); vte_regex_unref(regex); }
