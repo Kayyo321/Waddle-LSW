@@ -1,0 +1,6 @@
+LIBRARY waddle_tcp_bootstrap
+EXPORTS
+    venus_tcp_bootstrap_start
+    venus_tcp_bootstrap_stop
+    venus_tcp_bootstrap_session
+    venus_tcp_bootstrap_abandon

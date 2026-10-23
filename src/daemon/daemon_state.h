@@ -6,8 +6,8 @@
  * transitions, process coordination (virtiofsd + QEMU), and health reporting.
  */
 
-#ifndef WADDLE_DAEMON_STATE_H
-#define WADDLE_DAEMON_STATE_H
+#ifndef WaddleDaemonStateH
+#define WaddleDaemonStateH
 
 #include "daemon_config.h"
 #include "../av/av_environment.h"
@@ -149,4 +149,4 @@ void daemon_state_cleanup(daemon_state_t *s);
 }
 #endif
 
-#endif /* WADDLE_DAEMON_STATE_H */
+#endif /* WaddleDaemonStateH */

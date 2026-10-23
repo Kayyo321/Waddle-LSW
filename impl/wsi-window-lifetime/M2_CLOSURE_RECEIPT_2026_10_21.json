@@ -1,0 +1,97 @@
+{
+  "schema": "waddle_m2_qualification_closure_v1",
+  "status": "Completed",
+  "milestone_completion_percent": 100,
+  "time_ended": "2026-10-21T22:36:09Z",
+  "scope": "M2 WSI/window retirement only; parent PR not accepted",
+  "source_and_ci_applicability": {
+    "schema": "m2_closure_ci_applicability_v1",
+    "scope": "M2 only; parent exact final HEAD CI still required",
+    "head_at_review": "fdf20385a8685dcaeaf8934cd9be67131b6fa1e5",
+    "full_green_ci_head": "8d71d8ae4c44127d9bc47626e1973af9f54f01cf",
+    "ci_run": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/39679035088",
+    "all_jobs_success": true,
+    "source_files": {
+      "src/vgpu/venus_icd.zig": "3b419a9e76cae858a3c78a8a5ab305bef206f7750e056c11daf23732b18cf0d7",
+      "src/vgpu/venus_win32_present.c": "c6562c92189e2ebd01355a0a375a56ad189182ba57264a643ab40350c0999606",
+      "tests/vgpu/m2_owner_ledger.c": "67bc1d5aefd0231dc04a2f85fb4280d8f94f2139291097893d1398059f3c2744",
+      "tests/vgpu/m2_owner_ledger.h": "86b8629bba52c944d41cd85f9ea1eb225359273dada2a0c0495ee4eb64a55b18",
+      "tests/vgpu/m2_ownership_probe.c": "5806cc3481091173290ccf25256280223f2389b309017c88795fff43aec6fc10",
+      "tests/vgpu/m2_ownership_probe.h": "8faeab040d473dc8319cd2f3a56019fd58168efe5b01a3f9fa2655ac645c2eea",
+      "tests/vgpu/m2_ownership_portable.c": "1bfde026587744d5875f872288f3a0598458d5cf59f5103bcef1501b587f467b",
+      "tests/vgpu/m2_ownership_native.c": "09dd38e35d9ba5ba2672006c2f1e827bc5cbd5e370a9a13dc1d6ec5bd185f62a",
+      "tests/vgpu/m2_owner_ledger_test.c": "34cb60fa76f38500a1fe8f28a83f678f01bb4e1b0431d8b1bb4a8981094f9535",
+      "tests/vgpu/m2_ownership_coverage.py": "fb95835de84d643e8a52db4686a681bd530b43b1312240a562c4d3c8cdecb178",
+      "tests/vgpu/m2_ownership_coverage_test.py": "a53c4bddfa16e209ae6ca6161943e0e413ae95553fb11c75172e0175aac65d6e",
+      "tests/vgpu/m2_owned_fixture_test.c": "c135000cb65d4f981e68ad00045164a5622b9320a0599cf861b49eeaa1fdf3d0",
+      "tests/vgpu/m2_owned_fixture_coverage.py": "9bb20cf7c531d555653e704f8ee9acedf2bb39793194121c95281fd84bc99a08",
+      "tests/vgpu/m2_native_controls.py": "9c1765c43331bfdab7b17550936d85d15904e84c835c6321a5753a046c66da4d",
+      "tests/vgpu/m2_native_controls_test.py": "81ed865d65471a68e03711a462dcd41043d400100056b92e80d6ba5d16b6eb33",
+      "tests/vgpu/m2_output_test.py": "00f9dc568318158efe4e36ce0e93973bbb3e792c3841a0b6f5bb08542645612a",
+      "tests/vgpu/m2_qualification_build_test.py": "57fea76b511555cbb27275f28ae9ab74e33bc30e5bc65d45e26bc0e4acb7674e",
+      "tests/vgpu/tcp_gpu_m2_owned_windows.inc": "9a6580d93d566fc8d097061d692143124517d4e62e9b2003f037c8d2247049cb",
+      "scripts/vgpu_m2_output.py": "b6fd8c29e46d59bce99fdf34ce0e829216cdaa67e7a7e0bef4b527769e8e0c7a"
+    },
+    "whole_production_and_build_workflow_diff_empty": true,
+    "changes_since_ci": [
+      "impl/software-vgpu-slicing/OPENCL_NATIVE_RETENTION_2026_10_21.md",
+      "impl/software-vgpu-slicing/OPENCL_RELOAD_CONTRACT.md",
+      "impl/software-vgpu-slicing/QUALIFICATION_CONTINUATION_2026_10_21.md",
+      "impl/software-vgpu-slicing/TRACKER.md",
+      "tests/vgpu/opencl_reload_test.c",
+      "tests/vgpu/opencl_reload_windows.inc"
+    ],
+    "excluded_test_changes": "OpenCL reload failure-only diagnostics, never compiled into M2; no M2 predicate/config change",
+    "historical_failures_preserved": true,
+    "full_ci_raw_sha256": "11b269631d61eaed0b7fe7ab4a66112705646159618752948a4861fa68805431",
+    "prior_independent_review_sha256": "8a48032c885f7931e552f61a7b2d3c60d62efe77c6e5297d7bb00a1e7ce8ff91"
+  },
+  "independent_review": {
+    "report_sha256": "6bc0acd5813b16d95f892289820cea0c5fda50eb83b88c028ebcfc7d75c94630",
+    "bindings_sha256": "a3d32f8d2bb7434b721fb48817ae97f4880e66f06d3e74aade2915984eee14e3",
+    "manifest_bound_files": 433,
+    "mismatches": 0,
+    "source_findings": []
+  },
+  "native_manifests": [
+    {
+      "entry_count": 348,
+      "manifest_path": "/home/dev/Waddle-LSW/build/qualification_feature_20261021/m2_owned_candidate_8038ad9/package_manifest.json",
+      "manifest_sha256": "206f1474f3a67dd8a4af5e27f57ea6e5606019a4ca0001d258813c34f7ab7ebb",
+      "mismatches": [],
+      "name": "m2_candidate_package"
+    },
+    {
+      "entry_count": 41,
+      "manifest_path": "/home/dev/Waddle-LSW/build/windows11_vm/tcp_gpu_8fd00fda/m2_owned_evidence_manifest.json",
+      "manifest_sha256": "f2dd5fe0019b458dbc6c269d076a38939ff1dbf16c4ff82407cfc67c18c35d31",
+      "mismatches": [],
+      "name": "tcp_gpu_8fd00fda"
+    },
+    {
+      "entry_count": 41,
+      "manifest_path": "/home/dev/Waddle-LSW/build/windows11_vm/tcp_gpu_94f4964b/m2_owned_evidence_manifest.json",
+      "manifest_sha256": "9f206aea2159ec3eaf2e3f0c1893fd355743317c8ba0192667e7c9543dc1e2ec",
+      "mismatches": [],
+      "name": "tcp_gpu_94f4964b"
+    },
+    {
+      "entry_count": 3,
+      "manifest_path": "/home/dev/Waddle-LSW/build/qualification_feature_20261021/m2_owned_runs_8038ad9_revision2/m2_owned_evidence_manifest.json",
+      "manifest_sha256": "d354a0a97d06b3a6f66776730b79b38fb330ee6a3ba7881c7f9a64ae5397b5a0",
+      "mismatches": [],
+      "name": "m2_owned_runs_8038ad9_revision2"
+    }
+  ],
+  "all_m2_gates_pass": true,
+  "coverage_minimum_percent": 90,
+  "owned_leaks_accepted": 0,
+  "historical_failures_preserved": [
+    "tcp_gpu_7adb6000 kernel handles199->200",
+    "tcp_gpu_78129871 USER4->9"
+  ],
+  "parent_feature_completion_percent": 85.5,
+  "parent_time_ended": "TBD",
+  "parent_exact_head_ci_and_heap_reload_gates": "pending",
+  "merge_authorized": false
+}

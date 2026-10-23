@@ -1,0 +1,2705 @@
+# Feature Tracker: Software vGPU Slicing
+
+- **Contributors / Agents**: Codex Astra (isolated M2 readiness and ownership qualification), Antigravity, Codex (/root, /root/icd_memory, /root/image_pipeline, /root/wddm_dxvk), Claude Code (OpenCL implementation; Haiku 5.5 inventory/audit/build-spike workers)
+- **Time Started**: 2026-10-05T18:35:00Z
+- **Time Ended**: 2026-10-23T18:13:11Z
+- **Feature Branch**: feature/software-vgpu-slicing
+- **Target Merge Branch**: origin
+- **Current Overall Status**: Completed
+
+## Tasks & Progress
+| TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
+|:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
+| #1      | Set up Venus protocol transport over IVSHMEM ring buffer | Done | 15% | 100% | Independent mapped-file/UNIX integration and native Windows fixtures verified; physical hypervisor validation delegated to user |
+| #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
+| #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | Done | 25% | 100% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification explicitly accepted by the user on 2026-10-23). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). All 12 checks pass on source head bffeb41; final source/native applicability review passes at 01613b1 with no subsequent runtime changes. Delivery requires a further all-green check of the completion commit before PR readiness. |
+| #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | Done | 20% | 100% | Candidate81f3fc1d passes current-source static admission, fresh controls/census, uninterrupted R13 1100-cycle/3300-context reload and guarded heap cf99460c: zero OWNED blocks/bytes at every unload, complete nine-heap/CSR coverage and exact retirement/IFEO restoration. Qualified default compiler-option profile; nonstandard LLVM diagnostic-option limitation is explicitly documented (attribution sections20-21). |
+| #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
+| #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
+| #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
+| #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
+| #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
+| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | Done | 0% | 100% | Pinned loader/bootstrap, physical/M2/DXVK acceptance and final OpenCL reload/guarded heap qualification pass; all owned/native/console/debugger processes retire naturally, IFEO is restored exactly, preserved VM remains running. |
+| #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
+
+**Total Feature Completion**: `100.0%`
+
+## Commit History & Progress Log
+
+Each row preserves its atomic commit, task/overall delta and evidence. Historical pending statements describe that checkpoint, not present completion. Detailed interface contracts remain in [IMPL_DESC.md](IMPL_DESC.md).
+Shorthand (exact expansions): @B/ = build/; San3 = ASan/LSan/UBSan; CSan3 = ASan/LSan/C-UBSan; D/RS = Debug/ReleaseSafe.
+Open-gate aliases (exact expansions): RuntimeOpen = runtime/native gates open.; GraphicsDxvkOpen = native graphics/modern DXVK gates open.; IntegrationPending = integration/acceptance pending.; AcceptancePending = acceptance pending..
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `2cac52d` | docs(tracker): initialize implementation plan and tracker for software vGPU; Created initial IMPL_DESC.md and TRACKER.md for software vGPU slicing. | Scaffolding baseline (0% completion) |  |
+| `af665cc` | docs(tracker): align vGPU architecture on Venus and DMA-BUFs; Updated architecture to use Venus Vulkan remoting and DMA-BUFs. | Scaffolding baseline (0% completion) |  |
+| `587dc10` | docs(tracker): add OpenCL compute remoting for Adobe compatibility; Extended the requested compute scope; no implementation evidence. | #5 +0%; overall +0%. |  |
+| `8b3edcd` | refactor(headers): convert header guards to PascalCase per project convention; Existing header naming cleanup; no Venus transport implementation. | #1 +0%; overall +0%. |  |
+| `5398e3f` | docs(vgpu): specify IVSHMEM ring transport contract; Defined cache-isolated C ABI, bounded Zig validation, SPSC ordering, errors, ownership, milestones, and transport-versus-renderer boundary. | #1 +10%; overall +1.5%. |  |
+| `59829ff` | feat(vgpu): implement bounded SPSC byte transport; Added the 192-byte C11 ABI, cache-isolated cursors, local capacity snapshots, allocation-free Zig validation/copy helpers, and basic tests. | #1 +35%; overall +5.25%. | `make vgpu-test vgpu-sanitizers` passed with San3; Zig allocator tests passed; Windows x86-64 C object compilation passed. Native Windows execution, stress, coverage, and session adapters remain pending. |
+| `b071cc8` | test(vgpu): exercise corruption and concurrent ring rollover; Exhausted every ring start and bounded transfer length, corrupted all ABI identity/padding bytes, verified capacity snapshots and error output preservation, and transferred 3.1 MB in both thread and independent-process stress starting near 32-bit rollover. Both stress variants have a deadline. | #1 +15%; overall +2.25%. | `make vgpu-test vgpu-sanitizers` passed; Zig allocator tests returned all allocations. Coverage and native adapters remain pending. |
+| `9ee99e0` | test(vgpu): gate C and Zig transport coverage; Added gcov gates for production C lines and branches, reused the repository LLVM instrumentation for Zig validation/copy routines, and added reproducible Windows test cross-link targets. Coverage excludes compiler panic guards but includes source validation errors. | #1 +5%; overall +0.75%. | C production line/branch coverage 100%; Zig production line/branch coverage 100%. Native CI remains pending. |
+| `63862ff` | chore(vgpu): verify transport on Linux and native Windows CI; Added feature-branch Linux safety/stress/coverage and native Windows ABI/allocator jobs with pinned tools and bounded runtime. This verifies transport only; renderer, WDDM, presentation, and OpenCL integration remain required for feature completion. | +0% to TODO: #1 (+0% overall); CI verification pending. |  |
+| `bfc1bb5` | chore(deps): pin virglrenderer 1.2.0 for Venus execution; Added public HTTPS MIT-licensed renderer dependency at immutable `500b41d5c8638f9b80dd558f4044f3301c7457a4`; allocated a dedicated dependency task by splitting 5% from unimplemented TODO #2. No guest or GPU completion is implied by the dependency pin. | #6 +40%; overall +2.0%. |  |
+| `bca923e` | chore(vgpu): build pinned Venus renderer offline; Added deterministic Meson/Ninja targets with wrap downloads disabled and base-package build prerequisites; synchronized the dependency in the Linux job. Built the full Venus-enabled renderer locally. | +40% to TODO: #6 (+2.0% overall); +5% to TODO: #1 (+0.75% overall) for native transport CI verification. | Transport Linux and native Windows jobs both succeeded at `63862ff` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37385937849 . Dependency CI for this commit remains pending; this is not a rendering test. |
+| `b993e78` | feat(vgpu): define bidirectional dedicated IVSHMEM region; Added a 64-byte immutable region ABI, separate command/reply rings, a bounded resource area, single-snapshot Zig extent validation, and all-or-nothing local attachment. Added portable fixtures and native CI checks. | +5% to TODO: #1 (+0.75% overall); +20% to TODO: #6 (+1.0% overall) for verified dependency CI. | Ring lines/branches 100%; region lines 100%, branches 96.15%; combined Zig validation/copy lines 100%, branches 97.5%. Sanitizers and allocator tests pass. Dependency CI succeeded at `bca923e` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37386229779 . Dedicated driver-backed host/guest integration is still pending. |
+| `acf8d73` | feat(vgpu): own sealed Linux IVSHMEM backing mappings; Created dedicated memfd-backed BAR ownership with resize seals, shared mmap, deterministic free, and preserved errno. Defined the native mapping API and Windows ownership contract for the next atomic implementation. | #1 +5%; overall +0.75%. | Real dual mapping exchanges commands/replies; all six injected acquisition/post-map failures release resources. Linux mapping line/branch coverage 100%; San3 and Zig allocator tests pass. |
+| `ff50f69` | feat(vgpu): map signed Windows IVSHMEM regions; Added signed-driver cached mapping, identity validation, bounded SetupAPI detail allocation, ownership flags for invalid map returns, preserved Windows errors, and symmetric mapping/handle cleanup. Guarded the upstream unguarded driver header without modifying the pinned dependency. | +0% to TODO: #1 (+0% overall); Windows fixture execution pending. | Cross-linked a native Windows SDK fixture covering success and fourteen allocation/driver/ABI failures, tracking every live allocation, device/list handle, and mapping. Native execution is queued next. This fake driver fixture does not establish real cross-VM IVSHMEM functionality. |
+| `a7e0756` | feat(vgpu): add cancellable ring backpressure waits; Added exact-transfer wait adapters with caller-owned bounded readiness callbacks, local cancellation/deadlines, disconnect closure, spurious-wakeup retries, and validation of unexpected callback results. | #1 +5%; overall +0.75%. | Wait adapter production line/branch coverage 100%; the complete local transport/mapping/wait sanitizer and allocator suite passes. Windows fixtures cross-link; native execution/lifecycle handoff still pending. |
+| `ace5ce5` | docs(vgpu): record native mapping verification; Credited the Windows mapping-owner milestone only after its fourteen-error-path fixture executed successfully on native Windows. Recorded the latest ring/region/Linux-owner CI verification without crediting the unimplemented lifecycle handoff or actual cross-VM signed-driver test. | #1 +5%; overall +0.75%. | Both Linux and native Windows jobs passed at `ff50f69`: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37387395968 . Wait adapters added after this run are awaiting their own native CI result. |
+| `71be1b8` | chore(vgpu): enforce C formatting and audit transport checks; Applied four-space LLVM formatting with a 100-column limit to owned feature C headers/sources/fixtures. Preserved required SDK/GUID include ordering; no upstream or README changes. | #1 +0%; overall +0%. | Local transport/owner/wait sanitizers and allocator tests pass. C ring/owner/wait line/branch coverage 100%; region line coverage 98.11%, branches 96.15%; Zig lines 100%, branches 97.5%. Windows fixtures cross-link and the production driver adapter compiles independently. New transport/native Windows jobs passed at `ace5ce5` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37387757325 . Existing AV coverage gates also passed locally after extending the shared LLVM coverage harness. Feature completion remains 18.5%. |
+| `9e7940f` | docs(vgpu): define lifecycle readiness handoff; Specified the fixed little-endian control frame, bounded parsing, offer/acknowledgement/ready ordering, stale-session rejection, cancellation, disconnect closure, and mapping lifetime. Split the remaining lifecycle gate into tested state-machine and native stream-integration milestones. | #1 +0%; overall +0%. | Reviewed against the existing bidirectional region and cancellable ring contract. No implementation credit is assigned yet. |
+| `0474547` | feat(vgpu): validate lifecycle readiness transitions; Added bounded Zig little-endian control encoding/decoding and a C11 session state machine that gates readiness, snapshots layout/identity, rejects stale/out-of-order frames, and atomically closes both directions. Added exhaustive role/state transitions, malformed-frame and cleanup tests, sanitizer/coverage gates, Windows cross-link and native CI execution targets. | #1 +1%; overall +0.15%. | `make vgpu-test vgpu-sanitizers vgpu-coverage vgpu-windows` passed locally. Session C line/branch coverage 100%; control Zig lines 100%, branches 93.75%; Zig allocator tests leak no bytes. Native Windows execution is not yet credited; OS stream adapters and actual cross-VM validation remain. |
+| `1921804` | docs(vgpu): specify public Venus receiver bootstrap; Defined singleton/context/blob ownership, private bounded commands, callback lifetime, CPU completion versus GPU completion, exact reply mapping, failure teardown and receiver milestones after exercising the public API. | #2 +0%; overall +0%. | A local exploratory public-ABI probe executed real Venus EnumerateInstanceVersion and received VK_SUCCESS after timeline-zero retirement. The probe is not production implementation or GPU-rendering evidence. |
+| `81e333c` | docs(vgpu): record native lifecycle verification; Credited the lifecycle state-machine native Windows execution milestone after both Linux and Windows jobs completed successfully. | #1 +1%; overall +0.15%. | https://github.com/Kayyo321/Waddle-LSW/actions/runs/37389407524 passed at `0474547`. Stream integration (3%) and real cross-VM signed-driver validation (5%) remain pending; no GPU execution credit is assigned. |
+| `8bb90be` | feat(vgpu): own public Venus receiver bootstrap; Added scoped renderer singleton/context/blob/map ownership, bounded Zig private command/reply copies, CPU timeline retirement, poisoned submission handling and deterministic pending/partial cleanup. Added real public Venus dispatch and all acquisition/error-path ownership fixtures. | #2 +10%; overall +2%. | `make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage` passed locally. Real renderer returned nine successful Vulkan instance-version replies over repeated owners/submissions and survived pending teardown. Owned C and Zig line/branch coverage 100%; San3 and Zig allocator gates pass. CI now executes the same real public-ABI test. This milestone proves CPU dispatch/ownership, not GPU execution, resource allocation policy, session integration, guest ICD or zero-copy presentation. |
+| `6281b0b` | docs(vgpu): specify native lifecycle stream adapters; Defined borrowed Linux VSOCK/UNIX and Windows overlapped serial streams, exact private framing, monotonic operation deadlines, cancellation, bounded backpressure waits, partial EOF and completion-event cleanup. | #1 +0%; overall +0%. | Reviewed against session readiness and ring exact-transfer contracts; native implementation and runtime validation remain pending. |
+| `c20e8bb` | feat(vgpu): hand off native lifecycle streams with deadlines; Added borrowed native Linux stream/Windows overlapped adapters, complete readiness delivery, private partial framing, atomic cancellation, monotonic operation deadlines, stop/EOF closure and bounded ring wait callbacks. Windows requests are cancelled and joined before stack/event reuse. Added real Linux sockets and cross-linked real Windows pipe tests plus coverage/CI gates. | #1 +2%; overall +0.3%. | `make vgpu-test vgpu-sanitizers vgpu-coverage vgpu-windows` passed locally. Channel C lines 98.37%, branches 95.10%; Linux native boundary lines 100%, branches 97.62%. San3 and Zig allocator gates pass. Real Linux two-peer handshake, one-byte framing, full-ring progress, partial EOF, final Stop, cancellation during waits and deadline shutdown passed. Native Windows execution and the real cross-VM signed-driver gate are pending. |
+| `f966258` | docs(vgpu): record native overlapped stream verification; Credited the Windows stream-adapter execution milestone after actual overlapped named-pipe handshake, fragmented control, pending cancellation, deadline/partial EOF and event cleanup tests passed on native Windows. | #1 +1%; overall +0.15%. | Both jobs passed at `c20e8bb` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37390952834 . Named-pipe fixtures exercise Windows completion APIs, not a VirtIO driver; actual cross-VM signed IVSHMEM/VirtIO-Serial driver validation remains 5%. |
+| `e2cb2e2` | docs(vgpu): adopt authorized standalone validation scope; Recorded the user's explicit mock-development direction and delegation of physical cross-VM testing. Replaced the final development gate with independently mapped processes, real UNIX control and CPU Venus dispatch, preserving actual hardware validation as an unclaimed user follow-up. | #1 +0%; overall +0%. | Existing native Windows fixtures remain required. New integrated mock fixture is specified before implementation; no credit yet. |
+| `dc1f16b` | test(vgpu): integrate independent mock guest and Venus replies; Completed the user-authorized mock gate using independently mapped /dev/shm file views, a real UNIX control handshake, ordered ring requests, actual Venus CPU dispatch/replies, simulated guest crash and partial EOF. Host joins callbacks/child before unmapping; the exclusive test file is unlinked. | #1 +5%; overall +0.75%. | `make vgpu-integration vgpu-integration-sanitizers` passed; San3 reported no findings. Existing production coverage/native Windows gates remain enforced. CI now runs integrated mock dispatch as well. Task #1 is complete for standalone development, with physical hypervisor testing explicitly delegated to the user; no real guest driver/GPU claim. |
+| `a2263c7` | docs(vgpu): define receiver resource registry and quota; Specified bounded IDs/ledger, explicit declared-storage/count quotas, lazy CPU SHM copy ownership, refunds/reuse, poisoned map cleanup, and the distinction between registered storage and arbitrary Vulkan VRAM. | #2 +0%; overall +0%. | Reviewed public renderer create/map/unref behavior and separated resource ownership from subsequent wire dispatch/GPU export gates. |
+| `8766015` | feat(vgpu): bound receiver resource ownership and quotas; Implemented a fixed 64-entry resource ledger, Zig-validated IDs, flags and copy bounds, declared-storage/count quotas, lazy CPU SHM mappings, quota refunds and deterministic resource teardown, including SDK unmap errors. | #2 +15%; overall +3.0%. | `make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage vgpu-integration vgpu-integration-sanitizers` passed. Owned receiver C lines 100%, branches 99.33%; Zig bounds lines/branches 100%. San3 and Zig allocator gates report no leaks. Real public renderer CPU SHM copies and independent mapped-file/UNIX integration passed. Device memory export, GPU completion and runtime wire dispatch remain separate gates. |
+| `e546879` | docs(vgpu): specify bounded receiver request envelopes; Defined the 64-byte little-endian header, operation-specific fields, explicit wire statuses, payload bounds and sequential exchange contract. Split remaining dispatch work into portable codec and integrated runtime gates. | #2 +0%; overall +0%. | Checked against resource quotas, CPU fences, fixed capset extent and the backing-agnostic ring/channel ownership contracts. |
+| `b6e825e` | feat(vgpu): validate portable receiver request envelopes; Added a documented C ABI and allocation-free Zig request/response codec with explicit little-endian fields, per-operation policy validation, resource-policy reuse, exact payload bounds and error output guarantees. Added independent C golden-wire/policy fixtures, Zig mutation/allocator tests, sanitizer/coverage targets and Linux/native Windows CI execution. | +0% to TODO: #2 (+0% overall); 5% codec gate awaits native CI. | `make vgpu-request-test vgpu-request-sanitizers vgpu-request-coverage @B/vgpu_request_test.exe` passed. Codec branch coverage 100%, line coverage 98.33%; sanitizers and Zig allocator tests pass. Native Windows execution remains pending. Resource commit `8766015` passed both jobs in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392534083 . |
+| `aa0d30d` | docs(vgpu): define sequential receiver runtime ownership; Specified private bounded framing, chunked payloads, explicit operation deadlines, consumed sequence rules, output preservation, quota-safe dispatch and terminal failures without an unreadable response guarantee. | #2 +0%; overall +0%. | Reviewed against codec limits, channel lifecycle and receiver ownership; integrated implementation and runtime acceptance remain pending. |
+| `4253a51` | feat(vgpu): dispatch bounded sequential receiver exchanges; Added allocation-free caller-buffer RPC ownership, streamed private framing, exact echoed response validation, sequence exhaustion and terminal closure. Routed all eight operations to the existing receiver; oversized transfers return Limit without dispatch. Replaced the temporary integration envelopes with real protocol resource/CPU execution exchanges. | +5% to TODO: #2 (+1.0% overall) for verified portable codec; runtime's separate 10% acceptance gate awaits native CI. | `make vgpu-runtime-test vgpu-runtime-sanitizers vgpu-runtime-coverage @B/vgpu_runtime_test.exe vgpu-integration vgpu-integration-sanitizers` passed. RPC lines 100%, branches 97.73%; dispatch lines 98.70%, branches 93.48%. San3 report no findings. Independent mapped-process/UNIX tests cover real SHM quota/refund/reuse, payloads larger than the ring, real CPU Venus replies, stale/malformed/truncated requests and peer crashes. Native runtime execution is queued; no GPU execution claim. Codec Linux/native Windows CI succeeded at `b6e825e` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37392958717 . |
+| `f99723a` | fix(vgpu): track runtime prerequisites before integration rules; Moved runtime source-list definitions before Make expands the integration prerequisites, and added explicit ABI/private header dependencies. Runtime edits now reliably rebuild integrated and portable fixtures. | #2 +0%; overall +0%. | Inspected Make's expanded integration target and asserted both runtime sources and ABI/private headers are present. Runtime behavior is unchanged; the preceding validated integration build contained both sources. |
+| `d384dee` | docs(vgpu): specify GPU queue fence ownership; Defined bounded queue timeline slots, independent issued/retired identities, inline callback publication, stale/future callback handling and CPU versus GPU semantics. Split ownership, hardware and recovery acceptance. | #2 +0%; overall +0%. | Matched the pinned public fence ABI and vkr queue association; callback retirement does not by itself prove successful GPU execution. |
+| `ec97da1` | feat(vgpu): track bounded GPU queue fence retirement; Added fixed per-queue issued/retired atomics, Zig timeline bounds, independent backpressure, inline callback publication, future-callback poison, monotonically retired maxima and explicit GPU fence polling. CPU completion remains separate. No queue/device creation or successful GPU work is implied. | +8% to TODO: #2 (+1.6% overall) for GPU fence ownership; +10% to TODO: #2 (+2.0% overall) for verified sequential runtime CI. | `make vgpu-receiver-test vgpu-receiver-sanitizers vgpu-receiver-coverage vgpu-integration vgpu-integration-sanitizers` passed. Receiver C lines 100%, branches 98.91%; Zig bounds lines/branches 100%. All 63 GPU slots, inline/concurrent callbacks, SDK failure, exhaustion, pending cleanup and CPU/GPU separation tested through the SDK mock boundary. San3 and allocator tests report no leaks. Real CPU Venus dispatch and independent mock integration still pass. Real hardware queue execution, runtime GPU fence operations and bounded hang recovery remain pending. Sequential runtime Linux/native Windows CI passed at `4253a51` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393773120 and at `f99723a` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37393832459 . |
+| `59065fd` | docs(vgpu): define GPU fence protocol routing; Defined GpuFence/GpuPoll extension fields, exact retirement semantics, matching-build requirement and separate wire/health/recovery gates. | #2 +0%; overall +0%. | Reviewed against bounded per-queue receiver APIs; no queue creation or hardware execution evidence is implied by the wire extension. |
+| `fb16a1d` | feat(vgpu): route GPU fence requests through bounded runtime; Extended the codec with GpuFence/GpuPoll, validated u64 timelines before narrowing and routed accepted private requests to per-queue APIs. Retained zero-payload errors, explicit CPU/GPU separation and existing frames. Corrected asynchronous worker acceptance semantics from pinned proxy source. | +0% to TODO: #2 (+0% overall); 3% GPU wire gate awaits native CI. | Request/runtime unit, sanitizer, coverage and Windows cross-link targets passed; independent mapped-process real CPU/resource integration also passes. Codec lines 98.36%, branches 100%; RPC lines 100%, branches 97.73%; dispatch lines 98.78%, branches 93.75%. Native CI is pending. Mock routing does not prove real GPU queue execution or bounded hang recovery. |
+| `1c488f7` | docs(vgpu): specify receiver health deadline policy; Defined independent absolute fence budgets, host-only policy, monotonic clock/cancellation poison and scoped runtime health callbacks. | #2 +0%; overall +0%. | Distinguished bounded health sampling from preempting SDK calls and isolated worker recovery, which remain separate requirements. |
+| `2568f9e` | feat(vgpu): enforce absolute receiver health deadlines; Armed independent absolute CPU/per-queue GPU budgets, added quiescent host-only policy and clock/cancellation/expiry poison. Scoped health callbacks now run before chunks and inside backpressure retries, and are cleared on every host serve return. Poll exchanges cannot extend fence budgets. | +3% to TODO: #2 (+0.6% overall) for verified GPU wire CI; health's separate 3% gate awaits current CI. | Receiver/runtime tests, sanitizers, coverage, Windows cross-link and independent real CPU/resource mock integration passed. Receiver lines 100%, branches 98.76%; RPC lines 100%, branches 97.79%; dispatch lines 98.92%, branches 93.75%. Clock/range/regression/overflow, exact retirement/expiry, independent queues, repeated polling, cancellation and callback lifetime covered. GPU wire Linux/native Windows CI passed at `fb16a1d` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37394675981 . Current health CI, real GPU execution and isolated worker recovery remain pending. |
+| `753e740` | docs(vgpu): specify isolated receiver process ownership; Defined trusted exec/descriptor handoff, owned process groups, observe-before-reap identity safety and bounded TERM/KILL shutdown. Kept actual worker integration/restart separate from process ownership acceptance. | #2 +0%; overall +0%. | Explicitly retains unreaped identities on timeout; killing a stuck kernel task is not falsely represented as complete recovery. |
+| `a07549c` | feat(vgpu): own isolated receiver process groups; Added collision-safe trusted exec/descriptor handoff, symmetric launch cleanup, observe-before-reap process identity, descendant disposal and bounded TERM/KILL shutdown with retained ownership on timeout/OS failure. | +3% to TODO: #2 (+0.6% overall) for verified health CI; process ownership's separate 1% gate awaits current CI. | `make vgpu-worker-test vgpu-worker-sanitizers vgpu-worker-coverage` passed; owned lines 98.35%, branches 94.26%. Real exec and TERM-resistant descendants, all launch acquisition failures, wait interruptions/external reaping, clock/timeout faults and descriptor preservation tested; San3 report no findings. CI now runs these gates. Health Linux/native Windows CI passed at `2568f9e` in https://github.com/Kayyo321/Waddle-LSW/actions/runs/37395109626 . Actual receiver worker integration, guest restart notification and real GPU execution remain pending; process shutdown tests do not prove GPU recovery. |
+| `6ec88a2` | docs(vgpu): define isolated receiver service execution; Specified trusted service policy, inherited mapping validation, random session identity, symmetric bootstrap/teardown, closure notification and fresh mapping/stream/worker restart requirements. | #2 +0%; overall +0%. | Kept parent process shutdown budgets mandatory for blocked SDK teardown; mock restart does not prove physical GPU recovery. |
+| `42637d1` | fix(build): declare worker coverage object prerequisite; Build the transport bounds object before worker coverage linking on a clean checkout; avoid reliance on unrelated earlier targets. | #2 +0%; overall +0%. | Diagnosed missing object in Linux CI run `37395678271`; worker functional and sanitizer tests passed there. Local worker coverage passes at 98.35% lines and 94.26% branches. |
+| `623f17e` | feat(vgpu): run receiver in isolated mapped service; Added a trusted worker executable and symmetric service ownership over borrowed CLOEXEC mapping/control descriptors, fresh random session IDs, host policy, private storage and real receiver dispatch. Added acquisition fault tests and exec-isolated guest disconnect/corruption/termination/restart fixtures with instrumented parent and service child. | +0% to TODO: #2 (+0% overall); the separate process/service acceptance gates await CI before progress credit. | Service, integrated mapped/UNIX tests and San3 pass locally; service production coverage 100% lines and 98.65% branches. All acquisition failures release owned memory and retain borrowed descriptors. Native Windows framing is unchanged; physical GPU queue evidence remains pending. |
+| `035c2e2` | test(vgpu): exercise production worker cancellation; Launch the actual default-policy executable, execute a real Venus CPU query, send SIGTERM and observe a cooperative zero-status exit, closed rings and guest notification without forced termination. | +0% to TODO: #2 (+0% overall); CI AcceptancePending | Normal and San3 integrated tests pass with the production executable instrumented separately from its parent. |
+| `b61a83d` | docs(readme): add Waddle Usage section and application logo; Separate documentation work; no software vGPU implementation credit. | #1 +0%; overall +0%. |  |
+| `171ccda` | docs(readme): add padding and spacing around images and text; Separate documentation work; no software vGPU implementation credit. | #1 +0%; overall +0%. |  |
+| `2ac629b` | docs(vgpu): record isolated receiver CI acceptance; Credit completed acceptance gates without conflating mapped/UNIX recovery plumbing with physical GPU reset or cross-VM validation. | +3% to TODO: #2 (+0.6% overall): +1% process ownership and +2% real service integration, terminal guest notification and fresh restart. | Linux and native Windows Software vGPU CI passed at `623f17e`, including service acquisition fault coverage, sanitizer-instrumented mapped/exec integration and fresh launches: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37396594127 . Production executable cancellation also passes locally at `035c2e2`; its additional CI run `37396744418` is tracked separately. |
+| `8aacbda` | Updated default-window-icon.png; Separate application artwork update; no vGPU task credit. | #1 +0%; overall +0%. |  |
+| `c1d9c07` | docs(vgpu): specify real Venus queue acceptance; Specify bounded Zig fixture serialization/parsing, physical device selection, queue timeline association, CPU/GPU ordering, ownership and software CI evidence. Split bootstrap (2%) from verified workload (6%) without treating empty submissions as GPU workload execution. | #2 +0%; overall +0%. |  |
+| `ff23bab` | fix(vgpu): preserve libc lookup across Zig objects; Compile Linux C-linked Zig objects with libc so a freestanding weak getauxval implementation cannot override system startup/driver lookups. Add regression checks for both runtime and receiver link sets and CI gates. | #2 +0%; overall +0%. | Original object reproduces null auxiliary-vector lookup; corrected objects pass regression and San3 tests. Existing transport, receiver, request, runtime, service and mapped/exec suites plus sanitizers pass. |
+| `c35ca4b` | docs(assets): preserve independent application artwork updates; Preserve separate README and application image changes staged concurrently; no vGPU implementation credit. | #1 +0%; overall +0%. |  |
+| `a54d571` | test(vgpu): execute real Venus queue bootstrap; Add bounded Zig command/reply fixture for instance/device/family enumeration, device queue creation with timeline 1, queue submission and three monotonically retired GPU fences, then explicit object destruction. | +0% to TODO: #2 (+0% overall); hardware bootstrap 2% gate awaits current CI before credit. Actual GPU workload output remains pending. | Hardware-required normal and sanitizer runs pass on NVIDIA GeForce RTX 5080 and AMD RADV integrated hardware. Linux llvmpipe runs pass separately, and hardware-required mode rejects that CPU backend. Zig fixed scalar/bounds/allocator tests pass. Existing receiver/runtime/service coverage remains above 90%; Linux CI installs a system software Vulkan test driver. Production worker cancellation CI passed at `035c2e2` in run `37396744418`, and acceptance tracker CI passed at `2ac629b` in run `37397026658`. |
+| `fced4de` | docs(vgpu): define GPU timestamp workload verification; Specify real recorded command submission and GPU-written query output checks, bounded blob parsing, availability/modular counter rules and quiescent query/command ownership. Keep graphics/compute/presentation tasks separate. | #2 +0%; overall +0%. |  |
+| `60321bc` | test(vgpu): verify GPU timestamp workload output; Record query reset and GPU top/bottom timestamp commands, submit the actual command buffer three times, fence GPU completion and parse exact nonblocking query result blobs with availability and modular counter checks. Destroy query/command pools before device/instance teardown. | +2% to TODO: #2 (+0.4% overall) for verified hardware queue bootstrap; timestamp workload separate 6% gate awaits current CI. | Hardware-required normal and San3 runs pass on NVIDIA RTX 5080 and AMD RADV; llvmpipe CI backend normal/sanitizer runs pass locally. Zig allocator tests cover all truncated lengths, invalid widths, failed/absent data, unavailable queries, wrap, reverse and equal timestamps. Bootstrap and libc-boundary Linux/native Windows CI passed at `a54d571`: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398115404 . GPU timestamps verify queue commands, not guest shader/presentation/OpenCL APIs. |
+| `8f2e6f6` | docs(vgpu): define pinned capability decoding; Specify exact portable capset offsets, flag shape, pinned version/profile compatibility, bounded explicit extension queries and private caller ownership. Allocate separate decoding, negotiation and multi-context acceptance gates without crediting unimplemented runtime policy. | #2 +0%; overall +0%. |  |
+| `0a43c16` | feat(vgpu): decode pinned capability snapshots safely; Add bounded Zig private capset decoding, exact pinned profile policy and explicit extension queries, C ABI/header documentation and native fixtures. Mapped/UNIX guest now validates the actual public receiver capset. | +6% to TODO: #2 (+1.2% overall) for verified hardware workload; separate capability decoding 5% gate awaits current native CI. | Linux C/Zig tests, allocator checks, San3 and independent mapped/exec integration pass; Windows cross-link passes. Owned Zig coverage 100% lines and 93.33% branches. CI adds Linux and native Windows capability gates; session negotiation and context runtime remain pending. GPU timestamp Linux/native Windows CI passed at `60321bc`: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37398576725 . |
+| `e9dcc0b` | docs(vgpu): specify negotiated isolated context completion; Specify operation-11 profile negotiation and host dispatch gate, bounded independent worker contexts, aggregate budgets, handle lifetime, failure ownership and simultaneous execution acceptance before coding. | +5% to TODO: #2 (+1.0% overall) for verified capability decoding. | Linux/native Windows capability CI passed at `0a43c16`: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37399147082 . No credit yet for negotiation or context manager implementation. |
+| `35076e2` | feat(vgpu): gate receiver dispatch on pinned negotiation; Add bounded operation-11 guest profile declaration, pinned host compatibility checks, pre-negotiation SDK rejection and private session state. Existing mapped/exec guests now negotiate before quotas and CPU dispatch. | +0% to TODO: #2 (+0% overall); 10% negotiation gate awaits native CI. | Request/runtime fixtures, real mapped/exec integration, San3 and Zig allocator checks pass. Request codec production coverage exceeds 90%; dispatch lines 99.10%, branches 93.94%; RPC coverage passes. Windows request/runtime cross-link passes; native CI follows. |
+| `4b8913a` | feat(vgpu): bound isolated context lifetimes and mapping budgets; Add eight-slot process-isolated controller, monotonic nonreused handles, aggregate mapping/count budgets, duplicate backing rejection, retained CLOEXEC fd ownership, bounded individual shutdown and failure retry. Teardown uses validated creation-time offsets even after peer metadata changes. | +10% to TODO: #2 (+2.0% overall) for bounded controller ownership. | Native Linux fixtures exercise all acquisition/shutdown failures, per-slot budget refunds and 128 churn cycles under San3. Production C line coverage 100%, branch coverage 96.61%. Existing worker process-launch and recovery fixtures remain separately gated. Simultaneous renderer execution is the next distinct 10% acceptance gate. |
+| `ae50f3d` | Updated README.md; Independent documentation commit outside receiver work; no software vGPU task credit or receiver source change. | #2 +0%; overall +0%. |  |
+| `75d39cd` | test(vgpu): verify simultaneous isolated context execution; Execute eight live production workers over separate mapped regions/UNIX streams with identical registry/resource/fence IDs, distinct resource contents and actual Venus CPU replies. Exercise profile mismatch retry, repeated negotiation, one-worker SIGKILL, seven-context survival, fresh startup, stale-handle rejection and three full churn rounds. | +0% to TODO: #2 (+0% overall); simultaneous execution 10% awaits CI. | Native Linux normal and San3 integration runs pass with all caller descriptors returned to baseline. Workers use the sanitizer-instrumented production executable. Add these gates to Linux CI. Native Windows negotiation fixtures have passed; remaining Linux CI is running. |
+| `24f83f3` | chore(vgpu): complete standalone negotiation build dependencies; Make standalone runtime sanitizer/coverage targets build the capability object they link, and track context consumer header dependencies. | +10% to TODO: #2 (+2.0% overall) for negotiated runtime acceptance. | `make -n -W src/vgpu/venus_capabilities.zig vgpu-runtime-sanitizers vgpu-runtime-coverage` includes codec rebuild before linking. Linux/native Windows negotiation, ownership, real mapped/exec, coverage and sanitizer CI passed at `35076e2`: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37400157106 . Simultaneous context runtime acceptance is the final 10% gate. |
+| `62b6393` | Ok look something changed in the README.md; Independent documentation commit outside receiver work; no vGPU source changes or task credit. | #2 +0%; overall +0%. |  |
+| `8541e4d` | docs(vgpu): record completed host receiver acceptance; Mark only TODO #2 complete; record exact host receiver scope, context handle lifetime and verification evidence. Remaining feature tasks and feature Time Ended remain unchanged because the feature is incomplete. | +10% to TODO: #2 (+2.0% overall) for simultaneous context runtime acceptance. | Linux and native Windows Software vGPU gates passed at `75d39cd`, including negotiated request/runtime, eight-worker execution, isolated ownership, crash/restart stress, descriptor baseline, sanitizer, allocator, coverage, legacy transport and software Vulkan GPU fixtures: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37400635748 . Full local host receiver suite and NVIDIA RTX 5080 hardware timestamp workload pass; context C coverage 100% lines/96.61% branches, RPC 100%/97.14%, dispatch 99.10%/93.94%, receiver 100%/98.76%, request Zig 98.39%/100%. Formatting and diff checks pass. README changes were independent commits. TODO #2 Completed At: 2026-10-06T01:50:12Z |
+| `c737b48` | docs(vgpu): specify guest and presentation acceptance boundaries; Divide guest and presentation scope into independently verifiable milestones; specify public Venus DMA-BUF export, completion ordering, descriptor ownership, image-layout and cross-process handoff boundaries. | +0% to TODO: #3; #4 +0%; overall +0%. | Inspected pinned public renderer export/query implementation, existing AV Wayland client and system Vulkan/Wayland dependencies. WDK/native guest access is requested; no driver or full ICD implementation credit. |
+| `33dd751` | feat(vgpu): export fence-ordered device-memory DMA-BUFs; Add Linux public-ABI export of registered shareable device memory after CPU and explicit GPU fence retirement, independent CLOEXEC FD ownership, strict FD type checks and symmetric export-failure cleanup without pixel copies. | #4 +15%; overall +2.25%. | Receiver unit/real CPU tests, San3 and coverage pass. Production receiver lines 100%, branches 98.89%; Zig bounds 100%/100%. Faults include acquired-FD SDK error, opaque/SHM rejection, invalid metadata, CLOEXEC get/set failure, pending/poisoned fences, 128 export/close cycles and exported FD survival after ledger free. Hardware export is a separate gate. |
+| `41ebf74` | docs(vgpu): specify image layout and feedback validation; Record reaffirmed userland WDDM/standalone acceptance scope and bounded packed/NV12 plane and complete-feedback-table validation contracts. | +0% to TODO: #3; #4 +0%; overall +0%. | Checked system linux-dmabuf protocol table/index schema; preserve separate import/allocation/descriptor-handoff acceptance gates. |
+| `0ab1bf9` | feat(vgpu): validate image planes and complete DMA-BUF feedback; Add allocation-free Zig packed/NV12 geometry and allocation-range validation, bounded native-endian format-table/tranche matching and documented C ABI. Ignore protocol-defined unused padding. Add independent Make and CI gates. | +15% to TODO: #4 (+2.25% overall); remaining 5% validation credit waits for native Windows CI. | Linux C ABI, Zig allocator tests, San3 and Windows x86_64 cross-link pass. Zig production coverage 100% lines/100% branches; all 4096 table indices, late corruption and descriptor fields exercised. No wl_buffer imports or worker FD handoff are claimed by codec tests. |
+| `5bcaa0b` | docs(vgpu): define negotiated guest frontend ownership; Specify constant guest encoder profile, borrowed ready RPC, private host capabilities, wire-status translation and sticky session loss. | #3 +0%; overall +0%. | Keep serialized Vulkan entry points, userland adapter stub and DXVK acceptance separate from the command/resource/fence backend. |
+| `1e2ad7d` | feat(vgpu): own negotiated guest frontend and sticky session loss; Add caller-owned allocation-free guest command/resource/fence frontend, constant mandatory-only encoder declaration, private host capability checks, exact status translation and terminal loss preventing further publication. | +5% to TODO: #3 (+1.25% overall); integrated/native AcceptancePending | Linux unit/fault/churn fixtures, San3 and Windows x86_64 cross-link pass. Production C lines 100%, branches 100%. Every init precondition, profile mismatch, exchange acquisition failure, wire status, sticky terminal result and idempotent teardown tested; native CI follows. |
+| `4ca8195` | test(vgpu): exercise guest frontend across isolated receiver contexts; Route real negotiation, resource accesses, CPU submission/poll/reply through the guest frontend across eight isolated workers and fresh crash recovery. | +0% to TODO: #3 (+0% overall); integrated/native 5% gate awaits CI. | Three rounds/27 production launches pass in normal and San3 runs with descriptor counts returned to baseline. Retain pre-negotiation/profile retry/repeated negotiation negative protocol tests. |
+| `b8b8231` | docs(vgpu): specify Wayland import pacing and release ownership; Define borrowed target surface/global, atomic feedback snapshots, bounded asynchronous import slots, damage validation, frame-versus-buffer retirement, rejection and safe display-loss teardown before implementation. | #4 +0%; overall +0%. | Preserve allocation FD ownership and prohibit freeing active listener cookies or CPU fallback; window roles and worker handoff stay separate. |
+| `8a065bd` | feat(vgpu): own asynchronous Wayland DMA-BUF presentation; Add version-four surface feedback snapshots, real received-FD map/close cleanup, supported-pair gating, asynchronous plane import, bounded damage, independent frame pacing/buffer release and safe display-loss teardown. | +30% to TODO: #4 (+4.5% overall): 25% presenter ownership and 5% native image-validation CI; +5% to TODO: #3 (+1.25% overall) for integrated/native guest frontend acceptance. | Linux unit/fault/churn tests, actual generated Wayland protocol compilation and San3 pass. Presenter production lines 99.07%, branches 94.23%; image/damage Zig lines/branches 100%. Tests cover acquired descriptor/proxy faults, import rejection, three owned buffers, both callback orders, stale frames, teardown refusal and abandonment. Guest/image codec Linux and native Windows CI passed at 4ca8195: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37402655882 . Hardware allocation/export, worker FD handoff and full ICD/DXVK remain pending. |
+| `d60a8ab` | docs(vgpu): define standalone render-only adapter lifetimes; Specify userland render/compute/no-scanout adapter identity, bounded negotiated context bindings, nonreused handles and fence-ordered registered-allocation teardown; distinguish this stub from kernel installation. | #3 +0%; overall +0%. | Preserve host quota/codec authority and explicit lost-context discard without remote requests or undocumented ownership transfer. |
+| `b7e7a48` | feat(vgpu): implement standalone render-only adapter ownership; Add no-scanout render/compute adapter capabilities, eight distinct negotiated frontend bindings, monotonic context/allocation handles, 64-resource ledgers, GPU-fence-ordered free and explicit lost-context discard. Build a userland Windows DLL exporting exactly eight snake_case stub ABI symbols. | +20% to TODO: #3 (+5.0% overall); native DLL acceptance 5% pending. | Linux faults/churn, San3 and Windows x86_64 test/DLL cross-link pass. Production C lines 100%, branches 98.15%; PE export table inspected. Native DLL fixture loads exports, calls init/query/free and verifies absence of kernel DriverEntry/internal frontend exports; CI AcceptancePending This implements the user-authorized stub scope, not an installed WDDM driver. |
+| `1c42a82` | docs(vgpu): specify credential-bound presentation FD handoff; Define a separate trusted seqpacket/SCM_RIGHTS channel, exact bounded Zig frame schema, kernel credential/context checks, descriptor rollback and the separate worker/surface/release runtime integration requirement. | #4 +0%; overall +0%. | No host FD enters the guest ring; borrowed socket/native identity lifetime and every malformed-message cleanup obligation are explicit. |
+| `0d8d0b6` | feat(vgpu): transfer presentation frames with credential-bound FDs; Add exact Zig image/damage frame codec and separate nonblocking seqpacket SCM_RIGHTS/SCM_CREDENTIALS bridge with sender/context/count checks, CLOEXEC receipt and full acquired-FD rollback on corruption/truncation. | +10% to TODO: #4 (+1.5% overall) for bounded codec/native FD ownership; +5% to TODO: #3 (+1.25% overall) for native adapter/DLL acceptance. | Real Linux same/process-separated packets, duplicate-plane FDs, all surplus/truncated FD counts, wrong PID/UID/context, malformed payloads, syscall faults and 128 churn cycles pass with descriptor baseline and San3. Native C coverage 96.77% lines/90.74% branches; Zig frame 100%/100%; Windows codec cross-link passes. Worker/service routing remains pending. Native adapter tests and actual restricted-export DLL loading passed in both Linux/Windows CI at b7e7a48: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37403866555 . Wayland presenter CI passed at 8a065bd: https://github.com/Kayyo321/Waddle-LSW/actions/runs/37403394245 . |
+| `c22c0fe` | test(vgpu): verify native Wayland frame descriptor integration; Exercise production frame channel and presenter across actual libwayland client/server sockets, real FD transfer and generated protocol. | #4 +10%; overall +1.5%. | Sixteen frames verify backing inode identity, partial damage, frame callbacks, release ownership, rejected import and subsequent recovery; normal and San3 runs pass. Synthetic allocation remains explicitly mock-only; hardware Venus image/export and worker routing remain pending. |
+| `e897295` | chore(deps): pin exact guest Venus serializer generator; Add MIT generator/Apache-2.0 Vulkan declarations as a public HTTPS submodule pinned to 7157163d5fed65f0742542a8e77e5412dea6a4bc; generate offline. | +100% to TODO: #7 (+0% overall); +0% to TODO: #3. | Reproduce all thirty-nine renderer headers and three Vulkan declaration headers byte-for-byte; generate thirty-seven driver headers and compile their complete declarations on Linux and Windows x86_64. This verifies schema/dependency configuration; ICD dispatch and serialization remain pending. |
+| `b0a481c` | feat(vgpu): bind worker frame ownership to native Wayland surfaces; Add credential/context-bound surface owner with pending FD retry, monotonic frame identities, three compositor-owned metadata ledgers, explicit unsubmitted cancellation and release callbacks retaining resource identities. | #4 +5%; overall +0.75%. | Production C lines/branches 100%; acquisition faults, retained backpressure FDs, three slots, stale callbacks/frames, sticky loss and 128 churn cycles pass San3. Actual native Wayland wire fixture now routes through this owner and passes normal/sanitized runs. Worker export service and guest release acknowledgement delivery remain pending, as does hardware image export. |
+| `44f05d8` | test(vgpu): present rendered Venus hardware images through native Wayland; Allocate/bind linear external-memory BGRA8 image through bounded Venus packets, clear on the real GPU, release external ownership, retire fence, export DMA-BUF and retain allocation through native mock compositor releases. | #4 +10%; overall +1.5%. | RTX 5080 normal and San3 clear/export/protocol runs pass (offset0, pitch128, image2048/allocation4096 bytes), fifteen released frames plus one rejected import; no pixel mapping/copy. Existing GPU allocator/unit, real queue and native mock normal/sanitized regressions pass. CI compiles the hardware fixture; physical compositor scanout/pixel readback is not claimed. Production worker export and guest release acknowledgement remain pending. |
+| `beba08e` | fix(vgpu): reject zero surface completion identities; Keep empty accepted-ledger entries from matching zero callback IDs. | #4 +0%; overall +0%. | Zero and unmatched nonzero callbacks prohibit further receives without reporting a completion; production line/branch coverage remains 100%, San3 and native hardware/Wayland fixture pass. |
+| `78176a5` | docs(vgpu): specify authenticated presentation release packets; Specify exact reverse-channel release schema, allowed completion statuses, sender validation, descriptor rollback and bounded retry ownership. | #4 +0%; overall +0%. | Cross-checked surface callback outcomes and native frame credential contract; worker leases, acknowledgement retry and guest polls remain separate integration gates, with no runtime completion credit. |
+| `b0e1b66` | feat(vgpu): encode bounded presentation release records; Add documented C ABI and allocation-free Zig release codec with exact little-endian size, explicit completion statuses and zeroed error output. | #4 +0%; overall +0%. | Five Zig allocator tests, Linux frame/native sanitizer tests, Windows x86_64 cross-link and coverage pass. Frame codec production lines100%, branches95.59%; native frame transport96.77%/90.74%. Native Windows CI retains the ABI roundtrip/corruption fixture; release socket routing remains pending. |
+| `7b06672` | feat(vgpu): authenticate native presentation release delivery; Add nonblocking reverse-channel release send/receive with exact controller PID/UID/context checks and closure of every unexpected received FD. | #4 +0%; overall +0%. | Real fork credentials, kernel send-buffer exhaustion/retry, all completion statuses, 128 churn cycles, descriptor baselines, malformed credentials/payloads and truncated/unexpected FD batches pass normal and San3 runs. Native transport coverage exceeds90% lines/branches; Zig codecs100%/95.59%. Worker leases and guest polling remain pending. |
+| `4fea0af` | docs(vgpu): define bounded worker presentation leases; Specify three receiver-backed leases, ordered frame publication, fence-bound plane export rollback, retained resource busy checks and exact-once guest completion consumption before implementing worker ownership. | #4 +0%; overall +0%. | Native release transport coverage97.92% lines/91.07% branches; runtime routing and controller acknowledgement retry remain pending. |
+| `5c4d29c` | feat(vgpu): retain bounded worker presentation allocation leases; Add caller-owned three-slot fence-bound export owner with actual DMA-BUF extent checks, ordered successful publication, resource busy guards, authenticated completion pumping and exact-once guest completion consumption. | #4 +0%; overall +0%. | Production C lines/branches100%; plane export rollback, native send faults, allocation-size mismatch/query faults, full/busy leases, duplicate/out-of-order acknowledgements and128 churn cycles pass normal and San3 runs with descriptor baselines. Add Linux CI gates. Service envelopes, worker launch wiring and controller acknowledgement retry pending. |
+| `80d3100` | docs(vgpu): specify guest presentation request envelopes; Specify operations12/13, exact frame/release payloads, explicit GPU ordering and publication/retry/consumption semantics without native FD exposure. | #4 +0%; overall +0%. | Cross-checked existing negotiation/RPC field/status contracts; envelope codec, service binding and controller retries remain pending. |
+| `d2aa43f` | feat(vgpu): validate presentation request envelope operations; Add bounded operations12/13 with exact frame/release payload, GPU timeline/fence and completion identity rules. Explicitly reject both in unbound host dispatch, preventing accidental fallthrough to CPU polling. | #4 +0%; overall +0%. | Linux/Zig allocator and C ABI tests, request/runtime sanitizer suites and Windows x86_64 cross-links pass. Request coverage98.46% lines/97.80% branches; RPC/dispatch coverage exceeds90%. Unbound pre/post-negotiation frames consume payload and return Invalid with no receiver calls. Bound routing pending. |
+| `ae2e60d` | docs(vgpu): specify optional bound presentation dispatch; Define trusted sole-thread submit/take/busy/pump callbacks, resource free guards, portable unbound behavior and bounded health-monitor integration. | #4 +0%; overall +0%. | Request and unbound RPC tests/coverage/sanitizers pass; earlier Linux/native Windows CI passed at beba08e, run37406662469. Bound routing pending. |
+| `4b06374` | feat(vgpu): route bounded presentation requests through trusted dispatch; Route negotiated frame/release requests through complete trusted bindings, guard resource frees, pump acknowledgements during receiver health checks and validate guest RPC release response capacity before publication. | #4 +0%; overall +0%. | Linux normal/San3 runtime and Windows cross-link pass; dispatch coverage99.24% lines/95.65% branches, RPC exceeds90%. Test partial bindings, pre-negotiation rejection, all local/terminal outcomes, release bytes, busy guards and health-pump loss with cleared call-scoped monitor pointers. Production service/worker launch and controller acknowledgement retry pending. |
+| `d39082b` | test(vgpu): verify bound presentation negotiation enforcement; Explicitly verify both bound operations before negotiation consume their full request and return Invalid without submit/take or receiver calls. | #4 +0%; overall +0%. | Normal and San3 runtime suites, required dispatch/RPC coverage and native Windows cross-link pass; monitor pointers remain cleared. |
+| `d6707d5` | docs(vgpu): define production service presentation lifetime; Specify optional borrowed frame channel binding, distinct descriptor checks, export owner acquisition and teardown order with existing service state. | #4 +0%; overall +0%. | Bound dispatch/native Windows cross-link and negotiation tests pass; service construction and worker launch wiring are next gates. |
+| `5030b20` | feat(vgpu): bind presentation leases into the production receiver service; Add optional trusted frame endpoint/controller/context service run, acquire caller-owned export leases, route bound callbacks and encode consumed completions through Zig; abandon leases with old receiver during teardown. | #4 +0%; overall +0%. | Service acquisition faults/callback outcomes/descriptor checks pass normal/San3; production coverage100% lines/99.02% branches. Real mapped/exec-isolated receiver and fresh restart regressions pass normal and sanitized production workers. Native frame launch/ack retry still pending. |
+| `faa8eae` | docs(vgpu): define presented worker exec binding; Specify prepared fd5 isolation, three-source duplication rollback, fixed bounded argument encoding, retained parent identity and unbound compatibility. | #4 +0%; overall +0%. | Service lifetime tests and actual mapped/exec regressions pass; worker launcher and argument decoding implementation follows separately. |
+| `1edc2ba` | feat(vgpu): decode fixed worker context arguments safely; Add allocation-free bounded Zig fixed hexadecimal argument decoder with explicit C ABI, zero failure output and strict lowercase/nonzero policy. | #4 +0%; overall +0%. | Six Zig allocator tests, native frame transport sanitizers, Windows cross-link and frame codec coverage100% lines/95.12% branches pass. Tests cover every invalid character position, bounds, zero and maximum identity. |
+| `6aa5255` | feat(vgpu): launch isolated workers with trusted presentation channels; Add prepared fd5 presented launch, collision-safe three-source duplication/rollback, fixed context/controller arguments and production entry point parsing/parent validation before bound service acquisition. | #4 +0%; overall +0%. | Worker unit/real exec faults and San3 pass; production coverage98.73% lines/95.24% branches. Actual production worker negotiates over mapped rings, rejects unregistered present/unknown polls without native frames, and terminates on authenticated unknown release; both normal/sanitized workers return descriptors to baseline. Existing mapped/exec restart regressions pass. Add Linux CI gates. Controller acknowledgement retry/render routing pending. |
+| `722962e` | docs(vgpu): define controller acknowledgement retry ownership; Specify opt-in four-slot surface release queue, receive gating during send pressure, observer lifetime and retry-preserving teardown behavior. | #4 +0%; overall +0%. | Production presented worker launch/native FD tests pass; controller queue implementation and rendered-frame runtime validation pending. |
+| `eaf075a` | feat(vgpu): retain surface release acknowledgements under backpressure; Add opt-in acknowledged surface owner with four bounded release slots, receive gating during pressure, sticky send loss and retry-preserving teardown after presenter destruction; preserve explicit callback compatibility. | #4 +0%; overall +0%. | Production C lines/branches100%; partial flush, all completion statuses, queue overflow, native loss, optional observer and cancelled teardown retry pass San3. Actual native Wayland/mock and real RTX5080 image harness roundtrip exact acknowledgements after every release/rejection in normal and sanitized runs. Successful rendered production worker routing still pending. |
+| `6a5149d` | docs(vgpu): define mapped guest hardware presentation verification; Specify explicit fixture transport backend, guest-only image metadata, production worker/native FD/Wayland roundtrip and exact completion-before-reuse validation. Keep standalone ICD and DXVK acceptance separate. | +0% to TODO: #4; #3 +0%; overall +0%. | Acknowledged native Wayland/RTX5080 path passes; mapped rendered production worker fixture and final runtime acceptance remain pending. |
+| `8984e9d` | test(vgpu): add explicit guest transport backend to the GPU fixture; Add private receiver/negotiated guest backends with exact request fields, shared image preparation/teardown and metadata-only remote callback. Format fixture signatures/conditions/calls within100 columns using zig fmt. | +0% to TODO: #4; #3 +0%; overall +0%. | Three Zig allocator tests cover all remote operation fields, malformed replies, status propagation and argument failures. Existing local timestamp and image native/hardware paths pass normal and San3. Successful mapped remote image/Wayland fixture remains pending; no ICD credit. |
+| `59d31bd` | test(vgpu): verify mapped guest production worker hardware presentation; Route real guest Vulkan image creation through an exec-isolated production worker, native DMA-BUF export, acknowledged Wayland surface and exact-once guest release polling. Add fresh-context descriptor-baseline churn. | +0% to TODO: #4; #3 +0%; overall +0%. | Three contexts and48 frames per normal/sanitized execution pass on RTX5080:45 successful releases and3 import rejections, wrong-context and inflated-extent rejection, resource busy before completion consumption, duplicate completion rejection, subsequent reuse and healthy worker teardown. Existing native/local hardware regressions pass San3. CI compilation and native ABI gates remain pending before final TODO #4 acceptance credit. |
+| `b9dc18e` | docs(vgpu): specify serialized guest command reply ownership; Specify allocation-free exclusive command/reply staging, fixed pinned reply-stream prefix, CPU completion state and bounded reply identity. | #3 +0%; overall +0%. | Cross-checked pinned SetReplyCommandStreamMESA encoding and production Submit/Poll/Reply semantics. No loader or DXVK credit assigned. |
+| `2fba038` | docs(vgpu): accept verified production presentation milestone; Accept final guest/production-worker/native Wayland release gate after mapped hardware and sanitized fresh-context runtime verification. | +5% to TODO: #4 (+0.75% overall); TODO #4 now100%. | Linux and native Windows CI at59d31bd both passed, run 37477413111. Hardware normal/sanitized runs each verified48 frames over3 fresh contexts with45 releases/3 import rejections and descriptor baselines. Existing protocol/memory ownership coverage gates remain above90%; no pixel copying. Physical compositor/VM acceptance remains downstream; standalone ICD/DXVK TODO #3 still35%, and unrequested OpenCL TODO #5 remains pending. |
+| `425bb0e` | feat(vgpu): own bounded serialized guest command replies; Add documented allocation-free Zig command owner, exclusive submission/reply staging, pinned prefix, retained CPU fence and exact-once identity-validated reply views. Add Linux/native Windows ABI and CI gates. | #3 +0%; overall +0%. | Five Zig tests include128 cycles, all state boundaries, buffer overlap/overflow, callback statuses and malformed successful shapes. Native Linux C ABI, San3 and Windows cross-link pass. Production lines100%, branches91.67%. Public Vulkan dispatch/DXVK remain pending. |
+| `b7c3025` | refactor(vgpu): keep command tests within the column limit; Format six long test assertions with explicit trailing commas so zig fmt preserves the100-column repository limit. | #3 +0%; overall +0%. | All5 Zig command tests and line-length audit pass; behavior and production code are unchanged. |
+| `960aa49` | test(vgpu): query real Vulkan versions through command ownership; Bind the command owner to a negotiated frontend in the actual exec-isolated production worker fixture; query pinned Vulkan instance version eight times before existing presentation isolation/loss checks. | #3 +0%; overall +0%. | Normal and San3 production worker/client execution pass with healthy/corrupt-release teardown and descriptor baselines. Command ownership coverage remains100% lines/91.67% branches. Loader/DXVK pending. |
+| `7872808` | docs(vgpu): record native command ownership verification; Record successful native Linux/Windows command owner verification without crediting unfinished public ICD dispatch, object/memory lifetimes or DXVK. | +0% to TODO: #3; #4 +0%; overall +0%. | Both CI jobs passed at960aa49, run37479173379. Linux gates include real production-worker queries, sanitizer and coverage checks; native Windows executes C ABI and Zig state tests. TODO #4 remains100%; TODO #3 remains 35% and the feature remains In Progress with Time Ended TBD. |
+| `2adb81b` | docs(vgpu): specify Vulkan object identity and lifetime storage; Subdivide remaining runtime milestones and specify loader headers, dispatchable address validation, namespaced nondispatchable identities, parent lifetime rules and bounded allocation-free storage before implementation. | #3 +0%; overall +0%. | Cross-check Vulkan loader header ABI and existing per-worker object ID isolation; no new runtime or DXVK credit claimed by this design. |
+| `ae50e2d` | feat(vgpu): retain bounded guest Vulkan object identities; Add documented caller-owned Zig registry with loader-first-word layout, monotonic host IDs, namespaced application tokens, bounded dispatchable address lookup, exact kinds and parent/child retirement. Add native ABI/CI gates. | +0% to TODO: #3 (+0% overall; native CI acceptance pending). | Four Zig tests include4096 allocator-backed lifecycle cycles, boundaries, namespaces, counter exhaustion and private metadata fault injection. Native Linux loader header helpers, C ABI, San3 and Windows cross-link pass. Production lines100%, branches98.75%; exclude test-only helper assertions from coverage. Complete ICD/device dispatch and DXVK still pending. |
+| `bd311f6` | docs(vgpu): accept native Vulkan object ownership milestone; Accept the documented identity/lifetime storage milestone after local allocator/sanitizer/coverage verification and native Linux/Windows CI. | +5% to TODO: #3 (+1.25% overall); TODO #3 now40%. | Both jobs atae50e2d passed, run37483582807. Linux verifies actual loader-word helpers, allocator churn, sanitizer and98.75% branch/100% line coverage; Windows executes native ABI and Zig state tests. This accepts storage only; public ICD instance/device/API dispatch and DXVK remain pending. |
+| `4699df2` | docs(vgpu): specify bounded physical-device reply decoding; Specify exact core property/feature/memory reply layouts, fixed array tags, scalar padding, semantic validation and preserved output behavior. | #3 +0%; overall +0%. | Cross-check pinned command IDs and generated field/array encodings; public ICD instance/device dispatch and DXVK remain independent gates. |
+| `d4c7059` | chore(vgpu): canonicalize generated protocol line endings; Normalize generated headers to LF before immutable receiver comparison so Windows text-mode output retains the exact pinned schema. | #3 +0%; overall +0%. | Offline generation matches all39 receiver headers and37 guest headers. Pinned source files are unchanged; no runtime progress credited. |
+| `b88853f` | feat(vgpu): decode bounded native Vulkan query values; Add allocation-free Zig native property/feature/memory conversion with exact tags, bounded reads, semantic checks and preserved failure output. Compare independent pinned C encoder output and gate Linux/Windows ABI tests. Correct design IDs to pinned properties6/features3/memory8. | #3 +0%; overall +0%. | Four allocator tests, native C, San3 and Windows cross-link pass; production lines100%, branches90%. Public ICD/API dispatch and DXVK remain unfinished; no completion credit from decoder helpers alone. |
+| `b2d6354` | test(vgpu): validate complete core replies from real receivers; Replace partial property parsing with production fixed-value decoders; also query complete features and memory metadata before GPU work. Encode exact fixed memory array tags required by the receiver input schema. | #3 +0%; overall +0%. | Mesa llvmpipe normal/sanitized queue workloads pass; RTX5080 queue and mapped guest/production-worker48-frame fresh-session tests pass, including San3. This is actual receiver verification, not ICD/DXVK. |
+| `add3a30` | docs(vgpu): specify core instance dispatch wire boundary; Specify production instance creation/destruction serialization, bounded name input, exact transaction replies, reservation rollback and unsupported initial core inputs before ICD lifecycle integration. | #3 +0%; overall +0%. | Cross-check command IDs and pinned guest encoding, including output host IDs and nullable application info. Full ICD/DXVK remains pending. |
+| `634e76c` | feat(vgpu): serialize bounded core instance transactions; Add production core create/destroy packets and exact creation reply identity/result checks with preserved failure output. Compare independent pinned guest serializer; add portable native ABI/sanitizer/coverage CI gates. | #3 +0%; overall +0%. | Five allocator tests, native C and San3 pass; Windows cross-link passes. Production lines100%, branches95.59%. Prior fixed query changes atb2d6354 pass Linux and native Windows CI run37488148604. Public loader/device/API dispatch and DXVK remain pending with no helper credit. |
+| `0dea65c` | test(vgpu): retire guest instance reservations through production worker; Integrate registry reservation, production instance packet, exclusive command owner and negotiated frontend through two fresh worker sessions; validate host ID/result and destroy reply before local retirement. | #3 +0%; overall +0%. | Normal and San3 worker/client fixtures pass; namespaces never reuse and success ends with zero live registry objects. Error paths abandon transport before clearing borrowed storage. Public ICD/device/API dispatch and real DXVK still pending; TODO #3 remains40%. |
+| `d8657a1` | docs(vgpu): record native core wire verification; Record Linux and native Windows acceptance of bounded core query and instance wire components; synchronize remaining ICD/device/DXVK scope and complete the test encoder length hook's structured ownership documentation. | #3 +0%; overall +0%. | Both jobs at0dea65c pass, run37490205909. Linux runs native ABI, allocator, sanitizer, coverage and actual production-worker instance retirement; Windows executes native ABI and all five instance wire Zig tests. TODO #3 remains40%, overall65.0%, In Progress, Time Ended TBD. No public ICD loader/device/API implementation or DXVK acceptance is claimed by these tests. |
+| `92eb676` | docs(vgpu): specify physical enumeration dispatch transactions; Define bounded count/fill physical-device enumeration and fixed query request serialization, reserved identities and reply preservation before connecting application-facing dispatch. Full ICD/device/DXVK remains required. | #3 +0%; overall +0%. | Cross-check pinned generated guest/renderer schemas, command IDs, partial fixed arrays and output handle preallocation; implementation pending. |
+| `26aee9b` | feat(vgpu): encode bounded physical enumeration transactions; Implement count/fill request encoding, reserved identity reply validation and fixed-query partial packets in allocation-free Zig; compare independent pinned C generator and add native Linux/Windows CI gates. | #3 +0%; overall +0%. | All3 allocator tests and native C/San3 pass; production coverage100% lines/90% branches; Windows fixtures cross-link. Full ICD/device/API/DXVK acceptance remains required; no helper milestone credit. |
+| `f757c40` | docs(vgpu): specify standalone ICD instance lifecycle; Define loader export aliases, serialized borrowed frontend, registry-backed instance/physical dispatch, count/fill caching and sticky loss. | #3 +0%; overall +0%. | Reviewed lifecycle against existing command, object and wire contracts; public device/API/DXVK acceptance remains pending. |
+| `a4bbf75` | refactor(vgpu): format physical query wire fixtures; Expand long Zig signatures/calls and fixture records with explicit trailing commas to preserve the100-column limit under zig fmt. | #3 +0%; overall +0%. | Query request/oracle and allocator tests pass; prior behavior and production coverage remain unchanged. No runtime milestone credit. |
+| `58ad94d` | feat(vgpu): dispatch standalone ICD instance lifecycles; Add mutex-serialized allocation-free experimental ICD, exact loader export aliases, borrowed negotiated backend, registry-backed instance/ physical dispatch and complete core physical query conversion. Build bounded test manifest/shared library and Windows DLL with exactly9 public exports. | +0% to TODO: #3 (+0% overall; native CI acceptance pending). | Native C fixtures exercise128 cycles plus128 concurrent cycles, rollback, cached identities, corrupt replies and sticky timeout/loss. System Vulkan loader performs8 manifest-discovered instance lifecycles. San3 pass; Zig production lines99.18%, branches91.37%; native Windows tests/DLL cross-link. Device creation explicitly returns unsupported; complete device/memory/command/synchronization APIs and DXVK remain required. |
+| `e0d4be9` | test(vgpu): exercise public ICD through production workers; Bind public ICD instance/procedure/query functions to the actual negotiated production worker in each of2 fresh mapped sessions; execute8 instance/create/enumerate/property/feature/memory/destroy cycles per session. | +0% to TODO: #3 (+0% overall; native CI acceptance pending). | Normal and San3 worker/client paths pass; success retires all cached physical and instance reservations before unbind, failure abandons the guest before clearing ICD objects. Descriptor baseline checks remain enforced. Device/API and real DXVK runtime acceptance remains pending. |
+| `53158a7` | fix(vgpu): link shared query decoder once in remote image fixture; Remove duplicate value decoder object after public ICD worker integration made it part of the shared guest object list. Restore clean remote image fixture linking without changing wire/runtime behavior. | +0% to TODO: #3; #4 +0%; overall +0%. | GitHub native Windows ICD dispatch/DLL tests passed in both push37496066320 and PR37496073296 runs. Linux ICD safety/coverage and real worker tests passed; remote image link exposed the duplicate object. Local image/remote consumers now compile, actual RTX5080 normal/sanitized48-frame fresh-context presentation runs pass, and loader/worker regressions pass. Full updated-head GitHub CI remains required. |
+| `6d2f73e` | docs(vgpu): specify bounded device and queue dispatch; Specify device creation input bounds, parent ownership, stable queue identity, exact pinned command11/12/17/19/20 semantics, error rollback, teardown and verification before implementation. Full dispatch and DXVK remain pending. | #3 +0%; overall +0%. |  |
+| `a086ca8` | fix(test): recognize compiler stack canary coverage guards; Exclude branches whose compiler-generated destination calls __stack_chk_fail, matching the existing exclusion for compiler panic guards. Keep stack protection enabled; no source bounds/error branch is excluded. | #3 +0%; overall +0%. | Inspect generated LLVM destinations, run three ICD Zig/native tests; 99.49% production lines and93.29% branches with the device increment. Commit53158a7 has all eight GitHub checks green. New device code remains under local verification and is not yet credited toward full dispatch acceptance. |
+| `449f7e4` | feat(vgpu): dispatch bounded device and queue lifecycles; Add bounded core device creation/destruction and stable cached queue dispatch. Validate native queue counts/priorities/features, strip loader-only device chain records, reserve identities and release negative creation results. Enforce parent teardown order,16 device caches and63 exclusive queue ring indices. Initialize queues through pinned command155 and required Venus timeline info; never submit forbidden legacy queue/idle commands. Idle/fence APIs remain pending. | +0% to TODO: #3 (+0% overall; complete runtime gate pending). | Pinned C encoder compares device/queue/destruction packets; native128-cycle churn,16-device/63-ring limits, invalid input and transport/reply failure cases pass. Three Zig tests pass, production coverage99.50% lines and 93.29% branches. San3 local/native and actual two-worker-session device create/queue/cache/destroy integration pass; Windows DLL/tests cross-link. Raise integration deadline20s to60s for16 actual host device lifecycles. Native Windows/updated-head GitHub checks remain required. TODO #3 stays40%; complete graphics/compute/memory/synchronization dispatch and actual DXVK remain pending. |
+| `79325dc` | docs(vgpu): specify receiver GPU fence idle waits; Specify queue/device idle through explicit issued and retired GPU identities, exact envelope shapes and a monotonic whole-call deadline. Preserve sole frontend ownership and session retirement on any terminal failure. | #3 +0%; overall +0%. |  |
+| `e41eda8` | fix(ci): include pinned ICD encoder oracle on Windows; Add the encoder shim/generated driver/test hook include directories to the native Windows ICD fixture's direct compiler invocation. Make targets already include them; preserve the workflow's compiler warnings/error policy. | #3 +0%; overall +0%. | Exact same directories pass local Windows cross-link; native job112393470812 identified missing vn_cs.h before executing the fixture. Updated-head native Windows verification remains required. |
+| `4620bf9` | feat(vgpu): wait for explicit GPU retirement in ICD idle calls; Resolve queue/device idle through negotiated GPU fence issue/poll envelopes; validate successful shapes and strictly increasing per-ring IDs. Bound the entire call with a monotonic timer, retain sticky loss ownership on deadline/transport/peer failure, and serialize the borrowed frontend. | +0% to TODO: #3 (+0% overall; full synchronization gate pending). | Pending issue/retirement, malformed flags/poll argument, zero and replayed identities, transport failure and both timeout phases pass under native San3 and three Zig tests. Production lines99.54%, branches 92.53%; Windows tests/DLL cross-link. Actual two-session worker queue/device idle integration passes normal and sanitizers with explicit GPU retirement. Native Windows and updated-head GitHub CI remain required. TODO #3 remains40%; complete graphics/compute/memory APIs, public synchronization objects and real DXVK execution are pending. |
+| `e4df455` | docs(vgpu): specify public fence ownership and polling; Specify bounded fence creation/destruction/reset/status/wait wire commands, device-parent validation, nonblocking receiver polls, caller timeout semantics and mutex release so another thread can signal pending fences. | #3 +0%; overall +0%. |  |
+| `da388de` | fix(test): record concurrent branch hits atomically; Use relaxed C11 atomic bytes in the fixed branch recorder so the four-thread native ICD fixture can record source edges without data races. Preserve bounds/abort behavior and the joined-thread exit report format. | #3 +0%; overall +0%. | Native thread fixtures and coverage gates remain enforced; no production runtime, threshold or ownership policy changes. |
+| `27c93da` | feat(vgpu): dispatch core fence objects and caller timed waits; Add device-parented nondispatchable fence create/destroy/reset/status and any/all waits. Validate native counts/flags/parents before serialization; poll host waits with timeout0 and release the binding mutex between caller-timed rounds. Refuse device retirement while nonqueue children remain. | +0% to TODO: #3 (+0% overall; full synchronization gate pending). | Independent pinned C encoders compare commands35..39. Native signaled/unsignaled/reset/any/all/zero/finite/delayed waits, stale/foreign handles, 508-fence registry exhaustion, negative creation rollback and every command's corrupt/transport path pass San3. Four Zig tests pass, including every result-reply truncation; atomic coverage recorder reports99.63% lines/93.29% branches. Actual two-worker-session fence lifecycle and GPU idle cycles pass normal and sanitizers; Windows test/DLL cross-link succeeds. Updated-head native CI remains required. Prior4620bf9 vGPU Linux and Windows checks are green; CLI pending. TODO #3 remains40%; full API dispatch and real DXVK are still pending. |
+| `beb49d3` | docs(vgpu): specify pinned native loader acceptance; Specify the exact public Vulkan-Loader v1.4.307 SHA, Apache-2.0/GPL-3.0 compatibility, test-only offline build boundary using existing pinned headers, private DLL/manifest lifetime and real loader device/fence verification gates. | +0% to TODO: #3; #8 +0%; overall +0%. |  |
+| `5135652` | chore(deps): pin native Vulkan loader to v1.4.307; Add public HTTPS KhronosGroup/Vulkan-Loader under submodules/vulkan_loader at0508dee4ff864f5034ae6b7f68d34cb2822b827d, with shallow clone preference. Audit preserved Apache-2.0/more-permissive notices against repository GPL-3.0; header307 matches the existing pinned protocol SDK. | +30% to TODO: #8; #3 +0%; overall +0%. | Public tag/commit resolves upstream, exact detached checkout is clean; no loose vendor files, source changes or runtime substitutions. Offline build and actual native loader acceptance remain pending. |
+| `2326afc` | test(vgpu): verify native loader device and fence dispatch; Build the pinned loader offline with the existing exact header307 target, no downloads/codegen/install or vendor edits. Extend dynamic loader fixture to eight instance/device/queue/idle/fence cycles, portable owned library handles/environment snapshots, private Windows manifest and medium-integrity test process behavior that preserves upstream elevated-search protections. Gate Linux pinned loader safety and native Windows DLL discovery in CI. | +35% to TODO: #8; #3 +0%; overall +0%. | System/pinned Linux loader device discovery passes; build an ASan-enabled pinned loader and run fixture with San3, zero leaks. Native Windows fixture cross-links with strict warnings and explicit Advapi32. Workflow parses. The native oracle backend remains explicitly fake; production worker runtime remains separately verified. Native Windows/updated-head CI required before completing dependency task or loader ABI milestone credit. |
+| `623e1a5` | docs(vgpu): specify experimental API version consistency; Align public physical properties/instance requests with declared experimental API1.0, keep host query data private until validated, and preserve the separate complete runtime/DXVK acceptance requirements. | #3 +0%; overall +0%. |  |
+| `4e61936` | fix(vgpu): enforce experimental public API version ceiling; Reject unsupported instance API requests before object reservation or host submission. Decode physical properties privately, reject invalid host API variants/majors without changing caller storage, and cap successful public properties at declared API1.0 while preserving all other host fields. | #3 +0%; overall +0%. | Native default/patch/unsupported API requests, unchanged outputs on invalid host versions, 128 healthy cycles and independent newer-host encoder pass. San3 reports no leaks; Zig tests pass; production coverage99.63% lines/93.35% branches. Updated native loader/Windows CI required. |
+| `9fb1558` | docs(vgpu): specify core buffer ownership and requirements; Specify private buffer identity, bounded sharing inputs, exact create/destroy/query wire fields, staged host requirements and failure ownership. Full memory execution and DXVK acceptance remain required. | #3 +0%; overall +0%. |  |
+| `40fa600` | feat(vgpu): dispatch core buffers and host memory requirements; Add private device-parented buffers, bounded exclusive/concurrent sharing, exact creation identity and host destruction, staged validated actual memory requirements. Preserve uncertain ownership on transport/peer loss. | +0% to TODO: #3 (+0% overall; full memory execution pending). | Independent pinned encoders compare commands30/50/51; invalid tags/flags/usage/sharing/families, native creation rollback, stale and foreign parents,507-buffer registry exhaustion, device-before-child refusal, malformed requirements and every command corruption/transport path pass. San3 reports no leaks; production coverage99.68% lines/93.61% branches. Actual two-session worker create/query/destroy cycles pass normal and sanitizers; native Windows fixtures/DLL cross-link and pinned Linux loader pass. Native updated-head CI and full runtime/DXVK remain required. |
+| `9914c38` | docs(vgpu): record native loader dependency acceptance; Complete loader dependency @B/runtime acceptance with the exact pinned offline loader and existing headers. Preserve pending full ICD/runtime and DXVK gates; this zero-weight dependency task does not claim them complete. | +35% to TODO: #8; #3 +0%; overall +0%. |  |
+| `70b62cd` | docs(vgpu): specify device memory allocation and buffer binding; Specify private memory ownership, per-slot generation metadata, exact allocation/free/bind wire, actual cached requirements and overflow-safe range validation, relationship teardown and independent/real-worker gates. | #3 +0%; overall +0%. |  |
+| `18350fb` | feat(vgpu): allocate private memory and bind core buffers; Add exact device-parented memory allocation/free, fixed per-slot generation metadata, cached actual buffer requirements, type/alignment/range checks using subtraction, and relationship publication only after host success. Retire bound relationships after validated buffer destruction; refuse premature memory free and device destruction while children remain. | +0% to TODO: #3 (+0% overall; mapping/commands/DXVK pending). | Pinned independent encoders compare commands21/22/28; native allocation rollback, unsupported tags/type bounds, offset overflow, type mismatch, wrong parents, rebinding,505-allocation exhaustion, cached query failure and every command's malformed/transport result path pass. ASan/LSan/ UBSan reports zero leaks; production coverage99.58% lines/93.83% branches. Actual two-session worker allocation/binding/GPU idle/destruction passes normal and sanitizers; pinned Linux loader and sanitized loader execute the same public API with their independent oracle backend. Native Windows fixture/DLL cross-link succeeds. Updated-head native CI remains required; TODO #3 remains40%. |
+| `1123f95` | docs(vgpu): specify native loader production worker proof; Specify real loader/shared ICD dispatch through the actual negotiated worker, explicit borrowed callback and owned library/environment lifetimes, two-session object cycles and independent loader milestone gates. | #3 +0%; overall +0%. |  |
+| `11ca7e7` | test(vgpu): drive production workers through the native loader; Add actual pinned loader/shared ICD production worker variant, owned library/environment lifetimes, original host driver environment before guest manifest selection, two-session object cycles and receiver-retired failure cleanup. Capture destroy callbacks to retire loader CPU dispatch tables; never query stale loader handles. Gate actual normal/sanitized worker dispatch and injected live-allocation failure in Linux CI with a20-minute job budget. | +0% to TODO: #3 (+0% overall; updated native CI required). | Local real loader/receiver sixteen device/queue/fence/buffer/ memory lifecycle cycles pass normal and San3. Forced failure after binding retires receiver and loader dispatch state with zero leaks and restored descriptor baseline; expected exit1 confirmed. Static worker normal/sanitized regressions pass; workflow YAML parses. Native Windows18350fb loader dispatch and DLL ABI are green. Latest native Linux integration CI remains required before the loader10% milestone; full command/mapping/DXVK remains incomplete. |
+| `45c8494` | docs(vgpu): specify core command pool ownership; Specify bounded pool flags/family validation, exact host identity, private device ownership, reset results and child retirement boundary with independent encoder and actual worker/loader verification gates. | #3 +0%; overall +0%. |  |
+| `8061962` | feat(vgpu): dispatch core command pool lifecycles; Add device-parented pool tokens, core flags/configured-family validation, exact host creation/destruction/reset, fixed pool metadata and implicit command-buffer child retirement after validated host destruction. | +0% to TODO: #3 (+0% overall; command-buffer execution pending). | Pinned independent encoders compare commands85..87; all core flag combinations, unknown families/flags/tags/chains, native negative creation rollback,507-pool exhaustion, foreign/stale handles and device-child ordering pass. Every command's transport/malformed paths and reset negative/ unexpected-positive/device-loss results pass San3, no leaks. Production coverage99.11% lines/93.70% branches; actual two-session worker create/reset/destroy cycles pass normal/sanitizers, Windows fixtures/DLL cross-link. Updated actual-loader local runs and native CI remain required. Full recording/submission, memory mapping and DXVK acceptance remain pending. |
+| `246be94` | docs(vgpu): specify command buffer allocation and recording states; Specify transactional bounded batch allocation/free, loader-owned dispatch prefixes, primary/secondary inheritance, recording/reset transitions, pool child retirement and exact wire/error/verification boundaries. | #3 +0%; overall +0%. |  |
+| `c0a4a54` | docs(vgpu): clarify primary command buffer begin flags; Record Khronos VUID02840 primary-only prohibition of combined one-time/simultaneous flags5, preserving the supported secondary combination. | #3 +0%; overall +0%. |  |
+| `8e5f540` | docs(vgpu): accept native loader milestone through production workers; Accept loader ABI/manifest milestone with real shared ICD device creation and public object/memory calls through the production negotiated worker. TODO #3 reaches50%, overall67.5%; no full runtime/DXVK acceptance. | #3 +10%; overall +2.5%. |  |
+| `4df9b74` | feat(vgpu): dispatch command buffer allocation and recording lifecycles; Add transactional1..64 dispatchable pool-owned allocation batches, validated batch free, primary/secondary begin inheritance, explicit Initial/ Recording/Executable/Invalid states and individual/pool reset. Publish only exact complete host identities; retain uncertain ownership on loss and retire implicit children after validated pool destruction. Confine generated encoder GNU pointer arithmetic warning adaptation to the imported oracle headers. | +0% to TODO: #3 (+0% overall; actual command execution pending). | Independent pinned encoders compare commands88..92. Every batch reply truncation, wrong count/identity/positive result, primary-only flags5 rejection, secondary inheritance guards, native allocation/recording errors, duplicate/stale/foreign arrays, local57-slot partial rollback and 505-buffer exhaustion pass. Five Zig tests, San3 and coverage pass: 99.68% lines/94.10% branches. Actual static and shared-loader production worker allocate/begin/end/reset/free/implicit-pool-release cycles pass normal/safety; forced loader failure restores descriptors and leaks zero bytes. Actual pinned Linux loader command-buffer dispatch/first-word trampoline tests pass; native Windows fixture/DLL cross-link succeeds. Latest native Windows/runtime CI remains required. TODO #3 stays50%; commands/mapping/full API/DXVK pending. |
+| `f2633b8` | fix(vgpu): recover invalid command buffers through implicit begin reset; Follow the pinned Vulkan1.4.307 lifecycle: reset-capable pools permit Begin from Invalid as well as Executable. Recording and Pending still fail locally; non-reset pools permit Initial only. Validate recovery from a host Begin allocation error and ensure non-reset Invalid rejection sends no request. Document the versioned specification boundary explicitly. | #3 +0%; overall +0%. | Native unit/loader tests, five Zig tests and San3 pass; coverage99.69% lines/94.09% branches. Windows native fixture, DLL and pinned-loader fixture cross-link pass. TODO #3 remains50%. |
+| `f3d4530` | docs(vgpu): specify core fill recording and resource invalidation; Define bounded buffer range validation, exact command118 encoding, generation-safe slot reference tracking and invalidation on buffer destruction. Specify reset/free ownership, Pending protection and recording-only acceptance. | #3 +0%; overall +0%. | Inspect pinned encoder and Vulkan fill-buffer valid usage; implementation and execution proof remain pending. TODO #3 remains50%. |
+| `fbbd1ac` | feat(vgpu): record bounded buffer fills with resource lifetime tracking; Route core fill command118 using requested buffer size/usage, same-device binding and overflow-safe range checks. Track buffer references in fixed512-bit sets, invalidate recordings before referenced slot release, clear references on successful begin/reset/free and reject Pending buffer or pool destruction before host dispatch. No heap allocation or native pointer retention; CPU acknowledgment does not imply GPU retirement. | +0% to TODO: #3 (+0% overall; GPU execution pending). | Independent pinned encoder, explicit/WHOLE_SIZE/rounded ranges, invalid inputs/state recovery, reference invalidation/reset/slot reuse and transport/tag errors pass. Six Zig tests include Pending destruction protection. San3 and coverage99.70% lines/94.13% branches pass. Normal/sanitized actual static and shared-loader production worker recording pass; forced loader failure restores descriptors and leaks zero bytes. Pinned Linux loader public fill dispatch passes normal/sanitized; Windows fixture, loader fixture and DLL cross-link pass. Native Windows latest CI remains required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending. |
+| `1f50cff` | docs(vgpu): specify bounded buffer copy and alias validation; Specify exact command112, byte-granular bounded region arrays, requested-size requirements validation and binding-offset overflow proof. Define all-pairs source/destination union overlap checks for same-allocation buffers and shared recording lifetime rules. | #3 +0%; overall +0%. | Inspect pinned encoder and versioned Vulkan1.4.307 common validity; implementation/execution gates remain pending. TODO #3 stays50%. |
+| `c7bf471` | feat(vgpu): record bounded buffer copies with allocation alias checks; Dispatch command112 only after validating every1..64 region, same-device bound transfer usage and requested-size bounds. Retain successful memory binding offsets; reject undersized host requirements while preserving caller output. Check all source/destination interval pairs for same-allocation aliases, including distinct buffers, and retain both recording dependencies. | +0% to TODO: #3 (+0% overall; GPU submission pending). | Independent pinned encoder, byte-sized/64-region copies, zero/65/null guards, bad-final-region no-partial dispatch, overflow/range, foreign/unbound/usage guards, cross-index alias overlap, legal adjacency and distinct allocation tests pass. Six Zig tests and zero-leak San3 pass; coverage99.72% lines/94.12% branches. Actual static/shared-loader worker fill/copy recording passes normal/sanitized and failure cleanup; pinned native Linux loader public copy dispatch passes normal/sanitized. Windows fixture, DLL and loader fixture cross-link pass. Latest CI remains required. TODO #3 stays50%; actual submission/full API/mapping/DXVK still pending. |
+| `4696452` | docs(vgpu): specify full-size inline update staging; Define native1..65536-byte update input, exact command117, fixed disjoint scratch/tx staging and source capture/scrub lifecycle. Preserve the small writer stack bound and shared buffer lifetime/recording rules. | #3 +0%; overall +0%. | Inspect pinned blob encoder4-byte stride, command owner's overlap checks/36-byte prefix and Vulkan update valid usage. Implementation and full-size production-worker proof remain pending. TODO #3 stays50%. |
+| `690b4ce` | fix(vgpu): size default worker commands for full inline updates; Raise the bounded default command/private-transfer allocation to131072 bytes so65536-byte native data plus48-byte command and36-byte reply-stream prefix fit. Keep one service-owned aligned allocation with deterministic teardown and preserve explicit smaller trusted policy support. Document required backend scratch/command extent for full ICD binding. | #3 +0%; overall +0%. | Service acquisition/fault tests, San3 and coverage100% lines/99.02% branches pass. Inline update worker fixture initially rejected its oversized request with prior4096-byte guest scratch; the pending recording increment expands scratch and verifies fragmented full-size input. TODO #3 stays50%. |
+| `ce01f55` | feat(vgpu): capture full-size inline buffer updates in bounded staging; Route command117 with native1..65536-byte data after complete identity/binding/usage/alignment/range validation. Keep the8192-byte stack writer; use disjoint fixed65584-byte scratch and65620-byte tx. Capture source before dispatch, retain destination dependency after exact acknowledgment and erase scratch/used tx on success and every error. Document backend extent; provide131072-byte guest scratch and180-second full-fixture watchdog for | +0% to TODO: #3 (+0% overall; GPU execution pending). | Independent pinned encoder verifies4/8/65536-byte patterns; rejected scalar guards do not read deliberately invalid source pointers. Seven Zig tests include source capture and exact erasure/reference publication on success/transport/malformed reply paths. Zero-leak San3 and coverage99.73% lines/94.04% branches pass. Actual static/shared-loader full-size worker recording passes normal/safety plus injected failure descriptor/heap cleanup. Pinned native Linux loader public update passes normal/sanitized; Windows fixture, DLL and loader fixture cross-link pass. Latest CI required. TODO #3 stays50%; synchronization/submission/full API/mapping/DXVK pending. |
+| `e7beb91` | docs(vgpu): specify core memory and buffer pipeline barriers; Define exact command126 and bounded canonical memory/buffer barrier arrays, core masks and family/range validation. Specify execution-only normalization, no partial dispatch, shared resource lifetime and native semantic caller requirements. Image scope remains pending, without completion credit. | #3 +0%; overall +0%. | Inspect pinned encoder record strides/ordering and Vulkan valid usage; implementation and actual worker dependency recording pending. TODO #3 stays50%. |
+| `184f002` | feat(vgpu): record bounded global and buffer pipeline barriers; Dispatch pinned command126 for execution-only/global/private buffer dependencies. Validate complete canonical arrays, core masks, family pairs and byte/WHOLE_SIZE bounds before sending; track buffer references only after acknowledgment. Normalize ignored zero-count pointers and reject image scope until image layout/ownership APIs are implemented. Add transfer hazards and host-read dependencies to the real worker's fill/copy/update recording. | +0% to TODO: #3 (+0% overall; full execution pending). | Independent encoder checks zero/one/64 arrays; invalid final record sends no partial command. Range, identity/binding/family/mask/tag guards and destruction/reset tests pass. Seven Zig tests and San3 pass; coverage99.74% lines/93.78% branches. Actual static/shared-loader worker and native loader recording pass normal/sanitized, including failure cleanup. Windows fixture/DLL/loader cross-link pass. Native Windows inline update CI ce01f55 passes; one Linux coverage run aborts while parallel same-head run passes that stage, under investigation/retry. Latest-head checks remain required. TODO #3 stays50%; submission/full API/mapping/DXVK still pending. |
+| `a32ce25` | test(vgpu): diagnose coverage recorder bounds and output failures; Report bounded recorder branch/edge violations and output path/ open/close failures before aborting. Publish instrumentation capacity counts and validate them against the runtime's named bounds before execution. Preserve atomic recording and all existing coverage thresholds; do not mask failures. | #3 +0%; overall +0%. | Strict C probe accepts final valid4095/31 site/edge and rejects4096/0 and0/32 with diagnostic SIGABRT. ICD seven-test coverage passes at99.74% lines/93.78% branches with2158/4096 sites, maximum3/32 edges. CI's single same-head coverage abort remains without a confirmed cause; parallel ce01f55 run passed that gate and failed job is retried. TODO #3 stays50%. |
+| `c9bafe7` | docs(vgpu): specify binary semaphore ownership and pending references; Specify canonical core binary semaphore commands40/41, exact transactional identities, negative rollback and uncertain loss retention. Define fixed in-flight reference counts for subsequent submission lifetime enforcement, with no synthetic signal state or timeline claim. | #3 +0%; overall +0%. | Inspect pinned semaphore encoders and existing private object/identity transaction contracts; implementation/execution pending. TODO #3 stays50%. |
+| `cb463c6` | test(vgpu): expand coverage recorder for CI instrumentation; Increase fixed atomic site capacity from4096 to16384 without changing edge limits, generated metadata guards or coverage thresholds. CI diagnostics identify4712 sites exceeding4096; local compiler emits fewer. The recorder owns512KiB static storage, performs no dynamic allocation and rejects out-of-range sites before indexing. TODO #3 remains50%. | #3 +0%; overall +0%. | Strict C boundary probe accepts16383/31 and aborts on 16384/0 and0/32. Latest native ICD coverage remains required. |
+| `36cc757` | feat(vgpu): implement binary semaphore ownership and pending guards; Dispatch canonical binary semaphore create/destroy40/41 with exact identity publication, known-error rollback and loss retention. Add fixed in-flight counts and refuse pending destruction. Shared constructors accept null failure outputs only after negative native results, preserving exact positive/success identities and result-less queue behavior. | #3 +0%; overall +0%. | Independent pinned encoder, native malformed/negative/null/ capacity/foreign/stale/transport guards and private pending tests pass. Eight Zig tests and San3 pass; coverage99.75% lines/94.01% branches with 2233/16384 sites. Real static/shared-loader worker and pinned native loader normal/sanitized semaphore lifecycles pass, including forced-failure cleanup. Windows fixture/DLL/loader cross-link passes. Queue submission and full API/ mapping/DXVK remain pending; TODO #3 stays50%. Latest CI required. |
+| `d307716` | docs(vgpu): specify queue submission and proven GPU retirement; Specify command18 canonical binary submits, exact bounded arrays, primary/family/state validation and128 fixed reference tickets. Define real fence/timeline proofs, any/all retirement, pending reset/destruction suppression and ONE_TIME/SIMULTANEOUS final state transitions without CPU completion credit. | #3 +0%; overall +0%. | Inspect pinned queue encoder and renderer native QueueSubmit dispatch. Implementation, oracle coverage and actual GPU worker submission remain pending; TODO #3 stays50%. |
+| `df4299b` | feat(vgpu): submit native queues and retain references until GPU proof; Encode command18 with canonical bounded submit arrays and primary command/family/device/state checks. Publish128 fixed tickets only on native success; track each unique command/semaphore/fence reference. Actual fence proofs retire the queue prefix, actual idle proofs retire matching queues; wait-any polls individual statuses. Refuse pending destruction/reset/free, retain simultaneous references and invalidate final ONE_TIME completion. Guard sequence wrap before dispatch; abandon clears only after backend retire. | #3 +0%; overall +0%. | Pinned native encoder checks zero/one/16 records, aggregate 64 arrays, ignored pointers and exact bytes. Native guards, negative/corrupt/ transport results,128-ticket exhaustion and pending lifetimes pass. Nine Zig tests include queue-prefix versus simultaneous/ONE_TIME retirement and wrap; coverage99.63% lines/94.53% branches and San3 pass. Actual static/ pinned shared-loader worker executes fill/barrier/copy/full-size update and binary signal/wait with native fence completion before release, normal and sanitized plus forced-failure cleanup. Windows fixture/DLL/loader cross-link passes. Full graphics/compute/mapping/DXVK gates pending; TODO #3 stays50%. |
+| `f1f83e5` | fix(vgpu): retain device creation identities after uncertain results; Treat native device loss and unexpected positive constructor statuses as sticky loss/corruption, retaining the uncertain device slot until receiver retirement/abandon. Preserve known negative rollback and NULL output. | #3 +0%; overall +0%. | New native loss/positive-result tests reject further commands without transport access. Nine Zig tests, native loader fixture and zero-leak San3 pass; coverage99.63% lines/94.55% branches. TODO #3 stays50%. |
+| `5b493fc` | docs(vgpu): specify device-time queue capacity reservation; Specify transactional private queue/ring reservation during CreateDevice, rollback before native dispatch, ready-only idle and loss retention. Void GetDeviceQueue consumes pre-reserved resources with stable identity; valid retrieval cannot fail due to later registry/ring exhaustion. | #3 +0%; overall +0%. | Native ABI result/error boundary and fixed object/ring capacity inspected; implementation and lifecycle/capacity tests pending. |
+| `6cbe845` | feat(vgpu): reserve all requested queues before native device creation; Stage every requested queue identity and timeline ring before CreateDevice. Fully roll back partial local/known native failures; retain uncertain reservations on sticky loss. GetDeviceQueue consumes reserved capacity and publishes only validated native readiness; Device idle fences initialized queues only and destruction releases unretrieved reservations. | #3 +0%; overall +0%. | Native fixtures reserve63 rings before retrieval, reject an extra device without native dispatch, roll back64-ring and object exhaustion, and retrieve queues with otherwise-full registry. Capacity tests charge all pre-reserved queues. Nine Zig tests, San3, coverage99.63% lines/ 94.82% branches pass. Actual static/shared-loader production worker normal/ sanitized execution plus injected-failure cleanup pass; Windows fixture/DLL/ loader cross-link passes. All eight CI checks on previous df4299b are green; latest-head checks still required. TODO #3 remains50%. |
+| `b771f3f` | docs(vgpu): specify idle polling across independent queue submissions; Define idle metadata references, namespace/ID guards and mutex release between complete GPU polls so another queue can signal pending work. Preserve same-queue external synchronization and one-second whole deadline. | #3 +0%; overall +0%. | Inspect current idle/submit transport ownership and native external synchronization contract; thread regression/implementation pending. |
+| `d224846` | feat(vgpu): track guest queue idle references and concurrency; Prevent queue submissions and concurrent wait-idle operations while a queue is already being idled by tracking `idle_refs`. Reject conflicting attempts with VK_ERROR_INITIALIZATION_FAILED. | #3 +5%; overall +1.25%. | ICD native queue concurrency fixtures, sanitizers, and coverage gates pass. `make vgpu-icd-test vgpu-icd-sanitizers vgpu-icd-coverage` and `make vgpu-windows` execution verified locally. |
+| `9bc3547` | docs(vgpu): specify real device-memory mapping and image wire contracts; Replace unsupported map-command/blob-zero assumptions with actual nonzero-memory export/copy ownership, coherency and hardware acceptance gates. | #3 +0%; overall +0%. |  |
+| `f6bfd69` | test(vgpu): permit core rendering identities in encoder oracle; Extend independent generated encoder fixture identities; existing instance-wire native and five Zig tests pass. | #3 +0%; overall +0%. |  |
+| `370e494` | test(vgpu): add real native DXVK device and presentation gate; Explicit DLL/manifest native device/swapchain/render/query/Present fixture cross-compiles under strict Windows warnings. Real DXVK run pending. | #3 +0%; overall +0%. |  |
+| `ac7bd54` | feat(vgpu): encode bounded core image lifecycle and barrier packets; Allocation-free image/view/barrier codecs match generated C oracle; five Zig tests and Linux/Windows ReleaseSafe compilation pass. ICD lifetime integration and actual image GPU execution remain pending. | #3 +0%; overall +0%. |  |
+| `97a934a` | docs(vgpu): record guide audit and native DXVK acceptance contract; Synchronize guide audit and native DXVK runtime requirements. | #3 +0%; overall +0%. |  |
+| `871b64f` | feat(vgpu): copy bounded mapped device-memory resources; Native mapped-resource copies, permission and padded extent guards pass ownership tests and San3; receiver coverage100% lines,98.91% branches. Actual ICD mapped GPU bytes remain an independent acceptance gate. | #3 +0%; overall +0%. |  |
+| `aacf99d` | feat(vgpu): validate and serialize bounded SPIR-V shader modules; Seven image/shader codec tests pass, including generated oracle comparisons and8192-byte boundary. Shader runtime integration pending. | #3 +0%; overall +0%. |  |
+| `9cf6056` | docs(vgpu): specify bounded shader and compute layout encoders; Detailed shader and layout wire limits and prior evidence. | #3 +0%; overall +0%. |  |
+| `e11c841` | feat(vgpu): serialize core descriptor and pipeline layouts; Nine image/shader/layout tests match independent generated encoders; runtime descriptor/pipeline ownership integration pending. | #3 +0%; overall +0%. |  |
+| `355e944` | docs(vgpu): detail ICD mapped shadow ownership and backend requirements; Precise public noncoherent/raw host coherent properties and backend bounded copy contracts, with native safety and coverage acceptance. | #3 +0%; overall +0%. |  |
+| `db5402c` | feat(vgpu): map coherent host allocations through noncoherent guest shadows; Native/shared loader tests, San3, Zig allocator and Windows cross-build pass. ICD coverage99.53% lines,93.56% branches. | +0% to TODO: #3 (+0% overall), pending hardware acceptance. |  |
+| `51af1e6` | chore(vgpu): track render codec dependencies for ICD builds; Explicit Linux/Windows imported-module dependencies prevent stale incremental ICD objects during integration. | #3 +0%; overall +0%. |  |
+| `fbb3466` | docs(vgpu): specify image lifetime integration and packet capacity proofs; Document image lifetime integration and whole-packet capacity proofs. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ad2afeb` | test(vgpu): isolate rendering oracle ring stub identity; Isolate unused upstream ring stub so image and ICD encoder oracles link together. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `2ef4e03` | fix(vgpu): publish generated headers without truncating concurrent builds; Three concurrent private generations verify exact receiver compatibility and preserve unchanged header bytes/mtimes; no incomplete header publication. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `e63bc1f` | refactor(vgpu): prove complete render packet bounds before scalar writes; Whole-record capacity proof and fifteen targeted oracle/boundary tests pass; render codec100% branches and lines. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `d87f747` | test(vgpu): enforce render wire oracle and coverage gates; Enforce independent codec oracle and unchanged90% source coverage gates through ICD test targets. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `0f0d237` | test(vgpu): add reproducible Vulkan 1.0 compute shader fixture; Readable owned compute GLSL and SPIR-V1.0 fixture validate against spirv-val and exact regenerated bytes; dispatch not yet implemented. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `f6c2a64` | feat(vgpu): integrate private image and view memory lifecycles; Image lifecycle native/shared loader and sanitizer tests pass; ICD90.74% branches99.08% lines, shader/command integration pending. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `3560d34` | test(vgpu): prove mapped transfers against physical GPU output; Actual NVIDIA RTX5080 direct/shared-loader mapped-byte tests and both San3 paths pass,16 repeated lifecycles each; GPU64KiB readback and4096-byte guest flush/GPU copy/invalidate match exactly. Forced mapped failure cleanup has no sanitizer diagnostics. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `11cfb3f` | docs(vgpu): audit mapped GPU evidence and remaining guide gates; Record real NVIDIA mapped-memory data validation through normal and sanitized direct/shared-loader workers, precise repeated lifecycle and timeout evidence, deterministic generator publication, image safety/coverage and shader fixture commits. Keep incomplete image commands, compute/graphics and native DXVK/bootstrap gates explicit; avoid duplicate adapter progress. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `d0b231f` | feat(vgpu): encode bounded single compute pipeline creation; Encode core compute pipeline creation with translated shader/layout/output identities, canonical count-one arrays and null pipeline cache. Reject unsupported flags/chains/specialization, derivative handles, invalid stage/IDs and empty or malformed UTF-8 names; scan at most 256 bytes and prove complete packet capacity before appending. Compare generated Venus bytes for ordinary and maximum 396-byte packets and exercise seventeen independent scalar failures, unterminated names and malformed UTF-8. Sixteen codec tests pass; render source coverage is 100% lines and 99.55% branches. Confine upstream GNU pointer-arithmetic warning suppression to the immutable oracle includes. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `1a289df` | test(vgpu): verify mapped allocation failure ownership and quota recovery; Inject one production posix_memalign ENOMEM at the aligned guest shadow allocation and verify a null output, no host export, and successful retry. Exercise all 64 export slots, prove unmap preserves export ownership, and verify explicit memory free refunds and safely reuses the slot. Map a non-page allocation to verify page-rounded export padding never reaches flush or invalidate; reject malformed read response lengths with sticky loss and shadow cleanup. Scope the allocation hook to an explicit native linker target so ordinary, Windows, and Zig allocator fixtures remain unaffected. Verification: isolated committed ICD lifecycle source passed native and San3 fixtures with production C allocator injection and seventeen mapping scenarios, zero leaks. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `e90fb35` | fix(vgpu): ignore unspecified scratch beyond image destroy reply prefix; Real Venus void replies initialize only the four-byte command opcode in the fixed-capacity reply scratch. Requiring the remaining 4092 bytes to be zero incorrectly poisoned the binding after otherwise successful image or view destruction and retained live resource identities. Validate the defined command prefix and transport outcome only, preserving ownership on malformed opcode or transport failure. Native regression fixtures deliberately provide nonzero trailing scratch for image and view destruction; the full native lifecycle suite passes. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `f7e71a5` | test(vgpu): permit sampler and buffer view IDs in descriptor oracles; Extend the bounded independent encoder handle-kind assertion to the two core descriptor resource kinds. Preserve native word copying and null identity behavior without adding pointer dereferences or production dispatch support. Verified nonzero and null sampler/buffer-view test identities with a strict C11 fixture. Required only for subsequent pinned descriptor serialization comparisons. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `038f7a5` | test(vgpu): run mapped allocation failures with libc leak checks; Add repeatable native and San3 ICD targets enabling one-shot posix_memalign ENOMEM injection. Include them in required ICD checks so production C allocator failure, rollback, retry and cleanup are exercised alongside Zig testing allocator coverage. Verification: both targets pass the native 128-cycle lifecycle fixture and seventeen mapping scenarios with zero sanitizer diagnostics. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `de2ba13` | feat(vgpu): track image barriers through bounded command recording; Accept core image barriers for bound same-device images after validating canonical scalar fields, aspect and subresource extents, and configured queue-family pairs. Preflight the complete 64+20*memory+52*buffer+64*image packet against 8192-byte scratch before reading any arrays; publish resource references only after successful native acknowledgment. Extend the independent generated command encoder fixture for image records and add twelve native success/error cases. Prove pending images cannot be destroyed and recorded commands invalidate only after confirmed image destruction. Update the formerly unsupported-image negative fixture to reject image count 65 before reading its deliberately inaccessible pointer. Native and shared-loader tests, allocation fault cases, San3, Zig allocator and coverage pass. ICD: 91.13% branches, 99.28% lines. Renderer codec: 99.55% branches, 100% lines. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `477a17f` | docs(vgpu): specify bounded descriptor and initial graphics wire profiles; Define pool/set/update quotas and translated resource identity boundaries, single-color render-pass/framebuffer/begin profiles, exact complete packet limits and clear-union tags. Clarify that short destruction acknowledgments ignore retained receiver scratch tails while preserving malformed-prefix ownership. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `92c5699` | feat(vgpu): expose bounded shader module ownership through ICD dispatch; Publish core shader module creation and destruction entry points. Validate SPIR-V structural bounds before private identity reservation, return host errors without leaking reservations, and preserve uncertain identities on transport or malformed replies. Retire shader ownership only after the native destroy opcode acknowledgment. Use the reproducible Vulkan 1.0 compute shader fixture for independent generated-packet comparison. Cover invalid pointers/scalars, payload cap rejection before copy, native allocation failure and retry, plus duplicate destruction. Native and shared-loader tests, mapping OOM fault tests, San3 and Zig allocator pass; ICD coverage is 91.14% branches and 99.28% lines. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `51de5d6` | test(vgpu): verify image and view lifetimes on the physical receiver; Extend each repeated production device lifecycle with a real 64x64 BGRA image, exact native memory requirements, supported allocation and binding, and a 2D color image view. Retire view, image and device memory in dependency order before device teardown, with stage-specific failure diagnostics. The physical workload exposed unspecified stale reply scratch after void image destruction; the independent e90fb35 production fix now preserves the declared reply-prefix contract. Keep lifecycle verification distinct from image barrier and shader execution acceptance. Verification: direct and pinned shared-loader receiver integration passed on NVIDIA GeForce RTX 5080, including existing mapped exact-byte stress. Both San3 integrations passed without errors or leaks and with balanced descriptors; sixteen full lifecycle repetitions per invocation. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `de94fa1` | docs(vgpu): define fixed descriptor and pipeline compatibility profiles; Specify dedicated layout, pipeline and descriptor-set metadata quotas, by-value compatibility snapshots, valid early shader/layout retirement and exact reservation/error/destruction cleanup. Correct descriptor copy packet size from independent oracle evidence and distinguish codec bounds from public ICD profile budgets. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `940dfbe` | test(vgpu): isolate physical workload milestones without shortening stress; Select full, mapping or image production workloads through a strict test-only environment policy. Keep the complete mapped and image workload as the default and preserve common instance/device/queue/fence/semaphore checks and sixteen normal/corrupt-release lifecycle repetitions for every accepted selection. Move shared memory-allocation procedure discovery into the common scope and retain forced post-acquisition loader-loss cleanup in each selected workload. Unknown selectors fail with status 2 before native resource acquisition; no unimplemented workload can pass as an empty test. Add dedicated image normal/shared-loader and sanitizer Make gates, with reusable sanitizer executable build targets and the forced-failure assertion. Existing full stress gates remain available unchanged. Verification: all four image-only direct/shared normal and San3 integrations passed on NVIDIA RTX 5080 with balanced descriptors; image forced failure exited exactly 1 without sanitizer diagnostics; invalid selector exited exactly 2. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `8910019` | feat(vgpu): encode bounded descriptor pools sets and buffer updates; Encode allocation-free descriptor pool creation, distinct set identity allocation, buffer descriptor families and exact descriptor copies using the shared render packet writer. Validate every scalar and borrowed array before construction and prove the entire packet fits before infallible scalar appends. Compare native packets against independently generated pinned Venus encoders, including pool592, allocation1088 and update8188 byte maxima. Reject malformed IDs, quota exhaustion, overflow and overlapping same-binding copies. Native and instrumented C-oracle San3 tests pass with zero leaks; Windows x86_64 test executable crosscompiles; production coverage is100% lines74/74 and branches84/84. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `da59924` | docs(vgpu): quantify fixed metadata storage and framebuffer limits; Specify each x86_64 table size and the complete 2,119,424-byte registry before public profile integration. Document exact framebuffer bounds of 1 through 4096 on each dimension. Static table ownership avoids hidden allocations. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `3acd87c` | feat(vgpu): encode bounded single-color render pass commands; Add allocation-free render-pass, framebuffer and inline begin packets with complete preflight bounds. Preserve raw clear union words and translated IDs. Independently compare packets against pinned generated C encoders, including maximal dependencies and all malformed scalar guards. Native tests and instrumented oracle tests pass without leaks; Windows crosscompile passes. Production coverage is 100% lines and branches. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `5e532a1` | test(vgpu): execute image layout barriers on the physical queue; Record an undefined-to-general full-color image transition in a real primary command buffer, submit it through the production receiver with an unsignaled Vulkan fence, and require fence retirement and queue idle before releasing the pool and image dependencies. Keep queue-family ownership ignored explicitly, use top-of-pipe to all-commands synchronization, and retain the existing forced-loss ownership fixture. Image workload selection provides sixteen real GPU submission lifecycles without rerunning the independently proven large mapped-transfer workload. Verification: direct and pinned shared-loader image integrations passed on NVIDIA GeForce RTX 5080; both San3 variants passed with zero diagnostics and balanced descriptor counts. All source compiled with strict C warnings. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `a42fc4c` | feat(vgpu): own copied descriptor and pipeline layout profiles; Expose core descriptor and pipeline layout creation/destruction with translated identities and fixed owned compatibility snapshots. Reserve metadata before native creation, refund ordinary failures, retain uncertain ownership until receiver abandon, and scrub slots only after native destruction acknowledgment. Exercise independent pinned packet encoders through native dispatch and shared loader. Prove32-slot exhaustion, full quota reuse, native allocation failure rollback, malformed inputs, and pipeline snapshots surviving destruction of their original descriptor layout tokens. Native and mapping fault San3 suites pass with zero leaks; Windows fixture crosscompiles. ICD production coverage90.41% branches and99.32% lines. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ae69d59` | test(vgpu): enforce descriptor wire oracle and coverage gates; Run independent descriptor and imported render oracle tests in the ICD acceptance targets. Track descriptor source as an incremental build dependency on Linux and Windows and link its oracle into ICD source coverage. Twenty-four tests and 100% descriptor production line and branch coverage pass with the unchanged 90% threshold. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ef69716` | fix(vgpu): remove incomplete metadata gate placeholders; Remove temporary unconfigured profile test rules left during isolated descriptor gate publication. They are not acceptance prerequisites; complete metadata targets will be added after their source coverage passes. Descriptor tests and coverage remain unchanged. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `cff5452` | test(vgpu): audit fixed profile metadata and generic ownership helpers; Add required standalone metadata tests and source coverage to ICD gates. Normalize Zig generic specialization suffixes only after verifying owned source attribution, so reserve/get/release slot helpers are included in coverage. All five tests pass with 98% branch and 100% line coverage, including exhaustion, reuse, malformed input and copied lifetime checks. Track profiles as an explicit Linux/Windows incremental ICD dependency. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `1d02691` | test(vgpu): enforce graphics wire oracle and coverage gates; Require independent single-color render pass, framebuffer and begin-record comparisons in ICD acceptance. Add production source instrumentation without reducing coverage thresholds. Twenty tests pass; owned graphics wire source has 100% line and branch coverage. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `b4bf3ad` | docs(vgpu): audit descriptor ownership and physical image barrier proof; Attribute every guide increment since the mapped GPU audit to its exact atomic commit. Record physical image barrier fence completion on both transport paths, independent codec coverage, fixed metadata ownership coverage and verified public layout gates. Keep incomplete compute, draw, surface, bootstrap and black-box DXVK requirements visible; no fabricated completion credit. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `0837834` | feat(vgpu): add bounded owned ICD rendering metadata; Store descriptor layout, pipeline layout, pipeline and descriptor set definitions in fixed quota tables with one-based allocation identities. Copy and normalize caller definitions, reject invalid stage and descriptor ranges, and scrub retired slots without heap ownership. Verify all quota exhaustion and reuse paths, definition independence, malformed copied layouts, ordering and descriptor counts with five Zig tests. Native coverage reaches 98% branches and 100% lines; the Windows test artifact cross-compiles. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `79f982a` | docs(vgpu): specify bounded graphics pipeline wire contract; Define the exact canonical triangle profile, translated ID ownership, borrowed record lifetime, unsupported states, finite viewport/scissor budgets and allocation-free632-byte packet bound before production integration. The serializer milestone confers no graphics or DXVK acceptance credit. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `0057fff` | test(vgpu): add independent generated graphics pipeline oracle; Exercise the pinned Venus pipeline serializer with separately translated shader42/43, layout44, pass45 and output46 IDs. Keep the oracle allocation-free with caller-owned8192-byte output so the owned encoder can be checked byte-for-byte without copying upstream implementation code. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `afaa7ca` | feat(vgpu): encode bounded canonical graphics pipeline packets; Validate ordered vertex/fragment main stages, mandatory static state, finite viewport/scissor ranges and every translated object ID before encoding core command65. Prove a fixed632-byte allocation-free packet and preserve generated string padding and pointer/array markers. Reject extension chains, unsupported flags, depth/tessellation/dynamic state and malformed enums without returning partial output. Native21 tests including imported render cases pass. Own production coverage is100% lines108/108 and branches72/72; independent C oracle passes San3 with ReleaseSafe Zig checks. No graphics or DXVK completion credit until actual rendering is verified. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `12aae23` | feat(vgpu): encode bounded core pipeline and dispatch commands; Add allocation-free command packets for pipeline and descriptor binding, push constants and dispatch. Validate translated IDs and fixed profile extents before any write; leave device capability, structural compatibility and GPU lifetime checks to the caller. Compare complete ordinary, empty and maximum packets against independently generated pinned Venus encoders. Native Zig tests, San3 maximum oracle paths, Windows cross-compilation and 100% branch / 96.97% line production coverage pass. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ef7093b` | docs(vgpu): specify bounded core command packet contract; Specify every constructor identity, enum, count, memory ownership, encoded length and validation boundary for pipeline binding, descriptor binding, push constants and dispatch. Record independent generated oracle, sanitizers, Windows compilation and measured coverage without claiming public GPU execution acceptance. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `939726e` | test(vgpu): add reproducible Vulkan 1.0 triangle vertex shader; Keep owned GLSL and derived SPIR-V1.0 words for a three-vertex triangle generated from gl_VertexIndex without vertex buffers. Record the exact base-system glslang command and immutable static shader ownership. spirv-val accepts Vulkan1.0 and packed header words match the generated binary byte-for-byte; shader fixture alone grants no rendering completion credit. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `a4a83cc` | test(vgpu): add reproducible solid-red triangle fragment shader; Keep owned GLSL and derived SPIR-V1.0 words for an opaque red fragment output at color location0. Exact generator command is recorded alongside source, and static array has documented borrowed lifetime. spirv-val accepts Vulkan1.0 and packed header words match the generated binary byte-for-byte, ready for exact GPU readback assertions. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ae90e2a` | test(vgpu): enforce compute command oracle and coverage gates; Require bounded bind, push and dispatch command oracle comparisons and production source coverage in ICD verification. Link its oracle for future imported ICD tests and track Linux/Windows incremental dependencies. Eighteen tests pass, with 100% branch and 96.97% line coverage; device-limit and actual execution acceptance remain independent. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ee842dc` | docs(vgpu): specify fixed descriptor transaction scratch ownership; Measure descriptor snapshots and bound allocation/update scratch independently from the persistent registry. Specify mutex exclusion, deterministic scrubbing, quota publication, failure rollback and transport uncertainty. Keep large snapshots off Windows stacks and require actual device alignment/range checks before descriptor updates. Affects TODO: #3 (+0%; public transaction and physical shader execution acceptance pending). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `fe82ede` | test(vgpu): enforce graphics pipeline oracle and coverage gates; Require the independently generated canonical graphics pipeline packet oracle and source coverage in ICD acceptance targets. Twenty-one linked tests pass; production lines108/108 and branches72/72 are covered. Preserve the 90% threshold and separate physical draw acceptance from wire serialization. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `631ea12` | docs(vgpu): specify graphics command and color readback wire contract; Define pinned command IDs, exact packet extents and caller state/resource responsibilities for end-render-pass, direct draw and tightly packed image-to-buffer copies. Specify every accepted2D color region field, checked destination extent, metadata provenance and borrowed-input ownership before the codec commit. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `b8aefb2` | feat(vgpu): own transactional descriptor pool and set lifetimes; Expose descriptor pool creation reset destruction and transactional set allocation/free. Retain copied layout metadata independently of layout tokens; bound fixed per-pool set/type quotas and global128-set metadata. Validate native identity arrays before publication and refund profile/object/quota ownership only after native success; uncertain transport ownership survives until retired abandon. Use mutex-owned230400-byte allocation staging scrubbed on every return and abandon. Pinned native encoders validate each packet. Tests prove quota and global slot exhaustion, native failure rollback, full-batch free/reset/destruction, stale and duplicate tokens, all reply truncations and pending set/pool protection with command-reference invalidation. Native/sharedloader and San3 pass zero leaks; Windows fixture crosscompiles; ICD coverage90.13% branches and99.27% lines. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `a2a6b38` | docs(vgpu): define owned command binding compatibility and lifetimes; Specify fixed64 command metadata owners and exact x86_64 storage. Define valid descriptor/push-before-pipeline ordering, normalized prefix compatibility, surviving suffix definitions, per-stage initialized push bytes, reservation retirement versus reset, and current descriptor resource rescanning at submission. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `41e5d6e` | test(vgpu): add pinned graphics command serializer oracles; Independently encode direct draw, render-pass end and image-to-buffer regions with the pinned generated Venus serializer and translated command8/image42/buffer43 IDs. Keep output ownership explicit, allocate nothing and isolate the unused ring symbol for linkage with other oracles. Strict native and Windows C builds pass; ordinary and maximum paths pass San3. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `7cd593d` | feat(vgpu): encode bounded draw and tightly packed color readback; Serialize core draw106 and end-render-pass135 with fixed scalar extents and copy-image-to-buffer116 with up to64 validated color2D records. Validate layout, metadata, subresource, alignment, source bounds and subtraction-proven destination capacity before emitting a packet. Prove the maximum3632-byte packet fits the owned8192-byte writer without allocating or retaining caller records. Independent generated oracle agrees for zero/full-u32 draw scalars, ordinary/max copy arrays, both layouts, nonzero offsets and maximum image extents. Native20 tests pass; own production branches100%20/20 and lines96.30%26/27. C oracle San3 and Windows crosscompile pass. No graphics or DXVK acceptance credit until actual GPU rendering/readback. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `d309a4a` | docs(vgpu): specify bounded typed Vulkan feature query chains; Define exact command147 partial query and reply schemas for four typed feature nodes, boolean validation, duplicate rejection and ownership before implementation. Preserve reused receiver scratch semantics and require negotiated schema support separately. Record independent guest/receiver oracle, truncation, corruption and native ABI verification requirements without advertising unfinished Vulkan 1.1 support. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `c52af28` | feat(vgpu): own bounded command binding compatibility snapshots; Add fixed64 command metadata owners with copied descriptor layout definitions, bound private tokens and per-stage push range/initialized-byte profiles. Support descriptor and push recording before pipeline binding; apply Vulkan prefix disturbance while preserving surviving upper suffix definitions. Prove reservation exhaustion/reuse/scrub, incompatible and compatible layout boundaries, partial push accumulation, per-stage definition changes and malformed range directions in nine linked Zig tests. Production coverage passes91.38% branches and100% lines; Windows test executable cross-compiles with no heap allocations. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `2b7ab77` | refactor(vgpu): apply canonical Zig formatting to compute modules; Expand command validation, compatibility loops and negative fixtures using the standard formatter for readable review. No encoded bytes, bounds, ownership or behavior change. Both linked native suites and production coverage pass: command codec100% branches/96.97% lines, compatibility state91.38% branches/97.14% lines after source-line separation. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `cf381bf` | test(vgpu): encode exact physical properties for descriptor limit oracles; Add an allocation-free independent renderer encoder helper accepting a borrowed native physical properties value and bounded output storage. This lets ICD descriptor fixtures exercise real offset alignment range and compute group limit values without guessed byte offsets or guessed device limits. Native round-trip checks preserve uniform/storage alignments and maximum ranges plus all group counts; invalid pointers/capacity reject before writes. Native Zig/C values tests and San3 pass zero leaks; Windows values fixture crosscompiles. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `338b974` | test(vgpu): gate command compatibility snapshot coverage; Require owned command compatibility and push-state tests and production coverage before ICD acceptance. Track the module in native and Windows incremental object dependencies. Nine tests pass with 91.38% branch and 97.14% line coverage, including valid binding before pipeline selection, prefix disturbance and staged push compatibility. Affects TODO: #3 (+0%; actual command integration remains pending). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `b95cefa` | test(vgpu): enforce graphics command wire coverage gates; Require independent draw, end-render-pass and bounded image readback packet comparisons in ICD verification. Twenty tests pass, including maximal 64-region copies and malformed scalar/range boundaries. Owned production coverage is 100% branches and 96.30% lines; physical triangle execution remains a separate gate. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `b88dacb` | test(vgpu): add independent typed feature chain encoder oracles; Construct actual native Vulkan feature structures and compare pinned guest partial queries with pinned receiver replies in isolated translation units. Encode deterministic boolean values without guessed wire offsets or native wire casts. Strict native and Windows compilation and San3 fixture execution pass. Affects TODO: #3 (+0%; runtime feature-chain advertisement remains pending). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `10783db` | feat(vgpu): encode and validate bounded typed feature query chains; Add allocation-free command147 structural queries and owned reply flags for Vulkan11, shader draw parameters, host query reset and transform feedback. Prove complete packet bounds before reads or writes; reject unsupported/duplicate nodes, every malformed structural word and nonboolean flags. Ignore unused reused transport scratch after the initialized prefix. Eighteen linked tests exercise all truncation lengths and independent native oracles; sanitizer execution has zero leaks and Windows crosscompile passes. Production coverage is 100% branches and 91.67% lines. Affects TODO: #3 (+0%; native API advertisement and DXVK acceptance remain pending). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ec2baa2` | docs(vgpu): clarify recorded pipeline layout token lifetime; Correct the ownership contract to retain copied compatibility definitions after recording rather than the pipeline layout token. Native pipeline layout destruction does not require pending command completion and must not invalidate copied recording state. Cite the authoritative Khronos contract before command lifetime integration. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ef77a69` | docs(vgpu): specify core descriptor update invalidation semantics; Correct the pre-integration recording lifetime plan using the authoritative Vulkan contract. Successful core destination updates invalidate recording/executable uses; pending destinations reject updates, while pending or undefined/stale copy sources are allowed. Require acknowledgment before metadata and invalidation publication, and canonicalize ignored native image/texel pointers without dereference. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `c71b862` | test(vgpu): gate typed feature query wire compatibility; Run independent pinned guest and receiver feature-chain oracles through required ICD test and source coverage targets. Build each oracle with its correct generated schema include path and keep translation-unit identities isolated. Eighteen tests pass with 100% branch and 91.67% line coverage; native API advertisement remains an independent integration gate. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `2e90f37` | docs(vgpu): clarify descriptor copy source lifetime semantics; Document that core descriptor copies require destination quiescence only. A pending source set remains readable, and copying an undefined descriptor or destroyed-resource reference is legal and yields an undefined destination. The copy transfers a reference without using its resource, as specified by vkUpdateDescriptorSets. This corrects interface wording only; bounded encoding and existing independent packet oracle behavior are unchanged. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `b3aabff` | feat(vgpu): publish transactional buffer descriptor updates after native acknowledgment; Expose bounded core buffer writes and ordered descriptor copies using actual cached host offset alignments and maximum ranges. Validate writes against same-device bound buffer usage and extent; stage metadata in fixed mutex-owned460800-byte snapshots and98304-byte wire records, scrub every return/abandon and publish only after exact command79 acknowledgment. Cache actual compute group limits with the same validated properties reply. Honor core Vulkan update lifetimes: only pending destinations prohibit mutation; acknowledged destination updates invalidate recording/executable references. Copy pending sources and undefined/destroyed-resource references legally, making undefined destinations without using source resources. Ignore unused image/texel pointer arrays canonically for buffer types. Pinned frontend oracle tests cover valid writes/copies, actual limits, whole-size ranges, malformed pointers/tokens/types/bindings/usage/ranges/overlap, aggregate capacity, copied stale descriptors and malformed host limits with sticky loss. Staging tests prove success-only metadata/invalidation, rollback on transport/corrupt replies, pending source/destination rules and zeroed scratch. Native/sharedloader plus San3 pass zero leaks; Windows fixture crosscompiles. ICD production coverage90.28% branches and99.30% lines. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `16ddafb` | docs(vgpu): specify modern DXVK 2.7.1 dependency and acceptance target; Record the user-authorized modern 2.x client target, exact public release commit, zlib/libpng license compatibility and unmodified upstream boundary before adding its submodule. Allocate a dedicated zero-weight prerequisite task while preserving functional Vulkan/DXVK acceptance requirements and feature completion accounting. Affects TODO: #9 (+0%), TODO: #3 (+0%). | #3 +0%; overall +0%; RuntimeOpen |  |
+| `ebc6c51` | chore(deps): pin DXVK 2.7.1 black-box client submodule; Track public upstream https://github.com/doitsujin/dxvk.git under submodules/dxvk at immutable release commit c3dd74be6baec53786d4e064a572185b70347a17. Initialize all four nested immutable dependencies from public HTTPS URLs without altering upstream source. Audited DXVK zlib/libpng license compatibility with GPLv3 and retained original notices. Required for user-authorized modern DXVK 2.x D3D11/DXGI compatibility acceptance. Recursive checkout is clean; build and runtime compatibility remain separate gates. Affects TODO: #9 (+20% pin/checkout milestone), TODO: #3 (+0%). | +20% to TODO: #9 (+0% overall); dependency pin only. |  |
+| `6db9967` | feat(vgpu): expose owned compute pipeline creation and destruction; Implement count1 core compute pipeline APIs with same-device shader/layout validation and fixed64 owned compatibility snapshots. Reserve metadata before native creation, refund ordinary failures, retain uncertain failures until abandonment, and retire metadata after exact native destruction acknowledgment. Add independent generated frontend wire checks, native OOM rollback, invalid input/cache/count tests and exact64-owner exhaustion. Destroy shader and layout definitions before retiring successful pipelines to prove construction copies do not impose artificial retention. Native and actual Vulkan loader suites, mapping allocation-fault suites, San3, Windows DLL cross-compilation and ICD coverage pass:90.40% branches,99.31% lines. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `184dd3c` | docs(vgpu): specify bounded Vulkan twelve thirteen and extension feature query nodes; Document all eight typed feature-query nodes, exact47/15/3/1 modern flag orders,132-byte query and668-byte reply maxima, reverse recursive body ordering, boolean and identity validation, scratch-tail policy and pointer-free ownership. Require negotiated core schema and explicit transform-feedback29 robustness2287 maintenance5471 parser mask bits before dispatch. Recognition does not advertise physical features or guest API functionality and grants no DXVK completion credit. Specify independent native offset assertions, one-hot flag oracles, truncation/corruption coverage and native/leak/Windows gates before implementation. | #3 +0%; overall +0%; RuntimeOpen |  |
+| `c42c823` | docs(vgpu): synchronize compute lifecycle and modern DXVK acceptance audit; Attribute each atomic implementation, oracle, coverage and contract increment since the preceding audit. Record the immutable DXVK dependency milestone at20% of its zero-weight prerequisite task while preserving honest55% TODO3 completion. Record current native loader coverage, Windows CI success and the unresolved128-byte Linux CI leak. Native DXVK and graphics/compute runtime acceptance remain pending. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `0c57279` | docs(vgpu): specify pinned DXVK build and isolated Windows test environment; Define exact offline minimal DXGI/D3D11 client configuration, immutable recursive revision checks, tool and output failures, dependency progress milestones and retained license terms. Specify private disposable Windows11 QEMU test resources, credential ownership and the distinction between native provisioning and real Waddle DXVK acceptance. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `076ec9b` | chore(vgpu): preserve deep allocation traces in sanitized workers; Set sanitizer-only fast_unwind_on_malloc=0 through the documented __asan_default_options hook so allocations originating in Vulkan modules retain deeper callers after module unload. Normal worker objects omit the hook entirely. No allocation ownership, teardown ordering, leak checking, driver selection or sanitizer abort policy changes. Strict sanitized worker build passes; runtime options report slow allocation unwind and detect_leaks=true, and normal-object nm confirms the diagnostic symbol is absent. Actual llvmpipe image workload16cycles passes San3. Exact CIhead083 snapshot full16 tests also pass locally in strictlvp and private headless/no-DRM/all-Mesa2CPU environments, but the repeated CI128-byte leak remains unresolved; this commit provides diagnostic evidence, not completion credit. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `d0d8602` | feat(vgpu): reserve and retire bounded command compatibility owners; Reserve one fixed command metadata owner for every command buffer before native creation. Refund complete and partial ordinary failures, preserve uncertain reservations until abandonment, scrub live owners in place at successful begin/reset, and release only after native command/pool destruction acknowledgment. Replace object-capacity-only allocation stress with exact64 metadata quota checks, reset-without-refund, partial reservation rollback, reuse and full refill. Native and actual loader suites, San3, mapping OOM checks, Windows DLL and coverage pass90.10% branches/99.17% lines. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `5aac665` | feat(vgpu): decode bounded modern Vulkan feature query profiles; Recognize the exact 47-word Vulkan12, 15-word Vulkan13, three-word robustness2 and one-word maintenance5 query nodes alongside the existing four typed nodes. Bound owned storage to eight nodes and 47 flags, preserving whole-prefix preflight, Boolean validation, reverse native reply body order and normalized requested node order without heap allocation. Extend both pinned guest-query and receiver-reply C oracles with actual native structures and compile-time Boolean interval assertions. Verify all standalone and combined one-hot positions, every truncation and every initialized structural or Boolean corruption, and the exact 132-byte query/668-byte reply maxima. Recognition does not advertise capabilities; negotiated core/schema and extension mask checks remain caller obligations documented in IMPL_DESC. Validation: native19 tests; coverage100% branches46/46 and91.67% lines44/48; sanitizer-instrumented C oracles with Zig safe tests zero diagnostics/leaks; Windows GNU crosscompile passed. Affects TODO #3 (+0%: independently verified query codec, no DXVK acceptance claim). | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `c15d69e` | fix(vgpu): reject empty native descriptor binding packets; Enforce the core vkCmdBindDescriptorSets descriptorSetCount-arraylength requirement before encoding. Replace the invalid empty native oracle case with a valid static one-set binding at the upper set boundary, and test explicit empty rejection. Linked native tests pass; production coverage remains90% branches and96.97% lines without lowering thresholds. State-only empty compatibility updates remain internal no-ops and never reach the native command. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `41756d6` | docs(vgpu): specify physical compute shader acceptance and cleanup; Define an explicit fail-closed compute workload with queried compute queue capability, poisoned/flushed256-byte storage output, actual64-group shader dispatch, barrier/fence retirement and exact64-word mapped readback. Specify each resource owner and reverse cleanup on success/failure, preserve existing full stress workload and require physical direct/shared-loader sanitizer proof before progress credit. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `a377c52` | chore(vgpu): build pinned DXVK DXGI and D3D11 clients offline; Verify root and four recursive immutable clean source revisions before each client build. Use upstream MinGW cross-file, base-system compilers and release configuration with Meson downloads disabled; exclude unrelated D3D8/9/10 entry libraries. Require nonempty x86_64 DXGI and D3D11 DLL outputs. All246 Ninja actions completed successfully with upstream sources unchanged; both outputs are Windows PE32+ DLLs. Client compilation is not native ICD or swapchain acceptance. | +80% to TODO: #9 (+0% overall):30% configuration and50% verified offline client outputs. |  |
+| `0d54419` | docs(vgpu): require nonempty native descriptor binding arrays; Align command packet bounds with the Vulkan descriptorSetCount array-length rule. Preserve the distinction between internal compatibility helper empty slices and externally issued native commands; positive boundary oracle uses one set at first-set fifteen. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `0d1feb3` | docs(vgpu): specify single-color graphics recording compatibility; Define allocation-free copied pipeline/pass compatibility, legal bind ordering, nested-pass and draw/finish failures, publication after native acknowledgment and reference lifetime obligations. Reuse existing64 command reservations and require meaningful state transition tests and unchanged coverage/leak gates before runtime integration. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `96d596a` | feat(vgpu): validate copied graphics pipeline and render pass recording state; Add allocation-free scalar graphics recording metadata with explicit error preservation and valid pipeline binding before, during and between passes. Reject nested passes, incompatible or absent draw pipelines, unmatched pass end and command finish inside a pass. Reset scrubs all fields. Meaningful ordering/recovery tests pass; production source has100% branch16/16 and line18/18 coverage. Windows fixture crosscompiles. LLVM AddressSanitizer instrumentation of all emitted owned state functions and LSan test execution pass with zero diagnostics; independent review found no further issue. Native graphics runtime integration remains pending. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `33f7ed0` | test(vgpu): prove physical compute dispatch through direct and shared ICD paths; Add explicit compute workload selection while preserving existing full mapping/image stress. Query a compute-capable family, poison and flush256-byte HOST_VISIBLE storage output, build owned shader/descriptors/pipeline, record bind/dispatch64 plus shader-write-to-host-read barrier, retire real queue/fence work, invalidate and compare all64 uint32 results with index*13+7. Missing APIs fail by name; no skipped or empty probe can succeed. Own all local handles with deterministic reverse cleanup and defensive NULLing on success/failure. Add selective normal/sanitized shared-loader targets and owned shader header dependencies. Physical NVIDIA RTX5080 direct/shared normal and direct/shared San3 all pass16 dispatch lifetimes each with balanced process descriptor counts. Forced shared-loader failure after map/poison/flush exits exactly1 cleanly; unknown selector exits2 before acquisition. The contract was committed41756d6 before source; true compute acceptance is proven, without broader graphics or DXVK claims. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `cb2453b` | test(vgpu): enforce graphics recording state coverage and native sanitizer gates; Require independent graphics state ordering tests and100% source branch/line coverage in ICD acceptance. Instrument emitted owned Zig production functions with LLVM ASan while retaining ReleaseSafe checks and process-wide ASan/LSan allocator interposition. Keep the Zig test runner outside cross-version IR stack instrumentation and verify emitted memory-access sanitizer symbols before execution. Native tests and sanitized tests pass with zero diagnostics; coverage remains above unchanged90% threshold. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `692f216` | fix(vgpu): preserve lower descriptor bindings by their own prefix; Compare each lower set M through M when a higher descriptor set is rebound. A differing higher layout definition must not disturb an otherwise compatible lower binding. Add an independent two-set regression reproducing the incorrect disturbance. Ten Zig tests pass; production coverage is 91.38% branches and 97.14% lines. Affects TODO #3; corrects existing command metadata semantics without raising completion. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `fd681ef` | docs(vgpu): specify physical push-constant shader acceptance; Define a separate compute_push workload with an owned4-byte COMPUTE shader block and sixteen distinct runtime biases across both receiver fixtures. Require copied push source bytes, poisoned storage output, actual dispatch/barrier/fence retirement and exact-word readback, while preserving baseline compute and default mapped/image workloads. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `f14d5c7` | test(vgpu): add reproducible Vulkan 1.0 push-constant compute shader; Keep owned GLSL and immutable SPIR-V1.0 words for64 storage results computed from index*13 plus a4-byte runtime push bias. Record the exact base-system glslang command alongside source and static-array lifetime. spirv-val accepts Vulkan1.0; packed header words match the generated binary byte-for-byte. This fixture alone gives no actual push-command acceptance credit. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `4cbb06b` | fix(vgpu): rebuild native ICD fixtures when their owned shader changes; Track the owned compute SPIRV header in each Linux, Windows, loader, sanitizer, allocation-fault and coverage-oracle fixture target that includes it. A shader-only change now rebuilds its native fixture rather than reusing a stale object or executable. Dry-run dependency resolution passes; source and shader bytes are unchanged. | #3 +0%; overall +0%; GraphicsDxvkOpen |  |
+| `922dd1c` | docs(vgpu): prove compact descriptor origins with independent state oracle; Specify the exact live-prefix merge invariant and distinguish initially unbound gap origins from a previously bound compatible slot. Record the authoritative Khronos validation state algorithm and the exact48-layout160-operation independent oracle matrix before its test integration. Preserve the existing64-command metadata budget and avoid unnecessary larger prefix storage. | #3 +0%; overall +0%; IntegrationPending |  |
+| `afa59aa` | test(vgpu): compare compact descriptor state with independent per-set origins; Add an allocation-free independent per-set compatibility oracle based on the authoritative Khronos validation state algorithm. Exercise48 canonical layout variants,160 legal bind operations, all25,600 ordered operation pairs and a distinct third rebind, comparing bound identities and live-prefix compatibility against every applicable layout after76,800 transitions. Add explicit initially undefined gap disturbance and compatible upper-suffix preservation regressions. These verify the compact representation after lower-set fix692f216 without increasing production storage, retaining pointers or assuming hash equality. Contract documented beforehand in922dd1c. Validation: all12 native Zig tests pass with no test allocator leaks; Windows GNU test executable crosscompile passes; production coverage91.38% branches53/58 and97.14% lines34/35. No production code changed. Affects TODO #3 (+0%: stronger independent state verification). | #3 +0%; overall +0%; IntegrationPending |  |
+| `7f88d25` | docs(vgpu): retain only acknowledged shader-consumed buffers before submission; Replace descriptor-content submit rescanning with exact dispatch-time compute-visible buffer validation and acknowledged recorded references. Core destination updates invalidate recorded commands, preventing stale submission, while pending in-flight guards retain buffer and its bound memory. Unused noncompute or historical set bindings do not create false submit failures. Correct earlier lower-set disturbance wording to each lower set own compatibility prefix. | #3 +0%; overall +0%; IntegrationPending |  |
+| `64df87e` | feat(vgpu): expose acknowledged compute pipeline binding; Expose vkCmdBindPipeline for validated same-device compute pipelines. Record the copied pipeline identity and lifetime reference only after the defined opcode93 acknowledgment. Add allocation-free shared acknowledgment/reference helpers and the bounded command codec import. The isolated incremental source compiles and passes the baseline128-cycle native fixture. Affects TODO #3; implements compute pipeline recording. | #3 +0%; overall +0%; IntegrationPending |  |
+| `e8af7f0` | feat(vgpu): expose compatible static descriptor set binding; Expose vkCmdBindDescriptorSets for bounded static buffer descriptor sets. Validate parent, structural copied layout compatibility and count before payload access; reject unsupported dynamic offsets locally. Preserve legal binding-before-pipeline ordering and publish disturbance metadata/set references only after opcode103 acknowledgment. The isolated incremental source compiles and passes the baseline128-cycle native fixture. Affects TODO #3; implements static descriptor recording. | #3 +0%; overall +0%; IntegrationPending |  |
+| `b3c9c9c` | feat(vgpu): expose acknowledged bounded push constants; Expose vkCmdPushConstants for covered aligned core128-byte push ranges. Prevalidate copied per-stage definitions without requiring prior pipeline binding; encode borrowed source bytes synchronously and publish initialized-byte metadata only after opcode132 acknowledgment. The isolated incremental source compiles and passes the baseline128-cycle native fixture. Affects TODO #3; implements push recording. | #3 +0%; overall +0%; IntegrationPending |  |
+| `d514ef5` | feat(vgpu): dispatch compute and retain consumed resources until retirement; Expose vkCmdDispatch using actual cached host group limits and copied pipeline/set layout compatibility. Validate compute-visible buffer descriptors before encoding; publish exact consumed buffer references only after opcode110 acknowledgment. Queue submission retains every recorded identity transactionally and increments inflight counts only after native success. Buffer destruction refuses outstanding ticket references, including descriptor-only uses. The isolated source compiles; meaningful frontend submission rollback, Pending destruction/update/free refusal and retirement tests pass in the final fixture. Physical direct/shared and sanitized compute workloads pass on RTX5080. Affects TODO #3; implements compute dispatch lifetime ownership. | #3 +0%; overall +0%; IntegrationPending |  |
+| `be326c2` | test(vgpu): prove compute recording and pending descriptor buffer ownership; Compare frontend pipeline/descriptor/push/dispatch packets with the independent pinned generated encoder. Exercise legal descriptor/push-before-pipeline ordering, malformed scalar and handle boundaries, real host group limits, undefined compute versus unused vertex descriptors and unconsumed historical sets. Prove queue OOM rollback, descriptor-only Pending buffer/memory/update/free/pool protection, idle retirement, core update invalidation and pre-submit consumed-buffer destruction invalidation. Add Zig transport/opcode failure regressions proving no unacknowledged metadata/reference publication. Native/shared and actual native-loader fixtures, San3 C suites and Windows DLL crosscompile pass;52 Zig tests pass with90.00% production branch and99.21% line coverage. Affects TODO #3; validates the separate command API commits without changing production behavior. | #3 +0%; overall +0%; IntegrationPending |  |
+| `3fef306` | test(vgpu): verify copied push constants through physical dispatch; Add an explicit compute_push production-worker workload using the owned Vulkan 1.0 shader and a four-byte compute-stage push range. Each of the sixteen complete resource lifetimes supplies a distinct runtime bias, mutates the borrowed source word immediately after recording, and compares all sixty-four GPU-written words after fence completion and mapped invalidation. The original fixed-seven compute workload remains a separate regression. Expose direct and pinned shared-loader normal and sanitizer targets, including the existing deterministic injected cleanup failure. All four physical NVIDIA RTX 5080 paths passed with no AddressSanitizer, LeakSanitizer or UndefinedBehaviorSanitizer diagnostics. The fixed-seven regression passed; injected sanitized shared-loader cleanup returned expected status 1 with balanced descriptors. | #3 +0%; overall +0%; IntegrationPending |  |
+| `be63993` | docs(vgpu): specify bounded256-byte push prerequisite and host limits; Specify scalar range validation, exact300-byte command maximum, four-word per-stage initialized map and verified6144-byte fixed registry growth. Preserve64 live command owners and actual-host maxPushConstantsSize validation as a separate public API prerequisite. Define boundary/oracle/lifecycle/coverage verification without advertising unsupported Vulkan capabilities. Affects TODO #3; documentation only, no completion increase. | #3 +0%; overall +0%; IntegrationPending |  |
+| `8a743aa` | feat(vgpu): bound copied pipeline push ranges at256 bytes; Introduce documented MaxPushBytes256 without changing scalar profile layouts or registry quota. Normalize aligned ranges with overflow-safe subtraction and retain stage overlap rules. Add full256-byte/final-word/overflow direction tests. Six native allocator tests, Windows test crosscompile and98% branch/100% line coverage pass. Actual host limit enforcement remains required separately before public256-byte acceptance. Affects TODO #3; pure metadata prerequisite. | #3 +0%; overall +0%; IntegrationPending |  |
+| `7b2ef53` | feat(vgpu): track all256 push bytes in owned command metadata; Extend each stage initialized-byte bitmap to four owned64-bit words and validate the256-byte profile ceiling. Preserve partial-write accumulation and clear every word on definition change. Add every64-byte boundary, full initialization, no-mutation overflow failures and exact ABI budget assertions:1254912 bytes for64 command owners,6144 bytes added. Fourteen native allocator tests, Windows test crosscompile and91.38% branch/97.14% line coverage pass. Host/API capability advertisement remains unchanged pending separate actual-limit integration. Affects TODO #3; pure command metadata prerequisite. | #3 +0%; overall +0%; IntegrationPending |  |
+| `278c437` | docs(vgpu): preserve public push limits until actual host enforcement; Define an explicit temporary core128 pipeline-layout ceiling while pure codecs and owned metadata expand to256. Specify tag/pointer/count validation before range reads, overflow-safe range subtraction, no native effects or quota reservations on rejection, and precise native regressions. Actual host limits and public property projection remain the next acceptance increment. | #3 +0%; overall +0%; IntegrationPending |  |
+| `a547ab1` | fix(vgpu): bound public pipeline pushes before native creation; Keep the public pipeline-layout push ceiling at core128 while pure256 support is introduced. Reject malformed create headers and null nonempty arrays before dereference, and reject above-ceiling offsets/ranges before metadata reservation or native exchange. Native regressions prove offset128 and UINT32_MAX plus null ranges preserve transaction count and clear output. Native128-cycle fixture and C San3 with mapping-OOM and graphics state gates pass with zero diagnostics. Actual host128/256 enforcement remains separate. | #3 +0%; overall +0%; IntegrationPending |  |
+| `9a695ad` | feat(vgpu): encode bounded256-byte pipeline push ranges; Add the documented256-byte pure packet ceiling and preserve overflow-safe aligned push-range validation. Compare full256-byte and final252-offset word layout packets with the independent generated encoder; reject above-ceiling extents. Seventeen native tests, Windows test crosscompile and99.10% branch/100% line coverage pass. Public ICD retains its separately committed128-byte guard pending actual-host integration. Affects TODO #3; private pipeline layout codec prerequisite. | #3 +0%; overall +0%; IntegrationPending |  |
+| `67b1f7b` | feat(vgpu): encode all256 bounded push bytes; Expand the command codec ceiling to256 borrowed bytes and prove exact300-byte maximum packets plus offset252 final-word encoding against the pinned generated oracle. Preserve original4/128-byte cases and reject overflow/alignment directions. Add runtime negative guard tests preventing constant-fold coverage gaps. Twenty linked native tests, Windows test crosscompile, C oracle San3 zero leaks and90.91% branch/97.06% line coverage pass. Public ICD128-byte guard remains until actual host-limit integration. Affects TODO #3; private push command codec prerequisite. | #3 +0%; overall +0%; IntegrationPending |  |
+| `7a6d50b` | docs(vgpu): specify bounded Mesa CPU cache cleanup prerequisite; Record independently reproduced RADV driver leak ownership and identical baseline/patched prototype evidence. Define official immutable Mesa25.0.7 dependency, pristine source with ignored patched build copy, exact128KiB static mask bounds, compatible retained license notices, minimal offline AMD/ACO build and strict driver-unload regression. Allocate zero-weight dependency milestones while keeping Waddle graphics/DXVK AcceptancePending | +0% to prerequisite TODO: #10 (+0% overall); full production CI remains pending. |  |
+| `6c94455` | chore(deps): pin pristine Mesa 25.0.7 for CPU cache ownership repair; Track official public HTTPS Mesa repository at immutable release commit742a20f48c59e8649533c84c4d49dd95b403f5da. Keep the vendor checkout pristine; the planned bounded CPU affinity storage patch applies only to an ignored build copy. Mesa25.0.7 matches the system RADV allocation regression and uses its existing permissive component licenses, audited in the prior implementation contract7a6d50b. Verified advertised annotated release tag resolves to the exact checkout and gitlink; no vendor files modified. Affects TODO #3 (+0%: dependency prerequisite for genuine zero-leak runtime fix). | +20% to prerequisite TODO: #10 (+0% overall, zero-weight task). |  |
+| `dd5baab` | fix(vgpu): build Mesa with bounded module-owned CPU affinity masks; Replace the pinned Mesa CPU topology utility heap growth with1024 module-owned128-byte cache masks. Existing CPU discovery bounds prove each new cache index fits; the exact128KiB BSS lifetime ends with driver unload, eliminating the orphaned allocation without exported cleanup APIs or retained heap state. Build only AMD Vulkan/ACO from an archived pristine pinned checkout in ignored build storage. Apply the owned patch there, prohibit fallback dependency downloads, disable LLVM/Gallium/GL/platform surfaces, and generate an absolute private RADV manifest. Check the exact dependency SHA and clean tracked vendor sources on every explicit gate. Validated the real tracked675-unit build and3 ordinary Vulkan enumeration/destruction/unload cycles under San3 with RTLD_NOLOAD proof and zero diagnostics. Identical unpatched prototype leaks384 bytes. Affects TODO #3 (+0%: genuine prerequisite ownership repair, no graphics/DXVK support credit). | +30% to prerequisite TODO: #10 (+0% overall, zero-weight task). |  |
+| `8563f84` | test(vgpu): verify Mesa CPU cache teardown and actual driver unload; Exercise three ordinary Vulkan create/enumerate/destroy cycles through the native loader, with deterministic cleanup for partial initialization and NULLed retired handles. Verify RTLD_NOLOAD reports the driver absent after each cycle so retained modules cannot hide leaks. Add native and San3 targets against the pinned patched RADV build. Both pass with zero leaked bytes; the same fixture reproduces 384 leaked bytes against the matched unpatched build and cleans up a failed instance creation. | +0% to prerequisite TODO: #10 (+0% overall); full production CI remains pending. |  |
+| `81eeda0` | ci(vgpu): verify repaired Mesa teardown with all host ICDs preserved; Build the immutable same-version Mesa25.0.7 RADV repair offline and run three real native and San3 teardown/unload cycles before production receiver verification. Fail closed if the installed Mesa source version changes. Substitute only RADV library_path in its original installed manifest, retaining every API/architecture setting and every other host ICD. Keep all existing receiver and full production worker workload tests; allow30minutes for the additional675-unit ACO driver build. Add required base-system glslang/zlib/expat tools and fetch the pinned Mesa gitlink. YAML,shell,Python syntax and exact manifest-field preservation verified locally; real clean CI remains mandatory. | #3 +0%; overall +0%; IntegrationPending |  |
+| `d16cb5c` | docs(vgpu): audit compute ownership and bounded Mesa prerequisite progress; Attribute each atomic source, regression, push-profile and Mesa prerequisite commit. Native Windows 11 build26300.9457 executed eight owned PE fixtures successfully; this establishes unit execution only. Physical compute/push direct/shared sanitizer paths passed; complete graphics and native DXVK remain pending. | +0% to TODO: #3 and #10 (+0% overall). |  |
+| `8860bd2` | docs(vgpu): specify acknowledged single-color graphics frontend ownership; Specify exact acknowledged graphics metadata, ordering and native lifecycle boundaries before frontend implementation. | #3/#10 +0%; overall +0%. |  |
+| `cde62cc` | test(vgpu): add owned triangle render and mapped readback workload; Add owned physical triangle workload and poisoned pixel readback; execution awaits complete graphics entry points. | #3/#10 +0%; overall +0%. |  |
+| `45ff49b` | feat(vgpu): gate256 push constants by actual host limits; Cache actual host push limits and truthfully clamp public256 support, preserving128/129hosts without fabricated feature advertising. | #3/#10 +0%; overall +0%. |  |
+| `b54beee` | test(vgpu): prove actual push limits and full256 recording; Cover nine actual/malformed host-limit cases and generated full256/final-word packet checks; native/shared/safety/Windows gates pass. Physical252-word normal/safety probes16cycles each passed. | #3/#10 +0%; overall +0%. |  |
+| `1c83116` | feat(vgpu): expose acknowledged single-color render pass ownership; Publish exact acknowledged render-pass ownership with independent native encoder checks; native/shared128cycles, safety and Windows object pass. ICD branch90.03%, line99.22%. Graphics and native DXVK acceptance remain pending. | #3/#10 +0%; overall +0%. |  |
+| `a0343f6` | docs(vgpu): record host push and render pass verification; Record actual-host push and render-pass milestones, plus four clean full16 worker paths using all host ICDs and the repaired matching RADV. Mesa production CI remains pending; graphics/DXVK completion not credited prematurely. | +0% to TODO: #3 and #10 (+0% overall). |  |
+| `40f1061` | feat(vgpu): acknowledge render pass recording and active command guards; Begin/end publish compatible pass state and five owned references only after exact opcode acknowledgments. Active passes reject transfer/compute/barrier commands and command-buffer completion; secondary recording, malformed areas and sampled final-layout usage are validated. Independent generated encoder checks and 25 invalid native cases pass through 128 direct/shared lifecycles. Transport/corrupt replies preserve state and references. San3 gates and Windows object compile pass; 74 Zig tests, production branch90.17% (2018/2238), line99.15% (2331/2351). | +0% to TODO: #3 (+0% overall); physical graphics and DXVK acceptance remain pending. |  |
+| `886198f` | docs(vgpu): require defined load contents and disjoint graphics copies; Record independent graphics audit findings before implementation: preserved attachment contents need defined initial layout, destination copy regions must not overlap, and shared allocation source image spans must remain disjoint from readback spans. Specify bounded half-open comparisons and failure-before-transmission without speculative optimal-image addressing. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; AcceptancePending |  |
+| `bf9e71f` | fix(vgpu): reject color LOAD from undefined render pass contents; Apply VkAttachmentDescription-format-06699 before encoding the bounded color pass: LOAD cannot consume an undefined initial layout. Preserve CLEAR and DONT_CARE from undefined contents and LOAD from GENERAL or COLOR_ATTACHMENT_OPTIMAL. | #3 +0%; overall +0%; AcceptancePending |  |
+| `72f405c` | docs(vgpu): specify Mesa unload proof on hosts without render nodes; Document exact pinned-loader initialization error for zero-device RADV enumeration and verify absence of DRM render nodes before recognizing it. Retain instance destruction, complete driver unload, three lifetimes and zero sanitizer diagnostics; preserve every production worker gate. Affects TODO: #10 (+0% pending clean CI). | #3 +0%; overall +0%; AcceptancePending |  |
+| `f25dd48` | docs(vgpu): require actual graphics queue flags and pass ordering; Specify immutable bounded raw queue-family capability caching, primary-only render passes and local rejection of compute/transfer/barrier operations inside the canonical pass. Preserve acknowledged lifecycle scrubbing and actual host flags without capability fabrication. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; AcceptancePending |  |
+| `71e7523` | feat(vgpu): validate actual attachment metadata before framebuffer creation; Copy image extent/sample and view subresource/component metadata after native identity publication. Resolve canonical bound color attachments, matching formats, selected mip dimensions, single layers and identity components before reserving framebuffer ownership. Preserve quiescent view retirement and copied pass compatibility. Independently compare create/destroy bytes and test NULL/stale identities, headers, bounds, MSAA/1D/non-color images, subviews, swizzles and ordinary OOM rollback. Native/shared128cycles, San3 and Windows object pass. ICD branch90.40%, line99.28%. Affects TODO: #3 (+0% pending complete physical graphics). | #3 +0%; overall +0%; AcceptancePending |  |
+| `29be25c` | fix(vgpu): verify Mesa teardown on a confirmed headless host; Handle the native loader exact VK_ERROR_INITIALIZATION_FAILED/count0 result only when /dev/dri is absent or a successfully inspected directory has no renderD* entries. Directory open/read/close errors fail closed, and every acquired DIR is deterministically closed and NULLed. | #3 +0%; overall +0%; AcceptancePending |  |
+| `8ae7928` | fix(vgpu): reject overlapping image readback destination spans; Preflight every pair of half-open destination spans before serialization. Prior buffer bounds prove endpoint additions cannot overflow. Reject identical,partial andcontained destination intersections while preserving adjacent spans and overlapping source reads. | #3 +0%; overall +0%; AcceptancePending |  |
+| `f8c7d12` | feat(vgpu): expose bounded vertexless graphics pipeline creation; Translate one canonical vertex/fragment static triangle pipeline with exact632-byte generated protocol encoding. Validate all native headers and live device-owned shader/layout/pass tokens before reserving the shared64-pipeline metadata quota; copy empty layout and pass compatibility so creating parents may retire. Ordinary host failures roll back quota; uncertain ownership survives until retired abandon. Independently compare native packet bytes and test unsupported states, NULL/stale identities, OOM rollback and copied definition retirement. Native/shared128cycles, San3 and Windows object pass. ICD branch90.41%, line99.29%. Affects TODO: #3 (+0% pending actual graphics dispatch). | #3 +0%; overall +0%; AcceptancePending |  |
+| `9146d4e` | docs(vgpu): specify bounded failure-only driver unload diagnostics; Preserve the original failing worker exit and unsuppressed sanitizer gate while collecting one existing-binary link-map diagnostic. Bound artifacts at8MiB with explicit omitted middle, retain7days, and forbid cleanup preload, driver selection changes or rerun acceptance credit. Affects TODO: #10 (+0%). | #3 +0%; overall +0%; AcceptancePending |  |
+| `296943e` | ci(vgpu): retain failed worker loader maps without changing gate status; When the complete presented-worker native/sanitizer gate fails, save its exact exit status and rerun the existing sanitized production binary once with LD_DEBUG=files. Keep the same worker,hostICDs,RADV repair and normal ownership teardown; rerun success never receives acceptance credit. | #3 +0%; overall +0%; AcceptancePending |  |
+| `43623da` | docs(vgpu): verify native and Windows graphics metadata storage bounds; Record measured416-byte resource and1280-byte device records,46080 fixed added graphics bytes and4398336 bytes across the specified metadata categories. Distinguish padding-adjusted ABI from estimates and identify static ownership/scrubbing boundaries without claiming a whole-process memory bound. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; AcceptancePending |  |
+| `70c1937` | docs(vgpu): require shader-read usage for implicit final attachment transitions; Document actual image usage validation before beginning a pass whose final layout is shader-read-only. Prevent an invalid implicit transition while preserving canonical general/color attachment paths and acknowledgment-before-state publication. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; AcceptancePending |  |
+| `4883684` | feat(vgpu): bind graphics pipelines using actual queue capabilities; Keep graphics binding state independent of compute descriptors/pushes and publish only after exact opcode93 acknowledgment. Cache raw64-family host queue flags only after complete reply/count validation; reject compute-only families, impossible host counts and corrupt replies. Own1024 bytes of fixed graphics state and scrub on native reset/free/pool retirement or abandoned receiver. Exercise repeated native binding/reset/reuse, stale/wrong pipeline tokens, capability cache immutability, missing family/queue data, corrupt acknowledgment and transport failure without state publication. Native/shared128cycles, San3 and Windows object pass. ICD69tests branch90.26%, line99.26%. Affects TODO: #3 (+0% pending draw/physical acceptance). | #3 +0%; overall +0%; AcceptancePending |  |
+| `fad6cf2` | docs(vgpu): specify private Windows loader and real receiver bootstrap prerequisites; Define offline pinned MinGW loader build, actual guest-path manifests, required runtime imports and interactive medium-integrity discovery. Allocate zero-weight prerequisite11 and retain same-process backend binding plus truthful Vulkan1.3/WSI gates before native DXVK acceptance. Do not replace delegated physical IVSHMEM integration with a TCP claim. Affects TODO: #11 (+0%). | #3 +0%; overall +0%; AcceptancePending |  |
+| `1584200` | chore(vgpu): crossbuild pinned native Windows Vulkan loader offline; Add an owned MinGW x86_64 Windows CMake toolchain using base-system GCC, C++, windres and an explicit target sysroot search policy. Add a private Ninja release target against the immutable Vulkan loader and existing pinned header307 compatibility boundary, with tests, dependency updates and Vulkan code generation disabled. Keep upstream Windows integrity checks and extension trampoline assembly enabled; do not install globally or alter vendor sources. | +40% to prerequisite #11 (+0% overall); immutable offline Windows loader build and PE/import checks passed. |  |
+| `c97ac02` | docs(vgpu): specify bounded native feature chain publication; Define64-header/8-known-node traversal, unknown-node payload preservation, cycle/duplicate quotas and transactional typed Boolean publication before modern feature queries. Require exact native ABI sizes, one-hot/malformed-last tests and90% coverage without receiver binding or API/extension advertisement. Affects TODO: #3 (+0%). | #3 +0%; overall +0%; AcceptancePending |  |
+| `743e8b3` | docs(vgpu): audit graphics and real Windows loader verification; Actual installed Windows11 build26300.9457 ran unmodified pinned loader against the private ICD with eight loader lifecycles and128 ICD dispatch cycles; all six deployed hashes match isolated source1584200. Evidence @B/windows11_vm/windows_loader_discovery.log and windows_loader_deployment.json. This verifies native discovery with an owned mock callback, not real GPU/DXVK. CI37542450701 and37542446871: Windows passed, Linux native full16 passed, first sanitized production lifetime still leaked128B through an unloaded unknown driver; standalone repaired RADV gate passed. Retain #10 at50% pending exact loader-map diagnostics and clean full production CI. | +20% to prerequisite #11 (+0% overall); actual medium-integrity guest discovery passed. +0% to TODO: #3 and prerequisite #10. |  |
+| `267474e` | feat(vgpu): record acknowledged vertexless draws with pending ownership; Require an active compatible pass and live compiled graphics pipeline before draw106. Exact acknowledgment precedes pipeline-reference publication. Independently generated native packets exercise ordinary and zero-count/full-u32 draws, binding before/inside a pass, retired creating shaders/layout/pass, and pending protection of pipeline/pass/framebuffer/view/image/memory/pool until queue idle. Corrupt/transport acknowledgment tests preserve references and active state. Native/shared128 lifecycles, San3, Windows object compilation and74 Zig tests pass; production branch90.04% (2024/2248), line99.03% (2343/2366). | +0% to TODO: #3 (+0% overall); real triangle pixels and DXVK acceptance remain pending. |  |
+| `399e7e9` | feat(vgpu): adapt native feature chains transactionally; Collect at most64 aligned native headers and eight distinct recognized tags without touching unknown payloads. Prevalidate whole Boolean batches and disjoint output extents before named-member writes. All25 native and freshly instrumented oracle sanitizer tests pass; Windows executable crosscompiles. | +0% to TODO: #3 (+0% overall); actual feature query/cache/device enablement remain pending. |  |
+| `2e7833a` | test(vgpu): delimit native feature adapter fixtures for coverage; Add explicit test-only boundary before native adapter helper functions. Correct production-only coverage97.96% branches(48/49),95.74% lines(45/47);25 tests pass. | #3 +0%; overall +0%. |  |
+| `a58886f` | docs(vgpu): record bounded native feature adapter verification; Record native/Windows exact storage ledger, overlap ownership preconditions, structured Boolean ABI assertions and corrected production-only sanitizer/coverage evidence. No hardware feature or API advertisement credit. | #3 +0%; overall +0%. |  |
+| `6da5c26` | docs(vgpu): specify atomic core and Features2 native publication; Specify entire core55 and known-chain validation before any caller write, exact named-member Boolean ABI, whole-outer extent overlap rejection, native canary/failure tests and Linux/Windows storage proof. This adds no procedure or API advertisement. | #3 +0%; overall +0%. |  |
+| `b649a99` | docs(vgpu): validate Features2 addresses before aligned native casts; Specify nullable untyped address validation before native cast after optimized typed-pointer negative test exposed alignment-check folding. | #3 +0%; overall +0%. |  |
+| `303f0cb` | feat(vgpu): publish core and chained Features2 outputs atomically; Prevalidate core55, known-chain batch and whole240-byte outer overlap before named-member writes. All28 D/RS/sanitizer tests and Windows crosscompile pass; branch98.51% (66/67), line98.44% (63/64). Actual Windows11 execution also passes28 tests, exits0; local/guest SHA256 eae63eafc1cda05101ad9f82fc914fff728bf0c397c3ea841e9b7b3df212d679, evidence @B/windows11_vm/features_native_units.log. | +0% to TODO: #3 (+0% overall); actual raw feature transport and advertisement remain pending. |  |
+| `daaa2ed` | feat(vgpu): record bounded acknowledged image buffer readback; Validate live RGBA/BGRA2D sample1 transfer owners and1..64 bounded tight regions before116. Reject inside-pass, invalid/foreign/stale/unbound/usages, destination overlap and conservative shared-allocation source-span intersections; permit exact adjacency. Publish exact image/buffer/both memory references only after ACK; failed replies preserve state. Independent generated encoder, mapped destination, pending ownership, native/shared128 lifecycles, San3 and Windows object pass;74 Zig tests, fresh C-oracle production branch90.13% (2055/2280), line99.08% (2382/2404). | +0% to TODO: #3 (+0% overall); actual physical triangle and DXVK acceptance remain pending. |  |
+| `0784d2d` | docs(vgpu): require positive Lavapipe devices and dual unload proof; Specify exact option preflight, positive Lavapipe enumeration, balanced residency probe, strict three-cycle unload, isolated dual-build outputs and unchanged complete CI gate before fixture implementation. | #3/#10 +0%; overall +0%. |  |
+| `89adb63` | docs(vgpu): account for imported ICD sanitizer source closure; Specify exact path/line runtime inventory of nine embedded imports, explicit compile-time/test exclusions, preserved compiler guards and whole-module reverse equality, independent per-module binary ASan hook proof, separate artifacts and zero-leak native/Zig execution. | #3 +0%; overall +0%. |  |
+| `b8d2168` | docs(vgpu): compact atomic progress history without losing evidence; Convert all324 recorded entries into one row per commit, resolve historical self-hash placeholders, centralize repeated pending wording and preserve every original change, delta and verification record. | #3 +0%; overall +0%. | Preserved-entry and numeric/URL inventory verified against @B/tracker_before_compaction.md; Git history unchanged. |
+| `0ddca3a` | Added default-window-icon.png; Independent application artwork addition. | #3 +0%; overall +0%. | No vGPU implementation credit. |
+| `1beb35c` | docs(tracker): update TODO 3 progress for queue idle concurrency; Synchronize queue-idle concurrency accounting; the +5% #3 delta is already attributed to d224846, with no duplicate award. | #3 +0%; overall +0%. | Existing native queue concurrency, sanitizer/coverage and Windows checks recorded under d224846. |
+| `34ca8f1` | docs(vgpu): audit physical compute proof and completed DXVK build prerequisite; Audit physical compute proof and completed zero-weight DXVK build prerequisite. | #3 +0%; overall +0%. | RTX5080 four compute paths; DXVK246-action offline build; native Windows37536533350 success; Linux128B leak unresolved at that checkpoint. |
+| `857e56a` | docs(vgpu): specify authenticated bounded receiver TCP bootstrap; Specify private-token authenticated, bounded real TCP receiver bootstrap and exact retirement ownership. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; no backend/GPU acceptance from contract. |
+| `4aa941c` | docs(vgpu): pin bootstrap capability capture to actual receiver reply; Capture exact actual160-byte host capability reply before guest negotiation; compare decoded snapshots before transmitting. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; avoids nonexistent capability encoder/synthetic profile. |
+| `99a0cbc` | test(vgpu): add independent authenticated TCP packet oracle; Add independent literal handshake/profile oracle with exact portable extents and no native wire casts. | #3/#11 +0%; overall +0%. | Pinned native C oracle; subsequent parser native/safety gates. |
+| `83547bc` | feat(vgpu): validate bounded authenticated TCP bootstrap packets; Implement Zig config/handshake/profile/admission/response ABI and shared coverage hook; strict numeric JSON and fixed64KiB scrubbed parser storage. | #3/#11 +0%; overall +0%. | 10 allocator tests;97.26% branches142/146,99.15% lines116/117; @B/tcp_wire_gates.log, venus_tcp_wire_coverage.log. |
+| `fb2be7f` | test(vgpu): exercise TCP wire ABI on native Windows and Linux; Exercise TCP wire C ABI32cycles including actual Windows execution. | #3/#11 +0%; overall +0%. | @B/tcp_final_native_gates.log; @B/windows11_vm/tcp_wire_units.log; exact deployed artifact hashes. |
+| `ba0983c` | docs(vgpu): specify owned negotiated capability binding; Specify additive immutable160-byte capability binding, preservation on rejected binds and retirement scrubbing. | #3 +0%; overall +0%. | IMPL_DESC.md; no API/extension increase. |
+| `163abb9` | docs(vgpu): define strict native socket retirement verification; Define strict native socket ownership/retirement and balanced Event baseline verification. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; no padded handle baseline. |
+| `264962a` | test(vgpu): gate physical triangle rendering through both ICD paths; Add physical triangle direct/shared normal and sanitizer workload gates without shortening16-cycle stress. | #3 +0%; overall +0%. | @B/graphics_triangle_physical_normal.log and graphics_triangle_physical_sanitized.log; red-center/blue-corner pixels, fences, invalidation, balanced descriptors; injected cleanup exit1 required. |
+| `ccff936` | docs(vgpu): specify sequential real TCP frontend ownership; Specify sequential real TCP client/server APIs, alias/output guarantees, deadlines, sequence and clean retirement. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; real controller retirement precedes exact-session ACK. |
+| `c73dd80` | docs(vgpu): identify Lavapipe allocation and require complete Mesa repair; Attribute remaining CI allocation to same-PID unloaded Lavapipe CPU topology and require dual same-version Mesa repair. | #3/#10 +0%; overall +0%. | CI37544979923 PID12382 allocation RVA0x1526a4/0x152b2d; matching realloc disassembly; @B/ci_37544979923_diagnostics/presented_worker_loader.log. |
+| `058138c` | docs(vgpu): define additive whole-RPC remaining timeout budget; Define additive bounded remaining whole-RPC budget with unchanged configured frontend maximum. | #3/#11 +0%; overall +0%. | IMPL_DESC/TCP_BOOTSTRAP; no deadline reset from partial I/O. |
+| `21faad9` | docs(vgpu): require explicit Windows CSPRNG provider retirement; Require explicit BCrypt algorithm-provider open/generate/close ownership instead of persistent implicit system RNG cache. | #3/#11 +0%; overall +0%. | Actual Windows handle-creation traces; TCP_BOOTSTRAP.md. |
+| `18f5035` | feat(vgpu): support a bounded remaining timeout for guest exchange; Implement guest_exchange_timeout remaining-budget API and preserve original frontend policy. | #3/#11 +0%; overall +0%. | Guest native/sanitizers/coverage pass100% lines75/75,98.80% branches82/83; actual Windows guest_timeout_units.log with matching hash. |
+| `e239aab` | docs(vgpu): require genuine ICD ASan with preserved compiler defenses; Specify genuine full owned-ICD Debug ASan access instrumentation and compiler-guard reverse equality. | #3 +0%; overall +0%. | IMPL_DESC.md; preserve checks/lifetimes/guards, no source rewrite/suppression. |
+| `d4714dd` | feat(vgpu): own bounded deadline TCP sockets on Linux and Windows; Implement portable deadline/cancellation TCP socket owners with balanced native Winsock/CNG lifetime. | #3/#11 +0%; overall +0%. | Linux/Windows strict builds and actual peer tests; native socket WSA cleanup verified. |
+| `45911a5` | docs(vgpu): size complete dual-driver CI resource budget; Set45min complete dual-driver CI @B/job budget while retaining every per-fixture deadline. | #3/#10 +0%; overall +0%. | Measured27min failing job plus remaining6–8min gates; dual978 versus675actions. |
+| `0303eb0` | test(vgpu): verify real TCP deadline and socket cleanup paths; Verify32 real-loopback socket lifecycle/failure/cancel/partial timeout/EOF cycles and exact native resource retirement. | #3/#11 +0%; overall +0%. | San3 clean;99.31% lines144/145,92.63% branches176/190; @B/tcp_transport_gates.log, tcp_socket_coverage.log; actual Windows tcp_transport_units.log. |
+| `24c1d38` | test(vgpu): prove actual Windows RNG provider error retirement; Prove explicit Windows CNG provider success/failure cleanup128cycles without masking persistent handles. | #3/#11 +0%; overall +0%. | @B/windows11_vm/tcp_cng_units.log; unchanged failure bytes and exact handle baseline. |
+| `38179b8` | chore(vgpu): add isolated TCP parser and socket verification targets; Add isolated TCP wire/socket native, sanitizer, coverage and Windows targets. | #3/#11 +0%; overall +0%. | All eight explicit vgpu-tcp wire/transport gates pass; aggregate GNU integration separately tracked. |
+| `3e9244d` | test(vgpu): instrument all owned ICD accesses with preserved compiler guards; Instrument every exact source-mapped owned ICD function while preserving compiler guards through whole-module reverse proof. | #3 +0%; overall +0%. | @B/icd_owned_safety_gate.log:161names,173/174definitions,1130/1537guards, zero omissions; native128/28groups+75Zig tests clean. Imported modules not included at this checkpoint. |
+| `b5ca62a` | docs(vgpu): specify upstream Lavapipe export closure and unload proof; Specify upstream Lavapipe export closure and matched baseline/repaired allocator/unload proof. | #3/#10 +0%; overall +0%. | Exact3 ICD exports, zero exported UNIQUE; matched baseline384B/3allocations versus repaired0; identical000000ff L3 masks. |
+| `e4b75d7` | fix(vgpu): close Lavapipe incidental static archive exports; Apply only the pinned upstream Vulkan link arguments/dependency map to Lavapipe ignored build copies. | #3/#10 +0%; overall +0%. | scripts/patches/mesa_lavapipe_visibility.patch; @B/mesa_lavapipe_visibility_unload.log, baseline_regression.log, repaired_regression.log; no custom whitelist/retention. |
+| `edc6067` | docs(vgpu): checkpoint TODO three continuation and agent ownership; Checkpoint continuation, existing dirty source, VM/artifacts and exact three-agent ownership. | #3/#10/#11 +0%; overall +0%. | HANDOFF.md and three /tmp checkpoint files; real modern Vulkan/DXVK acceptance still pending. |
+| `69b7dd0` | chore(vgpu): build immutable repaired RADV and Lavapipe together; Build pinned repaired RADV and Lavapipe with both owned patches, one Ninja writer, isolated fresh outputs and offline dependencies. | #3/#10 +0%; overall +0%. | 978actions; LLVM19.1.7/SPIRV-Tools2025.1.1; @B/mesa_cpu_cache_dual_integration_build.log, dual_build_gates.log; both3unloads, exact3exports, zeroUNIQUE, zero diagnostics. |
+| `594ef5e` | feat(vgpu): publish bounded authenticated TCP peer owner ABI; Publish documented bounded client/server owner ABI, preserving drafted implementations pending their own tests. | #3/#11 +0%; overall +0%. | @B/tcp_peer_api_gates.log; wire32Ccycles+10ReleaseSafe tests, C San3 and x64 Windows crossbuild. |
+| `dc55f14` | test(vgpu): require live software devices and exact dual driver unload; Require positive Lavapipe enumeration, exact intended-driver residency and three complete unloads; keep RADV exception isolated. | #3/#10 +0%; overall +0%. | @B/mesa_cpu_cache_dual_fixture_gates.log, dual_fixture_negatives.log; bothDSOs count1/native+safety; malformed options/path/wrongDSO rejected cleanly. |
+| `4cf7fa6` | fix(ci): repair both installed Mesa allocator owners without filtering ICDs; Integrate base LLVM/bison/flex and path-only same-version RADV/Lavapipe repair in CI while preserving every installed manifest. | #3/#10 +0%; overall +0%. | @B/mesa_cpu_cache_ci_manifest_check.log; YAML/Python pass;8manifests,6byte-identical others; missing/invalidLvp fails before mutation; full CI pending. |
+| `46cd546` | feat(vgpu): implement authenticated sequential TCP client ownership; Implement and verify bounded authenticated TCP client with real peers, staging, alias/deadline/sequence/cancel and retirement checks. | #3/#11 +0%; overall +0%. | 31portable peer cases plus5Linux dependency faults,8cycles each;100%lines131/131,92.11%branches175/190; zero FD/native Win11 handle leaks; @B/tcp_client_coverage.log, tcp_client_sanitizers.log, windows11_vm/tcp_client_peer_units_final.log; actual deployed SHA matches. |
+| `4768f82` | docs(vgpu): synchronize resumed prerequisite commit evidence; Attribute every previously omitted atomic commit and resumed agent increment without duplicating historical acceptance deltas. | #3/#10/#11 +0%; overall +0%. | Exact feature-history set audit from2cac52d through prior HEAD; TODO3 stays55%, #10 stays50%, #11 stays60%. |
+| `d6ca59f` | docs(vgpu): specify side-effect-free Features2 topology preflight; Extract exact whole-publication validation before hardware query/cache effects, preserving current native Boolean and overlap rules. | #3 +0%; overall +0%. | Pure native adapter contract; no query/advertisement acceptance. |
+| `bd3b105` | chore(vgpu): expose committed TCP gates through the main makefile; Include isolated TCP @B/test targets in GNUmakefile. | #3/#11 +0%; overall +0%. | All eight wire/socket native, sanitizer, coverage and Windows crossbuild gates pass through main makefile; @B/tcp_gnu_integration_gates.log. |
+| `1be24e0` | docs(vgpu): specify TCP server cancellation and status consistency; Specify cancellation, alias/error staging and consistency for the real TCP server. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; contract before server implementation. |
+| `2d0ca31` | chore(vgpu): isolate TCP client verification build outputs; Isolate four committed TCP client verification targets and their outputs. | #3/#11 +0%; overall +0%. | @B/tcp_client_make_gates.log; native, San3, coverage and Windows compile pass. |
+| `2c60d75` | test(vgpu): instrument the complete embedded ICD source closure; Instrument the complete recursively embedded owned ICD source closure with exact per-function mapping and preserved compiler guards. | #3 +0%; overall +0%. | @B/icd_closure_safety_gate.log and {native,test}_sanitized.json:217runtime names/10files,264/265definitions,1130/1537guards, whole-module reverse equality;128native cycles/28groups+75Zigtests, zero CSan3 findings; independently linked codecs remain separate. |
+| `c753f02` | docs(vgpu): require native EOF provenance before TCP retirement; Require actual native recv-zero provenance before admitting clean TCP EOF retirement. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; clock/recv failure must never admit the clean retirement ACK. |
+| `9c1a229` | refactor(vgpu): preflight complete Features2 output without side effects; Extract pure native Features2 validation before publication or host queries. | #3 +0%; overall +0%. | @B/features2_preflight_gates.log:29D/RS/C-oracle tests, zero sanitizer/allocator leaks;98.55%branches68/69,98.51%lines66/67; Windows compile; full A5 output unchanged after preflight. |
+| `783985f` | docs(vgpu): specify immutable per-physical feature query ownership; Adopt canonical actual-host query caching, pure caller preflight, API-aware node admission and explicit conservative feature projection. | #3 +0%; overall +0%. | 460800-byte fixed cache increment specified; no Vulkan API/extension or DXVK credit. |
+| `cbd93b0` | docs(vgpu): require actual access safety in separately linked ICD codecs; Specify six isolated native/allocator gates, exact runtime/source provenance, compiler-defense preservation and atomic module enablement. | #3 +0%; overall +0%. |49runtime names/24existing units; combined ICD seam and Windows/GPU acceptance remain separate. |
+| `9a9ee3b` | fix(vgpu): distinguish actual TCP EOF from native socket failure; Record actual native recv-zero provenance before clean server retirement admission. | #3/#11 +0%; overall +0%. | Host wire/socket safety;99.32%lines146/147,92.71%branches178/192; actual Win11 socket32cycles, exact handle baseline and SHA19707B8B24C913CE4186C09AB7A4E602BD244ACC37B0F9AADA684CBCEC94641B. |
+| `a8b639e` | docs(vgpu): specify actual TCP controller lifecycle and watchdog; Shared-index collision also included verified capability binding sources, exports, fixture and evidence; Add copied compatible binding, rejected-call preservation and teardown scrubbing; pass actual production-worker profile through direct/shared dispatch. | #3 +0%; overall +0%. |161-byte logical payload, no allocation; native/shared128cycles, loader8lifetimes, Windows crossbuild,75Zigtests;90.21%branches2064/2288,99.09%lines2395/2417; complete217-name closure clean; RTX5080 normal/safety triangle16lifetimes/path with exact pixels and forced-loss cleanup. @B/icd_capability_binding_* logs; Windows/DXVK pending. |
+| `325422a` | feat(vgpu): own actual negotiated capability snapshots in the ICD; Complete three native/Windows/header link-list changes for capability sources captured in a8b639e. | #3 +0%; overall +0%. | Final complete binding checkpoint; no duplicated acceptance credit. |
+| `728d09a` | feat(vgpu): forward authenticated TCP frames through the actual guest boundary; Own actual-peer token/profile/capability/sequence/deadline/status/EOF/cancellation handling, preserving synthetic guest scope in units. | #3/#11 +0%; overall +0%. |8cycles;100%lines124/124,92.02%branches173/188; zero San3 findings; actual Win11 exact handle baseline/SHA D4FCA66C77EAB9E84A117E9F2B1D04EB90BCA7DF3DE64641CA317AA6D55DD8B5; tcp_server_coverage.log, tcp_server_sanitizers_final.log, windows11_vm/tcp_server_peer_units.log; no cross-VM GPU credit. |
+| `da4dfb5` | docs(vgpu): require production-only standalone codec coverage; Specify exact legacy fixture boundaries and meaningful malformed-owner rejection tests to repair true command coverage89.33%. | #3 +0%; overall +0%. | Historical91.67%included test callback; corrected production gate pending. |
+| `024bc57` | chore(vgpu): require embedded ICD access checks in aggregate safety; Include the owned closure target in GNUmakefile and the aggregate ICD sanitizer dependency list. | #3 +0%; overall +0%. | make vgpu-icd-sanitizers passes legacy C/allocator/lifecycle/fault/state gates plus genuine10-file embedded access instrumentation; @B/icd_capability_binding_aggregate_safety.log; separate codecs/Windows/GPU remain independent. |
+| `69dc5a9` | test(vgpu): add genuine standalone capability codec ASan gate; Add isolated reusable access-check runner and capability-only registration. | #3 +0%; overall +0%. |4runtime names/native+test4definitions,38actual hooks each,894/970guards preserved, reverse equality; native+3allocatorunits clean; fresh production93.33%branches28/30,100%lines28/28; @B/icd_dependency_capabilities_{gate,coverage}.log. |
+| `5b9604b` | docs(vgpu): account for exact Features2 helper reachability; Preserve full source inventory while truthfully reporting one absent native helper and requiring its emitted, instrumented Zig-test body. | #3 +0%; overall +0%. | Exact publish_batch signature/path/mode; no existing-body exclusion or relaxed reverse/access proof. |
+| `9111799` | chore(vgpu): expose isolated TCP server verification gates; Add four isolated native/safety/coverage/Windows server targets. | #3/#11 +0%; overall +0%. | @B/tcp_server_make_gates.log; all four pass; synthetic guest units remain separate from real cross-VM execution. |
+| `0e932b1` | test(vgpu): reject callback owners lacking their borrowed context; Exercise start/poll/take rejection before callback or owner mutation and documented cleared take outputs. | #3 +0%; overall +0%. |6D/RS tests; genuine native/test9names/9defs,65hooks each,901/1045guards/reverse equality, zero findings; true93.33%branches70/75,100%lines82/82; Windows crosscompile. @B/command_coverage_repair_* and icd_dependency_command_gate.log. |
+| `7884ae3` | fix(vgpu): exclude legacy test fixtures from codec coverage; Use exact validated legacy fixture boundaries while retaining every runtime helper. | #3 +0%; overall +0%. | Fresh command93.33%branches70/75,100%lines82/82; capability93.33%branches28/30,100%lines28/28; prior full reports preserved in @B/coverage_legacy_fixture_checkpoint. Actual Win11 command6units exit0/SHA d5b5e592adb1e1d2ff2c22820bbc1f3ee1b212edbbdbb35b68ea9ec5328fb393; windows11_vm/command_coverage_repair_units.log. |
+| `90b714f` | test(vgpu): account for native lazy Features2 helper in owned sanitizers; Account for the exact lazily absent native Features2 helper and add owned feature imports/oracle prerequisites. | #3 +0%; overall +0%. | 240source functions/12files retained; native295definitions/1149guards,test297/1983;90tests clean, testpublish_batch3access relocations; @B/features2_closure_first.log. Query source uncommitted at this checker checkpoint; no query/physical credit. |
+| `61557de` | test(vgpu): gate command owner accesses with genuine ASan; Add standalone command access gate with explicit native/test emission mode. | #3 +0%; overall +0%. | 9names/9defs,65hooks each,901/1045guards/reverse equality; native+6units clean;93.33%branches70/75,100%lines82/82; @B/icd_dependency_command_{gate,coverage}.log. |
+| `4e08d06` | test(vgpu): gate object lifetime accesses with genuine ASan; Add isolated object lifetime access gate. | #3 +0%; overall +0%. | 8names/8defs,59hooks each,900/971guards/reverse equality; native+4units clean;98.75%branches79/80,100%lines67/67; @B/icd_dependency_objects_{gate,coverage}.log. |
+| `8295e2f` | test(vgpu): gate instance codec accesses with genuine ASan; Add isolated instance codec access gate with fresh sanitized native oracle. | #3 +0%; overall +0%. | 9names/10defs,51hooks each,900/999guards/reverse equality; native+5units clean;95.59%branches65/68,100%lines85/85; @B/icd_dependency_instance_wire_{gate,coverage}.log. |
+| `90b0f3d` | fix(vgpu): keep instance safety header discovery read-only; Remove generated-header prerequisite that could invoke a shared generator. | #3 +0%; overall +0%. | Standalone runner discovers/hashes existing inputs read-only; missing generated headers fail without mutation. |
+| `9ef9dd9` | test(vgpu): gate query codec accesses with genuine ASan; Add isolated query codec access gate with fresh sanitized native oracle. | #3 +0%; overall +0%. | 10names,native13/test14defs,71/75hooks,903/997guards/reverse equality; native+3units clean;95.56%branches86/90,100%lines71/71; @B/icd_dependency_query_wire_{gate,coverage}.log. |
+| `efe3399` | test(vgpu): gate physical-device values accesses with genuine ASan; Add isolated physical-value codec access gate with fresh sanitized receiver oracle. | #3 +0%; overall +0%. | 9names/36defs each,404hooks each,933/1015guards/reverse equality; native+4units clean;90.91%branches40/44,100%lines57/57; @B/icd_dependency_values_{gate,coverage}.log. |
+| `c2faa4c` | fix(ci): link the negotiated capability codec in Windows ICD gates; Add capability library to all three explicit workflow ICD link lists. | #3/#10/#11 +0%; overall +0%. | CI37556752590 Windows112584658369 failed undefined venus_capabilities_compatible at9111799; YAML and three isolated corrected Windows crosslinks pass, inputs SHA-stable; @B/windows_ci_capability_links/{snapshot.json,links_v2.log}; full native CI rerun pending. |
+| `862046b` | test(vgpu): aggregate all six standalone ICD dependency ASan gates; Add seventh aggregate target after six separate verified module registrations. | #3 +0%; overall +0%. |6native fixtures+25Debug units, genuinehooks/full accounting/guard reverse/provenance, zero findings; @B/icd_dependency_aggregate_gate.log; combined ICD seam remains separate. |
+| `33d4ca3` | docs(vgpu): require actual access proof across the complete ICD seam; Specify private linkage of embedded ICD and six sanitized codecs, fresh C oracles and all18-source final-executable hook proof. | #3 +0%; overall +0%. | New isolated output/source freeze required; no public artifact replacement or Windows/GPU/DXVK credit. |
+| `af81fc3` | docs(vgpu): distinguish direct feature queries from loader API acceptance; Specify full direct ICD chain proof and legal loader core-query/cache proof under the unchanged1.0/no-extension ceiling. | #3 +0%; overall +0%. | First direct physical triangle passed; loader KHR alias absent by pinned enabled-extension gate, shared first attempt failed and preserved; corrected full AcceptancePending |
+| `f93b2c6` | chore(vgpu): link independent Features2 oracles for ICD verification; Add feature source dependencies and exactly-once native/coverage/Windows test-only oracle inputs; runtime libraries exclude test oracles. | #3 +0%; overall +0%. | Native128cycles,96ReleaseSafe units,90.06%branches2120/2354,99.08%lines2469/2492 and Windows crosslinks pass on frozen candidate; query source/physical/full18 seam still pending at wiring checkpoint. |
+| `e1b6d27` | docs(vgpu): specify owned modern device-create wire requests; Define bounded exact command11 queues/names/legacy/promoted-feature serialization with complete preflight and independent native oracle requirements. | #3 +0%; overall +0%. | Public input parsing, support/enable policy and device-state ownership remain separate; no API/extension/DXVK credit. |
+| `4b62726` | fix(ci): link independent Features2 oracles in Windows ICD fixtures; Compile both pinned test oracles and link static/loader fixtures exactly once; DLL excludes them. | #3/#10/#11 +0%; overall +0%. | YAML parse and isolated exact workflow crosslinks pass; @B/windows_ci_features2_links_v2/links_v3.log. Initial private snapshots missing local oracle alias/relative shaders failed and remain preserved; no native CI credit from crosslinks. |
+| `70fd669` | test(vgpu): verify genuine access safety across the complete owned ICD seam; Privately link all18 newly sanitized modules and eight C oracles; validate final executable hooks and immutable provenance. | #3 +0%; overall +0%. | Six native codec fixtures/25allocatorunits, native128cycles/96ICDunits;289declarations,375/377definitions,6580/7453guards,4352/4360final hooks; zero CSan3 findings; @B/icd_complete_seam_safety_gate.log and reports. Native publish_batch absent explicitly/test3hooks. |
+| `e9f01f6` | docs(vgpu): retain TCP views when exact reaping proof is lost; No result/ACK or released controller mapping when worker exit status is unknown. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; lost-proof retention contract, no fabricated retirement/leak credit. |
+| `a7c9482` | feat(vgpu): cache checked raw Features2 queries per physical device; Query actual API/parser-admitted canonical chain once, preserve raw snapshot and expose conservative zero allowlist; reject bad native chains before transport. | #3 +0%; overall +0%. | 96D/RS units/native128cycles;90.06%branches2120/2354,99.08%lines2469/2492; all668truncations/167corruptwords, cache isolation/teardown; full18 safety and Windows crosslinks pass; @B/features2_final_* logs. Actual Windows/DXVK pending. |
+| `abe9110` | test(vgpu): verify real negotiated feature cache at both ICD boundaries; Assert direct full-chain projection and legal loader1.0 core cache with hidden KHR alias; firstqueryone/repeatszero submits. | #3 +0%; overall +0%. | RTX5080 triangle all4direct/shared normal/safety paths16lifetimes each, exact pixels/fences/invalidate/FD balance, forced-postflush exit1/target0; @B/features2_physical_{normal,safety}_final.log. First shared alias failure preserved. |
+| `279dd9b` | feat(vgpu): control one authenticated actual TCP receiver lifecycle; Own token admission, actual capability/guest negotiation, sequential forwarding, original handshake/watchdog budget and proof-gated reap/ACK/view retirement. | #3/#11 +0%; overall +0%. | 49faultcases+real eight-version forwarding;100%lines151/151,91.74%branches200/218; CSan3 clean except deliberate supervised lost-proof termination earns no leak credit; @B/tcp_bridge_* logs. Host normal/safety and actual Win11 real eight-version requests/ACK exit0; GPU/DXVK still pending. |
+| `dbb6014` | docs(vgpu): reconcile verified query seam and TCP controller evidence; Record five atomic commits and their exact scope/proof without completion credit. | #3/#10/#11 +0%; overall +0%. | Windows CI112587098004 passed c2faa4c; Linux112587097749 still running, full clean-CI prerequisite remains open. |
+| `710f5ae` | docs(vgpu): specify complete owned ICD physical access acceptance; Define private all18-module direct/shared actual triangle/compute/push and prescribed cleanup matrix with frozen graph, full8-driver inventory and genuine final binary proofs. | #3 +0%; overall +0%. | 18serial runs/144positive lifetimes required; no shared artifact/driver policy changes, no inherited Windows/DXVK credit; separate instrumentation scopes explicit. |
+| `dbb743d` | test(vgpu): add independent modern device-create request oracle; Encode command11 through immutable pinned generator with borrowed canonical native inputs and bounded8192-byte output. | #3 +0%; overall +0%. | 128literal header/priority/identity/canary cycles normal+CSan3, strict Windows oracle crosscompile; @B/device_wire_oracle/{native,safety_windows}.log; codec/runtime/Windows execution remain separate. |
+| `06e9eee` | feat(vgpu): serialize bounded owned modern device-create requests; Validate exact IDs, queues/priorities/names/legacy/recognized feature records and complete capacity before command11 writes; retain no input pointers. | #3 +0%; overall +0%. | 5meaningful codec+17imported units D/RS,137modern+55legacy onehots, chains/limits/allocator corpus;100%branches88/88,98.15%lines53/54; genuine2source19functions/26defs1047guards/reverse equality, final49device+242render hooks, zero CSan3/allocator leaks; strict Windows22unit crosslink. @B/device_wire_oracle/*final.log and device_wire_owned_safety_final reports; public integration/actual Windows/DXVK pending. |
+| `fd6f017` | docs(vgpu): distinguish private manifest receipt hashes from originals; Correct frozen receipt semantics while requiring separate immutable original hashes and exact only-library_path repair. | #3 +0%; overall +0%. | Physical preflight failed before any GPU launch; @B/icd_physical_owned_safety_gate.log/run-20261007T020101343661Z-1661075 preserved; all8 private receipt hashes match, unchanged6 byte-equal, repaired2 JSON policy unchanged. |
+| `2b4471b` | test(vgpu): gate production-only modern device wire coverage; Add mode and independent device/render oracle links with the unique runtime fixture boundary. | #3 +0%; overall +0%. | 22units,100%branches88/88,98.15%lines53/54;12compiler defenses separately reported; @B/device_wire_oracle/coverage_integrated.log; prior report preserved under @B/device_wire_production_coverage_checkpoint. |
+| `f3f2a1a` | test(vgpu): preserve genuine device wire access and allocation gates; Add repeatable fresh-output two-source safety gate with complete input/link/executable provenance and final resolved hooks. | #3 +0%; overall +0%. | 22Debug units,19runtime functions/26definitions,1047guards/reverse equality, final49device+242render hooks; zero CSan3/allocator findings; @B/device_wire_sanitizers/run-20261007T020326975579Z-1670597/report.json and execution.log; reusable_safety_gate.log. |
+| `3092fbf` | chore(vgpu): integrate isolated actual TCP controller build gates; Add strict controller build and actual lifecycle/coverage/safety gates with private codecs and stable copied worker graph. | #3/#11 +0%; overall +0%. | @B/tcp_bridge_make_{build,gates}.log;100%lines151/151,91.74%branches200/218; normal/error/cancel zero CSan3; deliberate retained lost-proof termination has no leak-exit credit. |
+| `3105693` | docs(vgpu): specify explicit Windows TCP bootstrap ownership; Specify four startup/stop/session/abandon exports, fixed phases, private SID/DACL admission, retained exact HMODULE/export, authenticated binding, quiescence/deadlines and proof-gated retirement. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; no actual GPU/DXVK credit from interface contract. |
+| `6dbfdb6` | docs(vgpu): retain authenticated startup failures for retirement; Retain admitted session/client/HMODULE after failed bind retirement; distinguish retryable unpublished zero-session reference. | #3/#11 +0%; overall +0%. | TCP_BOOTSTRAP.md; Microsoft native release is separate from exact remote retirement. |
+| `616fff9` | feat(vgpu): validate exact Windows bootstrap filename extents in Zig; Bound absolute ASCII drive/UNC extent1..1024 with final-only NUL, reject invalid storage before access. | #3/#11 +0%; overall +0%. | 11Zigunits/native32vectors/C-CSan3 and actualWin11 C32cycles;99.18%lines121/122,97.40%branches150/154;19compiler guards separate; tcp_bootstrap_path_{gates,coverage}.log, windows11_vm/tcp_bootstrap_path_units.log; actualSHA396b9fa7891d103e42ff5060ea8f52dda4bffe1a177e696d47f843f11850a10a. |
+| `c032933` | docs(vgpu): record native Windows query and device-codec acceptance; Attribute exact frozen native checks independently of mock/GPU scope and unfinished full CI. | #3/#10/#11 +0%; overall +0%. | a7c9482 actualWin11 static128Features2/cache+DLLlifecycle exit0; pinned mediumSID8192 loader8life/128dispatch exit0, all5SHA match features2_deployment.json/native_units/windows_loader logs.06e9eee device22units exit0/SHA4708577182c0ede328db7ca5ad6a50dc910a856e77afe0cdf6b1d02dd21b2596; device_wire_units.log/native_checkpoint/provenance.json. Linux CI112587097749 passed formerly leaking presented-worker step, remaining steps pending. |
+| `a692cc5` | docs(vgpu): compact exact tracker notation and restore one commit table; Canonicalize task deltas, use declared reversible abbreviations and remove table-splitting blank lines. | #3 +0%; overall +0%. | All410existing rows retain every hash, numeric delta and exactly reversible evidence; @B/tracker_before_second_compaction.md and tracker_second_compaction_proof.json; no Git history rewrite. |
+| `6e2dcb6` | docs(vgpu): specify native device preflight and immutable enablement; Define owned request/admission/error order, zero-modern stripping, measured state/scratch ABI and deferred truthful DXVK36+3/runtime requirements. | #3 +0%; overall +0%. | Native/Windows private layout1796enabled,3080cache/offset544,2696request,3216scratch; no public source/GPU/VM change; untrusted pure adapter planned separately from frozen ICD; Vulkan valid-use00373/02829/02830 verified against primary reference. |
+| `38c41fc` | docs(vgpu): accept dual Mesa ownership repair after clean full CI; Complete prerequisite10 after pinned dual repair, positive hardware/software enumeration, repeated true unload and full production/native Windows verification. | #10 +50%; #3 +0%; overall +0%. | CI37557528193 Linux112587097749/Windows112587098004 success at c2faa4c; duplicate37557524621 also success. @B/ci_c2faa4c_verified.json preserves all step statuses;69b7dd0/dc55f14/4cf7fa6 repair evidence retained. No leak suppression/driver filtering/history rewrite; later feature-head CI and actual DXVK still required. |
+| `e368f22` | docs(vgpu): correct frozen request profile and exact header provenance; Record request profile without -Iinclude, actual receiver_bounds/dmabuf imports and compiler-discovered used-header closure. | #3 +0%; overall +0%. | Prior partial physical matrix passes remain incomplete: verifier overcaptured unrelated changing TCP header; full fresh18run retry preserves priorlogs/results, removes no genuine input or assertion; copied runtime bytes unchanged. |
+| `63809e5` | docs(vgpu): require physical launcher cancellation retirement; Guard every acquired process session against cancellation, bounded graceful/escalated group termination and unconditional child reap. | #3 +0%; overall +0%. | Harmless real group selftests and complete fresh18 matrix required; previous partial/full-attempt logs preserved, no workload300s/fence deadline or acceptance relaxation. |
+| 7756a28 | docs(vgpu): retire the complete acquired physical process session; Include separately grouped worker/render descendants, verified identity signaling, bounded rescans, empty-session proof and direct reap. | #3 +0%; overall +0%. | Actual POSIX_SPAWN_SETPGROUP at venus_worker.c96-97 defeats group-only cleanup; harmless nested/ignoring process fixture required, positive leftovers fail; no external/global-name signals or completed GPU/leak credit for killed paths. |
+| 67decaf | docs(vgpu): correct physical failure matrix to supported fixture modes; Preserve failed eighteen-case attempt; specify fifteen existing cases and cancellation-safe child construction. | #3 +0%; overall +0%. | Nine positive cases pass; direct flag ignored by VgpuIcdLoader guard, strict gate fails exit2; no aggregate credit. Final launcher requires complete fresh run and four actual session/FD/signal owner tests. |
+| d1bbcbb | docs(vgpu): retain bootstrap native release failures for retry; Keep failed file/token/security-descriptor release ownership until explicit retry. | #3 +0%; overall +0%. | TCP_BOOTSTRAP.md retains exact per-owner slots; actual native lifecycle AcceptancePending |
+| 95ce231 | feat(vgpu): preflight bounded native device requests into owned values; Validate full native shape before zero-policy feature/extension rejection, return owned2696-byte values. | #3 +0%; overall +0%. | Eleven parser +22 codec/render units pass Linux/Win11; exact guest SHA5c7483757ff8, exit0; @B/windows11_vm/device_native_units.log/provenance. Public ICD integration pending. |
+| 0f7f237 | test(vgpu): gate production-only native device parser coverage; Register new mode and preserve unique run artifacts. | #3 +0%; overall +0%. | 100% branches100/100, lines86/86; ten compiler guards separate; @B/device_native_initial/coverage.log. Existing mode boundaries retained. |
+| 6eaae04 | test(vgpu): preserve genuine native device parser access gates; Private three-module reverse/guard/final-symbol proof with fresh C oracles. | #3 +0%; overall +0%. | 28 runtime/57 definitions,1138 guards;447+49+242 actual hooks;33 Debug units zero San3/allocator leaks; @B/device_native_initial/safety.log and device_native_owned_safety/run-20261007T021641961340Z-1722758. |
+| a252b26 | docs(vgpu): reconcile native device parser prerequisites; Record exact native Windows/coverage/access evidence and pending public integration. | #3 +0%; overall +0%. | All four original commits preserved; no API/extension/GPU/DXVK acceptance inferred from unit-only parser. |
+| 7e36dee | test(vgpu): preserve every device wire coverage attempt; Use unique UTC/PID directories for codec and native parser modes. | #3 +0%; overall +0%. | Existing evidence retained;22 units,100% branches88/88,98.15% lines53/54,12 compiler guards separate; @B/device_wire_oracle/coverage_preserved_target.log. Other mode semantics unchanged. |
+| bae86ea | test(vgpu): expose strict device wire make gates; Separate native D/RS, Windows crosslink, preserved production coverage and genuine access targets. | #3 +0%; overall +0%. |22 D/RS units, strict Windows assertion-active -UNDEBUG crosslink,22 Debug units zero CSan3/allocator leaks; @B/device_wire_oracle/make_gates{,_v2}.log (initial NDEBUG failure retained), device_wire_sanitizers/run-20261007T022719051916Z-1765413. Aggregate include pending freeze release. |
+| 63b3011 | docs(vgpu): define validated device encoder rollback boundary; Encode after real device-ID reservation, before queue/ring reservations; derive twenty-source closure. | #3 +0%; overall +0%. | Owned current maximum1096/8192; Invalid/Limit release fresh device, INITIALIZATION_FAILED/NULL, no transport/cache/loss mutation, monotonic IDs retained. Public implementation pending. |
+| 02ba62b | test(vgpu): expose native device preflight make gates; Share strict single device/render oracles; separate D/RS, Windows, unique coverage and genuine access targets. | #3 +0%; overall +0%. |33 D/RS units and assertion-active Windows ReleaseSafe crosslink pass; @B/device_native_initial/make_gates.log. Existing verified33-unit coverage/access CLI reused; aggregate include pending lease release. |
+| 946c16f | docs(vgpu): attribute native bootstrap owner verification boundaries; Separate traced first-use SDK lifetime from exact repeated owner baselines. | #3 +0%; #11 +0%; overall +0%. | ntmarta semaphores/mswsock IoCompletion traces and original failures retained; synthetic transport admission, no real GPU credit. |
+| 8d00d2d | feat(vgpu): declare explicit Windows TCP bootstrap lifecycle ABI; Four bounded start/stop/session/abandon interfaces document retained owners and quiescence. | #3 +0%; #11 +0%; overall +0%. | Additive snake_case exports; current-owner config and exact-session trusted retirement contract; no loader-entry project work. |
+| acc0b5a | feat(vgpu): implement retained Windows TCP bootstrap owner; Exact DLL binding, SID-only bounded config, socket admission and retryable release/retirement. | #3 +0%; #11 +0%; overall +0%. | Fixed singleton retains config/token/descriptor/module/client/session on failures; strict Windows link and fresh Linux SDK owners pass; native unit DLL SHA6bfcf0b101f0. |
+| 80084e4 | test(vgpu): prove bootstrap SDK owner retries without exclusions; Actual FD/calloc/free faults retain one owner until successful retry. | #3 +0%; #11 +0%; overall +0%. |127/127 production lines,167/174 branches95.98%, no exclusions; zero San3/owner leaks; @B/tcp_bootstrap_sdk_{coverage,sanitizers}.log. Client/ICD replies synthetic. |
+| b4db905 | test(vgpu): verify actual Windows bootstrap binding and lost Ack ownership;24 SID/public-grant rejections plus12 matching/12 lost synthetic-Ack native cycles. | #3 +0%; #11 +0%; overall +0%. | Exact113 handle baseline, WSANOTINITIALISED and ICD/module absence; guest/host hashes/native exit0; @B/windows11_vm/tcp_bootstrap_51e14a4f/native.log, exeSHAc78586089464, frozen query ICD79b0036fdc26. Actual worker/GPU pending. |
+| a2233b0 | docs(vgpu): reconcile explicit Windows bootstrap ownership acceptance; Attribute five atomic commits to actual SDK/native evidence and synthetic-reply boundary. | #3 +0%; #11 +0%; overall +0%. | All failed snapshots and kernel owner traces preserved; actual authenticated receiver/GPU/DXVK remain required. |
+| 49fcdf1 | docs(vgpu): specify bounded actual extension count and fill codec; Define command14 layout,1024-entry quota, transactional normalized output and real-oracle/checker gates. | #3 +0%; overall +0%. |44-byte request,28+268*N reply,max274460; no offset pagination/host-only advertisement. ICD/TCP4096 quota and public source remain unchanged until separate coherent integration. |
+| f8ee17a | test(vgpu): verify pinned extension request and reply oracles; Separate guest/renderer translation units retain exact command14 generators. | #3 +0%; overall +0%. | Count0/1/1024 literal44-byte requests and28+268*N replies,full274460 boundary/sentinels; normal/C San3 exit0, strict assertion-active Windows crosslink; @B/extensions_wire_oracle/oracle_provenance.json. Actual Windows codec units pending; initial missing pinned vulkan include failure retained. |
+| 48205b1 | feat(vgpu): decode actual extension count and fill into owned values; Complete shape/name/duplicate validation precedes normalized publication; preserve errors and untouched capacity. | #3 +0%; overall +0%. | Five D/RS/Linux/Win11 units;95.65% branches44/46,100% lines42/42,12 compiler guards separate; genuine7/7 definitions,1013 guards,51 final owned hooks,zero CSan3/allocator leaks; @B/extensions_wire_oracle/{coverage_native_calls,owned_safety_final}.log and windows11_vm/extensions_wire_units.log (SHA b11becd9344f/native0). No public integration/advertisement. |
+| 6a837da | test(vgpu): gate production-only actual extension codec coverage; Register unique retained runs and fresh independent request/reply oracles. | #3 +0%; overall +0%. | Five actual native decoder units,95.65% branches44/46,100% lines42/42; unchanged90% threshold/12 compiler-guard accounting. Two immutable revalidation error branches retained in denominator; @B/extensions_wire_oracle/coverage_native_calls.log. |
+| 24195c2 | chore(vgpu): include verified device codec and native preflight targets; Register root-owned standalone gate makefiles in dependency order. | #3 +0%; overall +0%. | Eight-target aggregate dry plan passes; previous standalone D/RS/Windows/access/coverage evidence retained; @B/device_native_initial/aggregate_make_plan.log. No shared build or generated-header mutation; public integration pending. |
+| a1cd799 | test(vgpu): retain failed module release before session admission; Zero-session missing-export owner remains until successful FreeLibrary retry. | #3 +0%; #11 +0%; overall +0%. | Fresh SDK coverage127/127 lines,169/174 branches97.13%, no exclusions; native-owner fault and San3 gates clean. |
+| c0c3d56 | chore(vgpu): expose isolated Windows bootstrap and owner gates; Strict DLL/native fixture crossbuild plus fresh SDK coverage/access targets. | #3 +0%; #11 +0%; overall +0%. | Make-produced Win11 fixture/DLL native0, exact guest/host SHA2b814e7141af/4c42c6beb82f; @B/windows11_vm/tcp_bootstrap_c5cb7913/native.log. Synthetic reply scope, no real GPU. |
+| 9ad3ca0 | docs(vgpu): specify native authenticated GPU fixture ownership; Medium-integrity bootstrap/loader dispatch, copied exact probes and supervised retained-owner failures. | #3 +0%; #11 +0%; overall +0%. | New native fixture design; draft strict crosslink/actual high-integrity guard rejection only; hardware/shared receiver receipt pending. |
+| d3fadc0 | test(vgpu): verify owned ICD accesses through real physical paths; Add private runner/target with exact immutable source/runtime/driver and final-binary proof. | #3 +0%; overall +0%. | Fresh15 cases:9 positives144 lifetimes +6 shared-only exact exit1;6 actual owner tests,all sessions empty/direct children reaped,zero CSan3 diagnostics. Direct/shared fallback/private DSO each18 modules375 definitions4352 actual hooks;230 input hashes unchanged. @B/icd_physical_owned_safety/run-20261007T023215414824Z-1784409/physical_report.json SHA cf156ce3d697; failed18 attempts retained, Windows/DXVK pending. |
+| cb827e8 | docs(vgpu): audit full physical safety and native bootstrap gates; Preserve exact acceptance scopes and release historical source freeze for public device integration. | #3 +0%; #11 +0%; overall +0%. | Root checks all15 physical receipt statuses/session/reap fields and complete144 count; prior18 proof remains immutable, new20 source proof requires separate artifacts. |
+| 86896d3 | test(vgpu): stress transactional extension replies across repeated owners; Deterministic256-cycle count/name/version/error corpus through actual native decoder calls. | #3 +0%; overall +0%. | Six D/RS/Linux/Win11 units;95.65% branches44/46,100% lines42/42;7/7 definitions1026 guards51 actual hooks,zero CSan3/allocator leaks. @B/extensions_wire_oracle/stress_{coverage,owned_safety,release}.log; windows11_vm/extensions_wire_stress_units.log SHA c4f85f2ed920/native0. Five-unit snapshots preserved. |
+| 2254391 | test(vgpu): preserve genuine extension codec access and ownership gates; Unique exact single-module IR/guard/reverse/final-symbol proof with fresh request/reply C oracles. | #3 +0%; overall +0%. | Six Debug units zero CSan3/allocator leaks;7 runtime/7 definitions1026 guards51 actual final hooks; sources/header/objects/executable hashes unchanged. @B/extensions_wire_sanitizers/run-20261007T025312046970Z-1860513/report.json;180s children/256MiB proof bounds, no vendor/std hook credit. |
+| 9a0ff26 | docs(vgpu): specify preserved twenty-source seam and physical receipts; Exact14+6 graph, named oracle mapping, immutable unique runs and atomic completed-record handoff. | #3 +0%; overall +0%. | Historical18 artifacts stay byte-identical; fresh same-make seam prerequisite before full15 physical matrix; no stale-record acceptance or new lazy exceptions. Candidate/runtime freeze and actual20 proof pending. |
+| 8fe1d90 | test(vgpu): expose strict actual extension codec make gates; Native D/RS and Windows assertion-active independent oracles, unique coverage/access targets. | #3 +0%; overall +0%. | Six D/RS units/strict Windows ReleaseSafe crosslink pass; @B/extensions_wire_oracle/make_gates_v2.log. First standalone missing ZIG default attempt retained in make_gates.log; generated headers read-only; aggregate inclusion separate. |
+| 1e27b7f | chore(vgpu): register verified actual extension codec gate targets; Include standalone makefile in the root build graph. | #3 +0%; overall +0%. | Four-target aggregate dry plan passes; @B/extensions_wire_oracle/aggregate_make_plan.log. Existing native/Windows/coverage/access artifacts unchanged; no transport or public import added. |
+| d9d30f3 | docs(vgpu): define compliant strict config numeric schema; Standard JSON value tags plus snake_case positive-u32 validator; fixed scratch/type/range contract, preserved snapshots. | #3/#11 +0%; overall +0%. | Decimal/exponent/overflow/nonnumeric rejection specified before isolated rebuild; no ABI/quota change. |
+| 133f9ec | fix(vgpu): replace custom JSON hook with strict numeric tags; Remove owned camelCase hook;20 invalid representations per3 numeric fields, cleared outputs/input preservation. | #3/#11 +0%; overall +0%. |12 Zig units/native CSan3 pass;123/124 lines150/154 branches with18 compiler guards separate. Actual Win32cycles SHA735a188e...; rebuilt bootstrap24cycles exact113handles/native0,127/127 lines169/174 branches no exclusions; synthetic retirement only. |
+| b060565 | docs(vgpu): record verified numeric naming repair receipts; Attribute SDK169 branches to a1cd799 zero-session release regression; preserve exact native receipts/exclusions. | #3/#11 +0%; overall +0%. | @B/windows11_vm/tcp_numeric_wire_units.log/provenance and tcp_bootstrap_4d4f7163; executable39285f9e...,DLL712b3b61...; older artifacts retained, no GPU credit. |
+| 4dd12cd | docs(vgpu): require complete owned session retirement proof; Dedicated controller SID/starttime/pidfds, workerPG/controller wait/reap and entire SID absence. | #3/#11 +0%; overall +0%. | Positive GPU acceptance requires natural whole-graph exit; finite owned-only TERM/KILL is failure evidence, no workload/leak credit; missing proof retains callback/module. |
+| 93e19fc | docs(vgpu): audit strict numeric and complete retirement receipts; Synchronize four atomic checkpoints without runtime/progress claims. | #3/#11 +0%; overall +0%. | Actual numeric/bootstrap Windows receipts retained; final117-unit/public integration and20-source physical/GPU/DXVK AcceptancePending |
+| fc2bf20 | chore(vgpu): budget complete owned access verification in Linux CI; Parent job60min based on prior measured2496s and added strict gates. | #3 +0%; overall +0%. | Full clean CI37557528193/c2faa4c passed; @B/ci_c2faa4c_verified.json. Existing180s children/256MiB proof,300s GPU and1s fence deadlines unchanged; Windows15min unchanged. |
+| 028d10e | chore(vgpu): require device and extension standalone Linux CI gates; Native D/RS, fresh genuine owned access and≥90% source coverage for each prerequisite. | #3 +0%; overall +0%. | Nine aggregate target plans/YAML parse pass; verified individual22/33/6-unit make gates retained. @B/device_native_initial/standalone_ci_make_plan.log; current-head CI execution pending. |
+| 57dedad | docs(vgpu): define bounded complete reply byte assembly; Existing command owner cursor/Reading phase with≤4096-byte offset reads and transactional publication. | #3 +0%; overall +0%. | Read-only dispatch/receiver/TCP boundaries verified; capset has no actual reply allocation field. Explicit trusted524288 host allocation and all implementation/coverage/native gates pending; current65536/4096 unchanged. |
+| 131a2fb | chore(vgpu): execute native Windows device and extension prerequisites; Strict fresh C oracle loop, D/RS22/33/6 suites and Debug ICD/import suite with6 codec libraries. | #3 +0%; overall +0%. | YAML parse and4 isolated Windows crosslinks pass; @B/device_native_initial/windows_ci_owned_v2/receipt.json. Initial absent local values oracle failure retained; fresh strict oracle correction. Actual prior Win117/33/22/6 receipts separate, current-head native CI pending; DLL runtime unchanged. |
+| 331c68b | chore(vgpu): require complete twenty-source ICD sanitizer seam; Replace aggregate embedded-only prerequisite with complete native/test closure plus6 codec gates. | #3 +0%; overall +0%. | Fresh make20 ac4cb58 exit0; @B/icd_complete_seam_safety_20_make_gate.log, completion28f7f37c....20sources414/416defs4672/4680 actual hooks;117+25 units/sixnative suites zero leaks. Existing C/mapping/graphics recipes unchanged; complete owned proof required once. |
+| 1244ff1 | chore(vgpu): link owned device request oracles through ICD checks; Track native/device sources in all public builds, exactly one independent device oracle per fixture/coverage link. | #3 +0%; overall +0%. |117 units,128 nativecycles, mapping/loader/Windows crosslinks;90.03%2095/2327 branches98.98%2433/2458 lines. Runtime DLLs contain no testoracles; source integration separate. |
+| 4338e65 | docs(vgpu): require native GPU fixture module absence; Final borrowed queries prove bootstrap/loader/ICD references released. | #3/#11 +0%; overall +0%. | Strict draftcrosslink only; actualGPU/fault execution pending exactruntimefreeze/lease. |
+| b2a0654 | chore(vgpu): require exact fourteen-source ICD access inventory; Exact native/device imports, literal grammar,9 unique publicoracles/deviceonce. | #3 +0%; overall +0%. | Fresh20 native/117test closure provesallnames/access; genericcodec proofs/sole documentedlazybody preserved; historical18 intact. |
+| ac4cb58 | chore(vgpu): retain complete twenty-source seam receipts; Unique native/test builds plus6codecs, immutable completion and atomic latest only oncomplete success. | #3 +0%; overall +0%. | Freshmake20 exit0; run031659394516Z-1954728 record28f7f37c...,147artifacts rechecked.414/416defs6617/7605guards4672/4680 actualaccesses;117+25 allocatorunits/6native suites zeroSan3. @B/icd_complete_seam_safety_20_make_gate.log. |
+| 34da0be | docs(vgpu): audit frozen device acceptance and bounded poll semantics; Preserve four atomic checkpoints and exact Windows/Linux candidate receipts; each future chunk poll yields caller control. | #3/#11 +0%; overall +0%. | @B/windows11_vm/device_integration_8289e5d9 native117/static128/DLL/mediumloader8+128 all0/exact6SHA; mockfrontend. Four normal+fourC-safety RTX5080 paths0,29inputSHAunchanged; full20physical/actualWinGPU pending. Current1000poll bound correctly distinguished from elapsed deadline; future274460needs68chunks. |
+
+
+| 9d9e8b6 | docs(vgpu): refresh durable continuation and interrupted gate boundaries; Replace stale handoff with exact ownership/receipts/next leases, preserve incomplete first physical run. | #3/#11 +0%; overall +0%. | Recovery353 input SHA matches/0accepted cases;3roles resumed, existingVMrestart only. Durable build checkpoints; current20/15 rerun and actualWinGPU/DXVK/currentCI pending. |
+
+| 7486580 | chore(vgpu): verify complete twenty-source hardware access gates; Fresh same-make20 seam and private15-case physical lifecycle/retirement proof. | #3 +0%; overall +0%. | @B/icd_physical_owned_safety_20/run-20261007T131204468494Z-26611/physical_report.json SHA90c62445...; 9positive/144lifetimes+6shared postflush failures, RTX5080,414defs4672actualaccesses per20-source runtime, zeroCSan3;353input hashes/15logs exact. Seam aabc76dd..., recoverylog b09cbdb3...; interrupted oldrun remains0accepted/incomplete. Six actual process-owner fault/cancellation tests pass; forced cleanup receives no leak/success credit. |
+| d4dc30b | feat(vgpu): own device requests before reservation and ACK publication; Immutable2696-byte preflight snapshot, output alignment/error precedence and transactional enabled-device publication; exact two-file commit. | #3 +0%; overall +0%. |117units;90.03%branches2095/2327,98.98%lines2433/2458;853 compiler guards separate. ActualWin117/static128/DLL/mediumloader8+128 mock0/exact6SHA; four normal+fourC-safety GPU paths0,29input SHA exact; same current20 physical proof separate. No original-pointer reread/ID rewind, exact negativeACK rollback/sticky uncertain ownership. |
+| 8d68f35 | docs(vgpu): audit complete current twenty-source physical acceptance; Synchronize two atomic source/tool checkpoints and retained interruption evidence. | #3/#11 +0%; overall +0%. | @B/root_todo3_continuation/audit_7486580_d4dc30b.json verifies exact receipt/source hashes. Windows12-case frozen matrix prepared/hash checked; actualGPU/DXVK/current-headCI pending. |
+
+| b06be83 | feat(vgpu): assemble command replies in bounded private byte ranges;80-byte native cursor ABI, Reading phase, one≤4096-byte read per poll and exact unbind retention. | #3 +0%; overall +0%. |9D/RS/nativeD/RS pass;93.59%branches73/78,100%lines90/90/22guards; genuine9defs/79accesses901/1054guards zeroCSan3/allocator leaks. ActualWin command_chunks_479502b2 threeEXE0/SHAexact. ICD117/native128/shared-loader0;90.03%2095/2327,98.98%2433/2458/853guards. Complete20 run134222497263Z-120724 SHA3896e748...117+28units414/416defs4686/4694accesses/147hashes exact. Initial naming failure retained/corrected. Current4096/65536/TCPv1 and empty public extensions unchanged; largequery/elapsedbudget/currentCI/GPU/DXVK pending. FirstactualWintriangle97→157handles fails/+0 despite exact pixels/naturalhostretirement. |
+
+| 01d910c | chore(vgpu): verify exact named codec allocator counts; Enforce captured actual3/9/4/5/3/4 per-codec native/test counts and identical total28. | #3 +0%; overall +0%. | Freshcomplete20 command28 exit0/run134222497263Z-120724 SHA3896e748...;147artifacts20sources/reports/objects/finalELFs exact,414/416defs6617/7644guards4686/4694accesses117ICD+28codec units zeroCSan3/allocator leaks. Sole nativepublish_batch absence/test3hooks unchanged. Historical physical25 proof remains separate; no new GPU credit. |
+| 33474b5 | docs(vgpu): preserve command ABI proof and failed Windows GPU boundary; Refresh durable handoff and attribute exact helper acceptance. | #3/#11 +0%; overall +0%. | b06be83/01d910c source/proof committed, pushed01d910c; currentCIpending. ActualWin command9D/9RS/native0/SHAexact; first GPU triangle97→157handles fails despite exact pixels/naturalretirement, diagnosticpending. Immutable old29runtime57bridge inputs/Mesa profiles preserved; no milestone credit. |
+
+| 6dba731 | docs(vgpu): adopt absolute query budgets and exact Properties2 contracts; Define staged allocation/deadline/cache ownership and pure five-node326-profile codec/native publication scope. | #3 +0%; overall +0%. | Read-only frontend/receiver/pinnedDXVK boundaries; exact proposed Linux/Windows layouts pass, inventory0945872d.../probe3117dd0c... preserved in committed field inventory. Actual deadline APIs,524288 two-range proof, codecs/native publishers/genuine gates and allpublic modern/GPU/DXVK AcceptancePending01d910c cleanCI37631620496/37631613047 running. |
+
+| 8de565b | docs(vgpu): specify exact absolute channel and client API precedence; Same native clock, immutable deadline/cap, no partial renewal and timed final publication check. | #3 +0%; overall +0%. | Read-only API/clock/I/O audit; additive channel and narrow TCPclient leases explicit, legacy behavior preserved. Actual implementation, meaningful partial-I/O/clock/cancel/nativeWindows/coverage/zeroCSan3 gates pending; no publiclargequery/GPU credit. |
+
+| 28da632 | docs(vgpu): compact repeated open-gate history without loss; Four exact-expansion aliases preserve every row and literal percentage sequence. | #3 +0%; overall +0%. | @B/root_todo3_continuation/tracker_open_aliases_proof.json roundtrips all482 table rows byte-exact; historicalnotes unchanged. NativeWin cleanCI37631620496/job112827071496 passes01d910c117/9/22/33/6units; rawlog/receipt retained, Linuxfulljob pending. No new GPU/DXVK/progress credit. |
+
+| 0d6a58b | docs(vgpu): define capped absolute RPC publication boundary; Validate payload before sampling, clip originaldeadline once by immutablecap and reject late/backward/cancelled completion before publication. | #3 +0%; overall +0%. | Exact channel-origin clock/API declaration/legacy precedence adopted; RPC realpartial-I/O/nativeWindows/coverage/zeroCSan3 implementation gates pending. Channel nativeWindows CPU run authorized after failed diagnostic forcedcleanup; no GPU/leak credit fromcleanup. |
+
+| 8b69019 | docs(vgpu): account for required render oracle in Properties2 proof; Correct impossible two-oracle full-import linkage with exact three fresh named Cobjects/actualrender units. | #3 +0%; overall +0%. | Read-only imported extern/test audit; no missing-body/lazy exception or filtered-fullproof. Property query/reply remain independent; render oracle read-only/fresh/once; actual allsource hooks/guards/nativeWindows/coverage/zeroSan3 gates pending. |
+
+| 4064193 | feat(vgpu): retain absolute native channel deadlines; Exact nonrenewed local deadline, cancellation/clock/expiry precedence and unchanged legacy calls. | #3 +0%; overall +0%. | Four ownedfiles; strictnative/CSan3 zero;95.08%116/122 branches98.61%142/144 lines, stream97.62%41/42+100%33/33; unchanged coverageengine. ActualWin channel_until_882e15f8 exit0/exact43c03 SHA/balancedhandles. Initial clockmodel failure retained/corrected; atomic concurrent testcounter; RPC separate. |
+| e877652 | docs(vgpu): require durable native supervisor ownership and live-log reads; Initial/transition journal before launch, exactowned graph retirement, shared-read output and coherent finite wrapper budgets. | #3/#11 +0%; overall +0%. | Failed pausedWin diagnosis losthostproof retained; exactPID5748/image/creation/SHA force-terminated1464091718 under explicitlease, no success/leak/abandon credit. Independent systemDXGI handle traces do not justify baseline inflation. Supervisor repair/testing pending before another GPU launch. |
+| c94fd18 | docs(vgpu): audit native absolute channel and clean command CI; Synchronize exactsource/Windows receipts and durable next leases. | #3/#11 +0%; overall +0%. | @B/root_todo3_continuation/channel_ci_audit.json; cleanCI37631620496 Linux+Windows success at01d910c, receipt6289b0a2..., not laterhead/GPU/DXVK acceptance. TCP client final100%156/156 lines93.48%215/230 branches/zeroCSan3 frozen; actualWinCPU pending. Properties2 full3-source/3-oracle proof and cappedRPC in progress. |
+
+| aa636b5 | feat(vgpu): preserve one capped absolute TCP exchange deadline; Validate private header before temporal sideeffects, fix one effective deadline through partial I/O and reject late ordinary publication. | #3 +0%; overall +0%. | Native8cycles/alloldcases+9absolute+6faults+7statusreplays/localinvalidcancel-clock adversaries pass;100%156/156 lines93.48%215/230 branches/zeroCSan3. ActualWin tcp_until_final_6946c293 native0/exact4f5a381b SHA/balancedresources. @B/absolute_tcp_client_checkpoint/verified_receipt.json sourcef61a18b6...; earlier5e40 freeze preserved/unexecuted after reviewed preflight correction. Legacytiming/TCPv1/ownerABI unchanged; hostretirement/runtime/GPU/DXVK separate. |
+
+| 8aac4dc | docs(vgpu): define validated extension backend status boundary; Add exact signed status only after shared metadata/full declared-array shape checks; successful record semantics remain transactional codec work. | #3 +0%; overall +0%. | Adopted @B/large_extension_query_design/status_contract.md; negative undefined payloads not treated as successful names. Existing count/fill Backend/quota/output precedence preserved; meaningful max/truncation/shape/negative/nativeWindows/coverage/zeroSan3 sourcegates pending. |
+
+| d7d9faa | docs(vgpu): specify exact absolute guest delegation; Forward caller timestamp/configuredcap to validated RPC without guest clock renewal or postpublication failure. | #3 +0%; overall +0%. | Adopted @B/large_extension_query_design/guest_contract_draft.md after channel4064193/RPC4eb5408; exact legacy/status/output/closure boundaries and nativeWindows/coverage/zeroCSan3 gates. Guest source implementation pending; separate legacy service mock linkage repair identified/no production change authorized. |
+
+| 90f1647 | feat(vgpu): add typed modern Properties2 request and reply codec; Five canonical nodes, exact scalar/array stride and fully validated normalized owned replies. | #3 +0%; overall +0%. | All326 permutations/75Boolean faults/truncations/floats/strings/256allocatorcycles;24D/RS fullimport units (7wire+17render),96.63%86/89 branches95.51%85/89 lines/327guards. Genuine2source wire60defs263hooks/render18defs236hooks1674guards/fullreverse,3freshCsan3 oracles zero leaks. ActualWin24D/24RS native0/exact57f368/fb93b5 SHA. Nativepublisher/publicintegration separate; explicit scalarTYPE assertions need separate compiletime correction. |
+| 4eb5408 | feat(vgpu): bound complete RPC publication by absolute deadlines; Share legacy framing, validate header/payload first, clip original absolute/cap once and reject late/cancelled/backward publication. | #3 +0%; overall +0%. |18invalid temporal adversaries/real7fragmented-cap/partial/nopeer/cancel/blocked/expired cases, native/CSan3 zero.96.88%186/192 branches99.35%153/154 lines; dispatch95.65/99.24 unchanged. ActualWin mock+real native0/exact8e368/d73a/balancedhandles. @B/absolute_rpc_checkpoint/provenance.json. Legacyservice mock missingnewunused symbols discovered postcommit; separately fixed5a54669, no false cleanwholegraph claim. |
+| 5a54669 | test(vgpu): keep legacy service mocks fail closed for absolute APIs; Add exact two unused new channel symbols that abort if invoked. | #3 +0%; overall +0%. | Full trackedmock/link audit onlyruntime+service mocks; otherRPC consumers realchannel. Host-only strictnative/CSan3 zero,100%101/101 lines99.02%101/102 branches unchanged; strictWin exact2body subset cross0, no POSIXservice Windows claim. @B/absolute_service_compatibility_checkpoint; initialmissing-symbol/extraction-newline failures preserved. |
+| 022f031 | docs(vgpu): audit Properties2 wire and absolute RPC acceptance; Attribute three discrete source checkpoints and native Windows proofs without GPU/runtime claims. | #3 +0%; overall +0%. | @B/root_todo3_continuation/properties_rpc_audit.json exactsource/report/4actualWin receipts rechecked; Properties native/typeassertion/full3sourcehelper, guest/statuscodec/largequery/currentheadCI/GPU/DXVK pending. |
+
+| afed061 | chore(vgpu): register complete Properties2 production coverage modes; Add unique retained wire/native attempts with exactly3 fresh query/reply/render C oracles and fullimport tests. | #3 +0%; overall +0%. | @B/properties_coverage_registration/receipt.json; collector/instrumentation/denominator suffix byte-exact unchanged. Wire24units96.63%86/89 branches95.51%85/89 lines/327guards; native29units93.51%72/77 branches98.28%57/58 lines/23guards at9af42c/194a501 snapshots. Modern public/GPU/DXVK AcceptancePending |
+
+| current (resolve by subject) | feat(vgpu): expose exact validated extension backend status; Shared metadata plus each declared-array shape, exact signed result and preserved existing count/fill semantics. | #3 +0%; overall +0%. |9D/RS/nativeC/Csan0;96.43%54/56 branches100%49/49 lines/13guards, genuine8defs60finalcalls1037guards/fullreverse/zeroSan3+allocator leaks. ActualWin9D/9RS0/exactb7089934/6a04ebc0 beforeafterSHA. @B/extensions_status_checkpoint/verified_receipt.json source8d30520b..., allproofinput/linkSHA rechecked. Initial missingNUL encoderfixture failure retained/corrected/fullrerun. Statusonly; cache/public/runtime/GPU/DXVK AcceptancePending |
+
+## Historical acceptance notes
+
+The current entry is identified by its unique commit subject because a commit
+cannot contain its own content-derived hash. Each following atomic commit records
+the preceding entry's actual hash; `git log` resolves the latest entry directly.
+
+- **Verification**:2326afc GitHub native Windows job112407789435 passes all
+    dispatch/DLL/manifest tests. Linux jobs112407789703 and112407762126 both pass
+    pinned loader discovery and its ASan/LSan/UBSan fixture. Local Linux loader
+    eight device/queue/fence cycles and strict Windows cross-link pass. Full latest
+    branch CI remains required independently of this dependency acceptance.
+
+- **Verification**:11ca7e7 GitHub Linux job112420950151 passes the actual pinned
+    loader production worker normal/sanitized and injected failure-cleanup gate.
+    Native Windows job112420950697 passes DLL export/dispatch and actual pinned
+    loader manifest/device/fence/memory tests. Local pool increment additionally
+    passes actual loader normal/sanitized worker cycles and forced cleanup.
+    Full latest-head CI remains required at task completion independently.
+
+16 cycles of full updates fragmented through64-byte rings.
+
+### Guide execution audit begun 2026-10-06
+
+The documentation synchronization commit is identified by its unique subject
+`docs(vgpu): record guide audit and native DXVK acceptance contract`; +0% to TODO
+#3 and overall. No runtime completion is inferred from codecs or cross-builds.
+
+The specification/audit commit is identified by unique subject
+`docs(vgpu): specify bounded shader and compute layout encoders`; +0% to TODO#3
+and overall, since no runtime gate is accepted by wire codecs alone.
+
+The current ownership/proof specification commit is identified by unique subject
+`docs(vgpu): specify image lifetime integration and packet capacity proofs`;
++0% to TODO#3 and overall until its corresponding runtime acceptance.
+### Verified guide increments
+
+The audit synchronization commit is identified by unique subject
+`docs(vgpu): audit mapped GPU evidence and remaining guide gates`; +0% to TODO#3
+and overall. TODO#3 remains55% until milestone acceptance is synchronized with
+required native Windows checks. Step1 hardware transfer is now proven locally;
+Step2 public image lifecycle is implemented but image command GPU acceptance is
+pending. Steps3 and5 retain compute/graphics/full DXVK requirements. Step4's
+standalone adapter milestone was already credited before this guide began and
+must not receive duplicate completion credit. Task5 OpenCL is outside this guide.
+### Descriptor and physical image verification audit
+
+Step1 now has actual mapped flush/GPU-copy/invalidate byte verification on the
+NVIDIA RTX5080. Step2 has real image/view/bind lifecycles plus16 layout transition
+submissions per direct/shared and normal/sanitized path, fence completion, queue
+idle, deterministic teardown and balanced descriptor counts. Step3 has public
+shader/layout ownership and independent descriptor/compute/graphics packet
+proofs; descriptor command binding, actual compute dispatch and triangle draw
+remain pending. Step4 standalone userland adapter was previously accepted. Step5
+black-box harness crosscompiles but initialization, surfaces, API/extensions and
+native backend bootstrap remain pending. No completion credit is awarded merely
+for serializers, command recording or a compiling DXVK harness.
+Metadata acceptance includes all generic fixed-slot ownership helpers in the
+coverage denominator:98% branches49/50 and100% lines45/45. Descriptor codec
+coverage is100% branches84/84 and100% lines74/74. Graphics wire coverage is100%
+branches82/82 and100% lines99/99. Public layout integration currently passes
+native/shared loader, ASan/LSan/UBSan, mapped libc OOM fixtures and Windows
+crosscompile; ICD coverage90.41% branches1405/1554 and99.32% lines1741/1753.
+Required native Windows CI acceptance of these increments remains pending.
+The synchronization commit is identified by unique subject
+`docs(vgpu): audit descriptor ownership and physical image barrier proof`;
++0% to TODO#3 and overall until corresponding remaining acceptance gates pass.
+## Modern DXVK and native testing audit
+
+Public descriptor pool/set/update lifecycle and compute pipeline construction now pass native loader, sanitizer and owned source coverage gates. The latest ICD coverage is90.40% branches1677/1855 and99.31% lines2013/2027. Command binding/dispatch, graphics runtime and modernDXVK acceptance remain open. The Windows CI checkpoint0837834 passes; its Linux presented-worker sanitizer step reports one128-byte allocation leak on llvmpipe. Local exact-source reproduction and CI allocation-stack diagnostics remain in progress; no leak suppressions or completion credit are allowed.
+The user-supplied Windows11 ISO and available QEMU/KVM permit an isolated native guest acceptance environment. Provisioning and DXVK client compilation are prerequisites, not proof of Waddle transport or DXVK device creation.
+This audit commit is identified by unique subject `docs(vgpu): synchronize compute lifecycle and modern DXVK acceptance audit`; +0% to TODO#3 and overall.
+## Physical compute and client prerequisite audit
+
+DXVK dependency task#9 is complete: the immutable2.7.1 tree and four recursive public revisions are clean, required base-package tools are present, Meson wrap downloads are disabled, and all246 Ninja actions produced nonempty Windows x86_64 PE32+ DXGI/D3D11 DLLs. This zero-weight dependency completion does not satisfy native Waddle DXVK device/swapchain acceptance.
+The production compute fixture33f7ed0 proves64 exact shader-produced storage words for each of16 lifecycle repetitions on NVIDIA5080 in all four direct/shared normal/sanitized paths. It flushes poisoned destination memory before execution and requires a real compute barrier, fence retirement, invalidate and byte comparison. Forced mapped-loader loss exits exactly1 clean with balanced descriptors. The current public recording implementation is still under targeted lifetime/compatibility regression review before its source commit, so TODO#3 remains55%.
+Graphics state96d596a/cb2453b passes state-order/recovery tests,100% source branches16/16 and lines18/18, owned-function LLVM ASan and process-wide LSan. It has not yet been integrated into actual drawing. Windows11 installation from the supplied ISO is progressing in the isolated KVM guest; installation is not ICD/DXVK acceptance. Native Windows CI37536533350 has passed for checkpoint076ec9b; its Linux worker leak diagnostics remain pending.
+This synchronization commit is identified by subject `docs(vgpu): audit physical compute proof and completed DXVK build prerequisite`; +0% TODO#3/overall.
+
+### Shared-index audit
+
+a8b639e unintentionally included nine root-owned capability files during a simultaneous TCP documentation commit;325422a then completed the capability makefile dependencies. The verified source evidence is retained and attributed to those actual contents; neither commit is rewritten. a8b639e alone is not claimed to be a complete independently buildable binding checkpoint. Its TCP contract covers private CLI/result admission,180s cancellation watchdog, original5s handshake across actual startup/negotiation, natural stop/reap before borrowed-view release, failed acceptance on forced escalation and retained ownership if unreaped. All agents now hold /tmp/waddle_git_index.lock for the complete staging/commit sequence and verify exact staged ownership before committing.
+
+### Native negotiated-binding acceptance
+
+The frozen a8b639e/325422a capability checkpoint now passes actual Win11 static128-cycle dispatch, DLL discovery and medium-integrity pinned-loader8lifecycle/128dispatch fixtures. All five deployed file hashes match the isolated host snapshot; windows11_vm/icd_capability_binding_{native_units,windows_loader}.log and deployment.json retain native exits and provenance. The first PowerShell capture attempt produced no persisted exit and remains preserved; only the subsequent raw-CMD capture supplies exit0 acceptance. The copied profile and exported ABI are verified; authenticated real cross-VM GPU and modern DXVK acceptance remain pending, so #3 stays55%/#11 stays60%. Full CI37556752590 and37556749246 are running at9111799; no CI credit yet.
+
+### Implementation-first milestones — acceptance pending
+
+TODO #3 remains55% pending integrated Windows/DXVK and final qualification.
+
+| Commit | Implemented milestone | Verification / remaining gate | Task impact |
+|:--|:--|:--|:--|
+| `93424cb` | Timed Windows bootstrap with bind-starting allocation probes | Targeted SDK-owner matrix and Windows crosslinks; real new runtime pending | #3 +0%; overall +0% |
+| `66dd212` | Owned real-image WSI registry and synchronous readback callbacks | Debug/ReleaseSafe targeted lifecycle tests; core integration pending | #3 +0%; overall +0% |
+| `988c3e9` | Actual authenticated DXVK pixel/compute/swapchain fixture | Strict crosslink; integrated runtime acceptance pending | #3 +0%; overall +0% |
+| `97a3d0b` | Native BGRA HWND sink with paced FIFO | Actual medium Windows128 exact-pixel cycles, stable GDI/USER owners at native_present_89e12fd3 | #3 +0%; overall +0% |
+| `e797037` | Six bounded image transfer commands and pinned C oracle | Debug/ReleaseSafe19 units; ICD integration pending | #3 +0%; overall +0% |
+| `e0e5928` | Native handle ownership regression with attributed system initialization | Original cold97→157 failure retained; strict crosslink; real corrected lifetime gate pending | #3 +0%; overall +0% |
+| `dc15eef` | Timed ICD ABI/export/build and trusted524288-byte worker mapping | Native fixture/Windows DLL/worker compile; full native queries and GPU/DXVK pending | #3 +0%; overall +0% |
+
+Integrated implementation milestones below carry **+0% verified progress** to
+TODO #3 and overall completion until final qualification passes. Targeted encoder
+and unit passes validate implementation paths; they are not Windows/DXVK acceptance.
+
+- **Commit `adb00a5`**: `feat(vgpu): integrate timed capability queries and immutable host extension cache`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `1e2ac02`**: `fix(vgpu): retain transport-lost swapchain backend owners`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `0d3674e`**: `feat(vgpu): encode real dynamic rendering attachment scopes`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c7d3cfc`**: `feat(vgpu): admit owned device requests against explicit supported capability policy`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `302b035`**: `feat(vgpu): serialize broad core graphics pipeline states`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `0ba4414`**: `feat(vgpu): encode modern synchronization and timeline operations`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `5abce9a`**: `feat(vgpu): encode dynamic graphics state and indexed draws`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c09f0ef`**: `fix(vgpu): preserve default single-device submit2 masks`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `721524f`**: `feat(vgpu): encode indexed image descriptors and immutable layouts`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c7917f1`**: `fix(vgpu): initialize attributed native graphics dependencies before handle audit`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `c18fb26`**: `feat(vgpu): encode additional Vulkan object and query operations`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `f1eed65`**: `feat(vgpu): query actual dedicated memory and64-bit format requirements`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `7aeba1e`**: `feat(vgpu): integrate real-image Win32 swapchain presentation`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `3f5e406`**: `feat(vgpu): preserve mutable cube image format lists`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `ca02d7b`**: `feat(vgpu): forward actual graphics and compute pipeline caches`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `bb225ca`**: `feat(vgpu): integrate additional Vulkan object and query lifecycles`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `766efb8`**: `feat(vgpu): encode timeline semaphore creation and preserve counter errors`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `d005eaa`**: `feat(vgpu): encode dedicated and device-address memory allocations`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `5941f88`**: `feat(vgpu): normalize complete modern transfer command inputs`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `62f1eab`**: `feat(vgpu): track broad first-attachment compatibility keys`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+- **Commit `2e685c5`**: `fix(test): permit private bootstrap fixture cleanup by its owner`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named API/ownership/test increment; integrated final qualification pending.
+
+The actual Vulkan1.0 triangle run `build/windows11_vm/tcp_gpu_warm_7bd7c75a`
+passed exact pixels and eight lifetimes with a stable independently initialized
+system-dependency handle baseline, natural controller/worker exit and empty owned
+session. Its copied runtime predates the modern integration and qualifies only
+that functional snapshot. Original cold-baseline failures remain preserved.
+The new timed-bootstrap run `build/windows11_vm/timed_bootstrap_26265411`
+completed startup and exact allocation-boundary probes but failed its first cold
+handle assertion102→111. This remains unresolved qualification evidence; no leak
+or progress credit is assigned.
+
+Build integration milestone (this commit, resolve by subject): native/Windows
+oracle dependencies are declared before make prerequisites expand; all modern
+modules participate in rebuild dependencies, and `vgpu-icd-units` provides actual
+Debug/ReleaseSafe checks during implementation without running final instrumentation.
+Task Impact: TODO #3 +0%; overall +0%. Final sanitizer/coverage/stress and real
+Windows/DXVK2.7.1 rendering/compute/presentation/teardown remain required.
+
+### Modern query functional integration milestone
+
+- **Commit `da566f6`**: `test(vgpu): exercise modern physical queries in native triangle lifetimes`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `b37ef00`**: `feat(vgpu): query actual image subresource layouts`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `2bc6773`**: `test(vgpu): cover all native KHR physical query entrypoints`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `669d66f`**: `fix(test): compare sparse query results against their actual legacy source`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `4d57146`**: `feat(vgpu): expose legal guest instance extensions and complete modern query aliases`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `2985268`**: `test(vgpu): include modern Vulkan modules in existing coverage runner`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `0b93dce`**: `feat(vgpu): query host render area granularity`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `41fd3c0`**: `feat(vgpu): encode synchronization2 event commands`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `46ff5c9`**: `feat(vgpu): forward maintenance5 pipeline flags and compute specialization`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+- **Commit `d4f8d34`**: `feat(vgpu): integrate modern synchronization and memory query lifecycles`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented the named path or targeted check; final integrated DXVK qualification pending.
+
+Actual copied commit `4d57146` passed the normal Windows query-and-triangle
+workload at `build/windows11_vm/tcp_gpu_e93b307b`: all seven KHR query families,
+eight typed query markers, eight exact RTX5080 triangles, handle baseline159
+unchanged per lifetime, medium integrity8192, native exit0, owned project DLLs
+absent after stop, and exact before/after hashes of four critical guest artifacts.
+Controller and worker exited0; the owned session emptied. The renderer adopted
+child records wait status9, so this is not represented as signal-free renderer
+teardown. This evidence covers that copied functional query snapshot, not the
+later sync/descriptor/graphics integration or final leak/coverage/stress/DXVK gates.
+The mistaken-argument deployment `tcp_gpu_6cfc9bd8` was never launched and remains
+preserved without credit. TODO #3 remains55%; overall68.75%.
+
+Full-size shader implementation (this commit, resolve by subject): actual host
+shader packets accept bounded SPIR-V up to65536 bytes instead of the legacy8KiB
+packet ceiling. Debug/ReleaseSafe tests compare ordinary, >8KiB and exact-maximum
+packets with the independent pinned C encoder. Native/Windows oracle builds pass.
+Task Impact: TODO #3 +0%; overall +0%; core integration and final acceptance pending.
+
+
+### Graphics, descriptor and presentation integration milestone
+
+- **Commit `a6c2d7d`**: `test(vgpu): exercise real Win32 swapchain rendering and presentation`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `ed225c4`**: `feat(vgpu): integrate general pipelines and dynamic rendering ownership`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `67ca728`**: `feat(vgpu): own and expand descriptor update template inputs`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `56e6f85`**: `feat(vgpu): execute mixed descriptors in independent graphics and compute domains`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `aacd210`**: `feat(vgpu): validate broad image transfer geometry and readback packets`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `ad8e689`**: `feat(vgpu): serialize bounded graphics pipeline library links`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `fc1b0a8`**: `fix(vgpu): enforce image blit numeric format compatibility`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `1608205`**: `test(vgpu): integrate template and image geometry native checks`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `9e951f4`**: `feat(vgpu): integrate broad graphics transfers and sync2 command ownership`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `940a082`**: `fix(test): retire native fixture owners in valid loader order`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+- **Commit `68a236b`**: `fix(vgpu): send interactive TCP RPC packets without Nagle delay`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented and targeted functionality checked; final integrated qualification pending.
+
+The actual Windows smoke at `build/windows11_vm/tcp_gpu_2f5da43f` used
+core `ed225c4` and fixture `940a082`. Two complete device/window/surface/swapchain
+lifetimes produced four FIFO/IMMEDIATE frames; every4096 client RGB pixel matched
+independent GPU staging readback. Native handle baseline197 and GDI/USER baselines
+returned exactly after both lifetimes. Native/controller/worker exited0, the owned
+session emptied without observer errors or signals, and four critical guest file
+hashes matched before/after. This is functional evidence for that copied snapshot;
+the full48-frame workload and actual pinned DXVK qualification remain pending.
+
+Remaining integration includes coherent mapped-memory synchronization, mutable
+and cube image views, and host-intersected Vulkan1.3 capability admission. Backend
+blob creation already permits page-aligned extents through one GiB; increasing the
+native mapped allocation ceiling to256MiB does not require changing TCP payload
+or ring bounds. Final sanitizer/leak/coverage/stress checks remain deferred until
+basic end-to-end execution of the integrated implementation works. TODO #3
+remains55%; overall68.75%.
+
+This milestone also fixes the existing coverage runner's module-oracle registry
+initialization order: modes without an oracle previously referenced the registry
+before its definition. No threshold, production scope, or acceptance assertion
+is changed. Task Impact: TODO #3 +0%; overall +0%.
+
+
+### Coherent mapping and DXVK admission implementation milestone
+
+- **Commit `998c89b`**: `test(vgpu): keep modern qualification runner usable across pure modules`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `f47d184`**: `feat(vgpu): validate owned cube and mutable image view metadata`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `83e5ebe`**: `feat(vgpu): transport bounded coherent mapping dirty spans`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `11b8338`**: `feat(vgpu): integrate descriptor templates and mutable descriptor ownership`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `dcee971`**: `test(vgpu): reuse sanitizer and coverage runners for integrated Vulkan modules`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `2d935ea`**: `test(vgpu): qualify integrated ICD through current sanitizer target`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `189ef2c`**: `test(vgpu): require exact DXVK client presentation pixels`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `c839945`**: `feat(vgpu): synchronize coherent mappings and validate mutable cube views`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `274af56`**: `feat(vgpu): encode instance requests through Vulkan 1.3`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `93bed1d`**: `fix(test): select honest coherent GPU readback memory`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+- **Commit `c6d3a89`**: `feat(vgpu): preserve image view usage chains for DXVK`. **Task Impact**: TODO #3 +0%; overall +0%. Implemented with targeted checks; full integrated qualification pending.
+
+Commit `c839945` implements owned mapped-range baselines, initial actual host reads,
+ACK-controlled bounded scatter uploads, and GPU incoming-byte merging that
+preserves newer CPU writes. The allocation ceiling is256MiB and actual coherent
+host types retain their coherent advertisement. Cube/mutable view metadata and
+resolved native ranges are integrated. Debug/ReleaseSafe189 tests, native128
+lifetimes, and Windows static compilation pass; these are targeted implementation
+checks, not final sanitizer or real DXVK qualification.
+
+Actual corrected snapshot `93bed1d` passed `build/windows11_vm/tcp_gpu_6eb88ac4`:
+seven query families in each of eight lifetimes, eight exact RTX5080 triangles,
+actual coherent host-visible type2, unchanged native handle baseline160,
+native/controller/worker exit0, owned session empty, no recorded signals, and
+four critical deployed file hashes unchanged. The earlier `tcp_gpu_b5a68377`
+failed at noncoherent-only fixture selection; its failure remains preserved without
+credit. Commit `93bed1d` corrects selection while retaining poison, flush/invalidate,
+exact output and ownership checks.
+
+The same corrected coherent source passed functional WSI smoke
+`tcp_gpu_fd643e37`: two complete lifetimes and four FIFO/IMMEDIATE frames,
+all4096 client RGB pixels equal independent GPU staging readback, GDI7/USER5/native197
+unchanged after each teardown, native/controller/worker exit0, no signals or
+observer errors, and owned session empty. Final deployed hash verification is
+pending at this recording. Full48-frame WSI qualification remains pending.
+
+Instance serializer `274af56` accepts Vulkan1.3 with existing variant/major/minor
+validation. `c6d3a89` forwards bounded actual image-view usage chains required by
+DXVK. Guarded core API/feature/device admission is undergoing targeted checks;
+generated regular/sanitized manifests now record the implementation ceiling1.3.0.
+Actual physical support remains intersected with host data; private legacy bindings
+retain their lower API policy. Existing deployed manifests and snapshots are unchanged.
+
+Final leak/sanitizer,90% coverage, stress, standalone timed bootstrap and real
+pinned DXVK rendering/compute/presentation/teardown remain pending. TODO #3
+remains55%; overall68.75%.
+
+
+## Integrated implementation and serializer qualification milestone (2026-10-07)
+
+All rows below are TODO#3 implementation or scoped qualification increments;
+none awards overall acceptance credit. The remaining guide gates include all
+production ICD functions, final resource/leak/stress checks, full48-frame Windows
+presentation, standalone24-cycle bootstrap, and real pinned DXVK results/teardown.
+The device path now genuinely creates the feature-level11 D3D11 device and
+swapchain. Exact Windows module-base diagnostics localized the subsequent panic
+to a dispatchability error in timeline waiting, corrected by516cf61. Previous
+failed runs remain preserved; the fresh corrected real DXVK run is pending.
+
+| Commit | Coherent change | Task / overall impact | Qualification scope |
+|:--|:--|:--|:--|
+| `db67c2e` | feat(vgpu): admit implemented Vulkan 1.3 features and host extensions | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `20eddc9` | test(vgpu): qualify modern copy rejection boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `96332da` | fix(test): link each modern coverage render oracle once | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `919f9b7` | test(vgpu): qualify image view format and shape boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `6c83dac` | test(vgpu): qualify WSI failure ownership and namespace quotas | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `272d2b8` | feat(vgpu): query actual native descriptor layout support | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `b45ed38` | fix(test): preserve Zig explicit stack guards during ASan lowering | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `be659e6` | test(vgpu): qualify transfer geometry and dynamic graphics boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `b911184` | feat(vgpu): complete feature level 11 policy and legal core support queries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `04ada00` | test(vgpu): qualify all image transfer rejection paths | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `40d8f7d` | refactor(vgpu): share checked packet capacity helpers | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `b3cf01e` | test(vgpu): identify actual DXVK device and failure stages | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `9d83afe` | refactor(vgpu): admit complete descriptor packet capacity before encoding | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `5624006` | refactor(vgpu): bound complete graphics staging before packet publication | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `962b156` | refactor(vgpu): prove fixed query and object packet capacities | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `516cf61` | fix(vgpu): retain timeline wait owners through nondispatchable lookup | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `e482815` | refactor(vgpu): preflight complete synchronization packet extents | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `7f1418c` | test(vgpu): qualify owned descriptor template failure boundaries | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+| `7f87d1d` | test(vgpu): qualify pipeline helper topology and append capacity | #3 +0% verified; overall +0%. | Implementation/targeted checks; scoped final results below; complete acceptance pending. |
+
+Current existing90% gates pass without lowering thresholds: request96.84%/98.55%,
+receiver bounds92.86%/100%, receiver C94.90%/97.97%, requirements queries100%/100%,
+extra objects92.49%/99.22%, synchronization94.12%/100% (branches/lines).
+Image-owner receipts in `build/image_pipeline_checkpoint/final_coverage_20261007.json`
+record nine rendering/image gates above90%; helper/template/shader follow-up gates
+also pass. All source functions in sampler are now before its test-only boundary;
+whole ICD production reorganization and qualification remain in progress.
+
+Final existing ASan/LSan/UBSan runner checks pass for root synchronization, extra
+objects, and requirements query modules, including their render/view imports.
+Receiver C/bounds sanitizers pass. Logs and unique attempt artifacts are retained
+under `build/root_todo3_continuation/` and `build/sanitizers/vgpu/`. These results
+cover their tested ownership paths, not completed full ICD/Windows/DXVK acceptance.
+Coverage runners now retain unique attempts for older modes as well, preserving
+all historical flat reports. TODO#3 remains55%; overall68.75% pending final gates.
+
+### Implementation and qualification milestone: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `6b88640` | refactor(vgpu): include every ICD production declaration in qualification | #3 +0%; overall +0% (qualification pending). | Full production coverage scope restored; first whole-core attempt fails honestly at 55.28% branches/67.62% lines; 90% thresholds unchanged. |
+| `0f5f495` | test(vgpu): identify blocking DXVK GPU completion operations | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `e395086` | test(vgpu): qualify complete sparse and graphics descriptor ownership | #3 +0%; overall +0% (qualification pending). | Complete production profiles 98.81% branches/100% lines; compute state 91.38%/97.56%; no truncated production credit. |
+| `b784be0` | test(vgpu): identify stalled actual receiver requests without payload logging | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `19d1aa7` | test(vgpu): retain dispatch runtime coverage qualification attempts | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `f8520da` | test(vgpu): exercise host child result publication and ownership | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `ec8de16` | test(vgpu): verify image recording and WSI ownership after acknowledgments | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `0b1f760` | fix(test): enforce elapsed DXVK GPU completion deadline | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `646f6b3` | test(vgpu): qualify bounded 64 KiB TCP resource reads | #3 +0%; overall +0% (qualification pending). | TCP client/server real socket boundary, partial EOF and oversized replies pass; client 93.48% branches/server 90.10%, both100% lines; sanitizers pass. |
+| `e530ac3` | feat(vgpu): negotiate bounded64KiB coherent resource reads | #3 +0%; overall +0% (qualification pending). | Hello version2 rejects old peers; 64KiB only for validated resource reads; command/write bounds unchanged. Wire units, owned sanitizer and97.42% branch/99.20% line gates pass. |
+| `bbafb14` | fix(vgpu): bound coherent refreshes to submitted resource spans | #3 +0%; overall +0% (qualification pending). | Actual initial maps retained; submitted buffer/image spans and exposed address ranges conservatively bound completion refreshes. Core Debug/ReleaseSafe/native checks pass; Windows GetData completes but staging Map fails. |
+| `c1f5d12` | test(vgpu): cover timeline result ownership and modern image copy wrappers | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `fe87b34` | test(vgpu): preserve TCP socket coverage attempts | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `928e241` | test(vgpu): verify buffer address exposure and coherent range ownership | #3 +0%; overall +0% (qualification pending). | Targeted checks and retained owner checkpoint evidence; no final acceptance credit. |
+| `ed50df6` | fix(vgpu): transfer resource reads through complete bridge payload rings | #3 +0%; overall +0% (qualification pending). | Owned262144-byte region/two65536-byte rings remove per64-byte polling bottleneck. Strict build and actual CPU lifecycle cases pass,100% lines/91.45% branches; final sanitizer and Windows rerun pending. |
+| `799990c` | test(vgpu): qualify bootstrap lifetimes after independent GUI initialization | #3 +0%; overall +0% (qualification pending). | Independent system-only GUI initialization reproduces exact9 cached system handles; diagnostic24 bootstrap lifetimes stable, final fresh production qualification pending. |
+| `de3920c` | chore(vgpu): add opt-in command lifecycle rejection diagnostics | #3 +0%; overall +0% (qualification pending). | Opt-in bounded local command lifecycle diagnostics;237 Debug/ReleaseSafe tests/native128/Windowsstatic pass. No ownership behavior changed. |
+
+### Native GPU readback and remaining compute milestone: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `2ac2adf` | test(vgpu): verify bounded Submit2 graph preflight | #3 +0%; overall +0% (final acceptance pending). | Actual native packet/resource graph and no-mutation rejection tests pass. |
+| `83115f8` | test(vgpu): gate native heap snapshots around full DXVK lifetimes | #3 +0%; overall +0% (final acceptance pending). | Optional bounded external heap gates prepared; actual native heap qualification pending. |
+| `3a62683` | fix(vgpu): retire command ownership through native submission fences | #3 +0%; overall +0% (final acceptance pending). | Hidden native fence ACK/status retires proven GPU references; pending and uncertain owners remain retained. Actual DXVK command reuse and staging Map now work. |
+| `c292dac` | test(vgpu): retain DLL bases for native heap allocation attribution | #3 +0%; overall +0% (final acceptance pending). | Native unloaded DLL base attribution prepared; no leak-audit credit yet. |
+| `386683b` | fix(vgpu): request canonical descriptor layout support reply extent | #3 +0%; overall +0% (final acceptance pending). | Exact28-byte host response requested; canonical decoder preserved and regression verified. |
+| `6e85c92` | test(vgpu): exercise modern native API owner graphs and failures | #3 +0%; overall +0% (final acceptance pending). | 260 Debug/ReleaseSafe tests and native128 pass; final whole-core coverage remains pending. |
+| `2e77d98` | fix(vgpu): admit all supported graphics pipeline chain orders | #3 +0%; overall +0% (final acceptance pending). | Three supported chain nodes accepted in all six orders;266 Debug/ReleaseSafe/native128 and Windowsstatic pass. |
+| `b05bede` | test(vgpu): report bounded real DXVK staging mismatch details | #3 +0%; overall +0% (final acceptance pending). | Actual eb202e00 reports all4096 BGRA127,64,32,255 pixels and RowPitch256; failed exact assertion preserved. |
+| `b6af112` | test(vgpu): retain uncertain native constructor and fence owners | #3 +0%; overall +0% (final acceptance pending). | 269 Debug/ReleaseSafe/native128 pass; uncertain hidden-fence and shader constructors remain owned. |
+| `b60fef3` | test(dxvk): use unambiguous UNORM byte centers | #3 +0%; overall +0% (final acceptance pending). | Microsoft FLOAT-to-UNORM allows either127/128 at0.5. Byte-center input preserves unchanged exact4096 expectations. Actual182afac7 passes pixels, compute allocation times out. |
+| `6cb8be4` | chore(vgpu): expose opt-in receiver service termination status | #3 +0%; overall +0% (final acceptance pending). | Strict production worker build passes; scalar diagnostics only. |
+| `821c0c7` | test(vgpu): qualify allocation and presentation owner failures | #3 +0%; overall +0% (final acceptance pending). | 276 Debug/ReleaseSafe/native128 and Windowsstatic pass; bounded optional descriptor-allocation diagnostics prepared. |
+
+Actual pinned DXVK2.7.1 run `182afac7` creates FL11 device/swapchain, passes
+GetData deadline, maps staging storage and verifies all4096 exact BGRA pixels.
+The last successful host operation was descriptor allocation77; shared live logs
+later proved local maintenance5 buffer-view rejection caused the command thread
+to exit and the idle host to time out. That run accepts no compute, Present/client
+pixels or teardown results. Controller status-5 means
+RingTimeout, not RingCorrupt. Host worker retired with raw exit256 and empty owned
+session; native PID4296 remains preserved. Non-invasive signed Microsoft CDB
+capture identifies DXVK synchronization waiting after its command thread exits.
+A separate native trace may proceed only because the old host/GPU owner retired.
+TODO#3 remains55%, overall68.75%; all final gates remain required.
+
+
+### Native compute integration milestone: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `409c0d7` | test(vgpu): trace descriptor reply validation and map owner failures | #3 +0%; overall +0% (final acceptance pending). | Both actual descriptor replies match; public mapping ownership and injected failures pass. |
+| `7c3f17e` | fix(vgpu): preserve maintenance5 buffer view usage | #3 +0%; overall +0% (final acceptance pending). | Pinned native encoder agrees with single bounded usage-flags2 chain. |
+| `5f34681` | fix(acceptance): read live Windows logs with shared writers | #3 +0%; overall +0% (final acceptance pending). | Actual shared log reads expose buffer-view rejection; old empty artifacts preserved. |
+| `3acd2cd` | fix(vgpu): admit empty buffer view usage subsets | #3 +0%; overall +0% (final acceptance pending). | All38 Debug/ReleaseSafe tests pass; affected final serializer coverage/sanitizers pending. |
+| `86caaf6` | fix(vgpu): preserve maintenance5 buffer view usage and ownership | #3 +0%; overall +0% (final acceptance pending). | Effective view usage must be a supported subset of a fully bound live backing allocation; descriptor checks use view and backing ownership. |
+| `79ac292` | fix(vgpu): borrow descriptor and resource registries within native stack limits | #3 +0%; overall +0% (final acceptance pending). | Native stack overflow fixed without raising thread stack; all282 Debug/ReleaseSafe/native128 and Windows static checks pass. |
+| `971e58a` | test(dxvk): await exact asynchronous client presentation | #3 +0%; overall +0% (final acceptance pending). | Polls all4096 unchanged exact RGB assertions within original10s bound; fresh Windows execution pending. |
+
+Actual immutable `dxvk_gpu_db079fbb` at79ac292 creates the pinned DXVK2.7.1
+FL11 device/swapchain and passes4096 exact GPU BGRA pixels plus64 exact compute
+storage words. Present returns S_OK but the immediate client pixel check fails.
+No presentation acceptance is credited. Shared DXVK logs show no Present-path
+error. The fresh971e58a verifier waits for asynchronous presentation while retaining
+all exact comparisons and the existing10s limit. Failed teardown uses the existing
+trusted cancellation/worker-retirement receipt; this is not normal-teardown credit.
+
+The previous descriptor-allocation hypothesis is superseded by shared live logs:
+maintenance5 buffer-view usage was rejected locally after a successful allocation.
+After that fix,400473f7 demonstrated STATUS_STACK_OVERFLOW in the ICD; borrowing
+mutex-owned registries reduces descriptor-update stack from1,427,480 to45,080 bytes
+and sampler destruction from1,478,552 to72 bytes. No stack-limit bypass was added.
+Old native PIDs4296/1404 and all failed snapshots remain preserved.
+
+Whole-core90% coverage, final leaks/sanitizers/stress, complete Windows presentation
+and normal teardown, controlled device removal and external native DLL heap audit
+remain required. TODO#3 remains55%, overall68.75%; Time Ended remains TBD.
+
+
+### Implementation complete; final qualification started: 2026-10-07
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `8d1d02a` | test(vgpu): diagnose retained teardown owners and qualify native query events | #3 +0%; overall +0% (implementation milestone below). |286 D/RS/native128/Windows static pass; actual e591931e proves one orphan image68/allocation69, no tickets/fences/pending uses. |
+| `e970799` | fix(vgpu): retain retired swapchain images through cached view teardown | #3 +25%; overall +6.25%. | Actual81a46cb2 at immutable20ed114b passes native0, FL11/device,4096 GPU pixels,64 compute words,4096 presented pixels and normal teardown; hoststatus0/workerexit0/retired1. |
+| `9bc7de4` | fix(vgpu): refund effective variable descriptor allocation counts | #3 +0%; overall +0% (final qualification pending). |18 actual0/2/4 count × free/reset/destroy × ACK/loss cases D/RS pass; Windows static pass. |
+| `0b8ecc8` | test(vgpu): verify retired WSI ownership through actual queue completion | #3 +0%; overall +0% (final qualification pending). | Actual frontend ticket/fence/queue-idle proof permits last-view/image/memory ACK retirement; failed proof retains10 owners/ticket. Targeted D/RS pass. |
+
+The80% TODO#3 milestone distinguishes integrated working implementation and basic
+real Windows acceptance from final qualification. Remaining20% requires unchanged
+90% whole-production coverage, final zero-leak/sanitizer and stress gates, fresh
+current-code native transport/bootstrap/repeated WSI/DXVK lifetimes, actual device
+removal and external native DLL heap allocation audit. Time Ended remains TBD.
+Core owns the required integrated make gates; image owns changed extra-object
+serializer qualification; root owns final fresh-worker/bridge sanitizers and
+progress coordination; WDDM exclusively owns VM/GPU acceptance. Historical failed
+runs and retained native processes remain intact. No100% or final acceptance claim.
+
+
+### Final qualification: real device loss and repeated presentation
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `9b566e2` | docs(vgpu): record integrated basic acceptance and open final qualification | #3 +0%; overall +0% (80% milestone attributed to e970799). | Ordinary81a46cb2 native/host/worker0, exact4096 GPU/64 compute/4096 client results and normal teardown. |
+| `a1a9583` | test(dxvk): release context bindings while healthy before deliberate loss | #3 +0%; overall +0%. | Preserves actual Clear/Flush/fault/status/Present/COM/DLL checks; removes a fresh ClearState after verified device reset. |
+| `23b6409` | test(vgpu): qualify current honest physical feature projection | #3 +0%; overall +0%. | Current API1.0..1.3 and normalized booleans; selected NVIDIA mandatory FL11 support; NULL device feature input still enables no features. Exact WSI acceptance unchanged. |
+| `fa05f47` | fix(vgpu): normalize compatible block sizes and volume/slice copy footprints | #3 +0%; overall +0%. | Native9/wire32 D/RS pass; native95.43%branch/100%line,wire92.86%branch/98.33%line; existing ASan/LSan/UBSan runners pass. |
+| `49ff70d` | test(vgpu): reject core feature advertisement outside the implemented allowlist | #3 +0%; overall +0%. | All55 fields checked against22 implemented flags; no weakening of pixel/lifetime checks. |
+| `da50fb7` | fix(vgpu): reset local command definitions after device loss | #3 +5%; overall +1.25% for verified final device-loss milestone. | All296 D/RS/native128/loader/Windows checks pass. Actual875d512b at immutable859e788a passes4096 GPU pixels,64 compute words,4096 client pixels before real reset; actual device and Present return RESET, then full owned native teardown marker. Native expected1, worker0/SID empty; deliberate host cancellation records SIGTERM15/forced_cleanup=true, distinct from normal acceptance. All6 native SHA checks and unique alias unchanged. |
+| `2f26b7b` | fix(vgpu): integrate native image copy block and slice geometry | #3 +0%; overall +0%. |298 D/RS/native128/Windows pass; original source-unit native packet with per-image normalized texel footprints and explicit owner retention. |
+| `3c34030` | test(vgpu): exercise modern wrapper boundaries and ownership | #3 +0%; overall +0%. |325 D/RS/native128 pass; unchanged whole-core gate reaches83.39%branch4010/4809 and95.89%line4547/4742, still fails90%branch threshold. |
+| `7d26011` | fix(vgpu): apply same-type remaining-layer and1D depth constraints | #3 +0%; overall +0%. | Changed geometry96.41%branch/100%line and existing20-function sanitizer gate pass; current Windows qualification passes. |
+
+Full48-frame/eight-lifetime native WSI d884604d at859e788a passes native/host/worker0,
+exact GPU/client pixels and original handle/GDI/USER assertions. All4 input SHAs
+are unchanged, no forced cleanup/signals. Final native TCPv2 50317b8a naturally
+passes32 cases after its separate private observer timeout; that failed observer
+receipt stays preserved. Bootstrap5dcace34 passes24 exact111-handle lifetimes and
+DLL unload. Ordinary ccadbf0d and sanitized e9a2bd0b pass pinned DXVK at69cbd277;
+current-code affected final GPU/DXVK runs remain separate and pending.
+
+Fresh final bridge ASan/LSan/UBSan passes all51 lifecycle/fault/controller cases,
+including rebuilt sanitized worker, in tcp_controller_sanitizers_b4a5d845. Reuse
+unchanged runtime/ring stress and pure codec receipts; changed copy/extra-object
+receipts replace only their superseded source results. Whole-core90%, current
+core sanitizer checks, required GPU matrix and external native heap audit remain
+open. Windows11SDK UMDH failed with Microsoft's documented tool bug; original
+per-image registry state was restored and failed capture retained. Signed
+Windows10SDK tools are prepared for a fresh current-code capture; no heap credit
+yet. A robust2 null vertex-binding correctness gap is being fixed before final
+source freeze. TODO#3 is85%, Time Ended remains TBD; no completion claim.
+
+
+### Whole-core coverage verified; approved repository-wide DXVK cleanup
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `c7580ad` | docs(vgpu): record genuine loss qualification and remaining final gates | #3 +0%; overall +0%. |85% milestone attributed to da50fb7, not documentation. |
+| `478a58d` | test(vgpu): expand physical, memory and wrapper boundary coverage | #3 +0%; overall +0%. |352 integrated tests; unchanged whole-production gate retained. |
+| `ee70c1a` | test(vgpu): verify descriptor copy and graphics ownership guards | #3 +0%; overall +0%. |357 integrated tests with native encoder oracles and failure ownership checks. |
+| `7e15868` | fix(vgpu): support legal robustness2 null vertex bindings | #3 +0%; overall +0%. |NULL native identity allowed only with enabled nullDescriptor and offset0; mixed real owners retained after ACK. Disabled/malformed input rejected without RPC. Targeted D/RS/native oracles pass; production source frozen here. |
+| `fb46a01` | test(dxvk): keep repeated lifetimes on the pinned DXGI factory | #3 +0%; overall +0%. |Exact loaded vendor factory/adapter is passed to pinned D3D11; three same-process real lifetimes pass device/render/compute/presentation and normal teardown in pristine eb81b3350d8e7546. Native heap growth remains a failure. |
+| `a34d93a` | test(vgpu): qualify final resource and submission edge cases | #3 +0%; overall +0%. |372 tests; actual ACK/loss, independent packets, cancellation and copied ownership. Whole gate89.92% remains below90%. |
+| `7cf6c01` | test(vgpu): verify render pass attachment and sampled layout guards | #3 +0%; overall +0%. |374 tests; whole gate89.99% still below90%; no rounding to acceptance. |
+| `37df8b4` | test(vgpu): preserve immutable sampler ownership through descriptor retirement | #3 +5%; overall +1.25% for verified whole-core coverage milestone. |375 Debug/ReleaseSafe tests and128 native tests pass. Whole production scope90.07%branch4335/4813 and98.50%line4677/4748; unchanged90% gate passes in run-20261007T213414219044Z-1351006. |
+| `094c34c` | fix(dxvk): apply tracked device information owner cleanup to every client build | #3 +0%; overall +0% (patched native acceptance pending). |User explicitly approved the narrow upstream cleanup exception and required repository-wide application. Tracked patch plus standard make driver builds246 targets and verifies exact repeat cache; clean pinned submodules and pristine DLL builds preserved. |
+
+The external native audit eb81b3350d8e7546 passes all three actual FL11/device,
+4096 GPU pixels,64 compute words,4096 client pixels and normal teardown lifetimes,
+but fails heap qualification: pinned DXVK getMonitorEdid acquires HDEVINFO without
+SetupDiDestroyDeviceInfoList on every return. The user authorized the prepared
+minimal cleanup patch with the explicit requirement that fresh checkouts receive
+the same fix. patches/dxvk/setupapi_device_info_owner.patch and the standard
+vgpu-dxvk-client-build driver now satisfy that requirement without changing the
+upstream submodule pin. Provenance includes patch/driver/dependency/DLL hashes.
+The accepted client is pinned2.7.1 plus this tracked downstream owner fix; it must
+not be reported as an unchanged upstream binary. Exact invalid acquisition and
+all normal/error returns use scoped release. Rendering and acceptance assertions
+are unchanged. Patched actual heap, normal/sanitized DXVK and fault checks remain
+pending. Matched Microsoft PDBs support attribution of residual native stacks;
+no allocation suppression or blanket OS exclusion substitutes for qualification.
+
+TODO#3 is90% and Time Ended remains TBD. Current required ICD sanitizer/Windows
+checks,12-case real GPU matrix/full repeated WSI and patched native zero-leak
+acceptance remain open. Historical pristine failures, DLLs and registry recovery
+receipts remain intact. README and VM state are preserved.
+
+
+### Current ICD and full Windows Vulkan qualification verified
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `b803ab1` | docs(vgpu): record whole-core coverage and approved tracked DXVK fix | #3 +0%; overall +0%. |90% milestone attributed to37df8b4; native heap gate remains open. |
+| `adccca8` | test(dxvk): retire compiler thread state before module unload | #3 +0%; overall +0% (heap qualification pending). |Strict Windows compilation and three real GPU/compute/presentation lifetimes pass; matched diff3ea6429b112fad64 still grows locale and compiler TLS allocations, so join alone does not establish release. |
+| `e8961c5` | test(dxvk): hold compiler code through device thread retirement | #3 +0%; overall +0% (affected actual acceptance pending). |Compiler loads on its owned worker; returned module remains owned through all device/COM/DXVK worker retirement. All8 Windows build targets pass at snapshot2ed4bda7. No manual free, locale API manipulation, result tolerance or skipped assertion. |
+
+Current required make vgpu-icd-test vgpu-icd-sanitizers vgpu-windows completes0
+at37df8b4:375 Debug/ReleaseSafe tests,128 native cycles,8 loader lifetimes and
+Windows builds. ASan/LSan/UBSan instruments1562 owned ICD functions without reports;
+C native ASan128 passes. Exact log: build/icd_final_current_test_san_windows.log.
+Whole-core coverage remains the verified90.07%branch/98.50%line result above.
+
+Actual final Vulkan matrix a64647c8 completes0: all12 normal/sanitized triangle,
+compute and push-compute positive/local-error cases pass. Local postflush failure
+requires its exact workload error, native1 and normal complete owner/module
+retirement; it is not transport/device loss. Real DXVK device/Present reset stays
+a separate required gate. Current48-frame/eight-lifetime WSI e7b07008 passes
+native/host/worker0, exact pixels and original handle/GDI/USER checks. All4 native
+input SHAs are unchanged for every case.
+
+Patched DXVK audit15bcd4b3481a360c passes three actual functional lifetimes and
+normal teardown; SetupAPI growth is gone, but compiler locale/TLS growth remains.
+Joined-compiler audit3ea6429b112fad64 also passes all three functional lifetimes
+but still fails heap qualification. Both restore exact absent per-image UST keys
+and preserve signed raw captures, diffs, all native inputs and host receipts.
+The next affected audit checks actual refcounts, globals and live TLS/socket-table
+owners with bounded read-only Microsoft debugger inspection. Capture observer
+fixes publish acknowledgements atomically; failed observer/callback attempts stay
+preserved and receive no acceptance credit. Native limits remain unchanged.
+TODO#3 stays90%; no100%, native heap pass or final completion claim.
+
+### 2026-10-09 cloud desktop-input and WSI checkpoint
+
+The synced starting source was `6eea43c743b589ab59be5b594721e44f7c3ce478`.
+The ordinary-window input milestone and WSI lifetime correction are published on
+this same feature branch at `875ddc81b1316a9f48461fc431818b975e79eab3`.
+The [source map](../CLOUD_PUBLICATION_CHECKPOINT.md) attributes all eleven atomic
+local checkpoints to their published commits and verifies identical Git trees.
+Input verification is in [its evidence receipt](../desktop-input/EVIDENCE.md);
+WSI verification is in [its tracker](../wsi-window-lifetime/TRACKER.md).
+
+The implementation adds focused Wayland physical keyboard/pointer forwarding,
+bounded guest input ownership, resize/loss/replacement checks, acquisition
+retirement and queue error handling. It does not complete ordinary-application,
+shared-GPU or Adobe acceptance. Software-vGPU TODO #3 remains 90%, TODO #5 remains
+0%, and overall completion remains 77.5%; these changes receive no physical
+acceptance credit.
+
+Full ICD Debug/ReleaseSafe unit runs passed 386 cases per mode. Strict Linux host
+build, Windows guest/ICD cross-builds and focused input/WSI coverage passed.
+However, the additional whole-ICD coverage gate failed its unchanged 90% branch
+requirement: 4353/4837 branches (89.99%) and 4693/4764 lines (98.51%). Do not round
+this to a pass or reuse historical whole-core coverage as current evidence.
+Focused regression additions are being validated separately. Required local
+LeakSanitizer checks remain blocked by executor ptrace; leak-disabled ASan/UBSan
+runs are supplementary only. CI on the published SHA is pending.
+
+The [hardware restart guide](../HARDWARE_TEST_HANDOFF.md) and
+[per-run result template](../HARDWARE_TEST_RESULT_TEMPLATE.md) preserve exact
+commands, source/binary receipts, manual native gates and unresolved blockers.
+Native Windows/Wayland/GPU execution, unobserved HWND reuse, a portable real-GPU
+supervisor, DXVK native heap qualification and integrated shared-GPU application
+workflows remain open. README and dependency pins are unchanged.
+
+### Follow-on whole-ICD coverage correction — 2026-10-09 UTC
+
+Six independently reviewed regression tests now pass the unchanged whole-ICD gate:
+4369/4837 production branches (90.32%) and 4694/4764 lines (98.53%), exit 0.
+The original 89.99% failed baseline above is retained as historical evidence.
+The production branch denominator is unchanged; 16 additional edges are exercised.
+No production code, threshold, exclusions or coverage harness changed. All 392
+unit cases passed in each of Debug and ReleaseSafe, both 128-cycle dispatch
+fixtures passed, and all 392 instrumented cases passed. See the
+[WSI evidence](../wsi-window-lifetime/TRACKER.md) for exact commands/source receipts.
+This changes the local full-coverage gate to passed, with +0% hardware/feature
+completion credit. Required LSan and native/hardware acceptance remain open.
+The initial published SHA's Linux CI was blocked before checkout by Docker Hub
+image-pull failures (including unauthenticated rate limiting after one retry);
+Windows jobs and latest-commit CI must be checked separately.
+
+
+### 2026-10-17 OpenCL production implementation (implemented, NOT verified)
+
+Overall moves 77.5% -> 85.5% solely from TODO #5 at 40% (20% weight). This is
+implementation credit for contract, dependencies and build tooling; every runtime
+and acceptance gate for #5, the DXVK native-heap gate for #3/#11, and all
+verification remain pending and belong to the verification owner. Feature status
+stays In Progress; Time Ended stays TBD.
+
+| Commit | Change | Task / overall impact | Evidence class |
+|:--|:--|:--|:--|
+| `96505a9` | docs(vgpu): specify OpenCL remoting contract and resolve dependency policy | #5 +0% | Specification only |
+| `f6d0708` | chore(deps): add clvk pinned to 8bd3672 | #12 (+0% weight), #5 +0% | Pin; public HTTPS; Apache-2.0 |
+| `79dc7f9` | chore(deps): add llvm-project pinned to 71a85ef | #12 | Pin from clspv deps.json |
+| `6dbf933` | chore(deps): add clspv_spirv_headers pinned to b824a46 | #12 | Pin from clspv deps.json |
+| `36e077c` | chore(deps): add clspv_spirv_tools pinned to fb74718 | #12 | Pin from clspv deps.json |
+| `93bf9d7` | feat(build): OpenCL source pin verifier and tracked export list | #5 +10% (+2.0% overall) | Static; list cross-checked against api.cpp |
+| `1886207` | feat(build): cross-build pinned clvk and clspv into OpenCL.dll without patching | #5 +30% (+6.0% overall) | Cross-compilation only: driver completed, DLL not executed |
+| `42c7ce2` | docs(vgpu): record the patch-free OpenCL build contract and exact pins | #5 +0% | Documentation |
+
+Static source audit (read-only, no execution): clvk needs only core Vulkan from the
+guest ICD to initialise. It requests API 1.3, `vkGetPhysicalDeviceProperties2KHR`
+and, at 1.1+, `vkGetPhysicalDeviceFeatures2`; every device extension it prefers is
+optional and the ICD advertises none of them, so clvk enables zero device
+extensions. It chains legacy per-feature structures (8/16-bit storage, float16/int8,
+variable pointers, buffer device address, ...). The ICD skips unknown structures
+and reports them as zero, so clvk disables fp16/int8, 8/16-bit storage and buffer
+addresses instead of failing; the OpenCL capability set is therefore honest but
+narrower. Projecting those aliased structures from the Vulkan 1.1/1.2 feature
+state the ICD already holds is an optional future enhancement, not needed to run a
+kernel, and was not done. Entry points clvk calls unconditionally are all present in
+the ICD name tables. This audit was by source reading only; it is not runtime proof.
+
+### Verification takeover: OpenCL build admission regressions, 2026-10-17
+
+- Entry commit: `7214c8e7007e7d9aa8236b90b90a98eb9f89255e`, clean tracked
+  working tree on `feature/software-vgpu-slicing`. User confirmed Claude and
+  its workers stopped editing; observed Claude process sleeping with no children
+  or open checkout files. Existing VM and artifacts preserved.
+- Test commit: identify with `git log -1 --format='%H' -- tests/vgpu/clvk_build.py`.
+  Adds ten test methods with per-export, per-pin and per-tool subcases;
+  `python3 -B tests/vgpu/clvk_build.py` exits zero. Full local log:
+  `build/qualification_20261017/clvk_build_tests.log`.
+- `make vgpu-opencl-pin vgpu-opencl-build` exits zero: existing DLL cache
+  validated against current inputs and DLL SHA-256, without recompilation.
+  Evidence class: source pins/build cache only, no execution.
+- Task impact: TODO #5 +0%, #12 +0%, overall remains 85.5%; native kernel,
+  lifetime/heap and simultaneous GPU gates remain open. Time Ended stays TBD.
+
+- **Commit `7347352`**: OpenCL build admission regression coverage.
+  **Task impact**: #5 +0%, #12 +0%, overall +0%. All ten test methods pass.
+- Native fixture checkpoint (identify via `git log -1 --format='%H' --
+  tests/vgpu/opencl_integration.c`): adds eight exact-context lifetimes, GPU-only
+  discovery, four kernel oracles, event/buffer operations and malformed/compile
+  error checks. Strict C11 Windows cross-link passes. **Task impact**: #5 +0%,
+  overall +0%; fixture execution, heap and concurrent Linux acceptance pending.
+
+- **Commit `72d5fae`**: native OpenCL exact-result fixture and explicit make
+  targets; strict cross-build passes. **Task impact**: #5 +0%, overall +0%.
+- OpenCL supervisor-correlation follow-up (identify through the fixture path):
+  adds exact authenticated session output and trusted retirement receipt handling
+  on failed bootstrap stop, preserving owners until external proof. Strict
+  Windows cross-build passes; #5 +0%, overall +0%.
+
+## Current verification checkpoint — 2026-10-17
+
+[Qualification evidence](QUALIFICATION_2026_10_17.md) records fresh passing
+local transport, AV, ICD/WSI sanitizer/allocator/coverage gates, native Windows
+WSI state tests and three real DXVK GPU lifetimes. Native handle counts grow
+201→205→209, so heap qualification remains open and further GPU acceptance is
+paused for attribution. OpenCL is cross-built/prepared, not executed.
+Commit `fb22eee` added exact OpenCL supervisor session/retirement handling.
+This evidence documentation commit has #3/#5/#11 +0%, overall +0%; no closure,
+Time Ended or PR change. Identify it via `git log -1 --format='%H' --
+impl/software-vgpu-slicing/QUALIFICATION_2026_10_17.md`.
+
+### DXVK native handle ownership correction, 2026-10-17
+
+Creator stacks from the exact observed native PID show the persistent two
+thread/event pairs allocated by static winpthreads in DXVK's DLL-global logger
+initialization. The C fixture now runs each entire transaction on a joined CRT
+thread and retains every client/compiler/loader/bootstrap DLL until that
+thread's TLS/FLS teardown finishes. All original GPU/fault/module assertions
+remain; no baseline or threshold changes. Strict Windows cross-build passes.
+Identify the atomic fixture fix via `git log -1 --format='%H' --
+tests/vgpu/dxvk_integration.c`; native rerun is pending, so #3/#11 +0%, overall
++0%, Time Ended TBD. Prior failed audits remain preserved.
+
+- **Commit `0c8d144`**: retire complete DXVK fixture calling threads with their
+  DLL TLS/FLS code still loaded; cross-build passed, fresh native audit pending.
+  **Task impact**: #3/#11 +0%, overall +0%.
+- Copied-input verifier correction (identify via `git log -1 --format='%H' --
+  scripts/verify_clvk.sh`): reject untracked/ignored inputs that the copy-based
+  build would otherwise ingest outside its pins. Eleven methods pass, including
+  real Git cleanliness regressions, and all real pins/cache validation pass.
+  **Task impact**: #5/#12 +0%, overall +0%; native qualification remains open.
+
+- **Commit `aa90325`**: enforce absence of copied untracked/ignored OpenCL
+  inputs, with eleven passing build-admission methods and actual pin/cache
+  validation. #5/#12 +0%, overall +0%.
+- OpenCL path-ABI correction (identify through fixture history): pre-execution
+  review found its bootstrap path byte count omitted the required terminal NUL.
+  Pass the complete conversion count and public path bound; strict cross-build
+  passes. Earlier prepared native inputs are retained as superseded/unexecuted.
+  #5 +0%, overall +0%; no runtime acceptance claim.
+
+- **Commit `33904ca`**: correct OpenCL fixture path ABI before execution;
+  strict cross-link and subsequent thirteen-case TCP wire/sanitizer/coverage
+  gate pass (97.42% branches, 99.20% lines). #5 +0%, overall +0%.
+- Native OpenCL attempt `dxvk_gpu_14ce8bed`: fails before VkInstance/device or
+  kernels; exact authenticated host graph is empty after failure. Loader-owned
+  debug pNext records were rejected by the ICD. No OpenCL runtime credit.
+- The pending ICD correction admits only the pinned loader's consumed debug
+  record headers, with C ABI/generated-packet and malformed/reservation stress
+  regressions. #3/#5 +0%, overall +0% until all affected checks pass.
+
+- **Commit `03caf9b`**: permit only pinned-loader-owned debug instance pNext
+  headers; reject malformed chains before dispatch, verify exact generated core
+  packet and reservation recovery. Fresh 394-test/sanitizer/allocator gates pass;
+  production coverage 90.32% branches, 98.53% lines. Native Windows Debug and
+  ReleaseSafe each pass 394 tests. #3/#5 +0%, overall +0%.
+- OpenCL startup ordering correction (identify via fixture history): load and
+  resolve the large compiler DLL before opening transport; preserve 5000 ms
+  idle deadline and all exact-result assertions. Strict Windows cross-build
+  passes. Native OpenCL attempt `dxvk_gpu_17aa5f54` still failed before kernels,
+  with RingTimeout; retained as failed evidence. #5 +0%, overall +0%.
+
+- **Commit `b758c9c`**: load/resolve OpenCL DLL before authenticated transport
+  start, preserving idle deadline; strict fixture cross-build passes. #5 +0%.
+- Native `dxvk_gpu_005527db`: platform discovery succeeds, three adapters are
+  initialized, no kernel executes because the fixture required one adapter.
+  Cleanup exposes 20 retained clvk-owned ICD objects; exact-session forced
+  cleanup is proved, never counted as normal retirement.
+- Adapter selection correction (identify via fixture history): bounded
+  enumeration and exactly one matching RTX 5080 GPU; reject CPU fallback and
+  ambiguous identity. Eleven build-admission tests and strict cross-build are
+  the portable gate; native rerun remains required. #5 +0%, overall +0%.
+- [Windows clvk retirement proposal](CLVK_LIFETIME_REVIEW.md) documents the
+  upstream defect and reviewable private-copy scope. No patch applied while
+  handoff-required explicit approval is pending. Time Ended remains TBD.
+
+- **Commit `7388e61`**: bound host adapter enumeration and uniquely select the
+  NVIDIA GPU; document twenty retained clvk owners and proposed private patch.
+  Eleven tests and strict fixture build pass; #5 +0%, overall +0%.
+- User explicitly approves private-copy clvk correction on 2026-10-17. Tracked
+  retirement patch/build contract added (identify through patch history).
+  Fifteen admission tests pass, including actual patched allocation accounting
+  under ASan/LSan/UBSan and 16,000 threaded lifetimes. Cross-build, actual shutdown,
+  kernels, heaps and concurrent GPU work remain required. #5/#12 +0%, overall
+  +0%; Time Ended remains TBD.
+
+- **Commit `b4481b9`**: approved private-copy terminal retirement and versioned
+  export/cache contract; fifteen admission/actual owner stress tests pass.
+  Independent review then finds an upstream executor selection state bug.
+- Pool correction (identify through patch history): mark candidate bound only
+  after idle admission; preserve strict shutdown checks. Actual pool regression
+  fails the earlier implementation and passes the correction with sanitizers;
+  sixteen admission tests pass. Owned superseded cross-build was interrupted
+  and preserved without publishing a new DLL receipt. #5 +0%, overall +0%.
+
+- **Commit `fac8c24`**: correct private clvk executor admission ordering; actual
+  pool regression and all sixteen admission tests pass with sanitizers.
+- Native shutdown fixture follow-up (identify through fixture history): require
+  versioned private export, reject shutdown with each live context, perform
+  explicit terminal cleanup, verify repeat/probe behavior, and retain modules
+  through worker TLS/FLS exit before parent unload. Strict Windows fixture
+  cross-build passes; actual new DLL/kernel/heap execution pending. #5 +0%.
+
+- **Commit `b040fe2`**: exercise versioned shutdown, live-context Busy, terminal
+  discovery and complete calling-thread module retirement; strict Windows
+  fixture build passes. #5 +0%, overall +0%.
+- Current source/evidence ledger update (identify through ledger history):
+  nineteen additional module unit/sanitizer/coverage groups and TCP server/bridge/
+  bootstrap ownership gates pass, each above 90% branches and lines. Current
+  corrected-ICD DXVK sanitized positive, normal postflush and sanitized postflush
+  runs pass with exact session/process retirement proof. All feature percentages
+  remain unchanged pending final native heap/OpenCL/physical acceptance.
+
+- **Commit `63a99ff`**: reconcile current safety and native evidence; no task
+  percentage or Time Ended change.
+- Heap diagnostic checkpoint (identify through fixture history): fresh audit
+  `dxvk_heap_56dca3b969766ebc` stops after one successful GPU lifetime and first
+  capture acknowledgement; no heap acceptance. Add exact native rejection/thread
+  error diagnostics, preserving all checks and deadlines. Strict Windows fixture
+  build passes. Signed tools before/after verify; per-image UST restored absent.
+  #3/#11 +0%, overall +0%.
+
+- **Commit `a158fff`**: add exact native heap handshake/thread failure
+  diagnostics; strict Windows cross-build passes, no acceptance relaxation.
+- CI admission follow-up (identify through workflow history): add a pinned
+  minimal-source/header job for all sixteen OpenCL admission and actual owner/
+  pool sanitizer tests. Workflow YAML parses locally; execution remains pending.
+  Existing full Linux/native Windows jobs remain required. #5/#12 +0%.
+
+- **Commit `12b30ee`**: add independent CI admission/sanitizer job; branch
+  pushed for fresh CI. Existing draft PR #6 was discovered afterwards, so that
+  push automatically updated its diff before the requested qualification gate.
+  This is acknowledged; it remains draft and no PR metadata/readiness is changed.
+- Concurrent OpenCL fixture (identify through fixture history): two serial
+  lifetimes with Busy probes, then two joined callers with three disjoint
+  lifetimes each. Preserve all eight exact-result oracles, exclude shutdown
+  until joins, and retain borrows/modules on partial thread creation. Strict
+  Windows cross-build passes; native execution remains pending. #5 +0%.
+
+- **Commit `f77ad49`**: eight exact contexts include concurrent callers, with
+  all callers joined before global shutdown; strict Windows fixture build passes.
+- PE decoder correction (identify through driver history): corrected DLL links
+  successfully but exact inspection fails because an address-table metadata
+  label is parsed as a symbol. Original failed build is preserved without a new
+  receipt. Parse only named exports and validate all counts; real MinGW PE
+  regression admits the exact table and rejects a genuine extra Export symbol.
+  Eighteen admission tests pass; candidate inspection finds exactly 121 named
+  exports including private shutdown. Fresh build/publication remains required.
+  #5/#12 +0%, overall +0%.
+
+- **Commit `ddc7926`**: decode actual GNU PE name tables and require121 exact
+  named OpenCL exports; eighteen admission tests pass, including real MinGW PE
+  acceptance and unexpected-export rejection. #5/#12 +0%, overall +0%.
+- Expanded owned sanitizer qualification (identify through sanitizer history):
+  migrate the stale14-embedded/20-total source contract to exact31/37 sources,
+  preserve interleaved production declarations and same-named member/module
+  functions, rebuild all23 C oracles and the Linux native sink, and require394
+  integrated/29 standalone units. Eleven inventory regressions pass. Full fresh
+  instrumentation/execution is required before any expanded safety claim.
+  #3/#11 +0%, overall +0%; Time Ended remains TBD.
+
+- Dead declaration cleanup (identify through ICD history): remove one unreferenced
+  legacy pipeline import and two private helpers with no caller or native/test
+  definition. Keep real extension dispatch and descriptor validation unchanged.
+  Debug394 and ReleaseSafe394 plus128 C ABI cycles pass in
+  `icd_dead_declaration_cleanup.log`. Native/test IR and independent source-call
+  review establish the distinction from active production code. #3/#11 +0%.
+
+- **Commit `df5f5b9`**: remove never-emitted ICD declarations; Debug394,
+  ReleaseSafe394 and128 C ABI cycles pass. #3/#11 +0%, overall +0%.
+- Loader environment ownership (identify through fixture history): fresh native
+  heap attribution finds fixture-modified loader environment retained through
+  captures. Add bounded transactional capture/restore after joined TLS and module
+  retirement, plus mock sanitizer and actual Windows round-trip regressions.
+  Preserve every GPU/heap assertion, deadline and baseline; fresh GPU/heap audit
+  remains required. #3/#11 +0%, overall +0%.
+
+- **Commit `ef77895`**: restore loader environment only after joined DXVK
+  caller/module retirement. Mock ASan/LSan/UBSan and actual native Windows
+  round-trip pass; strict DXVK cross-build passes. #3/#11 +0%, overall +0%.
+- Full owned-access gate migration (identify through sanitizer history):
+  `full_owned_seam_37.log` exits0 with all394 allocator tests, six native codec
+  suites and29 standalone codec tests,23 fresh sanitized C oracles and native
+  sink. Receipt `build/icd_complete_seam_safety_37/latest.json` is version2,
+ 37-source exact proof with no unknown declaration holes, full LLVM reverse
+  proof and zero configured sanitizer/leak errors. Independent read-only review
+  verifies all177 retained hashes. Eleven separate inventory regressions pass
+  and are now Make prerequisites. Physical gate also checks the actual11-export
+  ABI including timed bind; its fresh hardware run remains required. #3/#11 +0%.
+
+- **Commit `ccef081`**: complete37-source owned ICD seam qualification,
+  394 integrated and29 standalone cases,23 C oracles and six native codecs;
+  zero configured sanitizer/leak errors. #3/#11 +0%, overall +0%.
+- Loader guard coverage (identify through environment-test history): test-only
+  malformed API regressions and exact seven-function production coverage gate.
+  ASan/LSan/UBSan pass;84/84 lines and74/74 branches. Actual native Windows
+  round-trip42ea77cc passes. #3/#11 +0%, overall +0%; Time Ended TBD.
+
+- **Commit `12385fa`**: add the exact loader guard production coverage gate;
+  mock sanitizer and native42ea77cc round-trip pass. #3/#11 +0%, overall +0%.
+- CRT stream ownership (identify through fixture history): set diagnostic streams
+  unbuffered before use to avoid acquiring process-lifetime stdio buffers during
+  measured cycles. Strict cross-build passes; native heap rerun required.
+  #3/#11 +0%, overall +0%; Time Ended TBD.
+
+- **Commit `8f2732e`**: configure diagnostics unbuffered before first use;
+  strict Windows cross-build passes, fresh heap audit pending. #3/#11 +0%.
+- Native WSI lifecycle fixture (identify through native-test history): eight
+  actual device lifetimes with failed replacement/acquired-image retention,
+  zero/nonzero extent changes, explicit replacements and observed HWND loss.
+  Strict integrated Windows cross-build passes; execution pending. #3/#11 +0%.
+
+- **Commit `eb1ff4c`**: add separate actual native WSI lifecycle workload;
+  integrated Windows cross-build passes, native execution pending. #3/#11 +0%.
+- Native OpenCL malformed admission oracles (identify through fixture history):
+  exact-end success, zero/past-end/wrap/null/alias/context/event rejection with
+  output ownership and actual temporary context cleanup. Strict cross-build
+  passes; real-DLL execution remains pending. #5 +0%, overall +0%.
+
+- **Commit `64910b4`**: native OpenCL buffer success/rejection oracles; strict
+  cross-build passes, real execution pending. #5 +0%, overall +0%.
+- Approved private buffer admission/lifetime fix (identify through clvk history):
+  patches0002/0003,13 exact API/helper bodies, zero malformed-call effects,
+  subtraction bounds, alias overlap and pre-enqueue map failure destruction.
+  All19 admission tests pass under San3 with original-source and missing-delete
+  negative controls. Final DLL build/native/heap gates pending. #5/#12 +0%.
+
+- **Commit `3282871`**: approved private1D buffer validation and failed-map
+  ownership corrections;19 San3 admission tests pass, final DLL/native pending.
+  #5/#12 +0%, overall +0%.
+- OpenCL transaction audit (identify through fixture history): restore the exact
+  loader environment after joined TLS/module retirement; preserve failure across
+  retry and optional unchanged-baseline UMDH cycle markers. Strict Windows build
+  passes; native restoration/heap/concurrent GPU pending. #5 +0%, overall +0%.
+
+- **Commit `c9471c9`**: parent-owned OpenCL loader environment and optional
+  native heap cycle markers; strict cross-build passes. #5 +0%, overall +0%.
+- Exact buffer coverage gate (identify through coverage history): preserve the
+  initial77.83% outcome failure; add meaningful malformed/valid cases to reach
+  161/161 lines and200/212 directional edges (94.34%), no exclusions. All19
+  San3 admission tests pass. Make/CI requires>=90% for both. #5 +0%, overall +0%.
+
+- **Commit `04381bd`**: exact private buffer memory coverage161/161 lines,
+  200/212 directional outcomes and19 San3 admission tests pass. #5 +0%.
+- Coherent physical profile (identify through hardware-test history): preserve
+  legacy noncoherent failure/default and add strict current coherent profile.
+  Full37-source owned matrix exits0:144 positive GPU lifetimes and6 expected
+  exit1 cleanup runs onRTX5080, zero configured sanitizer/leak errors.
+  Native/heap/OpenCL gates remain open; #3/#11 +0%, overall +0%.
+
+- **Commit `1e91c48`**: coherent37-source physical matrix passes144 positive
+  GPU lifetimes and6 exact cleanup failures. #3/#11 +0%, overall +0%.
+- Native qualification evidence (identify through qualification-doc history):
+  current WSI8lifetimes/32cases pass; unchanged48-framecase failsafter42 at
+  handle199→200. FinalthreepatchOpenCL8primary lifetimes/concurrent callers
+  and allmalformed oracles passnative; freshDXVK3lifeheap stillunclassified.
+  Requiredheap/concurrentGPU/legacyacceptance remainsopen; #3/#5/#11 +0%.
+
+- **Commit `50d5da2`**: record current native WSI/OpenCL functional receipts,
+  failed unchanged48-frame case and open native heap gate. #3/#5/#11 +0%.
+- User-pause checkpoint (identify through checkpoint documentation history):
+  sanitized-host OpenCL8primary lifetimes also pass; all local jobs ended,
+  publishers stopped, VM preserved. Remaining native heap/concurrent GPU and
+  handle-count failure remain open. #3/#5/#11 +0%, overall85.5%; Time Ended TBD.
+
+
+- **Commit `8a316fb`**: preserve user-pause checkpoint; #3/#5/#11 +0%.
+- Resumed M2 evidence (identify through this documentation commit): two fresh
+  unchanged48-frame native runs pass96 frames/16 lifetime checks; current-source
+  diagnostic passes but does not explain prior199→200 failure. Exact receipts
+  in M2_NATIVE_RECEIPT_2026_10_17.json; vendor child reap status9 retained.
+  #3/#5/#11 +0%, overall85.5%; M2 remains94%, Time Ended TBD.
+
+
+- **Commit `1c3e1f6`**: preserve two unchanged full48-frame positives and
+  current-source successful diagnostic, without waiving old failure. #3/#5/#11 +0%.
+- M2 system-control evidence (identify through this documentation commit):
+  no Vulkan/Waddle session, baseline167→168 at59.766s; unchanged exact check
+  fails. Current OS traces identify RPC garbage-collection paths. M2 native
+  global-count gate externally blocked; no progress/waiver. Overall85.5%,
+  M2 94%, Time Ended TBD; healthy feature heap work remains independent.
+
+
+M2 accounting clarification: the WSI tracker retains five equal verification
+gates; its Windows gate requires both compilation and the already-required
+native/physical acceptance. The prior cross-build-only label omitted that
+requirement from the accounting sentence. Four gates pass; native qualification
+remains blocked by the strict count failure, so #4 stays80% and M2 stays94%.
+No new completion credit, waiver or feature progress. Evidence commit db40b19
+records the system-only reproduction; software-vGPU #3/#5/#11 +0%, total85.5%.
+
+
+### OpenCL three-cycle native heap capture, resumed 2026-10-17
+
+The unchanged approved DLL and native fixture completed three native cycles in
+`dxvk_opencl_heap_edf760f119a1747c`: 24 primary lifetimes plus six temporary
+foreign contexts, all four exact kernels, malformed inputs, build errors,
+joined concurrent callers, explicit shutdown, module absence and loader
+environment restoration. Native exit0, exact guest inputs and five signed
+Microsoft tools were verified before/after, and the unique originally absent
+UST image key was restored. The context/event mismatch oracle runs in two
+serial primary lifetimes per cycle; the other six exercise concurrent exact
+results and range/pointer/overlap checks. No broader oracle scope is claimed.
+
+UMDH unloaded2→unloaded3 has zero requested/overhead delta. Baseline53 process
+handles become142,148,154 after the three unloads. Heap stability does not
+prove zero owned leaks or clear the six-handle increase per later cycle.
+First-cycle retained stacks include Windows graphics/loader calls reached
+through clvk initialization; caller frames alone do not establish allocator
+ownership. No LLVM compiler leak or system-cache exemption is inferred.
+Native heap and final GPU acceptance remain false pending exact attribution.
+
+Controller and Waddle worker exit0 with no supervisor-directed signals and
+empty owned sessions. An adopted vendor renderer child has raw wait status9;
+pinned virgl teardown contains its own SIGKILL path, but these receipts do not
+identify the signal sender or prove graceful vendor-child exit/LSan coverage.
+
+Two failed private-supervisor attempts are preserved separately:76683d1e59a91796
+never launched the native fixture because of a malformed private CMD; its
+unique UST key was restored through an independently recorded fresh session.
+The corrected staging attempt acb28b83e56ef2e0 reached baseline, then a wrong
+Python helper reference aborted supervision; no OpenCL cycle ran, the native
+fixture naturally timed out with exit1, and UST was restored. Neither failure
+is reused as positive evidence. Ten private supervisor regression tests pass.
+
+The separate CI-only head1e91c4833a285c7978afa0d50eaa4035f983cce7 now passes all
+four workflows, including software-vGPU run39085524347 (OpenCL admission,
+Linux transport and native Windows transport). This is CI evidence for that
+source/configuration, not native heap or current feature-HEAD acceptance.
+
+[OPENCL_HEAP_RECEIPT_2026_10_17.json](OPENCL_HEAP_RECEIPT_2026_10_17.json) binds
+raw captures, differences, identities and checksums. #3/#5/#11 +0%; total85.5%.
+M2 remains94%/Review, feature In Progress, Time Ended TBD. Real cancellation,
+simultaneous Linux-GPU/OpenCL execution and DXVK heap ownership remain open;
+no feature push, PR readiness or merge follows from this evidence.
+
+
+Offline repeat-cycle review accounts for verified per-cycle OpenCL/Vulkan
+rebasing. Unloaded1→2 requested bytes decrease0xF78, overhead increases0x8,
+net decrease0xF70; unloaded2→3 has zero positive stack groups and zero net
+bytes/count. One same-size Windows stack allocation changes address, so the
+captures are not byte-identical. These are allocation deltas, not ownership
+acceptance. The executed supervisor and ten-test source are archived with
+hashes equal to the successful run's original manifest before later private
+polling changes. See the OpenCL receipt. Evidence commit80cf470 updated
+#3/#5/#11 +0%; this preservation/review also adds0%, total85.5%.
+
+
+The separate24-primary-lifetime diagnostic ca77f1b6a9915205 completes native0,
+all bounded trace queries0, explicit trace-disable0 and UST restoration. It
+reproduces six retained OpenCL runtime handles per reload; exact creator
+chains and the pending isolated runtime/toolchain comparison are documented
+in [CLVK_RUNTIME_LIFETIME_REVIEW.md](CLVK_RUNTIME_LIFETIME_REVIEW.md) and
+[OPENCL_HANDLE_RECEIPT_2026_10_17.json](OPENCL_HANDLE_RECEIPT_2026_10_17.json).
+This is diagnostic evidence, not heap acceptance. The preceding8ce239cc4db15dd2
+attempt failed before any OpenCL cycle because of a private prelaunch token-file
+race; native baseline timed out naturally with exit1 and UST was restored.
+The race correction retains strict token admission and passes11 private tests.
+Evidence commit031c665 preserves the successful prior supervisor source and
+repeat-cycle heap review; #3/#5/#11 +0%, total85.5%. No production correction,
+threshold change, feature push, Time Ended or PR readiness is claimed.
+
+
+### Runtime reload regression: both toolchains fail, 2026-10-17
+
+Tracked Windows compatibility tests now cover exact handle/TLS-slot return,
+module/export absence, joined threads, once initialization, shared mutex and
+stream teardown. Both strict cross-builds pass; native POSIX loses6handles and
+1TLS slot on first unload, while candidate Win32 keeps handles balanced but
+loses2TLS slots. The Win32 handle-only stress stalls after543 reloads; its failed
+collector and exact owned forced retirement are preserved. The candidate build
+configuration is withdrawn, not qualified. Original19 admission tests pass.
+See [CLVK_RUNTIME_LIFETIME_REVIEW.md](CLVK_RUNTIME_LIFETIME_REVIEW.md) and
+[CLVK_RUNTIME_RECEIPT_2026_10_17.json](CLVK_RUNTIME_RECEIPT_2026_10_17.json).
+Evidence commit0a2eec0 records the preceding trace isolation. New regression
+coverage adds0% to #3/#5/#11; total85.5%. M2 remains94%/Review and Time Ended TBD.
+No new upstream SDK patch, feature push, PR readiness or assertion waiver.
+
+
+## Resumed qualification blocker checkpoint, 2026-10-17 America/New_York
+
+The earlier user-requested stop was superseded by the subsequent request to
+continue toward M2. This resumed work is now recorded at concrete qualification
+blockers, not feature completion or a new user-requested pause.
+
+- Branch `feature/software-vgpu-slicing`; implementation/evidence head
+  `07923b46c9abcfe8d9883bb9aa040236073ee12e`. M2 remains94%/Review;
+  software-vGPU85.5%/In Progress; Time Ended TBD.
+- M2's unchanged global native handle-count gate fails independently in a
+  Windows-only control without Vulkan or Waddle. Two fresh unmodified full48
+  frame positives do not waive the retained199→200 failure.
+- The approved OpenCL DLL still points to exact hash
+  `a8fd9d7a4f979ca4534e26d789025cf9f7c7affd84b46726eeee28f40d83c54d`.
+  Three native cycles complete24 primary lifetimes; repeat heap bytes are
+  stable but six runtime handles per reload require attribution/closure.
+- Exact tracing and a new isolated native regression identify current POSIX
+  runtime loss of6handles/1TLS slot per unload. Candidate Win32 balances
+  handles but loses2TLS slots and stalls after543 handle-balanced reloads.
+  Both final TLS regressions exit1. The original19 admission tests pass;
+  cross-compilation/collection are not native acceptance.
+- The pending Win32 build switch was preserved as a rejected private patch
+  and withdrawn. No new upstream patch or production runtime change is applied.
+  SDK lifetime corrections need a separately reviewed private-copy proposal
+  and explicit approval under CODEX_HANDOFF.md section4. Do not destroy TLS
+  state early, call speculative LLVMshutdown, close borrowed handles, relax
+  assertions or reinterpret a short positive as final qualification.
+- Owned stalled process5888/creation01dd5ea9f4e6eede was identity-checked and
+  forcibly retired after two frozen-progress/increasing-CPU observations.
+  Guest exit marker is-1; this is failed stress evidence. All exact owned
+  native jobs are now absent. Unique UST keys were restored to original absence.
+- Task-only binary/PDB publishers257264/257274 were identity/socket checked
+  and stopped with pidfds. Their loopback ports are closed. Restart only the
+  documented scripts if more transfers are needed; update PDB server record
+  through its script before preparing new immutable audits.
+- Original VM10895/start19105 remains running. No host packages were installed
+  or upgraded; the optional matching SDK was only extracted in build/. README
+  matches the original task-start bytes. Artifacts and unrelated processes remain.
+- Separate CI-only head1e91c4833a285c7978afa0d50eaa4035f983cce7 passes all four
+  workflows. No feature push, PR readiness update or merge was performed.
+
+Canonical evidence: [runtime review](CLVK_RUNTIME_LIFETIME_REVIEW.md),
+[runtime receipt](CLVK_RUNTIME_RECEIPT_2026_10_17.json),
+[OpenCL heap receipt](OPENCL_HEAP_RECEIPT_2026_10_17.json),
+[OpenCL handle receipt](OPENCL_HANDLE_RECEIPT_2026_10_17.json), and
+[M2 system control](M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json).
+The durable runner/README/DLL identity checkpoint is
+`build/qualification_20261017/runtime_blocker_checkpoint.json`.
+Commit07923b4 adds the regression and synchronized evidence with0% task impact.
+No qualification credit or thresholds changed. Remaining actual-DLL heap,
+transport-loss cancellation and Linux-GPU/OpenCL overlap acceptance stays open.
+
+
+Final recursive inventory retains five uninitialized nested Looking Glass
+checkouts (`repos/LGMP`, `PureSpice`, `cimgui`, `nanosvg`, `wayland-protocols`).
+The initial overbroad assertion that every recursive checkout was initialized
+failed and is not acceptance evidence. No checkout/pin was changed to hide it.
+Required feature top-level checkouts are initialized at their pins; the
+inventory has no advanced/conflicted entries. Raw inventory and corrected
+non-acceptance report remain in `build/qualification_20261017/runtime_final_git_state.json`.
+
+
+## 2026-10-21 user-requested stopping point
+
+See [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md). **No progress change: software-vGPU remains 85.5% / In Progress; M2 remains 94% / Review; Time Ended TBD for both.**
+
+- M2 audit, passive handle-attribution diagnostics, two fixture fixes and their native proof: commits `7b6c9d5`, `6faf4ed`, `faf9d19`, `44d69c2`, `56b89a9` (+0% to #3/#5/#11; M2 #4 +0%).
+  Receipt [M2_DIAGNOSTICS_RECEIPT_2026_10_21.json](M2_DIAGNOSTICS_RECEIPT_2026_10_21.json); audit [../wsi-window-lifetime/M2_HANDLE_GATE_AUDIT_2026_10_21.md](../wsi-window-lifetime/M2_HANDLE_GATE_AUDIT_2026_10_21.md).
+- OpenCL runtime-unload defect (TODO #5 evidence only, +0%): root cause, independent reviews and a built-but-never-run candidate DLL in
+  [CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md](CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md), [CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md](CLVK_RUNTIME_PROPOSAL_REVIEWS_2026_10_21.md),
+  [RUNTIME_CANDIDATE_RECEIPT_2026_10_21.json](RUNTIME_CANDIDATE_RECEIPT_2026_10_21.json) and `clvk_runtime_proposal/`. **Human approval recorded (2026-10-21):** shim approach with a hardened v2
+  (Win32 thread model, Waddle C runtime shim replacing two libgcc_eh members, emergency-exception-pool release, fail-closed gates); no clvk/LLVM/clspv/submodule/`patches/clvk` change and no host package install.
+  Nothing is integrated; the v2 work list is in the checkpoint. The earlier "Win32 configuration rejected" status stands until v2 passes native qualification.
+- Task attribution for the docs-only commit(s) of this checkpoint: +0% to #3, #5, #11; overall remains 85.5%.
+
+## 2026-10-21 resumed: M2 native verification on the committed fixture (evidence only)
+
+**No progress change: software-vGPU remains 85.5% / In Progress; M2 remains 94% / Review; Time Ended TBD for both.** The work resumed at the user's request to bring M2 to a reviewable state. The M2 evidence (30 native repetitions of the
+unchanged strict handle gate on the committed fixture, all passing; portable gates on the final sources; amended M2 IMPL_DESC and tracker) is recorded in [../wsi-window-lifetime/TRACKER.md](../wsi-window-lifetime/TRACKER.md) and handed over in
+[../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md](../wsi-window-lifetime/M2_REVIEW_HANDOFF_2026_10_21.md). Receipts: [M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json](M2_INSTRUMENTED_TRIANGLE_PRESENT_RECEIPT_2026_10_21.json),
+[M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json](M2_INSTRUMENTED_WSI_LIFETIME_RECEIPT_2026_10_21.json).
+
+- **Commit `cdd7690`**: `docs(wsi): record the M2 handle-gate audit, diagnostics and the open acceptance decision` - +0% to #3/#5/#11 (M2 #4 +0%).
+- **Commit `7392d93`**: `docs(vgpu): checkpoint at user stop with OpenCL runtime-unload root cause and approved path` - +0% to #3/#5/#11.
+- **Commit `ca52536`**: `docs(wsi): record source-bound native receipts for the instrumented M2 handle-gate runs` - +0% to #3/#5/#11 (M2 #4 +0%).
+- **Commits `d5f2361`, `0faf4cd`** and the later review-fix documentation commit(s), which carry this section, the M2 tracker/IMPL_DESC/audit updates and the review handoff: +0% to #3, #5, #11; overall remains 85.5%.
+- The OpenCL runtime-unload correction (TODO #5) is untouched by this resumption and remains NOT READY; its remaining-work list is in [CHECKPOINT_2026_10_21.md](CHECKPOINT_2026_10_21.md).
+
+
+### Independent M2 review checkpoint, 2026-10-21
+
+[M2_CODEX_REVIEW_2026_10_21.md](../wsi-window-lifetime/M2_CODEX_REVIEW_2026_10_21.md) and its [receipt](../wsi-window-lifetime/M2_CODEX_RECEIPT_2026_10_21.json) record the independent review of `8810544`. Commits `c650401` (snapshot-capacity correction), `ff66d04` (native 1,024-event growth regression) and `bc89bb0` (provenance/duration correction) each affect bounded M2 TODO #4 by +0%; every software-vGPU task remains +0%. The commit containing this checkpoint, `docs(wsi): record independent Codex review and qualification blocker`, likewise changes every task by +0%.
+
+All prescribed M2 portable gates pass independently, including 394 ICD cases and 90.32% ICD branch coverage. The corrected diagnostics pass 18 cases / 6,779 checks with ASan/LSan/UBSan; native Windows diagnostics pass 8/8. Fresh corrected-fixture triangle and WSI workloads pass through the physical RTX 5080, with all 16 checks exactly at 199 handles. The original 199-to-200 failure remains unattributed and unwaived, so M2 stays 94% / Review. CI is not run for these commits, no criteria amendment is approved, no acceptance credit is granted, and no push, PR-readiness update or merge occurs. Software-vGPU remains **85.5%**, Time Ended TBD; OpenCL runtime-unload, DXVK heap and other separate feature gates remain open.
+
+
+### Runtime TLS v2 implementation unit (2026-10-21)
+
+- **Commit containing `fix(vgpu): harden bounded Win32 runtime TLS ownership`**: +0% to TODO #5 and all other tasks; overall remains **85.5% / In Progress**, Time Ended TBD.
+- Implements the Waddle-owned runtime shim and meaningful normal, boundary, malformed-control, concurrent first-use, thread creation/join and failure tests. See [CLVK_RUNTIME_V2.md](CLVK_RUNTIME_V2.md). The DLL build driver is not yet wired; this is not native acceptance.
+- Root independently ran all four new Make gates. Plain, ASan/LSan/UBSan and TSan passed; zero owned leaks reported. Actual fake-mode shim coverage is 118/120 lines (98.33%), 85/92 branch outcomes (92.39%), all 10 functions executed. The coverage validator's four negative-control groups pass both normally and with Python optimization. Strict private GCC 14.2 Win32 object cross-compilation passed separately.
+- Raw outputs and source/tool-bound coverage are preserved in `build/qualification_feature_20261021/root_tls/make_receipt.json` and `build/coverage/vgpu/clvk_runtime_tls/`. Linux Win32 doubles prove no Windows TEB/loader behavior; final-image checks, native controls, final DLL heap/TLS/FLS retirement and GPU qualification remain pending.
+
+- **Commit `b82c383`**: `fix(vgpu): harden bounded Win32 runtime TLS ownership`; +0% to #5/all tasks, recording the preceding implementation unit.
+- **Commit containing `fix(vgpu): retire the GCC exception arena after static destructors`**: +0% to #5/all tasks; overall **85.5% / In Progress**, Time Ended TBD. Adds the private final callback and six lifecycle controls. Plain and ASan/LSan/UBSan pass; real included code coverage 13/13 lines and 6/6 branch outcomes, all two functions. Five shared coverage-validator groups pass normally and optimized; the TLS coverage adapter still passes unchanged 90% floors. Assertion-elided EH tests fail compilation as required. Cross-object compilation and combined probe linking pass, not native execution. Retained `std::__at_thread_exit` fails strict map admission and remains under investigation. Raw `root_tls/eh_make_receipt.json` and unique `build/coverage/vgpu/clvk_runtime_eh_pool/` directories preserve successes and the initial missing-fatal-profile failure.
+
+- **Commit `999b473`**: `fix(vgpu): retire the GCC exception arena after static destructors`; +0% to #5/all tasks, recording the preceding implementation unit.
+- **Commit containing `test(vgpu): fail closed on OpenCL runtime image admission`**: +0% to #5/all tasks; overall **85.5% / In Progress**, Time Ended TBD. Adds standalone read-only PE/map/toolchain admission and seventeen synthetic test groups, passing normally and optimized. Root review added final-instruction scan, non-writable metadata and complete zeroed-record controls. Driver integration, actual-image admission, gthread equality compatibility and native qualification remain open; synthetic inputs are not production evidence.
+
+- **Commit `82f18d6`**: `test(vgpu): fail closed on OpenCL runtime image admission`; +0% to #5/all tasks, recording the preceding unit.
+- **Commit containing `test(vgpu): measure native runtime heap FLS and thread retirement`**: +0% to #5/all tasks; overall **85.5% / In Progress**, Time Ended TBD. Strengthens the runtime C/C++ fixtures and documents exact ABI/watchdog/ownership limits. Strict GCC14 POSIX C and GCC14.2 POSIX/Win32 C++ builds pass. Independent source review completed; root corrected HeapWalk completion to documented `ERROR_NO_MORE_ITEMS`, preserving the failed native baseline (`native_probe_758487be`). DLL-free heap controls pass (`native_probe_4f58c01e`). Exploratory eight-cycle combined probe passes its balances (`native_probe_3301f3fc`), but has an unattributed first-load +8,016 bytes / +6 entries; strict admission and equality compatibility still open, no acceptance. All paths under `build/qualification_feature_20261021/`; raw source/binary records and earlier controls preserved.
+
+- **Commit `7074065`**: `test(vgpu): measure native runtime heap FLS and thread retirement`; +0% to #5/all tasks, recording the preceding unit.
+- **Commit containing `fix(vgpu): reject unsupported runtime thread-exit references at link`**: +0% to #5/all tasks; overall **85.5% / In Progress**, Time Ended TBD. Removes only exact unused root COMDATs through a linker supplement and rejects external use of those APIs and incompatible gthread equality through undefined wrappers. Real positive plus six negative links pass (`build/qualification_runtime_link/20261021T181214926533Z`), with the earlier discard-only bypass retained at `20261021T181109010700Z`. Strict map ABI/CRT audit passes on positive image; 19 synthetic groups pass optimized. Native/final-DLL qualification remains pending; no upstream or pin change.
+
+- **Commit `e1fbaf0`**: `fix(vgpu): reject unsupported runtime thread-exit references at link`; +0% to #5/all tasks, recording the preceding unit.
+- **Commit containing `test(vgpu): bind Debian runtime version alias to exact package members`**: +0% to #5/all tasks; overall **85.5% / In Progress**, Time Ended TBD. Corrects the unsupported assumption that Debian package14.2.0 drivers print14.2.0: they print14-win32. Admission now requires exact reviewed releases/member proof plus whole-identity equality for that alias. Root verified 5 package archives and all122 member/extracted hashes independently; 20 synthetic groups pass normally/optimized. No compiler output spoofing, host package installation, native credit or runtime threshold change. Evidence `build/qualification_feature_20261021/root_tls/toolchain_root_review.json`.
+
+- **Commit `da3e308`**: `test(vgpu): bind Debian runtime version alias to exact package members`; +0% to #5/all tasks, recording the preceding unit.
+- **Commit containing `test(vgpu): verify the actual outlined runtime TLS accessor`**: +0% to #5/all tasks; feature **85.5% / In Progress**, Time Ended TBD. Corrects an unsupported inline-rax assumption in the static checker; the actual GCC image directly calls the exact C helper and loads GS:0x58 into r8. Tests require that edge, all16 register forms, and reject wrong offset/unreachable decoy. 21 synthetic groups pass optimized; actual fenced positive probe passes complete PE/TLS/runtime admission (`root_tls/probe_full_static_admission.json`). No native/full-DLL qualification credit.
+
+### Runtime heap-attribution fixture unit (2026-10-21)
+
+- **Commit containing `test(vgpu): expose bounded runtime heap attribution stages`**: +0% to #5/all tasks; feature **85.5% / In Progress**, Time Ended TBD. Adds optional K={0,4,16} pre-existing-thread variants and exact UMDH baseline/loaded/unloaded/threads-retired stages, with no threshold or timeout relaxation. Three real-source compile groups pass normally and optimized (six positive and three rejected configurations each). See [CLVK_RUNTIME_PROBE_V2.md](CLVK_RUNTIME_PROBE_V2.md).
+- The frozen admitted probe's native2048 stress **fails at381**: heap decreases1048bytes/2entries while handles/TLS/FLS balance; natural exit1, no owned survivor. Evidence `build/qualification_feature_20261021/native_probe_cda4fe0f/` remains failed/unattributed. New audited variants and full OpenCL native acceptance remain pending.
+
+### Reviewed OpenCL build-driver integration (2026-10-21)
+
+- **Commit containing `chore(vgpu): bind OpenCL builds to reviewed Win32 runtime admission`**: +0% to #5/all tasks; overall85.5% / In Progress, Time Ended TBD. Adds explicit reviewed compiler/package/member provenance, independent production/probe API policies, Waddle runtime objects and mandatory link fences, fail-closed map/PE admission before publication and during cache reuse. Preserves the canonical old receipt until success. Source contract: [CLVK_RUNTIME_DRIVER_V2.md](CLVK_RUNTIME_DRIVER_V2.md).
+- Root independently ran all34 driver tests normally/optimized outside ptrace; both pass. Real preflight caught and fixed Python3.13 import registration; fresh probe compilation/admission passes. Raw root evidence `build/qualification_feature_20261021/root_tls/driver_root_review_v2/`; worker failures preserved. No full new OpenCL DLL/native/heap/GPU acceptance yet.
+
+### Runtime CI and Make entry point (2026-10-21)
+
+- **Commit `f314d95`** records bounded native heap attribution fixtures; **`524fefb`** records reviewed OpenCL driver integration, each +0% to all tasks.
+- **Commit containing `ci(vgpu): enforce runtime ownership and image admission gates`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds actual TLS/EH plain/sanitizer/coverage, probe build boundaries, and optimized/adversarial admission checks to OpenCL CI; Make now requires explicit reviewed build arguments. Root exact Make group passes, missing arguments reject, explicit forwarding and workflow YAML parse pass. Raw `build/qualification_feature_20261021/root_tls/ci_gate_wiring/receipt.json`; remote candidate CI/native/full-DLL acceptance remain pending.
+
+### Qualification-only OpenCL cancellation witness (2026-10-21)
+
+- **Commit `ae444ac`** records runtime CI/Make gates, +0% to all tasks.
+- **Commit containing `test(vgpu): witness actual OpenCL submits before supervised cancellation`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds a separately compiled authenticated opcode18 gate without changing default preprocessed code, plus malformed/I/O/deadline/threaded-cancel/fd controls. Root exact Make plain+ASan/LSan/UBSan passes with leak detection enabled; real helper47/47lines,63/66branches95.45%, all3functions, unchanged90% floor. [Contract](OPENCL_TRANSPORT_GATE.md); evidence `build/qualification_feature_20261021/opencl_gate_root/`. Native OpenCL cancellation/GPU/worker-retirement evidence remains pending.
+
+### Separate strict runtime startup gate (2026-10-21)
+
+- **Commit `82d17cb`** records the qualification-only OpenCL submit witness, +0% to all tasks.
+- **Commit containing `test(vgpu): stabilize runtime stress with observed startup retirement`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds a separate thin native stress wrapper that waits before any runtime load for externally proven startup-pool retirement; original2048 assertions/budgets remain unchanged. Strict cross-build and independent source/receipt review pass. [Exact protocol](CLVK_RUNTIME_PROBE_V2.md). Native2048 completion is not claimed; original381 failure and first-load/full-DLL gates remain open.
+
+### OpenCL transport-loss fixture and actual-owner controls (2026-10-21)
+
+- **Commit `c697d94`** records the separate strict startup-gated stress wrapper, +0% to all tasks.
+- **Commit containing `test(vgpu): qualify in-flight OpenCL transport-loss ownership`**: +0% to #5/all tasks; feature85.5% / In Progress, Time Ended TBD. Adds explicit supervised fault mode, exact CL_OUT_OF_RESOURCES, joined API caller, Busy while live owners, trusted reap/abandon before reverse CL release, bounded terminal shutdown/unload. Ordinary invocation remains. [Contract](OPENCL_CANCELLATION_CONTRACT.md).
+- Exact extracted call/release functions pass portable normal/-O and ASan/LSan/UBSan with zero reported leaks;17/17lines26/26branches100%, both functions100%, unchanged90% floors. Strict Windows builds and10 actual native invalid-mode/path/audit controls pass (all naturalexit2/no survivors). No native in-flight/GPU cancellation acceptance is claimed; final runtime qualification remains pending.
+
+
+### M2 ordered guest-output readiness gate, 2026-10-21
+
+Codex Astra implemented the isolated `feature/m2-astra-readiness` unit with
+subject `test(vgpu): reject unordered M2 qualification output` (exact hash
+recorded by the lead in the following commit checkpoint). The tracked final
+output verifier enforces lifetimes 1..8 and each workload's ordered frame/case
+sequence, rejects malformed/contradictory evidence, and is covered by nine
+portable regression groups through `make vgpu-m2-output-test` (PASS). Every
+future final native qualification must additionally run this verifier against
+each collected status; existing supervisor/host/source/owner checks remain
+required. Historical receipts and the strict count oracle are unchanged.
+
+**Task impact: +0% to TODO #3 and #11 (+0% overall). Software-vGPU remains
+85.5%; M2 TODO #4 remains 80%, M2 overall 94% / Review, Time Ended TBD.**
+Native/physical acceptance and CI are pending. Details and validation evidence
+are in [the M2 tracker](../wsi-window-lifetime/TRACKER.md) and
+[implementation contract](../wsi-window-lifetime/IMPL_DESC.md).
+
+
+### M2 CI readiness and prior commit attribution, 2026-10-21
+
+- **Commit `17dc2d0`**: `test(vgpu): reject unordered M2 qualification output`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Adds the tracked final
+  output gate, malformed-output regressions and qualification instructions.
+- Current isolated unit: `ci(vgpu): enforce M2 output and native diagnostic gates`
+  (exact hash recorded by the lead in the following checkpoint). CI now checks
+  the verifier, builds both M2 native fixtures, and runs all eight diagnostic
+  cases on Windows while preserving real exit/failure/timeout evidence.
+  Config and controlled collector checks pass; actual CI/native execution is
+  not claimed. See the [M2 tracker](../wsi-window-lifetime/TRACKER.md).
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
+  **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. Original native
+  strict-count failure and final qualification remain open.
+
+
+### M2 diagnostic coverage readiness, 2026-10-21
+
+- **Commit `e17425b`**: `ci(vgpu): enforce M2 output and native diagnostic gates`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**.
+- Current isolated unit: `test(vgpu): gate real handle diagnostic coverage`
+  (exact hash recorded by the lead in the next checkpoint). Adds a reproducible
+  >=90% production line/branch gate over the real diagnostic include, retained
+  gcov evidence and CI wiring. Five malformed-evidence/floor control groups
+  PASS; the existing 18 cases/6,779 checks yield 108/108 lines and 100/100
+  branch outcomes, with no exclusions. See the [M2 tracker](../wsi-window-lifetime/TRACKER.md).
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
+  **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. No historical
+  result is reclassified and no native execution is claimed by this change.
+
+
+### M2 ownership contract adoption, 2026-10-21
+
+- **Commit `3736237`**: `test(vgpu): gate real handle diagnostic coverage`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Reproducible diagnostic
+  coverage passes 108/108 lines and 100/100 branch outcomes without exclusions.
+- Current atomic unit: `docs(wsi): adopt bounded M2 ownership qualification`
+  (exact hash recorded in the next checkpoint). Direct acceptance-owner approval
+  adopts the prospective [M2 ownership contract and complete owner
+  inventory](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md).
+  This records the authorized implementation boundary, not passing qualification.
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU remains
+  **85.5%**, M2 remains **94% / Review**, Time Ended **TBD**. The strict historical
+  failures remain failed/unattributed; the new protocol still requires its code,
+  controls, fresh native/physical evidence, exact-candidate CI and final review.
+  Separate OpenCL/DXVK tasks receive no credit from this amendment.
+
+
+### M2 native-owner observer readiness, 2026-10-21
+
+- **Commit `fbd94e6`**: `docs(wsi): adopt bounded M2 ownership qualification`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**.
+- Current atomic unit: `test(wsi): observe exact native drawing-context owners`
+  (exact hash recorded in the next checkpoint). The fixed identity ledger and
+  conditional actual C-boundary observer pass portable functional, sanitizer and
+  per-source >=90% coverage gates. The real Windows controls cross-build but are
+  unexecuted. Default behavior is unchanged; no test-fault definitions enter the
+  qualified observer object. Full [details and limits](../wsi-window-lifetime/M2_OWNERSHIP_QUALIFICATION_2026_10_21.md).
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. Software-vGPU stays
+  **85.5%**, M2 **94% / Review**, Time Ended **TBD**. No credit to OpenCL/DXVK;
+  ICD quiescence, the per-lifetime protocol, native controls, fresh physical
+  qualification, exact-candidate CI and independent final review remain open.
+
+
+### M2 actual-owner query readiness, 2026-10-21
+
+- **Commit `b385806`**: `test(wsi): observe exact native drawing-context owners`.
+  **Task impact: +0% to TODO #3 and #11 (+0% overall)**. The lead subsequently executed
+  its source-bound native controls: all four PASS; exact owned leaks rejected
+  despite equal process totals. Earlier deployment failure remains preserved.
+- Current atomic unit: `test(wsi): expose read-only qualified ICD ownership` (exact
+  hash recorded in the next checkpoint). Adds the fixed 144-byte actual-array
+  query, five meaningful Zig groups, separate qualified DLL and actual export/
+  symbol gate. Invalid queries do not mutate output; valid queries never retire
+  owners or clear failures. The two existing exact test pins increase 394→399.
+- **PASS**: 399 Debug/ReleaseSafe tests, owned ICD ASan/LSan access instrumentation,
+  qualified Windows cross-build and strict export/fault/wrong-DLL controls.
+  Corrected coverage: ICD 90.42% branches / 98.56% lines; query 50/50 branch
+  outcomes and 81/81 lines. Exact source/artifact bindings are in
+  `build/qualification_m2_astra_20261021/ownership_icd_revision2/receipt.json`.
+  **NOT RUN**: qualified DLL native/physical execution and remote CI.
+- **Task impact: +0% to TODO #3 and #11 (+0% overall)**. M2 remains **94% / Review**,
+  M2 task #4 **80%**, parent **85.5%**, Time Ended **TBD**. Per-lifetime protocol,
+  CI wiring, fresh physical qualification and independent final review remain.
+  Every historical strict failure remains failed/unattributed.
+
+- Pre-commit independent review reopened this unit for a real observation gap:
+  copied-profile occupancy/recordings could survive with zero object counts.
+  Revision 2 adds all 320 occupied profile/command slots, all recording fields,
+  orphan cache/dependency tokens and 22 retained-owner controls. The initial
+  false-clean regression failure and old receipt remain preserved; current
+  validation is source-bound in `ownership_icd_revision2/receipt.json`. +0%.
+
+### M2 explicit ownership protocol checkpoint, 2026-10-21
+
+- **Commit `b56f7b7`**: `test(wsi): expose read-only qualified ICD ownership`.
+  **Task impact: +0% to parent tasks (+0% overall)**. The corrected actual-array
+  query includes profile/command reservations, graphics recordings and orphan
+  cache/token owners; the original missed-owner failure remains preserved.
+- Current atomic unit: `test(wsi): enforce explicit native ownership qualification`
+  (hash recorded next checkpoint). Integrates that query and real sink/fixture
+  ledgers into an explicit session/module-bound native protocol, strict output
+  verification, meaningful malformed/API-double controls and portable/native CI
+  gates. The old eight-argument strict-count mode remains; historical failures
+  are not relabeled. No OpenCL/DXVK scope or production implementation is changed.
+- **Task impact: +0% to parent tasks (+0% overall)**. All parent task percentages
+  remain unchanged, total **85.5%**; M2 **94% / Review**, Time Ended **TBD**.
+  Local evidence: `build/qualification_m2_astra_20261021/ownership_protocol/receipt.json`.
+  This candidate still needs fresh root-owned native/physical qualification,
+  exact integrated CI and independent final review before M2 completion.
+
+### Integrated M2 readiness checkpoint (2026-10-21)
+
+The lead integrated isolated Astra commits `17dc2d0`, `e17425b`, `3736237`,
+`fbd94e6`, `b385806`, `b56f7b7` and `d246127` with the existing runtime and
+OpenCL cancellation work, retaining both CI gate sets and both evidence
+histories. Root rehashed all 156 Unit D source/artifact bindings and reran its
+portable output, ownership and fixture gates successfully. Independent source
+review found no actionable false-clean path. The new native ownership protocol
+still requires fresh physical qualification and exact integrated CI; this merge
+claims +0% to all tasks. M2 remains 94% / Review, parent 85.5% / In Progress,
+Time Ended TBD.
+
+### Remote history synchronization (2026-10-21)
+
+The lead preserved remote head `b95751e302e97aa56c5a2124d469a450883f3bec`
+with a normal merge, including the separate Claude review-controller feature.
+Its 47 offline controller cases pass; no review API was invoked. This does not
+qualify the integrated software-vGPU candidate or replace its own tests/CI.
+Task impact: +0% to every software-vGPU task; parent remains 85.5%, M2 94%,
+Time Ended TBD. No force push or merge to the target branch occurred.
+
+### First-load allocator calibration checkpoint (2026-10-21)
+
+The deliberately retained malloc negative fixture and its native expected
+rejection are documented in [the runtime probe contract](CLVK_RUNTIME_PROBE_V2.md).
+HeapWalk catches exact12,345bytes/oneentry; UMDH misses the same control, so
+zero-owned first-load acceptance remains open. The separate strict2048-cycle
+startup-gated probe passes naturally, without relaxing assertions; that is
+isolated runtime evidence only. The full production OpenCL build fails closed
+at its final link on future.o's forbidden thread-exit reference; it is not
+published or qualified. All failures and raw evidence are preserved.
+Task impact: +0% to #5/all tasks; parent85.5%, M2 94%, Time Ended TBD.
+
+### Normal futures without thread-exit callbacks (2026-10-21)
+
+The first full production link exposed an additional dead COMDAT in the exact
+reviewed GCC archive: `future.o` is needed by LLVM's ordinary future_error,
+promise.set_value and future.wait paths, but also contains
+`std::__future_base::_State_baseV2::_Make_ready::_M_set()`, a tail-call to the
+unsupported thread-exit callback API. Source scans and exact object relocations
+show no normal runtime caller of the thread-exit helper. The original failed
+link/map remain in `root_tls/full_driver_build/`.
+
+The Waddle linker supplement discards only that helper's text/pdata/xdata and
+adds an undefined-reference wrap for the helper itself in both production and
+probe links. This preserves the fence against GNU PE discard-only call/address
+bypasses. Final map/PE admission rejects a retained helper in mangled or
+demangled form. No dependency source/archive, pin or forbidden API allowance
+changes. Actual ordinary promise.set_value/future.wait/get linking passes; all
+eight direct/address controls reject, including set_value_at_thread_exit call
+and member-pointer use. Both Python modes pass. Root independently reran all34
+build-driver tests outside ptrace in both modes: PASS, including actual
+ASan/LSan-backed boundaries. Worker ptrace-related sanitizer failures remain
+preserved. Receipt `build/qualification_feature_20261021/root_tls/future_link_root/receipt.json`;
+link/audit evidence `root_tls/future_link_revision/`. Full new production link,
+static admission and native qualification remain pending.
+
+Task impact: +0% to #5/all tasks; parent85.5%, M2 94%, Time Ended TBD.
+
+### Fresh-checkout CI preflight correction (2026-10-21)
+
+Current-head OpenCL CI at `52f8999` found that one integration test depended on
+this machine's private build/compiler evidence, absent in a fresh checkout. The
+failed job/log remain preserved (`ci_opencl_39659026160_job.log`). The corrected
+test uses explicit temporary tools, archives/headers, identities and distinct
+policies, exercises the actual preflight, auditor, tool records and source hashes,
+and proves malformed identity/missing policy reject before any build. Only
+external compiler capture/package proof/PATH selection are doubles; separate
+real package and native build evidence remain mandatory. Root's full34 tests
+PASS normally and optimized outside ptrace, including ASan/LSan boundaries.
+Receipt `build/qualification_feature_20261021/ci_preflight_root/receipt.json`.
+This is a test portability fix, not production/native acceptance. +0% to every
+task; parent85.5%, M2 94%, Time Ended TBD. CI must rerun at the corrected head.
+
+### Complete ICD seam refresh (2026-10-21)
+
+Current qualified ICD source adds exactly two macro-gated ownership helpers,
+`m2_note_id` and `m2_snapshot`: the embedded inventory is now662 functions
+across the same31 sources. Ordinary native emission may omit only their exact
+audited lazy declarations; the399-test image must emit both and prove actual
+ASan access-hook relocations in each function and the final executable. Neither
+helper is excluded from ownership instrumentation. Missing helpers or unknown
+owned functions fail synthetic rejection controls. The ordinary11-export ABI
+remains separately asserted. Physical proof now requires the current exact ICD
+SHA and399 units rather than the obsolete394-case baseline. No workload,
+coverage floor, sanitizer or cleanup requirement changes.
+
+Root's strict complete37-module seam passes with zero sanitizer diagnostics at
+`build/icd_complete_seam_safety_37/run-20261021T193122717034Z-341004/completion.json`.
+The earlier660-count and native-emission failures remain in the qualification
+logs. All13 inventory controls pass with assertions enabled; optimized Python
+is intentionally rejected by the existing preservation gate. Physical Windows
+and Linux GPU acceptance remain separate.
+
+Atomic unit: `test(vgpu): account for qualified ownership sanitizer helpers`
+(hash recorded next checkpoint). Task impact +0% to every task; parent85.5%,
+M2 94% / Review, Time Ended TBD.
+
+### Native heap acknowledgement correction (2026-10-21)
+
+The preserved PageHeap calibration `pageheap_negative_45c0d686` stopped because
+opening an already-published acknowledgement transiently returned Windows
+ERROR_SHARING_VIOLATION32. The audit include now retries that one error alongside
+FILE_NOT_FOUND within its unchanged60-second/10-ms loop. All other open errors
+fail immediately; successful opens still require exact bytes/size, regular
+single-link disk files and successful handle closure. Persistent sharing reaches
+the original timeout. No allocation/native acceptance assertion changes.
+
+The actual include runs against deterministic Win32 doubles covering transient
+sharing, timeout, malformed/stale/foreign files, I/O, clock, close and ownership
+errors. Root ASan/LSan/UBSan passes with53/53 lines and82/88 branch outcomes
+(93.18%), both functions executed, no exclusions. Evidence:
+`build/coverage/vgpu/dxvk_heap_audit_root/run-20261021T194243056452Z-349543/coverage.json`.
+The build driver's source identity now includes this transitively compiled
+header; all34 driver tests pass normally and optimized outside ptrace. The
+strict coverage target is included in OpenCL admission CI. Worker ptrace/LSan
+failures remain preserved and are not acceptance evidence.
+
+Previous fixture/DLL identities remain historical. Fresh native fixtures and
+source-bound production admission must be rebuilt after this change. Atomic
+unit: `test(vgpu): tolerate bounded native audit acknowledgement sharing`
+(hash recorded next checkpoint). +0% to all tasks; parent85.5%, M2 94% / Review,
+Time Ended TBD.
+
+### Independent qualification continuation (2026-10-21)
+
+See [the current source-bound checkpoint](QUALIFICATION_CONTINUATION_2026_10_21.md)
+for the new real OpenCL GPU pass, preserved fresh M2 USER-count failure and
+remaining gates. Commits5260170 and01702c5 add strict sanitizer inventory and
+bounded native audit regressions, respectively; +0% to every task. Parent85.5%,
+M2 94%, Time Ended TBD. No final acceptance or merge readiness claimed.
+
+### M2 GUI failure diagnostics integration (2026-10-21)
+
+Atomic unit `test(vgpu): capture bounded GUI ownership failure identities` adds
+passive bounded HWND and raw owner snapshots only around the unchanged GUI
+failure gate. Root reviewed99 bindings, portable sanitizers/coverage and strict
+cross-build pass; native controls and full WSI remain pending. See
+[the detailed contract](../wsi-window-lifetime/IMPL_DESC.md). +0% all parent
+tasks; total85.5%, M2 94%, Time Ended TBD. Commits5260170,01702c5 ande895d9d
+retain their +0% task impacts.
+
+### Physical and allocator qualification checkpoint (2026-10-21)
+
+The [current checkpoint](QUALIFICATION_CONTINUATION_2026_10_21.md) records the
+completed37-module seam and Linux physical15-case matrix, new full OpenCL
+static image, real Windows GUI identity controls and allocator calibration
+limits. Commits8038ad9 ande895d9d retain +0% to every task. This documentation
+unit, `docs(vgpu): record physical matrix and allocator calibration`, also
+changes no task progress; parent85.5%, M2 94%, Time Ended TBD. Outstanding
+native ownership, stress, cancellation, overlap, CI and review gates remain
+explicit.
+
+### M2 loaded-host native evidence (2026-10-21)
+
+Both full M2 owned-protocol workloads pass under six owned CPU workers, with
+strict GUI checks and exact M2 owner retirement despite diagnostic199-to200
+process-handle drift. All owned load/native/host processes retire cleanly.
+See [the source-bound native evidence](../wsi-window-lifetime/M2_OWNED_NATIVE_2026_10_21.md).
+Atomic unit `docs(vgpu): record loaded-host M2 ownership qualification`, all
+parent tasks +0%, parent85.5%, M2 94%, Time Ended TBD. Separate DXVK/OpenCL
+native gates and final CI/review remain open.
+
+### Preserve dispatch through OpenCL fault teardown (2026-10-21)
+
+Atomic unit `fix(vgpu-tests): retire OpenCL owners before ICD abandonment`
+corrects the actual native invalid-device failure in tcp_gpu_7359408c: exact
+receiver reap, reverse CL release, bounded terminal SDK shutdown, then exact
+bootstrap abandonment. Source-extracted order/error controls, old-order
+negative control and unchanged call/release controls pass in both Python
+modes with ASan/LSan/UBSan; actual four helpers cover36/36lines and38/38
+directional branches. Independent source review finds no additional issue.
+The failed native process/owned console/host retire; raw failure is preserved.
+[Contract and evidence](OPENCL_CANCELLATION_CONTRACT.md). Native rerun pending;
+#5/all parent tasks +0%, total85.5%, M2 94%, Time Ended TBD.
+
+### Full cancellation regression and witnessed native result (2026-10-21)
+
+Atomic unit `test(vgpu): exercise full OpenCL cancellation orchestration`
+extends the actual five-function regression to108/108lines and92/92branch
+outcomes with root O0/O2 ASan/LSan/UBSan pass. Fresh native
+`tcp_gpu_d5dbcc4f` passes the intentional authenticated transport-loss scope;
+full dependency closure/final-source rerun remains required.
+[Evidence and limitations](OPENCL_CANCELLATION_CONTRACT.md).
+#5/all tasks +0%, total85.5%, M2 94%, Time Ended TBD.
+
+### Integrated source-bound full reload harness (2026-10-21)
+
+Commit `1a08805` records full cancellation regression and native scoped result:
+#5/all tasks +0%, overall +0%.
+Atomic unit `test(vgpu): add full OpenCL runtime reload qualification` integrates
+Astra revision3 with strict1100-cycle/3300-context ownership and output gates.
+Root portable, ASan/LSan/UBSan and support coverage pass; fresh297-input private
+Windows cross-build passes. Native controls reject error8 at TLS exhaustion;
+no successful controls receipt or full native stress is claimed.
+[Contract/evidence](OPENCL_RELOAD_CONTRACT.md).
+#5/all tasks +0%; total85.5%, M2 94%, Time Ended TBD.
+
+### Native TLS capacity certificate (2026-10-21)
+
+Commit `31312b2` integrates Astra full reload harness; #5/all tasks +0%, overall
++0%. Atomic unit `test(vgpu): prove exact native TLS exhaustion and retirement`
+adds source-bound target-specific bitmap reconciliation. Root193-case safety
+and98.85% branch gates pass; private14 strict cross-build and actual Windows
+full/retained-slot/early-OOM/admission controls pass at1086→1085→1086 slots.
+Incorrect26100 target and compiler/ptrace/preflight failures remain preserved.
+[Contract/evidence](OPENCL_SLOT_CERTIFICATE.md). Full FLS/reload/heap/GPU gates
+remain open. All tasks +0%; total85.5%, M2 94%, Time Ended TBD.
+
+### Exact CSR user-allocation inventory (2026-10-21)
+
+Atomic unit `test(vgpu): qualify CSR heap inventory and retirement` adds a
+bounded, locked, complete HeapWalk of the exact externally admitted CsrPortHeap
+at existing DXVK/OpenCL audit boundaries. Every boundary requires zero live
+user rows; DPH/API-heap coverage remains separately mandatory. Portable,
+ASan/LSan/UBSan and93.55%branch gates pass. Exact native12380-byte allocation/
+free controls pass with stable OS identities and no survivors.
+[Contract and evidence](NATIVE_CSR_HEAP_CONTRACT.md). All tasks +0%; total85.5%,
+M2 94%, Time Ended TBD. Commit `7dfd516` records the native TLS certificate,
+#5/all tasks +0%, overall +0%.
+
+### Final Windows physical matrix and independent M2 review (2026-10-21)
+
+Atomic unit `docs(vgpu): record final Windows physical qualification` records
+12actual host/guest cases:48exact positiveGPUlifetimes and6expectedpostflush
+cleanup failures, natural controller/worker0 and complete owned retirement.
+[Evidence and applicability](WINDOWS_PHYSICAL_FINAL_2026_10_21.md).
+Independent M2 review recomputes348package entries and both41-file runs with
+zero mismatches and no source defects; frozen M2 paths remain8038ad9. Its
+prospective ownership contract passes, while historical kernel/USER failures
+remain failed/unattributed. Exact current CI remains pending. Review artifacts
+are preserved under `build/qualification_feature_20261021/final_scope_reviews`.
+All tasks +0%; total85.5%, M2 94%, Time Ended TBD.
+
+Commit `e9c474e` records the Windows physical matrix, all tasks +0%. Atomic
+`docs(vgpu): consolidate qualification continuation evidence` moves its new
+entry into the existing dated continuation document and corrects its link;
+all tasks +0%, overall +0%, no evidence/acceptance change.
+
+### Native FLS certificate and combined fixture controls (2026-10-21)
+
+Atomic unit `test(opencl): gate exact native FLS exhaustion and retirement`
+integrates Astra's fixed-storage certificate and native reload branch with
+required portable/sanitizer/coverage/CI gates. Root270-case ASan/LSan/UBSan and
+100%line/branch gates pass. Native four-case calibration passes4078→4077→4078,
+with independent raw-marker review; the final300-input fixture passes both
+slot controls and ten malformed CLI regressions. [Evidence](OPENCL_FLS_CERTIFICATE.md).
+All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Full candidate stress/heap/
+overlap and final CI/review remain open. Commit `a845098` records CSR inventory
+and native calibration, all tasks +0%; `7db0909` consolidates documentation,
+all tasks +0%.
+
+### Bind actual API heap arrays during native audits (2026-10-21)
+
+Atomic `test(vgpu): bind complete native API heap snapshots` preserves each
+validated GetProcessHeaps array and emits ordered handles, correcting the
+verification assumption that PageHeap's PEB list is complete. Native retained/
+freed CSR control and exact API rows pass; current San3 and94.53%branch gates
+pass. [Contract, preserved failure and inverse proof](NATIVE_CSR_HEAP_CONTRACT.md).
+All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `f873b18` records
+Astra FLS certificate/gates and native controls; all tasks +0%, overall +0%.
+
+### Complete-input OpenCL fault rerun (2026-10-21)
+
+Atomic `docs(opencl): record complete-input cancellation qualification` binds
+fresh native tcp_gpu_d62ddee8/session2112ca43451ab2a1 to the300-input/two-TU
+fixture and current fullDLL70ca4fdb. Intentional authenticated host cancellation,
+API completion and exact guest/host/module retirement pass;41rawfiles rehashed.
+[Evidence/applicability](OPENCL_CANCELLATION_CONTRACT.md). Full reload/heap/overlap
+and exact final CI/review remain required. All tasks +0%; total85.5%, M2 94%,
+Time Ended TBD. Commit `4688cf8` records complete API-heap snapshots, all tasks
++0%, overall +0%.
+
+### Failure-only full reload diagnostics (2026-10-21)
+
+Atomic `test(opencl): report exact rejected reload predicates` adds diagnostic
+output for each of the29 existing rejection predicates, at the original
+short-circuit position. It does not resample counts, change an owner, alter
+1100 cycles/3300 contexts, or change any deadline, equality, certificate,
+module or retirement requirement. [Contract and failed native evidence](OPENCL_RELOAD_CONTRACT.md).
+Root leak-enabled sanitizer and integrated tests pass5groups/9291checks;
+all12 functions execute with142/142lines and188/202branches (93.07%, minimum90).
+The previous worker LSan ptrace failure remains preserved. Exact inverse source
+proof recovers all original predicates/tokens and original include bytes.
+All tasks +0%; total85.5%, M2 94%, Time Ended TBD. Commit `8d71d8a` records
+the complete-input cancellation qualification, all tasks +0%, overall +0%.
+
+### Measured full-DLL retention and physical overlap (2026-10-21)
+
+Atomic `docs(opencl): record strict native reload failure and overlap` records
+R7 first-cycle equality failure (+83handles, three TLS and three FLS slots),
+three exact GPU contexts, natural failed-process retirement and zero accepted
+reloads. No-vendor native CRT controls show no corresponding count retention.
+[Exact evidence, limits and next steps](OPENCL_NATIVE_RETENTION_2026_10_21.md).
+The15-case Linux physical matrix and source-bound functional GPU overlap pass;
+reload and heap acceptance remain open. All tasks +0%; total85.5%, M2 94%,
+Time Ended TBD. Commit `7d5c6bb` records failure-only reload diagnostics,
+all tasks +0%, overall +0%.
+
+### M2 completed; parent qualification remains open (2026-10-21)
+
+Atomic unit `docs(m2): close independently qualified ownership milestone`
+records M2 task#4 +20points and milestone94%→100%, Completed, Time Ended
+2026-10-21T22:36:09Z. [Closure](../wsi-window-lifetime/M2_CLOSURE_2026_10_21.md)
+and [receipt](../wsi-window-lifetime/M2_CLOSURE_RECEIPT_2026_10_21.json).
+Full CI39679035088 passes on identical M2 code/build/workflow configuration;
+independent review rehashes433 artifacts and19 sources without mismatch or
+M2 findings. Current whole-PR exact-HEAD CI remains a separate gate.
+Historical199→200 and USER4→9 failures remain failed/unattributed, and GDI/
+USER equality stays strict under the human-approved explicit ownership mode.
+All parent tasks +0%; parent85.5% / In Progress, Time Ended TBD. Final OpenCL
+heap/reload and DXVK heap qualification remain open; PR#6 stays draft.
+Commit `fdf2038` records OpenCL native retention/physical overlap (+0% all tasks).
+
+### Full-DLL static-load attribution control (2026-10-21)
+
+Atomic unit `docs(opencl): distinguish static loading from active retention`
+records three real load-only lives of candidate70ca with all explicit refs
+retired. Native session0 exits0, no additional module paths remain, TLS/FLS
+fully return after each unload, and a +7handle delta remains unattributed.
+[Evidence and limits](OPENCL_NATIVE_RETENTION_2026_10_21.md). This does not
+reproduce or waive the active GPU workload's +83handles/threeTLS/threeFLS.
+No parent progress changes:85.5% / In Progress, Time Ended TBD. M2 is100% /
+Completed in commit `54ee9c4` (+6 M2 points; +0 parent points).
+
+Evidence count correction (`docs(opencl): correct source inventory cardinality`):
+R6/R7 root plan reviews each bind212 src/include files, not213. Correct only
+the prose cardinality; raw hashes, source equality, native failure and all
+acceptance statuses are unchanged. All tasks +0%. Commit `d050394` records
+the load-only diagnostic and M2 closure attribution (+0% all tasks).
+
+### Recoverable Fable continuation (2026-10-21)
+
+The user requested a safe stopping point and transfer.
+[Authoritative Fable handoff](FABLE_HANDOFF_2026_10_21.md) records sole VM lease
+relinquishment, all three workers stopped, active signed-in console, zero owned
+candidate survivors and three frozen tooling packages. Root verified1221 census
+bindings and35 guard receipt inputs; actual new native work is NOT RUN.
+R14 is offline-ready/not native-calibrated; native guard fixture is partial.
+M2 stays100% / Completed in54ee9c4; parent85.5% / In Progress, Time Ended TBD.
+Final OpenCL reload/native heap, DXVK heap, final review and exact-head CI remain.
+Atomic unit `docs(vgpu): preserve recoverable Fable qualification handoff`: all
+tasks +0%, overall +0%. Commit `cbae0a9` corrects the212-file source count (+0%).
+
+### OpenCL first-cycle retention attribution (2026-10-22)
+
+Atomic unit `docs(opencl): attribute first-cycle reload retention`. Continuation
+took the sole VM lease with explicit user permission and a user-approved
+owner-only lease wrapper. Census R5 completes one ordinary eight-context GPU
+life with natural exit and retired host, and reproduces R7's +83 handles,
++3 TLS and +3 FLS. All 83 handles are typed; every retained module is a Windows
+component. Sixteen component controls attribute the state to USER32/win32k
+connection, Winsock, bcrypt, the C runtime and an upstream Vulkan loader
+reference leak (`LoadLibrary` of dxgi/gdi32 without `FreeLibrary`); none grows
+on a second cycle. Three failed census attempts (runner batch line, stage
+directory, non-duplicable handles) are preserved with corrected R3-R5 revisions.
+[Attribution](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md). The no-warm-up reload
+contract conflicts with Windows first-use state; it is unchanged pending a human
+decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved OS-only reload pre-initialization (2026-10-22)
+
+Atomic unit `docs(opencl): record approved OS-only reload pre-initialization`.
+The user approved four Windows-only first-use operations before the persistent
+reload baseline (USER32 load/free, Winsock startup/socket/cleanup, bcrypt
+load/free, DXGI factory create/release) with exact equality kept on every
+reload, including the first. A diagnostic census must prove zero residual
+first. [Amendment](OPENCL_RELOAD_CONTRACT.md#approved-amendment-os-only-pre-initialization-2026-10-22).
+Commit `aa1b025` attributes the first-cycle retention (+0% all tasks). All
+tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### OS pre-initialization implementation and diagnostic census (2026-10-22)
+
+Commit `d029a7a` (`test(opencl): add approved OS-only pre-initialization with API
+doubles`) adds the four-step include with 58/58 lines and 46/46 branches under
+API doubles and ASan/LSan/UBSan, run in CI (+0%). Commit `5bb843b` (`test(opencl):
+add diagnostic OS pre-initialization switch to heap audits`) enables it for
+diagnostic heap audits only (+0%). Atomic unit `docs(opencl): record diagnostic
+census after approved pre-initialization` records census R6: TLS/FLS/thread
+deltas are now zero but +34 handles and seven modules remain. Controls attribute
+the residual to standard-search DLL resolution, an OS package query and the
+upstream loader's leaked dxgi/gdi32 references; a scratch-evaluated loader patch
+plus two more OS-only steps reach exact zero. Each needs a human decision.
+[Evidence](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#7-diagnostic-census-after-the-approved-pre-initialization-2026-10-22).
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved second amendment: OS steps 5-6 and loader patch (2026-10-22)
+
+Atomic unit `docs(opencl): record approved second reload pre-initialization
+amendment`. The user approved a bare-name System32 `dwmapi.dll` load/free with a
+fail-closed path check, one `GetPackagesByPackageFamily` size query, and the
+76-line Vulkan loader module-reference patch through a tracked private build,
+with M2, Windows physical and DXVK requalification on the patched loader.
+[Amendment 2](OPENCL_RELOAD_CONTRACT.md#approved-amendment-2-two-more-os-steps-and-the-loader-patch-2026-10-22).
+Commit `3459a1e` records the diagnostic census after the first amendment (+0%).
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Tracked Windows Vulkan loader patch (2026-10-22)
+
+Commit `f871b9e` (`test(opencl): add approved search-order and package-family
+pre-initialization`) adds OS steps 5-6 with 77/77 lines and 72/72 branches and
+native zero-residual controls (+0%). Atomic unit `chore(deps): build Windows
+Vulkan loader from tracked private patch` adds the approved module-reference
+patch, a pin-verifying private-source builder, its CI test, and switches the
+MinGW and native Windows loader builds to the private tree. The submodule pin is
+unchanged; Linux loader builds are unaffected. Requalification on the patched
+loader `8a9e3d32…` (local MinGW build) is still required. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
+
+### Reload pre-initialization wiring and residual narrowing (2026-10-22)
+
+Commit `5682038` (`chore(deps): build Windows Vulkan loader from tracked private
+patch`) adds the approved loader patch build and its CI test (+0%). Commit
+`402c2e2` (`test(opencl): run approved OS pre-initialization before reload
+baselines`) wires the six steps into reload mode and the verifier (+0%). Atomic
+unit `docs(opencl): record residual after six-step pre-initialization` records
+censuses R7-R9: with the patched loader, modules/TLS/FLS/threads are exactly
+zero; a DBWinMutex came from the harness's own loader debug logging, and one
+IoCompletion remains from Winsock's first nonblocking connect, which needs a
+human decision. All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Approved third amendment: loopback connect step (2026-10-22)
+
+Atomic unit `docs(opencl): record approved loopback connect pre-initialization
+step`. The user approved a seventh OS-only step, one nonblocking 127.0.0.1
+connect completed with select and fully closed, and dropping `VK_LOADER_DEBUG`
+from qualification batches.
+[Amendment 3](OPENCL_RELOAD_CONTRACT.md#approved-amendment-3-loopback-connect-and-loader-logging-2026-10-22).
+Commit `1182579` records censuses R7-R9 (+0%). All tasks +0%; parent 85.5% / In
+Progress, Time Ended TBD.
+
+### Seven-step pre-initialization and zero-residual proof (2026-10-22)
+
+Commit `65ba629` records amendment 3 (+0%). Commit `4ce7a3e` (`test(opencl): add
+approved loopback connect pre-initialization step`) adds step 7 with 133/133
+lines and 146/146 branches (+0%). Commit `4dd24d1` (`fix(opencl): accept the
+seven-step pre-initialization witness`) raises the reload witness bound that the
+79-character witness would have exceeded (+0%). Atomic unit `docs(opencl): record
+zero-residual census` records census R10: one full GPU life leaves handles, TLS,
+FLS, modules and threads exactly unchanged. The 1100-cycle reload is next. All
+tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Promoted core structure specification (2026-10-22)
+
+Commit `32bbf08` records census R10 (+0%). The 1100-cycle reload attempt with
+the R8 runner failed in cycle 2: clvk read stale bytes from an unwritten
+`VkPhysicalDeviceDriverProperties`. Root cause: the ICD advertises Vulkan 1.3
+but leaves every promoted core property and feature structure unwritten, and
+device creation skips promoted feature requests. Atomic unit `docs(vgpu):
+specify promoted core structure publication` adds the
+[IMPL_DESC section](IMPL_DESC.md#promoted-core-structure-publication-2026-10-22).
+The failed attempt stays preserved under
+`build/qualification_feature_20261021/opencl_reload_final_r8/`. All tasks +0%;
+parent 85.5% / In Progress, Time Ended TBD.
+
+### Promoted structure fix and overnight stopping point (2026-10-22)
+
+Commit `320c697` specifies the fix (+0%). Commits `5c8a557` (Properties2),
+`1614757` (Features2) and `b271730` (device creation) implement it, each with
+module coverage of at least 97% branches and ICD units 415/415 Debug and
+ReleaseSafe (+0%). Commit `c13e360` refreshes the local sanitizer pins
+(+0%). Its message misdates the physical run; the correct run is
+`build/icd_physical_coherent_owned_safety_37/run-20261022T023008133960Z-1408837`.
+
+| Gate | Result |
+|:--|:--|
+| ICD coverage | 90.45% branches, 98.54% lines |
+| 37-module ASan/LSan seam | Pass, 415 ICD + 29 standalone units, zero findings |
+| Linux physical coherent matrix | Pass, 144 GPU lives + 6 expected cleanup failures |
+| Device/Features2 sanitizers, Windows cross-compiles | Pass |
+
+Atomic unit `docs(opencl): record promoted ICD fix and overnight checkpoint`
+pauses work at the user's request.
+[Attribution section 11](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#11-reload-attempt-r8-and-the-promoted-structure-icd-defect-2026-10-22)
+lists the prepared census and R9 runner, which are **not run**. The lease is
+idle and the VM was not touched after the R8 attempt.
+
+Resume order: run the promoted-ICD census and require zero residual; write the
+R9 composite with the census record; run the 1100-cycle reload. Then finish the
+guard fixture and R14 integration, run native heap qualification, and
+requalify M2, the Windows physical matrix and DXVK on the patched loader and
+fixed ICD. Exact-head CI and the final review follow. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
+
+### Host reboot recovery and promoted-ICD census (2026-10-22)
+
+The host restarted overnight. The VM was booted from its preserved artifacts
+with no reset, and the user signed in at the console. The lease records the new
+QEMU and swtpm identities.
+
+The reboot cleared tmpfs `/tmp`. 302 hash-pinned frozen inputs were restored from
+byte-identical preserved copies, and three of them were rebuilt from session
+transcripts. Each one was admitted only on exact SHA-256 equality
+([attribution section 12](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#12-host-reboot-recovery-and-promoted-icd-census-2026-10-22)).
+
+| Gate | Result |
+|:--|:--|
+| Native TLS/FLS and malformed-input controls on the new VM instance | Pass, `opencl_reload_controls_native_06d96b57` |
+| Promoted-ICD census, one ordinary life | Zero residual, `opencl_census_483f3b38` |
+
+Next: prepare and run the R9 1100-cycle reload. All tasks +0%; parent 85.5% /
+In Progress, Time Ended TBD.
+
+### Reload R9 attribution and guard review (2026-10-22)
+
+R9 passes cycles 1 and 2 with exact equality. Cycle 3 adds one Thread and one Event, identically in
+two attempts. Kernel handle tracing attributes both to RPCRT4 per-thread state created by an ntdll
+thread-pool timer callback. The RPC connections come from the Windows Vulkan loader's DXGI/DXCore
+adapter enumeration ([attribution section 13](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#13-reload-r9-and-the-rpc-timer-residual-2026-10-22)).
+The resolution needs a human decision.
+
+An offline review of the frozen CDB guard R14 found that its 309 KB worker upload takes about 120 s
+against a 60 s stage. R14 also imports an inventory module that the reboot wiped, with no preserved
+copy. R14 and the native guard fixture each need a reviewed revision before native guard controls
+(`build/qualification_feature_20261021/guard_native_control_r1/REVIEW_FINDINGS_20261022.md`).
+
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Reload R10 started; CDB guard R15 prepared (2026-10-22)
+
+Loader patch 0002 and the ten-step pre-initialization (amendment 4) remove the R9 residual: traced
+six-life census `opencl_census_709beb33` shows zero handle, module, TLS and FLS change in every life.
+Native TLS/FLS controls pass on fixture `27cfb403`, and R10 (composite `e769dd0f…`) is running the
+1100-cycle reload. It has already passed the cycle where R9 failed.
+
+CDB guard R15 and the native guard controls are implemented and pass all offline gates
+([IMPL_DESC](IMPL_DESC.md#cdb-suspend-guard-r15-and-native-guard-controls-2026-10-22)). The two wiped
+R12 inputs were rebuilt by exact hash (inventory replay `3ca2e4e3…`, wrapper-mapping report
+`f370ea1e…`), and R12's 33 tests pass. The native guard controls run after R10 releases the lease.
+
+All tasks +0%; parent 85.5% / In Progress, Time Ended TBD.
+
+### Commit hash backfill (2026-10-22)
+
+The independent pre-review found 98 branch commits that this log never recorded by hash,
+plus the IMPL_DESC commit `713ef8e` made just before this backfill. Many were recorded only by subject,
+because a commit cannot contain its own hash, or only in another feature's tracker. The task and
+overall deltas in the table at the top of this log already sum to exactly 85.5%, the current
+total. So every commit below carries +0% overall. Its work is credited in the adjacent logged rows
+or, for separate features, in that feature's own tracker. The table lists the 99 commits
+newest first.
+
+| Commit | Date | Change | Task / overall impact | Also recorded in |
+|:--|:--|:--|:--|:--|
+| `713ef8e` | 2026-10-22 | docs(opencl): specify the ten-step reload pre-initialization in IMPL_DESC | #5 +0%; overall +0% | not recorded elsewhere |
+| `df4d25d` | 2026-10-22 | docs(vgpu): specify CDB guard R15 and the native guard controls | #3 +0%; overall +0% | not recorded elsewhere |
+| `d2ba4a4` | 2026-10-22 | fix(opencl): absorb user-hive, RNG and D3DKMT first use in pre-initialization | #5 +0%; overall +0% | software-vgpu-slicing/IMPL_DESC.md |
+| `408752e` | 2026-10-22 | docs(opencl): add pre-initialization steps 8-10 and their attribution | #5 +0%; overall +0% | not recorded elsewhere |
+| `cfb951e` | 2026-10-22 | fix(opencl): narrow pre-initialization step 4 to a dxgi.dll load | #5 +0%; overall +0% | not recorded elsewhere |
+| `448f608` | 2026-10-22 | fix(vgpu): skip DXGI adapter sorting for explicit Vulkan loader driver lists | #3 +0%; overall +0% | not recorded elsewhere |
+| `f930eee` | 2026-10-22 | docs(opencl): specify loader patch 0002 and reload contract amendment 4 | #5 +0%; overall +0% | not recorded elsewhere |
+| `0541b3e` | 2026-10-22 | docs(opencl): attribute the R9 cycle-3 handle residual to RPC timer state | #5 +0%; overall +0% | not recorded elsewhere |
+| `901751f` | 2026-10-22 | docs(opencl): count the third transcript-rebuilt evidence file | #5 +0%; overall +0% | not recorded elsewhere |
+| `bbbdaee` | 2026-10-22 | docs(opencl): record reboot recovery and zero-residual promoted-ICD census | #5 +0%; overall +0% | not recorded elsewhere |
+| `d249a07` | 2026-10-21 | docs(opencl): record promoted ICD fix and overnight checkpoint | #5 +0%; overall +0% | this tracker, by subject |
+| `3997f55` | 2026-10-21 | docs(opencl): record approved second reload pre-initialization amendment | #5 +0%; overall +0% | not recorded elsewhere |
+| `800a5d6` | 2026-10-21 | docs(opencl): record approved OS-only reload pre-initialization | #5 +0%; overall +0% | this tracker, by subject |
+| `8a6e25e` | 2026-10-21 | docs(vgpu): preserve recoverable Fable qualification handoff | #3 +0%; overall +0% | this tracker, by subject; software-vgpu-slicing/CODEX_HANDOFF.md |
+| `8b964ab` | 2026-10-21 | fix(vgpu-tests): retire OpenCL owners before ICD abandonment | #5 +0%; overall +0% | this tracker, by subject |
+| `1ea8364` | 2026-10-21 | docs(vgpu): record loaded-host M2 ownership qualification | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `3e3d205` | 2026-10-21 | docs(vgpu): record physical matrix and allocator calibration | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `24f766b` | 2026-10-21 | test(vgpu): make preflight admission independent of local artifacts | #3 +0%; overall +0% | software-vgpu-slicing/QUALIFICATION_CONTINUATION_2026_10_21.md |
+| `2c3ca25` | 2026-10-21 | test(vgpu): calibrate first-load malloc leak detection | #3 +0%; overall +0% | not recorded elsewhere |
+| `4116250` | 2026-10-21 | test(vgpu): qualify in-flight OpenCL transport-loss ownership | #5 +0%; overall +0% | this tracker, by subject; software-vgpu-slicing/CODEX_HANDOFF.md |
+| `b374f69` | 2026-10-21 | test(vgpu): verify the actual outlined runtime TLS accessor | #3 +0%; overall +0% | this tracker, by subject |
+| `ca00ad7` | 2026-10-21 | docs(wsi): record independent Codex review and qualification blocker | #3 +0%; overall +0% | this tracker, by subject; wsi-window-lifetime/TRACKER.md |
+| `52a1a29` | 2026-10-17 | docs(vgpu): retain final recursive checkout inventory limitation | #3 +0%; overall +0% | software-vgpu-slicing/CHECKPOINT_2026_10_21.md; software-vgpu-slicing/CLVK_RUNTIME_ROOT_CAUSE_2026_10_21.md |
+| `eb88c71` | 2026-10-17 | docs(vgpu): record qualification blockers and retired owned runners | #3 +0%; overall +0% | not recorded elsewhere |
+| `0c57b69` | 2026-10-17 | docs(wsi): clarify native acceptance in verification gate accounting | #3 +0%; overall +0% | not recorded elsewhere |
+| `2933aa6` | 2026-10-17 | docs(vgpu): record fresh qualification gates and native heap growth | #3 +0%; overall +0% | not recorded elsewhere |
+| `3ec4908` | 2026-10-17 | docs(tracker): record OpenCL implementation honestly as unverified at TODO #5 40% | #5 +0%; overall +0% | software-vgpu-slicing/CODEX_HANDOFF.md |
+| `de518b4` | 2026-10-09 | docs: bind reviewed input lease and terminal recovery handoff | No task delta; overall +0% | software-vgpu-slicing/CODEX_HANDOFF.md |
+| `d714621` | 2026-10-09 | fix(av): retain failed releases for bounded teardown retry | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `8d8d4df` | 2026-10-09 | test(av): exercise actual poll boundary across EINTR | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `8650e12` | 2026-10-09 | docs(cli): record reviewed terminal race implementation | No task here (separate feature); overall +0% | not recorded elsewhere |
+| `3884af7` | 2026-10-09 | fix(cli): drain terminal frames after peer write shutdown | No task here (separate feature); overall +0% | auto-terminal-race/TRACKER.md |
+| `26a73cb` | 2026-10-09 | feat(av): integrate revocable input leases across native peers | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `461f7c5` | 2026-10-09 | test(av): wire lease coverage and frozen V2 compatibility gate | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `efee605` | 2026-10-09 | feat(av): add canonical epoch protocol and portable lease authority | No task here (separate feature); overall +0% | input-lease-recovery/TRACKER.md |
+| `414d7e4` | 2026-10-09 | docs: preserve exact green native CI checkpoint | No task delta; overall +0% | REVIEW_CHECKLIST.md; auto-terminal-race/IMPL_DESC.md |
+| `879d0c3` | 2026-10-09 | docs(test): correct sanitizer implementation receipt hash | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; CI_GREEN_CHECKPOINT_2026-10-10.md |
+| `34c9d3e` | 2026-10-09 | docs(test): bind fail-closed sanitizer review receipt | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `01c30f7` | 2026-10-09 | docs: retain worker query and fatal sanitizer acceptance gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1b7cd17` | 2026-10-09 | test: make coverage sanitizer probes fail closed | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; coverage-recorder-integrity/TRACKER.md |
+| `50ca9bd` | 2026-10-09 | docs(vgpu): bind worker query runtime correction receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `3d3267d` | 2026-10-09 | test(vgpu): enable legal KHR queries in worker acceptance | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-runtime/TRACKER.md |
+| `f62cf52` | 2026-10-09 | docs: add exact coverage recorder replay and diagnostic handoff | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1e49a8e` | 2026-10-09 | docs: trace native fixture and recorder publication | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `51583f9` | 2026-10-09 | docs(test): bind native recorder integrity verification receipt | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `8d2dd4f` | 2026-10-09 | fix(test): retain every native coverage site within recorder budget | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `6f9494c` | 2026-10-09 | docs(vgpu): bind native WSI capability verification receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `0c65763` | 2026-10-09 | docs: record native lifecycle CI and remaining WSI gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `337021a` | 2026-10-09 | test(vgpu): opt native WSI fixtures into swapchain capability | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; native-wsi-test-capabilities/TRACKER.md |
+| `f04e358` | 2026-10-09 | docs: trace the bounded worker link repair and pending execution | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-runtime/TRACKER.md |
+| `d6be1c1` | 2026-10-09 | docs(vgpu): bind presented worker link correction receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `37df949` | 2026-10-09 | fix(vgpu): link native WSI sink into worker acceptance binaries | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; presented-worker-link/TRACKER.md |
+| `ec8bf07` | 2026-10-09 | docs: preserve lifecycle upgrade and native verification handoff | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `7c26f20` | 2026-10-09 | docs(av): bind synthetic callback correction verification receipt | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `f6e5695` | 2026-10-09 | test(av): accept validated input in synthetic platform fixture | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `f8163d9` | 2026-10-09 | docs(vgpu): record native extension oracle coverage receipt | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `efc09c8` | 2026-10-09 | docs(av): record exact generation lifecycle verification receipt | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1337fe5` | 2026-10-09 | feat(av): gate native lifecycle effects on admitted window generations | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `b317c05` | 2026-10-09 | test(vgpu): verify exact native extension projections | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; native-icd-extension-oracle/TRACKER.md |
+| `580349c` | 2026-10-09 | feat(av): add explicit lifecycle capability and identity effect gate | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `c11ce21` | 2026-10-09 | docs(vgpu): record exact sanitizer inventory repair evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; coverage-recorder-integrity/TRACKER.md |
+| `cf1ca1e` | 2026-10-09 | docs(av): specify generation-safe lifecycle capability contract | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `dfe7969` | 2026-10-09 | docs: link the portability checkpoint and remaining sanitizer gates | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `3cf2faa` | 2026-10-09 | fix(vgpu): account for device sanitizer helper closure | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; owned-sanitizer-inventory/TRACKER.md |
+| `e9b0663` | 2026-10-09 | docs(vgpu): attribute portable ICD test environment evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `37970ae` | 2026-10-09 | test(vgpu): make ICD environment fixtures portable on Windows | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; windows-icd-test-environment/TRACKER.md |
+| `b7c5912` | 2026-10-09 | docs(av): record native CI and leak-enabled input acceptance | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `622e79e` | 2026-10-09 | docs: map the verified coverage follow-on publication | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `4e07ac8` | 2026-10-09 | docs: add a concise prioritized home-validation index | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `1de3fdd` | 2026-10-09 | docs(vgpu): record restored whole-ICD coverage evidence | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/EVIDENCE.md |
+| `96291c5` | 2026-10-09 | docs: record restored ICD coverage without hardware acceptance credit | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `2d97603` | 2026-10-09 | test(vgpu): cover queue-side WSI failure transactions | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; wsi-window-lifetime/TRACKER.md |
+| `b137f3e` | 2026-10-09 | docs: map published checkpoints and retain the full coverage failure | No task delta; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `78ed9d1` | 2026-10-09 | ci(vgpu): include full ICD queue regression units in both modes | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `f130306` | 2026-10-09 | docs(vgpu): record reviewed WSI lifetime verification | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; HARDWARE_TEST_HANDOFF.md |
+| `6a4e65a` | 2026-10-09 | ci(vgpu): exercise WSI lifetime and repair native ICD link parity | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `51ee17b` | 2026-10-09 | fix(vgpu): harden Win32 swapchain retirement and resize lifetimes | #3 +0%; overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `272f030` | 2026-10-09 | docs(av): correct measured cloud compiler version | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `c854a79` | 2026-10-09 | test(av): record input verification and native DPI assertions | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `2d4cb16` | 2026-10-09 | ci(av): verify desktop input on the shared GPU branch | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md |
+| `388b7b3` | 2026-10-09 | feat(av): connect Wayland seat input to tracked guest injection | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; REVIEW_CHECKLIST.md |
+| `887c5f7` | 2026-10-09 | feat(av): validate bounded input and track held ownership | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `c4a4d39` | 2026-10-09 | docs(av): specify ordinary-window input contract | No task here (separate feature); overall +0% | CLOUD_PUBLICATION_CHECKPOINT.md; desktop-input/TRACKER.md |
+| `9cdb6b6` | 2026-10-09 | test(vgpu): add Properties2 sanitizer gate and DXVK shader tooling | #3 +0%; overall +0% | not recorded elsewhere |
+| `c6cf98c` | 2026-10-08 | docs: add shared GPU Windows desktop roadmap | No task delta; overall +0% | not recorded elsewhere |
+| `cb0b0d5` | 2026-10-07 | docs(vgpu): record final ICD and real Windows Vulkan qualification | #3 +0%; overall +0% | SHARED_GPU_DESKTOP_ROADMAP.md |
+| `c390a74` | 2026-10-07 | test(dxvk): exercise genuine recorded submission transport loss | #3 +0%; overall +0% | not recorded elsewhere |
+| `e24733e` | 2026-10-07 | docs(vgpu): record real compute acceptance and remaining presentation gate | #3 +0%; overall +0% | not recorded elsewhere |
+| `5407cfc` | 2026-10-07 | docs(vgpu): record real DXVK pixel acceptance and remaining compute failure | #3 +0%; overall +0% | not recorded elsewhere |
+| `357d6e4` | 2026-10-07 | docs(vgpu): record integrated transport and honest qualification gaps | #3 +0%; overall +0% | not recorded elsewhere |
+| `e6687ad` | 2026-10-07 | test(vgpu): preserve all final coverage attempts and track qualification scope | #3 +0%; overall +0% | not recorded elsewhere |
+| `8083c76` | 2026-10-07 | chore(vgpu): describe Vulkan 1.3 ceiling and coherent integration milestone | #3 +0%; overall +0% | not recorded elsewhere |
+| `393b2f3` | 2026-10-07 | feat(vgpu): support bounded full-size DXVK shader packets | #3 +0%; overall +0% | not recorded elsewhere |
+| `081989b` | 2026-10-07 | chore(vgpu): integrate modern Vulkan module builds and targeted checks | #3 +0%; overall +0% | not recorded elsewhere |
+| `75c0954` | 2026-10-07 | fix(vgpu): freeze every Properties2 SDK member type explicitly | #3 +0%; overall +0% | not recorded elsewhere |
+| `4ae52ec` | 2026-10-07 | docs(vgpu): record exact native SDK owner attribution | #3 +0%; overall +0% | not recorded elsewhere |
+| `7bfb191` | 2026-10-07 | feat(vgpu): forward immutable guest caps with absolute deadlines | #3 +0%; overall +0% | not recorded elsewhere |
+| `12bdbac` | 2026-10-07 | feat(vgpu): expose exact validated extension backend status | #3 +0%; overall +0% | this tracker, by subject |
+| `640ea9a` | 2026-10-07 | feat(vgpu): publish modern native Properties2 payloads transactionally | #3 +0%; overall +0% | not recorded elsewhere |
+
+Later commits are recorded by hash in the section that follows each one. All tasks +0%; parent
+85.5% / In Progress, Time Ended TBD.
+
+### Reload R10 passes 1100 cycles (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `98d0211` | docs(tracker): backfill 99 unlogged commit hashes for software-vgpu-slicing | No task delta; overall +0% | Logged deltas re-summed to 85.5% |
+| `23e4d3b` | docs(vgpu): record where the R15 guard sources live and their hashes | #3, #5 +0%; overall +0% | 16 hashes recomputed from the files |
+| `63f0c80` | docs(opencl): record the passing 1100-cycle reload R10 | #5 +30%; overall +6% | R10 exit 0, verdict PASS; independent verifier rerun PASS; 1100 cycles at 104/1083/4075 |
+| `952583e` | docs(opencl): cite amendments 1-4 for the reload verifier witness | #5 +0%; overall +0% | Verifier tests 13/13 |
+| `1c3df0c` | docs(opencl): make reload amendment 4's approval basis and scope exact | #5 +0%; overall +0% | Wording only |
+
+R10 ([attribution section 15](OPENCL_RETENTION_ATTRIBUTION_2026_10_22.md#15-reload-r10-passes-1100-cycles-2026-10-22))
+is the full-reload acceptance for TODO #5, so #5 moves from 40% to 70% (+6% overall). The remaining
+30% of #5 is guarded native heap qualification (20%), then exact-head CI and the final review (10%).
+Patch 0002 and steps 8-10 still need the user's explicit ratification before merge (contract
+amendment 4). The native CDB guard controls are running now; the Windows physical matrix, M2 and the
+DXVK and OpenCL heap runs follow. Parent 91.5% / In Progress, Time Ended TBD.
+
+### CDB guard R16-R18 and passing native guard controls (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `dc7ca79` | docs(tracker): credit the passing 1100-cycle reload R10 to TODO #5 | #5 +0% (records the +30% above); overall +0% | Logged deltas re-summed to 91.5% |
+| `90bc5c5` | docs(vgpu): specify CDB guard R16-R18 and the passing native guard controls | #3, #5 +0%; overall +0% | Native controls r5 `run_b85ce051` PASS: normal, inject (slot 0 recovered), fresh (FRESH reported, never resumed), timeout (all six restored, `GuardTimeoutCleaned`); every fixture TERMINAL 0 with equal handles and absent |
+
+R15, R16 and R17 each failed the native guard controls once, on a WinRM command-line limit, a
+stage-capped cleanup deadline, and an exit-time identity re-read plus a PowerShell CRLF on the
+result. Controls r4 also showed that the inject hook fired too late. Each failure is preserved and
+fixed in a new revision ([IMPL_DESC](IMPL_DESC.md#cdb-suspend-guard-r16-r18-and-passing-native-guard-controls-2026-10-22)).
+The R16 timeout control left one CPU-only control fixture suspended in the guest (pid 7984). It is
+retained, not terminated, and recorded in the lease. The guard is now cleared for the heap runs. The
+Windows physical matrix revision 2 is running. All tasks +0%; parent 91.5% / In Progress, Time
+Ended TBD.
+
+### Physical matrix, guarded heap runs and M2 revision 4 (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `09ff98e` | docs(tracker): record CDB guard R16-R18 and the passing native controls | No task delta; overall +0% | - |
+| `fce4e28` | docs(opencl): correct the pre-initialization comments to ten steps and four amendments | #5 +0%; overall +0% | Comment-only; pre-initialization coverage 100% |
+| `59c06e2` | docs(vgpu): record guard R19-R22, the heap residual review and both heap results | #3 +4%; overall +1% | Windows physical r2: 12/12 PASS. DXVK heap revision 11: three lifetimes, native exit 0, review PASS with zero OWNED blocks; guard controls r6/r8/r9 PASS; review tool tests 7/7 |
+| `2e411c4` | docs(opencl): attribute the guarded heap run's owned per-load leaks | #5 +0%; overall +0% | OpenCL heap r3: three lives complete, review FAIL (27 OWNED blocks per load) |
+
+TODO #3 moves from 90% to 94% (+1% overall). The Windows physical matrix requalified 12/12 on the
+patched loader, and the DXVK heap qualification shows zero owned leaks. Classifying DXVK's own
+statically linked runtime residue as CLIENT rather than OWNED was Claude's decision under the user's
+autonomy instruction. It follows the handoff criterion "zero owned leaks" and is flagged for the
+user's review. The remaining 6% of #3 is M2 on the patched loader (running as revision 4; revision 3
+refused before native work because its owner check named the previous lease owner), exact-head CI
+and the final review.
+
+TODO #5 stays at 70%. The OpenCL heap run proves per-load owned leaks in OpenCL.dll, which block
+heap acceptance until a user-approved teardown fix, rebuild and requalification. The R16 control
+fixture (pid 7984) remains suspended in the guest. Parent 92.5% / In Progress, Time Ended TBD.
+
+### M2 revision 4 passes on the patched loader (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `9228a01` | docs(tracker): credit physical requalification and DXVK heap, record the OpenCL heap failure | #3 +0% (records the +4% above); overall +0% | Logged deltas re-summed to 92.5% |
+| (this commit) | docs(tracker): record the passing M2 revision 4 requalification | #3 +2%; overall +0.5% | `m2_owned_runs_2e411c4_revision4/results.json` (`515f17cb…`): status PASS; triangle_present (eight lifetimes) and wsi_lifetime (eight lifetimes) PASS on exact RTX 5080; guest pre/postflight PASS; no host survivors; retirement and VM preservation PASS |
+
+Package `m2_owned_candidate_2e411c4_r4` (manifest `63f66a5b…`) was frozen by plan revision 4
+(`build/qualification_feature_20261021/m2_root_plan_r4`). That revision differs from revision 3
+only in the sole-owner string its lease check requires and in its regenerated plan manifest.
+Revision 3 refused before any native work (status NOT_RUN). Amendment 2 item 4 (requalify every
+Windows workload that loads the patched `vulkan-1.dll`) is now complete for M2, the Windows physical
+matrix and DXVK. TODO #3 moves from 94% to 96% (+0.5% overall). Its remaining 4% is exact-head CI and
+the final review. TODO #5 stays blocked on the OpenCL.dll per-load leak fix, which awaits the user's
+decision. Parent 93.0% / In Progress, Time Ended TBD.
+
+### OpenCL.dll llvm_shutdown teardown fix (2026-10-22)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `46f623a` | docs(tracker): record the passing M2 revision 4 requalification | #3 +0% (records the +2% above); overall +0% | Logged deltas re-summed to 93.0% |
+| `23e9275` | fix(opencl): destroy LLVM managed statics before releasing the GCC arena | #5 +0%; overall +0% | EH-pool unit test plain/ASan/LSan/UBSan; 100% line and branch coverage |
+| `99d333a` | test(opencl): require llvm_shutdown to resolve from LLVM's ManagedStatic object | #5 +0%; overall +0% | Audit tests; current map satisfies the gate |
+| `9f40010` | fix(opencl): give the LLVM-free runtime probe its own llvm_shutdown stand-in | #5 +0%; overall +0% | Audit, build-driver (34) and probe-build tests; rebuilt candidate 8552b3a1 admitted statically |
+| `8fb0b93` | docs(opencl): record the llvm_shutdown teardown fix and the critical-section analysis | #5 +0%; overall +0% | Census r6 zero handle/module/TLS/FLS change; controls r8 PASS |
+
+The user approved this fix and its requalification on 2026-10-22. Reload R11 (1100 cycles) and the
+guarded heap run r4 are running or queued. TODO #5 stays at 70% until both pass. Parent 93.0% / In
+Progress, Time Ended TBD.
+
+
+### Codex continuation: exact runtime archive admission (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `22e86e3` | docs(vgpu): specify the OpenCL.dll llvm_shutdown teardown and log its commits | #3/#5 +0%; overall +0% | Prior documentation checkpoint; no additional native acceptance |
+| `e5c39a2` | fix(opencl): bind teardown symbols to their exact runtime archives | #5 +0%; overall +0% | 22 audit tests pass in normal/optimized Python, including archive-only spoofs, standalone/prefixed members and policy override rejection. Preserved real map c5af0bdc passes the stricter gate with candidate 8552b3a1 unchanged. |
+
+Both archive and member names are now required, matching the shim and admission documentation.
+The auditor is a build-cache input; a later build must use a new cache key. This read-only map
+recheck does not refresh the historical build receipt or credit a rebuild/native qualification.
+Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: probe and production LLVM policy wiring (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `3c7b105` | test(opencl): enforce separate probe and production LLVM admission | #5 +0%; overall +0% | 35 build-driver tests pass in normal/optimized Python outside sandbox ptrace with ASan/LSan enabled. Cached admission asserts llvm_runtime=True; fresh admission wiring requires literal True; probe admission asserts False. |
+
+Sandbox runs are retained in /tmp/waddle_clvk_build*.log as failures: ptrace prevents LSan
+execution. Host reruns use unchanged leak checks and pass; no failed result is waived.
+The preceding archive regression test fails six cases against the original 22e86e3 auditor.
+No OpenCL.dll rebuild or native acceptance is credited; parent remains 93.0%.
+
+### Codex continuation: managed-static destructor-order boundary (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `881b40f` | docs(opencl): specify the managed-static teardown ordering limitation | #5 +0%; overall +0% | Shim preprocessed C unchanged; existing CRT-double tests pass 6/6 plain and ASan/LSan/UBSan; actual shim coverage 14/14 lines and 6/6 branches. |
+
+The default-option review is conditional: -print-debug-counter can print through a destroyed
+LLVM stream during unload. No filter is implemented and no qualification is claimed for that
+option. IMPL_DESC and Doxygen now state the lifetime precondition and the separate approval
+and complete native requalification required for a private-copy filter. No upstream changes.
+Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: nonthrowing LLVM-free probe stand-in (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `ea2ffa4` | test(opencl): declare the probe llvm_shutdown stand-in noexcept | #5 +0%; overall +0% | Three probe cross-build boundary tests pass. This affects only the LLVM-free probe; no production DLL rebuild or native acceptance is credited. |
+
+Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: reviewed lease-owner wrapper r2 (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `7eafbff` | chore(qualification): prepare exact Codex lease-owner wrapper r2 | #3/#5/#11 +0%; overall +0% | Eleven offline tests pass in normal/optimized Python against frozen executor b571dbbe; inverse patch exactly recovers wrapper r1 94a367b8. Native use awaits explicit approval. |
+
+[Approval request](lease_owner_wrapper_r2/approval_request.md) records the exact owner chain and
+wrapper hash a08bf833. An ignored r5 heap launcher pins this wrapper and preserves r4 runner
+bytes d276f589. Newly launched VM identities require a separate runner revision. No owner
+impersonation, predicate waiver or native qualification is included. Parent remains 93.0%.
+
+### Codex continuation: approvals and VM recovery checkpoint (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `608f0ee` | docs(vgpu): record ratified contracts and preserved VM recovery | #3/#5/#11 +0%; overall +0% | Explicit amendment-4, DXVK CLIENT and wrapper-r2 approvals; preserved disk check clean; new QEMU/swtpm identities and console sign-in observed. R11/R12 remain incomplete; no new native acceptance. |
+
+The supplied handoff is retained as historical context. Its RESULT_R12_PLACEHOLDER is superseded
+by attribution section 18, not filled with a fabricated result. All current review nits are
+addressed. TODO #5's note now reflects the already approved/implemented fix. Parent remains
+93.0% / In Progress, Time Ended TBD until fresh native gates and final exact-head CI pass.
+
+### CI package-download timeout correction (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `ea40d8a` | ci(vgpu): use the official Ubuntu archive for admission tools | #3/#5 +0%; overall +0% | Job 120451134378 in run 39964621955 at 608f0ee exhausted 15 minutes during Azure-mirror downloads before tests. Workflow YAML/shell syntax pass; test steps, package list, other jobs and timeout are unchanged. |
+
+The same-head push admission job passed, but the cancelled PR job is not called green. The
+new commit changes the concrete failing download source instead of rerunning an unexplained
+failure. Raw installation log is preserved under codex_continuation_20261023. Parent remains
+93.0% / In Progress, Time Ended TBD; fresh-head CI and native gates remain open.
+
+### Current-source OpenCL build and native prerequisites (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `bffeb41` | docs(opencl): record current-source build and new-boot native prerequisites | #5/#11 +0%; overall +0% | Build 2738/2738 and static admission PASS; candidate 81f3fc1d; native controls c5d11649 PASS; six-life census 680adacd completes with zero handle/module/TLS/FLS deltas, native exit 0 and exact host/native retirement. |
+
+Six normal/optimized revision groups and both supervisor self-tests pass. All 1225 preserved
+input paths were rechecked; only the approved shim documentation and new canonical receipt are
+rebound, with all other old bindings exact. New runners preserve prior revisions and bind the
+approved owner/new VM boot. Reload R13 and guarded heap remain open. Parent 93.0%, Time Ended TBD.
+
+### Rebuilt OpenCL candidate R13 reload qualification (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `52f2f75` | docs(opencl): record the independently verified R13 reload pass | #5/#11 +0%; overall +0% | R13 attempt2 executor exit0, exactly1100 cycles/3300 contexts, handles104/TLS1083/FLS4075 on every cycle, one cleanup-complete record, exact host/native retirement, independently rerun frozen verifier PASS. |
+
+All 12 CI checks pass on exact source head bffeb41. The earlier plan preparation failed only
+because sandbox sockets were denied, before native work; its evidence is retained and no
+native failed run was retried into this result. R13's heap_acceptance remains false. The
+new-candidate guarded heap capture and offline ownership gate still block TODO #5, which stays
+70%, and TODO #11, which stays60%. Parent remains93.0% / In Progress, Time Ended TBD.
+
+### Final rebuilt-candidate heap and native bootstrap acceptance (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `01613b1` | docs(opencl): close rebuilt-candidate heap ownership qualification | #5 +30% (+6.0% overall); #11 +40% (+0% overall) | Heap cf99460c: native0, three8-context lives, nine API heaps/zero CSR busy at each stage, eight clean R22 passes, zero OWNED blocks/bytes at every unload, all allocating modules resolved, exact process/pidfd/IFEO retirement; offline review e2fc5fb6 and root review4638f3df PASS. |
+
+The original capture exit1 is retained as the expected source-frame-attribution handoff; the
+prescribed separate offline module-ownership review supplies acceptance. No missing coverage,
+unknown allocator or ownership failure is waived. R13 was independently qualified before heap
+launch. Default compiler-option scope and the documented LLVM diagnostic limitation remain
+explicit. Native gates #5/#11 are complete. Parent moves93.0->99.0%, Review, Time Ended TBD;
+TODO#3's final4% is the final source/evidence and delivery-head CI closure.
+
+### Feature acceptance closure (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `19bb1a6` | docs(vgpu): complete software slicing acceptance tracker | #3 +4% (+1.0% overall); all other tasks +0% | All 12 checks SUCCESS on source head bffeb41; final source/native applicability review PASS at 01613b1, current receipt binds all 14 runtime inputs, R13 and heap root reviews PASS, README/dependency pins unchanged. |
+
+All twelve tasks now reach100%, weighted total100.0%, and the header records the acceptance
+closure time. The final review is a root follow-up to the preserved independent handoff review;
+it is not represented as a newly independent review. The default compiler-option qualification
+and explicit nonstandard LLVM diagnostic-option limitation remain unchanged. Physical hypervisor
+and compositor boundaries previously delegated by the user remain outside the accepted scope.
+Historical pending statements in the commit log describe their dated checkpoints and are
+superseded by the current task table and attribution sections18-21.
+
+This commit changes acceptance documentation only. Before PR#6 is marked ready, its exact
+pushed head must have all twelve provider CI checks successful; the final provider snapshot
+and delivery receipt are retained with the local qualification evidence without another
+source commit. PR#6 must remain open and must not be merged by this continuation.
+
+### Historical merge attribution audit (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| `7fc3c81` | test(vgpu): integrate independently reviewed M2 ownership readiness | All tasks +0%; overall +0% | Merge preserves both isolated M2 and runtime/cancellation histories. Original checkpoint records 156 Unit D bindings and portable gates, with native/current-head acceptance still open then; no duplicate progress credit. |
+| `2568c0b` | chore(vgpu): preserve existing remote PR history | All tasks +0%; overall +0% | Merge preserves remote review-controller source/documentation and 47 offline controls without rewriting history. Original checkpoint explicitly gives no current-candidate CI/runtime credit. |
+| (this commit; identified by the git commit containing this row) | docs(tracker): attribute preserved feature integration commits | All tasks +0%; overall +0% | Complete feature-range hash audit finds every preceding commit represented, including the two historical merges above and acceptance closure19bb1a6. No implementation or qualification verdict changes. |
+
+This closes attribution gaps found by comparing all feature-range commits against the parent
+tracker, rather than assigning their already integrated work additional progress. Total remains
+100.0% and the acceptance end time remains unchanged. The exact delivery-head CI requirement
+applies to this documentation follow-up before PR readiness; superseded CI is not final evidence.

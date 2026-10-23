@@ -1,0 +1,165 @@
+# User-requested qualification checkpoint — 2026-10-18T01:25:19Z
+
+Work is paused at the user's request to find a good stopping point. This is a
+recoverable checkpoint, not qualification closure. Feature85.5%, WSI94%, both
+Time Ended fields remain TBD. README is unchanged. Do not merge or mark the PR ready.
+
+## Checkout and ownership
+
+- Branch: `feature/software-vgpu-slicing`.
+- HEAD before this documentation-only checkpoint: `50d5da28673733453ca304f2636d60db47b07700`.
+  The checkpoint commit is identifiable by `docs(vgpu): checkpoint qualification at user pause`.
+- All completed implementation/tests are committed. Generated Python caches were
+  preserved under ignored build artifacts. Lead alone owns Git and VM/GPU runs.
+- All three GPT-6 Luna high-effort workers completed and relinquished their files.
+- Claude and its workers had already relinquished the checkout by explicit user confirmation.
+- User approvals for the documented private clvk shutdown and buffer corrections
+  persist. Do not ask again for those approved corrections. Submodules/pins are unchanged.
+
+## Completed evidence
+
+- Current owned ICD:394 Debug/ReleaseSafe tests,128 native C cycles, allocator
+  and prescribed sanitizer gates. Branches90.32%, lines98.53%.
+- Complete37-source owned-access proof and physical RTX5080 matrix pass:
+  144 positive GPU lifetimes plus6 exact expected postflush cleanup failures,
+  zero configured sanitizer/leak errors. See PHYSICAL_RECEIPT_2026_10_18.json.
+- Private clvk patches0001/0002/0003 pass19 admission tests with actual13-body
+  ASan/LSan/UBSan regressions and both negative controls. Production buffer
+  coverage161/161 lines,200/212 directional outcomes (94.34%), no exclusions.
+- Final three-patch DLL cross-build/export/import admission passes. Receipt
+  `build/clvk_client.json`; log `clvk_buffer_map_final_cross_build.log`.
+- OpenCL final native normal `dxvk_gpu_d0fc65d0` and sanitized-host
+  `dxvk_gpu_ff4d1413` both pass8 primary exact kernel lifetimes, temporary
+  malformed/context/alias/event scopes, deliberate build error, joined concurrent
+  callers, terminal shutdown and native module retirement. Host graphs retire
+  naturally with no signals; six guest artifacts and fixture manifests match
+  after both runs. Native heap and simultaneous Linux GPU gates remain open.
+- Native bounded WSI `tcp_gpu_683c0ee2` passes8 lifetimes/32 cases/24 exact
+  presentations with original handle199 baseline and GDI/USER equality.
+- Loader environment guard: native round-trip and mock ASan/LSan/UBSan pass;
+  production84/84 lines and74/74 branches. OpenCL and DXVK restore environment
+  after joined thread/TLS/module retirement; retries retain failure status.
+- Fresh post-stdio DXVK heap `dxvk_heap_d79f3c51503adc22`:3 exact GPU lifetimes,
+  native exit0, tool/image/PDB/registry evidence intact. The4096-byte stderr
+  bucket is gone. Heap acceptance remains false; positive allocations remain.
+- Four system-only UMDH controls each pass3 joined lifetimes. Exact narrow
+  matches support some GUI/MSCTF/DXCore, compiler locale and direct Winsock/CNG
+  ancestry. No totals were subtracted and unmatched paths remain unresolved.
+
+## Open gates and next work
+
+1. Unchanged48-frame presentation `tcp_gpu_7adb6000` fails after42 exact frames:
+   handle baseline199, actual200. Host and worker retire naturally. This is
+   failed evidence. Older diagnostic traces use another fixture and cannot
+   attribute the current extra handle. Current-source diagnostic checkpoint
+   `tcp_gpu_fe13e873` is prepared but NOT executed. Runner:
+   `build/qualification_20261017/run_current_wsi_diagnostic.py`.
+   It preserves assertions and adds a60-second inspection hold; NEVER count its
+   result as acceptance. Do not weaken assertions, inflate baselines or widen budgets.
+2. Finish DXVK heap attribution. New control results:
+   `build/qualification_20261017/system_heap_control_results.json`.
+   Exact matches do not waive remaining environment-size mismatch, bootstrap
+   FIPS/timer, ETW/threadpool, DXGI/DirectXDatabaseHelper/WNF/RPC and Present/WinTrust
+   stacks. Current native positive heap deltas are not zero-owned-leak proof.
+3. Review the NOT EXECUTED OpenCL heap tool:
+   `build/qualification_20261017/opencl_heap_tools/opencl_heap_audit.py`.
+   It has separate `prepare --cycles 3` and `run <folder>` commands. Worker AST,
+   source hashes and PE/PDB GUID/age checks passed; lead execution/review remains.
+   Freeze actual live module bases for post-unload symbolization. Require exact
+   original UST restoration and tool/binary hashes. Keep heap_acceptance false
+   until every relevant owned allocation is proved released.
+4. Run simultaneous Linux GPU work during actual OpenCL execution, recording
+   real overlap, exact GPU outputs, sanitizer results and natural owner cleanup.
+   Ordinary OpenCL context concurrency already passed; that is a different gate.
+5. Assess/add actual OpenCL transport-loss/cancellation acceptance. Existing
+   portable protocol and DXVK fault tests do not by themselves verify every
+   clvk consumer failure path. No OpenCL-specific transport-loss fixture has
+   been added at this checkpoint.
+6. Reconcile applicable final CI/input hashes, current source documentation and
+   progress only after all gates pass; then Time Ended and PR update. Do not merge.
+
+## Live state and resumption
+
+- All local GPU/native/build jobs have finished. No local test is intentionally
+  left running. All image-specific UST registry changes were restored by each audit.
+- The original Windows VM remains running at PID10895; disk/firmware/TPM and
+  settings are preserved. Never provision/reset it. Credentials remain only in
+  the existing private credentials JSON, never in logs or command arguments.
+- Stopped only our verified localhost publishing servers PID15253/:55986 and
+  PID65136/:37337 after transfers finished. Their files remain. On resume,
+  explicitly start `python3 -B build/qualification_20261017/public_binaries_resume.py`
+  and `python3 -B build/qualification_20261017/public_pdbs_resume.py` as owned jobs
+  before any new deployment. The PDB restart rewrites its PID/port record.
+- Prior source snapshots, failed runs, VM artifacts, control binaries/PDBs and
+  logs remain intact. Root artifact directory: `build/qualification_20261017`.
+- Draft PR6 already exists and is attached to this chat. No readiness/metadata
+  update or feature-branch push occurred during this checkpoint interval.
+  Feature PR must remain unqualified while these gates are open.
+- Separate CI-only ref `codex/vgpu-qualification-20261017-a42994ee` points to
+  `1e91c4833a285c7978afa0d50eaa4035f983cce7`, with no PR. All four earlier ddc7926
+  workflows passed. New runs: software39085524347, CLI39085525928,
+  guest39085527458, AV39085528946. Last saved observation: guest/AV success,
+  CLI/software still running (software OpenCL admission success). Leave remote
+  CI running; inspect once on resume. No follow-up automation was created.
+
+
+## Resumed qualification blocker checkpoint, 2026-10-17 America/New_York
+
+The earlier user-requested stop was superseded by the subsequent request to
+continue toward M2. This resumed work is now recorded at concrete qualification
+blockers, not feature completion or a new user-requested pause.
+
+- Branch `feature/software-vgpu-slicing`; implementation/evidence head
+  `07923b46c9abcfe8d9883bb9aa040236073ee12e`. M2 remains94%/Review;
+  software-vGPU85.5%/In Progress; Time Ended TBD.
+- M2's unchanged global native handle-count gate fails independently in a
+  Windows-only control without Vulkan or Waddle. Two fresh unmodified full48
+  frame positives do not waive the retained199→200 failure.
+- The approved OpenCL DLL still points to exact hash
+  `a8fd9d7a4f979ca4534e26d789025cf9f7c7affd84b46726eeee28f40d83c54d`.
+  Three native cycles complete24 primary lifetimes; repeat heap bytes are
+  stable but six runtime handles per reload require attribution/closure.
+- Exact tracing and a new isolated native regression identify current POSIX
+  runtime loss of6handles/1TLS slot per unload. Candidate Win32 balances
+  handles but loses2TLS slots and stalls after543 handle-balanced reloads.
+  Both final TLS regressions exit1. The original19 admission tests pass;
+  cross-compilation/collection are not native acceptance.
+- The pending Win32 build switch was preserved as a rejected private patch
+  and withdrawn. No new upstream patch or production runtime change is applied.
+  SDK lifetime corrections need a separately reviewed private-copy proposal
+  and explicit approval under CODEX_HANDOFF.md section4. Do not destroy TLS
+  state early, call speculative LLVMshutdown, close borrowed handles, relax
+  assertions or reinterpret a short positive as final qualification.
+- Owned stalled process5888/creation01dd5ea9f4e6eede was identity-checked and
+  forcibly retired after two frozen-progress/increasing-CPU observations.
+  Guest exit marker is-1; this is failed stress evidence. All exact owned
+  native jobs are now absent. Unique UST keys were restored to original absence.
+- Task-only binary/PDB publishers257264/257274 were identity/socket checked
+  and stopped with pidfds. Their loopback ports are closed. Restart only the
+  documented scripts if more transfers are needed; update PDB server record
+  through its script before preparing new immutable audits.
+- Original VM10895/start19105 remains running. No host packages were installed
+  or upgraded; the optional matching SDK was only extracted in build/. README
+  matches the original task-start bytes. Artifacts and unrelated processes remain.
+- Separate CI-only head1e91c4833a285c7978afa0d50eaa4035f983cce7 passes all four
+  workflows. No feature push, PR readiness update or merge was performed.
+
+Canonical evidence: [runtime review](CLVK_RUNTIME_LIFETIME_REVIEW.md),
+[runtime receipt](CLVK_RUNTIME_RECEIPT_2026_10_17.json),
+[OpenCL heap receipt](OPENCL_HEAP_RECEIPT_2026_10_17.json),
+[OpenCL handle receipt](OPENCL_HANDLE_RECEIPT_2026_10_17.json), and
+[M2 system control](M2_SYSTEM_HANDLE_RECEIPT_2026_10_17.json).
+The durable runner/README/DLL identity checkpoint is
+`build/qualification_20261017/runtime_blocker_checkpoint.json`.
+Commit07923b4 adds the regression and synchronized evidence with0% task impact.
+No qualification credit or thresholds changed. Remaining actual-DLL heap,
+transport-loss cancellation and Linux-GPU/OpenCL overlap acceptance stays open.
+
+
+Final recursive inventory retains five uninitialized nested Looking Glass
+checkouts (`repos/LGMP`, `PureSpice`, `cimgui`, `nanosvg`, `wayland-protocols`).
+The initial overbroad assertion that every recursive checkout was initialized
+failed and is not acceptance evidence. No checkout/pin was changed to hide it.
+Required feature top-level checkouts are initialized at their pins; the
+inventory has no advanced/conflicted entries. Raw inventory and corrected
+non-acceptance report remain in `build/qualification_20261017/runtime_final_git_state.json`.

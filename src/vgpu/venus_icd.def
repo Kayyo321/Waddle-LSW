@@ -1,0 +1,16 @@
+; Experimental x86_64 standalone ICD exports. All function pointers are static;
+; bind borrows an exclusive negotiated backend until unbind/abandon. No allocation.
+; Required external Vulkan ABI names are aliases of documented snake_case functions.
+LIBRARY waddle_vulkan_experimental
+EXPORTS
+    venus_icd_bind
+    venus_icd_bind_capabilities
+    venus_icd_bind_timed
+    venus_icd_unbind
+    venus_icd_abandon
+    venus_icd_negotiate_loader
+    venus_icd_get_instance_proc_addr
+    venus_icd_get_physical_proc_addr
+    vk_icdNegotiateLoaderICDInterfaceVersion
+    vk_icdGetInstanceProcAddr
+    vk_icdGetPhysicalDeviceProcAddr

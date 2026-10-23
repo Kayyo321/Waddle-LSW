@@ -1,0 +1,11 @@
+; Standalone userland adapter ABI. No kernel miniport/DriverEntry export.
+LIBRARY waddle_userland_adapter
+EXPORTS
+    venus_wddm_init
+    venus_wddm_capabilities
+    venus_wddm_context_create
+    venus_wddm_context_destroy
+    venus_wddm_context_discard
+    venus_wddm_allocation_create
+    venus_wddm_allocation_destroy
+    venus_wddm_free

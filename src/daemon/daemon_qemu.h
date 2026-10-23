@@ -6,8 +6,8 @@
  * QMP integration, graceful shutdown, and force termination for QEMU.
  */
 
-#ifndef WADDLE_DAEMON_QEMU_H
-#define WADDLE_DAEMON_QEMU_H
+#ifndef WaddleDaemonQemuH
+#define WaddleDaemonQemuH
 
 #include "daemon_config.h"
 #include "daemon_qmp.h"
@@ -139,4 +139,4 @@ void qemu_cleanup(qemu_process_t *proc);
 }
 #endif
 
-#endif /* WADDLE_DAEMON_QEMU_H */
+#endif /* WaddleDaemonQemuH */

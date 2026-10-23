@@ -20,6 +20,9 @@
 #include <termios.h>
 #include <unistd.h>
 
+/** @brief Fixed receive-drain cap after peer write shutdown; never renewed by traffic. */
+#define TransportDrainMs UINT64_C(2000)
+
 int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int interactive) {
     queue_t output[2];
     memset(&output[0], 0, sizeof(output[0]));
@@ -31,6 +34,8 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
     int result = 125;
     int spawned = 0;
     int stdin_eof = 0;
+    int tx_error = 0;
+    uint64_t drain_deadline = 0;
     int eof[2] = {0, 0};
     int exited = 0;
     uint32_t exit_code = 0;
@@ -40,13 +45,21 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
     }
 
     for (;;) {
-        if (deadline > 0 && monotonic_ms() >= deadline) {
+        uint64_t now = monotonic_ms();
+        if (deadline > 0 && now >= deadline &&
+            (tx_error == 0 || exited || deadline <= drain_deadline)) {
             fprintf(stderr, "waddle: session timed out\n");
             result = 124;
             goto done;
         }
 
-        if (spawned && !exited && waddle_send_pending(tx, &seq, interactive) != 0) {
+        if (tx_error != 0 && !exited && now >= drain_deadline) {
+            errno = tx_error;
+            goto error;
+        }
+
+        if (spawned && !exited && tx_error == 0 &&
+            waddle_send_pending(tx, &seq, interactive) != 0) {
             goto error;
         }
 
@@ -60,12 +73,12 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
             queue_space(&output[1]) >= WaddleChunkSize) {
             fd_events |= POLLIN;
         }
-        if (tx->len > 0 && !exited) {
+        if (tx->len > 0 && !exited && tx_error == 0) {
             fd_events |= POLLOUT;
         }
 
         short stdin_events = 0;
-        if (spawned && !exited && !stdin_eof && queue_space(tx) >= WaddleChunkSize + 40) {
+        if (spawned && !exited && tx_error == 0 && !stdin_eof && queue_space(tx) >= WaddleChunkSize + 40) {
             stdin_events |= POLLIN;
         }
 
@@ -86,9 +99,14 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
         }
 
         int timeout = -1;
-        if (deadline > 0) {
+        uint64_t poll_deadline = deadline;
+        if (tx_error != 0 && !exited &&
+            (poll_deadline == 0 || drain_deadline < poll_deadline)) {
+            poll_deadline = drain_deadline;
+        }
+        if (poll_deadline > 0) {
             uint64_t now = monotonic_ms();
-            uint64_t left = (deadline > now) ? (deadline - now) : 0;
+            uint64_t left = (poll_deadline > now) ? (poll_deadline - now) : 0;
             timeout = (left > INT_MAX) ? INT_MAX : (int)left;
         }
 
@@ -101,7 +119,7 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
         }
 
         if (p[4].revents != 0) {
-            if (spawned) {
+            if (spawned && !exited && tx_error == 0) {
                 if (waddle_send_pending(tx, &seq, interactive) != 0) {
                     goto error;
                 }
@@ -117,10 +135,19 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
         }
 
         if ((p[0].revents & POLLOUT) != 0 && queue_flush(tx, fd) != 0) {
-            goto error;
+            if (errno != EPIPE && errno != ECONNRESET) {
+                goto error;
+            }
+            /* A peer may close after sending its final frames while our stdin EOF
+             * is still queued. Its write failure is not a ProcessExit: stop sending
+             * and validate the receive direction before deciding the session result. */
+            tx_error = errno;
+            drain_deadline = monotonic_ms() + TransportDrainMs;
+            tx->off = 0;
+            tx->len = 0;
         }
 
-        if ((p[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
+        if (tx_error == 0 && (p[1].revents & (POLLIN | POLLHUP | POLLERR)) != 0) {
             uint8_t b[WaddleChunkSize];
             ssize_t got = read(STDIN_FILENO, b, sizeof(b));
             if (got > 0) {
@@ -148,7 +175,7 @@ int waddle_session(int fd, queue_t *tx, uint32_t seq, uint64_t deadline, int int
             }
             if (got < 0) {
                 if (got == -2) {
-                    errno = ECONNRESET;
+                    errno = (tx_error != 0) ? tx_error : ECONNRESET;
                 }
                 goto error;
             }

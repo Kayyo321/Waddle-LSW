@@ -1,0 +1,47 @@
+{
+  "wsi": {
+    "checkpoint": "build/windows11_vm/tcp_gpu_683c0ee2",
+    "fixture_sources": {
+      "/home/dev/Waddle-LSW/build/wddm_dxvk_checkpoint/dxvk_source_9bd62e9f/source/tests/vgpu/tcp_gpu_windows.c": "b97fd1c6e4cd202007755b45a7c2c6d2ad64f5368a13a689f8672ae8696f4005",
+      "/home/dev/Waddle-LSW/build/wddm_dxvk_checkpoint/dxvk_source_9bd62e9f/source/tests/vgpu/tcp_gpu_present_windows.inc": "169ba63d99ed11152b597858252f1d3e20e7d12c6c5769597c57b8c97e2aa6e3",
+      "/home/dev/Waddle-LSW/build/wddm_dxvk_checkpoint/dxvk_source_9bd62e9f/source/tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": "fe304e5bbb540c9e1e11e8239bea8b326e027ed04fb2a42e6e4317187c1186ad"
+    },
+    "guest_inputs_after": {
+      "gpu.exe": "ad8be3986eb93d3c0440e2ec5aa2dd853e500d647e913d993b7135a8925b9162",
+      "vulkan-1.dll": "dcc3bb5a6eaa6b02d32d15b0d83381befd1a9a25915074e8f74c769932b3d66d",
+      "waddle_vulkan_experimental.dll": "3c2b14c09df7400e12fdd3064f26e974edc248905bfe67607f217c52931e075a",
+      "waddle_tcp_bootstrap.dll": "c8081c5e9561a16cbd7f24492cfd6e2497c5a9745e39988163f5db458a1aca9a"
+    },
+    "lifetimes": 8,
+    "native_cases": 32,
+    "scope": "bounded native replacement/extent/loss; not complete feature acceptance"
+  },
+  "legacy_presentation": {
+    "checkpoint": "build/windows11_vm/tcp_gpu_7adb6000",
+    "native_exit": 1,
+    "exact_frames_before_failure": 42,
+    "baseline_handles": 199,
+    "observed_handles": 200,
+    "acceptance": false
+  },
+  "opencl": {
+    "checkpoint": "build/windows11_vm/dxvk_gpu_d0fc65d0",
+    "fixture_inputs": {
+      "/home/dev/Waddle-LSW/tests/vgpu/opencl_integration.c": "9664e55afccbc75afb531ec285162b11809b5e12ec3a291185cd06bb907b9b47",
+      "/home/dev/Waddle-LSW/tests/vgpu/loader_environment_windows.c": "94203a7a1c34c0e92d7f57460b9c1698931e4825923c5b8b88e90062534b3ed3",
+      "/home/dev/Waddle-LSW/tests/vgpu/loader_environment_windows.h": "d2f85f1405b66aa5ebfa1757959bdce7d38e55da6f8f1dd44a3b57d65f179686",
+      "/home/dev/Waddle-LSW/tests/vgpu/dxvk_heap_audit_windows.inc": "8aa24f23b14deaba2c674a0f4202f0c19b688f279f1db9380d1e3ce51d92f28b",
+      "/home/dev/Waddle-LSW/include/waddle/clvk.h": "2bc4f3111ab06463ca0204f985da085b4ffb564f600d96b865c4f3788515c451",
+      "/home/dev/Waddle-LSW/include/waddle/venus_tcp.h": "407c759f7cb216187961f549e4f6cb74ff2b9281941e3cc7d3dd33468b7289c8"
+    },
+    "dll_sha256": "a8fd9d7a4f979ca4534e26d789025cf9f7c7affd84b46726eeee28f40d83c54d",
+    "fixture_sha256": "59722473f33ba7d91648c315bd50df267b98aaa3d1438e7bdf0e2c2666da8339",
+    "primary_lifetimes": 8,
+    "functional_native_gpu": true,
+    "native_heap_acceptance": false,
+    "simultaneous_linux_gpu_acceptance": false,
+    "sanitized_host_checkpoint": "build/windows11_vm/dxvk_gpu_ff4d1413",
+    "sanitized_host_functional_native_gpu": true,
+    "sanitized_host_primary_lifetimes": 8
+  }
+}

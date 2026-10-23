@@ -23,7 +23,24 @@ typedef enum av_message_type_t {
     /** Either peer updates size/state; position remains guest metadata. */ MsgWindowGeometry = 3,
     /** Guest publishes a triple-buffer slot and one bounded damage rectangle. */ MsgFrameReady = 4,
     /** Host requests WM_CLOSE for the guest window. */ MsgWindowClose = 5,
-    /** Host-only opt-in fixture flash; sequence is RGB24 token, flags bit 0 occludes. */ MsgDiagnosticFlash = 6
+    /** Host-only opt-in fixture flash; sequence is RGB24 token, flags bit 0 occludes. */ MsgDiagnosticFlash = 6,
+    /** Host activates/releases one window incarnation; flags 1/0. */ MsgInputFocus = 7,
+    /** Physical evdev code in width, down/up in flags. */ MsgInputKey = 8,
+    /** Surface-local integer pixel x/y, bounded again against live geometry. */ MsgInputPointer = 9,
+    /** Button 1 left, 2 right, 3 middle in width; down/up flags. */ MsgInputButton = 10,
+    /** Signed Windows horizontal/vertical wheel units in x/y. */ MsgInputWheel = 11,
+    /** Release held keys (1), buttons (2), or both (3); retain focus. */ MsgInputRelease = 12,
+    /** Guest announces generation-safe lifecycle support; sequence is nonzero incarnation. */ MsgWindowCreateV2 = 13,
+    /** Guest requires revocable input epochs; no legacy fallback. */ MsgWindowCreateV3 = 14,
+    /** Guest revokes input and requests an ordered host barrier. */ MsgInputEpochRevoked = 15,
+    /** Host acknowledges the current epoch after its Wayland barrier. */ MsgInputEpochAck = 16,
+    /** Guest confirms the exact acknowledged epoch and serial. */ MsgInputEpochReady = 17,
+    /** Epoch-bound focus request, no focus-result response. */ MsgInputFocusV3 = 18,
+    /** Epoch-bound physical key event. */ MsgInputKeyV3 = 19,
+    /** Epoch-bound surface-local pointer position. */ MsgInputPointerV3 = 20,
+    /** Epoch-bound button event. */ MsgInputButtonV3 = 21,
+    /** Epoch-bound wheel event. */ MsgInputWheelV3 = 22,
+    /** Epoch-bound held-input release. */ MsgInputReleaseV3 = 23
 } av_message_type_t;
 /** @brief Decoded control data, caller-owned, natural alignment, no wire casts.
  * @note Codec copies fields using explicit LE offsets; struct is not serialized
@@ -38,14 +55,15 @@ typedef struct av_message_t {
     uint32_t flags; /**< Minimized/fullscreen only; no unknown bits allowed. */
     uint32_t dpi; /**< Window DPI, 48..768 for create/geometry/frame. */
     uint32_t process_id; /**< Target process ID; nonzero for create. */
-    uint32_t buffer_index; /**< Frame slot 0..2. */
-    uint64_t sequence; /**< Nonzero frame sequence for FrameReady. */
+    uint32_t buffer_index; /**< Frame slot 0..2; input uses strictly increasing nonzero session serial. */
+    uint64_t sequence; /**< Frame counter; CreateV2/modern lifecycle/control/input use immutable incarnation. */
     int32_t damage_x; /**< Nonnegative surface-local damage origin. */
     int32_t damage_y; /**< Nonnegative surface-local damage origin. */
     uint32_t damage_width; /**< Bounded nonzero damage width for frames. */
     uint32_t damage_height; /**< Bounded nonzero damage height for frames. */
     char title[256]; /**< NUL-terminated UTF-8; unused bytes zeroed by encoder. */
     uint32_t type; /**< av_message_type_t, decoded from header. */
+    uint64_t lease_generation; /**< Independent guest epoch, nonzero only for opcodes 15..23. */
 } av_message_t;
 /** @brief Decode and validate one fixed-size AV frame.
  * @param[in] bytes Nonnull borrowed input[length], may be untrusted.

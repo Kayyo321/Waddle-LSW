@@ -1,0 +1,24 @@
+--- a/src/wsi/win32/wsi_monitor_win32.cpp
++++ b/src/wsi/win32/wsi_monitor_win32.cpp
+@@ -321,6 +321,21 @@
+ 
+     const HDEVINFO devInfo = ::SetupDiGetClassDevsW(&GUID_DEVINTERFACE_MONITOR, nullptr, nullptr, DIGCF_DEVICEINTERFACE);
+ 
++    // Own the device-information set across every successful and error return.
++    // An invalid result never acquires ownership and must not be destroyed.
++    struct device_info_owner_t {
++      HDEVINFO handle;
++      ~device_info_owner_t() {
++        if (handle != INVALID_HANDLE_VALUE)
++          ::SetupDiDestroyDeviceInfoList(handle);
++      }
++    } device_info_owner{devInfo};
++
++    if (devInfo == INVALID_HANDLE_VALUE) {
++      Logger::err("getMonitorEdid: Failed to enumerate monitor device interfaces.");
++      return {};
++    }
++
+     SP_DEVICE_INTERFACE_DATA interfaceData;
+     memset(&interfaceData, 0, sizeof(interfaceData));
+     interfaceData.cbSize = sizeof(interfaceData);

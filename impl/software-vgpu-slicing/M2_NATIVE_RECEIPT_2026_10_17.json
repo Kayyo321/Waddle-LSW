@@ -1,0 +1,96 @@
+{
+  "checkout_before_verification": "8a316fb8d4fdcf8b058323cefc194ad5843b97c9",
+  "source_snapshot_commit": "eb1ff4cc50094d411f9ac6061e45360f14d1a7c9",
+  "m2_qualified": false,
+  "historical_failure_still_open": "tcp_gpu_7adb6000:42 frames,199 to200",
+  "native_repetitions": [
+    {
+      "folder": "build/windows11_vm/tcp_gpu_41308226",
+      "frames": 48,
+      "lifetimes": 8,
+      "fixture_inputs": {
+        "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_windows.c": "b97fd1c6e4cd202007755b45a7c2c6d2ad64f5368a13a689f8672ae8696f4005",
+        "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_present_windows.inc": "169ba63d99ed11152b597858252f1d3e20e7d12c6c5769597c57b8c97e2aa6e3",
+        "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": "fe304e5bbb540c9e1e11e8239bea8b326e027ed04fb2a42e6e4317187c1186ad"
+      },
+      "native_exit": 0,
+      "host_result": {
+        "session": "ea162b861f161979",
+        "worker_pid": "263314",
+        "worker_retired": "1",
+        "status": "0",
+        "worker_exit_status": "0"
+      },
+      "supervisor_signals": [],
+      "adopted_reaps": [
+        {
+          "pid": 263316,
+          "starttime": 766905,
+          "wait_status": 9
+        }
+      ],
+      "owned_session_empty": true,
+      "guest_hashes_after_verified": true,
+      "limitation": "Vendor descendant wait status is retained; no claim every vendor child exited normally."
+    },
+    {
+      "folder": "build/windows11_vm/tcp_gpu_df62f140",
+      "frames": 48,
+      "lifetimes": 8,
+      "fixture_inputs": {
+        "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_windows.c": "b97fd1c6e4cd202007755b45a7c2c6d2ad64f5368a13a689f8672ae8696f4005",
+        "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_present_windows.inc": "169ba63d99ed11152b597858252f1d3e20e7d12c6c5769597c57b8c97e2aa6e3",
+        "/home/dev/Waddle-LSW/tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": "fe304e5bbb540c9e1e11e8239bea8b326e027ed04fb2a42e6e4317187c1186ad"
+      },
+      "native_exit": 0,
+      "host_result": {
+        "session": "bc96bb42f157e65c",
+        "worker_pid": "269571",
+        "worker_retired": "1",
+        "status": "0",
+        "worker_exit_status": "0"
+      },
+      "supervisor_signals": [],
+      "adopted_reaps": [
+        {
+          "pid": 269573,
+          "starttime": 774018,
+          "wait_status": 9
+        }
+      ],
+      "owned_session_empty": true,
+      "guest_hashes_after_verified": true,
+      "limitation": "Vendor descendant wait status is retained; no claim every vendor child exited normally."
+    }
+  ],
+  "artifacts": {
+    "build/windows11_vm/tcp_gpu_41308226/checkpoint.json": "d0ae1b6766d2018e8d96a9a807f5d4d7c77ca3580ab117d53089cf46c07e552b",
+    "build/windows11_vm/tcp_gpu_41308226/guest_status.json": "4d6a497c615d623e7ca6f36b38ec3c52320f89b4209c322da8e6690d9c724f7e",
+    "build/windows11_vm/tcp_gpu_41308226/result": "f26d88dfada99ca05f012f164e920b778e1d11e936916e1d989777a0c05160f9",
+    "build/windows11_vm/tcp_gpu_41308226/guest_binary_hashes_after.json": "aa0dde84ef1e6e24bbff09b9a63fb0272c6bcd2cb0f46000580057f342a3f066",
+    "build/windows11_vm/tcp_gpu_41308226/supervisor_inputs.json": "a69b128da45c7dbfbce94956bca0fd844e940791c254060b06e52c2cb67079fd",
+    "build/windows11_vm/tcp_gpu_41308226/controller_reuse.json": "d4cbf65641a06e0390546eb5becdf73514438ac04f4b703f49049c7b1d74aac0",
+    "build/windows11_vm/tcp_gpu_df62f140/checkpoint.json": "a65c750ba59dc18596da87ea6bf16f486f833c43b5e326d2ab2959d925201483",
+    "build/windows11_vm/tcp_gpu_df62f140/guest_status.json": "a9ecadf6174280bd5748db95de7f34d295ee685ddaf5c530293b35e5c1c9d87f",
+    "build/windows11_vm/tcp_gpu_df62f140/result": "937e231d6d489d3e68e62bdb92fbb301145f78008f9e188868025c486b085b37",
+    "build/windows11_vm/tcp_gpu_df62f140/guest_binary_hashes_after.json": "aa0dde84ef1e6e24bbff09b9a63fb0272c6bcd2cb0f46000580057f342a3f066",
+    "build/windows11_vm/tcp_gpu_df62f140/supervisor_inputs.json": "a69b128da45c7dbfbce94956bca0fd844e940791c254060b06e52c2cb67079fd",
+    "build/windows11_vm/tcp_gpu_df62f140/controller_reuse.json": "d4cbf65641a06e0390546eb5becdf73514438ac04f4b703f49049c7b1d74aac0",
+    "build/qualification_20261017/wsi_handle_diagnostic_7adb_9bd62e9f/record.json": "4c484536146ef2527bbaea659aeea823811c7d56c0ed4e23871509d6eb2316e9",
+    "build/qualification_20261017/wsi_handle_diagnostic_7adb_9bd62e9f/guest_status.json": "cac6fea0e0acec9a511cc962738d9aa7e0e364890955c123c32d5b8a1b7141f9",
+    "build/qualification_20261017/wsi_handle_diagnostic_7adb_9bd62e9f/closed_traces.log": "65aaa2435a2d3c28a4985a7aaa5bf22087eda88ebcdca34fc41afa4db3423e9a",
+    "build/qualification_20261017/wsi_handle_diagnostic_7adb_9bd62e9f/module_map_after.json": "43aa60308f82c5b1c378a4a031ba098d38740690608232c3e255671229e7c0a2",
+    "build/qualification_20261017/wsi_handle_diagnostic_7adb_9bd62e9f/resolved_traces.txt": "f5fbd0ebf997cd81bbf4701eba8c0c569bafc06fd0a472d6a960a0fc3253124b",
+    "build/qualification_20261017/system_modules_resume_21e4c766/receipt.json": "77b88c25845df351d0327ed799b2b3ef03347cc1b6bf994ec2984f25a35b1104",
+    "build/qualification_20261017/system_modules_resume_21e4c766/symbol_receipt.json": "dd4b766b62d8f8604bd7ada3d441d8153235db2a9d4c56df0fa2370d5ca3aed5",
+    "build/qualification_20261017/system_modules_resume_21e4c766/rpc_symbol_resolution.json": "ee3bd198455c10d8035761043122a9c85342707a3b4866af287466c67229135a"
+  },
+  "diagnostic": {
+    "folder": "build/qualification_20261017/wsi_handle_diagnostic_7adb_9bd62e9f",
+    "original_exit": 0,
+    "frames": 48,
+    "lifetimes": 8,
+    "acceptance": false,
+    "finding": "Two ALPC closes plus RPC ThreadSelf thread/event creation; count199, no reproduced delta"
+  }
+}

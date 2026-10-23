@@ -3,8 +3,8 @@
  * @brief Device profile management, registry discovery, and storage initialization.
  */
 
-#ifndef WADDLE_DAEMON_DEVICE_H
-#define WADDLE_DAEMON_DEVICE_H
+#ifndef WaddleDaemonDeviceH
+#define WaddleDaemonDeviceH
 
 #include <stddef.h>
 #include <stdint.h>
@@ -297,4 +297,4 @@ void daemon_device_cancel_child(int pid);
 }
 #endif
 
-#endif /* WADDLE_DAEMON_DEVICE_H */
+#endif /* WaddleDaemonDeviceH */

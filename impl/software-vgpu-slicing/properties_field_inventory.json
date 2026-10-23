@@ -1,0 +1,2563 @@
+{
+  "header_sha256": "1f10a30deba8833fa522750d01a6c50d6e1f96c2e2cf95c1b1bfbb187bc19f7c",
+  "types": {
+    "VkPhysicalDeviceProperties": [
+      {
+        "native_type": "uint32_t",
+        "member": "apiVersion",
+        "array": null,
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "driverVersion",
+        "array": null,
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 4,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "vendorID",
+        "array": null,
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 8,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "deviceID",
+        "array": null,
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 12,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkPhysicalDeviceType",
+        "member": "deviceType",
+        "array": null,
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 16,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "char",
+        "member": "deviceName",
+        "array": "[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE]",
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 20,
+        "native_bytes": 256
+      },
+      {
+        "native_type": "uint8_t",
+        "member": "pipelineCacheUUID",
+        "array": "[VK_UUID_SIZE]",
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 276,
+        "native_bytes": 16
+      },
+      {
+        "native_type": "VkPhysicalDeviceLimits",
+        "member": "limits",
+        "array": null,
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 296,
+        "native_bytes": 504
+      },
+      {
+        "native_type": "VkPhysicalDeviceSparseProperties",
+        "member": "sparseProperties",
+        "array": null,
+        "boolean": false,
+        "native_size": 824,
+        "native_alignment": 8,
+        "native_offset": 800,
+        "native_bytes": 20
+      }
+    ],
+    "VkPhysicalDeviceLimits": [
+      {
+        "native_type": "uint32_t",
+        "member": "maxImageDimension1D",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxImageDimension2D",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 4,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxImageDimension3D",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 8,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxImageDimensionCube",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 12,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxImageArrayLayers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 16,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTexelBufferElements",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 20,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxUniformBufferRange",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 24,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxStorageBufferRange",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 28,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPushConstantsSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 32,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxMemoryAllocationCount",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 36,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxSamplerAllocationCount",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 40,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "bufferImageGranularity",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 48,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "sparseAddressSpaceSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 56,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxBoundDescriptorSets",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 64,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorSamplers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 68,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUniformBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 72,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorStorageBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 76,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorSampledImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 80,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorStorageImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 84,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorInputAttachments",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 88,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageResources",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 92,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetSamplers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 96,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUniformBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 100,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUniformBuffersDynamic",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 104,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetStorageBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 108,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetStorageBuffersDynamic",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 112,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetSampledImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 116,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetStorageImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 120,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetInputAttachments",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 124,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxVertexInputAttributes",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 128,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxVertexInputBindings",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 132,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxVertexInputAttributeOffset",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 136,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxVertexInputBindingStride",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 140,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxVertexOutputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 144,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationGenerationLevel",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 148,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationPatchSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 152,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationControlPerVertexInputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 156,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationControlPerVertexOutputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 160,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationControlPerPatchOutputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 164,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationControlTotalOutputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 168,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationEvaluationInputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 172,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTessellationEvaluationOutputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 176,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxGeometryShaderInvocations",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 180,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxGeometryInputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 184,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxGeometryOutputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 188,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxGeometryOutputVertices",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 192,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxGeometryTotalOutputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 196,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxFragmentInputComponents",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 200,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxFragmentOutputAttachments",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 204,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxFragmentDualSrcAttachments",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 208,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxFragmentCombinedOutputResources",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 212,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxComputeSharedMemorySize",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 216,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxComputeWorkGroupCount",
+        "array": "[3]",
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 220,
+        "native_bytes": 12
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxComputeWorkGroupInvocations",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 232,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxComputeWorkGroupSize",
+        "array": "[3]",
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 236,
+        "native_bytes": 12
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "subPixelPrecisionBits",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 248,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "subTexelPrecisionBits",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 252,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "mipmapPrecisionBits",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 256,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDrawIndexedIndexValue",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 260,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDrawIndirectCount",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 264,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "float",
+        "member": "maxSamplerLodBias",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 268,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "float",
+        "member": "maxSamplerAnisotropy",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 272,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxViewports",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 276,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxViewportDimensions",
+        "array": "[2]",
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 280,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "float",
+        "member": "viewportBoundsRange",
+        "array": "[2]",
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 288,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "viewportSubPixelBits",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 296,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "size_t",
+        "member": "minMemoryMapAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 304,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "minTexelBufferOffsetAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 312,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "minUniformBufferOffsetAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 320,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "minStorageBufferOffsetAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 328,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "int32_t",
+        "member": "minTexelOffset",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 336,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTexelOffset",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 340,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "int32_t",
+        "member": "minTexelGatherOffset",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 344,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxTexelGatherOffset",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 348,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "float",
+        "member": "minInterpolationOffset",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 352,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "float",
+        "member": "maxInterpolationOffset",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 356,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "subPixelInterpolationOffsetBits",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 360,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxFramebufferWidth",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 364,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxFramebufferHeight",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 368,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxFramebufferLayers",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 372,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "framebufferColorSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 376,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "framebufferDepthSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 380,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "framebufferStencilSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 384,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "framebufferNoAttachmentsSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 388,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxColorAttachments",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 392,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "sampledImageColorSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 396,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "sampledImageIntegerSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 400,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "sampledImageDepthSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 404,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "sampledImageStencilSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 408,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "storageImageSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 412,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxSampleMaskWords",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 416,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "timestampComputeAndGraphics",
+        "array": null,
+        "boolean": true,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 420,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "float",
+        "member": "timestampPeriod",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 424,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxClipDistances",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 428,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxCullDistances",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 432,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxCombinedClipAndCullDistances",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 436,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "discreteQueuePriorities",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 440,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "float",
+        "member": "pointSizeRange",
+        "array": "[2]",
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 444,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "float",
+        "member": "lineWidthRange",
+        "array": "[2]",
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 452,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "float",
+        "member": "pointSizeGranularity",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 460,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "float",
+        "member": "lineWidthGranularity",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 464,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "strictLines",
+        "array": null,
+        "boolean": true,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 468,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "standardSampleLocations",
+        "array": null,
+        "boolean": true,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 472,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "optimalBufferCopyOffsetAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 480,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "optimalBufferCopyRowPitchAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 488,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "nonCoherentAtomSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 504,
+        "native_alignment": 8,
+        "native_offset": 496,
+        "native_bytes": 8
+      }
+    ],
+    "VkPhysicalDeviceSparseProperties": [
+      {
+        "native_type": "VkBool32",
+        "member": "residencyStandard2DBlockShape",
+        "array": null,
+        "boolean": true,
+        "native_size": 20,
+        "native_alignment": 4,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "residencyStandard2DMultisampleBlockShape",
+        "array": null,
+        "boolean": true,
+        "native_size": 20,
+        "native_alignment": 4,
+        "native_offset": 4,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "residencyStandard3DBlockShape",
+        "array": null,
+        "boolean": true,
+        "native_size": 20,
+        "native_alignment": 4,
+        "native_offset": 8,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "residencyAlignedMipSize",
+        "array": null,
+        "boolean": true,
+        "native_size": 20,
+        "native_alignment": 4,
+        "native_offset": 12,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "residencyNonResidentStrict",
+        "array": null,
+        "boolean": true,
+        "native_size": 20,
+        "native_alignment": 4,
+        "native_offset": 16,
+        "native_bytes": 4
+      }
+    ],
+    "VkConformanceVersion": [
+      {
+        "native_type": "uint8_t",
+        "member": "major",
+        "array": null,
+        "boolean": false,
+        "native_size": 4,
+        "native_alignment": 1,
+        "native_offset": 0,
+        "native_bytes": 1
+      },
+      {
+        "native_type": "uint8_t",
+        "member": "minor",
+        "array": null,
+        "boolean": false,
+        "native_size": 4,
+        "native_alignment": 1,
+        "native_offset": 1,
+        "native_bytes": 1
+      },
+      {
+        "native_type": "uint8_t",
+        "member": "subminor",
+        "array": null,
+        "boolean": false,
+        "native_size": 4,
+        "native_alignment": 1,
+        "native_offset": 2,
+        "native_bytes": 1
+      },
+      {
+        "native_type": "uint8_t",
+        "member": "patch",
+        "array": null,
+        "boolean": false,
+        "native_size": 4,
+        "native_alignment": 1,
+        "native_offset": 3,
+        "native_bytes": 1
+      }
+    ],
+    "VkPhysicalDeviceVulkan11Properties": [
+      {
+        "native_type": "VkStructureType",
+        "member": "sType",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "void*",
+        "member": "pNext",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 8,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "uint8_t",
+        "member": "deviceUUID",
+        "array": "[VK_UUID_SIZE]",
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 16,
+        "native_bytes": 16
+      },
+      {
+        "native_type": "uint8_t",
+        "member": "driverUUID",
+        "array": "[VK_UUID_SIZE]",
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 32,
+        "native_bytes": 16
+      },
+      {
+        "native_type": "uint8_t",
+        "member": "deviceLUID",
+        "array": "[VK_LUID_SIZE]",
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 48,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "deviceNodeMask",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 56,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "deviceLUIDValid",
+        "array": null,
+        "boolean": true,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 60,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "subgroupSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 64,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkShaderStageFlags",
+        "member": "subgroupSupportedStages",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 68,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkSubgroupFeatureFlags",
+        "member": "subgroupSupportedOperations",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 72,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "subgroupQuadOperationsInAllStages",
+        "array": null,
+        "boolean": true,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 76,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkPointClippingBehavior",
+        "member": "pointClippingBehavior",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 80,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxMultiviewViewCount",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 84,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxMultiviewInstanceIndex",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 88,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "protectedNoFault",
+        "array": null,
+        "boolean": true,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 92,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerSetDescriptors",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 96,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "maxMemoryAllocationSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 112,
+        "native_alignment": 8,
+        "native_offset": 104,
+        "native_bytes": 8
+      }
+    ],
+    "VkPhysicalDeviceVulkan12Properties": [
+      {
+        "native_type": "VkStructureType",
+        "member": "sType",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "void*",
+        "member": "pNext",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 8,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDriverId",
+        "member": "driverID",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 16,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "char",
+        "member": "driverName",
+        "array": "[VK_MAX_DRIVER_NAME_SIZE]",
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 20,
+        "native_bytes": 256
+      },
+      {
+        "native_type": "char",
+        "member": "driverInfo",
+        "array": "[VK_MAX_DRIVER_INFO_SIZE]",
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 276,
+        "native_bytes": 256
+      },
+      {
+        "native_type": "VkConformanceVersion",
+        "member": "conformanceVersion",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 532,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkShaderFloatControlsIndependence",
+        "member": "denormBehaviorIndependence",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 536,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkShaderFloatControlsIndependence",
+        "member": "roundingModeIndependence",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 540,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderSignedZeroInfNanPreserveFloat16",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 544,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderSignedZeroInfNanPreserveFloat32",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 548,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderSignedZeroInfNanPreserveFloat64",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 552,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderDenormPreserveFloat16",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 556,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderDenormPreserveFloat32",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 560,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderDenormPreserveFloat64",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 564,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderDenormFlushToZeroFloat16",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 568,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderDenormFlushToZeroFloat32",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 572,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderDenormFlushToZeroFloat64",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 576,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderRoundingModeRTEFloat16",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 580,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderRoundingModeRTEFloat32",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 584,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderRoundingModeRTEFloat64",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 588,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderRoundingModeRTZFloat16",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 592,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderRoundingModeRTZFloat32",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 596,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderRoundingModeRTZFloat64",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 600,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxUpdateAfterBindDescriptorsInAllPools",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 604,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderUniformBufferArrayNonUniformIndexingNative",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 608,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderSampledImageArrayNonUniformIndexingNative",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 612,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderStorageBufferArrayNonUniformIndexingNative",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 616,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderStorageImageArrayNonUniformIndexingNative",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 620,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "shaderInputAttachmentArrayNonUniformIndexingNative",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 624,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "robustBufferAccessUpdateAfterBind",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 628,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "quadDivergentImplicitLod",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 632,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUpdateAfterBindSamplers",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 636,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUpdateAfterBindUniformBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 640,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUpdateAfterBindStorageBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 644,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUpdateAfterBindSampledImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 648,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUpdateAfterBindStorageImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 652,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUpdateAfterBindInputAttachments",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 656,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageUpdateAfterBindResources",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 660,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindSamplers",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 664,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindUniformBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 668,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindUniformBuffersDynamic",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 672,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindStorageBuffers",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 676,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindStorageBuffersDynamic",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 680,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindSampledImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 684,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindStorageImages",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 688,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindInputAttachments",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 692,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkResolveModeFlags",
+        "member": "supportedDepthResolveModes",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 696,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkResolveModeFlags",
+        "member": "supportedStencilResolveModes",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 700,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "independentResolveNone",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 704,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "independentResolve",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 708,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "filterMinmaxSingleComponentFormats",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 712,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "filterMinmaxImageComponentMapping",
+        "array": null,
+        "boolean": true,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 716,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint64_t",
+        "member": "maxTimelineSemaphoreValueDifference",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 720,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkSampleCountFlags",
+        "member": "framebufferIntegerColorSampleCounts",
+        "array": null,
+        "boolean": false,
+        "native_size": 736,
+        "native_alignment": 8,
+        "native_offset": 728,
+        "native_bytes": 4
+      }
+    ],
+    "VkPhysicalDeviceVulkan13Properties": [
+      {
+        "native_type": "VkStructureType",
+        "member": "sType",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "void*",
+        "member": "pNext",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 8,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "minSubgroupSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 16,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxSubgroupSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 20,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxComputeWorkgroupSubgroups",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 24,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkShaderStageFlags",
+        "member": "requiredSubgroupSizeStages",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 28,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxInlineUniformBlockSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 32,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorInlineUniformBlocks",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 36,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxPerStageDescriptorUpdateAfterBindInlineUniformBlocks",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 40,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetInlineUniformBlocks",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 44,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxDescriptorSetUpdateAfterBindInlineUniformBlocks",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 48,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "uint32_t",
+        "member": "maxInlineUniformTotalSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 52,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct8BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 56,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct8BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 60,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct8BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 64,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct4x8BitPackedUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 68,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct4x8BitPackedSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 72,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct4x8BitPackedMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 76,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct16BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 80,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct16BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 84,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct16BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 88,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct32BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 92,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct32BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 96,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct32BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 100,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct64BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 104,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct64BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 108,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProduct64BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 112,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating8BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 116,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating8BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 120,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating8BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 124,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 128,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 132,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating4x8BitPackedMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 136,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating16BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 140,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating16BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 144,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating16BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 148,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating32BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 152,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating32BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 156,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating32BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 160,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating64BitUnsignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 164,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating64BitSignedAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 168,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "integerDotProductAccumulatingSaturating64BitMixedSignednessAccelerated",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 172,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "storageTexelBufferOffsetAlignmentBytes",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 176,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "storageTexelBufferOffsetSingleTexelAlignment",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 184,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "uniformTexelBufferOffsetAlignmentBytes",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 192,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "uniformTexelBufferOffsetSingleTexelAlignment",
+        "array": null,
+        "boolean": true,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 200,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "maxBufferSize",
+        "array": null,
+        "boolean": false,
+        "native_size": 216,
+        "native_alignment": 8,
+        "native_offset": 208,
+        "native_bytes": 8
+      }
+    ],
+    "VkPhysicalDeviceRobustness2PropertiesEXT": [
+      {
+        "native_type": "VkStructureType",
+        "member": "sType",
+        "array": null,
+        "boolean": false,
+        "native_size": 32,
+        "native_alignment": 8,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "void*",
+        "member": "pNext",
+        "array": null,
+        "boolean": false,
+        "native_size": 32,
+        "native_alignment": 8,
+        "native_offset": 8,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "robustStorageBufferAccessSizeAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 32,
+        "native_alignment": 8,
+        "native_offset": 16,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkDeviceSize",
+        "member": "robustUniformBufferAccessSizeAlignment",
+        "array": null,
+        "boolean": false,
+        "native_size": 32,
+        "native_alignment": 8,
+        "native_offset": 24,
+        "native_bytes": 8
+      }
+    ],
+    "VkPhysicalDeviceMaintenance5Properties": [
+      {
+        "native_type": "VkStructureType",
+        "member": "sType",
+        "array": null,
+        "boolean": false,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 0,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "void*",
+        "member": "pNext",
+        "array": null,
+        "boolean": false,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 8,
+        "native_bytes": 8
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "earlyFragmentMultisampleCoverageAfterSampleCounting",
+        "array": null,
+        "boolean": true,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 16,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "earlyFragmentSampleMaskTestBeforeSampleCounting",
+        "array": null,
+        "boolean": true,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 20,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "depthStencilSwizzleOneSupport",
+        "array": null,
+        "boolean": true,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 24,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "polygonModePointSize",
+        "array": null,
+        "boolean": true,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 28,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "nonStrictSinglePixelWideLinesUseParallelogram",
+        "array": null,
+        "boolean": true,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 32,
+        "native_bytes": 4
+      },
+      {
+        "native_type": "VkBool32",
+        "member": "nonStrictWideLinesUseParallelogram",
+        "array": null,
+        "boolean": true,
+        "native_size": 40,
+        "native_alignment": 8,
+        "native_offset": 36,
+        "native_bytes": 4
+      }
+    ]
+  }
+}

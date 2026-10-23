@@ -1,0 +1,10 @@
+--- a/src/api.cpp
++++ b/src/api.cpp
+@@ -3920,6 +3920,7 @@
+     // FIXME This error cannot occur for objects created with
+     // CL_MEM_USE_HOST_PTR or CL_MEM_ALLOC_HOST_PTR.
+     if (err != CL_SUCCESS) {
++        delete cmd;
+         *errcode_ret = CL_MAP_FAILURE;
+         return nullptr;
+     }

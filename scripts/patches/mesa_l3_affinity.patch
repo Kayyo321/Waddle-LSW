@@ -1,0 +1,26 @@
+--- a/src/util/u_cpu_detect.c
++++ b/src/util/u_cpu_detect.c
+@@ -551,7 +551,12 @@
+ 
+       uint32_t L3_found[UTIL_MAX_CPUS] = {0};
+       uint32_t num_L3_caches = 0;
+-      util_affinity_mask *L3_affinity_masks = NULL;
++      /* Each visited CPU contributes at most one distinct L3 cache.  The
++       * discovery loop visits at most UTIL_MAX_CPUS indices, so this
++       * module-owned array bounds every cache index without heap ownership.
++       * Module unload releases the storage after all driver users retire.
++       */
++      static util_affinity_mask L3_affinity_masks[UTIL_MAX_CPUS];
+ 
+       /* Query APIC IDs from each CPU core.
+        *
+@@ -619,9 +624,6 @@
+             if (idx == -1) {
+                idx = num_L3_caches;
+                L3_found[num_L3_caches++] = l3_id;
+-               L3_affinity_masks = realloc(L3_affinity_masks, sizeof(util_affinity_mask) * num_L3_caches);
+-               if (!L3_affinity_masks)
+-                  return;
+                memset(&L3_affinity_masks[num_L3_caches - 1], 0, sizeof(util_affinity_mask));
+             }
+             util_cpu_caps.cpu_to_L3[i] = idx;

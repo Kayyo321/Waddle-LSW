@@ -1,0 +1,1602 @@
+diff --git a/.github/workflows/software_vgpu.yml b/.github/workflows/software_vgpu.yml
+index 4f3d65a..6b68f4d 100644
+--- a/.github/workflows/software_vgpu.yml
++++ b/.github/workflows/software_vgpu.yml
+@@ -18,7 +18,7 @@ jobs:
+       - name: Install vendor-boundary test tools
+         run: |
+           sudo apt-get update
+-          sudo apt-get install -y --no-install-recommends git g++ python3 gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
++          sudo apt-get install -y --no-install-recommends git g++ python3 gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-win32 binutils-mingw-w64-x86-64
+       - name: Check out only pinned admission-test source and headers
+         run: |
+           git submodule update --init --depth 1 submodules/clvk submodules/dxvk
+@@ -28,6 +28,10 @@ jobs:
+         run: python3 -B tests/vgpu/clvk_build.py
+       - name: Require buffer production line and directional branch coverage
+         run: python3 -B scripts/clvk_buffer_coverage.py build/clvk_buffer_coverage
++      - name: Verify runtime TLS shim with sanitizers and 90% coverage (Linux double only)
++        run: |
++          mkdir -p build
++          make vgpu-clvk-runtime-tls-sanitizers vgpu-clvk-runtime-tls-coverage
+   transport:
+     runs-on: ubuntu-22.04
+     timeout-minutes: 60
+diff --git a/scripts/build_clvk_windows.py b/scripts/build_clvk_windows.py
+index 8303984..0b204ec 100644
+--- a/scripts/build_clvk_windows.py
++++ b/scripts/build_clvk_windows.py
+@@ -4,8 +4,12 @@
+ Inputs are the clean verified submodules (scripts/verify_clvk.sh lists the pins),
+ the tracked export list scripts/clvk/OpenCL.def and the MinGW-w64/Ninja/CMake
+ toolchain. The approved tracked retirement patch is applied only to a private
+-copy. MinGW accommodations use include paths and linker flags. Upstream
+-submodule trees stay unmodified.
++copy. The Windows DLL uses MinGW's Win32 thread model with -mthreads and static
++GCC/C++ runtimes. The Waddle-authored src/vgpu/clvk_runtime_tls.c object is
++linked ahead of libgcc_eh.a so that libgcc's emutls.o and gthr-win32-thread.o
++(each leaks one TlsAlloc index per DLL load) are never extracted; the link map,
++emulated-TLS inventory and TlsAlloc call sites are verified after linking.
++Upstream submodule trees stay unmodified.
+ 
+ Outputs: a fresh ignored private build tree under build/clvk_client/ and the
+ receipt build/clvk_client.json (pins, tools, settings, driver/export-list hashes,
+@@ -37,11 +41,25 @@ Pins = (
+     ('submodules/clspv_spirv_headers', 'b824a462d4256d720bebb40e78b9eb8f78bbb305'),
+     ('submodules/clspv_spirv_tools', 'fb7471844504abb16b732dc4fc0837119a32ec24'),
+ )
+-Tools = ('cmake', 'ninja', 'x86_64-w64-mingw32-gcc-posix', 'x86_64-w64-mingw32-g++-posix',
++Compilers = ('x86_64-w64-mingw32-gcc-win32', 'x86_64-w64-mingw32-g++-win32')
++Tools = ('cmake', 'ninja', *Compilers,
+          'x86_64-w64-mingw32-dlltool', 'x86_64-w64-mingw32-objdump', 'x86_64-w64-mingw32-nm')
+ # Private copies of the clvk tree skip VCS metadata; large third-party trees are symlinked.
+ CopyIgnore = shutil.ignore_patterns('.git', '.github')
+ ForbiddenImports = ('libgcc_s', 'libstdc++', 'libwinpthread')
++# Waddle-authored replacement of libgcc_eh's emutls.o and gthr-win32-thread.o.
++RuntimeTlsSource = 'src/vgpu/clvk_runtime_tls.c'
++# Must equal runtime_tls_constants_t in RuntimeTlsSource (an admission test checks).
++RuntimeTlsArenaBytes = 512
++RuntimeTlsSlotCapacity = 32
++RuntimeTlsMaxAlign = 16
++# Archive members that must not be linked: the two never-freed TlsAlloc owners and
++# every winpthreads member (process TLS slot, key-lock semaphores, lazy thread state).
++ForbiddenRuntimeMembers = ('libgcc_eh.a(emutls.o)', 'libgcc_eh.a(gthr-win32-thread.o)',
++                           'libwinpthread.a(', 'libpthread.a(')
++# The only functions allowed to call TlsAlloc: libstdc++'s lazily keyed facilities,
++# each paired with __gthr_win32_key_delete (TlsFree) in its static destructor.
++AllowedTlsAllocSites = ('__gthr_win32_key_create',)
+ RequiredExports = ('clGetPlatformIDs', 'clBuildProgram', 'clCreateProgramWithSource',
+                    'clCreateKernel', 'clEnqueueNDRangeKernel', 'clFinish', 'clIcdGetPlatformIDsKHR',
+                    'waddle_clvk_shutdown')
+@@ -81,6 +99,43 @@ def jobs():
+     return str(int(os.environ.get('WADDLE_CLVK_JOBS', min(os.cpu_count() or 1, 6))))
+ 
+ 
++def verify_compiler_thread_models():
++    """Verify actual compiler diagnostics before recording Win32 settings.
++
++    No parameters or allocations cross an ABI. Return a caller-owned mapping
++    of trusted executable hashes and observed thread models; no files change.
++    Raise SystemExit on a missing/wrong model. Serial build-lock caller only.
++    """
++    result = {}
++    for compiler in Compilers:
++        path = shutil.which(compiler)
++        if path is None:
++            raise SystemExit('Missing required Win32-thread compiler: ' + compiler)
++        diagnostics = subprocess.check_output([path, '-v'], stderr=subprocess.STDOUT, text=True)
++        matches = re.findall(r'^Thread model: (\S+)$', diagnostics, re.MULTILINE)
++        if matches != ['win32']:
++            raise SystemExit('Required Win32 compiler reports wrong thread model: ' + compiler)
++        result[compiler] = {'thread_model': matches[0], 'sha256': digest(path)}
++    return result
++
++
++def build_settings():
++    """Return behavior-affecting Windows OpenCL build settings for cache receipts."""
++    return {'cmake_build_type': 'Release', 'clvk_vulkan_implementation': 'custom',
++            'clvk_clspv_online_compiler': 'ON', 'llvm_targets_to_build': 'X86',
++            'windows_thread_model': 'win32', 'windows_thread_flag': '-mthreads',
++            'static_runtime': 'libgcc,libstdc++',
++            'shared_link_flags': '-static-libgcc -static-libstdc++ -mthreads',
++            'runtime_tls_object': RuntimeTlsSource,
++            'runtime_tls_capacity': [RuntimeTlsArenaBytes, RuntimeTlsSlotCapacity, RuntimeTlsMaxAlign],
++            'llvm_switches': LlvmSwitches}
++
++
++def compute_cache_key(inputs):
++    """Return a stable key for all source, tool, and build settings in inputs."""
++    return hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
++
++
+ def read_export_list(path):
+     """Return the ordered export names listed in a module-definition file."""
+     return [line.strip() for line in Path(path).read_text().splitlines() if line.startswith('    ')]
+@@ -185,16 +240,42 @@ def prepare_vulkan(root, vulkan):
+     return include, shim
+ 
+ 
+-def write_toolchain(path):
+-    """Write the MinGW-w64 (posix threads) CMake toolchain file."""
++def compile_runtime_tls(root, folder):
++    """Compile the runtime TLS replacement object into a private build folder.
++
++    [in] root repository and folder new caller-owned directory. Return the
++    owned object path. Uses the verified Win32 C compiler with -Werror; raises
++    CalledProcessError on any diagnostic. No submodule or tracked file changes.
++    """
++    target = folder / 'clvk_runtime_tls.o'
++    run(['x86_64-w64-mingw32-gcc-win32', '-std=c11', '-O2', '-Wall', '-Wextra', '-Wpedantic',
++         '-Werror', '-mthreads', '-c', root / RuntimeTlsSource, '-o', target])
++    return target
++
++
++def write_toolchain(path, export_file, shim, runtime_object, link_map):
++    """Write the Win32-thread-model CMake toolchain and shared-link settings.
++
++    [in] path is a new private toolchain path; export_file is the pinned
++    OpenCL.def file passed to the shared-library linker and the private Windows
++    header shim directory; runtime_object is the compiled runtime TLS object
++    linked as an object (never as an archive member) so it defines the libgcc
++    symbols before libgcc_eh.a is searched; link_map is the private map path
++    audited after linking. These are borrowed. The caller owns the generated
++    file. No subprocess is launched here.
++    """
+     path.write_text('\n'.join((
+         'set(CMAKE_SYSTEM_NAME Windows)',
+         'set(CMAKE_SYSTEM_PROCESSOR x86_64)',
+-        'set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc-posix)',
+-        'set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-posix)',
++        'set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc-win32)',
++        'set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-win32)',
+         'set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)',
+         'set(CMAKE_AR x86_64-w64-mingw32-ar)',
+         'set(CMAKE_RANLIB x86_64-w64-mingw32-ranlib)',
++        'set(CMAKE_C_FLAGS_INIT "-mthreads -isystem %s")' % shim,
++        'set(CMAKE_CXX_FLAGS_INIT "-mthreads -isystem %s")' % shim,
++        'set(CMAKE_SHARED_LINKER_FLAGS_INIT "%s %s -Wl,-Map=%s -static-libgcc -static-libstdc++ -mthreads")'
++        % (export_file, runtime_object, link_map),
+         'set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)',
+         'set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)',
+         'set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)',
+@@ -230,6 +311,126 @@ def inspect_dll(dll, expected_exports):
+     return imports, sorted(exports)
+ 
+ 
++def verify_runtime_link(link_map):
++    """Fail closed when the GNU ld map shows a forbidden runtime archive member.
++
++    [in] link_map borrowed path written by the OpenCL link. Missing members prove
++    the runtime TLS object supplied every replaced libgcc symbol (an undefined or
++    duplicate definition would have failed the link). Read-only; raises SystemExit.
++    """
++    text = Path(link_map).read_text(errors='replace')
++    if 'clvk_runtime_tls.o' not in text:
++        raise SystemExit('OpenCL link map does not contain the runtime TLS object')
++    loaded = sorted({member for member in ForbiddenRuntimeMembers
++                     for line in text.splitlines() if member in line.split('/')[-1]})
++    if loaded:
++        raise SystemExit('OpenCL.dll links forbidden runtime members: %s' % loaded)
++
++
++def read_image(path):
++    """Return (bytes, image base, sections) of a borrowed PE32+ file.
++
++    Each section is (virtual address, virtual size, raw offset, raw size,
++    characteristics). Raises SystemExit for a non-PE32+ input. Read-only.
++    """
++    import struct
++    data = Path(path).read_bytes()
++    header = struct.unpack_from('<I', data, 0x3c)[0]
++    if data[header:header + 4] != b'PE\0\0' or struct.unpack_from('<H', data, header + 24)[0] != 0x20b:
++        raise SystemExit('Not a PE32+ image: %s' % path)
++    count, optional_size = struct.unpack_from('<H', data, header + 6)[0], struct.unpack_from('<H', data, header + 20)[0]
++    base = struct.unpack_from('<Q', data, header + 48)[0]
++    sections = []
++    for index in range(count):
++        entry = header + 24 + optional_size + 40 * index
++        size, address, raw_size, raw_offset = struct.unpack_from('<IIII', data, entry + 8)
++        sections.append((address, size, raw_offset, raw_size, struct.unpack_from('<I', data, entry + 36)[0]))
++    return data, base, sections
++
++
++def image_offset(sections, rva):
++    """Map an RVA to a file offset; raise SystemExit when it is not file-backed."""
++    for address, size, raw_offset, raw_size, _ in sections:
++        if address <= rva < address + min(size, raw_size):
++            return raw_offset + rva - address
++    raise SystemExit('RVA 0x%x is not file-backed' % rva)
++
++
++def audit_runtime_tls(dll):
++    """Return the emulated-TLS inventory and TlsAlloc call sites of a linked DLL.
++
++    Reads `nm` COFF symbols and raw PE bytes (borrowed, unstripped DLL). Fails
++    closed when the emulated-TLS layout cannot fit the runtime TLS record, or a
++    TlsAlloc reference lies outside AllowedTlsAllocSites. The call-site scan
++    covers RIP-relative call/jmp/mov encodings of the TlsAlloc IAT slot.
++    """
++    import bisect
++    import struct
++    data, base, sections = read_image(dll)
++    symbols = []
++    controls = {}
++    for line in capture(['x86_64-w64-mingw32-nm', '-n', '--defined-only', dll]).splitlines():
++        parts = line.split()
++        if len(parts) != 3:
++            continue
++        address = int(parts[0], 16)
++        if parts[1] in 'tT':
++            symbols.append((address, parts[2]))
++        name = parts[2][6:] if parts[2].startswith('.data$') else parts[2]
++        if name.startswith('__emutls_v.'):
++            controls[address] = name
++    total = maximum_align = 0
++    for address in sorted(controls):
++        size, align = struct.unpack_from('<QQ', data, image_offset(sections, address - base))
++        align = align or 1
++        total = (total + align - 1) // align * align + size
++        maximum_align = max(maximum_align, align)
++    if len(controls) > RuntimeTlsSlotCapacity or total > RuntimeTlsArenaBytes or \
++       maximum_align > RuntimeTlsMaxAlign:
++        raise SystemExit('Emulated TLS does not fit the runtime TLS record: objects=%d bytes=%d align=%d'
++                         % (len(controls), total, maximum_align))
++    header = struct.unpack_from('<I', data, 0x3c)[0]
++    descriptor = image_offset(sections, struct.unpack_from('<I', data, header + 24 + 112 + 8)[0])
++    slot = None
++    while struct.unpack_from('<I', data, descriptor + 12)[0]:
++        lookup, _, _, _, thunks = struct.unpack_from('<IIIII', data, descriptor)
++        index = 0
++        while True:
++            entry = struct.unpack_from('<Q', data, image_offset(sections, (lookup or thunks) + 8 * index))[0]
++            if not entry:
++                break
++            if not entry >> 63:
++                start = image_offset(sections, (entry & 0x7fffffff) + 2)
++                if data[start:data.index(b'\0', start)] == b'TlsAlloc':
++                    slot = thunks + 8 * index
++            index += 1
++        descriptor += 20
++    symbols.sort()
++    starts = [item[0] for item in symbols]
++    sites = set()
++    for address, size, raw_offset, raw_size, characteristics in sections:
++        if slot is None or not characteristics & 0x20000000:
++            continue
++        code = data[raw_offset:raw_offset + min(size, raw_size)]
++        for position in range(len(code) - 7):
++            if code[position] == 0xff and code[position + 1] in (0x15, 0x25):
++                length, displacement = 6, position + 2
++            elif code[position] in (0x48, 0x4c) and code[position + 1] in (0x8b, 0xff) and \
++                    code[position + 2] & 0xc7 == 0x05:
++                length, displacement = 7, position + 3
++            else:
++                continue
++            if address + position + length + struct.unpack_from('<i', code, displacement)[0] == slot:
++                owner = bisect.bisect_right(starts, base + address + position) - 1
++                sites.add(symbols[owner][1] if owner >= 0 else '?')
++    sites.discard('TlsAlloc')
++    unexpected = sorted(sites - set(AllowedTlsAllocSites))
++    if unexpected:
++        raise SystemExit('OpenCL.dll has unpaired TlsAlloc call sites: %s' % unexpected)
++    return {'emutls_objects': len(controls), 'emutls_bytes': total, 'emutls_max_align': maximum_align,
++            'tls_alloc_sites': sorted(sites)}
++
++
+ def main():
+     """Verify pins, build or reuse OpenCL.dll, and atomically publish the receipt."""
+     root = Path.cwd().resolve()
+@@ -240,14 +441,15 @@ def main():
+     exports = read_export_list(export_file)
+     check_export_list_against_api(root, exports)
+     tools = {name: capture([name, '--version']).splitlines()[0] for name in Tools}
+-    settings = {'cmake_build_type': 'Release', 'clvk_vulkan_implementation': 'custom',
+-                'clvk_clspv_online_compiler': 'ON', 'llvm_targets_to_build': 'X86',
+-                'static_runtime': 'libgcc,libstdc++,winpthread', 'llvm_switches': LlvmSwitches}
++    compiler_models = verify_compiler_thread_models()
++    settings = build_settings()
+     inputs = {'pins': dict(Pins), 'driver_sha256': digest(Path(__file__)),
+               'export_list_sha256': digest(export_file), 'tools': tools, 'settings': settings,
++              'compiler_thread_models': compiler_models,
+               'private_patches': {path: digest(root / path) for path in PrivatePatches},
++              'runtime_tls_sha256': digest(root / RuntimeTlsSource),
+               'shutdown_abi_sha256': digest(root / 'include/waddle/clvk.h')}
+-    cache_key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
++    cache_key = compute_cache_key(inputs)
+     native_key = hashlib.sha256(json.dumps({'llvm': dict(Pins)['submodules/llvm_project'], 'tools': tools,
+                                             'switches': LlvmSwitches}, sort_keys=True).encode()).hexdigest()
+     receipt = build / 'clvk_client.json'
+@@ -269,11 +471,10 @@ def main():
+         prepare_source(root, source)
+         include, shim = prepare_vulkan(root, folder / 'vulkan')
+         toolchain = folder / 'mingw-w64-x86_64.cmake'
+-        write_toolchain(toolchain)
++        runtime_object = compile_runtime_tls(root, folder)
++        link_map = folder / 'OpenCL.map'
++        write_toolchain(toolchain, export_file, shim, runtime_object, link_map)
+         cross = folder / 'cross'
+-        linker = ' '.join((str(export_file), '-static-libgcc', '-static-libstdc++',
+-                           '-Wl,--whole-archive', '-Wl,-Bstatic', '-lwinpthread',
+-                           '-Wl,--no-whole-archive', '-Wl,-Bdynamic'))
+         # LLVM_PARALLEL_LINK_JOBS is deliberately not set here: clvk and clspv include LLVM's
+         # option handling several times and Ninja rejects the resulting duplicate link pool.
+         run(['cmake', '-G', 'Ninja', '-S', source, '-B', cross, '-DCMAKE_TOOLCHAIN_FILE=' + str(toolchain),
+@@ -284,8 +485,7 @@ def main():
+              '-DCLSPV_EXTERNAL_LIBCLC_DIR=' + str(libclc),
+              '-DLLVM_TABLEGEN=' + str(native / 'bin/llvm-tblgen'), '-DCLANG_TABLEGEN=' + str(native / 'bin/clang-tblgen'),
+              '-DLLVM_NATIVE_TOOL_DIR=' + str(native / 'bin'), '-DLLVM_TARGETS_TO_BUILD=X86',
+-             '-DCMAKE_CXX_FLAGS=-isystem ' + str(shim), '-DCMAKE_C_FLAGS=-isystem ' + str(shim),
+-             '-DCMAKE_SHARED_LINKER_FLAGS=' + linker, *LlvmSwitches])
++             *LlvmSwitches])
+         run(['ninja', '-C', cross, '-j', jobs(), 'OpenCL'])
+         produced = [item for item in cross.rglob('libOpenCL.dll') if item.is_file()] or \
+                    [item for item in cross.rglob('OpenCL.dll') if item.is_file()]
+@@ -296,9 +496,12 @@ def main():
+         dll = output / 'OpenCL.dll'
+         shutil.copyfile(produced[0], dll)
+         imports, built_exports = inspect_dll(dll, exports)
++        verify_runtime_link(link_map)
++        runtime_tls = audit_runtime_tls(dll)
+         if inputs['private_patches'] != {path: digest(root / path) for path in PrivatePatches}:
+             raise SystemExit('OpenCL private patch changed during build')
+         if inputs['export_list_sha256'] != digest(export_file) or \
++           inputs['runtime_tls_sha256'] != digest(root / RuntimeTlsSource) or \
+            inputs['shutdown_abi_sha256'] != digest(root / 'include/waddle/clvk.h') or \
+            inputs['driver_sha256'] != digest(Path(__file__)):
+             raise SystemExit('OpenCL build contract changed during build')
+@@ -306,6 +509,7 @@ def main():
+         record = {'cache_key': cache_key, 'inputs': inputs, 'native_dir': str(native),
+                   'dll': {'path': str(dll), 'sha256': digest(dll), 'bytes': dll.stat().st_size},
+                   'imports': imports, 'export_count': len(built_exports), 'executed': False,
++                  'runtime_tls': runtime_tls, 'link_map_sha256': digest(link_map),
+                   'note': 'Cross-built only; runtime behavior is unverified.'}
+         (folder / 'provenance.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
+         if receipt.exists():
+diff --git a/scripts/clvk_runtime_tls_coverage.py b/scripts/clvk_runtime_tls_coverage.py
+new file mode 100644
+index 0000000..35ccada
+--- /dev/null
++++ b/scripts/clvk_runtime_tls_coverage.py
+@@ -0,0 +1,86 @@
++#!/usr/bin/env python3
++"""Gate src/vgpu/clvk_runtime_tls.c production code under a Linux-only Win32 double.
++
++Borrow immutable source/test/tool inputs; own a fresh artifact directory. Require
++every fake-mode production function, >=90% of its lines and branches, and
++unchanged inputs. The Windows-only TEB/implicit-TLS accessor is not compiled in
++fake mode and is covered only by disassembly review and native Windows runs.
++No threshold override, suppression, rewritten source, or shared profile output.
++"""
++from datetime import datetime, timezone
++import gzip
++import hashlib
++import json
++import os
++from pathlib import Path
++import shutil
++import subprocess
++import sys
++
++MinimumPercent = 90
++ProductionFunctions = {'runtime_tls_current_record', 'runtime_tls_fail', 'runtime_tls_assign',
++                       'waddle_test___emutls_get_address', 'waddle_test___emutls_register_common',
++                       'gthread_entry', 'waddle_test___gthr_win32_create',
++                       'waddle_test___gthr_win32_join', 'waddle_test___gthr_win32_self'}
++
++
++def digest(path):
++    """[in] Borrow regular path; [out] owned SHA256; read-only synchronous lifetime."""
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
++def main():
++    """[in] Exclusive output-root CLI; [out] retained exact production coverage proof.
++
++    Children close synchronously; errors preserve diagnostics and fail. No source
++    mutation. The caller serializes source access through completion.
++    """
++    assert len(sys.argv) == 2
++    root = Path.cwd().resolve()
++    stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
++    output = Path(sys.argv[1]).resolve() / ('run-' + stamp + '-' + str(os.getpid()))
++    output.mkdir(parents=True)
++    source = root / 'src/vgpu/clvk_runtime_tls.c'
++    test = root / 'tests/vgpu/clvk_runtime_tls_test.c'
++    inputs = [source, test, root / 'tests/vgpu/clvk_runtime_tls_fake/windows.h', Path(__file__).resolve()]
++    for tool in ('cc', 'gcov'):
++        found = shutil.which(tool)
++        assert found
++        inputs.append(Path(found).resolve(strict=True))
++    manifest = {str(path): digest(path) for path in inputs}
++    commands = [
++        ['cc', '-std=c11', '-Wall', '-Wextra', '-Wpedantic', '-Werror', '-O0', '-g', '--coverage',
++         '-pthread', '-DWaddleRuntimeTlsFakeWindows', '-I' + str(root / 'tests/vgpu'),
++         str(test), '-o', str(output / 'runner')],
++        [str(output / 'runner')],
++        ['gcov', '-j', '-b', '-c', 'runner-clvk_runtime_tls_test.gcno'],
++    ]
++    for index, command in enumerate(commands):
++        with (output / ('command_' + str(index) + '.log')).open('wb') as stream:
++            subprocess.run(command, cwd=output, check=True, timeout=120, stdout=stream, stderr=stream)
++    artifact = output / 'runner-clvk_runtime_tls_test.gcov.json.gz'
++    assert artifact.stat().st_size <= 1024 * 1024
++    report = json.loads(gzip.decompress(artifact.read_bytes()))
++    files = [entry for entry in report['files'] if Path(entry['file']).resolve() == source]
++    assert len(files) == 1
++    selected = files[0]
++    assert {entry['name'] for entry in selected['functions']} == ProductionFunctions
++    lines = selected['lines']
++    branches = [branch for entry in lines for branch in entry['branches']]
++    assert lines and branches
++    line_hit = sum(entry['count'] > 0 for entry in lines)
++    branch_hit = sum(entry['count'] > 0 for entry in branches)
++    assert manifest == {str(path): digest(path) for path in inputs}, 'coverage inputs changed'
++    result = {'scope': 'runtime TLS shim production code; Linux Win32 double; no native Windows claim',
++              'lines': [line_hit, len(lines)], 'branches': [branch_hit, len(branches)],
++              'inputs': manifest}
++    (output / 'coverage.json').write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
++    line_percent = 100.0 * line_hit / len(lines)
++    branch_percent = 100.0 * branch_hit / len(branches)
++    print('runtime TLS coverage lines=%.2f%% branches=%.2f%% (%s)' % (line_percent, branch_percent, output))
++    if line_percent < MinimumPercent or branch_percent < MinimumPercent:
++        raise SystemExit('runtime TLS coverage below %d%%' % MinimumPercent)
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/scripts/vgpu_dxvk.mk b/scripts/vgpu_dxvk.mk
+index ead94b1..736c1c6 100644
+--- a/scripts/vgpu_dxvk.mk
++++ b/scripts/vgpu_dxvk.mk
+@@ -33,7 +33,7 @@ vgpu-native-loader-win64: submodules/vulkan_loader/CMakeLists.txt scripts/vulkan
+ vgpu-opencl-pin:
+ 	sh scripts/verify_clvk.sh
+ 
+-vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/OpenCL.def patches/clvk/0001-explicit-quiescent-windows-shutdown.patch include/waddle/clvk.h | build
++vgpu-opencl-build: vgpu-opencl-pin scripts/build_clvk_windows.py scripts/clvk/OpenCL.def patches/clvk/0001-explicit-quiescent-windows-shutdown.patch include/waddle/clvk.h src/vgpu/clvk_runtime_tls.c | build
+ 	python3 scripts/build_clvk_windows.py
+ 
+ # Native execution requires a separately owned authenticated host receiver.
+@@ -88,4 +88,28 @@ build/vgpu_clvk_runtime_test.exe: tests/vgpu/clvk_runtime_windows.c | build
+ build/vgpu_clvk_runtime_stress.exe: tests/vgpu/clvk_runtime_windows.c | build
+ 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -DWaddleRuntimeLifetimeCount=2048 $< -o $@
+ 
+-vgpu-opencl-runtime-fixture: build/vgpu_clvk_runtime_posix.dll build/vgpu_clvk_runtime_win32.dll build/vgpu_clvk_runtime_test.exe build/vgpu_clvk_runtime_stress.exe
++# Candidate correction: Win32 runtime with libgcc_eh emutls.o/gthr-win32-thread.o
++# replaced by src/vgpu/clvk_runtime_tls.c. The map proves neither member is linked.
++build/vgpu_clvk_runtime_win32_tls.o: src/vgpu/clvk_runtime_tls.c | build
++	x86_64-w64-mingw32-gcc-win32 -std=c11 -Wall -Wextra -Wpedantic -Werror -O2 -mthreads -c $< -o $@
++
++build/vgpu_clvk_runtime_win32_tls.dll: tests/vgpu/clvk_runtime_windows.cpp build/vgpu_clvk_runtime_win32_tls.o | build
++	x86_64-w64-mingw32-g++-win32 -std=c++17 -Wall -Wextra -Wpedantic -Werror -O2 -shared -mthreads $^ -o $@ -static-libgcc -static-libstdc++ -Wl,-Map=$@.map
++	! grep -E 'libgcc_eh\.a\((emutls|gthr-win32-thread)\.o\)|libwinpthread\.a\(' $@.map
++
++vgpu-opencl-runtime-fixture: build/vgpu_clvk_runtime_posix.dll build/vgpu_clvk_runtime_win32.dll build/vgpu_clvk_runtime_test.exe build/vgpu_clvk_runtime_stress.exe build/vgpu_clvk_runtime_win32_tls.dll
++
++# Actual runtime TLS shim logic under a Linux-only Win32 double (no native claim).
++.PHONY: vgpu-clvk-runtime-tls-test vgpu-clvk-runtime-tls-sanitizers vgpu-clvk-runtime-tls-coverage
++vgpu-clvk-runtime-tls-test: | build
++	$(CC) $(CFLAGS) -pthread -DWaddleRuntimeTlsFakeWindows -Itests/vgpu tests/vgpu/clvk_runtime_tls_test.c -o build/vgpu_clvk_runtime_tls_test
++	./build/vgpu_clvk_runtime_tls_test
++
++vgpu-clvk-runtime-tls-sanitizers: | build
++	$(CC) $(CFLAGS) -O1 -pthread -fsanitize=address,leak,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all -DWaddleRuntimeTlsFakeWindows -Itests/vgpu tests/vgpu/clvk_runtime_tls_test.c -o build/vgpu_clvk_runtime_tls_test_sanitized
++	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 LSAN_OPTIONS=exitcode=23 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ./build/vgpu_clvk_runtime_tls_test_sanitized
++	$(CC) $(CFLAGS) -O1 -pthread -fsanitize=thread -DWaddleRuntimeTlsFakeWindows -Itests/vgpu tests/vgpu/clvk_runtime_tls_test.c -o build/vgpu_clvk_runtime_tls_test_tsan
++	TSAN_OPTIONS=halt_on_error=1:die_after_fork=0 ./build/vgpu_clvk_runtime_tls_test_tsan
++
++vgpu-clvk-runtime-tls-coverage: | build
++	python3 -B scripts/clvk_runtime_tls_coverage.py build/clvk_runtime_tls_coverage
+diff --git a/src/vgpu/clvk_runtime_tls.c b/src/vgpu/clvk_runtime_tls.c
+new file mode 100644
+index 0000000..d665ec5
+--- /dev/null
++++ b/src/vgpu/clvk_runtime_tls.c
+@@ -0,0 +1,391 @@
++/**
++ * @file clvk_runtime_tls.c
++ * @brief Unload-neutral replacements for two libgcc Win32 runtime members.
++ *
++ * OpenCL.dll statically links GCC's Win32-thread-model runtime. Two libgcc
++ * archive members allocate a process TLS index with TlsAlloc and never call
++ * TlsFree: emutls.o (`emutls_key`) and gthr-win32-thread.o
++ * (`__gthr_win32_tls`). Every LoadLibrary/FreeLibrary cycle therefore loses
++ * two of the process's 1088 dynamic TLS indices.
++ *
++ * This translation unit defines the complete external symbol set of both
++ * members (`__emutls_get_address`, `__emutls_register_common`,
++ * `__gthr_win32_create`, `__gthr_win32_join`, `__gthr_win32_self`). Linked as
++ * an object before libgcc.a, it prevents either member from being extracted.
++ * Per-thread state lives in one record inside this module's implicit
++ * (loader-managed) TLS template (`.tls$WDL`, between mingw-w64's `_tls_start`
++ * and `_tls_end`). The Windows loader allocates that record for every thread,
++ * zero-fills it from the template, and releases both the per-thread blocks and
++ * the implicit TLS index itself when the module unloads or a thread exits.
++ *
++ * Consequently this file owns no TLS index, kernel handle, heap block or lock
++ * that survives a thread start: there is no DllMain, TLS-callback, atexit or
++ * other loader-lock cleanup code, and no state is destroyed early.
++ *
++ * Ownership summary:
++ * - Emulated TLS storage: bytes inside the calling thread's loader-owned
++ *   record; valid until that thread exits or the module unloads.
++ * - Thread start block: malloc-owned by __gthr_win32_create until the new
++ *   thread copies and frees it before invoking the user routine.
++ * - Thread handle: created by CreateThread, returned to libstdc++ (owned by
++ *   std::thread, closed by __gthr_win32_join or __gthread_detach). The new
++ *   thread's record stores a borrowed copy only for __gthr_win32_self.
++ *
++ * The behavior mirrors GCC 14.2 libgcc (Debian gcc-mingw-w64 14.2.0-19+27+b1)
++ * except: emulated TLS never allocates from the heap, and
++ * __gthr_win32_self() on a thread not created through __gthr_win32_create
++ * returns an opaque, resource-free, odd-valued identity instead of a newly
++ * duplicated thread handle (libgcc leaked that handle at thread exit).
++ */
++#ifdef WaddleRuntimeTlsFakeWindows
++#include "clvk_runtime_tls_fake/windows.h"
++#else
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#include <intrin.h>
++_Static_assert(sizeof(void *) == 8, "x64 TEB layout is required");
++#endif
++
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++
++/** Fixed capacities of the per-thread record; immutable, own no resources.
++ * The build driver checks the linked DLL's emulated-TLS inventory against
++ * these values; exceeding them at runtime terminates through __fastfail. */
++typedef enum {
++   /** Bytes of emulated TLS storage per thread (current OpenCL.dll needs 88). */
++   RuntimeTlsArenaBytes = 512,
++   /** Distinct emulated TLS control objects (current OpenCL.dll has 11). */
++   RuntimeTlsSlotCapacity = 32,
++   /** Largest alignment guaranteed by the loader's per-thread heap block. */
++   RuntimeTlsMaxAlign = 16,
++   /** Bits of the encoded control word that hold slot index + 1. */
++   RuntimeTlsSlotBits = 8,
++   /** x64 TEB offset of ThreadLocalStoragePointer (NT ABI, used by MSVC). */
++   RuntimeTlsTebVectorOffset = 0x58,
++   /** Low tag bit marking a resource-free foreign-thread identity. */
++   RuntimeTlsForeignIdentityTag = 1,
++} runtime_tls_constants_t;
++
++_Static_assert(RuntimeTlsSlotCapacity < (1 << RuntimeTlsSlotBits),
++               "slot index + 1 must fit in the encoded control word");
++_Static_assert((RuntimeTlsArenaBytes % RuntimeTlsMaxAlign) == 0,
++               "arena must preserve record alignment");
++
++/**
++ * @brief ABI mirror of libgcc's `struct __emutls_object` (GCC 14.2 emutls.c).
++ * GCC emits one per `__thread`/`thread_local` variable as `__emutls_v.<name>`
++ * in the module's writable data. Fields are borrowed module data.
++ */
++typedef struct emutls_object_t {
++   /** Size in bytes of one thread's instance; may grow via register_common. */
++   uintptr_t size;
++   /** Required power-of-two alignment in bytes. */
++   uintptr_t align;
++   /** Zero until assigned; then (byte offset << SlotBits) | (slot + 1).
++    * Written once under runtime_tls_layout_lock with release ordering. */
++   uintptr_t location;
++   /** Borrowed initializer template of `size` bytes, or NULL for zero fill. */
++   const void *templ;
++} emutls_object_t;
++
++_Static_assert(sizeof(emutls_object_t) == 4 * sizeof(void *),
++               "emutls control object ABI mismatch");
++
++/**
++ * @brief Per-thread record copied by the loader from this module's template.
++ * Lives in loader-owned memory; never freed or reset by this module.
++ * @thread_safety Only the owning thread reads or writes its own record.
++ */
++typedef struct runtime_tls_record_t {
++   /** Emulated TLS storage; slots are laid out identically in all threads. */
++   _Alignas(16) unsigned char storage[RuntimeTlsArenaBytes];
++   /** Nonzero once this thread initialized the slot from its template. */
++   unsigned char initialized[RuntimeTlsSlotCapacity];
++   /** Borrowed creation handle for threads started by __gthr_win32_create;
++    * NULL for every other thread. Never closed through this field. */
++   HANDLE gthread_handle;
++} runtime_tls_record_t;
++
++/**
++ * @brief Start block passed from __gthr_win32_create to the new thread.
++ * Heap-owned by the creator until gthread_entry copies and frees it.
++ */
++typedef struct gthread_start_t {
++   /** User routine supplied by libstdc++; never NULL. */
++   void *(*routine)(void *);
++   /** Opaque routine argument owned by libstdc++. */
++   void *argument;
++   /** Creation handle written before ResumeThread; borrowed by the thread. */
++   HANDLE handle;
++} gthread_start_t;
++
++#ifdef WaddleRuntimeTlsFakeWindows
++#define RuntimeTlsSymbol(name) waddle_test_##name
++/** Linux test double for the loader-owned per-thread record. */
++static __thread runtime_tls_record_t runtime_tls_fake_record;
++
++static runtime_tls_record_t *
++runtime_tls_current_record(void)
++{
++   return &runtime_tls_fake_record;
++}
++#else
++#define RuntimeTlsSymbol(name) name
++/** Implicit TLS index written by the loader (mingw-w64 crt/tlssup.c). */
++extern ULONG _tls_index;
++/** First template byte, StartAddressOfRawData of `_tls_used` (tlssup.c). */
++extern char _tls_start;
++
++/** Template image of runtime_tls_record_t. Never accessed directly: the
++ * loader copies it into each thread's block. `.tls$WDL` sorts between
++ * `.tls` (`_tls_start`) and `.tls$ZZZ` (`_tls_end`) in GNU ld's PE script. */
++__attribute__((section(".tls$WDL"), used)) static runtime_tls_record_t
++   runtime_tls_template;
++
++/**
++ * @brief Return the calling thread's loader-owned record.
++ * @return Non-null pointer valid until the thread exits or the module unloads.
++ * @ownership Borrowed loader memory; never freed by this module.
++ * @thread_safety Reentrant; returns a different record for every thread.
++ */
++static runtime_tls_record_t *
++runtime_tls_current_record(void)
++{
++   void **vector;
++   unsigned char *block;
++
++   /* Same instruction MSVC emits for __declspec(thread); written as asm
++    * because GCC 14 misreports mingw-w64's __readgsqword as a NULL access. */
++   __asm__("movq %%gs:%c1, %0" : "=r"(vector) : "i"(RuntimeTlsTebVectorOffset));
++   block = (unsigned char *)vector[_tls_index];
++   ptrdiff_t offset =
++      (unsigned char *)&runtime_tls_template - (unsigned char *)&_tls_start;
++   return (runtime_tls_record_t *)(block + offset);
++}
++#endif
++
++/** Global slot layout lock; SRWLOCK_INIT needs no creation or destruction. */
++static SRWLOCK runtime_tls_layout_lock = SRWLOCK_INIT;
++/** Bytes of the arena assigned so far; guarded by runtime_tls_layout_lock. */
++static size_t runtime_tls_used_bytes;
++/** Number of slots assigned so far; guarded by runtime_tls_layout_lock. */
++static size_t runtime_tls_used_slots;
++/** Byte size reserved for each slot; written before publication. */
++static size_t runtime_tls_slot_bytes[RuntimeTlsSlotCapacity];
++
++/**
++ * @brief Terminate on an impossible layout without running any unload code.
++ * @note __fastfail ends the process immediately (no DllMain, no atexit),
++ *       so a broken invariant cannot turn into a hang under the loader lock.
++ */
++static void __attribute__((noreturn))
++runtime_tls_fail(void)
++{
++   __fastfail(FAST_FAIL_FATAL_APP_EXIT);
++}
++
++/**
++ * @brief Assign a process-wide arena slot to a control object exactly once.
++ * @param[in,out] object Non-null control object; `location` is published.
++ * @return The nonzero encoded location word.
++ * @ownership No allocation; the slot persists until the module unloads.
++ * @thread_safety Serialized by runtime_tls_layout_lock; idempotent.
++ */
++static uintptr_t
++runtime_tls_assign(emutls_object_t *object)
++{
++   uintptr_t encoded;
++
++   AcquireSRWLockExclusive(&runtime_tls_layout_lock);
++   encoded = __atomic_load_n(&object->location, __ATOMIC_RELAXED);
++   if (encoded == 0) {
++      uintptr_t align = object->align ? object->align : 1;
++      size_t offset;
++
++      if (align > RuntimeTlsMaxAlign || (align & (align - 1)) != 0 ||
++          object->size > RuntimeTlsArenaBytes ||
++          runtime_tls_used_slots >= RuntimeTlsSlotCapacity) {
++         ReleaseSRWLockExclusive(&runtime_tls_layout_lock);
++         runtime_tls_fail();
++      }
++      offset = (runtime_tls_used_bytes + align - 1) & ~(size_t)(align - 1);
++      if (offset > RuntimeTlsArenaBytes - object->size) {
++         ReleaseSRWLockExclusive(&runtime_tls_layout_lock);
++         runtime_tls_fail();
++      }
++      runtime_tls_slot_bytes[runtime_tls_used_slots] = object->size;
++      encoded = ((uintptr_t)offset << RuntimeTlsSlotBits) |
++                (uintptr_t)(runtime_tls_used_slots + 1);
++      runtime_tls_used_slots++;
++      runtime_tls_used_bytes = offset + object->size;
++      __atomic_store_n(&object->location, encoded, __ATOMIC_RELEASE);
++   }
++   ReleaseSRWLockExclusive(&runtime_tls_layout_lock);
++   return encoded;
++}
++
++/**
++ * @brief libgcc ABI: return the calling thread's instance of a TLS variable.
++ * @param[in,out] object Non-null compiler-emitted control object.
++ * @return Non-null address aligned to object->align, initialized from
++ *         object->templ (or zero) on this thread's first access.
++ * @ownership Borrowed loader-owned storage; caller must not free it. Valid
++ *            until the calling thread exits or this module unloads.
++ * @thread_safety Thread-safe; each thread receives distinct storage.
++ */
++void *
++RuntimeTlsSymbol(__emutls_get_address)(emutls_object_t *object)
++{
++   runtime_tls_record_t *record = runtime_tls_current_record();
++   uintptr_t encoded = __atomic_load_n(&object->location, __ATOMIC_ACQUIRE);
++   size_t slot;
++   unsigned char *address;
++
++   if (encoded == 0)
++      encoded = runtime_tls_assign(object);
++   slot = (size_t)(encoded & ((1u << RuntimeTlsSlotBits) - 1)) - 1;
++   if (object->size > runtime_tls_slot_bytes[slot])
++      runtime_tls_fail();
++   address = record->storage + (encoded >> RuntimeTlsSlotBits);
++   if (!record->initialized[slot]) {
++      if (object->templ)
++         memcpy(address, object->templ, object->size);
++      record->initialized[slot] = 1;
++   }
++   return address;
++}
++
++/**
++ * @brief libgcc ABI: merge a common-symbol TLS definition (emutls.c rules).
++ * @param[in,out] object Non-null control object to update.
++ * @param[in] size Candidate instance size in bytes.
++ * @param[in] align Candidate alignment in bytes.
++ * @param[in] templ Optional borrowed template; may be NULL.
++ * @ownership No allocation; templ remains owned by the module image.
++ * @thread_safety Called from module constructors before concurrent use.
++ */
++void
++RuntimeTlsSymbol(__emutls_register_common)(emutls_object_t *object,
++                                           uintptr_t size, uintptr_t align,
++                                           const void *templ)
++{
++   if (object->size < size) {
++      object->size = size;
++      object->templ = NULL;
++   }
++   if (object->align < align)
++      object->align = align;
++   if (templ && size == object->size)
++      object->templ = templ;
++}
++
++/**
++ * @brief Thread entry: adopt the start block, record the handle, run.
++ * @param[in] parameter Heap gthread_start_t from __gthr_win32_create.
++ * @return Low 32 bits of the routine result, as libgcc returns them.
++ * @ownership Frees @p parameter before calling user code.
++ */
++static DWORD WINAPI
++gthread_entry(LPVOID parameter)
++{
++   gthread_start_t start;
++
++   memcpy(&start, parameter, sizeof(start));
++   free(parameter);
++   runtime_tls_current_record()->gthread_handle = start.handle;
++   return (DWORD)(uintptr_t)start.routine(start.argument);
++}
++
++/**
++ * @brief libgcc ABI: start a thread for std::thread.
++ * @param[out] thread Non-null; receives the owned creation handle on success.
++ * @param[in] routine Non-null routine run on the new thread.
++ * @param[in] argument Opaque argument passed to @p routine.
++ * @return 0 on success; a Win32 error code (or ERROR_NOT_ENOUGH_MEMORY) on
++ *         failure, in which case nothing remains allocated or running.
++ * @ownership The caller (std::thread) owns *thread and must join or detach.
++ * @thread_safety Thread-safe.
++ */
++int
++RuntimeTlsSymbol(__gthr_win32_create)(HANDLE *thread, void *(*routine)(void *),
++                                      void *argument)
++{
++   gthread_start_t *start = malloc(sizeof(*start));
++   HANDLE handle;
++   int error;
++
++   if (!start)
++      return ERROR_NOT_ENOUGH_MEMORY;
++   start->routine = routine;
++   start->argument = argument;
++   start->handle = NULL;
++   handle = CreateThread(NULL, 0, gthread_entry, start, CREATE_SUSPENDED, NULL);
++   if (!handle) {
++      error = (int)GetLastError();
++      free(start);
++      return error;
++   }
++   start->handle = handle;
++   if (ResumeThread(handle) == (DWORD)-1) {
++      /* The suspended thread never ran user or loader-notification code. */
++      error = (int)GetLastError();
++      (void)TerminateThread(handle, 0);
++      (void)WaitForSingleObject(handle, INFINITE);
++      (void)CloseHandle(handle);
++      free(start);
++      return error;
++   }
++   *thread = handle;
++   return 0;
++}
++
++/**
++ * @brief libgcc ABI: wait for a std::thread and close its handle.
++ * @param[in] thread Owned creation handle; consumed unless 1 is returned.
++ * @param[out] value Optional; receives the routine's 32-bit result.
++ * @return 0 on success, 1 when joining the calling thread itself (handle kept,
++ *         matching libgcc), otherwise a Win32 error (handle closed).
++ * @thread_safety Call once per handle.
++ */
++int
++RuntimeTlsSymbol(__gthr_win32_join)(HANDLE thread, void **value)
++{
++   DWORD exit_code;
++   int status = 0;
++
++   if (GetThreadId(thread) == GetCurrentThreadId())
++      return 1;
++   if (WaitForSingleObject(thread, INFINITE) != WAIT_OBJECT_0) {
++      status = (int)GetLastError();
++   } else if (value) {
++      if (GetExitCodeThread(thread, &exit_code))
++         *value = (void *)(uintptr_t)exit_code;
++      else
++         status = (int)GetLastError();
++   }
++   (void)CloseHandle(thread);
++   return status;
++}
++
++/**
++ * @brief libgcc ABI: identity for std::this_thread::get_id().
++ * @return For threads from __gthr_win32_create: their creation handle
++ *         (equal to the owning std::thread's id). For any other thread: the
++ *         address of its loader-owned record with the low bit set, which is
++ *         unique among live threads, stable for the thread's life, never a
++ *         valid handle value, and owns no resource.
++ * @ownership Borrowed; callers must never close or wait on the result.
++ * @thread_safety Reentrant.
++ */
++HANDLE
++RuntimeTlsSymbol(__gthr_win32_self)(void)
++{
++   runtime_tls_record_t *record = runtime_tls_current_record();
++
++   if (record->gthread_handle)
++      return record->gthread_handle;
++   return (HANDLE)((uintptr_t)record | RuntimeTlsForeignIdentityTag);
++}
+diff --git a/tests/vgpu/clvk_build.py b/tests/vgpu/clvk_build.py
+index bb624cc..b6fa126 100644
+--- a/tests/vgpu/clvk_build.py
++++ b/tests/vgpu/clvk_build.py
+@@ -7,6 +7,7 @@ also executed. These tests provide no Windows or GPU acceptance evidence.
+ import importlib.util
+ import hashlib
+ import os
++import re
+ from pathlib import Path
+ import shutil
+ import subprocess
+@@ -133,6 +134,8 @@ class export_tests_t(unittest.TestCase):
+                 exports = (*Driver.RequiredExports, *extra)
+                 source.write_text('\n'.join('void %s(void) {}' % name for name in exports))
+                 definition.write_text('EXPORTS\n' + '\n'.join('    ' + name for name in exports) + '\n')
++                # This is a C-only PE parser fixture, not the OpenCL DLL or its
++                # C++ runtime; POSIX MinGW is intentionally sufficient here.
+                 subprocess.run(['x86_64-w64-mingw32-gcc-posix', '-shared', str(source),
+                                 str(definition), '-o', str(dll)], check=True, timeout=60)
+                 if extra:
+@@ -182,6 +185,123 @@ class export_tests_t(unittest.TestCase):
+                 Driver.inspect_dll(Path('fixture.dll'), Driver.RequiredExports)
+ 
+ 
++class windows_toolchain_tests_t(unittest.TestCase):
++    """Verify the actual Win32-thread-model compiler preflight and CMake input."""
++
++    def test_win32_compilers_are_preflighted(self):
++        expected = ('x86_64-w64-mingw32-gcc-win32',
++                    'x86_64-w64-mingw32-g++-win32')
++        self.assertEqual(Driver.Compilers, expected)
++        self.assertTrue(set(expected) <= set(Driver.Tools))
++        for compiler in expected:
++            with self.subTest(compiler=compiler):
++                version = Driver.capture([compiler, '--version'])
++                self.assertIn('GCC', version)
++                self.assertNotIn('-posix', version)
++
++    def test_actual_models_are_win32_and_reject_wrong_or_missing_diagnostics(self):
++        actual = Driver.verify_compiler_thread_models()
++        self.assertEqual(set(actual), set(Driver.Compilers))
++        self.assertTrue(all(value['thread_model'] == 'win32' for value in actual.values()))
++        for diagnostics in ('Thread model: posix\n', '', 'Thread model: win32\nThread model: posix\n'):
++            with self.subTest(diagnostics=diagnostics), \
++                    patch.object(Driver.subprocess, 'check_output', return_value=diagnostics):
++                with self.assertRaisesRegex(SystemExit, 'wrong thread model'):
++                    Driver.verify_compiler_thread_models()
++
++    def test_generated_toolchain_and_settings_invalidate_old_cache(self):
++        with tempfile.TemporaryDirectory() as directory:
++            toolchain = Path(directory) / 'mingw-w64-x86_64.cmake'
++            export_file = Path(directory) / 'OpenCL.def'
++            shim = Path(directory) / 'shim'
++            runtime_object = Path(directory) / 'clvk_runtime_tls.o'
++            link_map = Path(directory) / 'OpenCL.map'
++            Driver.write_toolchain(toolchain, export_file, shim, runtime_object, link_map)
++            text = toolchain.read_text()
++
++        self.assertIn('set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc-win32)', text)
++        self.assertIn('set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++-win32)', text)
++        self.assertIn('set(CMAKE_C_FLAGS_INIT "-mthreads -isystem %s")' % shim, text)
++        self.assertIn('set(CMAKE_CXX_FLAGS_INIT "-mthreads -isystem %s")' % shim, text)
++        self.assertIn('set(CMAKE_SHARED_LINKER_FLAGS_INIT "%s %s -Wl,-Map=%s -static-libgcc '
++                      '-static-libstdc++ -mthreads")' % (export_file, runtime_object, link_map), text)
++        self.assertNotIn('posix', text)
++        self.assertNotIn('winpthread', text)
++        self.assertNotIn('whole-archive', text)
++
++        settings = Driver.build_settings()
++        self.assertEqual(settings['windows_thread_model'], 'win32')
++        self.assertEqual(settings['windows_thread_flag'], '-mthreads')
++        self.assertEqual(settings['static_runtime'], 'libgcc,libstdc++')
++        self.assertEqual(settings['shared_link_flags'],
++                         '-static-libgcc -static-libstdc++ -mthreads')
++        legacy_settings = {
++            'cmake_build_type': 'Release',
++            'clvk_vulkan_implementation': 'custom',
++            'clvk_clspv_online_compiler': 'ON',
++            'llvm_targets_to_build': 'X86',
++            'static_runtime': 'libgcc,libstdc++,winpthread',
++            'llvm_switches': Driver.LlvmSwitches,
++        }
++        self.assertNotEqual(
++            Driver.compute_cache_key({'settings': settings}),
++            Driver.compute_cache_key({'settings': legacy_settings}),
++            'the changed thread model/runtime must select a different build cache',
++        )
++
++
++class runtime_tls_tests_t(unittest.TestCase):
++    """Verify the runtime TLS replacement contract with actual Win32 cross links.
++
++    Linking is compilation evidence only; native handle/TLS/unload behavior is
++    proven solely by tests/vgpu/clvk_runtime_windows.c on Windows.
++    """
++
++    def test_driver_constants_match_source(self):
++        source = (Root / Driver.RuntimeTlsSource).read_text()
++        for name in ('RuntimeTlsArenaBytes', 'RuntimeTlsSlotCapacity', 'RuntimeTlsMaxAlign'):
++            with self.subTest(name=name):
++                match = re.search(r'\b%s = (\d+),' % name, source)
++                self.assertIsNotNone(match)
++                self.assertEqual(int(match[1]), getattr(Driver, name))
++
++    def test_link_map_rejects_each_forbidden_member(self):
++        with tempfile.TemporaryDirectory() as directory:
++            link_map = Path(directory) / 'OpenCL.map'
++            link_map.write_text('LOAD /x/clvk_runtime_tls.o\n')
++            Driver.verify_runtime_link(link_map)
++            for member in ('libgcc_eh.a(emutls.o)', 'libgcc_eh.a(gthr-win32-thread.o)',
++                           'libwinpthread.a(libwinpthread_la-thread.o)', 'libpthread.a(x.o)'):
++                with self.subTest(member=member):
++                    link_map.write_text('LOAD /x/clvk_runtime_tls.o\n/usr/lib/%s\n' % member)
++                    with self.assertRaisesRegex(SystemExit, 'forbidden runtime members'):
++                        Driver.verify_runtime_link(link_map)
++            link_map.write_text('LOAD /x/other.o\n')
++            with self.assertRaisesRegex(SystemExit, 'runtime TLS object'):
++                Driver.verify_runtime_link(link_map)
++
++    def test_actual_probe_links_replace_libgcc_tls_owners(self):
++        with tempfile.TemporaryDirectory() as directory:
++            folder = Path(directory)
++            runtime_object = Driver.compile_runtime_tls(Root, folder)
++            outputs = {}
++            for name, extra in (('shim', [str(runtime_object)]), ('libgcc', [])):
++                dll = folder / (name + '.dll')
++                link_map = folder / (name + '.map')
++                subprocess.run(['x86_64-w64-mingw32-g++-win32', '-std=c++17', '-Wall', '-Wextra',
++                                '-Wpedantic', '-Werror', '-O2', '-shared', '-mthreads',
++                                str(Root / 'tests/vgpu/clvk_runtime_windows.cpp'), *extra,
++                                '-o', str(dll), '-static-libgcc', '-static-libstdc++',
++                                '-Wl,-Map=' + str(link_map)], check=True, timeout=300)
++                outputs[name] = (dll, link_map)
++            Driver.verify_runtime_link(outputs['shim'][1])
++            audit = Driver.audit_runtime_tls(outputs['shim'][0])
++            self.assertLessEqual(set(audit['tls_alloc_sites']), set(Driver.AllowedTlsAllocSites))
++            self.assertGreaterEqual(audit['emutls_objects'], 2)
++            with self.assertRaisesRegex(SystemExit, '__emutls_get_address.*__gthr_win32_create'):
++                Driver.audit_runtime_tls(outputs['libgcc'][0])
++
++
+ class private_patch_tests_t(unittest.TestCase):
+     """Check exact patch preimages and compile actual patched owner accounting."""
+ 
+diff --git a/tests/vgpu/clvk_runtime_tls_fake/windows.h b/tests/vgpu/clvk_runtime_tls_fake/windows.h
+new file mode 100644
+index 0000000..cf648e6
+--- /dev/null
++++ b/tests/vgpu/clvk_runtime_tls_fake/windows.h
+@@ -0,0 +1,78 @@
++/**
++ * @file windows.h
++ * @brief Linux-only Win32 test double for src/vgpu/clvk_runtime_tls.c.
++ *
++ * Declares exactly the Win32 surface the runtime TLS shim uses. Definitions
++ * live in tests/vgpu/clvk_runtime_tls_test.c and are built on POSIX threads.
++ * This double is never part of a Windows build and proves no native behavior.
++ */
++#ifndef WaddleRuntimeTlsFakeWindowsHeader
++#define WaddleRuntimeTlsFakeWindowsHeader
++
++#include <pthread.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++
++#define WINAPI
++/** Fake success value of WaitForSingleObject. */
++#define WAIT_OBJECT_0 0u
++/** Fake failure value of WaitForSingleObject. */
++#define WAIT_FAILED 0xffffffffu
++/** Fake infinite timeout. */
++#define INFINITE 0xffffffffu
++/** Fake CreateThread flag; the double always honors it. */
++#define CREATE_SUSPENDED 0x4u
++/** Fake Win32 error code returned for allocation failure. */
++#define ERROR_NOT_ENOUGH_MEMORY 8u
++/** Fake __fastfail code. */
++#define FAST_FAIL_FATAL_APP_EXIT 7u
++
++typedef uint32_t DWORD;
++typedef unsigned long ULONG;
++typedef void *LPVOID;
++/** Opaque fake handle: a heap-owned fake thread record. */
++typedef struct fake_thread_t *HANDLE;
++/** Fake thread routine signature. */
++typedef DWORD (*LPTHREAD_START_ROUTINE)(LPVOID);
++/** Fake slim reader/writer lock backed by a statically initialized mutex. */
++typedef struct {
++   pthread_mutex_t mutex;
++} SRWLOCK;
++/** Static initializer; the fake needs no destruction, like SRWLOCK_INIT. */
++#define SRWLOCK_INIT { PTHREAD_MUTEX_INITIALIZER }
++
++/** Acquire @p lock exclusively; never fails. */
++void AcquireSRWLockExclusive(SRWLOCK *lock);
++/** Release @p lock held exclusively by the caller. */
++void ReleaseSRWLockExclusive(SRWLOCK *lock);
++/** Create a suspended fake thread; NULL and last error on injected failure. */
++HANDLE CreateThread(void *attributes, size_t stack, LPTHREAD_START_ROUTINE routine,
++                    LPVOID parameter, DWORD flags, DWORD *thread_id);
++/** Resume a fake thread; (DWORD)-1 on injected failure. */
++DWORD ResumeThread(HANDLE thread);
++/** Cancel a never-resumed fake thread; returns nonzero. */
++int TerminateThread(HANDLE thread, DWORD exit_code);
++/** Join the fake thread; WAIT_FAILED on injected failure. */
++DWORD WaitForSingleObject(HANDLE thread, DWORD milliseconds);
++/** Read the exit code; zero on injected failure. */
++int GetExitCodeThread(HANDLE thread, DWORD *exit_code);
++/** Free the fake handle; returns nonzero. */
++int CloseHandle(HANDLE thread);
++/** Return the fake thread's id. */
++DWORD GetThreadId(HANDLE thread);
++/** Return the calling thread's fake id. */
++DWORD GetCurrentThreadId(void);
++/** Return the calling thread's fake last error. */
++DWORD GetLastError(void);
++/** Fake fail-fast: exits the (forked) test process with status 77. */
++void __fastfail(unsigned int code) __attribute__((noreturn));
++/** Counting allocator used by the shim under test. */
++void *waddle_fake_malloc(size_t size);
++/** Counting free paired with waddle_fake_malloc. */
++void waddle_fake_free(void *pointer);
++
++#define malloc(size) waddle_fake_malloc(size)
++#define free(pointer) waddle_fake_free(pointer)
++
++#endif
+diff --git a/tests/vgpu/clvk_runtime_tls_test.c b/tests/vgpu/clvk_runtime_tls_test.c
+new file mode 100644
+index 0000000..8e9d194
+--- /dev/null
++++ b/tests/vgpu/clvk_runtime_tls_test.c
+@@ -0,0 +1,481 @@
++/**
++ * @file clvk_runtime_tls_test.c
++ * @brief Linux unit tests for the actual src/vgpu/clvk_runtime_tls.c logic.
++ *
++ * The shim is included with WaddleRuntimeTlsFakeWindows, which renames its
++ * libgcc ABI entry points to waddle_test_* and replaces the loader-owned
++ * record with a Linux __thread record. POSIX threads emulate Win32 threads.
++ * Every fail-fast scenario runs in a forked child that must exit with 77.
++ * This proves layout, initialization, isolation, error and ownership logic
++ * only; it is not evidence of Windows loader or native unload behavior.
++ */
++#ifndef _GNU_SOURCE
++#define _GNU_SOURCE
++#endif
++#include "../../src/vgpu/clvk_runtime_tls.c"
++
++#include <errno.h>
++#include <stdio.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++#undef malloc
++#undef free
++
++/** Test sizes; immutable and own no resources. */
++typedef enum {
++   ThreadCount = 8,
++   RaceObjects = 6,
++   FastFailStatus = 77,
++} test_constants_t;
++
++/** Heap-owned state behind one fake thread handle. */
++struct fake_thread_t {
++   /** Joinable POSIX thread, valid once started. */
++   pthread_t thread;
++   /** Guards resumed/terminated. */
++   pthread_mutex_t mutex;
++   /** Signals resumption. */
++   pthread_cond_t cond;
++   /** Nonzero after ResumeThread or TerminateThread. */
++   int resumed;
++   /** Nonzero when TerminateThread cancelled the routine. */
++   int terminated;
++   /** Routine result stored at thread exit. */
++   DWORD exit_code;
++   /** Fake id unique within this process. */
++   DWORD id;
++   /** Routine and its parameter. */
++   LPTHREAD_START_ROUTINE routine;
++   LPVOID parameter;
++};
++
++static __thread DWORD fake_current_id = 1;
++static __thread DWORD fake_last_error;
++static DWORD fake_next_id = 2;
++static long fake_open_handles;
++static long fake_live_allocations;
++static int fail_next_malloc;
++static int fail_next_create;
++static int fail_next_resume;
++static int fail_next_wait;
++static int fail_next_exit_code;
++
++#define Check(condition)                                                     \
++   do {                                                                      \
++      if (!(condition)) {                                                    \
++         fprintf(stderr, "CHECK FAILED %s:%d: %s\n", __FILE__, __LINE__,    \
++                 #condition);                                                \
++         exit(1);                                                            \
++      }                                                                      \
++   } while (0)
++
++void AcquireSRWLockExclusive(SRWLOCK *lock) { Check(pthread_mutex_lock(&lock->mutex) == 0); }
++void ReleaseSRWLockExclusive(SRWLOCK *lock) { Check(pthread_mutex_unlock(&lock->mutex) == 0); }
++DWORD GetLastError(void) { return fake_last_error; }
++DWORD GetCurrentThreadId(void) { return fake_current_id; }
++DWORD GetThreadId(HANDLE thread) { return thread->id; }
++void __fastfail(unsigned int code) { exit(code == FAST_FAIL_FATAL_APP_EXIT ? FastFailStatus : 1); }
++
++void *
++waddle_fake_malloc(size_t size)
++{
++   void *pointer;
++   if (fail_next_malloc) {
++      fail_next_malloc = 0;
++      return NULL;
++   }
++   pointer = malloc(size);
++   if (pointer)
++      __atomic_add_fetch(&fake_live_allocations, 1, __ATOMIC_SEQ_CST);
++   return pointer;
++}
++
++void
++waddle_fake_free(void *pointer)
++{
++   if (pointer)
++      __atomic_sub_fetch(&fake_live_allocations, 1, __ATOMIC_SEQ_CST);
++   free(pointer);
++}
++
++static void *
++fake_trampoline(void *parameter)
++{
++   struct fake_thread_t *thread = parameter;
++   int terminated;
++   Check(pthread_mutex_lock(&thread->mutex) == 0);
++   while (!thread->resumed)
++      Check(pthread_cond_wait(&thread->cond, &thread->mutex) == 0);
++   terminated = thread->terminated;
++   Check(pthread_mutex_unlock(&thread->mutex) == 0);
++   fake_current_id = thread->id;
++   if (!terminated)
++      thread->exit_code = thread->routine(thread->parameter);
++   return NULL;
++}
++
++HANDLE
++CreateThread(void *attributes, size_t stack, LPTHREAD_START_ROUTINE routine,
++             LPVOID parameter, DWORD flags, DWORD *thread_id)
++{
++   struct fake_thread_t *thread;
++   (void)attributes;
++   (void)stack;
++   (void)thread_id;
++   Check(flags == CREATE_SUSPENDED);
++   if (fail_next_create) {
++      fail_next_create = 0;
++      fake_last_error = 1455;
++      return NULL;
++   }
++   thread = calloc(1, sizeof(*thread));
++   Check(thread != NULL);
++   Check(pthread_mutex_init(&thread->mutex, NULL) == 0);
++   Check(pthread_cond_init(&thread->cond, NULL) == 0);
++   thread->routine = routine;
++   thread->parameter = parameter;
++   thread->id = __atomic_fetch_add(&fake_next_id, 1, __ATOMIC_SEQ_CST);
++   Check(pthread_create(&thread->thread, NULL, fake_trampoline, thread) == 0);
++   __atomic_add_fetch(&fake_open_handles, 1, __ATOMIC_SEQ_CST);
++   return thread;
++}
++
++static void
++fake_release(HANDLE thread, int terminate)
++{
++   Check(pthread_mutex_lock(&thread->mutex) == 0);
++   thread->resumed = 1;
++   thread->terminated = terminate;
++   Check(pthread_cond_signal(&thread->cond) == 0);
++   Check(pthread_mutex_unlock(&thread->mutex) == 0);
++}
++
++DWORD
++ResumeThread(HANDLE thread)
++{
++   if (fail_next_resume) {
++      fail_next_resume = 0;
++      fake_last_error = 5;
++      return (DWORD)-1;
++   }
++   fake_release(thread, 0);
++   return 1;
++}
++
++int
++TerminateThread(HANDLE thread, DWORD exit_code)
++{
++   thread->exit_code = exit_code;
++   fake_release(thread, 1);
++   return 1;
++}
++
++DWORD
++WaitForSingleObject(HANDLE thread, DWORD milliseconds)
++{
++   Check(milliseconds == INFINITE);
++   Check(pthread_join(thread->thread, NULL) == 0);
++   if (fail_next_wait) {
++      fail_next_wait = 0;
++      fake_last_error = 6;
++      return WAIT_FAILED;
++   }
++   return WAIT_OBJECT_0;
++}
++
++int
++GetExitCodeThread(HANDLE thread, DWORD *exit_code)
++{
++   if (fail_next_exit_code) {
++      fail_next_exit_code = 0;
++      fake_last_error = 87;
++      return 0;
++   }
++   *exit_code = thread->exit_code;
++   return 1;
++}
++
++int
++CloseHandle(HANDLE thread)
++{
++   Check(pthread_cond_destroy(&thread->cond) == 0);
++   Check(pthread_mutex_destroy(&thread->mutex) == 0);
++   free(thread);
++   __atomic_sub_fetch(&fake_open_handles, 1, __ATOMIC_SEQ_CST);
++   return 1;
++}
++
++/** Run @p scenario in a child; require exit status 77 (fail-fast). */
++static void
++expect_fast_fail(void (*scenario)(void))
++{
++   int status = 0;
++   pid_t child;
++   fflush(NULL);
++   child = fork();
++   Check(child >= 0);
++   if (child == 0) {
++      scenario();
++      exit(2);
++   }
++   Check(waitpid(child, &status, 0) == child);
++   Check(WIFEXITED(status) && WEXITSTATUS(status) == FastFailStatus);
++}
++
++static const unsigned char template_bytes[16] = {
++   1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
++};
++
++static void
++test_layout_and_initialization(void)
++{
++   emutls_object_t byte_object = { 1, 1, 0, NULL };
++   emutls_object_t aligned_object = { 16, 16, 0, template_bytes };
++   emutls_object_t word_object = { 4, 4, 0, template_bytes };
++   emutls_object_t empty_object = { 0, 0, 0, NULL };
++   unsigned char *byte_address = waddle_test___emutls_get_address(&byte_object);
++   unsigned char *aligned_address = waddle_test___emutls_get_address(&aligned_object);
++   unsigned char *word_address = waddle_test___emutls_get_address(&word_object);
++   unsigned char *empty_address = waddle_test___emutls_get_address(&empty_object);
++
++   Check(((uintptr_t)aligned_address % 16) == 0);
++   Check(((uintptr_t)word_address % 4) == 0);
++   Check(*byte_address == 0);
++   Check(memcmp(aligned_address, template_bytes, 16) == 0);
++   Check(memcmp(word_address, template_bytes, 4) == 0);
++   Check(aligned_address >= byte_address + 1);
++   Check(word_address >= aligned_address + 16);
++   Check(empty_address >= word_address + 4);
++   *byte_address = 0x5a;
++   word_address[0] = 0x77;
++   Check(waddle_test___emutls_get_address(&byte_object) == byte_address);
++   Check(*byte_address == 0x5a);
++   Check(waddle_test___emutls_get_address(&word_object) == word_address);
++   Check(word_address[0] == 0x77);
++   Check(byte_object.location != 0 && aligned_object.location != 0);
++   Check(fake_live_allocations == 0);
++}
++
++static emutls_object_t race_objects[RaceObjects] = {
++   { 8, 8, 0, template_bytes }, { 4, 4, 0, NULL }, { 16, 16, 0, template_bytes },
++   { 2, 2, 0, NULL }, { 8, 8, 0, NULL }, { 1, 1, 0, template_bytes },
++};
++
++static void *
++race_worker(void *parameter)
++{
++   uintptr_t token = (uintptr_t)parameter;
++   unsigned char *addresses[RaceObjects];
++   for (unsigned index = 0; index < RaceObjects; index++) {
++      addresses[index] = waddle_test___emutls_get_address(&race_objects[index]);
++      if (race_objects[index].templ)
++         Check(memcmp(addresses[index], template_bytes, race_objects[index].size) == 0);
++      else
++         for (uintptr_t byte = 0; byte < race_objects[index].size; byte++)
++            Check(addresses[index][byte] == 0);
++      memset(addresses[index], (int)token, race_objects[index].size);
++   }
++   for (unsigned index = 0; index < RaceObjects; index++) {
++      Check(waddle_test___emutls_get_address(&race_objects[index]) == addresses[index]);
++      for (uintptr_t byte = 0; byte < race_objects[index].size; byte++)
++         Check(addresses[index][byte] == (unsigned char)token);
++   }
++   return NULL;
++}
++
++static void
++test_concurrent_first_use_and_isolation(void)
++{
++   pthread_t threads[ThreadCount];
++   uintptr_t layout[RaceObjects];
++   for (uintptr_t index = 0; index < ThreadCount; index++)
++      Check(pthread_create(&threads[index], NULL, race_worker, (void *)(index + 0x10)) == 0);
++   for (unsigned index = 0; index < ThreadCount; index++)
++      Check(pthread_join(threads[index], NULL) == 0);
++   for (unsigned index = 0; index < RaceObjects; index++) {
++      layout[index] = race_objects[index].location;
++      Check(layout[index] != 0);
++      for (unsigned other = 0; other < index; other++) {
++         size_t a = layout[index] >> RuntimeTlsSlotBits;
++         size_t b = layout[other] >> RuntimeTlsSlotBits;
++         Check((layout[index] & 0xff) != (layout[other] & 0xff));
++         Check(a + race_objects[index].size <= b || b + race_objects[other].size <= a ||
++               race_objects[index].size == 0 || race_objects[other].size == 0);
++      }
++   }
++   race_worker((void *)(uintptr_t)0x33);
++   Check(fake_live_allocations == 0);
++}
++
++static void
++test_assignment_is_idempotent(void)
++{
++   /* Deterministically covers the locked re-check that a racing first use
++    * observes after another thread published the location word. */
++   emutls_object_t object = { 8, 8, 0, NULL };
++   uintptr_t first = runtime_tls_assign(&object);
++   Check(first != 0 && object.location == first);
++   Check(runtime_tls_assign(&object) == first);
++}
++
++static void
++test_register_common(void)
++{
++   emutls_object_t object = { 4, 4, 0, template_bytes };
++   waddle_test___emutls_register_common(&object, 8, 2, NULL);
++   Check(object.size == 8 && object.align == 4 && object.templ == NULL);
++   waddle_test___emutls_register_common(&object, 8, 8, template_bytes);
++   Check(object.size == 8 && object.align == 8 && object.templ == template_bytes);
++   waddle_test___emutls_register_common(&object, 4, 1, template_bytes + 1);
++   Check(object.size == 8 && object.align == 8 && object.templ == template_bytes);
++}
++
++static void scenario_alignment_too_large(void)
++{
++   emutls_object_t object = { 32, 32, 0, NULL };
++   (void)waddle_test___emutls_get_address(&object);
++}
++
++static void scenario_alignment_not_power_of_two(void)
++{
++   emutls_object_t object = { 3, 3, 0, NULL };
++   (void)waddle_test___emutls_get_address(&object);
++}
++
++static void scenario_object_too_large(void)
++{
++   emutls_object_t object = { RuntimeTlsArenaBytes + 1, 1, 0, NULL };
++   (void)waddle_test___emutls_get_address(&object);
++}
++
++static void scenario_arena_overflow(void)
++{
++   static emutls_object_t first = { RuntimeTlsArenaBytes - 8, 8, 0, NULL };
++   static emutls_object_t second = { 16, 8, 0, NULL };
++   (void)waddle_test___emutls_get_address(&first);
++   (void)waddle_test___emutls_get_address(&second);
++}
++
++static void scenario_slot_exhaustion(void)
++{
++   static emutls_object_t objects[RuntimeTlsSlotCapacity + 1];
++   for (unsigned index = 0; index <= RuntimeTlsSlotCapacity; index++) {
++      objects[index].size = 1;
++      objects[index].align = 1;
++      (void)waddle_test___emutls_get_address(&objects[index]);
++   }
++}
++
++static void scenario_size_grown_after_assignment(void)
++{
++   static emutls_object_t object = { 4, 4, 0, NULL };
++   (void)waddle_test___emutls_get_address(&object);
++   waddle_test___emutls_register_common(&object, 8, 4, NULL);
++   (void)waddle_test___emutls_get_address(&object);
++}
++
++static void
++test_fail_fast_paths(void)
++{
++   expect_fast_fail(scenario_alignment_too_large);
++   expect_fast_fail(scenario_alignment_not_power_of_two);
++   expect_fast_fail(scenario_object_too_large);
++   expect_fast_fail(scenario_arena_overflow);
++   expect_fast_fail(scenario_slot_exhaustion);
++   expect_fast_fail(scenario_size_grown_after_assignment);
++}
++
++static HANDLE observed_self;
++
++static void *
++gthread_routine(void *argument)
++{
++   observed_self = waddle_test___gthr_win32_self();
++   return (void *)((uintptr_t)argument + 1);
++}
++
++static void *
++foreign_identity(void *argument)
++{
++   HANDLE *slot = argument;
++   *slot = waddle_test___gthr_win32_self();
++   Check(*slot == waddle_test___gthr_win32_self());
++   return NULL;
++}
++
++static void
++test_gthreads(void)
++{
++   HANDLE thread = NULL;
++   HANDLE foreign[2];
++   pthread_t workers[2];
++   void *value = NULL;
++   HANDLE main_identity = waddle_test___gthr_win32_self();
++
++   Check(((uintptr_t)main_identity & 1) == 1);
++   Check(main_identity == waddle_test___gthr_win32_self());
++   Check(waddle_test___gthr_win32_create(&thread, gthread_routine, (void *)41) == 0);
++   Check(waddle_test___gthr_win32_join(thread, &value) == 0);
++   Check(value == (void *)42 && observed_self == thread);
++   Check(fake_open_handles == 0 && fake_live_allocations == 0);
++
++   Check(waddle_test___gthr_win32_create(&thread, gthread_routine, NULL) == 0);
++   Check(waddle_test___gthr_win32_join(thread, NULL) == 0);
++
++   for (unsigned index = 0; index < 2; index++)
++      Check(pthread_create(&workers[index], NULL, foreign_identity, &foreign[index]) == 0);
++   for (unsigned index = 0; index < 2; index++)
++      Check(pthread_join(workers[index], NULL) == 0);
++   Check(foreign[0] != foreign[1] && foreign[0] != main_identity);
++   Check(((uintptr_t)foreign[0] & 1) == 1 && ((uintptr_t)foreign[1] & 1) == 1);
++
++   fail_next_malloc = 1;
++   Check(waddle_test___gthr_win32_create(&thread, gthread_routine, NULL) ==
++         (int)ERROR_NOT_ENOUGH_MEMORY);
++   fail_next_create = 1;
++   Check(waddle_test___gthr_win32_create(&thread, gthread_routine, NULL) == 1455);
++   fail_next_resume = 1;
++   Check(waddle_test___gthr_win32_create(&thread, gthread_routine, NULL) == 5);
++   Check(fake_open_handles == 0 && fake_live_allocations == 0);
++
++   Check(waddle_test___gthr_win32_create(&thread, gthread_routine, NULL) == 0);
++   fail_next_wait = 1;
++   Check(waddle_test___gthr_win32_join(thread, &value) == 6);
++   Check(waddle_test___gthr_win32_create(&thread, gthread_routine, NULL) == 0);
++   fail_next_exit_code = 1;
++   Check(waddle_test___gthr_win32_join(thread, &value) == 87);
++   Check(fake_open_handles == 0 && fake_live_allocations == 0);
++}
++
++static void *
++self_join_routine(void *argument)
++{
++   HANDLE own = waddle_test___gthr_win32_self();
++   (void)argument;
++   Check(waddle_test___gthr_win32_join(own, NULL) == 1);
++   return NULL;
++}
++
++static void
++test_self_join_keeps_handle(void)
++{
++   HANDLE thread = NULL;
++   Check(waddle_test___gthr_win32_create(&thread, self_join_routine, NULL) == 0);
++   Check(waddle_test___gthr_win32_join(thread, NULL) == 0);
++   Check(fake_open_handles == 0 && fake_live_allocations == 0);
++}
++
++int
++main(void)
++{
++   test_layout_and_initialization();
++   test_concurrent_first_use_and_isolation();
++   test_assignment_is_idempotent();
++   test_register_common();
++   test_gthreads();
++   test_self_join_keeps_handle();
++   test_fail_fast_paths();
++   printf("CLVK_RUNTIME_TLS_TEST PASS\n");
++   return 0;
++}

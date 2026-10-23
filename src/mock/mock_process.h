@@ -3,8 +3,8 @@
  * @brief Subprocess lifecycle management for Linux mock guest agent.
  */
 
-#ifndef WADDLE_MOCK_PROCESS_H
-#define WADDLE_MOCK_PROCESS_H
+#ifndef WaddleMockProcessH
+#define WaddleMockProcessH
 
 #include "common.h"
 #include <sys/types.h>
@@ -68,4 +68,4 @@ void mock_stop(mock_process_t *p);
 }
 #endif
 
-#endif /* WADDLE_MOCK_PROCESS_H */
+#endif /* WaddleMockProcessH */

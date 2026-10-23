@@ -1,0 +1,94 @@
+{
+  "acceptance": false,
+  "crossbuild": "both variants and C8/2048 executables strict compiled; compilation not execution acceptance",
+  "current_production_configuration": "unchanged POSIX/static winpthread; no Win32 build switch accepted",
+  "evidence_sha256": {
+    "build/qualification_20261017/mingw_win32_private_1402/package_receipt.json": "52ae360850345a12e10790de2194ea2ac65aae3ad6fb9b07e279e58b45280581",
+    "build/qualification_20261017/rejected_win32_configuration.patch": "3cf2f5ee9d9547d523cb9e2877aec881e8f604d57d8bbec7cbc4b10b8b2c9c6f",
+    "build/qualification_20261017/runtime_lifetime_native_bc0a8175/initial_failed_collector.py": "5affe67e5141bb561d7cdff9cc66ad9eb5b28a46cf01029ee30c211a554a053a",
+    "build/qualification_20261017/runtime_lifetime_native_bc0a8175/record.json": "0f39a1f298944cc0d935bc533e27dad753aa40d25793bae16208a02fb84dd487",
+    "build/qualification_20261017/runtime_lifetime_tls_6dd7f8d5/executed_clvk_runtime_windows.c": "f079778332b7684f591c9334c1f2c93e5ad98e85c6d10bd223c75c13e9579221",
+    "build/qualification_20261017/runtime_lifetime_tls_6dd7f8d5/executed_clvk_runtime_windows.cpp": "7ca227340a08d602b3dab6adbdd0a6e80d50c0f5e632e667cb2910596090ad28",
+    "build/qualification_20261017/runtime_lifetime_tls_6dd7f8d5/record.json": "36f5f50774d34b6c6a266d7efbdb7aa2271d7e9ba23edbec7c1c7ed0fb5962a8",
+    "build/qualification_20261017/runtime_lifetime_tls_6dd7f8d5/run.cmd": "9a02389823e96e4a254aaa7aa90b1223bc85c15c3c0da6ec610a25e836412b65",
+    "build/qualification_20261017/runtime_lifetime_tls_6dd7f8d5/status.json": "199c8277faf25362cc774c3e97d247969c5ed56156e57f762d4bc77d1599977e",
+    "build/qualification_20261017/runtime_lifetime_tracked_9f838b66/owned_stress_retirement.json": "a053cd964a741ae7a415184054a617a6e5e791eae02ccfb825ae2c89a586c727",
+    "build/qualification_20261017/runtime_lifetime_tracked_9f838b66/root_read_only_stress_status_first.json": "4cb35b8c88c2103510146f5dde73de47c6ecd735344e0c83bb9ef919f0dc6473",
+    "build/qualification_20261017/runtime_lifetime_tracked_9f838b66/root_read_only_stress_status_second.json": "a73fb283def4d9ff1979d740e2d5d88b47415bdd325eeda98e3df821f9059bee",
+    "build/qualification_20261017/runtime_lifetime_tracked_9f838b66/stress_retirement_guest_status.json": "648b1ace667609012d47cd080e66333f357309cdf5cb793e9821c06238ec41f9"
+  },
+  "host_packages_installed_or_upgraded": false,
+  "native_regression": {
+    "assertions": "exact original handle equality100x10ms, module/export absence, plus exact free TLS capacity; probe owns/frees only indices it allocates",
+    "binary_hashes_before_after": {
+      "posix.dll": "16106b1c5a836f0e9bfc61b7dab397489b476caa942f344b4b510f651cc9a4af",
+      "probe.exe": "734b6bf93773084415a91086cf42e195b22a25fae591df9947169ebd79518e5c",
+      "win32.dll": "b48eba1f20ecf7aa41ea6fb82cce119d78e8959f19100f52e276d73e54e37540"
+    },
+    "medium_integrity": true,
+    "posix": {
+      "free_tls_after": 1085,
+      "free_tls_before": 1086,
+      "functional_probe_result": 0,
+      "handles_after": 59,
+      "handles_before": 53,
+      "module_absent": true,
+      "native_exit": 1
+    },
+    "same_dll_source": "7ca227340a08d602b3dab6adbdd0a6e80d50c0f5e632e667cb2910596090ad28",
+    "same_harness_source": "f079778332b7684f591c9334c1f2c93e5ad98e85c6d10bd223c75c13e9579221",
+    "win32_mthreads": {
+      "free_tls_after": 1084,
+      "free_tls_before": 1086,
+      "functional_probe_result": 0,
+      "handles_after": 47,
+      "handles_before": 47,
+      "module_absent": true,
+      "native_exit": 1
+    }
+  },
+  "new_upstream_patch_applied": false,
+  "production_submodules_pins_unchanged": true,
+  "recorded_utc": "2026-10-18T02:48:40.997659+00:00",
+  "rejected_candidate_admission_tests": {
+    "count": 22,
+    "exit": 0,
+    "scope": "candidate config tests only; do not clear failed native runtime qualification"
+  },
+  "restored_admission_tests": {
+    "count": 19,
+    "exit": 0
+  },
+  "short_handle_only_comparison": {
+    "collector": "initial shared-read error preserved; read-only recovery after both exit markers, original binary hashes matched",
+    "posix_exit": 1,
+    "scope": "handle-only regression, superseded by TLS/stress failure; no production acceptance",
+    "win32_eight_lives_exit": 0
+  },
+  "stress_candidate": {
+    "acceptance": false,
+    "causality_limit": "2TLS slots/load and initial1086 free slots are consistent with exhaustion after543; no instruction stack was captured",
+    "collector_exit": 1,
+    "collector_failure": "60s deadline followed by missing stress.exit KeyError; preserved",
+    "completed_successful_handle_only_lifetimes": 543,
+    "forced_owned_retirement": {
+      "creation": "01dd5ea9f4e6eede",
+      "exact_exit_code_unavailable_in_retirement_receipt": true,
+      "identity_revalidated": true,
+      "image": "C:\\waddle_runtime_0f2643b4\\stress.exe",
+      "pid": 5888,
+      "reported_exited": true
+    },
+    "guest_exit_after_forced_retirement": -1,
+    "native_exit_before_retirement": null,
+    "observed": "identical output after543 lives across two observations, increasing CPU, one live thread",
+    "owned_image_processes_remaining": [],
+    "requested_lifetimes": 2048
+  },
+  "unresolved": [
+    "M2 strict absolute count gate independently fails in system-only Windows control",
+    "current OpenCL toolchain retains kernel handles and TLS state",
+    "candidate Win32 toolchain retains TLS state and stalls under reload stress",
+    "DXVK/OpenCL native heap ownership, cancellation and physical overlap remain unqualified"
+  ]
+}

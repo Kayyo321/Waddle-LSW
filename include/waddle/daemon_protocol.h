@@ -7,8 +7,8 @@
  * and the background subsystem supervisor daemon (`waddled`) over local UNIX domain sockets.
  */
 
-#ifndef WADDLE_DAEMON_PROTOCOL_H
-#define WADDLE_DAEMON_PROTOCOL_H
+#ifndef WaddleDaemonProtocolH
+#define WaddleDaemonProtocolH
 
 #include <stddef.h>
 #include <stdint.h>
@@ -328,4 +328,4 @@ int waddle_daemon_recv_msg(int fd,
 }
 #endif
 
-#endif /* WADDLE_DAEMON_PROTOCOL_H */
+#endif /* WaddleDaemonProtocolH */

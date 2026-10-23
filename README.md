@@ -1,12 +1,38 @@
 # Waddle-LSW (Waddle Linux Subsystem for Windows)
 
-<img align="right" width="180" height="180" alt="Waddle-LSW Logo" src="imgs/logo.png">
+<img align="right" width="180" height="180" alt="Waddle-LSW Logo" src="imgs/logo.png" style="margin-left: 12px; margin-bottom: 12px;">
 
 **Waddle-LSW** is an open-source compatibility layer and subsystem architecture designed to deliver seamless, borderless integration of Microsoft Windows applications directly into Linux Wayland desktop environments.
 
 Unlike traditional full-screen virtual machine viewers, Waddle-LSW tracks individual Windows application windows inside a lightweight guest VM, captures their surfaces with hardware acceleration, transfers frames across domain boundaries via high-throughput IVSHMEM shared memory, and composes them as native Wayland surfaces alongside your Linux applications.
 
 <br clear="right" />
+
+---
+
+## Waddle Usage
+
+<img align="right" width="180" height="180" alt="Waddle-LSW Application Icon" src="imgs/default-window-icon.png" style="margin-left: 12px; margin-bottom: 12px;">
+
+The `waddle` command provides access to the Windows guest and subsystem controls:
+
+- Start an interactive terminal with `waddle`. This starts the background services and opens a Windows ConPTY session.
+- Run a program in the guest with `waddle exec -- <command>`.
+- Start, inspect, or stop the subsystem with `waddle start`, `waddle status`, or `waddle stop`.
+- Check shared directory mappings and read/write access with `waddle fs test`.
+
+<br clear="right" />
+
+```bash
+# Launch interactive Windows shell (auto-starts background subsystem)
+waddle
+
+# Execute a command inside the Windows guest
+waddle exec -- cmd.exe /c "dir C:\\"
+
+# Inspect subsystem daemon and VM status
+waddle status
+```
 
 ---
 

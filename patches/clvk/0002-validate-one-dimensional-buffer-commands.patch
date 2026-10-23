@@ -1,0 +1,118 @@
+--- a/src/api.cpp
++++ b/src/api.cpp
+@@ -3489,6 +3489,16 @@
+         return CL_INVALID_EVENT_WAIT_LIST;
+     }
+ 
++    // Reject malformed logical spans before command allocation or host access.
++    if (!is_same_context(cq, buf) ||
++        !is_same_context(cq, num_events_in_wait_list, event_wait_list)) {
++        return CL_INVALID_CONTEXT;
++    }
++    if (ptr == nullptr || size == 0 || offset > buffer->size() ||
++        size > buffer->size() - offset) {
++        return CL_INVALID_VALUE;
++    }
++
+     auto cmd = new cvk_command_buffer_host_copy(
+         command_queue, CL_COMMAND_READ_BUFFER, static_cast<cvk_buffer*>(buffer),
+         ptr, offset, size);
+@@ -3519,8 +3529,6 @@
+         return CL_INVALID_COMMAND_QUEUE;
+     }
+ 
+-    // TODO validate the contexts
+-
+     if (!is_valid_buffer(buffer)) {
+         return CL_INVALID_MEM_OBJECT;
+     }
+@@ -3531,6 +3539,16 @@
+ 
+     if (!is_valid_event_wait_list(num_events_in_wait_list, event_wait_list)) {
+         return CL_INVALID_EVENT_WAIT_LIST;
++    }
++
++    // Reject malformed logical spans before command allocation or host access.
++    if (!is_same_context(cq, buf) ||
++        !is_same_context(cq, num_events_in_wait_list, event_wait_list)) {
++        return CL_INVALID_CONTEXT;
++    }
++    if (ptr == nullptr || size == 0 || offset > buffer->size() ||
++        size > buffer->size() - offset) {
++        return CL_INVALID_VALUE;
+     }
+ 
+     auto cmd = new cvk_command_buffer_host_copy(
+@@ -3740,20 +3758,44 @@
+         return CL_INVALID_COMMAND_QUEUE;
+     }
+ 
+-    if (!is_same_context(cq, srcbuf) || !is_same_context(cq, dstbuf)) {
+-        return CL_INVALID_CONTEXT;
+-    }
+-
+-    if (!is_same_context(cq, num_events_in_wait_list, event_wait_list)) {
+-        return CL_INVALID_CONTEXT;
+-    }
+-
+     if (!is_valid_buffer(src_buffer) || !is_valid_buffer(dst_buffer)) {
+         return CL_INVALID_MEM_OBJECT;
+     }
+-
+     if (!is_valid_event_wait_list(num_events_in_wait_list, event_wait_list)) {
+         return CL_INVALID_EVENT_WAIT_LIST;
++    }
++    if (!is_same_context(cq, srcbuf) || !is_same_context(cq, dstbuf) ||
++        !is_same_context(cq, num_events_in_wait_list, event_wait_list)) {
++        return CL_INVALID_CONTEXT;
++    }
++    if (size == 0 || src_offset > src_buffer->size() ||
++        size > src_buffer->size() - src_offset ||
++        dst_offset > dst_buffer->size() ||
++        size > dst_buffer->size() - dst_offset) {
++        return CL_INVALID_VALUE;
++    }
++
++    // Sub-buffers cannot themselves be parents. Resolve the shared root and
++    // checked backing spans so sibling aliases obey the same overlap rule.
++    auto src_root = src_buffer->parent() ? src_buffer->parent() : src_buffer;
++    auto dst_root = dst_buffer->parent() ? dst_buffer->parent() : dst_buffer;
++    size_t src_base = src_buffer->parent() ? src_buffer->parent_offset() : 0;
++    size_t dst_base = dst_buffer->parent() ? dst_buffer->parent_offset() : 0;
++    if (src_base > src_root->size() ||
++        src_offset > src_root->size() - src_base ||
++        size > src_root->size() - src_base - src_offset ||
++        dst_base > dst_root->size() ||
++        dst_offset > dst_root->size() - dst_base ||
++        size > dst_root->size() - dst_base - dst_offset) {
++        return CL_INVALID_VALUE;
++    }
++    if (src_root == dst_root) {
++        size_t src_begin = src_base + src_offset;
++        size_t dst_begin = dst_base + dst_offset;
++        if (src_begin < dst_begin ? size > dst_begin - src_begin
++                                  : size > src_begin - dst_begin) {
++            return CL_MEM_COPY_OVERLAP;
++        }
+     }
+ 
+     auto cmd = new cvk_command_copy_buffer(
+@@ -3916,14 +3958,16 @@
+         return nullptr;
+     }
+ 
+-    if (!is_same_context(command_queue, buffer)) {
++    if (!is_same_context(command_queue, buffer) ||
++        !is_same_context(command_queue, num_events_in_wait_list, event_wait_list)) {
+         if (errcode_ret != nullptr) {
+             *errcode_ret = CL_INVALID_CONTEXT;
+         }
+         return nullptr;
+     }
+ 
+-    if ((size == 0) || (offset + size > buffer->size())) {
++    if (size == 0 || offset > buffer->size() ||
++        size > buffer->size() - offset) {
+         if (errcode_ret != nullptr) {
+             *errcode_ret = CL_INVALID_VALUE;
+         }

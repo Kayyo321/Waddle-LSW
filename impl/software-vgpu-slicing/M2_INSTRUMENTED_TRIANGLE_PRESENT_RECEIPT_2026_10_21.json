@@ -1,0 +1,2866 @@
+{
+ "acceptance_credit": false,
+ "disclosures": [
+  "Run 1 is the pilot (invocation 20261021T153046Z_0c3dd4); runs 2-20 are the second invocation (20261021T153515Z_c128ca, continue past failure enabled; none failed).",
+  "The Windows 11 VM was booted from its preserved disk at 2026-10-21T15:25:18Z host time after a host reboot (never provisioned or reset; qemu-img check clean before boot). Codex signed in at the console using the saved test-account credential through QMP at the user\u2019s explicit request (auto-logon remained off); run 1 started about 5 minutes after boot.",
+  "Host portable gates ended at 15:28:50Z, before run 1. During runs 18-20 a light offline mock-harness of an evidence-tooling worker ran at nice 19 under unshare -rn with no VM, WinRM, QMP, GPU or network contact; those runs recorded all-pass pre-checks, empty stray-process lists and the same timings as the others.",
+  "All runs used the frozen guest ICD, bootstrap, loader, worker, runtime and controller of the qualified 2026-10-17 runs (hash-equal); only the guest fixture executable differs and is the instrumented build of the committed sources.",
+  "Every run finished its last retirement check 55.06-55.80 s after its own baseline, whereas the system-only control changed count about 59.8 s after its baseline. The earlier GPU runs lack this same baseline-relative clock. On the shared controller-ready to host-result clock these new runs took 65.1-68.6 s, the earlier passes 66.4-68.5 s, and the failed run 81.8 s for 7 lifetimes. The 71.1 s earlier wsi_lifetime run also passed. These runs do not discriminate duration as a cause of the preserved failure."
+ ],
+ "fixture": {
+  "build_command": "make build/vgpu_tcp_gpu_windows_draft.exe  # zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror",
+  "exe": {
+   "equals_frozen_fixture_exe": false,
+   "handle_diag_marker_count": 8,
+   "is_pe_x86_64": true,
+   "legacy_failure_text_count": 1,
+   "mtime_ns": 1792596286465843811,
+   "mtime_utc": "2026-10-21T15:24:46.465844+00:00",
+   "path": "build/vgpu_tcp_gpu_windows_draft.exe",
+   "sha256": "77a334150077b0702c0a4144124b760871ec2e1bb41a7967cc774139773bb66d",
+   "size": 317440
+  },
+  "handle_diag_include_and_other_compile_inputs": {
+   "include/waddle/venus_capabilities.h": "a05a19ef194b412e7f684739f01987289d326b3f4f9bc509379a1f78932e3d8a",
+   "include/waddle/venus_command.h": "5b5f7749ff1b100b9ef04c50d15a15500b3fa0f882e012f7e02cdc4746994c22",
+   "include/waddle/venus_icd.h": "3382a0c924ddc9a68e6617a511f98c1fa1e0c46affa011aff5d3dead83f977ec",
+   "include/waddle/venus_instance_wire.h": "0a3539c23170f4568bfec4d32eb17f8c51b0b0b68d11f20636b4a01a7cb8799a",
+   "include/waddle/venus_request.h": "3f682a40ff167a8e9c0fee0d7587cccda53dbd4c2574e96c7b830a73ee02702b",
+   "include/waddle/venus_ring.h": "84069856ab6e9daca731250279767f54bf9001daf9519c121212136aa02a9aea",
+   "include/waddle/venus_tcp.h": "407c759f7cb216187961f549e4f6cb74ff2b9281941e3cc7d3dd33468b7289c8",
+   "include/waddle/venus_values.h": "8a2bef2647ed521ca74e73ec0796fe0cbee520beca0fa6d3ff0426bfa295c8b3",
+   "tests/vgpu/shaders/compute_push_shader.h": "b59d796d11e25a36a1259cfabec41daf44668dd3aae8f0ca497be723d28b47fe",
+   "tests/vgpu/shaders/compute_shader.h": "44ccc2a73cc1fb8bf674898079efa2de8bc922becc697ed5cc6102490cc54515",
+   "tests/vgpu/shaders/triangle_fragment_shader.h": "6d75588d34a2225713f7e2198ff6b2d0bcb5f861f00f0fc8e76d42453bd2790d",
+   "tests/vgpu/shaders/triangle_vertex_shader.h": "6cf3a302397d0c0fa1bdea71dd6a7ce1a3f901430f3c2b569b520ebdef7dc8f0",
+   "tests/vgpu/tcp_gpu_handle_diag_windows.inc": "09a88a42e183695fe17afb5490525f9311021060ecdaa45ea4bf6a0349503eb9",
+   "tests/vgpu/tcp_gpu_present_windows.inc": "61b8189e388496a9fcfe4068a9e5635abf3c54a9353ff19eacdd564591e857bb",
+   "tests/vgpu/tcp_gpu_windows.c": "ef51e3d6006fadd4006d6ce67d4ca81520c3c3d275abefa4efd57ae3fc1fc17d",
+   "tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": "dcb3a630ff3b6f955169268e68647304edec046304ce327b67bc202b90156595"
+  },
+  "include_closure_file_count": 44,
+  "sources": {
+   "tests/vgpu/tcp_gpu_present_windows.inc": {
+    "differs_from_frozen": true,
+    "frozen_snapshot_sha256": "169ba63d99ed11152b597858252f1d3e20e7d12c6c5769597c57b8c97e2aa6e3",
+    "sha256": "61b8189e388496a9fcfe4068a9e5635abf3c54a9353ff19eacdd564591e857bb"
+   },
+   "tests/vgpu/tcp_gpu_windows.c": {
+    "differs_from_frozen": true,
+    "frozen_snapshot_sha256": "b97fd1c6e4cd202007755b45a7c2c6d2ad64f5368a13a689f8672ae8696f4005",
+    "sha256": "ef51e3d6006fadd4006d6ce67d4ca81520c3c3d275abefa4efd57ae3fc1fc17d"
+   },
+   "tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": {
+    "differs_from_frozen": true,
+    "frozen_snapshot_sha256": "fe304e5bbb540c9e1e11e8239bea8b326e027ed04fb2a42e6e4317187c1186ad",
+    "sha256": "dcb3a630ff3b6f955169268e68647304edec046304ce327b67bc202b90156595"
+   }
+  }
+ },
+ "frozen_guest_inputs_unchanged_vs_qualified_runs": {
+  "controller_sha256": "c1646a6e319dd2ebe4e34c05ff1f767f168d516d12258e931077c9863a1f7cd8",
+  "driver_inputs_drift_vs_20261017": [],
+  "expected_sha256": {
+   "gpu.exe": "ad8be3986eb93d3c0440e2ec5aa2dd853e500d647e913d993b7135a8925b9162",
+   "libvirglrenderer.so.1": "65e903a06209ab7b38179093df38b97516cc485cb32e225ea4b6c758cc3ab433",
+   "root_runtime_provenance.json": "ebcb3741048765b3e2516589f5b6fdce311ff6f44fe7638a3f9a1b85a6d2d00f",
+   "virgl_render_server": "cb9c7cacff6bf6dfb97a7417e2d44a4b75e386f9f6201c16c36650636458e148",
+   "vulkan-1.dll": "dcc3bb5a6eaa6b02d32d15b0d83381befd1a9a25915074e8f74c769932b3d66d",
+   "waddle_tcp_bootstrap.dll": "c8081c5e9561a16cbd7f24492cfd6e2497c5a9745e39988163f5db458a1aca9a",
+   "waddle_vgpu_worker": "3f4d9528dde962bad1d4518a6bebea367b7e170cb7ff18dc54fcd5265d787d2d",
+   "waddle_vulkan_experimental.dll": "3c2b14c09df7400e12fdd3064f26e974edc248905bfe67607f217c52931e075a"
+  },
+  "qualified_run_folders": [
+   "tcp_gpu_41308226",
+   "tcp_gpu_df62f140"
+  ],
+  "qualified_run_receipt": {
+   "path": "impl/software-vgpu-slicing/M2_NATIVE_RECEIPT_2026_10_17.json",
+   "sha256": "7e54e39c7d19c1b88ed0e0857497ed9149a1874cabf65feee6075c89e8505140"
+  }
+ },
+ "git": {
+  "branch": "refs/heads/feature/software-vgpu-slicing",
+  "head_at_generation": "7392d9375b040971d852e92f55cfe0e9d1f0eec6",
+  "head_at_runs": "7392d9375b040971d852e92f55cfe0e9d1f0eec6",
+  "tree_clean_at_generation": true
+ },
+ "host_environment": {
+  "cwd": "/home/dev/Waddle-LSW",
+  "debug_asserts_enabled": true,
+  "pid": 17672,
+  "python": "3.13.5",
+  "python_executable": "/usr/bin/python3",
+  "selected_variables": {
+   "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "uname": "Linux a03-hating-machine 7.1.13+deb13-amd64 x86_64"
+ },
+ "not_claimed": [
+  "No acceptance credit, waiver, M2 closure, Time Ended, feature progress or PR readiness.",
+  "The preserved tcp_gpu_7adb6000 failure (199 to 200 after 42 frames) is neither replaced nor attributed by these runs.",
+  "Passive diagnostics only; the rule, baseline point, budget and workload are the unchanged originals.",
+  "Vendor descendant wait status 9 (pinned virgl teardown) is retained as recorded; no claim that every vendor child exited normally."
+ ],
+ "purpose": "Source-bound native repetitions of the unchanged strict process-handle gate with the passive handle_diag fixture. Evidence for independent review; it grants no acceptance credit and waives nothing.",
+ "receipt": "M2_INSTRUMENTED_TRIANGLE_PRESENT_2026_10_21",
+ "results_file": {
+  "path": "build/qualification_20261020/m2_instrumented_results.json",
+  "sha256": "7aee8c92730f82d9ddfe12ee48a2597fe195cb60bd51b6385380d3028c56daf1"
+ },
+ "runner": {
+  "path": "build/qualification_20261020/m2_runner/run_m2_instrumented.py",
+  "sha256s": [
+   "e87ba840421bb77882a446dccf35244e6c5018108884988558ec1e3089748d3a"
+  ]
+ },
+ "runs": [
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:32:01Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_9d3be2f5/evidence_manifest.json",
+    "sha256": "fc0bf48f5c0ddbf156cc52f636bf0a3290b5e8117bcb998f72d128becbcacf61"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_9d3be2f5",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "ca331c750a6ea325",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 7387,
+      "check_start_ms": 7387,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14436,
+      "check_start_ms": 14436,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 21362,
+      "check_start_ms": 21362,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28327,
+      "check_start_ms": 28327,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 35266,
+      "check_start_ms": 35266,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 42131,
+      "check_start_ms": 42131,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48946,
+      "check_start_ms": 48946,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55805,
+      "check_start_ms": 55805,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "d1755078f5f330047be6ddfc18393a263b71c4fc11dcb3272842a4b4e6aca426",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 17714,
+      "starttime": 96704,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "ca331c750a6ea325",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "17712",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 1,
+   "invocation_id": "20261021T153046Z_0c3dd4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.3,
+   "repetition_in_invocation": 1,
+   "retained_session_lines": [],
+   "run_seconds": 69.3,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "f1f1055d4cc5696f2e0f0e9045bae8477cb2c7fbc2327ef7fd9af5381948e938"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "e425187aa2e1331e38051466fc2eb59b6f9be188fdfbbbae7845637dcec7f3b3"
+    }
+   },
+   "start_utc": "2026-10-21T15:30:46Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55805,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:36:27Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_d924e1ad/evidence_manifest.json",
+    "sha256": "89092535532d35a48723ca9bf9dc456abdf4e26da7e7b20b22defbf98a98f8b3"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_d924e1ad",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "a25076fa360bb69d",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6938,
+      "check_start_ms": 6938,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13820,
+      "check_start_ms": 13819,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20877,
+      "check_start_ms": 20877,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27783,
+      "check_start_ms": 27783,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34670,
+      "check_start_ms": 34670,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41572,
+      "check_start_ms": 41572,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48517,
+      "check_start_ms": 48517,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55507,
+      "check_start_ms": 55507,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "1dbc51f30d7fcd5501e406823d4b5160c0af89bf13a17742a05f09dad0957ca7",
+    "slowest_retirement_check_ms": 1,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 19369,
+      "starttime": 123348,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "a25076fa360bb69d",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "19367",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 2,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.8,
+   "repetition_in_invocation": 1,
+   "retained_session_lines": [],
+   "run_seconds": 66.2,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "1e983f3c0381ac41b8bfc7dc902e05aec38834306a9aa330f6c8c8a199842aec"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "8dff8561570c540346317d95d49f5dc95bf183cbb13c2056ac76ee53d85b9c00"
+    }
+   },
+   "start_utc": "2026-10-21T15:35:16Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55507,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:37:38Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_61c708db/evidence_manifest.json",
+    "sha256": "2a67cb414735103933e663229bd7a59a65b3d1d9a62e90e62cd98af1145ea5da"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_61c708db",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "7a2b2a187cdd21e2",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6948,
+      "check_start_ms": 6948,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13850,
+      "check_start_ms": 13850,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20805,
+      "check_start_ms": 20805,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27748,
+      "check_start_ms": 27748,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34662,
+      "check_start_ms": 34662,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41534,
+      "check_start_ms": 41534,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48418,
+      "check_start_ms": 48418,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55328,
+      "check_start_ms": 55328,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "99dbce7b10c7ded5af69e17cbdd0ca3ebfedd8dd29f7ede29b481bfd6837e9cf",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 19672,
+      "starttime": 130496,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "7a2b2a187cdd21e2",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "19670",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 3,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.0,
+   "repetition_in_invocation": 2,
+   "retained_session_lines": [],
+   "run_seconds": 65.9,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "b231e3260a3a06c5b058fd8bedfdca83d3046aec4cb10e85fe5f0cfa246aca0d"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "a58a2a4644f7fb7027e6d60d197d45659ba9629b9e1aa3bab0bcfa5053ea7861"
+    }
+   },
+   "start_utc": "2026-10-21T15:36:27Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55328,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:38:48Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_2d3558ba/evidence_manifest.json",
+    "sha256": "020dc8071fb029f2cd951b6ba9e44cd0305870ad7d6f551b7e6b61d816f94212"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_2d3558ba",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "810ad876aad76597",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6908,
+      "check_start_ms": 6907,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13840,
+      "check_start_ms": 13840,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20753,
+      "check_start_ms": 20753,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27619,
+      "check_start_ms": 27619,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34525,
+      "check_start_ms": 34525,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41443,
+      "check_start_ms": 41443,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48420,
+      "check_start_ms": 48420,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55436,
+      "check_start_ms": 55436,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "f6a57a05388ffa3059353bc51f12f606fe2fb8c1fd2eb942bbcaf29028f12b40",
+    "slowest_retirement_check_ms": 1,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 20237,
+      "starttime": 137539,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "810ad876aad76597",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "20235",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 4,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.7,
+   "repetition_in_invocation": 3,
+   "retained_session_lines": [],
+   "run_seconds": 65.8,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "187a148e0b17a465ee3094fbf07704fdcac6412517d2a1b02e33a02f7383a6ff"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "1fc503536cf937f18ab5f19b65bfc90e9884770b3eb9cb39d33716d563f16416"
+    }
+   },
+   "start_utc": "2026-10-21T15:37:38Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55436,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:39:59Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_5f483ec0/evidence_manifest.json",
+    "sha256": "7c413fc690774664220b5c8d0a7a1d13a65692c69d09f5e2efe38270feaeb550"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_5f483ec0",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "aa0233f142b86490",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6963,
+      "check_start_ms": 6963,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13843,
+      "check_start_ms": 13843,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20742,
+      "check_start_ms": 20742,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27750,
+      "check_start_ms": 27750,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34699,
+      "check_start_ms": 34699,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41666,
+      "check_start_ms": 41666,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48647,
+      "check_start_ms": 48647,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55563,
+      "check_start_ms": 55563,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "3efc89e55c943f9e8832156b39b13b0eed10ecbbd8127b96e4018873d35f1798",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 20611,
+      "starttime": 144605,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "aa0233f142b86490",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "20609",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 5,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.7,
+   "repetition_in_invocation": 4,
+   "retained_session_lines": [],
+   "run_seconds": 66.2,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "ab7f12cab8b6f344aa3e480b7d3a9d57f0c002dca8bb484d8cb5283b96e2bde5"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "7a731362c943a06aef90b9afc7ac62436de1542eff58fe8189cec132491586ed"
+    }
+   },
+   "start_utc": "2026-10-21T15:38:48Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55563,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:41:10Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_19e59203/evidence_manifest.json",
+    "sha256": "65e23e03beb938cceca5a9b1bdfbbf54343df14de639a392f6032e89237716c7"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_19e59203",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "6632eeac86d772e1",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6888,
+      "check_start_ms": 6888,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13826,
+      "check_start_ms": 13826,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20725,
+      "check_start_ms": 20725,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27640,
+      "check_start_ms": 27640,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34600,
+      "check_start_ms": 34600,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41526,
+      "check_start_ms": 41526,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48449,
+      "check_start_ms": 48448,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55407,
+      "check_start_ms": 55407,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "c4d4469ffca9819d886be1efbc72327582ab4c5c77bef19f191fa02e4ecd4981",
+    "slowest_retirement_check_ms": 1,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 20919,
+      "starttime": 151694,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "6632eeac86d772e1",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "20917",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 6,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.8,
+   "repetition_in_invocation": 5,
+   "retained_session_lines": [],
+   "run_seconds": 66.0,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "9836ee1c834bd0c93cff44ec82e1cbf240fbe5da647c1819aad2b764cf6d6602"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "49eeda142576317108399f3cc8b5c013345a2b4349e3ea11452b24884aee8c61"
+    }
+   },
+   "start_utc": "2026-10-21T15:39:59Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55407,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:42:20Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_68505bd4/evidence_manifest.json",
+    "sha256": "4fb4cae7e230891129bbce35fafc1ed4fe2520c16e91d1868d81eaef96495259"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_68505bd4",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "e7c5866d1ce8ddaf",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6947,
+      "check_start_ms": 6947,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13846,
+      "check_start_ms": 13846,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20726,
+      "check_start_ms": 20726,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27624,
+      "check_start_ms": 27624,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34467,
+      "check_start_ms": 34467,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41362,
+      "check_start_ms": 41362,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48229,
+      "check_start_ms": 48229,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55122,
+      "check_start_ms": 55122,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "67bdb03a3d05f4099bd083518b9552f643278483f2b570fca90c6cb4d1c76c98",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 21347,
+      "starttime": 158778,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "e7c5866d1ce8ddaf",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "21345",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 7,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.8,
+   "repetition_in_invocation": 6,
+   "retained_session_lines": [],
+   "run_seconds": 65.5,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "7380bb7557132ea0b9261d6962a47370d44921fd82b81bb238a001d096945718"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "0eba0c179bc0c2d56b1a0860fab922cc7d26cfa1800412fd996a581f47f595d9"
+    }
+   },
+   "start_utc": "2026-10-21T15:41:10Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55122,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:43:31Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_08d50349/evidence_manifest.json",
+    "sha256": "ad217ed01d6fd98c5db2d8622e4f73295aa729319a70161b3606f7b2723d82dd"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_08d50349",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "d756fc298336f59b",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6985,
+      "check_start_ms": 6984,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13968,
+      "check_start_ms": 13968,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20819,
+      "check_start_ms": 20819,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27778,
+      "check_start_ms": 27778,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34673,
+      "check_start_ms": 34673,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41526,
+      "check_start_ms": 41526,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48490,
+      "check_start_ms": 48490,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55346,
+      "check_start_ms": 55346,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "4b9bb46d2c4cd33cc7ee74a9bb8efaee5954a7ee31b31ec8aff7fb9fbdf7b2ed",
+    "slowest_retirement_check_ms": 1,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 21831,
+      "starttime": 165788,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "d756fc298336f59b",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "21829",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 8,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.7,
+   "repetition_in_invocation": 7,
+   "retained_session_lines": [],
+   "run_seconds": 66.2,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "6275e2e596659e3194f823b206dac2922310573968b845c3a0eecf8e7b58c3bf"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "d078c3bdd2d1b7a9f7abdf1b5c58e3a6d318fc01a7792cdf4a2962fb79bb3078"
+    }
+   },
+   "start_utc": "2026-10-21T15:42:20Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55346,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:44:41Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_6681aa4d/evidence_manifest.json",
+    "sha256": "8d7320b05f9d0d336462ef58a9c0509400c5f9a85cce007c4b8b9d74a956f572"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_6681aa4d",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "5edb6c9638a0cb48",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6889,
+      "check_start_ms": 6889,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13704,
+      "check_start_ms": 13704,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20528,
+      "check_start_ms": 20528,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27514,
+      "check_start_ms": 27514,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34562,
+      "check_start_ms": 34562,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41397,
+      "check_start_ms": 41397,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48394,
+      "check_start_ms": 48394,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55313,
+      "check_start_ms": 55313,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "d78b0dcce0c34cbc686775447cced96c57f07d6740df3d8bb42e4a51e0faf06e",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 22307,
+      "starttime": 172870,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "5edb6c9638a0cb48",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "22305",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 9,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.7,
+   "repetition_in_invocation": 8,
+   "retained_session_lines": [],
+   "run_seconds": 65.8,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "5bad50550f17f2082cc83ea89d7d0a837201032c9da92b8c1cbc37aca7943ea1"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "6275e2e596659e3194f823b206dac2922310573968b845c3a0eecf8e7b58c3bf"
+    }
+   },
+   "start_utc": "2026-10-21T15:43:31Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55313,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:45:52Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_c7c4df33/evidence_manifest.json",
+    "sha256": "934e06abad1e0c364a7ac5c5b73f97c3396cbd561e144538aac08382ed44b4b8"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_c7c4df33",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "c3fcf5fef6af8a10",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6896,
+      "check_start_ms": 6896,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13775,
+      "check_start_ms": 13775,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20711,
+      "check_start_ms": 20711,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27634,
+      "check_start_ms": 27634,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34521,
+      "check_start_ms": 34521,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41428,
+      "check_start_ms": 41428,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48284,
+      "check_start_ms": 48284,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55163,
+      "check_start_ms": 55163,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "00192cae82d5b0d26eddc8d35a78cb70afcb017b7418b2e2dfe56d4214f267a0",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 22666,
+      "starttime": 179920,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "c3fcf5fef6af8a10",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "22664",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 10,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.6,
+   "repetition_in_invocation": 9,
+   "retained_session_lines": [],
+   "run_seconds": 66.0,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "cdc4a0387eafbf021fb47e01732a0229661ffbcc0ca6010de9ade12726289fba"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "af37d06d2c4fcce65e2d6f2b7ccd1c316bdb90864667649ae2bab605eaab15f0"
+    }
+   },
+   "start_utc": "2026-10-21T15:44:41Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55163,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:47:03Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_1fe480a3/evidence_manifest.json",
+    "sha256": "b94d88741d83c9e542ea353e2e58f7c3a63ede3a554d9c9cc9a4eb1482392596"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_1fe480a3",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "a95891cf670e27c0",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6960,
+      "check_start_ms": 6960,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13822,
+      "check_start_ms": 13822,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20740,
+      "check_start_ms": 20740,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27622,
+      "check_start_ms": 27622,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34490,
+      "check_start_ms": 34490,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41422,
+      "check_start_ms": 41422,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48309,
+      "check_start_ms": 48309,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55194,
+      "check_start_ms": 55194,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "f8699d1c596a6f9733645bedb2df5c470e246fc7f7d4cb49b2f56944bcf0dcd8",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 23045,
+      "starttime": 186988,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "a95891cf670e27c0",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "23043",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 11,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.7,
+   "repetition_in_invocation": 10,
+   "retained_session_lines": [],
+   "run_seconds": 66.0,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "9af85620fcfbc5dba5eb254af4e92bddb499d4e7fcf9265e11e780c898167c7e"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "97a970cc16dd0b002bbbcf5d39d969fc68463b25276dfe126f2d4deb4ece786d"
+    }
+   },
+   "start_utc": "2026-10-21T15:45:52Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55194,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:48:13Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_99b93e78/evidence_manifest.json",
+    "sha256": "4adbb77b1729fd1d097ce51f8f83441f585129bcf17891f673aa3755c092da34"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_99b93e78",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "c770412b8f5f53e4",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6824,
+      "check_start_ms": 6824,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13691,
+      "check_start_ms": 13691,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20543,
+      "check_start_ms": 20543,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27368,
+      "check_start_ms": 27368,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34268,
+      "check_start_ms": 34268,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41181,
+      "check_start_ms": 41181,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48244,
+      "check_start_ms": 48244,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55196,
+      "check_start_ms": 55196,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "7e0f8b5548da97ef4a6407b90f95a2b47b780a54708eaccbdf68136b418542f5",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 23516,
+      "starttime": 194072,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "c770412b8f5f53e4",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "23514",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 12,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.9,
+   "repetition_in_invocation": 11,
+   "retained_session_lines": [],
+   "run_seconds": 65.7,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "3d78a788715584bca391731d68d83c7e1d5fdcd24bdd87685790991f70a3f0c2"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "931d5ec59b1ad89e1068ac82f6ec3b6377f2beb9985b702ee67f435a9c1b8229"
+    }
+   },
+   "start_utc": "2026-10-21T15:47:03Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55196,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:49:25Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_920e1a21/evidence_manifest.json",
+    "sha256": "729306d334998504d197cb2162b10e4acb565ef7bf026fc32c26d2ce32b2d9fd"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_920e1a21",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "98237abac5e32d71",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6991,
+      "check_start_ms": 6991,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13923,
+      "check_start_ms": 13923,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20797,
+      "check_start_ms": 20797,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27778,
+      "check_start_ms": 27778,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34674,
+      "check_start_ms": 34674,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41580,
+      "check_start_ms": 41580,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48425,
+      "check_start_ms": 48425,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55374,
+      "check_start_ms": 55374,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "cff950f8f2c7e31df4b1a757d1e1eb9d292e210ee5b8ed0036f444ce00320e28",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 24936,
+      "starttime": 201166,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "98237abac5e32d71",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "24934",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 13,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.2,
+   "repetition_in_invocation": 12,
+   "retained_session_lines": [],
+   "run_seconds": 66.0,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "429ec3e976f67b8922e645cc7c5f02008e2791826c0072d4ddf427a4a4228ff4"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "2eeed6f3e6fce248659cc3c6e793a5a5ffca0403036ee29ac6fdcfbd07d1fdd2"
+    }
+   },
+   "start_utc": "2026-10-21T15:48:13Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55374,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:50:35Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_aa8c70a1/evidence_manifest.json",
+    "sha256": "3d6fb6c6898a6b1e3b75c653e63731479dbb32746bd7b68aa4618ab4ba770574"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_aa8c70a1",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "dc383bd420996a2a",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6878,
+      "check_start_ms": 6878,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13815,
+      "check_start_ms": 13815,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20892,
+      "check_start_ms": 20892,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27759,
+      "check_start_ms": 27759,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34631,
+      "check_start_ms": 34631,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41644,
+      "check_start_ms": 41644,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48622,
+      "check_start_ms": 48622,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55447,
+      "check_start_ms": 55447,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "830f09660dffb9eb8594904b09da5fea4da6c66c9698505c17cbc6825279bc89",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 25223,
+      "starttime": 208243,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "dc383bd420996a2a",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "25221",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 14,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.8,
+   "repetition_in_invocation": 13,
+   "retained_session_lines": [],
+   "run_seconds": 66.0,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "dc5d6bc9106467b64766e733177d617e58693e93d92b3d10d9722d33234a2921"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "0ab53e70296a1ec74ed354aa5ca44447733ccc0f1aab701470175a7715db3d46"
+    }
+   },
+   "start_utc": "2026-10-21T15:49:25Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55447,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:51:46Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_6ee9023f/evidence_manifest.json",
+    "sha256": "792343deb67bf7a6b560f06da131519303edb09ca715b4e9ffa8bf205d1ebc61"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_6ee9023f",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "6301bdcaa0303aca",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6980,
+      "check_start_ms": 6980,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14000,
+      "check_start_ms": 14000,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20894,
+      "check_start_ms": 20894,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27783,
+      "check_start_ms": 27783,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34779,
+      "check_start_ms": 34779,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41676,
+      "check_start_ms": 41676,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48654,
+      "check_start_ms": 48654,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55616,
+      "check_start_ms": 55616,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "3dff5ec4b0384bd4e570085bdcc35894bb170788b49035613fd27f1fb53dab21",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 26277,
+      "starttime": 215340,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "6301bdcaa0303aca",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "26275",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 15,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.9,
+   "repetition_in_invocation": 14,
+   "retained_session_lines": [],
+   "run_seconds": 66.2,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "5e6e348f2cfe54c71989a3273cbdc178fd55b85d5f349a7e00c1ba83f2573124"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "900a00a4373163086ef82e73768046273c6a1bdbca63d51129635041a5594934"
+    }
+   },
+   "start_utc": "2026-10-21T15:50:35Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55616,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:52:57Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_d709dce2/evidence_manifest.json",
+    "sha256": "348546c62b9bdbd009bbe51831819bc5d684d9a7ea58be4beb0c7970461fc8e5"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_d709dce2",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "537d9f495848e515",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6964,
+      "check_start_ms": 6964,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13851,
+      "check_start_ms": 13851,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20767,
+      "check_start_ms": 20767,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27594,
+      "check_start_ms": 27594,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34489,
+      "check_start_ms": 34489,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41385,
+      "check_start_ms": 41385,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48314,
+      "check_start_ms": 48314,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55185,
+      "check_start_ms": 55185,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "5e26d40fa7b8ff7aee65b4d19f19dd956cdcc5e70e861731cfb558fac8b8650f",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 26600,
+      "starttime": 222427,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "537d9f495848e515",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "26598",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 16,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.8,
+   "repetition_in_invocation": 15,
+   "retained_session_lines": [],
+   "run_seconds": 65.7,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "64d8b7722b7047f05fb3f5db3cbdec052508a67758c31bf7fcfc44675a5da09f"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "eb5fb772b7b8da023a19b724f417f60c8d5141f2483266bc1be2315d61960cb6"
+    }
+   },
+   "start_utc": "2026-10-21T15:51:46Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55185,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:54:08Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_56931e42/evidence_manifest.json",
+    "sha256": "9b0f9a06cfaad890b0d66fff68526cea8067131f98b6033b1527fa5b5dc90f5b"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_56931e42",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "3ad9c8a3145a2b47",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6932,
+      "check_start_ms": 6932,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13829,
+      "check_start_ms": 13829,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20764,
+      "check_start_ms": 20764,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27677,
+      "check_start_ms": 27677,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34537,
+      "check_start_ms": 34537,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41430,
+      "check_start_ms": 41430,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48250,
+      "check_start_ms": 48250,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55153,
+      "check_start_ms": 55153,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "df54a976438e216f3e5af4ace5799015cb82d7833c3e89e96701f67b9c015a7b",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 26985,
+      "starttime": 229489,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "3ad9c8a3145a2b47",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "26983",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 17,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.8,
+   "repetition_in_invocation": 16,
+   "retained_session_lines": [],
+   "run_seconds": 66.1,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "bd1f840e9d14e92d23a05c1ace06fb640094d88e496d71894566930f8ea3d96d"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "bcb96cc37206687404feed880191f477f577384d95249d086130c8477cde6cad"
+    }
+   },
+   "start_utc": "2026-10-21T15:52:57Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55153,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:55:18Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_6719241d/evidence_manifest.json",
+    "sha256": "6f2d07cc699ddc8f44b3f022362ace1d2c8dc2f00c7069a2bdd1125a9b231f04"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_6719241d",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "901fe321a5c7d8e5",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6930,
+      "check_start_ms": 6930,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13824,
+      "check_start_ms": 13824,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20681,
+      "check_start_ms": 20681,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27545,
+      "check_start_ms": 27545,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34413,
+      "check_start_ms": 34413,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41267,
+      "check_start_ms": 41267,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48171,
+      "check_start_ms": 48171,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55065,
+      "check_start_ms": 55065,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "0135d510d200d8d5623e0c97b057ccbb94e89c63298362a1057fe32ae0baa37f",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 27506,
+      "starttime": 236591,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "901fe321a5c7d8e5",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "27504",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 18,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.9,
+   "repetition_in_invocation": 17,
+   "retained_session_lines": [],
+   "run_seconds": 65.5,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "d654bad8beb4e67f3e0eeedd42b19c2e0702ecd56143398d71fa309a67046fd2"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "bd1f840e9d14e92d23a05c1ace06fb640094d88e496d71894566930f8ea3d96d"
+    }
+   },
+   "start_utc": "2026-10-21T15:54:08Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55065,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:56:29Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_83c91c30/evidence_manifest.json",
+    "sha256": "00a2f653c3a4bd49a7d9f8a9b9cdd5e1fc6738a358a263805e0cc3715482a82c"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_83c91c30",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "d6ecc8495d7d68c7",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6919,
+      "check_start_ms": 6919,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13781,
+      "check_start_ms": 13781,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20693,
+      "check_start_ms": 20693,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27613,
+      "check_start_ms": 27613,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34523,
+      "check_start_ms": 34523,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41401,
+      "check_start_ms": 41401,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48275,
+      "check_start_ms": 48275,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55162,
+      "check_start_ms": 55162,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "0fa2bb308f7ed29c0ca260f5e0b49091835d9c40f6e61641aab894e45f4db243",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 28250,
+      "starttime": 243646,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "d6ecc8495d7d68c7",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "28248",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 19,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.9,
+   "repetition_in_invocation": 18,
+   "retained_session_lines": [],
+   "run_seconds": 65.7,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "e9c87f0df89a459f73c82ddde6cdf1e7b42747f7b0c40ba61074f78fef2d054e"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "5229db38dcd441ac9894d8a3167b2895116e7ee22f9a8c71644d15457c017e1d"
+    }
+   },
+   "start_utc": "2026-10-21T15:55:18Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55162,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T15:57:40Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_ee73add6/evidence_manifest.json",
+    "sha256": "b0d40d98ecfb87674ac8d4fff8b4cdb9ef81011ea709d6e28826617d54ab8be9"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_ee73add6",
+   "frame_pass_lines": 48,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "04b78cd36a363787",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 6886,
+      "check_start_ms": 6886,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 13783,
+      "check_start_ms": 13783,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 20672,
+      "check_start_ms": 20672,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 27630,
+      "check_start_ms": 27630,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 34548,
+      "check_start_ms": 34548,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 41506,
+      "check_start_ms": 41506,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 48447,
+      "check_start_ms": 48447,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 55355,
+      "check_start_ms": 55355,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "14c42bf85afbebb17c37a332f5dd0c6117742bb9c656028dc38fbaca35c378ab",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 29116,
+      "starttime": 250725,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "04b78cd36a363787",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "29114",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 20,
+   "invocation_id": "20261021T153515Z_c128ca",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.0,
+   "repetition_in_invocation": 19,
+   "retained_session_lines": [],
+   "run_seconds": 66.1,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "9d3f265a893f16fc3f45ff8771e2114833854cd801345c80600315e240829545"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "07ed59765f593206b82e9250d08250194721b16cb37e26378fa075c93248df3a"
+    }
+   },
+   "start_utc": "2026-10-21T15:56:29Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 55355,
+   "verdict_consistent": true,
+   "workload_in_output": "triangle_present"
+  }
+ ],
+ "summary": {
+  "all_baselines_equal": [
+   199
+  ],
+  "all_lifetime_counts_equal_baseline": true,
+  "baseline_to_last_check_seconds": {
+   "max": 55.8,
+   "median": 55.34,
+   "min": 55.06
+  },
+  "lifetimes_needing_more_than_one_sample_total": 0,
+  "max_slowest_retirement_check_ms": 1,
+  "not_passed": 0,
+  "not_passed_runs": [],
+  "passed": 20,
+  "per_lifetime_seconds": {
+   "max": 7.39,
+   "min": 6.82
+  },
+  "runs": 20,
+  "wsi_cases_per_run": []
+ },
+ "supervisor_copy": {
+  "tcp_gpu_actual.py": {
+   "copy_sha256": "cb3f1d5b36c2fa5b584d017c2ce1f4ab37761441fc7b8ba71bf7c3263fd30aeb",
+   "original_sha256": "cb3f1d5b36c2fa5b584d017c2ce1f4ab37761441fc7b8ba71bf7c3263fd30aeb"
+  },
+  "tcp_gpu_owned_session.py": {
+   "copy_sha256": "c02314f6e9d74781e5650fa50facb3a512ee2559b62015c5e9212fc2cbac8acd",
+   "original_sha256": "c02314f6e9d74781e5650fa50facb3a512ee2559b62015c5e9212fc2cbac8acd"
+  },
+  "type_command_immediate.py": {
+   "copy_sha256": "cc6e627044863a538821b089e7f19acfcdbf37086c4cb9835f3cff996914d3e8",
+   "original_sha256": "cc6e627044863a538821b089e7f19acfcdbf37086c4cb9835f3cff996914d3e8"
+  }
+ },
+ "vm": {
+  "guest_boot_reported_by_guest": "2026-10-21T22:25:17.5000000Z",
+  "guest_clock_note": "The guest reports a -07:00 zone but its clock follows host UTC; use the host start_utc/end_utc fields.",
+  "lease": {
+   "backup": "build/vm_backup_20261021 (taken before the first boot of this session; the live disk has advanced since and passed qemu-img check before this boot)",
+   "host_boot_before": "2026-10-21 11:14:55 local (second host reboot of the session; previous VM instance ended with the host at 2026-10-20T23:23 local)",
+   "owner": "Claude Code lead session (Sonnet 5.5) for M2/clvk closure",
+   "qemu_pid": 10732,
+   "started_from": "preserved artifacts only; no provisioning/reset",
+   "supersedes": "qemu_pid 39354 / swtpm_pid 39348 (dead after host reboot)",
+   "swtpm_pid": 10727,
+   "vm_started_utc": "2026-10-21T15:25:18Z"
+  },
+  "qemu": {
+   "alive": true,
+   "executable": "qemu-system-x86_64",
+   "is_expected_vm": true,
+   "pid": 10732,
+   "pid_file": "build/windows11_vm/qemu.pid",
+   "qmp_arg": "unix:/home/dev/Waddle-LSW/build/windows11_vm/qmp.sock,server=on,wait=off",
+   "starttime": 62029,
+   "state": "S",
+   "vm_name": "waddle_windows11_test"
+  }
+ },
+ "workload": "triangle_present",
+ "signin_provenance_amendment": {
+  "recorded_by": "Codex independent review, 2026-10-21",
+  "reason": "The original disclosure incorrectly attributed console sign-in to the user. This chat records Codex entering the saved credential through QMP at explicit user request on October 20 and October 21. No run-folder artifact, source binding, outcome or acceptance criterion is changed. The duration disclosure also now separates baseline-relative and controller-relative clocks; its measured outcomes remain unchanged.",
+  "prior_receipt_sha256": "01440bc359fd69bade8eb6e8e0a2f5cad5e48fb9fa50334921b5df908bf1939a"
+ }
+}

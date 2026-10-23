@@ -6,8 +6,8 @@
  * supervision, socket readiness polling, and integration with path translation rules.
  */
 
-#ifndef WADDLE_DAEMON_FS_H
-#define WADDLE_DAEMON_FS_H
+#ifndef WaddleDaemonFsH
+#define WaddleDaemonFsH
 
 #include "daemon_config.h"
 #include "path_rules.h"
@@ -150,4 +150,4 @@ void daemon_fs_cleanup(virtiofs_process_t *proc);
 }
 #endif
 
-#endif /* WADDLE_DAEMON_FS_H */
+#endif /* WaddleDaemonFsH */

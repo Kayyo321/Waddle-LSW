@@ -1,0 +1,71 @@
+diff --git a/tests/vgpu/clvk_runtime_windows.cpp b/tests/vgpu/clvk_runtime_windows.cpp
+index 7ba4a82..a4a66d3 100644
+--- a/tests/vgpu/clvk_runtime_windows.cpp
++++ b/tests/vgpu/clvk_runtime_windows.cpp
+@@ -5,10 +5,12 @@
+  * The DLL owns all C++ state and passes no pointers to or from its caller.
+  * Loading constructs the namespace-scope shared mutex and iostream initializer;
+  * unloading destroys them. Each invocation exercises call_once, exclusive
+- * shared-mutex locking, a joined std::thread, and std::cout.
++ * shared-mutex locking, a joined std::thread, std::cout, an initialized
++ * thread_local on two threads, a caught exception and std::thread::id identity.
+  */
+ #include <cstdint>
+ #include <iostream>
++#include <stdexcept>
+ #include <mutex>
+ #include <shared_mutex>
+ #include <thread>
+@@ -23,13 +25,15 @@ std::uint32_t once_runs = 0;
+ std::uint32_t registration_count = 0;
+ std::uint32_t joined_thread_runs = 0;
+ std::ios_base::Init stream_initializer;
++thread_local std::uint32_t thread_counter = 7;
+ 
+ }  // namespace
+ 
+ /**
+  * @brief Exercise static C++ runtime state for one DLL load lifetime.
+  * @param[in] api_version Must equal ApiVersion.
+- * @return Zero only when call_once, lock, joined-thread, and stream checks pass.
++ * @return Zero only when call_once, lock, joined-thread, stream, thread_local,
++ *         exception and thread-identity checks pass (5, 6, 7 name the last three).
+  * @ownership The DLL owns all static objects; no pointers or allocations cross
+  *            the C ABI boundary. The caller owns no returned resource.
+  * @thread_safety Safe for sequential invocation; this probe is not a
+@@ -50,12 +54,34 @@ runtime_lifetime_probe(std::uint32_t api_version) noexcept
+       }
+ 
+       std::uint32_t worker_observed_registrations = 0;
+-      std::thread worker([&worker_observed_registrations]() {
++      std::uint32_t worker_initial_counter = 0;
++      std::thread::id worker_seen_id;
++      const std::thread::id caller_id = std::this_thread::get_id();
++      if (thread_counter != 7)
++         return 5;
++      thread_counter++;
++      std::thread worker([&]() {
+          std::unique_lock<std::shared_mutex> write_lock(pass_registry_mutex);
+          joined_thread_runs++;
+          worker_observed_registrations = registration_count;
++         worker_initial_counter = thread_counter;
++         thread_counter = 99;
++         worker_seen_id = std::this_thread::get_id();
+       });
++      const std::thread::id worker_id = worker.get_id();
+       worker.join();
++      if (worker_initial_counter != 7 || thread_counter != 8 ||
++          worker_seen_id != worker_id || caller_id == worker_id ||
++          caller_id != std::this_thread::get_id())
++         return 6;
++      bool caught = false;
++      try {
++         throw std::runtime_error("probe");
++      } catch (const std::runtime_error &) {
++         caught = std::uncaught_exceptions() == 0;
++      }
++      if (!caught)
++         return 7;
+ 
+       std::cout.put('L');
+       std::cout.flush();

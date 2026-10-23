@@ -2,23 +2,18 @@
 #include "av_layout.h"
 #include "av_pipewire.h"
 #include "av_wayland.h"
+#include "platform_requests.h"
 #include <assert.h>
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
-static int requests;
+static av_platform_requests_t requests;
 static unsigned commits;
 static void observed_commit(void *context) {
     assert(context == &commits);
     ++commits;
-}
-static int host_request(const av_message_t *message, void *context) {
-    (void)context;
-    assert(message->type == MsgWindowGeometry || message->type == MsgWindowClose);
-    ++requests;
-    return 0;
 }
 int main(void) {
     int memory = memfd_create("waddle-av-platform-test", MFD_CLOEXEC);
@@ -26,7 +21,7 @@ int main(void) {
     uint8_t *mapping = mmap(NULL, AvMappingBytes, PROT_READ | PROT_WRITE, MAP_SHARED, memory, 0);
     assert(mapping != MAP_FAILED && av_layout_init(mapping, AvMappingBytes) == 0);
     av_wayland_t *video = NULL;
-    assert(av_wayland_init(&video, host_request, NULL) == 0);
+    assert(av_wayland_init(&video, av_platform_record_request, &requests) == 0);
     audio_ring_header_t *ring = (audio_ring_header_t *)(mapping + AvAudioHeaderOffset);
     av_pipewire_t audio = {0};
     assert(av_pipewire_init(&audio, ring, mapping + AvPcmOffset, AvAudioCapacity * AvAudioFrameBytes) == 0);
@@ -36,13 +31,13 @@ int main(void) {
         slots[i] = av_layout_slot(mapping, AvMappingBytes, 0, i);
         offsets[i] = av_layout_pixels(0, i);
     }
-    av_message_t message = {.type = MsgWindowCreate, .window_id = 4242, .width = 320,
+    av_message_t message = {.type = MsgWindowCreateV2, .sequence = AvPlatformIncarnation, .window_id = AvPlatformWindow, .width = 320,
         .height = 200, .dpi = 96, .process_id = 1};
     strcpy(message.title, "Waddle AV native validation");
     assert(av_wayland_create(video, &message, memory, AvUsedBytes, slots, offsets, AvSlotCapacity) == 0);
-    assert(av_wayland_watch(video, 4242, 0x888888, mapping, AvMappingBytes,
+    assert(av_wayland_watch(video, AvPlatformWindow, 0x888888, mapping, AvMappingBytes,
                              observed_commit, &commits) == 0);
-    assert(av_wayland_watch(video, 4242, 0x888888, mapping, AvMappingBytes,
+    assert(av_wayland_watch(video, AvPlatformWindow, 0x888888, mapping, AvMappingBytes,
                              observed_commit, &commits) == -1);
     uint8_t silence[1024] = {0};
     int submitted = 0;
@@ -77,6 +72,8 @@ int main(void) {
     av_pipewire_free(&audio);
     assert(munmap(mapping, AvMappingBytes) == 0);
     close(memory);
-    printf("Native platform: real surface attachment/release and connected PCM callbacks passed (%d geometry requests)\n", requests);
+    printf("Native platform: real surface attachment/release and connected PCM callbacks passed "
+           "(%u control requests, %u synthetic input callbacks recorded; no guest injection)\n",
+           requests.controls, requests.inputs);
     return 0;
 }

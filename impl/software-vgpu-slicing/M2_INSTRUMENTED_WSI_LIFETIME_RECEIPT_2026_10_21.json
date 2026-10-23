@@ -1,0 +1,1792 @@
+{
+ "acceptance_credit": false,
+ "disclosures": [
+  "Run 1 is the pilot (invocation 20261021T160314Z_fe16e2); runs 2-10 are the second invocation (continue past failure enabled; none failed).",
+  "Driven by run_m2_instrumented_wsi.py (a workload-generalized copy of the triangle runner; unified diff run_m2_instrumented_wsi.diff sha256 5e7c2cf6870e31f62e78cc10cfe93e5b01cf2f64cd2623a11a4d4fad51368bfc; 32/32 offline mock scenarios and a 24/24 old-versus-new equivalence check for triangle_present). The supervisor acceptance asserts for wsi_lifetime are the unchanged 2026-10-17 supervisor's.",
+  "Same VM boot and same frozen guest inputs as the triangle_present receipt; only the guest fixture executable differs from the qualified runs and it is the instrumented build of the committed sources.",
+  "The earlier native wsi_lifetime pass (tcp_gpu_683c0ee2) ran the old fixture; these runs exercise the committed fixture, including the changed destroyed-HWND ownership path in tcp_gpu_wsi_lifetime_windows.inc."
+ ],
+ "fixture": {
+  "build_command": "make build/vgpu_tcp_gpu_windows_draft.exe  # zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror",
+  "exe": {
+   "equals_frozen_fixture_exe": false,
+   "handle_diag_marker_count": 8,
+   "is_pe_x86_64": true,
+   "legacy_failure_text_count": 1,
+   "mtime_ns": 1792596286465843811,
+   "mtime_utc": "2026-10-21T15:24:46.465844+00:00",
+   "path": "build/vgpu_tcp_gpu_windows_draft.exe",
+   "sha256": "77a334150077b0702c0a4144124b760871ec2e1bb41a7967cc774139773bb66d",
+   "size": 317440
+  },
+  "handle_diag_include_and_other_compile_inputs": {
+   "include/waddle/venus_capabilities.h": "a05a19ef194b412e7f684739f01987289d326b3f4f9bc509379a1f78932e3d8a",
+   "include/waddle/venus_command.h": "5b5f7749ff1b100b9ef04c50d15a15500b3fa0f882e012f7e02cdc4746994c22",
+   "include/waddle/venus_icd.h": "3382a0c924ddc9a68e6617a511f98c1fa1e0c46affa011aff5d3dead83f977ec",
+   "include/waddle/venus_instance_wire.h": "0a3539c23170f4568bfec4d32eb17f8c51b0b0b68d11f20636b4a01a7cb8799a",
+   "include/waddle/venus_request.h": "3f682a40ff167a8e9c0fee0d7587cccda53dbd4c2574e96c7b830a73ee02702b",
+   "include/waddle/venus_ring.h": "84069856ab6e9daca731250279767f54bf9001daf9519c121212136aa02a9aea",
+   "include/waddle/venus_tcp.h": "407c759f7cb216187961f549e4f6cb74ff2b9281941e3cc7d3dd33468b7289c8",
+   "include/waddle/venus_values.h": "8a2bef2647ed521ca74e73ec0796fe0cbee520beca0fa6d3ff0426bfa295c8b3",
+   "tests/vgpu/shaders/compute_push_shader.h": "b59d796d11e25a36a1259cfabec41daf44668dd3aae8f0ca497be723d28b47fe",
+   "tests/vgpu/shaders/compute_shader.h": "44ccc2a73cc1fb8bf674898079efa2de8bc922becc697ed5cc6102490cc54515",
+   "tests/vgpu/shaders/triangle_fragment_shader.h": "6d75588d34a2225713f7e2198ff6b2d0bcb5f861f00f0fc8e76d42453bd2790d",
+   "tests/vgpu/shaders/triangle_vertex_shader.h": "6cf3a302397d0c0fa1bdea71dd6a7ce1a3f901430f3c2b569b520ebdef7dc8f0",
+   "tests/vgpu/tcp_gpu_handle_diag_windows.inc": "09a88a42e183695fe17afb5490525f9311021060ecdaa45ea4bf6a0349503eb9",
+   "tests/vgpu/tcp_gpu_present_windows.inc": "61b8189e388496a9fcfe4068a9e5635abf3c54a9353ff19eacdd564591e857bb",
+   "tests/vgpu/tcp_gpu_windows.c": "ef51e3d6006fadd4006d6ce67d4ca81520c3c3d275abefa4efd57ae3fc1fc17d",
+   "tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": "dcb3a630ff3b6f955169268e68647304edec046304ce327b67bc202b90156595"
+  },
+  "include_closure_file_count": 44,
+  "sources": {
+   "tests/vgpu/tcp_gpu_present_windows.inc": {
+    "differs_from_frozen": true,
+    "frozen_snapshot_sha256": "169ba63d99ed11152b597858252f1d3e20e7d12c6c5769597c57b8c97e2aa6e3",
+    "sha256": "61b8189e388496a9fcfe4068a9e5635abf3c54a9353ff19eacdd564591e857bb"
+   },
+   "tests/vgpu/tcp_gpu_windows.c": {
+    "differs_from_frozen": true,
+    "frozen_snapshot_sha256": "b97fd1c6e4cd202007755b45a7c2c6d2ad64f5368a13a689f8672ae8696f4005",
+    "sha256": "ef51e3d6006fadd4006d6ce67d4ca81520c3c3d275abefa4efd57ae3fc1fc17d"
+   },
+   "tests/vgpu/tcp_gpu_wsi_lifetime_windows.inc": {
+    "differs_from_frozen": true,
+    "frozen_snapshot_sha256": "fe304e5bbb540c9e1e11e8239bea8b326e027ed04fb2a42e6e4317187c1186ad",
+    "sha256": "dcb3a630ff3b6f955169268e68647304edec046304ce327b67bc202b90156595"
+   }
+  }
+ },
+ "frozen_guest_inputs_unchanged_vs_qualified_runs": {
+  "controller_sha256": "c1646a6e319dd2ebe4e34c05ff1f767f168d516d12258e931077c9863a1f7cd8",
+  "driver_inputs_drift_vs_20261017": [],
+  "expected_sha256": {
+   "gpu.exe": "ad8be3986eb93d3c0440e2ec5aa2dd853e500d647e913d993b7135a8925b9162",
+   "libvirglrenderer.so.1": "65e903a06209ab7b38179093df38b97516cc485cb32e225ea4b6c758cc3ab433",
+   "root_runtime_provenance.json": "ebcb3741048765b3e2516589f5b6fdce311ff6f44fe7638a3f9a1b85a6d2d00f",
+   "virgl_render_server": "cb9c7cacff6bf6dfb97a7417e2d44a4b75e386f9f6201c16c36650636458e148",
+   "vulkan-1.dll": "dcc3bb5a6eaa6b02d32d15b0d83381befd1a9a25915074e8f74c769932b3d66d",
+   "waddle_tcp_bootstrap.dll": "c8081c5e9561a16cbd7f24492cfd6e2497c5a9745e39988163f5db458a1aca9a",
+   "waddle_vgpu_worker": "3f4d9528dde962bad1d4518a6bebea367b7e170cb7ff18dc54fcd5265d787d2d",
+   "waddle_vulkan_experimental.dll": "3c2b14c09df7400e12fdd3064f26e974edc248905bfe67607f217c52931e075a"
+  },
+  "qualified_run_folders": [
+   "tcp_gpu_41308226",
+   "tcp_gpu_df62f140"
+  ],
+  "qualified_run_receipt": {
+   "path": "impl/software-vgpu-slicing/M2_NATIVE_RECEIPT_2026_10_17.json",
+   "sha256": "7e54e39c7d19c1b88ed0e0857497ed9149a1874cabf65feee6075c89e8505140"
+  }
+ },
+ "git": {
+  "branch": "refs/heads/feature/software-vgpu-slicing",
+  "head_at_generation": "7392d9375b040971d852e92f55cfe0e9d1f0eec6",
+  "head_at_runs": "7392d9375b040971d852e92f55cfe0e9d1f0eec6",
+  "tree_clean_at_generation": true
+ },
+ "host_environment": {
+  "cwd": "/home/dev/Waddle-LSW",
+  "debug_asserts_enabled": true,
+  "pid": 33402,
+  "python": "3.13.5",
+  "python_executable": "/usr/bin/python3",
+  "selected_variables": {
+   "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "uname": "Linux a03-hating-machine 7.1.13+deb13-amd64 x86_64"
+ },
+ "not_claimed": [
+  "No acceptance credit, waiver, M2 closure, Time Ended, feature progress or PR readiness.",
+  "The preserved tcp_gpu_7adb6000 failure (199 to 200 after 42 frames) is neither replaced nor attributed by these runs.",
+  "Passive diagnostics only; the rule, baseline point, budget and workload are the unchanged originals.",
+  "Vendor descendant wait status 9 (pinned virgl teardown) is retained as recorded; no claim that every vendor child exited normally."
+ ],
+ "purpose": "Source-bound native repetitions of the unchanged strict process-handle gate with the passive handle_diag fixture. Evidence for independent review; it grants no acceptance credit and waives nothing.",
+ "receipt": "M2_INSTRUMENTED_WSI_LIFETIME_2026_10_21",
+ "results_file": {
+  "path": "build/qualification_20261020/m2_wsi_lifetime_results.json",
+  "sha256": "c6dbc95195013acfd40c0129d70f8069e2f3a3722e70ba43343ae4a5cf9cd971"
+ },
+ "runner": {
+  "path": "build/qualification_20261020/m2_runner/run_m2_instrumented_wsi.py",
+  "sha256s": [
+   "77fb3703e54cd96baeec3f551f43bfbe9f57b0a0b8696b4377b31ca12a6c74e7"
+  ]
+ },
+ "runs": [
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:04:10Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_58e08807/evidence_manifest.json",
+    "sha256": "a4a6f07bc13d8b08a94308f9e206ab659baac816a97b1b14624b81b69df3cb17"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_58e08807",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "fb2a6061171b5f6b",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4809,
+      "check_start_ms": 4809,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9635,
+      "check_start_ms": 9635,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14372,
+      "check_start_ms": 14372,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19098,
+      "check_start_ms": 19098,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 23838,
+      "check_start_ms": 23838,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28665,
+      "check_start_ms": 28665,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33548,
+      "check_start_ms": 33548,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38405,
+      "check_start_ms": 38405,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "6b4d915d1c7af1f6bd9c51d9baf3f2211c109b2393f9d200020792ed0309434e",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 33446,
+      "starttime": 291392,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "fb2a6061171b5f6b",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "33444",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 1,
+   "invocation_id": "20261021T160314Z_fe16e2",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 3.5,
+   "repetition_in_invocation": 1,
+   "retained_session_lines": [],
+   "run_seconds": 48.9,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "f26fa424f56177f8734f8a1d146a60f2b7663f72e67606c0cf446817d8a7114f"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "05713dbacb00cfa92e8cad1581147b0f1349f6ee14c97d122440aff36011bd53"
+    }
+   },
+   "start_utc": "2026-10-21T16:03:14Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38405,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:08:29Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_f84dd7d5/evidence_manifest.json",
+    "sha256": "962f6e9968209b2521181ab7f1bcd91a95a00f158d47ea19ef6a6bffba051ec5"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_f84dd7d5",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "8571083c76973c6c",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4849,
+      "check_start_ms": 4849,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9635,
+      "check_start_ms": 9635,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14418,
+      "check_start_ms": 14418,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19212,
+      "check_start_ms": 19212,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 24036,
+      "check_start_ms": 24036,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28828,
+      "check_start_ms": 28828,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33641,
+      "check_start_ms": 33641,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38485,
+      "check_start_ms": 38485,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "633201f27926b94d49772727c3b26e21d44cccbd21d0238f623dc0ac72a7bece",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 35402,
+      "starttime": 317296,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "8571083c76973c6c",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "35400",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 2,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.3,
+   "repetition_in_invocation": 1,
+   "retained_session_lines": [],
+   "run_seconds": 49.4,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "1031250344796a9fbb4426529382a3fd3d289cca3460e5ef30dc19dc260db2d8"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "c5c5f860b7a7059bc439162e02717d1e42060effa2f60c0ed820278228d65b1c"
+    }
+   },
+   "start_utc": "2026-10-21T16:07:35Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38485,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:09:23Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_a358dba9/evidence_manifest.json",
+    "sha256": "51819fc7b556d58e8c65b0f75cfe73872ec80ed1a5f7ba4f7c746ab2894ad0ae"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_a358dba9",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "75ea9e545eab4de7",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4832,
+      "check_start_ms": 4832,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9610,
+      "check_start_ms": 9610,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14357,
+      "check_start_ms": 14357,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19282,
+      "check_start_ms": 19282,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 24010,
+      "check_start_ms": 24010,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28810,
+      "check_start_ms": 28810,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33574,
+      "check_start_ms": 33574,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38393,
+      "check_start_ms": 38393,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "299767ef5a081b36a9c02c0aea3190deedb87211b68f0e877efdcd2dad1f98cc",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 35614,
+      "starttime": 322720,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "75ea9e545eab4de7",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "35612",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 3,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 1.8,
+   "repetition_in_invocation": 2,
+   "retained_session_lines": [],
+   "run_seconds": 49.5,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "92023d814289cf503f0f3116d943402a47ae4290656b6431a1aa6a442a9d4cb8"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "1031250344796a9fbb4426529382a3fd3d289cca3460e5ef30dc19dc260db2d8"
+    }
+   },
+   "start_utc": "2026-10-21T16:08:29Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38393,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:10:17Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_97e1063d/evidence_manifest.json",
+    "sha256": "d4bcbe7e59bcbfba834e65006c7e75d514402c0a69f01df4d0dd44779129e779"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_97e1063d",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "1914674ca5f3f2fc",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4793,
+      "check_start_ms": 4793,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9560,
+      "check_start_ms": 9560,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14314,
+      "check_start_ms": 14314,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19064,
+      "check_start_ms": 19064,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 23797,
+      "check_start_ms": 23797,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28575,
+      "check_start_ms": 28575,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33353,
+      "check_start_ms": 33353,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38124,
+      "check_start_ms": 38124,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "989f583160606a0a5fb1c681d832d88b775ad72fd428a5a329f21118ea5e49bd",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 36421,
+      "starttime": 328138,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "1914674ca5f3f2fc",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "36419",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 4,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.1,
+   "repetition_in_invocation": 3,
+   "retained_session_lines": [],
+   "run_seconds": 48.8,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "49ce68079d6833c81ab28fea2ad0086f783eb9f70e78c7547ef0bbe665bdf4ce"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "92023d814289cf503f0f3116d943402a47ae4290656b6431a1aa6a442a9d4cb8"
+    }
+   },
+   "start_utc": "2026-10-21T16:09:23Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38124,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:11:11Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_c37333a4/evidence_manifest.json",
+    "sha256": "ba5f1bc872331de302e5c0b9870ddd87a2e963f109bd38327adee28a4c89ba98"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_c37333a4",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "b1aee2a8816d519f",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4758,
+      "check_start_ms": 4758,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9548,
+      "check_start_ms": 9548,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14367,
+      "check_start_ms": 14367,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19089,
+      "check_start_ms": 19089,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 23838,
+      "check_start_ms": 23838,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28615,
+      "check_start_ms": 28615,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33377,
+      "check_start_ms": 33377,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38487,
+      "check_start_ms": 38487,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "fd851b9586aeab8b65dc763c38628d362aae1dc045dfedd9efbd14a5c04c0621",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 36630,
+      "starttime": 333511,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "b1aee2a8816d519f",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "36628",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 5,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.1,
+   "repetition_in_invocation": 4,
+   "retained_session_lines": [],
+   "run_seconds": 49.2,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "048fe77343338d1042ae77719715904ee2483b5875e64dcd93d692f255e576a0"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "7962680dd350e5fbd81707588dcf79612509ea346bc52b1ae5c7fc716719b9f9"
+    }
+   },
+   "start_utc": "2026-10-21T16:10:17Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38487,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:12:06Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_0c6a52ae/evidence_manifest.json",
+    "sha256": "8c4c3965ca7a09d07e16d979ccbb4fc546941cc61e48f203903e600fbaaeebe2"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_0c6a52ae",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "4e44dd793adaac6a",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4865,
+      "check_start_ms": 4865,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9650,
+      "check_start_ms": 9650,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14443,
+      "check_start_ms": 14443,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19384,
+      "check_start_ms": 19384,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 24283,
+      "check_start_ms": 24283,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 29103,
+      "check_start_ms": 29103,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33972,
+      "check_start_ms": 33972,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38779,
+      "check_start_ms": 38779,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "70d62c9e9dff2c5bc19b4f55b87d43d8a2e28e6e29a242a8bc3903cf283b0721",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 39176,
+      "starttime": 338937,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "4e44dd793adaac6a",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "39174",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 6,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.1,
+   "repetition_in_invocation": 5,
+   "retained_session_lines": [],
+   "run_seconds": 49.6,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "4b89223aef5c0d59d53968230e42f71c3eb02f7c8a0de6fa9737ac1933795d4f"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "048fe77343338d1042ae77719715904ee2483b5875e64dcd93d692f255e576a0"
+    }
+   },
+   "start_utc": "2026-10-21T16:11:11Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38779,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:13:00Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_e4275b57/evidence_manifest.json",
+    "sha256": "c3925e21abedca067a3ba03afa42f0ed04e64b4a953fde0dc5d3d2e5cc108147"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_e4275b57",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "69bf07c216493d5e",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4839,
+      "check_start_ms": 4839,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9724,
+      "check_start_ms": 9724,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14491,
+      "check_start_ms": 14491,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19353,
+      "check_start_ms": 19353,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 24192,
+      "check_start_ms": 24192,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 29000,
+      "check_start_ms": 29000,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33917,
+      "check_start_ms": 33917,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38732,
+      "check_start_ms": 38732,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "b0cbe1fd2d22167abf2422a41c54a1a15545a09afaade168b37376e28c19a004",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 41935,
+      "starttime": 344395,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "69bf07c216493d5e",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "41933",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 7,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.3,
+   "repetition_in_invocation": 6,
+   "retained_session_lines": [],
+   "run_seconds": 49.3,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "eedf75b59302efada8f0123bf65765dd6751b5e6d289bcf7ff5f773ff8edd93e"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "e100274d44495b3493b6069e8718eb93aede3ee757896d4c3d6f8627c211e564"
+    }
+   },
+   "start_utc": "2026-10-21T16:12:06Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38732,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:13:54Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_9a4ee29c/evidence_manifest.json",
+    "sha256": "8d440b70e9b96af87ed5df9bffe834934d4ccd44ebb14f12b6d15d998fcef216"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_9a4ee29c",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "6b538752534cb818",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4825,
+      "check_start_ms": 4825,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9596,
+      "check_start_ms": 9596,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14355,
+      "check_start_ms": 14355,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19132,
+      "check_start_ms": 19132,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 23930,
+      "check_start_ms": 23930,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28691,
+      "check_start_ms": 28691,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33441,
+      "check_start_ms": 33441,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38248,
+      "check_start_ms": 38248,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "e2307c0aef998edd8fe59f17f79bafee0ef55a2df0cb9ecf023a09ec2ae124cd",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 44194,
+      "starttime": 349850,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "6b538752534cb818",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "44192",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 8,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.3,
+   "repetition_in_invocation": 7,
+   "retained_session_lines": [],
+   "run_seconds": 49.1,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "bf22d2443a51bd1e13d6a96ce4efec87e52964720e9d8f51ebb71f51f6bcc9f2"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "5140b49e30fba555afae21744f3357e54cab441ae3e6c3a0bd0547416f16da82"
+    }
+   },
+   "start_utc": "2026-10-21T16:13:00Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38248,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:14:48Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_708f0cb9/evidence_manifest.json",
+    "sha256": "9b1c07484436dc3f14a6e03fc6b821bbf502fb2630d390670de7e7c9f172d554"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_708f0cb9",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "0afc0c94c516f787",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4856,
+      "check_start_ms": 4856,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9658,
+      "check_start_ms": 9658,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14497,
+      "check_start_ms": 14497,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19287,
+      "check_start_ms": 19287,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 24033,
+      "check_start_ms": 24033,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28786,
+      "check_start_ms": 28786,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33617,
+      "check_start_ms": 33617,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38468,
+      "check_start_ms": 38468,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "e74315bfedafb12abab63e2b633b6433a2ca34e620455879a47b3e903462439f",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 44510,
+      "starttime": 355228,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "0afc0c94c516f787",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "44508",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 9,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.0,
+   "repetition_in_invocation": 8,
+   "retained_session_lines": [],
+   "run_seconds": 49.1,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "047bafacfe3ce47cbf15cfbb936b06eb2d810eae633b76eeae52590f66732f82"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "5140b49e30fba555afae21744f3357e54cab441ae3e6c3a0bd0547416f16da82"
+    }
+   },
+   "start_utc": "2026-10-21T16:13:54Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38468,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  },
+  {
+   "application_handle_baseline": 199,
+   "end_utc": "2026-10-21T16:15:42Z",
+   "evidence_manifest": {
+    "files": 34,
+    "path": "build/windows11_vm/tcp_gpu_6a3fe1a4/evidence_manifest.json",
+    "sha256": "5e3b03e73a173df11a0a02e8e2c4bc98a4bcd0172382247dce55d0a933becaac"
+   },
+   "exact_output_pass_lines": 8,
+   "fixture_failed_lines": [],
+   "folder": "build/windows11_vm/tcp_gpu_6a3fe1a4",
+   "frame_pass_lines": 0,
+   "guest_binary_hashes_after_verified": true,
+   "guest_exit": "0",
+   "guest_session": "a8673898826ac7ce",
+   "handle_diag": {
+    "baseline_process_handle_count": 199,
+    "baseline_snapshot_handles": 199,
+    "failure": null,
+    "get_process_handle_count_failures": [],
+    "lifetimes": [
+     {
+      "check_done_ms": 4820,
+      "check_start_ms": 4820,
+      "count": 199,
+      "lifetime": 1,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 9597,
+      "check_start_ms": 9597,
+      "count": 199,
+      "lifetime": 2,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 14347,
+      "check_start_ms": 14347,
+      "count": 199,
+      "lifetime": 3,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 19180,
+      "check_start_ms": 19180,
+      "count": 199,
+      "lifetime": 4,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 23971,
+      "check_start_ms": 23971,
+      "count": 199,
+      "lifetime": 5,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 28750,
+      "check_start_ms": 28750,
+      "count": 199,
+      "lifetime": 6,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 33544,
+      "check_start_ms": 33544,
+      "count": 199,
+      "lifetime": 7,
+      "samples": 1
+     },
+     {
+      "check_done_ms": 38339,
+      "check_start_ms": 38339,
+      "count": 199,
+      "lifetime": 8,
+      "samples": 1
+     }
+    ],
+    "lifetimes_needing_more_than_one_sample": [],
+    "parsed_file_sha256": "e8d1ac67e6196b0d365b753d029b5808fdda223700636bc601cc606301dae98d",
+    "slowest_retirement_check_ms": 0,
+    "unavailable": [],
+    "unparsed": []
+   },
+   "host": {
+    "adopted_reaps": [
+     {
+      "pid": 44735,
+      "starttime": 360640,
+      "wait_status": 9
+     }
+    ],
+    "owned_session_empty": true,
+    "receipt_proof_present": false,
+    "result_fields": {
+     "session": "a8673898826ac7ce",
+     "status": "0",
+     "worker_exit_status": "0",
+     "worker_pid": "44733",
+     "worker_retired": "1"
+    },
+    "supervisor_signals": []
+   },
+   "index": 10,
+   "invocation_id": "20261021T160734Z_62e3d4",
+   "legacy_handle_failure_lines": [],
+   "liveness_after": {
+    "guest_gpu_processes": [],
+    "guest_run_cmd_processes": [],
+    "host_stray_run_processes": [],
+    "host_survivors": []
+   },
+   "matches_unchanged_workload_counts": true,
+   "post_errors": [],
+   "prepare_seconds": 2.0,
+   "repetition_in_invocation": 9,
+   "retained_session_lines": [],
+   "run_seconds": 49.2,
+   "screens": {
+    "postrun": {
+     "file": "screen_postrun.png",
+     "sha256": "92e8e95b1453b00f3d9e7990e89fb3d853a264816a4f66d9840c14117d681716"
+    },
+    "prelaunch": {
+     "file": "screen_prelaunch.png",
+     "sha256": "05f6ea42e715c59707996fe203d7d84adb0bd43e5573ebc80f0aa462b6430777"
+    }
+   },
+   "start_utc": "2026-10-21T16:14:48Z",
+   "status": "pass",
+   "total_baseline_to_last_check_ms": 38339,
+   "verdict_consistent": true,
+   "workload_in_output": "wsi_lifetime",
+   "wsi_lifetime_output": {
+    "baseline_lines": 1,
+    "final_pass_line_is_last_stdout_line": true,
+    "final_pass_lines": 1,
+    "header_lines": 1,
+    "public_api_in_output": "1.0",
+    "wsi_case_pass_by_label": {
+     "destroyed-HWND-surface-loss-and-retirement-precedence": 8,
+     "failed-replacement-retained-acquired-image": 8,
+     "resize-capabilities-out-of-date-and-replacements": 8,
+     "zero-area-sticky-out-of-date-replacement-and-restore": 8
+    },
+    "wsi_case_pass_lines": 32,
+    "wsi_expectations": {
+     "case_pass_lines_per_label": true,
+     "exact_output_pass_lines": true,
+     "header_public_api": true,
+     "header_workload": true,
+     "no_fifo_mode_lines": true,
+     "no_frame_pass_lines": true,
+     "no_immediate_mode_lines": true,
+     "one_baseline_line": true,
+     "one_final_pass_line_and_it_is_last": true,
+     "one_header_line": true
+    },
+    "wsi_stderr_lines": []
+   }
+  }
+ ],
+ "summary": {
+  "all_baselines_equal": [
+   199
+  ],
+  "all_lifetime_counts_equal_baseline": true,
+  "baseline_to_last_check_seconds": {
+   "max": 38.78,
+   "median": 38.44,
+   "min": 38.12
+  },
+  "lifetimes_needing_more_than_one_sample_total": 0,
+  "max_slowest_retirement_check_ms": 0,
+  "not_passed": 0,
+  "not_passed_runs": [],
+  "passed": 10,
+  "per_lifetime_seconds": {
+   "max": 5.11,
+   "min": 4.72
+  },
+  "runs": 10,
+  "wsi_cases_per_run": [
+   32
+  ]
+ },
+ "supervisor_copy": {
+  "tcp_gpu_actual.py": {
+   "copy_sha256": "cb3f1d5b36c2fa5b584d017c2ce1f4ab37761441fc7b8ba71bf7c3263fd30aeb",
+   "original_sha256": "cb3f1d5b36c2fa5b584d017c2ce1f4ab37761441fc7b8ba71bf7c3263fd30aeb"
+  },
+  "tcp_gpu_owned_session.py": {
+   "copy_sha256": "c02314f6e9d74781e5650fa50facb3a512ee2559b62015c5e9212fc2cbac8acd",
+   "original_sha256": "c02314f6e9d74781e5650fa50facb3a512ee2559b62015c5e9212fc2cbac8acd"
+  },
+  "type_command_immediate.py": {
+   "copy_sha256": "cc6e627044863a538821b089e7f19acfcdbf37086c4cb9835f3cff996914d3e8",
+   "original_sha256": "cc6e627044863a538821b089e7f19acfcdbf37086c4cb9835f3cff996914d3e8"
+  }
+ },
+ "vm": {
+  "guest_boot_reported_by_guest": "2026-10-21T22:25:17.5000000Z",
+  "guest_clock_note": "The guest reports a -07:00 zone but its clock follows host UTC; use the host start_utc/end_utc fields.",
+  "lease": {
+   "backup": "build/vm_backup_20261021 (taken before the first boot of this session; the live disk has advanced since and passed qemu-img check before this boot)",
+   "host_boot_before": "2026-10-21 11:14:55 local (second host reboot of the session; previous VM instance ended with the host at 2026-10-20T23:23 local)",
+   "owner": "Claude Code lead session (Sonnet 5.5) for M2/clvk closure",
+   "qemu_pid": 10732,
+   "started_from": "preserved artifacts only; no provisioning/reset",
+   "supersedes": "qemu_pid 39354 / swtpm_pid 39348 (dead after host reboot)",
+   "swtpm_pid": 10727,
+   "vm_started_utc": "2026-10-21T15:25:18Z"
+  },
+  "qemu": {
+   "alive": true,
+   "executable": "qemu-system-x86_64",
+   "is_expected_vm": true,
+   "pid": 10732,
+   "pid_file": "build/windows11_vm/qemu.pid",
+   "qmp_arg": "unix:/home/dev/Waddle-LSW/build/windows11_vm/qmp.sock,server=on,wait=off",
+   "starttime": 62029,
+   "state": "S",
+   "vm_name": "waddle_windows11_test"
+  }
+ },
+ "workload": "wsi_lifetime"
+}
