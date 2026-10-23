@@ -2599,6 +2599,17 @@ Parent remains 93.0% / In Progress, Time Ended TBD.
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | test(opencl): declare the probe llvm_shutdown stand-in noexcept | #5 +0%; overall +0% | Three probe cross-build boundary tests pass. This affects only the LLVM-free probe; no production DLL rebuild or native acceptance is credited. |
+| `ea2ffa4` | test(opencl): declare the probe llvm_shutdown stand-in noexcept | #5 +0%; overall +0% | Three probe cross-build boundary tests pass. This affects only the LLVM-free probe; no production DLL rebuild or native acceptance is credited. |
 
 Parent remains 93.0% / In Progress, Time Ended TBD.
+
+### Codex continuation: reviewed lease-owner wrapper r2 (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | chore(qualification): prepare exact Codex lease-owner wrapper r2 | #3/#5/#11 +0%; overall +0% | Eleven offline tests pass in normal/optimized Python against frozen executor b571dbbe; inverse patch exactly recovers wrapper r1 94a367b8. Native use awaits explicit approval. |
+
+[Approval request](lease_owner_wrapper_r2/approval_request.md) records the exact owner chain and
+wrapper hash a08bf833. An ignored r5 heap launcher pins this wrapper and preserves r4 runner
+bytes d276f589. Newly launched VM identities require a separate runner revision. No owner
+impersonation, predicate waiver or native qualification is included. Parent remains 93.0%.
