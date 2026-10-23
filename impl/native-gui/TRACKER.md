@@ -15,9 +15,9 @@
 | #2 | Launch GUI by default and retain explicit REPL | Done | 10% | 100% | `910924b`; explicit commands preserved |
 | #3 | Native manager, creation, settings and complete CLI access | Done | 40% | 100% | Native workflows and existing CLI regression gates passed |
 | #4 | Terminal, launchers, AV and desktop capability handling | Done | 25% | 100% | VTE/AV adapter and capability handling verified; hardware limits explicit |
-| #5 | Automated integration, sanitizer checks and usage docs | In Progress | 15% | 75% | GUI/CLI sanitizers, coverage and HiDPI pass; delivery audit pending |
+| #5 | Automated integration, sanitizer checks and usage docs | In Progress | 15% | 90% | Installation and package checks pass; final documentation audit pending |
 
-**Total Feature Completion**: `96.25%`
+**Total Feature Completion**: `98.5%`
 
 ## Commit History & Progress Log
 
@@ -47,9 +47,15 @@ branch and documentation now follow the requested names. Task impact: +100% to #
     blank sizes and save reviewed output asynchronously. Native and CLI tests pass;
     library leak roots are isolated by sanitizer evidence.
 
-- **Commit `test(gui): cover native workflows and launch compatibility`** (hash recorded next commit)
+- **Commit `1c8131c`**: `test(gui): cover native workflows and launch compatibility`
   - **Task Impact**: +5% to #3 (+2% overall); +5% to #4 (+1.25% overall);
     +75% to #5 (+11.25% overall).
   - **Summary**: Deterministic native GTK/VTE workflows, real CLI launcher/instance
     tests, keyboard palette checks, sanitizer gates and CI. Regression cases ensure
     plain log snapshots, new export-directory selection and stopped batch replay.
+
+- **Commit `chore(gui): ship native manager with the AV distribution`** (hash recorded next commit)
+  - **Task Impact**: +15% to #5 (+2.25% overall).
+  - **Summary**: Require/copy the GUI in complete AV bundles, install GTK development
+    packages in the existing packaging workflow, enforce missing-GUI failure without
+    corrupting archives, and document launch/build/runtime integration boundaries.

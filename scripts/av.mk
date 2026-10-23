@@ -134,7 +134,7 @@ build/av_wgc.dll: | build
 	@exit 1
 
 .PHONY: av-distribution
-av-distribution: build/waddle build/waddled av windows av-drivers build/av_wgc.dll build/av_windows_test.exe
+av-distribution: build/waddle build/waddle-gui build/waddled av windows av-drivers build/av_wgc.dll build/av_windows_test.exe
 	sh scripts/package_av.sh
 
 # Fake syscall wrappers ensure privileged reuse tests never touch real devices.

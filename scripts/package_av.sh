@@ -3,7 +3,7 @@
 # Inputs are repository build outputs. A private staging tree owns all copied
 # bytes and is removed on success/error/signal. Existing archives survive failure.
 set -eu
-for name in waddle waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll av_windows_test.exe; do
+for name in waddle waddle-gui waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll av_windows_test.exe; do
     test -s "build/$name" || { echo "AV package: missing build/$name" >&2; exit 1; }
 done
 for name in ivshmem.inf ivshmem.sys ivshmem.cat LICENSE.txt; do
@@ -17,7 +17,7 @@ trap 'rm -rf "$stage"' EXIT
 trap 'exit 1' HUP INT TERM
 bundle="$stage/waddle_av"
 mkdir -p "$bundle/vendor/av/ivshmem" "$bundle/vendor/av/module" "$bundle/source" "$bundle/impl/high-perf-av-passthrough"
-for name in waddle waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll av_windows_test.exe; do
+for name in waddle waddle-gui waddled waddle-av-host waddle-av-setup waddle-guest-exec.exe waddle-guest-av.exe av_wgc.dll av_windows_test.exe; do
     cp "build/$name" "$bundle/$name"
 done
 for name in ivshmem.inf ivshmem.sys ivshmem.cat LICENSE.txt; do
@@ -45,7 +45,9 @@ gzip -n -c "$stage/looking_glass_source.tar" > "$bundle/source/looking_glass.tar
 test "$(git rev-parse HEAD:submodules/looking_glass)" = "$(git -C submodules/looking_glass rev-parse HEAD)"
 cat > "$bundle/INSTALL.txt" <<'TEXT'
 Extract this archive to a private directory owned by the invoking Linux user.
-Keep its layout intact: run ./waddle, with sibling host/guest binaries, DLL,
+Keep its layout intact: ./waddle opens the native GTK device manager without booting.
+Use ./waddle repl [--device NAME] for the interactive terminal.
+Run ./waddle with with sibling host/guest binaries, DLL,
 privileged setup helper, signed driver package, and patched module sources.
 Use waddle device commands to select a licensed Windows image and its execution
 bridge, then ./waddle av setup --device NAME [--uefi] [--kvmfr] [--gpu-mdev UUID] [--gpu PCI_BDF].
@@ -67,6 +69,10 @@ occluded color challenges. This measures compositor commit processing, not scano
 
 Linux x86_64 base packages: QEMU with KVM/VSOCK/IVSHMEM, virtiofsd, OVMF for UEFI,
 Wayland client, PipeWire, libc, sudo, make, acl, kmod, running-kernel build headers.
+The native manager also requires GTK4 >= 4.8, libadwaita >= 1.2, JSON-GLib,
+GTK4 VTE >= 0.70 and the desktop symbolic icon/SVG loader packages.
+Full-desktop capture and execution pause/resume require backend interfaces not
+present in this release; per-process seamless AV viewing remains available.
 These system packages and a licensed Windows installation are not redistributed.
 Do not mix Windows artifacts from another source commit. This CI bundle includes
 its own matching Windows SDK-built av_wgc.dll; no manual artifact assembly is needed.

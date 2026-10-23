@@ -17,7 +17,7 @@ jobs:
       - name: Install base build and platform development packages
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential pkg-config libwayland-dev wayland-protocols libpipewire-0.3-dev clang-19 llvm-19 kcov python3 ovmf 7zip
+          apt-get install -y --no-install-recommends git ca-certificates curl xz-utils build-essential pkg-config libwayland-dev wayland-protocols libpipewire-0.3-dev libgtk-4-dev libadwaita-1-dev libjson-glib-dev libvte-2.91-gtk4-dev clang-19 llvm-19 kcov python3 ovmf 7zip
           git config --global --add safe.directory '*'
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

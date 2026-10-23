@@ -6,7 +6,7 @@ import tarfile
 import tempfile
 
 Root = pathlib.Path(__file__).resolve().parents[2]
-Binaries = ('waddle', 'waddled', 'waddle-av-host', 'waddle-av-setup',
+Binaries = ('waddle', 'waddle-gui', 'waddled', 'waddle-av-host', 'waddle-av-setup',
             'waddle-guest-exec.exe', 'waddle-guest-av.exe', 'av_wgc.dll', 'av_windows_test.exe')
 Drivers = ('ivshmem.inf', 'ivshmem.sys', 'ivshmem.cat', 'LICENSE.txt')
 Module = ('kvmfr.c', 'kvmfr.h', 'Makefile', 'LICENSE')

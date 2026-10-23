@@ -16,7 +16,7 @@ No additional vendored dependencies or wire ABI changes are introduced.
 ```
 waddle launcher -> sibling waddle-gui -> GTK/libadwaita widgets
                                       |-> sibling waddle (argv, no shell)
-                                      |-> existing local QMP socket
+                                      |-> GTK4 VTE PTY -> waddle repl
 ```
 
 The launcher uses /proc/self/exe to resolve its sibling, preserving argv as
@@ -65,7 +65,7 @@ VTE GTK4 is a system dependency. Each embedded terminal owns a PTY child running
 waddle repl --device NAME. GUI close sends SIGHUP only to those terminal children;
 VM processes remain daemon-owned. Saved launcher and preference files use GLib
 GKeyFile in the user's XDG config directory with atomic, private replacement.
-Launchers record argv as string lists and retain explicit device identity. Local
+Launchers record quoted argv text and retain explicit device identity. Local
 shell strings are never executed. The command palette searches registered actions
 and displays the selected device in its title. Device pins and recent use are
 application preferences, independent of the backend default selection.
@@ -94,7 +94,7 @@ No process-global environment changes occur after startup.
 ## Error handling and recovery
 
 Missing CLI/terminal/display, empty registry, malformed JSON, nonzero exits,
-partial batch failure, unavailable QMP, paused VMs and disconnected guests surface
+partial batch failure, unavailable backend capabilities and disconnected guests surface
 in the UI. Output retention is bounded and pipes continue draining after truncation.
 Cancel signals only GUI-owned CLI jobs and waits for them; device processes remain
 supervisor-owned. Destructive removal/kill/reboot require a concrete native dialog.
@@ -111,3 +111,32 @@ malformed files. Run GUI-owned paths under ASan/LSan (system GTK process caches
 require documented library-only suppressions). Windows/vGPU hardware rendering
 performance is not claimed by these integration tests; the existing VM acceptance
 gate remains applicable. Record actual commands and limitations in VERIFICATION.md.
+
+## Implemented module boundaries
+
+- `gui_main.c`: GApplication registration/forwarding, display checks and state teardown.
+- `gui_backend.c`: GSubprocess stream/reap lifetime and bounded schema validation.
+- `gui_window.c`: registry/config/mount observations, main navigation and activity results.
+- `gui_forms.c`: captured-device forms, native confirmation, explicit batch queue and CLI argv.
+- `gui_terminal.c`: VTE PTY ownership, literal search, session tools and external terminals.
+- `gui_library.c`: saved launchers, safe Windows argument quoting, preferences, palette and async output export.
+- `gui_store.c`: bounded private preferences, atomic writes, damaged-file protection, nonpersistent pending operations.
+
+The foreground operation slot serializes all GUI management mutations, which also
+serializes conflicts on each device. List/config reads run independently. Batch
+names are copied at submission and each result is recorded separately; failures
+continue to later names. Cancelling clears the remaining queue. A successful
+create-and-start request queues start only after the creation exit status is zero.
+The batch/create follow-up state is never written to disk or replayed at startup.
+
+Device configuration has its own captured identity. List polls never overwrite
+unsaved settings. Successful setting updates/reset reload effective values;
+explicit Reload discards edits. A selection change discards the old device's
+unsaved entry values rather than ever applying them to the new identity. GUI
+forms capture device names at opening, so later dashboard navigation cannot
+redirect an already-reviewed mutation.
+
+Output export snapshots the visible bounded text before opening the native picker.
+The selected file is replaced asynchronously with private creation flags. Errors
+appear in a native alert. Parent/application references keep completion memory
+valid even if the main window closes while a save is in progress.
