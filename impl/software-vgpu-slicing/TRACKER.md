@@ -5,7 +5,7 @@
 - **Time Ended**: TBD
 - **Feature Branch**: feature/software-vgpu-slicing
 - **Target Merge Branch**: origin
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Review
 
 ## Tasks & Progress
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
@@ -14,16 +14,16 @@
 | #2      | Implement host-side Venus receiver (virglrenderer/vkr integration) | Done | 20% | 100% | Pinned negotiation and eight isolated worker contexts verified; Linux/native Windows CI, safety, coverage and local hardware workload pass |
 | #3      | Implement guest-side WDDM render-only driver and standalone Vulkan ICD | In Progress | 25% | 96% | Windows physical 12-case matrix revision 2 passes on the patched loader. Guarded three-lifetime DXVK heap (revision 11, guard R21) completes with zero OWNED residual blocks; DXVK's static-runtime CLIENT residue and OS residue are attributed by stack (IMPL_DESC heap section, classification explicitly accepted by the user on 2026-10-23). M2 revision 4 passes triangle_present and wsi_lifetime on the patched loader (m2_owned_runs_2e411c4_revision4). Exact-head CI and final review remain open. |
 | #4      | Implement zero-copy DMA-BUF export and Wayland `zwp_linux_dmabuf_v1` integration | Done | 15% | 100% | Production worker export, native Wayland import/release and exact-once guest acknowledgements verified on RTX5080; safety/coverage and Linux/native Windows CI pass; physical compositor acceptance downstream |
-| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | In Progress | 20% | 70% | Historical exact native GPU kernels pass. Full 1100-cycle DLL reload R10 passes with exact handle/TLS/FLS equality on every cycle (loader patch 0002 and ten-step OS pre-initialization, contract amendment 4). The guarded three-life heap run (r3, guard R22) completes but FAILS: 27 OWNED blocks (107,842 B) leak per OpenCL.dll load (LLVM ManagedStatics without llvm_shutdown; std::mutex critical sections never deleted). The user approved the llvm_shutdown fix, implemented in 23e9275 and rebuilt as 8552b3a1; census r6 and controls r8 pass. R11 and R12 are incomplete and grant no new reload acceptance. Review fixes and explicit user ratifications are recorded; the current-source rebuild produces 81f3fc1d (receipt 4c0436a7), which passes native controls r9 and six-life census r7 on the new VM boot. R13 passes all 1100 cycles/3300 contexts with exact handle/TLS/FLS equality, cleanup and independent frozen-verifier recheck; guarded heap runner r6 and offline ownership verdict remain required (attribution sections 19-20). |
+| #5      | Implement OpenCL compute remoting layer (pinned clvk + clspv over the guest Vulkan ICD) for Adobe compatibility | Done | 20% | 100% | Candidate81f3fc1d passes current-source static admission, fresh controls/census, uninterrupted R13 1100-cycle/3300-context reload and guarded heap cf99460c: zero OWNED blocks/bytes at every unload, complete nine-heap/CSR coverage and exact retirement/IFEO restoration. Qualified default compiler-option profile; nonstandard LLVM diagnostic-option limitation is explicitly documented (attribution sections20-21). |
 | #6      | Pin, configure, build, and verify virglrenderer dependency | Done | 5% | 100% | Immutable pin, license audit and offline build verified in CI |
 | #7      | Pin, configure and verify guest Venus serializer generator | Done | 0% | 100% | Exact receiver schema reproduced offline; Linux/Windows declarations compile |
 | #8      | Pin, build and verify native Vulkan loader with existing protocol headers | Done | 0% | 100% | Offline Linux normal/sanitized and native Windows loader device/fence discovery pass in GitHub CI |
 | #9      | Pin and verify modern DXVK 2.x black-box dependency and build prerequisites | Done | 0% | 100% | Immutable recursive sources verified; offline MinGW DXGI/D3D11 client DLLs built; native Waddle/DXVK acceptance remains TODO#3 |
 | #10     | Pin and build Mesa RADV/Lavapipe CPU cache lifecycle repair for zero-leak native driver enumeration | Done | 0% | 100% | Pinned dual offline repair/repeated positive unload and full Linux/native Windows CI37557528193 pass at c2faa4c; current feature-head acceptance remains separate |
-| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | In Progress | 0% | 60% | Pinned loader, medium-integrity bootstrap/receiver and real GPU/DXVK execution verified; final native heap teardown qualification pending |
+| #11     | Build/deploy pinned native Windows loader and own real ISO-VM receiver test bootstrap | Done | 0% | 100% | Pinned loader/bootstrap, physical/M2/DXVK acceptance and final OpenCL reload/guarded heap qualification pass; all owned/native/console/debugger processes retire naturally, IFEO is restored exactly, preserved VM remains running. |
 | #12     | Pin OpenCL dependencies as submodules and verify them (clvk + nested, llvm-project, clspv SPIR-V checkouts) | Done | 0% | 100% | Nine immutable public-HTTPS pins; scripts/verify_clvk.sh checks them; licences audited (Apache-2.0 / LLVM exceptions / NCSA for the translator) |
 
-**Total Feature Completion**: `93.0%`
+**Total Feature Completion**: `99.0%`
 
 ## Commit History & Progress Log
 
@@ -2651,10 +2651,23 @@ approved owner/new VM boot. Reload R13 and guarded heap remain open. Parent 93.0
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | docs(opencl): record the independently verified R13 reload pass | #5/#11 +0%; overall +0% | R13 attempt2 executor exit0, exactly1100 cycles/3300 contexts, handles104/TLS1083/FLS4075 on every cycle, one cleanup-complete record, exact host/native retirement, independently rerun frozen verifier PASS. |
+| `52f2f75` | docs(opencl): record the independently verified R13 reload pass | #5/#11 +0%; overall +0% | R13 attempt2 executor exit0, exactly1100 cycles/3300 contexts, handles104/TLS1083/FLS4075 on every cycle, one cleanup-complete record, exact host/native retirement, independently rerun frozen verifier PASS. |
 
 All 12 CI checks pass on exact source head bffeb41. The earlier plan preparation failed only
 because sandbox sockets were denied, before native work; its evidence is retained and no
 native failed run was retried into this result. R13's heap_acceptance remains false. The
 new-candidate guarded heap capture and offline ownership gate still block TODO #5, which stays
 70%, and TODO #11, which stays60%. Parent remains93.0% / In Progress, Time Ended TBD.
+
+### Final rebuilt-candidate heap and native bootstrap acceptance (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | docs(opencl): close rebuilt-candidate heap ownership qualification | #5 +30% (+6.0% overall); #11 +40% (+0% overall) | Heap cf99460c: native0, three8-context lives, nine API heaps/zero CSR busy at each stage, eight clean R22 passes, zero OWNED blocks/bytes at every unload, all allocating modules resolved, exact process/pidfd/IFEO retirement; offline review e2fc5fb6 and root review4638f3df PASS. |
+
+The original capture exit1 is retained as the expected source-frame-attribution handoff; the
+prescribed separate offline module-ownership review supplies acceptance. No missing coverage,
+unknown allocator or ownership failure is waived. R13 was independently qualified before heap
+launch. Default compiler-option scope and the documented LLVM diagnostic limitation remain
+explicit. Native gates #5/#11 are complete. Parent moves93.0->99.0%, Review, Time Ended TBD;
+TODO#3's final4% is the final source/evidence and delivery-head CI closure.

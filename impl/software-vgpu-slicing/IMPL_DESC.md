@@ -7704,3 +7704,18 @@ handle/TLS/FLS equality and module retirement, final cleanup to entry, natural n
 and host retirement, and an independent rerun of the frozen strict verifier. Attribution
 section 20 records full immutable evidence hashes. The heap verdict is explicitly separate
 and remains pending; no reload result alone grants heap acceptance.
+
+### Rebuilt candidate heap acceptance (2026-10-23)
+
+The final heap run cf99460c on candidate81f3fc1d completes three ordinary eight-context lives
+with full PageHeap/UST, nine-heap coverage, zero CSR user-busy allocations and eight clean R22
+guard passes. Native/controller/worker exits are natural0; all owned groups/pidfds retire and
+IFEO returns exactly to its absent pre-run state. The capture tool's source-frame handoff remains
+a recorded denial; the separate prescribed offline ownership review supplies PASS with zero
+OWNED blocks/bytes at every unload and no unknown allocating module. OS residue retains full
+raw stacks and pinned-symbol attribution. Attribution section21 records counts and full hashes.
+
+R13 plus this heap verdict satisfy the OpenCL reload/memory gates for the documented default
+compiler-option profile. The diagnostic/statistics-option limitation above remains explicit,
+without claiming an unimplemented private-copy filter or qualification of that path. The source
+implementation and native evidence are complete; parent delivery-head CI closure is separate.

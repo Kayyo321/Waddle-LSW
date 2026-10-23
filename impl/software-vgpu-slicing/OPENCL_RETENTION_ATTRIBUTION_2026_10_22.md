@@ -614,3 +614,58 @@ those interrupted runs. It proves reload resource equality and functional retire
 The new-candidate R22-guarded three-life heap capture and offline ownership verdict remain open;
 TODO #5 remains 70% until that gate also passes. All 12 CI checks are independently green on
 source head bffeb41, preserved in `codex_continuation_20261023/ci_bffeb41_all_green.json`.
+
+## 21. Rebuilt candidate guarded heap ownership passes (2026-10-23)
+
+Run: `build/qualification_feature_20261021/opencl_heap_cf99460c/`, heap runner r6, guard R22,
+current candidate 81f3fc1d and fixture d519743e, same leased VM boot as R13. Three ordinary lives
+each execute all eight exact contexts and malformed/concurrent-call oracles under full PageHeap
+and UST. The flagged executable is the byte-verified OpenCL fixture copied to the helper's unique
+legacy-named `waddle_dxvk_heap_44f14ac4f2900477.exe`; no DXVK workload is run here.
+
+**Capture and retirement.** All four stages (baseline and unloaded_1..3) complete two guarded CDB
+passes: eight successful guard results, command_ok/cleanup_ok true, cleanup_uncertain false,
+no FRESH threads, original suspend counts zero before/after, and no guard recovery needed. All
+nine API heaps are covered at each stage. CSR user-busy allocations are zero at every stage.
+The native fixture naturally exits0; all three host sessions return controller/worker0, empty
+owned groups and closed pidfds with no signals. The exact native/console absence proof passes.
+IFEO before/restored/current states are identical absent keys. A fresh read-only liveness query
+finds no qualification, CDB, batch or guard process. The same QEMU/swtpm identities remain live.
+
+**Separate offline verdict.** The unmodified capture runner exits1 only at its conservative
+source-frame-attribution handoff, after successful native execution and coverage. Its denial is
+preserved in run_failure.json; it is not silently changed into a pass. The prescribed offline
+reviewer maps allocating frames with the same-capture loaded/unloaded module ranges and pinned
+ntdll/kernelbase publics. Verdict: **PASS**, zero OWNED residual blocks and bytes at every unload,
+including the first. Every allocating module is resolved; none is unknown or waived. OpenCL,
+the patched loader, bootstrap, ICD and flagged fixture ranges are present in the classifier.
+
+| Stage | OWNED blocks / bytes | OS blocks / bytes | CSR user busy |
+|:--|--:|--:|--:|
+| unloaded_1 | 0 / 0 | 104 / 16,488 | 0 |
+| unloaded_2 | 0 / 0 | 105 / 16,536 | 0 |
+| unloaded_3 | 0 / 0 | 108 / 16,936 | 0 |
+
+OS residue is fully listed with raw stacks. The allocating modules are ntdll, bcryptprimitives,
+ws2_32 and Windows.StateRepositoryCore. Pinned ntdll symbols identify ETW registrations, loader
+TLS data/vectors, environment/path storage, provider registration and verifier critical-section
+debug records. The 48-byte debug-info counts are12/13/15 across the three stages; they follow
+the already attributed guard mutex and bounded ntdll debug-info reuse cache (section17). A
+second304-byte bcryptprimitives record appears at life3. These allocations remain OS-attributed
+by the same first-allocating-module rule used by the failing old-candidate control; no ownership
+rule, threshold, count or subtraction policy changed. The old 27 OWNED blocks per load are gone.
+
+Key SHA-256 bindings:
+- Capture record: `98f755f59f50555092c6eebc736fb9855a429e7f80617edd42997240bf18e997`.
+- Offline review: `e2fc5fb6d6d18d8f342455c7cfbd678d1dd67efa8616048d5734748ba7b655d5`.
+- Root completion/coverage/guard/retirement review: `4638f3df52c3a80a438610ab76d711958e37b97435f492749cd17ab77a73af8e`.
+- Fresh liveness/registry review: `a25ff74123fb82da1a76bc77b819e811d5dd9287ca7f4c33eba7455dab9d6e0a`.
+- OS symbol attribution: `1281cf393b99cfd607aa6e99ed4f575ca52a559e21fbc803c0570f90091e60bf`.
+
+Together with R13, this closes the rebuilt-candidate OpenCL reload/heap gates and native heap
+bootstrap qualification. TODO#5 rises70->100 (+6% overall) and zero-weight TODO#11 rises60->100.
+The qualified profile is the documented default compiler-option path; the nonstandard LLVM
+diagnostic-option destructor-order limitation remains explicit in IMPL_DESC and the shim, as
+the handoff's minimum handling requires. No option filter or upstream private-copy change is
+claimed. Native qualification is complete; final source/evidence closure and exact delivery-head
+CI remain the final parent closeout step.
