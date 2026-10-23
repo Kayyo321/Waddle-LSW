@@ -1,0 +1,35 @@
+{
+  "source_commit": "d942bb089928e1e97239042ff6fdf4ff874e6686",
+  "source_sha256": {
+    "src/interop/interop_layout.zig": "493f9be29202afd544ac661ac945301cb4ddd9c0ee5c02847fff9e1847e4b916",
+    "src/interop/interop_heap.zig": "b4c39c304006936f44b1bb76865bb836b3e19990a32e42d217465c975a753b91",
+    "src/interop/manifest.zig": "cdb6ce1ab125cc853f11c0a1768c86903dce1448c9868b0bb195d7a00eb30614"
+  },
+  "binary_sha256": {
+    "layout.exe": "d074a87d2304ad2394b4a2f2dba9091ec8587138135ccd415f7035a9ddf3b943",
+    "heap.exe": "35b7bf3541c9d32d624509e9bd2b8984e0f35a805b2ee74ad13a9cdafb147490",
+    "manifest.exe": "ad1b2b5e08d41e580b69abf7885c49280aedfca59d14f6ae28be99a4c95370bd"
+  },
+  "native_windows_exit": 0,
+  "guest": "Existing Windows 11 test VM; noninteractive WinRM CPU tests only",
+  "transfer": "Temporary loopback HTTP source; guest SHA256 checked before execution",
+  "cleanup": "Only task-specific guest temporary directory removed in finally; VM/processes preserved",
+  "run_directory": "/home/dev/Waddle-LSW/build/interop_native_8c98208d9330448996531bba8a557e5d",
+  "stdout_sha256": "7e1054f04d69413e0351a8647d33b83a2b60626b4c46cf816ab2286a5203c37f",
+  "stderr_sha256": "4ff44ac0e58057fb3933e81ad2ff7af25defc8876e9a844c0d4789eaca11d9ba",
+  "completed_utc": "2026-10-23T20:13:01.341003+00:00",
+  "windows": {
+    "caption": "Microsoft Windows 11 Pro",
+    "build": "26300"
+  },
+  "zig_version": "0.13.0",
+  "test_counts": {
+    "layout.exe": 8,
+    "heap.exe": 17,
+    "manifest.exe": 12
+  },
+  "build_command_template": "ZIG_GLOBAL_CACHE_DIR=/tmp/seamless_review_zig_cache zig test SOURCE -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=EXE (layout additionally -Iinclude)",
+  "stdout_log": "evidence/foundation_native_stdout.log",
+  "stderr_log": "evidence/foundation_native_stderr.log",
+  "scope": "Portable unit tests only: no Wayland surfaces, VSOCK/IVSHMEM, capture/input, UIAccess, policy, peripherals or live session acceptance."
+}

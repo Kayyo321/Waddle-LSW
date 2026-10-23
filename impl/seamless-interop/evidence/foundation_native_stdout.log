@@ -1,0 +1,7 @@
+{"Caption":"Microsoft Windows 11 Pro","BuildNumber":"26300"}
+RUN layout.exe
+PASS layout.exe
+RUN heap.exe
+PASS heap.exe
+RUN manifest.exe
+PASS manifest.exe

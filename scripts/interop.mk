@@ -18,10 +18,11 @@ build/interop_codec_abi_test: tests/interop/codec_abi.c build/interop_codec.o in
 interop-codec-test: build/interop_codec_abi_test
 	$(ZIG) test src/interop/interop_codec.zig -Iinclude -lc
 	./build/interop_codec_abi_test
-# C consumers under ASan/LSan/UBSan; zero leaks required.
-interop-sanitizers:
+# Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
+# Native C mapping adapters remain a separate acceptance subtask.
+interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
-# >= 90% line and branch coverage of the interop codec.
+# >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage:
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
@@ -52,3 +53,11 @@ interop-manifest-test:
 	$(ZIG) test src/interop/manifest.zig -lc
 interop-manifest-coverage:
 	python3 tests/av/coverage.py manifest
+
+# Native Windows unit executables; cross-build is distinct from actual execution.
+build/interop_layout_test.exe: src/interop/interop_layout.zig | build
+	$(ZIG) test $< -Iinclude -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+build/interop_heap_test.exe: src/interop/interop_heap.zig src/interop/interop_layout.zig | build
+	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+build/interop_manifest_test.exe: src/interop/manifest.zig | build
+	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@

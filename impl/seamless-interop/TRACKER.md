@@ -1,6 +1,6 @@
 # Feature Tracker: Seamless Interop
 
-- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna audits (luna_foundations, luna_integration, luna_acceptance)
+- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna implementation/review (luna_foundations, luna_integration, luna_acceptance)
 - **Time Started**: 2026-10-22T00:59:49Z
 - **Time Ended**: TBD
 - **Feature Branch**: feat/seamless-interop
@@ -29,8 +29,8 @@ acceptance remain pending.
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
 | #1  | IMPL_DESC.md + TRACKER.md, contract freeze (protocol v2, layout v3, manifest schema, config keys) | Done | 2% | 100% | Versioned amendment 2026-10-23; CLI stop/force, serial mapping and minima explicit |
-| #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **hardware run by user pending** (`scripts/interop_verify_m0.sh audio`) |
-| #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE hardware runs by user pending** |
+| #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **native pipeline readiness and hardware run pending** (`scripts/interop_verify_m0.sh audio`) |
+| #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE native hardware runs pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 40% | Snapshot primitives and first-fit reservations accepted; native ABI/atomics and slot pins/runtime remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
@@ -61,7 +61,7 @@ acceptance remain pending.
 | #31 | .exe/.msi/.lnk MIME handler, PE classifier, `exe_handler` setting | Pending | 2% | 0% | Waits on #29 and #33 journal/artifact API milestone; full #33 closure follows all artifact producers |
 | #32 | binfmt_misc system artifacts, `install --system`, status/conflict reporting | Pending | 1% | 0% | Waits on #31 |
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
-| #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
+| #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
 **Total Feature Completion**: `12.25%`
 
@@ -278,7 +278,7 @@ runner is granted by these assignments. Shared build targets run serially.
     no behavior change. Restricted-executor formatting returned Unexpected;
     host-access formatting succeeds and all nineteen config tests pass again.
 
-- **Commit `HEAD`**: `feat(interop): expose seamless settings through device config commands`
+- **Commit `e6e40fa`**: `feat(interop): expose seamless settings through device config commands`
   - **Task Impact**: +5% to TODO #8 (+0.15% overall; total 12.25%).
   - **Summary**: Luna exposes frozen qualified settings as typed JSON/text,
     documents command keys and separates legacy AV edit aliases. Lead review
@@ -287,4 +287,16 @@ runner is granted by these assignments. Shared build targets run serially.
     set/get/reset, 16 selectors and 17-selector rejection with exact rollback.
     Path-option regressions pass again. Export/import/clone persistence remains
     a separate 5% subtask; no QEMU/native device behavior is credited.
-    `HEAD` identifies this containing CLI integration commit.
+
+- **Commit `HEAD`**: `test(interop): qualify foundation units on Linux and native Windows`
+  - **Task Impact**: +0% to TODO #5/#33/#34 (+0% overall; total 12.25%).
+  - **Summary**: Extends aggregate sanitizer/testing-allocator and Windows CI
+    execution to layout, heap and manifest; all Linux interop gates and Windows
+    cross-builds pass. Records hashed source/binary/log evidence of actual
+    Windows 11 build 26300 unit runs (8 layout, 17 heap including layout,
+    12 manifest tests), with verified transfers and task-temporary cleanup.
+    The host/guest runner is available; missing guest runtime/drivers still
+    prevent integrated M0/session acceptance. No live mapping/GUI/audio/input,
+    native atomic proof or hosted CI result is claimed. Independent Luna
+    read-only review finds no additional primitive correctness defects.
+    `HEAD` identifies this containing foundation test/evidence commit.

@@ -1,0 +1,42 @@
+#< CLIXML
+1/8 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+2/8 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+3/8 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+4/8 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+5/8 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+6/8 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+7/8 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+8/8 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 8 tests passed.
+1/17 interop_heap.test.initialization and capacity errors preserve outputs...OK
+2/17 interop_heap.test.first fit skips a partially occupied candidate...OK
+3/17 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+4/17 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+5/17 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+6/17 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+7/17 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+8/17 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+9/17 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+10/17 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+11/17 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+12/17 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+13/17 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+14/17 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+15/17 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+16/17 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+17/17 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 17 tests passed.
+1/12 manifest.test.schema one parses all host and guest record kinds with owned borrowed views...OK
+2/12 manifest.test.all frozen schema one kinds parse with their kind-specific fields...OK
+3/12 manifest.test.rejects malformed schema duplicate keys and duplicate record ids...OK
+4/12 manifest.test.rejects root type omissions and malformed JSON paths...OK
+5/12 manifest.test.rejects each required record field when missing or mistyped...OK
+6/12 manifest.test.validates prior variants and optional record values...OK
+7/12 manifest.test.rejects record kind field prior hash UTF8 and string bound violations...OK
+8/12 manifest.test.enforces input record string and nesting bounds...OK
+9/12 manifest.test.valid parse releases every arena allocation...OK
+10/12 manifest.test.document owns strings independently of input and deinit is idempotent...OK
+11/12 manifest.test.invalid parse frees partial allocations under allocation failure...OK
+12/12 manifest.test.allocation failures cover record and duplicate-index growth...OK
+All 12 tests passed.
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="2"><TNRef RefId="0" /><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>
