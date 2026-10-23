@@ -70,11 +70,26 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     assert '"日本語' in shown["data"]["config_path"]
     assert shown["data"]["config"]["default_shell"] == "powershell.exe"
     values = run("device", "config", "get", "alpha", "--json", structured=True)["results"][0]["data"]
-    assert values == dict(memory_mb=4096, vcpus=4, vsock_port=5242,
-                          default_shell="powershell.exe", start_timeout=60, stop_timeout=15)
+    assert values == {
+        "memory_mb": 4096, "vcpus": 4, "vsock_port": 5242,
+        "default_shell": "powershell.exe", "start_timeout": 60, "stop_timeout": 15,
+        "enabled": 0, "uefi": 0, "shm_path": "", "gpu_bdf": "", "gpu_mdev_uuid": "",
+        "network.mode": "user", "network.cups_forward": True,
+        "usb.controller": True, "usb.auto_attach": "", "audio.backend": "pipewire",
+        "audio.microphone": True, "audio.per_app": True, "input.ime": "guest",
+        "input.inhibit_shortcuts": "fullscreen", "input.repeat": "host",
+        "clipboard.enabled": True, "clipboard.max_mb": 64, "clipboard.files": True,
+        "integration.start_at_login": False, "integration.menu_apps": "installed",
+        "integration.desktop_shortcuts": "mirror", "integration.exe_handler": "waddle",
+        "integration.uac": "window", "integration.notify": True,
+    }
     value = run("device", "config", "get", "alpha", "memory_mb", "--json", structured=True)
     assert value["results"][0]["data"] == {"memory_mb": 4096}
     run("device", "config", "get", "alpha", "bogus", "--json", expected=2, structured=True)
+    assert run("device", "config", "get", "alpha", "clipboard.enabled", "--json", structured=True)["results"][0]["data"] == {"clipboard.enabled": True}
+    assert run("device", "config", "get", "alpha", "enabled", "--json", structured=True)["results"][0]["data"] == {"enabled": 0}
+    help_text = run("device", "--help").stdout
+    assert "network.mode" in help_text and "integration.uac" in help_text and "clipboard.max_mb" in help_text
     run("device", "default", "absent", "--json", expected=2, structured=True)
     assert run("device", "default", "--json", structured=True)["results"][0]["data"]["default_device"] == "alpha"
     run("device", "default", "--clear")
@@ -103,6 +118,36 @@ with tempfile.TemporaryDirectory(prefix="waddle-dev-") as root:
     assert values["memory_mb"] == 8192 and values["vcpus"] == 8
     run("device", "config", "reset", "alpha", "memory_mb", "vcpus")
     assert run("device", "config", "get", "alpha", "memory_mb", "--json", structured=True)["results"][0]["data"] == {"memory_mb": 4096}
+    # Exercise enum spellings through the public set/get/reset surface in bounded batches.
+    run("device", "config", "set", "alpha", "network.mode=none", "audio.backend=none",
+        "input.ime=host", "input.inhibit_shortcuts=never", "input.repeat=off",
+        "integration.menu_apps=all", "integration.desktop_shortcuts=off",
+        "integration.exe_handler=off", "integration.uac=auto", "usb.auto_attach=1234:abcd,00ff:0001")
+    changed = run("device", "config", "get", "alpha", "--json", structured=True)["results"][0]["data"]
+    assert [changed[key] for key in ("network.mode", "audio.backend", "input.ime", "input.inhibit_shortcuts", "input.repeat", "integration.menu_apps", "integration.desktop_shortcuts", "integration.exe_handler", "integration.uac", "usb.auto_attach")] == ["none", "none", "host", "never", "off", "all", "off", "off", "auto", "1234:abcd,00ff:0001"]
+    usb_ids = ",".join(f"{index:04x}:{index:04x}" for index in range(16))
+    run("device", "config", "set", "alpha", f"usb.auto_attach={usb_ids}")
+    assert run("device", "config", "get", "alpha", "usb.auto_attach", "--json", structured=True)["results"][0]["data"] == {"usb.auto_attach": usb_ids}
+    usb_profile_before_reject = profile.read_bytes()
+    too_many_usb_ids = ",".join(f"{index:04x}:{index:04x}" for index in range(17))
+    run("device", "config", "set", "alpha", f"usb.auto_attach={too_many_usb_ids}", expected=2)
+    assert profile.read_bytes() == usb_profile_before_reject
+    run("device", "config", "set", "alpha", "network.mode=user", "audio.backend=pipewire",
+        "input.ime=guest", "input.inhibit_shortcuts=focused", "input.repeat=host",
+        "integration.menu_apps=none", "integration.desktop_shortcuts=mirror",
+        "integration.exe_handler=waddle", "integration.uac=native")
+    changed = run("device", "config", "get", "alpha", "--json", structured=True)["results"][0]["data"]
+    assert [changed[key] for key in ("network.mode", "audio.backend", "input.ime", "input.inhibit_shortcuts", "input.repeat", "integration.menu_apps", "integration.desktop_shortcuts", "integration.exe_handler", "integration.uac")] == ["user", "pipewire", "guest", "focused", "host", "none", "mirror", "waddle", "native"]
+    run("device", "config", "set", "alpha", "clipboard.enabled=false")
+    changed = run("device", "config", "get", "alpha", "--json", structured=True)["results"][0]["data"]
+    assert changed["clipboard.enabled"] is False and changed["enabled"] == 0
+    run("device", "config", "reset", "alpha", "network.mode", "audio.backend", "input.ime",
+        "input.inhibit_shortcuts", "input.repeat", "integration.menu_apps", "integration.desktop_shortcuts",
+        "integration.exe_handler", "integration.uac", "usb.auto_attach")
+    run("device", "config", "reset", "alpha", "clipboard.enabled", "enabled")
+    reset_values = run("device", "config", "get", "alpha", "--json", structured=True)["results"][0]["data"]
+    assert reset_values["network.mode"] == "user" and reset_values["usb.auto_attach"] == ""
+    assert reset_values["clipboard.enabled"] is True and reset_values["enabled"] == 0
     # Same-user orphan disk holders must block mutations even without a socket.
     with open(shown["data"]["disk_image"], "rb"):
         run("device", "config", "set", "alpha", "vcpus=8", expected=1)

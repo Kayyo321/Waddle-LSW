@@ -137,6 +137,26 @@ fn put(value: *std.json.Value, key: []const u8, field: std.json.Value) !void {
     try value.object.put(key, field);
 }
 
+/// Convert a validated fixed-width enum value to its stable public spelling.
+fn enum_text(value: u32, spellings: []const []const u8) []const u8 {
+    return if (value < spellings.len) spellings[value] else "invalid";
+}
+
+/// Format configured USB selectors as the canonical lower-case VID:PID list.
+fn usb_auto_attach_text(allocator: std.mem.Allocator, cfg: *const c.daemon_config_t) !std.json.Value {
+    var buffer: [c.ConfigMaxUsbAutoAttach * 9 + (c.ConfigMaxUsbAutoAttach - 1)]u8 = undefined;
+    var length: usize = 0;
+    for (cfg.usb_auto_attach[0..@intCast(cfg.usb_auto_attach_count)], 0..) |device, index| {
+        if (index != 0) {
+            buffer[length] = ',';
+            length += 1;
+        }
+        const rendered = try std.fmt.bufPrint(buffer[length..], "{x:0>4}:{x:0>4}", .{ device.vendor_id, device.product_id });
+        length += rendered.len;
+    }
+    return try text_value(allocator, buffer[0..length]);
+}
+
 /// Build typed effective mutable settings from an already validated configuration.
 fn config_value(allocator: std.mem.Allocator, cfg: *const c.daemon_config_t) !std.json.Value {
     var value = object(allocator);
@@ -146,6 +166,32 @@ fn config_value(allocator: std.mem.Allocator, cfg: *const c.daemon_config_t) !st
     try put(&value, "default_shell", try text_value(allocator, c_text(&cfg.default_shell)));
     try put(&value, "start_timeout", .{ .integer = cfg.start_timeout_sec });
     try put(&value, "stop_timeout", .{ .integer = cfg.stop_timeout_sec });
+    // Expose the unqualified AV edit aliases with their established integer/string types.
+    try put(&value, "enabled", .{ .integer = cfg.av_enabled });
+    try put(&value, "uefi", .{ .integer = cfg.av_uefi });
+    try put(&value, "shm_path", try text_value(allocator, c_text(&cfg.av_shm_path)));
+    try put(&value, "gpu_bdf", try text_value(allocator, c_text(&cfg.av_gpu_bdf)));
+    try put(&value, "gpu_mdev_uuid", try text_value(allocator, c_text(&cfg.av_gpu_mdev_uuid)));
+
+    try put(&value, "network.mode", .{ .string = enum_text(cfg.network_mode, &.{ "user", "none" }) });
+    try put(&value, "network.cups_forward", .{ .bool = cfg.network_cups_forward != 0 });
+    try put(&value, "usb.controller", .{ .bool = cfg.usb_controller != 0 });
+    try put(&value, "usb.auto_attach", try usb_auto_attach_text(allocator, cfg));
+    try put(&value, "audio.backend", .{ .string = enum_text(cfg.audio_backend, &.{ "pipewire", "none" }) });
+    try put(&value, "audio.microphone", .{ .bool = cfg.audio_microphone != 0 });
+    try put(&value, "audio.per_app", .{ .bool = cfg.audio_per_app != 0 });
+    try put(&value, "input.ime", .{ .string = enum_text(cfg.input_ime, &.{ "guest", "host" }) });
+    try put(&value, "input.inhibit_shortcuts", .{ .string = enum_text(cfg.input_inhibit_shortcuts, &.{ "never", "fullscreen", "focused" }) });
+    try put(&value, "input.repeat", .{ .string = enum_text(cfg.input_repeat, &.{ "host", "off" }) });
+    try put(&value, "clipboard.enabled", .{ .bool = cfg.clipboard_enabled != 0 });
+    try put(&value, "clipboard.max_mb", .{ .integer = cfg.clipboard_max_mb });
+    try put(&value, "clipboard.files", .{ .bool = cfg.clipboard_files != 0 });
+    try put(&value, "integration.start_at_login", .{ .bool = cfg.integration_start_at_login != 0 });
+    try put(&value, "integration.menu_apps", .{ .string = enum_text(cfg.integration_menu_apps, &.{ "installed", "all", "none" }) });
+    try put(&value, "integration.desktop_shortcuts", .{ .string = enum_text(cfg.integration_desktop_shortcuts, &.{ "mirror", "off" }) });
+    try put(&value, "integration.exe_handler", .{ .string = enum_text(cfg.integration_exe_handler, &.{ "waddle", "off" }) });
+    try put(&value, "integration.uac", .{ .string = enum_text(cfg.integration_uac, &.{ "window", "auto", "native" }) });
+    try put(&value, "integration.notify", .{ .bool = cfg.integration_notify != 0 });
     return value;
 }
 
@@ -809,7 +855,11 @@ export fn waddle_device_command(argc: c_int, argv: [*]const [*:0]const u8) c_int
                 "Batch operations snapshot sorted names, continue failures and return aggregate failure.\n" ++
                 "Read commands never start a guest. Default selection does not boot.\n" ++
                 "Config keys: memory_mb, vcpus, default_shell, vsock_port, start_timeout, stop_timeout,\n" ++
-                "enabled, uefi, shm_path, gpu_bdf (AV environment).\n" ++
+                "enabled, uefi, shm_path, gpu_bdf, gpu_mdev_uuid (AV edit aliases), network.mode, network.cups_forward,\n" ++
+                "usb.controller, usb.auto_attach, audio.backend, audio.microphone, audio.per_app,\n" ++
+                "input.ime, input.inhibit_shortcuts, input.repeat, clipboard.enabled, clipboard.max_mb,\n" ++
+                "clipboard.files, integration.start_at_login, integration.menu_apps,\n" ++
+                "integration.desktop_shortcuts, integration.exe_handler, integration.uac, integration.notify.\n" ++
                 "Exit codes: 0 success, 2 usage/validation, 1 I/O, 125 resources, 130 interrupted.\n",
         ) catch return 125;
         return 0;
