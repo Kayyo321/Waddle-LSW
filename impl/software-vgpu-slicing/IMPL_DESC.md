@@ -7696,3 +7696,11 @@ qualification. It passes static admission, new-boot native controls r9 and six-l
 with zero handle/module/TLS/FLS deltas. The census proves attribution and functional retirement
 only. Attribution section 19 records exact hashes, applicability and natural retirement. Fresh
 1100-cycle reload R13 and guarded three-life heap runner r6 remain mandatory and uncredited.
+
+### Rebuilt candidate uninterrupted reload gate (2026-10-23)
+
+Candidate 81f3fc1d passes R13: exactly 1100 DLL lives/3300 GPU contexts, exact per-cycle
+handle/TLS/FLS equality and module retirement, final cleanup to entry, natural native/console
+and host retirement, and an independent rerun of the frozen strict verifier. Attribution
+section 20 records full immutable evidence hashes. The heap verdict is explicitly separate
+and remains pending; no reload result alone grants heap acceptance.

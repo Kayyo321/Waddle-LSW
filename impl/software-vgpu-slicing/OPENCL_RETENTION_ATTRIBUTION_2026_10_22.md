@@ -574,3 +574,43 @@ passes a live read-only check of the approved owner chain and exact VM executabl
 Fresh reload R13 is prepared next, with unchanged cycle counts, equality predicates, context
 counts, deadlines and retirement rules. It must pass before the new-candidate heap run starts.
 Feature progress remains 93.0%; no incomplete reload or missing heap result is credited.
+
+## 20. Rebuilt candidate R13 passes the uninterrupted 1100-cycle gate (2026-10-23)
+
+Run folder: `build/qualification_feature_20261021/opencl_reload_final_r13_attempt2/`.
+Candidate 81f3fc1d and fixture d519743e run on the exact new-boot VM identities recorded in section 18.
+R13 preserves R12's execution, counts, equality predicates, deadlines and retirement rules; the
+new revision binds the approved Codex owner, current candidate/receipt and fresh controls/census.
+Wrapper r2 is hash-pinned and explicitly approved. The explanatory contract/attribution documents
+are byte-copied into the composite's evidence folder so later result appendices do not invalidate
+this historical run's hash-bound evidence.
+
+The first plan preparation was denied localhost sockets by the filesystem/operation sandbox,
+before any VM/native work. Its partial folder and error log are retained. A fresh host preparation
+created attempt2 with 1100 unique ports/tokens and all source/receipt identities reviewed before
+launch. There is only one native R13 execution, detached into its own process session.
+
+| Check | Result |
+|:--|:--|
+| Executor exit | 0 at 2026-10-23T17:47:15Z |
+| Strict verdict | PASS, full_dll_reload_lifecycle_only; heap_acceptance false |
+| Cycle records | Exactly 1100, ordered 1-1100, three contexts each |
+| Per-cycle resource state | Handles 104, TLS 1083, FLS 4075; module exact/absent true throughout |
+| Completion | Exactly one record; 3300 contexts, cleanup true; entry [92,1083,4075] |
+| Independent frozen-verifier rerun | PASS at 2026-10-23T17:48:05Z, same verdict |
+| Lease and process retirement | Exact host/native/console retirement proofs accepted; lease returned to idle with the same owner chain and VM identities |
+
+Key SHA-256 bindings:
+- Plan: `07847e870e73bdb3408a137979bdd93f00e3cc9358beb00dccbd5b0d532b27ca`.
+- Composite: `392c84833a296c70d8b537ecffa55132e5b5b9f2c18b59758942f402e5d2ab4b`.
+- Native manifest: `409e30c760f8a1f44eb6c47e450a5e74f9e53960f03b57d5440f464539e373b8`.
+- Native result: `70b6f103c6344bf7ce714a45b1c675fa4f589e925959e0e1930207177e121211`.
+- Independent root review: `a7d5ff83913dacb16e459cdf0f5a76ea05488f16b7cda432bd7da5afd33d8405`.
+- Raw stdout: `5ccee10c5b18ddbfc1bb2e17903a925b481e7ea1699b32c126bb37134ba5be48`.
+- Raw stderr: `2202b27f18576543d5092466d68f23b679d882dfdfa9d208bbc60f9053951cfc`.
+
+This replaces the missing/incomplete rebuilt-candidate R11/R12 reload gate without crediting
+those interrupted runs. It proves reload resource equality and functional retirement only.
+The new-candidate R22-guarded three-life heap capture and offline ownership verdict remain open;
+TODO #5 remains 70% until that gate also passes. All 12 CI checks are independently green on
+source head bffeb41, preserved in `codex_continuation_20261023/ci_bffeb41_all_green.json`.
