@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Waddle
+Comment=Manage Windows subsystem devices and applications
+Exec=waddle gui
+Icon=io.github.Kayyo321.Waddle
+Terminal=false
+Categories=System;Emulator;
+Keywords=Windows;Virtual Machine;Subsystem;
+StartupNotify=true
+StartupWMClass=io.github.Kayyo321.Waddle

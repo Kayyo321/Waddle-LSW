@@ -223,3 +223,6 @@ include scripts/vgpu_icd_owned_safety.mk
 include scripts/vgpu_wsi_lifecycle.mk
 
 include scripts/vgpu_gui_diag.mk
+
+include scripts/gui.mk
+all: gui

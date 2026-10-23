@@ -67,8 +67,11 @@ static void usage(FILE *f) {
             "  av setup|probe|run             Provision and use managed audio/video\n"
             "\n"
             "Default Action:\n"
-            "  waddle [device-name]           Enter interactive Windows terminal (ConPTY)\n"
+            "  waddle [device-name]           Open the native device manager (does not boot)\n"
+            "  gui [--device NAME]            Open or focus the native device manager\n"
+            "  repl [NAME|--device NAME]      Enter interactive Windows terminal (ConPTY)\n"
             "                                 Auto-starts subsystem if not currently running.\n"
+            "  shell [NAME|--device NAME]     Compatible alias for repl\n"
             "\n"
             "Device Management:\n"
             "  device list/show/default/config  Inspect profiles and select persistent default\n"
@@ -1092,9 +1095,34 @@ static int cmd_interactive_default(const char *target_device) {
 
 #include "av_managed.inc"
 
+/** @brief Replace this process with the adjacent native GUI executable.
+ * @param[in] device Borrowed optional device name; NULL opens the dashboard.
+ * @return 1 on missing graphical session or executable; otherwise exec never returns.
+ * @note Main-thread only; stack storage, no retained memory or guest startup.
+ */
+static int launch_gui(const char *device) {
+    if ((getenv("DISPLAY") == NULL || !*getenv("DISPLAY")) &&
+        (getenv("WAYLAND_DISPLAY") == NULL || !*getenv("WAYLAND_DISPLAY"))) {
+        fputs("waddle: the GUI needs a graphical session. Use 'waddle repl' for the terminal.\n", stderr);
+        return 1;
+    }
+    char executable[PATH_MAX];
+    ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+    if (length < 0 || (size_t)length >= sizeof(executable) - 1) return 1;
+    executable[length] = '\0';
+    char *slash = strrchr(executable, '/');
+    if (slash == NULL || (size_t)(slash - executable) + sizeof("/waddle-gui") > sizeof(executable)) return 1;
+    strcpy(slash, "/waddle-gui");
+    char *arguments[] = {executable, "--device", (char *)device, NULL};
+    if (device == NULL) arguments[1] = NULL;
+    execv(executable, arguments);
+    fprintf(stderr, "waddle: cannot launch native GUI: %s. Install waddle-gui beside waddle; use 'waddle repl' for the terminal.\n", strerror(errno));
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc == 1) {
-        return cmd_interactive_default(NULL);
+        return launch_gui(NULL);
     }
 
     const char *cmd = argv[1];
@@ -1109,13 +1137,22 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    if (strcmp(cmd, "shell") == 0) {
+    if (strcmp(cmd, "gui") == 0) {
+        if (argc == 2) return launch_gui(NULL);
+        if (argc == 3 && (!strcmp(argv[2], "--help") || !strcmp(argv[2], "-h"))) { usage(stdout); return 0; }
+        if (argc == 4 && !strcmp(argv[2], "--device") && daemon_device_validate_name(argv[3]) == 0)
+            return launch_gui(argv[3]);
+        fputs("waddle gui: expected [--device NAME]\n", stderr);
+        return 2;
+    }
+
+    if (strcmp(cmd, "repl") == 0 || strcmp(cmd, "shell") == 0) {
         const char *name = NULL;
         for (int i = 2; i < argc; i++) {
             if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) { usage(stdout); return 0; }
             if ((strcmp(argv[i], "--device") == 0 || strcmp(argv[i], "-d") == 0) && i + 1 < argc && name == NULL) name = argv[++i];
             else if (argv[i][0] != '-' && name == NULL) name = argv[i];
-            else { fprintf(stderr, "waddle shell: expected one NAME or --device NAME\n"); return 2; }
+            else { fprintf(stderr, "waddle %s: expected one NAME or --device NAME\n", cmd); return 2; }
         }
         return cmd_interactive_default(name);
     }
@@ -1206,12 +1243,11 @@ int main(int argc, char **argv) {
         return r;
     }
 
-    /* If the command does not begin with '-' and matches an initialized device,
-     * launch an interactive terminal into that device! */
-    if (cmd[0] != '-') {
+    /* Opening an initialized device is a read-only GUI selection. */
+    if (argc == 2 && cmd[0] != '-') {
         device_info_t dev_info = {0};
         if (daemon_device_find(cmd, &dev_info) == 0) {
-            return cmd_interactive_default(cmd);
+            return launch_gui(cmd);
         }
     }
 

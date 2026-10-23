@@ -51,24 +51,24 @@ can be stopped without killing the VM. Closing the application cancels/reaps own
 jobs; it does not shut down devices. JSON is decoded by the system JSON-GLib
 parser with type checks at every GUI-facing boundary.
 
-QMP adds no CLI commands or supervisor protocol fields. Its path is derived from
-the registered device daemon socket (same directory, qmp.sock). A worker connects
-with a finite timeout, negotiates capabilities, ignores bounded asynchronous events,
-and validates JSON replies before returning. Each request owns its connection.
-Only fixed commands are admitted: query-status, stop, cont, system_reset,
-screendump, input-send-event and send-key. Requests use JSON-GLib serialization.
-No arbitrary QMP or monitor command entry is exposed.
+The existing daemon protocol has no pause/resume operation and managed AV accepts
+only a process ID, not a full desktop target. These controls remain visible with
+precise unavailable reasons. This feature does not add private QMP control,
+screenshot-based remote desktop, guest capture changes or hypervisor behavior.
+Reboot Windows uses the existing guest execution path with shutdown.exe /r /t 0;
+restart subsystem uses the existing graceful stop/start operation. Seamless viewing
+uses waddle av run. Viewer fullscreen and input remain owned by that native AV
+viewer. A future full desktop backend must expose a managed capture target and
+input lease through the existing presentation path before the GUI enables it.
 
-Full desktop viewing uses the existing QEMU scanout via QMP screendump in a
-private temporary directory. A single outstanding capture limits load; frames
-are decoded through the system GdkPixbuf loader. This also works at firmware/boot
-screens. It shows the emulated display, not the separate per-window AV/VDD surface.
-The viewer provides keyboard and absolute pointer input, full screen and explicit
-refresh. Managed AV setup/probe/process viewing remain available separately.
-Pause/resume use QMP stop/cont, and guest reboot uses system_reset with confirmation;
-restart remains the existing graceful stop/start CLI operation. The actual QMP
-state is displayed separately from supervisor readiness and is never inferred from
-a button press. QMP failures are visible and never treated as success.
+VTE GTK4 is a system dependency. Each embedded terminal owns a PTY child running
+waddle repl --device NAME. GUI close sends SIGHUP only to those terminal children;
+VM processes remain daemon-owned. Saved launcher and preference files use GLib
+GKeyFile in the user's XDG config directory with atomic, private replacement.
+Launchers record argv as string lists and retain explicit device identity. Local
+shell strings are never executed. The command palette searches registered actions
+and displays the selected device in its title. Device pins and recent use are
+application preferences, independent of the backend default selection.
 
 ## Execution sequences
 
@@ -78,16 +78,15 @@ a button press. QMP failures are visible and never treated as success.
    not boot a device. An unknown explicit name shows a useful error.
 4. Capture selected identity and form values into a private argv array on submit.
 5. Spawn CLI, consume stdout/stderr, report status, then refresh observations.
-6. Desktop tab polls only while visible and enabled; capture/QMP work stays off
-   the GTK thread. Selection changes invalidate older frame completions.
+6. Stream logs, execution and AV output asynchronously; VTE owns terminal IO.
+   Selection changes never relabel results from an earlier operation.
 7. Closing clears timers, stops owned children, drains asynchronous completions,
    releases widgets/application references, and removes temporary frame files.
 
 ## Concurrency and synchronization
 
 GTK callbacks and subprocess output completion execute on the GLib main context.
-QMP calls execute in GTask workers using copied paths and request values; workers
-never touch widgets. CLI registry locks and daemon lifecycle leases remain the
+All management IO executes in subprocesses; callbacks never block on guest IO. CLI registry locks and daemon lifecycle leases remain the
 existing source of truth. Controls are disabled during conflicting foreground
 operations. Refresh results are associated with the selection at request time.
 No process-global environment changes occur after startup.
@@ -100,17 +99,15 @@ in the UI. Output retention is bounded and pipes continue draining after truncat
 Cancel signals only GUI-owned CLI jobs and waits for them; device processes remain
 supervisor-owned. Destructive removal/kill/reboot require a concrete native dialog.
 Failed settings/creation keep entered values available for correction.
-A failed capture leaves the last frame with an explicit error; a selection change
-clears it immediately. Temporary frames are local, private, and removed at teardown.
+Unavailable backend capabilities never show success or imply an active connection.
 
 ## Verification
 
 Build with repository warning-as-error flags. Test launcher dispatch independently
 of a display. Run existing CLI tests against the new entrypoint. Run native GTK
 smoke tests under Xvfb and a session bus, including empty/error/multi-device states,
-creation/settings argv, cancellation/close and selection preservation. Exercise QMP
-against a fake socket and a real local QEMU without KVM/Windows, covering handshake,
-events, status, pause/resume, reboot, capture and input. Run GUI-owned paths under
-ASan/LSan (system GTK process caches require documented library-only suppressions).
-Windows/vGPU hardware rendering performance is not claimed by these integration
-tests; the existing VM acceptance gate remains applicable.
+creation/settings argv, cancellation/close and selection preservation. Test saved launchers and preferences with temporary XDG directories, including
+malformed files. Run GUI-owned paths under ASan/LSan (system GTK process caches
+require documented library-only suppressions). Windows/vGPU hardware rendering
+performance is not claimed by these integration tests; the existing VM acceptance
+gate remains applicable. Record actual commands and limitations in VERIFICATION.md.
