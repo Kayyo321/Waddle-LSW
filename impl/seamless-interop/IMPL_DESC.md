@@ -8,6 +8,23 @@ protocol/schema version bump and a TRACKER commit entry. Sections marked
 extended in the same section by the commit that implements the task, before the
 task is marked Done.
 
+### Contract amendment 2026-10-23
+
+The original protocol v1/layout v2 freeze is superseded by **protocol v2 and
+layout v3**. Versioned corrections are intentional: v1 peers are rejected by
+header decoding; v2 layout mappings are rejected by the future layout-v3
+validator. There is no auto-detection or reinterpretation of old mappings.
+The existing per-PID AV protocol/layout remain unchanged. The integration
+manifest schema stays 1 because these corrections change no persisted record.
+
+Protocol v2 adds optional `min_size` and an optional menu-trigger `serial` on
+WindowAnnounce, separates input counters from Wayland serials, and fixes AUMID
+key truncation. Layout v3 has SMW3 magic, an exact 4096-byte header with reserved
+bytes starting at offset 72, and explicit 64-byte struct alignment. Public C ABI
+assertions are in `include/waddle/interop_memory.h`; no layout allocator or
+runtime session is implemented by this amendment. Later incompatible changes
+still require a version bump. CLI lifecycle/force behavior below is now explicit.
+
 ---
 
 ## 1. Title & High-Level Scope
@@ -61,7 +78,7 @@ applications:
 
 - New guest component `waddle-guest-session.exe` (session agent).
 - New host component `waddle-session` (session client).
-- Interop protocol v1 (VSOCK port 5002) and IVSHMEM layout v2.
+- Interop protocol v2 (VSOCK port 5002) and IVSHMEM layout v3.
 - New CLI command families: `waddle open`, `waddle integration`, `waddle usb`.
 - Daemon protocol additions for guest readiness, session ensure and USB.
 - QEMU device additions: explicit network with CUPS forwarding, `qemu-xhci`,
@@ -117,9 +134,9 @@ LINUX HOST (user session)                                   WINDOWS GUEST (inter
                      | xdg_shell, seat, ...                 |  - WGC capture (av_wgc.dll) / DXGI fallback |
 +--------------------+---------------------+   VSOCK 5002   |  - SendInput / synthetic pointer injection  |
 | waddle-session  (1 per device)           |<-------------->|  - cursor, clipboard, DnD, IME preedit      |
-|  - interop protocol client               |  interop v1    |  - app catalog, icons, launch, UAC handling |
+|  - interop protocol client               |  interop v2    |  - app catalog, icons, launch, UAC handling |
 |  - toplevel/popup manager                |                |  - audio sessions (WASAPI process loopback) |
-|  - input/cursor/clipboard/DnD/IME        |   IVSHMEM v2   |  - printers                                 |
+|  - input/cursor/clipboard/DnD/IME        |   IVSHMEM v3   |  - printers                                 |
 |  - desktop-entry/icon materializer       |<===============|  frames + audio rings                       |
 |  - per-app PipeWire streams, discard sink|                +---------------------------------------------+
 +---^---------------^----------------------+                | waddle-guest-exec.exe (existing, VSOCK 5242)|
@@ -148,11 +165,11 @@ LINUX HOST (user session)                                   WINDOWS GUEST (inter
 
 ### 2.3 Data paths
 
-1. **Control**: interop protocol v1 frames over AF_VSOCK, guest listens on port
+1. **Control**: interop protocol v2 frames over AF_VSOCK, guest listens on port
    5002 (`InteropControlPort`), host connects to `(device_cid, 5002)`.
-2. **Pixels**: IVSHMEM layout v2 window slot heap (Section 3.3). Frame
+2. **Pixels**: IVSHMEM layout v3 window slot heap (Section 3.3). Frame
    readiness and release are control messages; pixels never travel on VSOCK.
-3. **Audio out**: IVSHMEM v2 audio rings (up to 8), one per guest audio
+3. **Audio out**: IVSHMEM v3 audio rings (up to 8), one per guest audio
    session, each played as its own PipeWire stream.
 4. **Audio in**: QEMU `-audiodev pipewire` capture into the guest HDA codec.
 5. **Bulk control data** (icons, cursor images, clipboard payloads, DnD
@@ -245,7 +262,8 @@ Defined in `include/waddle/interop_protocol.h`:
 |---|---|---|
 | `InteropControlPort` | 5002 | Guest VSOCK listen port |
 | `InteropMagic` | `0x504F4957` | Bytes `W I O P` |
-| `InteropVersion` | 1 | Protocol version |
+| `InteropVersion` | 2 | Protocol version |
+| `InteropLayoutVersion` | 3 | Required shared-memory layout |
 | `InteropHeaderBytes` | 16 | Frame header size |
 | `InteropMaxPayloadBytes` | 65520 | Max payload; max frame 65536 |
 | `InteropMaxFields` | 64 | Max TLV fields per frame |
@@ -262,7 +280,7 @@ Defined in `include/waddle/interop_protocol.h`:
 | `InteropHitTestTimeoutMs` | 50 | `WM_NCHITTEST` probe timeout |
 | `InteropPeerQueueFrames` | 512 | Per-direction bounded send queue |
 
-### 3.2 Interop protocol v1 framing (Frozen)
+### 3.2 Interop protocol v2 framing (Frozen)
 
 #### 3.2.1 Frame header
 
@@ -329,7 +347,7 @@ it is sent as critical.
 | 0x000D | `frame_sequence` | u64 | yes | |
 | 0x000E | `damage` | bytes | no | Array of up to 16 rects; empty = full |
 | 0x000F | `edge` | u8 | yes | `interop_resize_edge_t` |
-| 0x0010 | `serial` | u32 | yes | Host input serial reference |
+| 0x0010 | `serial` | u32 | yes | Host protocol input counter or its guest echo; never a raw Wayland seat serial |
 | 0x0011 | `point` | point | yes | Surface-local guest pixels |
 | 0x0012 | `button` | u16 | yes | `interop_button_t` |
 | 0x0013 | `pressed` | bool | yes | |
@@ -388,6 +406,7 @@ it is sent as critical.
 | 0x0048 | `uri_list` | str | yes | `text/uri-list` body (host paths) or CRLF list of guest paths |
 | 0x0049 | `interval_ms` | u32 | yes | |
 | 0x004A | `rate` | u32 | yes | Key repeat rate per second, 0 = no repeat |
+| 0x004B | `min_size` | bytes | no | `u32 width, u32 height`, each 0..16384 guest physical pixels; zero clears that minimum |
 
 #### 3.2.4 Enumerations (Frozen)
 
@@ -512,8 +531,8 @@ Direction: G→H guest to host, H→G host to guest. "Req" fields are required,
 | 0x0004 | `Ping` | H→G | — | — |
 | 0x0005 | `Pong` | G→H | — | — |
 | 0x0006 | `Error` | both | error_code | refused_type, message |
-| 0x0100 | `WindowAnnounce` | G→H | window, generation, role, rect, app_key, state, dpi | title, parent, parent_generation, process_id |
-| 0x0101 | `WindowUpdate` | G→H | window, generation, rect, state, dpi | title, parent, parent_generation |
+| 0x0100 | `WindowAnnounce` | G→H | window, generation, role, rect, app_key, state, dpi | title, parent, parent_generation, process_id, min_size, serial (menu trigger only) |
+| 0x0101 | `WindowUpdate` | G→H | window, generation, rect, state, dpi | title, parent, parent_generation, min_size |
 | 0x0102 | `WindowRetire` | G→H | window, generation | — |
 | 0x0103 | `WindowConfigure` | H→G | window, generation, state | rect (width/height only meaningful, x=y=0) |
 | 0x0104 | `WindowClose` | H→G | window, generation | — |
@@ -582,6 +601,9 @@ Direction: G→H guest to host, H→G host to guest. "Req" fields are required,
 | 0x0F01 | `TransferChunk` | both | transfer, offset, data | — |
 | 0x0F02 | `TransferEnd` | both | transfer, content_hash | — |
 | 0x0F03 | `TransferCancel` | both | transfer, status | — |
+| 0x7F00 | `LocalLaunch` | local socket only | launch_kind | app_key, target_path, arguments, working_dir, activation_token |
+| 0x7F01 | `LocalStop` | local socket only | — | — |
+| 0x7F02 | `LocalStopResult` | local socket only | status | message |
 
 Exception rule: in `DisplayConfig` only, tag 0x003E may repeat (1..8 times);
 repeated tags are still required to be contiguous and the ordering rule applies
@@ -618,8 +640,8 @@ Guest: Listening -> AwaitHelloAck -> Ready -> Draining -> Listening
 1. Host connects to `(cid, 5002)` with a 2 s connect timeout; retries with
    exponential backoff 250 ms → 4 s while the daemon reports `Running`.
 2. Guest sends `Hello` within `InteropHelloTimeoutMs`.
-3. Host verifies: `version == 1`, `agent_version` major equals host major,
-   `layout_version == 2`. Mismatch → `Error{VersionMismatch}`, close, and the
+3. Host verifies: `version == 2`, `agent_version` major equals host major,
+   `layout_version == 3`. Mismatch → `Error{VersionMismatch}`, close, and the
    host triggers agent redeploy (Section 4.2) once per host process.
 4. Host replies `HelloAck` with the capability intersection. Only negotiated
    facilities may be used; a frame for an unnegotiated facility is
@@ -648,10 +670,10 @@ Guest: Listening -> AwaitHelloAck -> Ready -> Draining -> Listening
   announced (bounded: 64 deferred windows, older deferrals are dropped and
   retried on the next 250 ms refresh).
 
-### 3.3 IVSHMEM layout v2 (Frozen)
+### 3.3 IVSHMEM layout v3 (Frozen)
 
 The mapping stays 2 GiB (`AvMappingBytes`, unchanged size so QEMU arguments do
-not change). Layout v2 is selected per session by `HelloAck.layout_version=2`;
+not change). Layout v3 is selected per session by `HelloAck.layout_version=3`;
 the per-PID AV mode keeps layout v1.
 
 ```
@@ -669,8 +691,8 @@ Offset           Size        Contents
 ```c
 /** @brief Shared header, 4096 bytes, guest-initialized, host read-only except host_heartbeat. */
 typedef struct interop_shm_header_t {
-    uint32_t magic;              /**< 0x32574D53 'SMW2'. */
-    uint32_t layout_version;     /**< 2. */
+    _Alignas(64) uint32_t magic; /**< 0x33574D53 'SMW3'. */
+    uint32_t layout_version;     /**< 3. */
     uint64_t session_epoch;      /**< Equals Hello.session_epoch. */
     uint64_t total_bytes;        /**< Mapping size. */
     uint32_t slot_count;         /**< Descriptors in use capacity, 192. */
@@ -681,12 +703,12 @@ typedef struct interop_shm_header_t {
     uint32_t reserved0;
     _Atomic uint64_t guest_heartbeat; /**< Incremented every 500 ms by guest. */
     _Atomic uint64_t host_heartbeat;  /**< Incremented every 500 ms by host. */
-    uint8_t reserved[4096 - 80];
+    uint8_t reserved[4096 - 72];
 } interop_shm_header_t;
 
 /** @brief One frame slot, 64-byte aligned, three per exported window. */
 typedef struct interop_slot_descriptor_t {
-    _Atomic uint32_t state;      /**< Free=0, Writing=1, Ready=2, Consuming=3 (same as v1). */
+    _Alignas(64) _Atomic uint32_t state; /**< Free=0, Writing=1, Ready=2, Consuming=3 (same as v1). */
     uint32_t format;             /**< AvPixelFormat BGRA 0x34325241, premultiplied alpha. */
     uint64_t window;             /**< Owning HWND, 0 when unassigned. */
     uint64_t generation;         /**< Owning window generation. */
@@ -699,6 +721,24 @@ typedef struct interop_slot_descriptor_t {
     uint64_t reserved;           /**< Zero. */
 } interop_slot_descriptor_t;     /* sizeof == 64: 4+4+8+8+8+8+4+4+4+4+8 */
 ```
+
+The declarations above are implemented in `include/waddle/interop_memory.h`.
+Both types are aligned to 64 bytes. Compile-time assertions freeze every field
+offset, both sizes (4096/64), and both alignments in native Linux and Windows
+C ABI builds. Header heartbeats are at offsets 56 and 64; reserved storage starts
+at 72 and contains 4024 zero bytes. Do not use the superseded `4096 - 80` array.
+The allocator and untrusted mapping validator remain TODO #5; declarations alone
+do not make a layout-v3 mapping usable by either runtime.
+
+Window minima: `WindowAnnounce.min_size` absent means `(0,0)` (no minimum);
+`WindowUpdate.min_size` absent leaves the previous minimum unchanged. Present
+zero clears an axis. `rect` always carries actual current bounds; it is never
+reinterpreted as a minimum. Hosts convert each positive physical-pixel minimum
+with `ceil(value / effective_scale)` for `xdg_toplevel.set_min_size`; zero stays
+zero. The guest clamps OS-reported minima into 0..16384. Toplevel/dialog only;
+minima on popups are ignored by the runtime. A popup announce may carry a
+trigger `serial`; non-menu announces must omit it. Menu runtime validates its
+family and live press as described in section 3.6.2.
 
 Slot heap allocation (guest-owned, single writer):
 
@@ -715,7 +755,7 @@ Slot heap allocation (guest-owned, single writer):
 - Ceiling: one window larger than 7680×4320 is clamped to capture at
   7680×4320 (stride 30720, 127 MiB per slot run of 64 pages).
 
-Audio ring v2: the 64-byte `audio_ring_header_t` of
+Audio ring v3: the 64-byte `audio_ring_header_t` of
 `include/waddle/av_memory.h` unchanged (same fields, SPSC semantics and
 assertions), `capacity_frames = 16384` (≈341 ms at 48 kHz). Stream open/closed
 state is carried only by `AudioStreamOpen`/`AudioStreamClose` control messages;
@@ -799,8 +839,27 @@ unchanged in semantics, carried by `LeaseRevoked`/`LeaseAck`/`LeaseReady` with
 
 - Guest owns the epoch; every guest foreground change between exported windows
   not caused by an `InputFocus` it executed revokes the lease (epoch + 1).
-- Host owns the serial: a 32-bit counter starting at 1, strictly increasing
-  across all input frames and `LeaseAck`; wrap → disconnect.
+- Host owns the protocol input serial: a 32-bit counter starting at 1,
+  strictly increasing across H→G messages that carry `serial` (input and
+  `LeaseAck`); wrap → disconnect. Messages without a serial, including
+  `InputRepeatInfo` and `KeyboardLayout`, do not consume it. Guest requests
+  echo the initiating serial; they do not allocate or advance this counter.
+- Wayland seat serials are a separate opaque u32 namespace, may wrap or be
+  zero, and never serve as protocol input counters. On an eligible physical
+  press, retain `(protocol serial T, Wayland serial S, seat, window,
+  generation, lease_epoch, press kind/code)` in a bounded 64-entry host table.
+  Only pointer button down, touch down or a non-repeat key down is eligible;
+  synthetic repeat has no grab entry. Never evict a live entry to admit a new
+  press: if all 64 are live, fail the session and release held input.
+- Remove an entry on its corresponding release/cancel, focus/lease loss,
+  window retirement, seat removal or disconnect. Match guest move/resize to
+  a still-held latest left-button press on that toplevel and match popup grabs
+  to a still-live trigger in its parent family, same seat/generation/epoch.
+  Resolve T to S only at the compositor request. Missing, stale or wrong-kind
+  entries cause no compositor request. Never pass T to Wayland.
+- An activating press queued before keyboard focus retains S locally, receives
+  T only when it is actually forwarded after focus/lease readiness, and expires
+  under the same 300 ms rule. Focus loss invalidates all existing grab entries.
 - Input frames from an old epoch consume their serial and have no effect.
 - Handshake deadline 2000 ms; expiry → disconnect.
 
@@ -1002,9 +1061,23 @@ unchanged in semantics, carried by `LeaseRevoked`/`LeaseAck`/`LeaseReady` with
 - Else (unpackaged exe without AUMID): `app_key = "p-" + lowercase hex of the
   first 16 bytes of SHA-256(UTF-16LE of the upper-cased canonical target
   path)`.
-- `sanitize`: map every byte not in `[A-Za-z0-9_-]` to `_`, then truncate to
-  `InteropMaxAppKeyBytes - 2`; if truncated or if any byte was mapped, append
-  `"-" + 8 hex chars` of SHA-256 of the original AUMID to keep keys unique.
+- Convert the original AUMID to UTF-8 without a trailing NUL; accept 1..4096
+  bytes of valid UTF-8 with no U+0000. Preserve ASCII `[A-Za-z0-9_-]`, map
+  every other UTF-8 byte to `_`. Hash the original UTF-8 bytes, with no Unicode
+  normalization or case folding. If any byte was mapped or the original is
+  longer than 198 bytes, reserve 9 bytes for `-` plus the first 8 lowercase
+  hex digits of SHA-256: keep at most **189** sanitized bytes. Otherwise keep
+  all original bytes (at most 198), with no suffix. Add the two-byte `a-`
+  prefix. Final length is 3..200 bytes and is not NUL-terminated on the wire.
+  The suffix reduces collisions; it does not prove uniqueness. The future
+  catalog must reject a duplicate app key for distinct canonical identities
+  with a diagnostic, rather than silently replacing an entry.
+- `interop_app_key_from_aumid()` is the allocation-free C ABI implementation
+  used by the future catalog. It consumes all input before writing, permits
+  overlapping input/output byte storage, and leaves output bytes/length
+  unchanged for invalid input or insufficient capacity. Tests use independent
+  SHA-256 vectors, 198/199/4096-byte inputs, multibyte text and sanitization
+  collisions. The `p-` canonical-path hash mechanism is unchanged.
 - Windows are tagged with the app key of
   `SHGetPropertyStoreForWindow(hwnd)→PKEY_AppUserModel_ID` if set, else the
   process's explicit AUMID (`GetApplicationUserModelId`), else the process
@@ -1375,7 +1448,7 @@ UAC mode).
 ```
 waddle integration install [--device N] [--system]
 waddle integration remove  [--device N | --all] [--guest] [--system]
-waddle integration repair  [--device N] [--system]
+waddle integration repair  [--device N] [--system] [--force]
 waddle integration status  [--device N] [--system] [--json]
 waddle integration migrate [--system]
 waddle integration shortcut add|remove [--device N] APP_KEY
@@ -1387,7 +1460,18 @@ waddle integration shortcut add|remove [--device N] APP_KEY
 - `remove`: deletes every record's artifact whose current sha256 equals the
   record (others are reported and kept), restores `prior` values (MIME
   defaults, guest policies, guest autostart), deletes the records.
-- `repair`: recreates missing/modified artifacts from current state.
+- `repair`: recreates missing managed artifacts from current state. Modified
+  managed files are preserved and reported unless `--force` is explicit;
+  without it exit 1 if any repair is blocked. `--force` applies only to
+  recorded artifacts in the selected user/system scope, never foreign files,
+  symlinks or a newer manifest schema. Before replacing a modified regular
+  file, atomically preserve its exact bytes and mode under
+  `<manifest directory>/backups/<transaction id>/<record id SHA-256>` (mode
+  0600 for the backup), fsync it, then perform the journaled replacement.
+  If backup fails, leave the artifact untouched and fail. Retain backups
+  after success and rollback; `remove` does not delete user backups. No flag
+  bypasses schema, path, permission or journal validation. Exit 0 only when
+  every selected artifact is repaired, 1 for blocked/failed work, 2 for usage.
 - `status`: lists records with state `ok|missing|modified|foreign`, binfmt
   conflicts (another `MZ` magic rule, e.g. Wine's `DOSWin`, with its order in
   `/proc/sys/fs/binfmt_misc/`), and guest policy drift.
@@ -1401,6 +1485,32 @@ waddle integration shortcut add|remove [--device N] APP_KEY
   hide entries whose `TryExec` is missing) and MIME defaults pointing at a
   missing desktop ID are ignored by `xdg-open`/GIO. `waddle integration remove
   --all` is documented for full cleanup.
+
+#### 3.12.5 Session lifecycle commands (Frozen grammar)
+
+```
+waddle session stop [--device|-d NAME]
+```
+
+The CLI resolves the selected device using existing device-selection rules and
+connects to that device's `session.sock` with same-user filesystem permissions
+and peer credential checks. Protocol v2 local-only type `0x7F01 LocalStop`
+has no fields, request_id nonzero, and is invalid on VSOCK. The session client
+replies local-only `0x7F02 LocalStopResult` with required `status` and optional
+`message`, echoing request_id, after draining held input, surfaces, audio and
+transfers and releasing both session/AV command locks. A successfully queued
+reply may be sent by a bounded closing connection after resource cleanup.
+The session does not reconnect or auto-respawn itself in response to stop.
+Existing guest applications and the VM keep running. A later explicit `open`
+may start another session. This command does not remove autostart settings.
+
+No socket and an unlocked session lock means already stopped (exit 0). A held
+lock while the socket is missing, EOF without a result, or no result within
+5 seconds means stop is unconfirmed (exit 1); do not unlink a live lock/socket
+or signal an arbitrary PID. Non-Ok result exits 1; usage exits 2; unknown device
+uses existing CLI device errors. `waddle stop` still shuts down the whole device;
+its existing daemon/VM shutdown causes session cleanup through disconnect.
+Runtime command dispatch and socket credential enforcement remain TODO #7.
 
 ### 3.13 binfmt_misc (Frozen)
 
@@ -1586,11 +1696,12 @@ agent feeds a ViGEm virtual Xbox 360 controller.
 2. `WindowAnnounce` → host creates `wl_surface`; for toplevel/dialog:
    `xdg_surface` + `xdg_toplevel`, `set_app_id(waddle.<dev>.<app_key>)`,
    `set_title`, `set_parent` for dialogs, `zxdg_toplevel_decoration_v1` with
-   `client_side` when the manager exists, `set_min_size` from guest
-   `WM_GETMINMAXINFO` (`ptMinTrackSize`, carried in `rect` of a
-   `WindowUpdate` sent right after announce — width/height fields only),
+   `client_side` when the manager exists (lifecycle in section 2.6),
+   `set_min_size` from optional `min_size` (`WM_GETMINMAXINFO.ptMinTrackSize`),
    desktop entry ensured (uncatalogued case); for menu/tooltip: positioner +
-   `xdg_popup` (grab for menus with the triggering press serial).
+   `xdg_popup` (menu grabs resolve the optional announce `serial` through the
+   press table; absent/stale trigger creates an ungrabbed popup, never a
+   fabricated serial).
 3. Initial commit without buffer; wait for `configure`; ack; then attach the
    first frame when `FrameReady` arrives.
 4. `FrameReady` → host imports slot (shm buffer over the mapped IVSHMEM range,
@@ -1624,20 +1735,24 @@ For a window `h` visible, enabled-or-not, on the input desktop:
 
 Move:
 1. Host `wl_pointer.button(serial S, BTN_LEFT, pressed)` on a toplevel.
-2. Host sends `InputPointerButton{serial=S, point, Left, pressed}`.
+2. Host allocates the next monotonic protocol serial T, stores the press-table
+   entry `(T,S,seat,window,generation,lease_epoch,Left)`, then sends
+   `InputPointerButton{serial=T, point, Left, pressed}`.
 3. Guest probes `SendMessageTimeoutW(h, WM_NCHITTEST, 0, MAKELPARAM(screen
    x,y), SMTO_ABORTIFHUNG, 50, &r)`.
 4. `r == HTCAPTION` (and the window is not maximized-and-unmovable): the press
-   is **not** injected; guest sends `WindowMoveRequest{serial=S}`. If the same
+   is **not** injected; guest sends `WindowMoveRequest{serial=T}`. If the same
    window received a caption press within `GetDoubleClickTime()` ms and
    within `SM_CXDOUBLECLK/2` px, the guest instead sends
    `WindowStateRequest{state ^ Maximized}` and nothing else.
-5. Host: if button still held and S is the latest press serial, call
-   `xdg_toplevel_move(seat, S)`; otherwise ignore. The compositor sends
+5. Host: resolve echoed T through the press table. If its left button is still
+   held, it is the latest press for that window, and seat/generation/epoch
+   match, call `xdg_toplevel_move(seat, S)` with the stored **Wayland** serial;
+   otherwise ignore. The compositor sends
    `wl_pointer.leave`/re-enter around the grab; the host suppresses the
    matching release toward the guest (it never saw the press).
 6. Resize: `r ∈ {HTLEFT…HTBOTTOMRIGHT}` with `InteropStateResizable` →
-   `WindowResizeRequest{edge}` → `xdg_toplevel_resize(seat, S, edge)`.
+   `WindowResizeRequest{serial=T, edge}` → `xdg_toplevel_resize(seat, S, edge)`.
    Mapping: HTTOP=Top, HTBOTTOM=Bottom, HTLEFT=Left, HTRIGHT=Right,
    HTTOPLEFT=TopLeft, HTTOPRIGHT=TopRight, HTBOTTOMLEFT=BottomLeft,
    HTBOTTOMRIGHT=BottomRight.
@@ -1836,7 +1951,7 @@ session stop" while it is held, and vice versa.
 |---|---|
 | `interop_codec.zig` | Every message type round-trip; every required field missing; duplicate/out-of-order tags; critical unknown tag; non-zero padding; oversize payload, string, field count; invalid UTF-8 and NUL; state mask bits; `DisplayConfig` repeat exception; fuzz corpus (≥ 10 000 mutated frames, no crash, output unchanged on error) |
 | Transfers | Contiguous offsets, gaps, overlaps, over cap, 17th transfer, hash mismatch, cancel at every stage |
-| Layout v2 | Header validation, slot size math, first-fit allocation, growth with deferred free, exhaustion, 7680×4320 clamp |
+| Layout v3 | Header validation, slot size math, first-fit allocation, growth with deferred free, exhaustion, 7680×4320 clamp |
 | Keyboard | `scancodes.csv` golden table both directions; repeat timing (fake clock); lock reconciliation; layout table lookups |
 | `pe_header.zig` | GUI, CUI, PE32/PE32+, truncated, bad `e_lfanew`, non-PE, 4096-byte bound |
 | `desktop_entry.zig` | Escaping, Exec quoting, rejection of control characters, ID sanitization |
@@ -1861,7 +1976,7 @@ session stop" while it is held, and vice versa.
 
 ### 7.3 Integration tests (Linux CI)
 
-- `waddle-mock-guest` extended with a mock session agent speaking interop v1:
+- `waddle-mock-guest` extended with a mock session agent speaking interop v2:
   `waddle open --app`, `waddle open file.exe` (PE fixtures), outside-share
   refusal, catalog snapshot → desktop entries and icons in temporary `XDG_*`
   roots, catalog removal → files removed, manifest `install/remove/repair/status`
@@ -1871,7 +1986,7 @@ session stop" while it is held, and vice versa.
 
 - `make interop-test`, `make interop-sanitizers` (ASan/LSan/UBSan, zero
   leaks), `make interop-coverage` (≥ 90 % line and branch on
-  `interop_codec.zig`, layout v2, `manifest.zig`, `desktop_entry.zig`,
+  `interop_codec.zig`, layout v3, `manifest.zig`, `desktop_entry.zig`,
   `mimeapps.zig`, `pe_header.zig`, clipboard conversions).
 - Existing `make test test-sanitizers coverage av-test av-sanitizers
   av-coverage` stay green.

@@ -2,7 +2,7 @@
 #define WaddleInteropProtocolH
 /**
  * @file interop_protocol.h
- * @brief Seamless-interop control protocol v1 (frozen contract, see
+ * @brief Seamless-interop control protocol v2 (frozen contract, see
  * impl/seamless-interop/IMPL_DESC.md section 3.2).
  *
  * A frame is a 16-byte little-endian header followed by an ordered sequence of
@@ -22,7 +22,9 @@
 /** @brief Frame magic, bytes 'W' 'I' 'O' 'P'. */
 #define InteropMagic 0x504F4957u
 /** @brief Protocol version carried in every header. */
-#define InteropVersion 1u
+#define InteropVersion 2u
+/** @brief Shared-memory version required by the current session endpoints. */
+#define InteropLayoutVersion 3u
 /** @brief Fixed header size in bytes. */
 #define InteropHeaderBytes 16u
 /** @brief Maximum payload bytes; the largest frame is 65536 bytes. */
@@ -81,7 +83,7 @@ typedef struct interop_header_t {
 typedef enum interop_direction_t {
     InteropFromGuest = 1, /**< Guest session agent to host session client. */
     InteropFromHost = 2,  /**< Host session client to guest session agent. */
-    InteropFromLocal = 3  /**< `waddle open` to waddle-session over session.sock. */
+    InteropFromLocal = 3  /**< Either local session.sock peer; never VSOCK. */
 } interop_direction_t;
 
 /** @brief Message types (IMPL_DESC 3.2.5). */
@@ -165,7 +167,9 @@ typedef enum interop_message_type_t {
     /** Local session.sock request from `waddle open`; LaunchRequest fields. The
      * reply on that socket is a LaunchResult validated as InteropFromGuest
      * because waddle-session relays the guest's result unchanged. */
-    InteropMsgLocalLaunch = 0x7F00
+    InteropMsgLocalLaunch = 0x7F00,
+    InteropMsgLocalStop = 0x7F01, /**< Local session stop request; nonzero request id. */
+    InteropMsgLocalStopResult = 0x7F02 /**< Local stop result; echoes request id. */
 } interop_message_type_t;
 
 /** @brief Field tags without the critical bit (IMPL_DESC 3.2.3). */
@@ -243,7 +247,8 @@ typedef enum interop_tag_t {
     InteropTagRefusedType = 0x0047,
     InteropTagUriList = 0x0048,
     InteropTagIntervalMs = 0x0049,
-    InteropTagRate = 0x004A
+    InteropTagRate = 0x004A,
+    InteropTagMinSize = 0x004B /**< Optional width/height u32 pair, 0..16384; zero clears a minimum. */
 } interop_tag_t;
 
 /** @brief Guest window classification for host surface mapping. */
@@ -497,5 +502,20 @@ void interop_transfer_cancel(interop_transfer_t *transfer);
  * @param[out] hash InteropHashBytes output.
  */
 void interop_sha256(const uint8_t *data, size_t length, uint8_t *hash);
+
+/** @brief Make a bounded protocol-v2 application key from a guest AUMID.
+ * @param[in] aumid Borrowed UTF-8 bytes, non-NULL for a valid call; no embedded
+ * NUL. All input is consumed before output is written; overlapping storage is safe.
+ * @param[in] length AUMID bytes, 1..InteropMaxStringBytes.
+ * @param[out] key Non-NULL caller-owned buffer of at least capacity bytes;
+ * output is not NUL-terminated and is unchanged on failure.
+ * @param[in] capacity Output capacity; at most InteropMaxAppKeyBytes are written.
+ * @param[out] key_length Non-NULL caller-owned length; unchanged on failure.
+ * @return InteropErrorNone, MalformedFrame for invalid input, or QuotaExceeded
+ * for insufficient capacity. No allocation or retained pointers. Thread-safe
+ * for distinct outputs; key_length must not overlap either byte buffer.
+ */
+int interop_app_key_from_aumid(const uint8_t *aumid, size_t length,
+                              uint8_t *key, size_t capacity, size_t *key_length);
 
 #endif

@@ -12,20 +12,20 @@ Original base: `feature/software-vgpu-slicing` at `8a6e25e`; synchronized with
 [IMPL_DESC.md](IMPL_DESC.md). Manual evidence: [VERIFICATION_M0.md](VERIFICATION_M0.md)
 (created by TODO #2).
 
-Current-source review, verification limits and recommended next work:
-[status_2026_10_23.md](status_2026_10_23.md). Synchronization and research leave
-feature completion at 9.6%; hardware evidence and the remaining implementation
-are still pending.
+Original review and its follow-up resolutions:
+[status_2026_10_23.md](status_2026_10_23.md). Contract corrections supersede
+the original protocol v1/layout v2 freeze with protocol v2/layout v3. Completion
+stays at 9.6%; hardware evidence and the remaining implementation are pending.
 
 ## Tasks & Progress
 
 | TODO ID | Task Description | Status | Weight (%) | Progress (%) | Notes / Blockers |
 |:-------:|:-----------------|:------:|:----------:|:------------:|:-----------------|
-| #1  | IMPL_DESC.md + TRACKER.md, contract freeze (protocol v1, layout v2, manifest schema, config keys) | Done | 2% | 100% | Contracts frozen in IMPL_DESC §3 |
+| #1  | IMPL_DESC.md + TRACKER.md, contract freeze (protocol v2, layout v3, manifest schema, config keys) | Done | 2% | 100% | Versioned amendment 2026-10-23; CLI stop/force, serial mapping and minima explicit |
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **hardware run by user pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE hardware runs by user pending** |
-| #4  | Interop protocol v1 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | Codec 96.97% branch / 96.35% line; sanitizers clean; Windows lib + ABI link; CI configured |
-| #5  | IVSHMEM layout v2 (slot heap, 64 windows, 8 audio rings) | Pending | 3% | 0% | Waits on #4 |
+| #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
+| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | Pending | 3% | 0% | C ABI sizes/offsets/alignment asserted; runtime validator/allocator still pending |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | Pending | 3% | 0% | - |
@@ -136,11 +136,23 @@ are still pending.
     gaps, and orders the next tasks. No hardware acceptance
     or additional feature implementation is claimed.
 
-- **Commit `HEAD`**: `fix(av): handle decoration configure events before presenting frames`
+- **Commit `2450d22`**: `fix(av): handle decoration configure events before presenting frames`
   - **Task Impact**: +0% to TODO #3 (+0% overall); corrects already credited
     negotiation work, with real compositor acceptance still pending.
   - **Summary**: Registers and delivers the configure listener, stages modes
     until the surface acknowledgement, handles forced server-side decoration
     through the protocol destructor, and tests invalid/missing/stale events,
     listener/allocation failures and teardown. IMPL_DESC section 2.6 specifies
-    ownership, ordering and fallback. `HEAD` identifies this containing commit.
+    ownership, ordering and fallback. Normal and ASan/LSan/UBSan callback tests pass.
+
+- **Commit `HEAD`**: `fix(interop): version corrected memory and session contracts`
+  - **Task Impact**: +0% to TODO #1/#4/#5/#7/#11/#12/#27/#33 (+0% overall);
+    repairs existing contracts and adds ABI declarations without claiming the
+    pending allocator, session, catalog or integration runtime.
+  - **Summary**: Protocol v2/layout v3 replace the inconsistent freeze; assert
+    every memory-field offset, sizes and alignment on Linux/Windows. Add bounded
+    AUMID keys, independent window minima, menu trigger references and local-only
+    stop frames. Specify serial translation, stop lifecycle and repair --force.
+    Nineteen Zig tests and C ABI tests pass; coverage 97.23% branch/96.65% line,
+    sanitizers clean and Windows ABI cross-link passes. `HEAD` identifies this
+    containing commit until the next tracker update resolves the hash.

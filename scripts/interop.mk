@@ -10,8 +10,8 @@ build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_prot
 	$(ZIG) build-obj $< -Iinclude -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
 build/interop_codec_windows.lib: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
 	$(ZIG) build-lib $< -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -femit-bin=$@
-build/interop_codec_abi_test: tests/interop/codec_abi.c build/interop_codec.o | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $^ $(LDFLAGS) -o $@
+build/interop_codec_abi_test: tests/interop/codec_abi.c build/interop_codec.o include/waddle/interop_memory.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG tests/interop/codec_abi.c build/interop_codec.o $(LDFLAGS) -o $@
 
 .PHONY: interop-codec-test interop-sanitizers interop-coverage
 # Zig unit/fuzz tests plus the C ABI round trip.
@@ -25,5 +25,5 @@ interop-sanitizers:
 interop-coverage:
 	python3 tests/av/coverage.py interop_codec
 # Windows link check of the same C ABI test (executed by guest_windows CI).
-build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib | build
-	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude $^ -o $@
+build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@

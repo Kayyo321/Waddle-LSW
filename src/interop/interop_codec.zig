@@ -1,4 +1,4 @@
-//! Interop protocol v1 codec (impl/seamless-interop/IMPL_DESC.md section 3.2).
+//! Interop protocol v2 codec (impl/seamless-interop/IMPL_DESC.md section 3.2).
 //!
 //! Untrusted frames from either peer are validated here before any field is
 //! interpreted. Every exported function is allocation-free, never retains a
@@ -34,7 +34,7 @@ fn put(comptime T: type, data: []u8, offset: usize, value: T) void {
 /// Registry entry: criticality and inclusive value length bounds.
 const FieldSpec = struct { critical: bool, min: u16, max: u16 };
 
-const MaxTag = 0x4A;
+const MaxTag = 0x4B;
 
 /// Indexed by base tag; null entries are unknown tags.
 const registry = blk: {
@@ -121,6 +121,7 @@ const registry = blk: {
     table[c.InteropTagUriList] = fixed.v(true, 1, 60000);
     table[c.InteropTagIntervalMs] = fixed.f(true, 4);
     table[c.InteropTagRate] = fixed.f(true, 4);
+    table[c.InteropTagMinSize] = fixed.f(false, 8);
     break :blk table;
 };
 
@@ -184,6 +185,44 @@ fn app_key_valid(value: []const u8) bool {
         if (!ok) return false;
     }
     return true;
+}
+
+fn app_key_byte(byte: u8) u8 {
+    return if ((byte >= 'A' and byte <= 'Z') or (byte >= 'a' and byte <= 'z') or
+        (byte >= '0' and byte <= '9') or byte == '_' or byte == '-') byte else '_';
+}
+
+/// in: borrowed UTF-8 AUMID; out: caller-owned bytes and length, unchanged on
+/// failure. Allocation-free and thread-safe for distinct output storage.
+export fn interop_app_key_from_aumid(aumid: ?[*]const u8, length: usize,
+    key: [*]u8, capacity: usize, key_length: *usize) c_int {
+    if (length == 0 or length > c.InteropMaxStringBytes) return Error.malformed;
+    const input = (aumid orelse return Error.malformed)[0..length];
+    if (!utf8_text(input)) return Error.malformed;
+    var changed = false;
+    for (input) |byte| changed = changed or app_key_byte(byte) != byte;
+    const suffixed = changed or length > c.InteropMaxAppKeyBytes - 2;
+    const suffix_bytes: usize = if (suffixed) 9 else 0;
+    const body_bytes = @min(length, c.InteropMaxAppKeyBytes - 2 - suffix_bytes);
+    const total = 2 + body_bytes + suffix_bytes;
+    if (capacity < total) return Error.quota;
+    var result: [c.InteropMaxAppKeyBytes]u8 = undefined;
+    result[0] = 'a';
+    result[1] = '-';
+    for (input[0..body_bytes], 0..) |byte, index| result[2 + index] = app_key_byte(byte);
+    if (suffixed) {
+        var digest: [32]u8 = undefined;
+        Sha256.hash(input, &digest, .{});
+        const Hex = "0123456789abcdef";
+        result[2 + body_bytes] = '-';
+        for (digest[0..4], 0..) |byte, index| {
+            result[3 + body_bytes + index * 2] = Hex[byte >> 4];
+            result[4 + body_bytes + index * 2] = Hex[byte & 15];
+        }
+    }
+    @memcpy(key[0..total], result[0..total]);
+    key_length.* = total;
+    return Error.none;
 }
 fn printer_name_valid(value: []const u8) bool {
     if (!printable(value)) return false;
@@ -278,7 +317,7 @@ fn data_value_valid(base: u16, value: []const u8) bool {
     };
 }
 
-/// Session, display, audio, printer, USB and error fields (tags 0x3A..0x4A).
+/// Session, display, audio, printer, USB and error fields (tags 0x3A..0x4B).
 fn session_value_valid(base: u16, value: []const u8) bool {
     return switch (base) {
         c.InteropTagCapabilities => get(u64, value, 0) <= c.InteropCapabilityMask,
@@ -296,6 +335,7 @@ fn session_value_valid(base: u16, value: []const u8) bool {
         c.InteropTagErrorCode => in_range(u32, get(u32, value, 0), 1, c.InteropErrorUnexpected),
         c.InteropTagIntervalMs => get(u32, value, 0) <= 10000,
         c.InteropTagRate => get(u32, value, 0) <= 1000,
+        c.InteropTagMinSize => get(u32, value, 0) <= 16384 and get(u32, value, 4) <= 16384,
         else => unreachable, // spec_for admits only registered tags
     };
 }
@@ -363,8 +403,8 @@ const messages = [_]MessageSpec{
     .{ .type = c.InteropMsgPing, .directions = DirHost, .required = &.{} },
     .{ .type = c.InteropMsgPong, .directions = DirGuest, .required = &.{} },
     .{ .type = c.InteropMsgError, .directions = DirBoth, .required = &.{c.InteropTagErrorCode}, .optional = &.{ c.InteropTagRefusedType, c.InteropTagMessage } },
-    .{ .type = c.InteropMsgWindowAnnounce, .directions = DirGuest, .required = &.{ Tags.window, Tags.generation, c.InteropTagRole, c.InteropTagRect, c.InteropTagAppKey, c.InteropTagState, c.InteropTagDpi }, .optional = &.{ c.InteropTagTitle, c.InteropTagParent, c.InteropTagParentGeneration, c.InteropTagProcessId } },
-    .{ .type = c.InteropMsgWindowUpdate, .directions = DirGuest, .required = &.{ Tags.window, Tags.generation, c.InteropTagRect, c.InteropTagState, c.InteropTagDpi }, .optional = &.{ c.InteropTagTitle, c.InteropTagParent, c.InteropTagParentGeneration } },
+    .{ .type = c.InteropMsgWindowAnnounce, .directions = DirGuest, .required = &.{ Tags.window, Tags.generation, c.InteropTagRole, c.InteropTagRect, c.InteropTagAppKey, c.InteropTagState, c.InteropTagDpi }, .optional = &.{ c.InteropTagTitle, c.InteropTagParent, c.InteropTagParentGeneration, c.InteropTagProcessId, c.InteropTagMinSize, c.InteropTagSerial } },
+    .{ .type = c.InteropMsgWindowUpdate, .directions = DirGuest, .required = &.{ Tags.window, Tags.generation, c.InteropTagRect, c.InteropTagState, c.InteropTagDpi }, .optional = &.{ c.InteropTagTitle, c.InteropTagParent, c.InteropTagParentGeneration, c.InteropTagMinSize } },
     .{ .type = c.InteropMsgWindowRetire, .directions = DirGuest, .required = &.{ Tags.window, Tags.generation } },
     .{ .type = c.InteropMsgWindowConfigure, .directions = DirHost, .required = &.{ Tags.window, Tags.generation, c.InteropTagState }, .optional = &.{c.InteropTagRect} },
     .{ .type = c.InteropMsgWindowClose, .directions = DirHost, .required = &.{ Tags.window, Tags.generation } },
@@ -434,6 +474,8 @@ const messages = [_]MessageSpec{
     .{ .type = c.InteropMsgTransferEnd, .directions = DirBoth, .required = &.{ c.InteropTagContentHash, c.InteropTagTransfer } },
     .{ .type = c.InteropMsgTransferCancel, .directions = DirBoth, .required = &.{ c.InteropTagTransfer, c.InteropTagStatus } },
     .{ .type = c.InteropMsgLocalLaunch, .directions = DirLocal, .required = &.{c.InteropTagLaunchKind}, .optional = &launch_fields },
+    .{ .type = c.InteropMsgLocalStop, .directions = DirLocal, .required = &.{} },
+    .{ .type = c.InteropMsgLocalStopResult, .directions = DirLocal, .required = &.{c.InteropTagStatus}, .optional = &.{c.InteropTagMessage} },
 };
 
 const TagSet = u128;
@@ -517,6 +559,8 @@ fn cross_valid(kind: u16, payload: []const u8) bool {
         const has_parent = optional_field(payload, c.InteropTagParent) != null;
         const has_generation = optional_field(payload, c.InteropTagParentGeneration) != null;
         if (has_parent != has_generation) return false;
+        if (kind == c.InteropMsgWindowAnnounce and optional_field(payload, c.InteropTagSerial) != null and
+            optional_field(payload, c.InteropTagRole).?[0] != c.InteropRoleMenu) return false;
     }
     if (kind == c.InteropMsgIconRequest) {
         const has_window = optional_field(payload, c.InteropTagWindow) != null;
@@ -792,6 +836,126 @@ export fn interop_sha256(data: ?[*]const u8, length: usize, hash: [*]u8) void {
 // Test-only fixtures.
 // ---------------------------------------------------------------------------
 
+test "AUMID keys reserve suffix space and preserve outputs on every error" {
+    var key = [_]u8{0xA5} ** c.InteropMaxAppKeyBytes;
+    var length: usize = 777;
+    const case_t = struct { input: []const u8, expected: []const u8 };
+    const Cases = [_]case_t{
+        .{ .input = "Explorer", .expected = "a-Explorer" },
+        .{ .input = "A.B", .expected = "a-A_B-4b861d8b" },
+        .{ .input = "A B", .expected = "a-A_B-fea4c5ce" },
+        .{ .input = "ÿ", .expected = "a-__-ea47fa96" },
+        .{ .input = "x" ** 198, .expected = "a-" ++ "x" ** 198 },
+        .{ .input = "x" ** 199, .expected = "a-" ++ "x" ** 189 ++ "-f18029ae" },
+        .{ .input = "x" ** 4096, .expected = "a-" ++ "x" ** 189 ++ "-a2e659da" },
+    };
+    for (Cases) |case| {
+        @memset(&key, 0xA5);
+        try testing.expectEqual(Error.none, interop_app_key_from_aumid(
+            opaque_value(?[*]const u8, case.input.ptr), opaque_value(usize, case.input.len),
+            &key, opaque_value(usize, key.len), &length));
+        try testing.expectEqualStrings(case.expected, key[0..length]);
+        try testing.expect(length <= c.InteropMaxAppKeyBytes);
+        try testing.expect(app_key_valid(key[0..length]));
+        for (key[length..]) |byte| try testing.expectEqual(@as(u8, 0xA5), byte);
+        // Exactly one byte too small must leave the whole output and length intact.
+        @memset(&key, 0xA5);
+        const previous = length;
+        try testing.expectEqual(Error.quota, interop_app_key_from_aumid(
+            case.input.ptr, case.input.len, &key, opaque_value(usize, length - 1), &length));
+        try testing.expectEqual(previous, length);
+        for (key) |byte| try testing.expectEqual(@as(u8, 0xA5), byte);
+    }
+    const Invalid = [_][]const u8{ "", "a\x00b", "\xff", "x" ** 4097 };
+    for (Invalid) |input| {
+        try testing.expectEqual(Error.malformed, interop_app_key_from_aumid(
+            opaque_value(?[*]const u8, input.ptr), opaque_value(usize, input.len), &key, key.len, &length));
+    }
+    try testing.expectEqual(Error.malformed, interop_app_key_from_aumid(
+        opaque_value(?[*]const u8, null), opaque_value(usize, 1), &key, key.len, &length));
+    for (key) |byte| try testing.expectEqual(@as(u8, 0xA5), byte);
+    // Full input consumption before copying permits overlapping caller storage.
+    @memcpy(key[0..3], "A.B");
+    try testing.expectEqual(Error.none, interop_app_key_from_aumid(&key, 3, &key, key.len, &length));
+    try testing.expectEqualStrings("a-A_B-4b861d8b", key[0..length]);
+}
+
+test "window minimum sizes are independent of current geometry and bounded per axis" {
+    var buffer = frame_buffer();
+    for ([_]u16{ c.InteropMsgWindowAnnounce, c.InteropMsgWindowUpdate }) |kind| {
+        var writer = writer_for(&buffer);
+        _ = interop_put_uint(&writer, c.InteropTagWindow, 1);
+        _ = interop_put_uint(&writer, c.InteropTagGeneration, 2);
+        if (kind == c.InteropMsgWindowAnnounce) _ = interop_put_uint(&writer, c.InteropTagRole, 1);
+        _ = interop_put_rect(&writer, c.InteropTagRect, 10, 20, 640, 480);
+        if (kind == c.InteropMsgWindowAnnounce) _ = interop_put_bytes(&writer, c.InteropTagAppKey, "a-App", 5);
+        _ = interop_put_uint(&writer, c.InteropTagState, 0);
+        _ = interop_put_uint(&writer, c.InteropTagDpi, 96);
+        var minimum: [8]u8 = undefined;
+        put(u32, &minimum, 0, 320);
+        put(u32, &minimum, 4, 200);
+        try testing.expectEqual(Error.none, interop_put_bytes(&writer, c.InteropTagMinSize, &minimum, 8));
+        var size: usize = 0;
+        try testing.expectEqual(Error.none, interop_writer_finish(&writer, kind, 0, c.InteropFromGuest, &size));
+        var value: ?[*]const u8 = null;
+        var value_length: u16 = 0;
+        const payload = buffer[c.InteropHeaderBytes..size];
+        try testing.expectEqual(@as(c_int, 0), interop_field_get(payload.ptr, payload.len, c.InteropTagMinSize, 0, &value, &value_length));
+        try testing.expectEqual(@as(u16, 8), value_length);
+        try testing.expectEqual(@as(u32, 320), get(u32, value.?[0..8], 0));
+        try testing.expectEqual(@as(c_int, 0), interop_field_get(payload.ptr, payload.len, c.InteropTagRect, 0, &value, &value_length));
+        try testing.expectEqual(@as(u32, 640), get(u32, value.?[0..16], 8));
+    }
+    var writer = writer_for(&buffer);
+    const Zero = [_]u8{0} ** 8;
+    try testing.expectEqual(Error.none, interop_put_bytes(&writer, c.InteropTagMinSize, &Zero, 8));
+    var size: usize = 0;
+    try testing.expectEqual(Error.malformed, interop_writer_finish(&writer, c.InteropMsgPing, 0, c.InteropFromHost, &size));
+    var minimum = Zero;
+    for ([_]usize{ 0, 4 }) |axis| {
+        writer = writer_for(&buffer);
+        @memset(&minimum, 0);
+        put(u32, &minimum, axis, 16385);
+        try testing.expectEqual(Error.malformed, interop_put_bytes(&writer, c.InteropTagMinSize, &minimum, 8));
+    }
+    writer = writer_for(&buffer);
+    try testing.expectEqual(Error.malformed, interop_put_bytes(&writer, c.InteropTagMinSize, &Zero, 4));
+}
+
+test "menu trigger serials are protocol references and local stop frames never cross VSOCK" {
+    var buffer = frame_buffer();
+    for ([_]u8{ c.InteropRoleMenu, c.InteropRoleToplevel }) |role| {
+        var writer = writer_for(&buffer);
+        _ = interop_put_uint(&writer, c.InteropTagWindow, 1);
+        _ = interop_put_uint(&writer, c.InteropTagGeneration, 1);
+        _ = interop_put_uint(&writer, c.InteropTagRole, role);
+        _ = interop_put_rect(&writer, c.InteropTagRect, 0, 0, 32, 32);
+        _ = interop_put_bytes(&writer, c.InteropTagAppKey, "a-App", 5);
+        _ = interop_put_uint(&writer, c.InteropTagState, 0);
+        _ = interop_put_uint(&writer, c.InteropTagDpi, 96);
+        _ = interop_put_uint(&writer, c.InteropTagSerial, 42);
+        var size: usize = 0;
+        const expected = if (role == c.InteropRoleMenu) Error.none else Error.malformed;
+        try testing.expectEqual(expected, interop_writer_finish(&writer, c.InteropMsgWindowAnnounce, 0, c.InteropFromGuest, &size));
+        if (role == c.InteropRoleMenu) {
+            var serial: u64 = 0;
+            try testing.expectEqual(@as(c_int, 0), interop_field_uint(buffer[16..].ptr, size - 16, c.InteropTagSerial, 4, &serial));
+            try testing.expectEqual(@as(u64, 42), serial);
+        }
+    }
+    for ([_]u16{ c.InteropMsgLocalStop, c.InteropMsgLocalStopResult }) |kind| {
+        var writer = writer_for(&buffer);
+        if (kind == c.InteropMsgLocalStopResult) _ = interop_put_uint(&writer, c.InteropTagStatus, c.InteropOk);
+        var size: usize = 0;
+        try testing.expectEqual(Error.none, interop_writer_finish(&writer, kind, 19, c.InteropFromLocal, &size));
+        var header: c.interop_header_t = undefined;
+        try testing.expectEqual(Error.none, interop_header_decode(&buffer, size, &header));
+        try testing.expectEqual(@as(u32, 19), header.request_id);
+        for ([_]c.interop_direction_t{ c.InteropFromHost, c.InteropFromGuest }) |direction|
+            try testing.expectEqual(Error.unsupported_type, interop_payload_validate(kind, direction, buffer[16..].ptr, size - 16));
+    }
+}
+
 /// Keeps test inputs opaque to the optimizer so exported functions run their
 /// out-of-line branches instead of constant-folded inlined copies.
 fn opaque_value(comptime V: type, value: V) V {
@@ -816,7 +980,7 @@ fn hello(buffer: []u8, epoch: u64) !usize {
     var writer = writer_for(buffer);
     try testing.expectEqual(Error.none, interop_put_uint(&writer, c.InteropTagCapabilities, c.InteropCapWindows | c.InteropCapInput));
     try testing.expectEqual(Error.none, interop_put_bytes(&writer, c.InteropTagAgentVersion, "0.2.0", 5));
-    try testing.expectEqual(Error.none, interop_put_uint(&writer, c.InteropTagLayoutVersion, 2));
+    try testing.expectEqual(Error.none, interop_put_uint(&writer, c.InteropTagLayoutVersion, c.InteropLayoutVersion));
     try testing.expectEqual(Error.none, interop_put_uint(&writer, c.InteropTagSessionEpoch, epoch));
     var length: usize = 0;
     try testing.expectEqual(Error.none, interop_writer_finish(&writer, c.InteropMsgHello, 0, c.InteropFromGuest, &length));
@@ -853,7 +1017,10 @@ test "header rejects magic, version, length and short input" {
     bad[0] ^= 1;
     try testing.expectEqual(Error.protocol, interop_header_decode(&bad, length, &header));
     bad = buffer;
-    bad[4] = 2;
+    put(u16, &bad, 4, c.InteropVersion + 1);
+    try testing.expectEqual(Error.protocol, interop_header_decode(&bad, length, &header));
+    bad = buffer;
+    bad[4] = 1; // The superseded protocol v1 must not be accepted as v2.
     try testing.expectEqual(Error.protocol, interop_header_decode(&bad, length, &header));
     bad = buffer;
     put(u32, &bad, 8, 65524);
@@ -1028,6 +1195,7 @@ const le = struct {
     }
 };
 const boundary_cases = [_]BoundaryCase{
+    .{ .tag = c.InteropTagMinSize, .good = &(le.u32_(16384) ++ le.u32_(0)), .bad = &(le.u32_(0) ++ le.u32_(16385)) },
     .{ .tag = c.InteropTagRole, .good = &.{6}, .bad = &.{7} },
     .{ .tag = c.InteropTagSlot, .good = &le.u32_(191), .bad = &le.u32_(192) },
     .{ .tag = c.InteropTagDamage, .good = &(le.pair(0, 0) ++ le.u32_(16384) ++ le.u32_(1)), .bad = &(le.pair(0, 0) ++ le.u32_(16385) ++ le.u32_(1)) },
@@ -1299,7 +1467,7 @@ fn sample_value(tag: u16) []const u8 {
         c.InteropTagWindow, c.InteropTagGeneration, c.InteropTagFrameSequence, c.InteropTagClipboardEpoch, c.InteropTagSessionEpoch, c.InteropTagLeaseEpoch, c.InteropTagCapabilities, c.InteropTagTotalBytes, c.InteropTagOffset, c.InteropTagParent, c.InteropTagParentGeneration => &S.one8,
         c.InteropTagRect => &S.rect,
         c.InteropTagPoint, c.InteropTagHotspot, c.InteropTagDelta => &S.point,
-        c.InteropTagImageSize => &S.image,
+        c.InteropTagImageSize, c.InteropTagMinSize => &S.image,
         c.InteropTagDpi => &S.dpi,
         c.InteropTagOutput => &S.output,
         c.InteropTagContentHash => &S.hash,
