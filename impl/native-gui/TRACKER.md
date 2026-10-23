@@ -2,10 +2,10 @@
 
 - **Contributors / Agents**: Codex (/root)
 - **Time Started**: 2026-10-23T04:20:00Z
-- **Time Ended**: TBD
+- **Time Ended**: 2026-10-23T05:13:35Z
 - **Feature Branch**: feature/native-gui
 - **Target Merge Branch**: feature/software-vgpu-slicing
-- **Current Overall Status**: In Progress
+- **Current Overall Status**: Completed
 
 ## Tasks & Progress
 
@@ -15,9 +15,9 @@
 | #2 | Launch GUI by default and retain explicit REPL | Done | 10% | 100% | `910924b`; explicit commands preserved |
 | #3 | Native manager, creation, settings and complete CLI access | Done | 40% | 100% | Native workflows and existing CLI regression gates passed |
 | #4 | Terminal, launchers, AV and desktop capability handling | Done | 25% | 100% | VTE/AV adapter and capability handling verified; hardware limits explicit |
-| #5 | Automated integration, sanitizer checks and usage docs | In Progress | 15% | 90% | Installation and package checks pass; final documentation audit pending |
+| #5 | Automated integration, sanitizer checks and usage docs | Done | 15% | 100% | GUI/CLI gates, install, packaging, HiDPI and evidence recorded |
 
-**Total Feature Completion**: `98.5%`
+**Total Feature Completion**: `100.0%`
 
 ## Commit History & Progress Log
 
@@ -54,8 +54,24 @@ branch and documentation now follow the requested names. Task impact: +100% to #
     tests, keyboard palette checks, sanitizer gates and CI. Regression cases ensure
     plain log snapshots, new export-directory selection and stopped batch replay.
 
-- **Commit `chore(gui): ship native manager with the AV distribution`** (hash recorded next commit)
+- **Commit `880eaf4`**: `chore(gui): ship native manager with the AV distribution`
   - **Task Impact**: +15% to #5 (+2.25% overall).
   - **Summary**: Require/copy the GUI in complete AV bundles, install GTK development
     packages in the existing packaging workflow, enforce missing-GUI failure without
     corrupting archives, and document launch/build/runtime integration boundaries.
+
+- **Final audit commit (`HEAD`)**: `docs(gui): record verified delivery and integration dependencies`
+  - **Task Impact**: +10% to #5 (+1.5% overall).
+  - **Summary**: Record exact test environment, coverage, sanitizer interpretation,
+    installation/package results and remaining backend/hardware boundaries. All
+    implementation commits above have immutable hashes; this final documentation
+    commit uses its exact subject/HEAD to avoid a self-referential hash.
+
+## Delivery boundary
+
+All planned GUI integration tasks are complete. Full-desktop capture, execution
+pause/resume and mapping edits remain unavailable because the existing backend
+has no corresponding public interface. Those controls explain their dependency;
+no backend success is fabricated. Windows/hardware AV acceptance and an external
+screen reader were not available in this environment. The tested behaviors and
+system-library sanitizer suppressions are detailed in `VERIFICATION.md`.
