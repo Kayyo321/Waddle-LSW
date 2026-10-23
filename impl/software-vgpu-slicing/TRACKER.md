@@ -2618,9 +2618,20 @@ impersonation, predicate waiver or native qualification is included. Parent rema
 
 | Commit | Change | Task / overall impact | Verification |
 |:--|:--|:--|:--|
-| (this commit) | docs(vgpu): record ratified contracts and preserved VM recovery | #3/#5/#11 +0%; overall +0% | Explicit amendment-4, DXVK CLIENT and wrapper-r2 approvals; preserved disk check clean; new QEMU/swtpm identities and console sign-in observed. R11/R12 remain incomplete; no new native acceptance. |
+| `608f0ee` | docs(vgpu): record ratified contracts and preserved VM recovery | #3/#5/#11 +0%; overall +0% | Explicit amendment-4, DXVK CLIENT and wrapper-r2 approvals; preserved disk check clean; new QEMU/swtpm identities and console sign-in observed. R11/R12 remain incomplete; no new native acceptance. |
 
 The supplied handoff is retained as historical context. Its RESULT_R12_PLACEHOLDER is superseded
 by attribution section 18, not filled with a fabricated result. All current review nits are
 addressed. TODO #5's note now reflects the already approved/implemented fix. Parent remains
 93.0% / In Progress, Time Ended TBD until fresh native gates and final exact-head CI pass.
+
+### CI package-download timeout correction (2026-10-23)
+
+| Commit | Change | Task / overall impact | Verification |
+|:--|:--|:--|:--|
+| (this commit) | ci(vgpu): use the official Ubuntu archive for admission tools | #3/#5 +0%; overall +0% | Job 120451134378 in run 39964621955 at 608f0ee exhausted 15 minutes during Azure-mirror downloads before tests. Workflow YAML/shell syntax pass; test steps, package list, other jobs and timeout are unchanged. |
+
+The same-head push admission job passed, but the cancelled PR job is not called green. The
+new commit changes the concrete failing download source instead of rerunning an unexplained
+failure. Raw installation log is preserved under codex_continuation_20261023. Parent remains
+93.0% / In Progress, Time Ended TBD; fresh-head CI and native gates remain open.

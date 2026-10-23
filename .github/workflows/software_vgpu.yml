@@ -17,6 +17,10 @@ jobs:
           persist-credentials: false
       - name: Install vendor-boundary test tools
         run: |
+          # The Azure mirror exhausted the job budget before any test ran.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends git g++ python3 gcc-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64
       - name: Check out only pinned admission-test source and headers
