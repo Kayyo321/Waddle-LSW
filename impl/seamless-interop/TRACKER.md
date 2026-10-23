@@ -32,7 +32,7 @@ acceptance remain pending.
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **hardware run by user pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE hardware runs by user pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
-| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 0% | Luna foundation lane: bounded snapshot validator/geometry first; runtime/pins/native gates remain open |
+| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 20% | Snapshot validators/geometry/audio bounds accepted; allocator, native ABI/atomics and slot pins/runtime remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 25% | Config defaults/parse/validate/edit-reset accepted; QEMU/devices/CLI persistence/native gates remain open |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 0% | Luna manifest lane: bounded schema codec first; accepted journal/artifact API later unblocks #28/#31; final closure waits on all producers |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | Pending | 4% | 0% | Waits on all |
 
-**Total Feature Completion**: `10.45%`
+**Total Feature Completion**: `11.05%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -72,7 +72,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
-| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; C ABI+native atomic adapters 10%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | None |
+| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; C ABI+native atomic adapters 10%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot/geometry/audio primitives 20%; 98.44% branch / 98.57% line coverage |
 | #8 | Config parse/validate/edit-reset 25%; config CLI serialization/get 10%; QEMU argv/build features 30%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config parse/validate/edit-reset 25%; 19 Zig tests and C ABI/sanitizer fixture |
 | #9 | All-mount process lifecycle/QEMU 40%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback removal 10%; export-boundary fixtures pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | None |
@@ -228,7 +228,7 @@ runner is granted by these assignments. Shared build targets run serially.
     ASan/LSan/UBSan runs pass with leak detection enabled. Config data only:
     QEMU/device behavior, CLI persistence and native qualification stay pending.
 
-- **Commit `HEAD`**: `fix(interop): restrict automatic path mapping to configured exports`
+- **Commit `d9def23`**: `fix(interop): restrict automatic path mapping to configured exports`
   - **Task Impact**: +10% to TODO #9 (+0.10% overall; total 10.45%).
   - **Summary**: Removes CLI/daemon phantom root mappings, refuses invalid config
     and partial allocation/capacity failures, validates bounded mount strings
@@ -238,4 +238,15 @@ runner is granted by these assignments. Shared build targets run serially.
     local UNIX-socket access and passes with it. Generic legacy path helper
     behavior is unchanged; realpath/symlink containment, all-mount processes
     and guest drive binding remain open. Independent Luna review found no
-    additional substantive path-slice defects. `HEAD` is this containing commit.
+    additional substantive path-slice defects.
+
+- **Commit `HEAD`**: `feat(interop): validate detached layout v3 memory snapshots`
+  - **Task Impact**: +20% to TODO #5 (+0.60% overall; total 11.05%).
+  - **Summary**: Luna adds allocation-free little-endian header/Ready-descriptor
+    snapshots, checked capture geometry/clamping and eight audio-ring bounds.
+    Lead rejects initial 81.25% branch coverage; revised dynamic malformed-input
+    tests pass 98.44% branch (63/64), 98.57% line (69/70), eight Zig tests and a
+    20,000-case mutation corpus with the testing allocator. Aggregate interop
+    test/coverage targets now include layout. No C ABI/native atomic transition,
+    allocator, mapping initialization or live slot ownership is claimed.
+    `HEAD` identifies this containing implementation commit.

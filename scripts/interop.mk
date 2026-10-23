@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test
+interop-test: interop-codec-test interop-layout-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -24,6 +24,15 @@ interop-sanitizers:
 # >= 90% line and branch coverage of the interop codec.
 interop-coverage:
 	python3 tests/av/coverage.py interop_codec
+	python3 tests/av/coverage.py interop_layout
 # Windows link check of the same C ABI test (executed by guest_windows CI).
 build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@
+
+.PHONY: interop-layout-test interop-layout-coverage
+
+# Bounds-checked snapshot/geometry primitives; native mapping ownership is separate.
+interop-layout-test:
+	$(ZIG) test src/interop/interop_layout.zig -Iinclude -lc
+interop-layout-coverage:
+	python3 tests/av/coverage.py interop_layout
