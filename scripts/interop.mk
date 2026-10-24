@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -21,13 +21,14 @@ interop-codec-test: build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage:
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
 	python3 tests/av/coverage.py interop_heap
 	python3 tests/av/coverage.py interop_slot_runtime
+	python3 tests/av/coverage.py interop_slot_runtime_abi
 	python3 tests/av/coverage.py manifest
 	python3 tests/av/coverage.py interop_layout_abi
 	python3 tests/interop/native_atomic_coverage.py
@@ -112,3 +113,18 @@ build/interop_slot_runtime_test.exe: src/interop/interop_slot_runtime.zig src/in
 # Fault-only fixture: no VM, device, ACL or process signaling occurs.
 interop-device-smoke-cleanup-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/device_smoke_cleanup.py
+
+.PHONY: interop-slot-runtime-abi-test
+build/interop_slot_runtime_abi.o: src/interop/interop_slot_runtime_abi.zig src/interop/interop_slot_runtime.zig src/interop/interop_slot_runtime.h src/interop/interop_heap.zig src/interop/interop_layout.zig | build
+	$(ZIG) build-obj $< -Isrc/interop -O ReleaseSafe -fPIC -fcompiler-rt -lc -femit-bin=$@
+build/interop_slot_runtime_abi_test: tests/interop/slot_runtime_abi.c build/interop_slot_runtime_abi.o src/interop/interop_slot_runtime.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -Isrc/interop $< build/interop_slot_runtime_abi.o $(LDFLAGS) -o $@
+interop-slot-runtime-abi-test: build/interop_slot_runtime_abi_test
+	$(ZIG) test src/interop/interop_slot_runtime_abi.zig -Isrc/interop -lc
+	./build/interop_slot_runtime_abi_test
+build/interop_slot_runtime_abi_windows.lib: src/interop/interop_slot_runtime_abi.zig src/interop/interop_slot_runtime.zig src/interop/interop_slot_runtime.h src/interop/interop_heap.zig src/interop/interop_layout.zig | build
+	$(ZIG) build-lib $< -Isrc/interop -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt -lc -femit-bin=$@
+build/interop_slot_runtime_abi_test.exe: tests/interop/slot_runtime_abi.c build/interop_slot_runtime_abi_windows.lib src/interop/interop_slot_runtime.h | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Isrc/interop $< build/interop_slot_runtime_abi_windows.lib -o $@
+build/interop_slot_runtime_abi_unit_test.exe: src/interop/interop_slot_runtime_abi.zig src/interop/interop_slot_runtime.zig src/interop/interop_slot_runtime.h src/interop/interop_heap.zig src/interop/interop_layout.zig | build
+	$(ZIG) test $< -Isrc/interop -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@

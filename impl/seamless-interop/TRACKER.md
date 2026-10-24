@@ -550,11 +550,23 @@ its uncompiled draft earns no credit until current acceptance passes.
     devices remain open. Existing Windows disk untouched. [Evidence receipt](device_smoke_qualification_2026_10_24.json).
     Source commitdd0ca3d contains this fixture/evidence.
 
-- **Commit `HEAD`**: `docs(interop): define quiescent guest metadata initialization`
+- **Commit `f33de21`**: `docs(interop): define quiescent guest metadata initialization`
   - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
   - **Summary**: Specifies exact mapping argument/proof validation, fixed
     header/descriptors, atomic initialization and untouched audio/heap regions
     for the guest pre-Hello primitive. Reserves separate Luna files while the
     slot C adapter receives error-path tests; Claude paths stay exclusive.
     Manifest storage remains unaccepted with an unresolved leaf race and
-    insufficient branch coverage. HEAD identifies this design/ownership commit.
+    insufficient branch coverage. Source commitf33de21 contains this design/ownership.
+
+- **Commit `HEAD`**: `feat(interop): expose proof-gated slot lifetime C API`
+  - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total14.40%).
+  - **Summary**: Adds an opaque C-allocator-owned runtime, exhaustive stable
+    statuses and scalar views. Every operation checks a captured epoch; outputs
+    remain unchanged on failure, aliases are rejected and destroy requires
+    successful producer/host drain. Independent review added missing height and
+    stride ABI offset guards. Forty-seven Zig tests, C fixtures, leak-enabled
+    sanitizers and90.18% line/98.33% branch coverage pass. Windows C and Zig
+    executables cross-build; actual execution is pending the next CI run.
+    [Qualification](slot_runtime_abi_qualification_2026_10_24.json). No live
+    integration credit. HEAD identifies this containing implementation commit.

@@ -1,0 +1,52 @@
+{
+  "recorded_utc": "2026-10-24T16:15:01.208950+00:00",
+  "source_sha256": {
+    "src/interop/interop_slot_runtime_abi.zig": "4dd3ca48297f178a572e10dcc7e56d4b9787520867c4802ba8ecf4249b282676",
+    "src/interop/interop_slot_runtime.h": "775f60d5df1ba1c01f36066a7515e3a0fa64e2e5032b1352390421b5f7e1663b",
+    "tests/interop/slot_runtime_abi.c": "9a593a811e4e10874948873aa1ee56c1c76d83ce9e334fa344966dcba625c281"
+  },
+  "commands": [
+    {
+      "command": "make interop-slot-runtime-abi-test build/interop_slot_runtime_abi_test.exe build/interop_slot_runtime_abi_unit_test.exe",
+      "exit_code": 0,
+      "zig_tests_passed": 47
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py interop_slot_runtime_abi",
+      "exit_code": 0,
+      "line": [
+        101,
+        112
+      ],
+      "branch": [
+        59,
+        60
+      ]
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 make -B interop-slot-runtime-abi-test CFLAGS='-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer' LDFLAGS='-fsanitize=address,leak,undefined'",
+      "exit_code": 0,
+      "host_escalated": true
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/slot_runtime_abi_2026_10_24/seamless_slot_abi_build.log",
+      "sha256": "8ed9f10ce0d0ab384d9569421539da19ba7f392541210bbde8a36e180f5829f7"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/slot_runtime_abi_2026_10_24/seamless_slot_abi_coverage.log",
+      "sha256": "9c43009eb91e46bd95d71b7fa17d0f1ccdfb4253ff07da3e5d5610df5a5568ec"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/slot_runtime_abi_2026_10_24/seamless_slot_abi_sanitizers.log",
+      "sha256": "e48bce112ebbf87fa4287a4ac5f99a03ae1eef321d34bece5a1ca9e1623b6ad7"
+    }
+  ],
+  "limits": [
+    "Opaque CPU bookkeeping C boundary only; external transition and teardown assertions remain caller obligations.",
+    "Windows executables cross-build; actual Windows execution pending next CI.",
+    "No live mapping/session/capture credit."
+  ],
+  "progress_credit": 0
+}

@@ -1,0 +1,63 @@
+preserved interop_slot_runtime_abi coverage: /home/dev/Waddle-LSW/build/coverage/interop/interop_slot_runtime_abi/run-20261024T161144822794Z-286404
+interop_slot_runtime_abi instrumentation: 147 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 736/524288 bytes; 147 sites
+1/47 interop_slot_runtime_abi.test.runtime error status mapping is exhaustive and has frozen values...OK
+2/47 interop_slot_runtime_abi.test.C ABI address checks preserve outputs and session epochs gate every operation...OK
+3/47 interop_slot_runtime_abi.test.every exported operation rejects a null runtime before reading caller outputs...OK
+4/47 interop_slot_runtime_abi.test.exported writer and release errors preserve scalar output snapshots...OK
+5/47 interop_slot_runtime_abi.test.exported geometry growth capacity and lifecycle errors are observable...OK
+6/47 interop_slot_runtime_abi.test.exported heap exhaustion and window-table capacity leave outputs unchanged...OK
+7/47 interop_slot_runtime_abi.test.exported current-session corruption fails closed and remains drainable...OK
+8/47 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+9/47 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+10/47 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+11/47 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+12/47 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+13/47 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+14/47 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+15/47 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+16/47 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+17/47 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+18/47 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+19/47 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+20/47 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+21/47 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+22/47 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+23/47 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+24/47 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+25/47 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+26/47 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+27/47 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+28/47 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+29/47 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+30/47 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+31/47 interop_heap.test.initialization and capacity errors preserve outputs...OK
+32/47 interop_heap.test.first fit skips a partially occupied candidate...OK
+33/47 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+34/47 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+35/47 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+36/47 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+37/47 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+38/47 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+39/47 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+40/47 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+41/47 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+42/47 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+43/47 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+44/47 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+45/47 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+46/47 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+47/47 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 47 tests passed.
+interop_slot_runtime_abi production branch coverage: 98.33% (59/60); 10 compiler panic/stack-canary guards excluded
+interop_slot_runtime_abi production line coverage: 90.18% (101/112); 10 compiler panic/stack-canary guards excluded
