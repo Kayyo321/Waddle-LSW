@@ -146,7 +146,24 @@ int daemon_fs_build_args(const char *socket_path,
                          const char *cache_mode,
                          char **argv,
                          size_t max_args) {
-    if (socket_path == NULL || shared_dir == NULL || argv == NULL || max_args < 8) {
+    return daemon_fs_build_args_for_mount(socket_path, shared_dir, sandbox_mode,
+                                          cache_mode, 0, argv, max_args);
+}
+
+int daemon_fs_build_args_for_mount(const char *socket_path,
+                                   const char *shared_dir,
+                                   const char *sandbox_mode,
+                                   const char *cache_mode,
+                                   uint32_t read_only,
+                                   char **argv,
+                                   size_t max_args) {
+    if (argv != NULL && max_args != 0) argv[0] = NULL;
+    if (socket_path == NULL || shared_dir == NULL || argv == NULL || max_args < 8 ||
+        read_only > 1 || socket_path[0] != '/' || shared_dir[0] != '/' ||
+        strnlen(socket_path, WaddleMaxPathLen) >= WaddleMaxPathLen ||
+        strnlen(shared_dir, WaddleMaxPathLen) >= WaddleMaxPathLen ||
+        (sandbox_mode != NULL && strnlen(sandbox_mode, 48) >= 48) ||
+        (cache_mode != NULL && strnlen(cache_mode, 48) >= 48)) {
         errno = EINVAL;
         return -1;
     }
@@ -173,6 +190,7 @@ int daemon_fs_build_args(const char *socket_path,
     char cache_arg[64];
     snprintf(cache_arg, sizeof(cache_arg), "--cache=%s", cache);
     if (fs_append_arg(argv, &argc, max_args, cache_arg) != 0) goto fail;
+    if (read_only && fs_append_arg(argv, &argc, max_args, "--readonly") != 0) goto fail;
 
     return (int)argc;
 
@@ -206,11 +224,71 @@ static int probe_socket_ready(const char *path) {
         return -1;
     }
     struct stat st;
-    if (stat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
+    if (lstat(path, &st) == 0 && S_ISSOCK(st.st_mode)) {
         /* Socket file bound; brief sleep ensures listen() is complete */
         usleep(20000);
         return 0;
     }
+    return -1;
+}
+
+static int fs_remove_owned_socket(const virtiofs_process_t *proc) {
+    if (proc == NULL || proc->socket_path[0] == '\0') return 0;
+    struct stat st;
+    if (lstat(proc->socket_path, &st) != 0) {
+        if (errno == ENOENT) return 0;
+        return -1;
+    }
+    if (!S_ISSOCK(st.st_mode)) {
+        errno = EEXIST;
+        return -1;
+    }
+    return unlink(proc->socket_path);
+}
+
+static int fs_path_available_for_socket(const char *socket_path) {
+    struct stat st;
+    if (lstat(socket_path, &st) != 0) {
+        return errno == ENOENT ? 0 : -1;
+    }
+    /* A new spawn owns no pre-existing listener, even under the session lock.
+     * Orphan recovery must establish ownership before deleting its socket. */
+    errno = S_ISSOCK(st.st_mode) ? EADDRINUSE : EEXIST;
+    return -1;
+}
+
+static int fs_waitpid_retry(pid_t pid, int *status, int options, pid_t *result) {
+    pid_t waited;
+    do {
+        waited = waitpid(pid, status, options);
+    } while (waited < 0 && errno == EINTR);
+    if (result != NULL) *result = waited;
+    if (waited < 0 && errno == ECHILD) return 0;
+    return waited < 0 ? -1 : 0;
+}
+
+static int fs_kill_retry(pid_t pid, int signal_number) {
+    int result;
+    do {
+        result = kill(pid, signal_number);
+    } while (result != 0 && errno == EINTR);
+    return result;
+}
+
+static int fs_mark_reaped(virtiofs_process_t *proc, pid_t waited) {
+    if (waited == proc->pid || (waited < 0 && errno == ECHILD)) {
+        proc->pid = 0;
+        proc->is_running = 0;
+        return 1;
+    }
+    if (waited == 0) return 0;
+    return -1;
+}
+
+static int fs_spawn_abort(virtiofs_process_t *proc, int cause, uint32_t timeout_ms) {
+    if (daemon_fs_stop(proc, timeout_ms) != 0) return -1;
+    daemon_fs_cleanup(proc);
+    errno = cause;
     return -1;
 }
 
@@ -220,18 +298,47 @@ int daemon_fs_spawn(virtiofs_process_t *proc,
                     const char *log_path,
                     const char *binary_path,
                     uint32_t timeout_ms) {
-    if (proc == NULL || socket_path == NULL || shared_dir == NULL || log_path == NULL) {
+    return daemon_fs_spawn_for_mount(proc, socket_path, shared_dir, 0,
+                                     log_path, binary_path, timeout_ms);
+}
+
+int daemon_fs_spawn_for_mount(virtiofs_process_t *proc,
+                              const char *socket_path,
+                              const char *shared_dir,
+                              uint32_t read_only,
+                              const char *log_path,
+                              const char *binary_path,
+                              uint32_t timeout_ms) {
+    if (proc == NULL || socket_path == NULL || shared_dir == NULL || log_path == NULL ||
+        read_only > 1 || log_path[0] != '/' ||
+        socket_path[0] != '/' || shared_dir[0] != '/' ||
+        strnlen(log_path, WaddleMaxPathLen) >= WaddleMaxPathLen ||
+        strnlen(socket_path, sizeof(((struct sockaddr_un *)0)->sun_path)) >=
+            sizeof(((struct sockaddr_un *)0)->sun_path) ||
+        (binary_path != NULL && (binary_path[0] == '\0' ||
+         strnlen(binary_path, WaddleMaxPathLen) >= WaddleMaxPathLen)) ||
+        strcmp(socket_path, log_path) == 0) {
         errno = EINVAL;
         return -1;
     }
+    if (proc->pid > 0 || proc->is_running || proc->socket_path[0] != '\0' ||
+        proc->shared_dir[0] != '\0' || proc->log_path[0] != '\0' || proc->log_fd != -1) {
+        errno = EBUSY;
+        return -1;
+    }
 
-    memset(proc, 0, sizeof(*proc));
-    proc->log_fd = -1;
+    char *argv[VirtiofsMaxArgs] = {0};
+    int argc = daemon_fs_build_args_for_mount(socket_path, shared_dir, "none", "auto",
+                                              read_only, argv, VirtiofsMaxArgs);
+    if (argc < 0) return -1;
 
     /* Verify host directory exists */
     struct stat st;
-    if (stat(shared_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
-        errno = (errno != 0) ? errno : ENOTDIR;
+    int stat_result = stat(shared_dir, &st);
+    if (stat_result != 0 || !S_ISDIR(st.st_mode)) {
+        int saved = stat_result != 0 ? errno : ENOTDIR;
+        daemon_fs_free_args(argv, (size_t)argc);
+        errno = saved;
         return -1;
     }
 
@@ -239,22 +346,23 @@ int daemon_fs_spawn(virtiofs_process_t *proc,
     const char *bin_to_exec = binary_path;
     if (bin_to_exec == NULL) {
         if (daemon_fs_find_binary(resolved_binary, sizeof(resolved_binary)) != 0) {
+            int saved = errno;
+            daemon_fs_free_args(argv, (size_t)argc);
+            errno = saved;
             return -1;
         }
         bin_to_exec = resolved_binary;
     }
 
-    /* Remove existing stale socket if present */
-    unlink(socket_path);
-
-    char *argv[VirtiofsMaxArgs];
-    memset(argv, 0, sizeof(argv));
-    int argc = daemon_fs_build_args(socket_path, shared_dir, "none", "auto", argv, VirtiofsMaxArgs);
-    if (argc < 0) {
+    /* A fresh spawn must not replace a pre-existing listener or file. */
+    if (fs_path_available_for_socket(socket_path) != 0) {
+        int saved = errno;
+        daemon_fs_free_args(argv, (size_t)argc);
+        errno = saved;
         return -1;
     }
 
-    int log_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    int log_fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0644);
     if (log_fd < 0) {
         daemon_fs_free_args(argv, (size_t)argc);
         return -1;
@@ -295,10 +403,13 @@ int daemon_fs_spawn(virtiofs_process_t *proc,
 
     while (fs_monotonic_ms() < deadline) {
         /* Check if child died prematurely */
-        if (daemon_fs_poll_status(proc) == 0) {
-            daemon_fs_cleanup(proc);
-            errno = ECHILD;
-            return -1;
+        int status = daemon_fs_poll_status(proc);
+        if (status == 0) {
+            return fs_spawn_abort(proc, ECHILD, 1000);
+        }
+        if (status < 0) {
+            int saved = errno;
+            return fs_spawn_abort(proc, saved, 1000);
         }
 
         if (probe_socket_ready(socket_path) == 0) {
@@ -309,9 +420,7 @@ int daemon_fs_spawn(virtiofs_process_t *proc,
     }
 
     /* Timed out waiting for socket */
-    daemon_fs_stop(proc, 1000);
-    errno = ETIMEDOUT;
-    return -1;
+    return fs_spawn_abort(proc, ETIMEDOUT, 1000);
 }
 
 int daemon_fs_poll_status(virtiofs_process_t *proc) {
@@ -321,56 +430,42 @@ int daemon_fs_poll_status(virtiofs_process_t *proc) {
     }
 
     int status = 0;
-    pid_t r = waitpid(proc->pid, &status, WNOHANG);
-    if (r == proc->pid) {
-        proc->is_running = 0;
-        proc->pid = 0;
-        return 0;
-    }
-    if (r == 0) {
-        return 1;
-    }
-    if (r < 0 && errno == ECHILD) {
-        proc->is_running = 0;
-        proc->pid = 0;
-        return 0;
-    }
-
-    return -1;
+    pid_t waited = -1;
+    if (fs_waitpid_retry(proc->pid, &status, WNOHANG, &waited) != 0) return -1;
+    int reaped = fs_mark_reaped(proc, waited);
+    return reaped < 0 ? -1 : reaped == 0 ? 1 : 0;
 }
 
 int daemon_fs_stop(virtiofs_process_t *proc, uint32_t timeout_ms) {
-    if (proc == NULL || proc->pid <= 0) {
-        if (proc != NULL) {
-            if (proc->socket_path[0] != '\0') unlink(proc->socket_path);
-            proc->is_running = 0;
-        }
-        return 0;
+    if (proc == NULL) { errno = EINVAL; return -1; }
+    if (proc->pid <= 0) {
+        proc->is_running = 0;
+        return fs_remove_owned_socket(proc);
     }
 
-    /* Send SIGTERM */
-    kill(proc->pid, SIGTERM);
+    pid_t pid = proc->pid;
+    if (fs_kill_retry(pid, SIGTERM) != 0 && errno != ESRCH) return -1;
 
-    uint64_t deadline = fs_monotonic_ms() + timeout_ms;
+    uint64_t start = fs_monotonic_ms();
+    uint64_t deadline = start + timeout_ms;
     while (fs_monotonic_ms() < deadline) {
-        if (daemon_fs_poll_status(proc) == 0) {
-            if (proc->socket_path[0] != '\0') unlink(proc->socket_path);
-            return 0;
-        }
+        int status = 0;
+        pid_t waited = -1;
+        if (fs_waitpid_retry(pid, &status, WNOHANG, &waited) != 0) return -1;
+        int reaped = fs_mark_reaped(proc, waited);
+        if (reaped < 0) return -1;
+        if (reaped > 0) return fs_remove_owned_socket(proc);
         usleep(50000);
     }
 
-    /* Fallback to SIGKILL */
-    kill(proc->pid, SIGKILL);
-    waitpid(proc->pid, NULL, 0);
-    proc->pid = 0;
-    proc->is_running = 0;
-
-    if (proc->socket_path[0] != '\0') {
-        unlink(proc->socket_path);
-    }
-
-    return 0;
+    if (fs_kill_retry(pid, SIGKILL) != 0 && errno != ESRCH) return -1;
+    int status = 0;
+    pid_t waited = -1;
+    if (fs_waitpid_retry(pid, &status, 0, &waited) != 0) return -1;
+    int reaped = fs_mark_reaped(proc, waited);
+    if (reaped < 0) return -1;
+    if (reaped == 0) { errno = EIO; return -1; }
+    return fs_remove_owned_socket(proc);
 }
 
 int daemon_fs_mounts_to_rules(const waddle_daemon_fs_mount_t *mounts,
@@ -428,18 +523,12 @@ char *daemon_fs_translate_path(const char *path, const daemon_config_t *config) 
 void daemon_fs_cleanup(virtiofs_process_t *proc) {
     if (proc == NULL) return;
 
-    if (proc->pid > 0) {
-        daemon_fs_stop(proc, 1000);
-    }
+    if (daemon_fs_stop(proc, 1000) != 0) return;
 
     if (proc->log_fd >= 0) {
         close(proc->log_fd);
-        proc->log_fd = -1;
     }
-
-    if (proc->socket_path[0] != '\0') {
-        unlink(proc->socket_path);
-    }
-
+    memset(proc, 0, sizeof(*proc));
+    proc->log_fd = -1;
     proc->is_running = 0;
 }

@@ -2296,3 +2296,24 @@ reaping, and ECHILD confirms no owned child remains. Only confirmed termination
 allows clearing the PID and closing QMP. Generic cleanup first polls and refuses
 to clear a running or unconfirmed process; callers request kill explicitly.
 Mount-array callers retain all backend ownership until QEMU is confirmed dead.
+
+### 8.7 Owned filesystem backend lifecycle
+
+Each mount backend is an independent virtiofs_process_t initialized with zero
+fields and log_fd=-1. A record retaining any PID, descriptor or path cannot be
+reused. Spawn validates absolute bounded paths and the exact boolean read_only
+before filesystem/process side effects; read_only=1 emits --readonly and has no
+read-write fallback. A missing directory returns its stat error; a non-directory
+returns ENOTDIR. Logs use O_NOFOLLOW. A fresh listener path must not exist:
+pre-existing sockets return EADDRINUSE and other objects EEXIST without deletion.
+Orphan recovery needs separate ownership evidence and is not inferred here.
+
+Readiness is bounded and requires a socket inode without following symlinks.
+On startup failure, stop/reap runs before cleanup. SIGTERM with a bounded wait
+falls back to SIGKILL; EINTR retries, ESRCH permits wait, and ECHILD confirms the
+owned child is gone. Unexpected kill/wait errors retain every ownership field,
+log FD and listener path for retry. Socket-removal errors likewise retain the
+record after reaping. Cleanup closes/clears only after successful stop and socket
+removal; it is idempotent on a fully released initialized record. Callers serialize
+one record/path and never discard a failed teardown record. These APIs do not
+prove guest mount binding or guest read-only write denial.

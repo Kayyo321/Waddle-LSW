@@ -384,7 +384,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     no credit yet; mapping initialization, pins/growth and runtime stay open.
     Source commit6f1ce16 awaits the Windows execution gate.
 
-- **Commit `HEAD`**: `feat(interop): add bounded drive-tagged QEMU mount arrays`
+- **Commit `84fc54b`**: `feat(interop): add bounded drive-tagged QEMU mount arrays`
   - **Task Impact**: +10% to TODO #9 (+0.10% overall; total12.95%).
   - **Summary**: Adds zero-to-eight mount builder/spawn APIs with exact ordered
     drive tags, duplicate/path validation and transactional argv cleanup.
@@ -393,4 +393,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     ownership for retry. Full-capacity argument, QMP, EPERM/EIO/EINTR fixtures
     pass normally and under ASan/LSan/UBSan with leak detection enabled.
     Supervisor ownership, guest tag binding and native qualification stay open.
-    HEAD identifies this containing QEMU mount-array commit.
+    Source commit84fc54b provides the accepted QEMU API subtask.
+
+- **Commit `HEAD`**: `fix(interop): retain filesystem backend ownership through teardown errors`
+  - **Task Impact**: +0% to TODO #9 (+0% overall; total12.95%).
+  - **Summary**: Adds explicit read-only spawn/builder policy and bounded
+    preflight, refuses unowned pre-existing listeners, and preserves resources
+    across kill/reap/unlink errors for retry. Real task-owned child fixtures
+    cover EPERM/EIO/EINTR, timeout cleanup, occupied paths and invalid policies;
+    normal and ASan/LSan/UBSan runs pass with leak detection enabled. These
+    primitives support the still-open all-mount supervisor milestone; native
+    guest binding and write-denial are not credited. HEAD is this commit.

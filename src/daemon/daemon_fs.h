@@ -25,6 +25,9 @@ extern "C" {
 
 /**
  * @brief State structure for managed virtiofsd process instance.
+ * @note Before spawn, caller initializes all fields to zero and sets log_fd to
+ *       -1. A record with a PID, running flag, descriptor other than -1, or any
+ *       nonempty path is already owned and cannot be reused.
  */
 typedef struct virtiofs_process_t {
     /** @brief Process ID of spawned virtiofsd process (0 if not running). */
@@ -74,6 +77,28 @@ int daemon_fs_build_args(const char *socket_path,
                          size_t max_args);
 
 /**
+ * @brief Build an owned virtiofsd argv with an explicit read-only policy.
+ * @param[in] socket_path Non-NULL borrowed absolute NUL-terminated path shorter
+ *                        than WaddleMaxPathLen; retained only as an argv copy.
+ * @param[in] shared_dir Non-NULL borrowed absolute path with the same bound.
+ * @param[in] sandbox_mode Nullable borrowed mode shorter than48 bytes;
+ *                         NULL/empty selects none.
+ * @param[in] cache_mode Nullable borrowed mode shorter than48 bytes;
+ *                       NULL/empty selects auto.
+ * @param[in] read_only Exactly0 or1;1 appends --readonly. Unsupported binaries
+ *                      fail at execution; no silent read-write fallback exists.
+ * @param[out] argv Non-NULL disjoint caller-owned array of max_args pointers.
+ * @param[in] max_args Actual pointer capacity, at least8, including trailing NULL.
+ * @return Count excluding NULL, or -1/EINVAL, E2BIG or ENOMEM. Every error
+ *         frees partial strings and sets argv[0] NULL when capacity permits.
+ * @note Caller releases strings with daemon_fs_free_args. No input is retained;
+ *       independent calls are thread-safe. The legacy builder selects read-write.
+ */
+int daemon_fs_build_args_for_mount(const char *socket_path, const char *shared_dir,
+                                   const char *sandbox_mode, const char *cache_mode,
+                                   uint32_t read_only, char **argv, size_t max_args);
+
+/**
  * @brief Releases argument vector allocated by daemon_fs_build_args.
  *
  * @param[in,out] argv Array of argument strings.
@@ -100,6 +125,28 @@ int daemon_fs_spawn(virtiofs_process_t *proc,
                     uint32_t timeout_ms);
 
 /**
+ * @brief Start one owned backend with the configured read-only policy.
+ * @param[out] proc Caller-owned unused process record with pid 0, running false,
+ *                  empty paths, and log_fd -1; owned records are rejected EBUSY.
+ * @param[in] socket_path Non-NULL borrowed absolute bounded socket path.
+ * @param[in] shared_dir Non-NULL borrowed absolute bounded directory path.
+ * @param[in] read_only Exactly0 or1;1 requires backend --readonly support.
+ * @param[in] log_path Non-NULL borrowed absolute path shorter thanWaddleMaxPathLen.
+ * @param[in] binary_path Nullable borrowed executable path; NULL selects lookup.
+ * @param[in] timeout_ms Readiness deadline;0 selects VirtiofsDefaultWaitMs.
+ * @return 0 on ready, -1 with errno on argument, process or readiness failure.
+ * @note Caller owns proc and must call daemon_fs_cleanup after use, including
+ *       failed calls that retain a child when teardown fails. No input is
+ *       retained. External serialization is required for a shared proc/path;
+ *       calls with independent records/paths are thread-safe. The legacy spawn
+ *       selects read-write. No successful spawn implies guest-drive acceptance.
+ */
+int daemon_fs_spawn_for_mount(virtiofs_process_t *proc, const char *socket_path,
+                              const char *shared_dir, uint32_t read_only,
+                              const char *log_path, const char *binary_path,
+                              uint32_t timeout_ms);
+
+/**
  * @brief Checks if virtiofsd is running and reaps child if terminated.
  *
  * @param[in,out] proc virtiofs process handle.
@@ -112,7 +159,10 @@ int daemon_fs_poll_status(virtiofs_process_t *proc);
  *
  * @param[in,out] proc       virtiofs process handle.
  * @param[in]     timeout_ms Timeout before SIGKILL fallback.
- * @return 0 on success, or -1 on error.
+ * @return 0 only after child reaping or ECHILD confirmation and socket cleanup;
+ *         -1 on kill/wait/unlink error. EINTR is retried. Kill errors other than
+ *         ESRCH and wait errors other than ECHILD preserve the owned PID and all
+ *         associated paths/descriptors so the caller can retry.
  */
 int daemon_fs_stop(virtiofs_process_t *proc, uint32_t timeout_ms);
 
@@ -150,7 +200,11 @@ char *daemon_fs_translate_path(const char *path, const daemon_config_t *config);
 /**
  * @brief Cleans up virtiofsd process, socket file, and descriptors.
  *
- * @param[in,out] proc virtiofs process handle.
+ * @param[in,out] proc Process handle; it must remain alive through retries.
+ * @note If stop/reap or owned-socket removal fails, returns without closing the
+ *       log descriptor, unlinking further paths, or clearing ownership fields.
+ *       After success it closes the log descriptor, clears every path/PID field,
+ *       sets log_fd to -1, and is idempotent.
  */
 void daemon_fs_cleanup(virtiofs_process_t *proc);
 

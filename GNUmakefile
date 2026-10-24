@@ -138,7 +138,7 @@ build/test_daemon_client: tests/daemon/test_daemon_client.c src/daemon/daemon_cl
 build/test_auto_terminal: tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
 
-test: cli build/unit build/integration build/test_session_shutdown build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_device build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
+test: cli build/unit build/integration build/test_session_shutdown build/test_daemon_protocol build/test_daemon_config build/test_daemon_qemu build/test_daemon_fs build/test_daemon_fs_failures build/test_daemon_device build/test_daemon_server build/test_daemon_client build/test_auto_terminal zig-test
 	./build/unit
 	./build/integration
 	./build/test_session_shutdown
@@ -147,6 +147,7 @@ test: cli build/unit build/integration build/test_session_shutdown build/test_da
 	./build/test_daemon_config
 	./build/test_daemon_qemu
 	./build/test_daemon_fs
+	./build/test_daemon_fs_failures
 	./build/test_daemon_device
 	./build/test_daemon_server
 	./build/test_daemon_client
@@ -224,3 +225,7 @@ include scripts/vgpu_icd_owned_safety.mk
 include scripts/vgpu_wsi_lifecycle.mk
 
 include scripts/vgpu_gui_diag.mk
+
+# Failure injection uses only task-owned fixture children.
+build/test_daemon_fs_failures: tests/daemon/test_daemon_fs_failures.c src/daemon/daemon_fs.c src/daemon/daemon_fs.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_fs.c $< $(LDFLAGS) -Wl,--wrap=fork,--wrap=lstat,--wrap=unlink,--wrap=kill,--wrap=waitpid -o $@

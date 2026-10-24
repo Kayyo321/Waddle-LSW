@@ -26,6 +26,19 @@ static void test_build_args(void) {
     assert(argv[argc] == NULL);
 
     daemon_fs_free_args(argv, (size_t)argc);
+    argc = daemon_fs_build_args_for_mount("/tmp/vfs.sock", "/home/dev", "none",
+                                          "auto", 1, argv, VirtiofsMaxArgs);
+    assert(argc == 6 && strcmp(argv[5], "--readonly") == 0 && argv[6] == NULL);
+    daemon_fs_free_args(argv, (size_t)argc);
+    assert(daemon_fs_build_args_for_mount("/tmp/vfs.sock", "/home/dev", NULL,
+                                           NULL, 2, argv, VirtiofsMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
+    char unterminated[WaddleMaxPathLen];
+    memset(unterminated, 'x', sizeof(unterminated));
+    unterminated[0] = '/';
+    assert(daemon_fs_build_args_for_mount(unterminated, "/home/dev", NULL,
+                                           NULL, 0, argv, VirtiofsMaxArgs) == -1);
+    assert(errno == EINVAL && argv[0] == NULL);
 }
 
 static void test_mounts_to_rules(void) {
@@ -123,6 +136,7 @@ static void test_export_boundaries(void) {
 static void test_invalid_spawn(void) {
     virtiofs_process_t proc;
     memset(&proc, 0, sizeof(proc));
+    proc.log_fd = -1;
 
     /* Nonexistent shared directory must fail */
     assert(daemon_fs_spawn(&proc, "/tmp/sock", "/nonexistent/path/waddle_test",
