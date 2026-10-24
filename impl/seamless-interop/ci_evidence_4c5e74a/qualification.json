@@ -1,0 +1,69 @@
+{
+  "source_commit": "4c5e74aa047d327d9f3508abb8ec5e27c9922278",
+  "runs": [
+    {
+      "run": 40141181515,
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181515",
+      "source_commit": "4c5e74aa047d327d9f3508abb8ec5e27c9922278",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "windows",
+          "conclusion": "success",
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181515/job/121013073446"
+        },
+        {
+          "name": "transport",
+          "conclusion": "success",
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181515/job/121013678705"
+        }
+      ],
+      "log_sha256": "69c176aadc6d20a21868b7f03da1dff4042d1a67741e67c19592bf35fc3685b0",
+      "compressed_log_sha256": "728d15bbcfd92bfb5e08d71888a0ab1cb9756827fc761484dc96584712eea3c9"
+    },
+    {
+      "run": 40141181509,
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181509",
+      "source_commit": "4c5e74aa047d327d9f3508abb8ec5e27c9922278",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "linux",
+          "conclusion": "success",
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181509/job/121013073546"
+        },
+        {
+          "name": "windows",
+          "conclusion": "success",
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181509/job/121015794944"
+        }
+      ],
+      "log_sha256": "0dbd835c8086c601ceb0b04885a0b108d71181253127fd0f85bf58271d462c2c",
+      "compressed_log_sha256": "68f696680aea9795360946fa1b93b27d07de1513cd04bae5fafe9b8bb99d82d2"
+    },
+    {
+      "run": 40141181545,
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181545",
+      "source_commit": "4c5e74aa047d327d9f3508abb8ec5e27c9922278",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "linux",
+          "conclusion": "success",
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181545/job/121013073496"
+        },
+        {
+          "name": "windows",
+          "conclusion": "success",
+          "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40141181545/job/121016100814"
+        }
+      ],
+      "log_sha256": "504df60969e4c93815ab8cf5d144fb8e2d429230b28ada721696479dce935d40",
+      "compressed_log_sha256": "8ec44e946025f8457137d33f8884dd65bb7286a73e6ad790a890b8a1e21ccafa"
+    }
+  ],
+  "overall_feature_percent": 18.0,
+  "native_installed_session_qualified": false,
+  "o5_working_tree_qualified": false,
+  "note": "Green CI applies only to this immutable pushed commit. The newer O5 changes and inherited VSOCK runner path are not qualified by these runs."
+}

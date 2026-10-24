@@ -1151,7 +1151,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     handling. Tests launch no VM or TPM and provide no installed-session credit.
     Local target passes; remote CI qualification remains required.
 
-- **Commit `HEAD`**: `test(interop): pass owned VSOCK backend into isolated native runner`
+- **Commit `8c6b04e`**: `test(interop): pass owned VSOCK backend into isolated native runner`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total18.00%).
   - **Summary**: Adds an explicit CID/inherited-device-FD pair, validates the
     actual read/write character device, duplicates it close-on-exec, passes only
@@ -1160,3 +1160,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     Elevated inspection finds usable KVM/VSOCK nodes and a privileged backend-open
     path; earlier sandbox-only missing-node observations do not establish a host
     limitation. Private native VSOCK boot/listener qualification remains pending.
+
+- **Commit `HEAD`**: `docs(interop): record green daemon and session component CI`
+  - **Task Impact**: +0% to TODO #7/#10/#34 (+0% overall; total18.00%).
+  - **Summary**: Exact source4c5e74a passes interop40141181545,
+    graph40141181509 and Native AV40141181515, with all Linux/Windows jobs green.
+    Archives complete run metadata and compressed logs with hashes in
+    [qualification](ci_evidence_4c5e74a/qualification.json). Confirms the new
+    GuestReady runtime/fault/sanitizer/coverage and Linux lease/connector gates.
+    These runs do not qualify the later O5 working tree, inherited-FD runner,
+    installed session or the full feature; tracker remains18.00%.
