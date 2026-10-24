@@ -1,0 +1,197 @@
+{
+  "scope": [
+    "/home/dev/Waddle-LSW/src/interop/window_graph.zig",
+    "/home/dev/Waddle-LSW/src/interop/window_graph_abi.zig",
+    "/home/dev/Waddle-LSW/src/interop/window_observer_windows.c",
+    "/home/dev/Waddle-LSW/src/interop/window_observer_windows.h",
+    "/home/dev/Waddle-LSW/include/waddle/interop_window_graph.h",
+    "/home/dev/Waddle-LSW/tests/interop/window_graph.c",
+    "/home/dev/Waddle-LSW/tests/interop/window_observer_api_double.h",
+    "/home/dev/Waddle-LSW/tests/interop/window_observer_native_failures_windows.c",
+    "/home/dev/Waddle-LSW/tests/interop/window_observer_native_windows.c",
+    "/home/dev/Waddle-LSW/tests/interop/window_observer_windows.c"
+  ],
+  "mode": "read_only_identifier_declaration_audit",
+  "type_alias_findings": [
+    {
+      "file": "/home/dev/Waddle-LSW/src/interop/window_graph_abi.zig",
+      "category": "type_name",
+      "current_token": "BadKind",
+      "proposed_token": "bad_kind_t",
+      "declaration_line": 1311,
+      "reference_lines": [
+        1317,
+        1330,
+        1338,
+        1339,
+        1340
+      ],
+      "note": "Enum type alias. Keep PascalCase enum fields unchanged."
+    },
+    {
+      "file": "/home/dev/Waddle-LSW/src/interop/window_graph_abi.zig",
+      "category": "type_name",
+      "current_token": "Job",
+      "proposed_token": "job_t",
+      "declaration_line": 1419,
+      "reference_lines": [
+        1428,
+        1429
+      ],
+      "note": "Local struct type alias. Keep the value job and method run unchanged."
+    }
+  ],
+  "generic_type_parameter_finding": {
+    "file": "/home/dev/Waddle-LSW/src/interop/window_graph_abi.zig",
+    "category": "generic_type_parameter",
+    "current_token": "T",
+    "proposed_token": "value_t",
+    "total_occurrences": 17,
+    "lexical_scopes": [
+      {
+        "scope": "span_of",
+        "current_token": "T",
+        "proposed_token": "value_t",
+        "token_count": 3,
+        "occurrences": [
+          {
+            "line": 122,
+            "column": 21
+          },
+          {
+            "line": 124,
+            "column": 28
+          },
+          {
+            "line": 125,
+            "column": 43
+          }
+        ]
+      },
+      {
+        "scope": "array_span_of",
+        "current_token": "T",
+        "proposed_token": "value_t",
+        "token_count": 3,
+        "occurrences": [
+          {
+            "line": 129,
+            "column": 27
+          },
+          {
+            "line": 131,
+            "column": 28
+          },
+          {
+            "line": 132,
+            "column": 50
+          }
+        ]
+      },
+      {
+        "scope": "aligned_const",
+        "current_token": "T",
+        "proposed_token": "value_t",
+        "token_count": 3,
+        "occurrences": [
+          {
+            "line": 171,
+            "column": 27
+          },
+          {
+            "line": 171,
+            "column": 62
+          },
+          {
+            "line": 171,
+            "column": 72
+          }
+        ]
+      },
+      {
+        "scope": "aligned_mut",
+        "current_token": "T",
+        "proposed_token": "value_t",
+        "token_count": 3,
+        "occurrences": [
+          {
+            "line": 175,
+            "column": 25
+          },
+          {
+            "line": 175,
+            "column": 54
+          },
+          {
+            "line": 175,
+            "column": 58
+          }
+        ]
+      },
+      {
+        "scope": "sentinel",
+        "current_token": "T",
+        "proposed_token": "value_t",
+        "token_count": 3,
+        "occurrences": [
+          {
+            "line": 753,
+            "column": 22
+          },
+          {
+            "line": 753,
+            "column": 31
+          },
+          {
+            "line": 754,
+            "column": 16
+          }
+        ]
+      },
+      {
+        "scope": "bad_pointer",
+        "current_token": "T",
+        "proposed_token": "value_t",
+        "token_count": 2,
+        "occurrences": [
+          {
+            "line": 1317,
+            "column": 25
+          },
+          {
+            "line": 1317,
+            "column": 112
+          }
+        ]
+      }
+    ],
+    "note": "Each comptime parameter is a type binding, so it follows the repository type naming invariant. Rename only the binding and its references within each listed function scope."
+  },
+  "audited_test_c_scopes": [
+    {
+      "file": "/home/dev/Waddle-LSW/tests/interop/window_graph.c",
+      "identifier_declaration_violations": 0
+    },
+    {
+      "file": "/home/dev/Waddle-LSW/tests/interop/window_observer_api_double.h",
+      "identifier_declaration_violations": 0
+    },
+    {
+      "file": "/home/dev/Waddle-LSW/tests/interop/window_observer_native_failures_windows.c",
+      "identifier_declaration_violations": 0
+    },
+    {
+      "file": "/home/dev/Waddle-LSW/tests/interop/window_observer_native_windows.c",
+      "identifier_declaration_violations": 0
+    },
+    {
+      "file": "/home/dev/Waddle-LSW/tests/interop/window_observer_windows.c",
+      "identifier_declaration_violations": 0
+    }
+  ],
+  "notes": [
+    "PascalCase declarations in these sources/fixtures are compile-time constants, enum members, or C constant tables and conform.",
+    "C fixture declarations were checked separately from expression uses. Windows SDK calls/types/constants and imported C API field/member names were excluded.",
+    "Prior Zig findings BadKind and Job are retained above. No repo files were edited and no builds/tests were run."
+  ]
+}

@@ -1,0 +1,204 @@
+{
+  "base_commit": "423ca84dfc493b8a2805f9b99fc2f8cd547ae0ce",
+  "path": "src/interop/window_graph_abi.zig",
+  "mapping": {
+    "BadKind": "bad_kind_t",
+    "Job": "job_t",
+    "T": "value_t"
+  },
+  "counts": {
+    "BadKind": 6,
+    "Job": 3,
+    "T": 17
+  },
+  "before_sha256": "71bf6c2b2820832e0ab04ba5001ed1d0b201fa814cd1777aa3006772258034ec",
+  "after_sha256": "0224568693cb3e3ccb7e318d8847b2d072ce4a73586d42fc22f871d40b524bb3",
+  "normalized_after_sha256": "71bf6c2b2820832e0ab04ba5001ed1d0b201fa814cd1777aa3006772258034ec",
+  "proof": "Only26 identifier tokens renamed; inverse identifier substitution equals every original byte, including comments, strings, punctuation and whitespace. Owned enum/struct type aliases and generic type parameters only; no ABI/header/wire or runtime logic changes.",
+  "changes": [
+    {
+      "offset": 6048,
+      "line": 122,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 6155,
+      "line": 124,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 6219,
+      "line": 125,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 6349,
+      "line": 129,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 6468,
+      "line": 131,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 6539,
+      "line": 132,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 8089,
+      "line": 171,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 8124,
+      "line": 171,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 8134,
+      "line": 171,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 8199,
+      "line": 175,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 8228,
+      "line": 175,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 8232,
+      "line": 175,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 38862,
+      "line": 753,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 38871,
+      "line": 753,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 38890,
+      "line": 754,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 61132,
+      "line": 1311,
+      "before": "BadKind",
+      "after": "bad_kind_t"
+    },
+    {
+      "offset": 61439,
+      "line": 1317,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 61454,
+      "line": 1317,
+      "before": "BadKind",
+      "after": "bad_kind_t"
+    },
+    {
+      "offset": 61526,
+      "line": 1317,
+      "before": "T",
+      "after": "value_t"
+    },
+    {
+      "offset": 61975,
+      "line": 1330,
+      "before": "BadKind",
+      "after": "bad_kind_t"
+    },
+    {
+      "offset": 62152,
+      "line": 1338,
+      "before": "BadKind",
+      "after": "bad_kind_t"
+    },
+    {
+      "offset": 62254,
+      "line": 1339,
+      "before": "BadKind",
+      "after": "bad_kind_t"
+    },
+    {
+      "offset": 62331,
+      "line": 1340,
+      "before": "BadKind",
+      "after": "bad_kind_t"
+    },
+    {
+      "offset": 67748,
+      "line": 1419,
+      "before": "Job",
+      "after": "job_t"
+    },
+    {
+      "offset": 68100,
+      "line": 1428,
+      "before": "Job",
+      "after": "job_t"
+    },
+    {
+      "offset": 68178,
+      "line": 1429,
+      "before": "Job",
+      "after": "job_t"
+    }
+  ],
+  "qualification": {
+    "abi_tests": 164,
+    "abi_production_lines": [
+      162,
+      163
+    ],
+    "abi_production_branches": [
+      66,
+      68
+    ],
+    "commands": [
+      {
+        "command": "zig test src/interop/window_graph_abi.zig -Iinclude -lc",
+        "exit_code": 0,
+        "log": "evidence/type_naming_2026_10_24/abi.log"
+      },
+      {
+        "command": "PYTHONPATH=tests/av python3 /tmp/seamless_snapshot_native_20261024/coverage_window_graph.py window_graph_abi",
+        "exit_code": 0,
+        "log": "evidence/type_naming_2026_10_24/coverage.log"
+      }
+    ],
+    "log_sha256": {
+      "evidence/type_naming_2026_10_24/abi.log": "62e771146323852cf151a4e135cbd32a1f5cde6f4f48efdb28ca01b00a4d2260",
+      "evidence/type_naming_2026_10_24/coverage.log": "8b5d8377f20527fd1c483e189a4140150855d51a71f1b1afc87f2426c9186050"
+    },
+    "windows": "Final source execution pending CI; identifier-only inverse proof preserves every other byte."
+  }
+}

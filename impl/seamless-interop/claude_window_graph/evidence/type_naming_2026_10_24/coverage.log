@@ -1,0 +1,180 @@
+preserved window_graph_abi coverage: /home/dev/Waddle-LSW/build/coverage/interop/window_graph_abi/run-20261024T202210366960Z-453290
+window_graph_abi instrumentation: 296 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 1480/524288 bytes; 296 sites
+1/164 window_graph_abi.test.create rejects bad slot and config pointers and nulls every valid slot...OK
+2/164 window_graph_abi.test.create maps allocation failure to NoMemory and frees everything it took...OK
+3/164 window_graph_abi.test.destroy handles null, empty, repeated, misaligned and self-containing slots...OK
+4/164 window_graph_abi.test.null and misaligned graph handles are InvalidArgument for every export...OK
+5/164 window_graph_abi.test.a foreign thread gets WrongThread from every graph export and touches nothing...OK
+6/164 window_graph_abi.test.calls from inside the lookup and sink callbacks return Reentrant and destroy keeps the graph...OK
+7/164 window_graph_abi.test.a stale epoch is decided before argument errors and changes only its counter...OK
+8/164 window_graph_abi.test.pointer faults are rejected before the engine for every export with pointer arguments...OK
+9/164 window_graph_abi.test.a pointer fault on a foreign thread is WrongThread and a stale epoch is StaleEpoch...OK
+10/164 window_graph_abi.test.classify validates its arguments and facts...OK
+11/164 window_graph_abi.test.zero-capacity arrays ignore their pointer and truncation reports the full count...OK
+12/164 window_graph_abi.test.list_tracked_windows ABI stages sorted unique handles and exact Free slots...OK
+13/164 window_graph_abi.test.list_tracked_windows ABI rejects malformed spans before reading or writing caller memory...OK
+14/164 window_graph_abi.test.drain reports SinkFailed with the delivered count and keeps the refused event...OK
+15/164 window_graph_abi.test.capacity diagnostic, invalidate_all and lookup failures through the exports...OK
+16/164 window_graph_abi.test.lifecycle through the exports: admit, events, retire, complete, refresh, drain...OK
+17/164 window_graph.test.classification matrix covers every step of the header table...OK
+18/164 window_graph.test.every excluded class matches exactly, case-insensitively and nothing else...OK
+19/164 window_graph.test.classification parents follow owner_root, never the raw owner...OK
+20/164 window_graph.test.classification never reads past an unvalidated class or image length...OK
+21/164 window_graph.test.valid facts: defaults, maxima and boundaries...OK
+22/164 window_graph.test.validate_facts rejects each violated rule and nothing else...OK
+23/164 window_graph.test.validate_facts checks text only over the stated length...OK
+24/164 window_graph.test.utf8_valid_no_nul accepts well-formed text and rejects every malformed class...OK
+25/164 window_graph.test.app_key_valid matches the frozen codec rule and the 3..200 length rule...OK
+26/164 window_graph.test.class_hash_of follows FNV-1a 64 and distinguishes case...OK
+27/164 window_graph.test.ascii_eql_ignore_case folds only ASCII letters over the full length...OK
+28/164 window_graph.test.unwrap_tick resolves a raw tick to the 64-bit value nearest the base...OK
+29/164 window_graph.test.derive_state maps facts to protocol bits and never sets Activated...OK
+30/164 window_graph.test.identity_equal compares process, thread, start time and class hash...OK
+31/164 window_graph.test.record_init returns an all-zero record...OK
+32/164 window_graph.test.bump increments and saturates without wrapping...OK
+33/164 window_graph.test.status values and constants equal the committed header...OK
+34/164 window_graph.test.app_key_valid agrees with the codec rule on random keys up to 200 bytes...OK
+35/164 window_graph.test.create validates every configuration field and builds a zeroed graph...OK
+36/164 window_graph.test.create copies the configuration by value...OK
+37/164 window_graph.test.create under allocator failure leaves no graph and leaks nothing...OK
+38/164 window_graph.test.create takes the default monotonic clock when no now_ms is given...OK
+39/164 window_graph.test.enter applies thread, busy and epoch rules in order...OK
+40/164 window_graph.test.a foreign thread gets WrongThread and touches nothing...OK
+41/164 window_graph.test.ring wraps around over many more pushes than its capacity...OK
+42/164 window_graph.test.a full ring refuses a new event and changes nothing...OK
+43/164 window_graph.test.announce and update merge keep the announce kind and OR the change mask...OK
+44/164 window_graph.test.update and update merge OR their masks and count only appended updates...OK
+45/164 window_graph.test.events never merge across a retire intent...OK
+46/164 window_graph.test.retire intents are always appended and an older update stays unmerged...OK
+47/164 window_graph.test.events of another generation or window do not merge...OK
+48/164 window_graph.test.next_event reports None on an empty queue and leaves the output alone...OK
+49/164 window_graph.test.drain delivers events oldest first up to max_events...OK
+50/164 window_graph.test.drain on an empty queue reports None and delivered 0...OK
+51/164 window_graph.test.drain stops at a refused event and redelivers it first next time...OK
+52/164 window_graph.test.drain rejects bad arguments after the common rules and changes nothing...OK
+53/164 window_graph.test.graph calls made from inside the sink are Reentrant and nothing is delivered twice...OK
+54/164 window_graph.test.check_action is Ok only for the exact Active pair...OK
+55/164 window_graph.test.lookup helpers distinguish Active, Retiring and deferred records...OK
+56/164 window_graph.test.find_live describes only Active entries...OK
+57/164 window_graph.test.list_retiring orders by generation, reports the total and truncates...OK
+58/164 window_graph.test.list_tracked_windows sorts unique Active and Retiring handles and counts exact Free slots...OK
+59/164 window_graph.test.list_tracked_windows handles empty and full entry arrays without touching output tails...OK
+60/164 window_graph.test.list_tracked_windows guards epoch before arguments and changes no counters or outputs...OK
+61/164 window_graph.test.complete_retire releases only the exact Retiring generation...OK
+62/164 window_graph.test.get_stats fills counters and recomputed gauges...OK
+63/164 window_graph.test.stamp high water is read through the guard and the plain getter...OK
+64/164 window_graph.test.capacity diagnostic is None without reading the clock when every counter is zero...OK
+65/164 window_graph.test.capacity diagnostic follows the sixty second rate limit...OK
+66/164 window_graph.test.capacity diagnostic takes its first sample even at clock zero and guards the clock callback...OK
+67/164 window_graph.test.first admission announces the full payload with the looked-up key...OK
+68/164 window_graph.test.the lookup receives a stack copy of the facts, never the caller's struct...OK
+69/164 window_graph.test.each fact group maps to its change bit in a queued Update...OK
+70/164 window_graph.test.updates coalesce into a pending Announce or Update and OR their masks...OK
+71/164 window_graph.test.an identical offer is Unchanged, queues nothing and still advances stamp and tick...OK
+72/164 window_graph.test.an older tick advances the record but never moves the tick base backwards...OK
+73/164 window_graph.test.an Update that cannot be queued returns QueueFull unless a pending event absorbs it...OK
+74/164 window_graph.test.a child whose parent is absent is deferred, then flushed in age order behind its parent...OK
+75/164 window_graph.test.re-offering a deferred window updates its record in place without a new lookup...OK
+76/164 window_graph.test.a deferred window offered with an Active parent is admitted from the stored key...OK
+77/164 window_graph.test.a three-deep chain is announced root first whatever the arrival order...OK
+78/164 window_graph.test.flushed children are admitted breadth first in deferral age order...OK
+79/164 window_graph.test.owner cycles through deferred records return Cycle and drop only the offered window's record...OK
+80/164 window_graph.test.a live window offered with an owner cycle stays unchanged...OK
+81/164 window_graph.test.identity change retires the old generation and its descendants and admits a fresh generation...OK
+82/164 window_graph.test.identity change of a thread, start time or class also forces a replacement...OK
+83/164 window_graph.test.identity change keeps the retirement when the replacement cannot be admitted...OK
+84/164 window_graph.test.identity change whose replacement must wait for its parent is deferred with a fresh key...OK
+85/164 window_graph.test.identity replacement drops the full deferred child chain before flushing...OK
+86/164 window_graph.test.identity replacement drops deferred children of every Active cascade member...OK
+87/164 window_graph.test.deferred parent identity replacement drops its deferred descendant chain...OK
+88/164 window_graph.test.Deferred-only identity shortfalls drop the old subtree and exclude the replacement...OK
+89/164 window_graph.test.accepted destruction and NotExported parents invalidate cached descendants...OK
+90/164 window_graph.test.refresh commit invalidates seen deferred descendants of unseen Active parents...OK
+91/164 window_graph.test.QueueFull preserves planned deferred drops and replacement retry applies them once...OK
+92/164 window_graph.test.QueueFull preserves a Deferred replacement subtree until its admission can commit...OK
+93/164 window_graph.test.identity replacement lookup failure still drops cached descendants...OK
+94/164 window_graph.test.reclassification retires the cascade descending and re-announces it behind the new parent...OK
+95/164 window_graph.test.reclassifying a window under its own descendant retires the cascade and defers nothing...OK
+96/164 window_graph.test.reclassification toward an unannounced parent defers the window and re-defers its descendants...OK
+97/164 window_graph.test.reclassification with one free slot admits the window and leaves its descendants deferred...OK
+98/164 window_graph.test.reclassification with a cut flush keeps the unadmitted descendant deferred...OK
+99/164 window_graph.test.reclassification with no free slot degrades to retire-only and retries on the next offer...OK
+100/164 window_graph.test.a role change without a parent change also reclassifies...OK
+101/164 window_graph.test.retirement for every non-reclassify cause leaves the descendants retired and not deferred...OK
+102/164 window_graph.test.a window that is not exported is Excluded and drops its deferred record...OK
+103/164 window_graph.test.an off-desktop offer is Suspended and changes no entry, record or event...OK
+104/164 window_graph.test.64 exported entries refuse a 65th window, evict nothing and free a slot only after completion...OK
+105/164 window_graph.test.a flush cut by capacity leaves the youngest children deferred and counts them...OK
+106/164 window_graph.test.a 65th deferred record evicts the oldest deferral...OK
+107/164 window_graph.test.lookup failure, invalid keys and re-entry publish nothing...OK
+108/164 window_graph.test.QueueFull changes nothing and the same offer succeeds after a drain...OK
+109/164 window_graph.test.QueueFull on a forced retirement counts nothing else and keeps the entry live...OK
+110/164 window_graph.test.generations grow by one, run out cleanly and leave existing entries working...OK
+111/164 window_graph.test.a flush cut by the last generations counts them as generation exhaustion...OK
+112/164 window_graph.test.reusing an HWND always yields a fresh generation and a late completion cannot touch it...OK
+113/164 window_graph.test.stale epochs, invalid facts and stale facts are rejected before any state change...OK
+114/164 window_graph.test.a genuine destroy hint retires the live entry and advances the high-water marks...OK
+115/164 window_graph.test.a destroy hint older than the admitting facts is ignored...OK
+116/164 window_graph.test.a destroy hint for a deferred record needs both a newer stamp and a non-older tick...OK
+117/164 window_graph.test.tick wrap: a destroy across the 32-bit wrap retires, one just before the admission does not...OK
+118/164 window_graph.test.destroy hints still work 30 and 60 simulated days after the admission...OK
+119/164 window_graph.test.with a clock that does not advance, a silence longer than half the range still aliases...OK
+120/164 window_graph.test.tick_estimate adds the clock time elapsed since the anchor, never goes below the base and saturates...OK
+121/164 window_graph.test.the estimate anchor follows ticks and clock: newer ticks re-anchor, delayed ticks keep the estimate...OK
+122/164 window_graph.test.a rejected call reads the clock but changes neither tick_base nor its anchor...OK
+123/164 window_graph.test.a graph without a now_ms callback unwraps with its default timer and keeps working...OK
+124/164 window_graph.test.after a silence longer than 2^31 ms of the graph clock, current-tick offers repair the base and a genuine destroy hint retires...OK
+125/164 window_graph.test.the very first tick-carrying call after a long silence is unwrapped by the clock estimate...OK
+126/164 window_graph.test.estimate unwrap tolerates a clock that runs ahead of the ticks by less than half the range...OK
+127/164 window_graph.test.a reclassification whose new parent chain re-enters the cascade through a deferred leftover is retire-only...OK
+128/164 window_graph.test.the cascade rule follows a longer deferred chain and a plain chain to a non-cascade terminal still defers...OK
+129/164 window_graph.test.OwnerHidden promotes an owned window and a later flag change reclassifies it...OK
+130/164 window_graph.test.an IME preedit window follows its owner and loses the parent when the owner is hidden...OK
+131/164 window_graph.test.classify_public reports the pure verdict in the C struct...OK
+132/164 window_graph.test.classify_public rejects bad arguments and invalid facts and leaves the verdict alone...OK
+133/164 window_graph.test.OwnerHidden is valid only together with an owner...OK
+134/164 window_graph.test.collect_cascade gathers Active descendants by exact parent pair, descending by generation...OK
+135/164 window_graph.test.retire_cascade keeps records, marks Retiring and queues children before the root...OK
+136/164 window_graph.test.event_from_record copies every payload field and leaves the rest zero...OK
+137/164 window_graph.test.record_from_facts copies identity and geometry and only the stated title bytes...OK
+138/164 window_graph.test.defer_insert uses a saturating age and evicts the lowest index among equal ages...OK
+139/164 window_graph.test.drop_deferred empties the slot and counts a drop, not an eviction...OK
+140/164 window_graph.test.mark_seen marks the Active entry and the deferred record but never a Retiring entry...OK
+141/164 window_graph.test.bump_by adds and saturates...OK
+142/164 window_graph.test.ring_merge_target returns the newest Announce or Update and stops at a RetireIntent...OK
+143/164 window_graph.test.seen marks follow entries through re-deferral, promotion and flush...OK
+144/164 window_graph.test.a deferred record of another incarnation is dropped and its key is never reused...OK
+145/164 window_graph.test.random operation traces keep every graph invariant and the event stream ordered...OK
+146/164 window_graph.test.observe_locked runs the plan on the facts it is given without applying the call guards...OK
+147/164 window_graph.test.refresh_begin opens the refresh, clears every mark and reports an already open refresh...OK
+148/164 window_graph.test.offering every live window and committing retires nothing...OK
+149/164 window_graph.test.a commit retires every unseen entry children first with reason RefreshUnseen...OK
+150/164 window_graph.test.a seen child of an unseen parent retires with it as ParentRetired and is never re-deferred...OK
+151/164 window_graph.test.a commit drops unseen deferred records and keeps the seen ones...OK
+152/164 window_graph.test.offers that fail still mark windows seen; accepted Deferred mismatch drops its subtree...OK
+153/164 window_graph.test.an offer rejected with QueueFull is not applied but marks the window seen...OK
+154/164 window_graph.test.a flush leftover cut off by capacity survives the commit only when it is offered again...OK
+155/164 window_graph.test.refresh_keep and refresh_unseen: statuses, ordering, truncation and null rules...OK
+156/164 window_graph.test.a commit that does not fit the ring changes nothing and succeeds after draining...OK
+157/164 window_graph.test.refresh_abort closes the refresh without retiring or dropping anything...OK
+158/164 window_graph.test.an offer without an open refresh returns NoRefresh after the argument checks and marks nothing...OK
+159/164 window_graph.test.refresh_offer hands the lookup its own stack copy of the facts...OK
+160/164 window_graph.test.a reclassification inside a refresh keeps the new generation seen and its re-deferred children unseen...OK
+161/164 window_graph.test.invalidate_all retires every Active entry children first with reason Invalidated...OK
+162/164 window_graph.test.every refresh function rejects a stale epoch and changes only the rejection counter...OK
+163/164 window_graph.test.every refresh function from a foreign thread returns WrongThread and touches nothing...OK
+164/164 window_graph.test.every refresh function called while the graph is busy returns Reentrant and touches nothing...OK
+All 164 tests passed.
+window_graph_abi production branch coverage: 97.06% (66/68); 47 compiler panic/stack-canary guards excluded
+window_graph_abi production line coverage: 99.39% (162/163); 47 compiler panic/stack-canary guards excluded

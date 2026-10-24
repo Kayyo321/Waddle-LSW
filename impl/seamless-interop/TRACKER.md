@@ -973,7 +973,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     is implied; later native guard/snapshot source still requires fresh CI.
     [Qualification](ci_qualification_57847b1.json). HEAD is this evidence commit.
 
-- **Commit `HEAD`**: `feat(interop): snapshot tracked window keys and exact free slots`
+- **Commit `423ca84`**: `feat(interop): snapshot tracked window keys and exact free slots`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
   - **Summary**: Adds read-only sorted unique Active/Retiring HWND snapshot with
     exact Free-slot count and complete staged C boundary validation. Lead keeps
@@ -984,3 +984,13 @@ its uncompiled draft earns no credit until current acceptance passes.
     exact22 exports. Native execution pending. O5 preservation still open.
     [Qualification](claude_window_graph/snapshot_qualification_2026_10_24.json).
     HEAD identifies this implementation commit.
+
+- **Commit `HEAD`**: `refactor(interop): conform graph ABI type bindings to naming rules`
+  - **Task Impact**: +0% to TODO #10 (+0% overall; total17.80%).
+  - **Summary**: Renames26 owned type-binding tokens: BadKind to bad_kind_t,
+    Job to job_t and generic T to value_t. Inverse lexical substitution exactly
+    reproduces every original byte, including literals/comments/punctuation.
+    ABI164 tests and unchanged99.39% line97.06% branch gates pass. Header,
+    exports and wire layouts unchanged; actual final-source CI remains pending.
+    [Token proof](claude_window_graph/type_naming_receipt_2026_10_24.json).
+    HEAD identifies this identifier-only conformance commit.

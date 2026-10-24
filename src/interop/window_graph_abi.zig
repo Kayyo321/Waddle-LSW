@@ -119,17 +119,17 @@ fn checked_range(address: usize, length: usize) ?range_t {
 }
 
 /// Region of one `T` at `pointer`, or null for NULL, misalignment or an overflowing range.
-fn span_of(comptime T: type, pointer: anytype) ?range_t {
+fn span_of(comptime value_t: type, pointer: anytype) ?range_t {
     const address = @intFromPtr(pointer);
-    if (address % @alignOf(T) != 0) return null;
-    return checked_range(address, @sizeOf(T));
+    if (address % @alignOf(value_t) != 0) return null;
+    return checked_range(address, @sizeOf(value_t));
 }
 
 /// Region of `count` consecutive `T` at `pointer`, or null for NULL, misalignment or overflow.
-fn array_span_of(comptime T: type, pointer: anytype, count: u32) ?range_t {
+fn array_span_of(comptime value_t: type, pointer: anytype, count: u32) ?range_t {
     const address = @intFromPtr(pointer);
-    if (address % @alignOf(T) != 0) return null;
-    const length = std_t.math.mul(usize, @sizeOf(T), count) catch return null;
+    if (address % @alignOf(value_t) != 0) return null;
+    const length = std_t.math.mul(usize, @sizeOf(value_t), count) catch return null;
     return checked_range(address, length);
 }
 
@@ -168,11 +168,11 @@ fn graph_of_const(handle: ?*const graph_handle_t) ?*const graph_t.graph_t {
     return typed;
 }
 
-fn aligned_const(comptime T: type, pointer: ?*align(1) const T) *const T {
+fn aligned_const(comptime value_t: type, pointer: ?*align(1) const value_t) *const value_t {
     return @alignCast(pointer.?);
 }
 
-fn aligned_mut(comptime T: type, pointer: ?*align(1) T) *T {
+fn aligned_mut(comptime value_t: type, pointer: ?*align(1) value_t) *value_t {
     return @alignCast(pointer.?);
 }
 
@@ -750,8 +750,8 @@ fn make_dialog_facts(window: u64, owner: u64, stamp: u64) facts_t {
     return facts;
 }
 
-fn sentinel(comptime T: type) T {
-    var value: T = undefined;
+fn sentinel(comptime value_t: type) value_t {
+    var value: value_t = undefined;
     @memset(std_t.mem.asBytes(&value), 0xA5);
     return value;
 }
@@ -1308,13 +1308,13 @@ test "a stale epoch is decided before argument errors and changes only its count
     try testing_t.expect(std_t.mem.eql(u8, std_t.mem.asBytes(&stats), std_t.mem.asBytes(&after)));
 }
 
-const BadKind = enum { NullPointer, Misaligned, InsideGraph, AliasInput, PartialAlias };
+const bad_kind_t = enum { NullPointer, Misaligned, InsideGraph, AliasInput, PartialAlias };
 
 var scratch_bytes: [4096]u8 align(16) = undefined;
 
 /// A pointer of type `T` that every export must reject: NULL, misaligned, inside the graph, or
 /// overlapping `alias` (fully or from byte 8 on).
-fn bad_pointer(comptime T: type, kind: BadKind, graph_pointer: *graph_t.graph_t, alias: *anyopaque) ?*align(1) T {
+fn bad_pointer(comptime value_t: type, kind: bad_kind_t, graph_pointer: *graph_t.graph_t, alias: *anyopaque) ?*align(1) value_t {
     switch (kind) {
         .NullPointer => return null,
         .Misaligned => {
@@ -1327,7 +1327,7 @@ fn bad_pointer(comptime T: type, kind: BadKind, graph_pointer: *graph_t.graph_t,
     }
 }
 
-fn scratch_untouched(kind: BadKind) bool {
+fn scratch_untouched(kind: bad_kind_t) bool {
     if (kind != .Misaligned) return true;
     for (scratch_bytes) |byte| {
         if (byte != 0xA5) return false;
@@ -1335,9 +1335,9 @@ fn scratch_untouched(kind: BadKind) bool {
     return true;
 }
 
-const AllKinds = [_]BadKind{ .NullPointer, .Misaligned, .InsideGraph, .AliasInput, .PartialAlias };
-const PlainKinds = [_]BadKind{ .NullPointer, .Misaligned, .InsideGraph };
-const OptionalKinds = [_]BadKind{ .Misaligned, .InsideGraph };
+const AllKinds = [_]bad_kind_t{ .NullPointer, .Misaligned, .InsideGraph, .AliasInput, .PartialAlias };
+const PlainKinds = [_]bad_kind_t{ .NullPointer, .Misaligned, .InsideGraph };
+const OptionalKinds = [_]bad_kind_t{ .Misaligned, .InsideGraph };
 
 test "pointer faults are rejected before the engine for every export with pointer arguments" {
     var h: harness_t = .{};
@@ -1416,7 +1416,7 @@ test "a pointer fault on a foreign thread is WrongThread and a stale epoch is St
     defer h.close();
     const before = try h.snapshot();
     defer testing_t.allocator.free(before);
-    const Job = struct {
+    const job_t = struct {
         handle: ?*graph_handle_t,
         status: c_int = -1,
         snapshot_status: c_int = -1,
@@ -1425,8 +1425,8 @@ test "a pointer fault on a foreign thread is WrongThread and a stale epoch is St
             job.snapshot_status = call_list_tracked_windows(job.handle, 0, null, 0, null, null);
         }
     };
-    var job: Job = .{ .handle = h.handle };
-    const thread = try std_t.Thread.spawn(.{}, Job.run, .{&job});
+    var job: job_t = .{ .handle = h.handle };
+    const thread = try std_t.Thread.spawn(.{}, job_t.run, .{&job});
     thread.join();
     try expect_status(.WrongThread, job.status);
     try expect_status(.WrongThread, job.snapshot_status);
