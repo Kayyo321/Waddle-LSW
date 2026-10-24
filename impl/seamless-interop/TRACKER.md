@@ -1105,7 +1105,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     ASan/LSan/UBSan passes. The daemon event loop/client and actual host entry
     remain unintegrated; no native or runtime credit. HEAD identifies this commit.
 
-- **Commit `HEAD`**: `test(interop): supervise isolated Windows native guest runs`
+- **Commit `dc766a3`**: `test(interop): supervise isolated Windows native guest runs`
   - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total18.00%).
   - **Summary**: Adds reviewed bounded TCG runner with exact-child cleanup,
     private QCOW2/UEFI/TPM state, pinned QEMU/firmware hashes, kernel read lease
@@ -1116,3 +1116,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     No guest test payload or installed interop session ran; no native capability
     credit, producer-release proof or mapping/reconnect permission is claimed.
     HEAD identifies this harness/boot evidence commit.
+
+- **Commit `HEAD`**: `feat(interop): own Linux session leases and bounded VSOCK admission`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
+  - **Summary**: Adds secure per-device session/AV lease ownership and one bounded
+    connection to reserved5002, with exact fd handoff into the real byte owner.
+    Rejects guest-exec collision before filesystem work, path/lock substitution,
+    ambiguous reconnect, short SO_ERROR, late completion and post-connect cancel.
+    Real temp-filesystem/socketpair fixtures plus fault seams pass strict C and
+    explicit detect_leaks=1 ASan/LSan/UBSan. Exact5 ordinary exports; production
+    326/333 lines97.90%,312/342 taken branch arcs91.23%, no exclusions.
+    [Qualification](linux_session_owner_evidence_2026_10_24/qualification.json)
+    retains failed coverage attempts. The real host entry, daemon admission policy,
+    mapping/Wayland lifetime and production VSOCK remain open; no runtime credit.
+    HEAD identifies this bounded component/qualification commit.

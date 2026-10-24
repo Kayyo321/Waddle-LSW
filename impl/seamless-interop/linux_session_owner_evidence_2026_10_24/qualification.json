@@ -1,0 +1,154 @@
+{
+  "schema": 1,
+  "accepted_scope": "lease/connector component only; real waddle-session entry pending",
+  "progress_delta": 0,
+  "source_sha256": {
+    "src/interop/linux_session_owner.c": "d75bf601ba07f2c333c502c872084ae289ead4fb5cfccddfb281dad043b77ed5",
+    "src/interop/linux_session_owner.h": "ee7699cc4d85ec0bdff15aa866f2be158a0dc267f9e413e028acb74103c6a044",
+    "tests/interop/linux_session_owner.c": "6601930a9542d5aadf78dbf955d91a9642a68d7a56156619ef80a7b1a9cd47d4",
+    "tests/interop/linux_session_owner_private.c": "8559c1f2aa4418a434b84c23dbb41b53b8646e03eb46095c1061b8f51457b9d8",
+    "tests/interop/linux_session_owner_coverage.py": "b92ab6bb63c3fe2dad89e56acbea48bb19948152e7d4f4539420ec8f1652b46a",
+    "scripts/interop.mk": "35db0044da661b97e4cc9cf5be3721d904f09128354a8ba14ff3e30ca072cd84"
+  },
+  "production_coverage": {
+    "lines": [
+      326,
+      333
+    ],
+    "taken_branch_arcs": [
+      312,
+      342
+    ],
+    "line_percent": 97.89789789789789,
+    "branch_percent": 91.2280701754386,
+    "exclusions": []
+  },
+  "attempts": [
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T223436-6f651ba4",
+      "files": {
+        "inputs.json": "730708a6a482096f48d002a2565bf0b557fea1d353a1e40e42b1ab6c2b8c7841",
+        "summary.json": "6bc797e418aff859d64ca61f7076f771b096125dd9768f17b60d48f1a3f85ac3",
+        "owner.gcov.json.gz": "28ec330fa929e65393ba1be26ce133b86b04c0da3102b5915db69d54526fbb91"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T223600-c17b8d37",
+      "files": {
+        "inputs.json": "ae6c0f478bb960ae9ed0261ab698760a46b2d8ad38433c7202caeda66916bdc3",
+        "summary.json": "0c38962a10fe20cc2d3f27c89ee21a65cbc93b2428abdde94a9765ae4c300a03",
+        "owner.gcov.json.gz": "aafb1330c58b27f1c4d99c983b2194251d8125a0366c0bef599a8642b1d80a06"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T223859-6152f853",
+      "files": {
+        "inputs.json": "91a7f03caea0b23a909a5453304f2105b19e0ece2e30ebdb4fda6a3dd0bfcb23"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T223908-50cfac45",
+      "files": {
+        "inputs.json": "0b9e1f18713ffa8d306c4721580885d3c0b015c903b9b5e0e9a144166d7c9c64"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T223913-f7c231dd",
+      "files": {
+        "inputs.json": "09ec794b0d9eda499f5ebc695e39ebe9951c6233c6b89f31581460ce384c3776"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T223917-70ca5ddf",
+      "files": {
+        "inputs.json": "d18624ae98491210cf19b1cd67b4efd24693e8a1e3ba112c61081c9c596bfaba",
+        "summary.json": "27c8ec27f41b759127766a86288de7e2d7bddc9b6fe73912ffa7197917996d38",
+        "owner.gcov.json.gz": "5372a6978fc117463384b8c3618e4edbf3b32ae1ff8b89830983a05528d84ab3"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T223944-7509b2d4",
+      "files": {
+        "inputs.json": "e5f17604641d0a1b1a1e5b359624f9eb717c65550656dba0d1f6b23de816daa2",
+        "summary.json": "27c8ec27f41b759127766a86288de7e2d7bddc9b6fe73912ffa7197917996d38",
+        "owner.gcov.json.gz": "765a7532e81dc404d936e591b011a5377c6c8a5c2001873a60bca7abfe522a61"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224134-3b6e8405",
+      "files": {
+        "inputs.json": "aaf836a554b8012c0ceac604645cb02834571056db0d9e206ee97d0e55ef3cd2"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224142-5033dda8",
+      "files": {
+        "inputs.json": "0d6f04d36f02862ef6bdf2976a5cc0c6257e88b76b2b250855dc98facd84e08c"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224146-3e208841",
+      "files": {
+        "inputs.json": "75aae88ab61d1cfa6fb7f88cc2ec97af228450e6a802b206c9aaa635c5c94d92"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224203-38a0a375",
+      "files": {
+        "inputs.json": "c7fe958ab3671a9b0201aeba8c8addaf4010ecacd3f74e1303967ee3fe622122"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224210-c220b2e6",
+      "files": {
+        "inputs.json": "9e7f81a0c8f957c1c15a1d24d0f7a84ae32dd481cca2d2f2100545fce2b2b902"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224238-2a4b33bc",
+      "files": {
+        "inputs.json": "ceac45eb7efc8a3643579e4d4f9effac3121f5824d2ea5c25fc8196336ca6603",
+        "summary.json": "f266d83cd23dc08d3ff8867b0aee50c135892032719eb67e27d6996360062efd",
+        "owner.gcov.json.gz": "e5c8792ae8d54d4caf78f3aaab2552c1c4beee6ed99dfc1fdebd453654ee45da"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224323-3f6da8cc",
+      "files": {
+        "inputs.json": "7db115acf6bfd0a9b9df64c54ecf460ee786fade8606f99660cd5f4287bacf49",
+        "summary.json": "f266d83cd23dc08d3ff8867b0aee50c135892032719eb67e27d6996360062efd",
+        "owner.gcov.json.gz": "208ec95b3e487e2b59a6c0490034168f56cf38957c98ee279a20e1f01f0ab315"
+      }
+    },
+    {
+      "path": "build/coverage/interop/linux_session_owner/run-20261024T224350-79e3080b",
+      "files": {
+        "inputs.json": "511fcb427bade1e1febe94dfa96274550da0e470925512ab03bea78a322872bc",
+        "summary.json": "82e6e3a6940a8a54cba725e0d938a79eac6d851e9be7bce92d94162a5352901e",
+        "owner.gcov.json.gz": "b99704764c67dcbd0697e711cd2e7341b2f90484416d68b2c6fb877915906b37"
+      }
+    }
+  ],
+  "sanitizers": {
+    "address": true,
+    "leak": true,
+    "undefined": true,
+    "detect_leaks": 1,
+    "exit_code": 0
+  },
+  "ordinary_exports": [
+    "interop_linux_session_acquire",
+    "interop_linux_session_connect_peer",
+    "interop_linux_session_socket_owner",
+    "interop_linux_session_destroy_peer",
+    "interop_linux_session_release"
+  ],
+  "review_corrections": [
+    "Validate exact SO_ERROR output length and require POLLOUT without HUP/ERR/NVAL.",
+    "Reject deadline-expired, backwards-clock or cancelled post-connect admission and consume attempted connection.",
+    "Check configuration-output aliases before typed slot load; stage release-slot pointer bytes before owner-alias check.",
+    "Count taken branch arcs, not merely executed branch sites. Initial sparse fixtures failed actual branch gate."
+  ],
+  "native_vsock_verified": false,
+  "mapping_or_epoch_authority": false
+}

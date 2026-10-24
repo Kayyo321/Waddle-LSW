@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test interop-linux-session-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -21,7 +21,7 @@ interop-codec-test: build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test interop-linux-socket-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test interop-linux-socket-test interop-linux-session-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o
 	python3 tests/av/coverage.py interop_codec
@@ -45,6 +45,7 @@ interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o
 	python3 tests/interop/mapping_init_coverage.py
 	python3 tests/interop/mapping_windows_coverage.py
 	python3 tests/interop/linux_socket_owner_coverage.py
+	python3 tests/interop/linux_session_owner_coverage.py
 # Windows link check of the same C ABI test (executed by guest_windows CI).
 build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@
@@ -258,3 +259,11 @@ build/interop_linux_socket_test: $(InteropLinuxSocketFixtures) $(InteropLinuxSoc
 interop-linux-socket-test: build/interop_linux_socket_owner.o build/interop_linux_socket_test
 	python3 tests/interop/linux_socket_owner_abi.py build/interop_linux_socket_owner.o
 	./build/interop_linux_socket_test
+
+# Per-device lease/one-attempt admission mechanics; not installed runtime acceptance.
+LinuxSessionOwnerWrapFlags = -Wl,--wrap=socket,--wrap=connect,--wrap=poll,--wrap=getsockopt,--wrap=getpeername,--wrap=clock_gettime,--wrap=calloc,--wrap=close,--wrap=fstatat,--wrap=fstat,--wrap=flock,--wrap=interop_linux_socket_create,--wrap=interop_linux_socket_destroy
+build/interop_linux_session_owner_test: tests/interop/linux_session_owner.c tests/interop/linux_session_owner_private.c src/interop/linux_session_owner.c src/interop/linux_session_owner.h src/interop/linux_socket_owner.c src/daemon/daemon_device.c build/interop_control_peer_abi.o build/interop_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG -ffunction-sections -fdata-sections tests/interop/linux_session_owner.c tests/interop/linux_session_owner_private.c src/interop/linux_socket_owner.c src/daemon/daemon_device.c build/interop_control_peer_abi.o build/interop_codec.o $(LDFLAGS) $(LinuxSessionOwnerWrapFlags) -Wl,--gc-sections -pthread -o $@
+.PHONY: interop-linux-session-test
+interop-linux-session-test: build/interop_linux_session_owner_test
+	./build/interop_linux_session_owner_test
