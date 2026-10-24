@@ -3538,3 +3538,9 @@ values without renumbering. `linux_session_admission.md` freezes the bounded
 lease/connector owner; real runtime wiring is required before credit. The
 isolated native harness boundary is `native_runner.md`. These contracts
 supersede older advisory proposals and grant no progress by themselves.
+
+### 8.25 GuestReady daemon event-loop integration
+
+[Exact readiness contract](daemon_guest_ready.md) freezes bounded incremental
+framing, correlated client transactions and per-client nonblocking configured
+guest-exec probes. This supplies no mapping or native acceptance authority.

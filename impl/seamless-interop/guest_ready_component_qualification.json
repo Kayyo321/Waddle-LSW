@@ -1,0 +1,1350 @@
+{
+  "schema": 1,
+  "scope": "component only; daemon/client integration pending",
+  "progress_delta": 0,
+  "sources": {
+    "src/daemon/daemon_guest_ready.c": "4f3f0e9455513886f75a6ae25d52001eb867ed60adb9bdfdb574dbc2485f025b",
+    "src/daemon/daemon_guest_ready.h": "4f41ddebab42c524d51d7323e64103ef6ff315d0ad32652a812cdec27e7aedd3",
+    "src/daemon/daemon_wire.zig": "70d4eef095cbd6dc3f6990838fa96c9c2095254819c52bae39828c594f4dc893",
+    "src/daemon/daemon_wire.h": "47a00d2e56d719018e0c6d62c249aa9b169b87cc2e6d6f23c3370581a004f8e2",
+    "tests/daemon/test_guest_ready.c": "b5f5a84bb6a306391ef5ed79d70ae3e716fd8ac4d6cc6df5773ee962c2fadf5d"
+  },
+  "probe_coverage": {
+    "format_version": "2",
+    "gcc_version": "14.2.0",
+    "current_working_directory": "/home/dev/Waddle-LSW",
+    "data_file": "/tmp/seamless_daemon_root/guest_ready-daemon_guest_ready.gcno",
+    "files": [
+      {
+        "file": "src/daemon/daemon_guest_ready.c",
+        "functions": [
+          {
+            "name": "close_probe",
+            "demangled_name": "close_probe",
+            "start_line": 10,
+            "start_column": 13,
+            "end_line": 14,
+            "end_column": 1,
+            "blocks": 3,
+            "blocks_executed": 3,
+            "execution_count": 34
+          },
+          {
+            "name": "daemon_guest_ready_init",
+            "demangled_name": "daemon_guest_ready_init",
+            "start_line": 16,
+            "start_column": 6,
+            "end_line": 19,
+            "end_column": 1,
+            "blocks": 1,
+            "blocks_executed": 1,
+            "execution_count": 11
+          },
+          {
+            "name": "daemon_guest_ready_cancel",
+            "demangled_name": "daemon_guest_ready_cancel",
+            "start_line": 21,
+            "start_column": 6,
+            "end_line": 24,
+            "end_column": 1,
+            "blocks": 2,
+            "blocks_executed": 2,
+            "execution_count": 19
+          },
+          {
+            "name": "daemon_guest_ready_start",
+            "demangled_name": "daemon_guest_ready_start",
+            "start_line": 26,
+            "start_column": 5,
+            "end_line": 42,
+            "end_column": 1,
+            "blocks": 14,
+            "blocks_executed": 14,
+            "execution_count": 25
+          },
+          {
+            "name": "complete_probe",
+            "demangled_name": "complete_probe",
+            "start_line": 44,
+            "start_column": 12,
+            "end_line": 50,
+            "end_column": 1,
+            "blocks": 3,
+            "blocks_executed": 3,
+            "execution_count": 5
+          },
+          {
+            "name": "retry_probe",
+            "demangled_name": "retry_probe",
+            "start_line": 52,
+            "start_column": 13,
+            "end_line": 56,
+            "end_column": 1,
+            "blocks": 2,
+            "blocks_executed": 2,
+            "execution_count": 10
+          },
+          {
+            "name": "daemon_guest_ready_step",
+            "demangled_name": "daemon_guest_ready_step",
+            "start_line": 58,
+            "start_column": 5,
+            "end_line": 96,
+            "end_column": 1,
+            "blocks": 42,
+            "blocks_executed": 42,
+            "execution_count": 29
+          }
+        ],
+        "lines": [
+          {
+            "line_number": 10,
+            "function_name": "close_probe",
+            "count": 34,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 11,
+            "function_name": "close_probe",
+            "count": 34,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 12,
+            "function_name": "close_probe",
+            "count": 34,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 13,
+            "function_name": "close_probe",
+            "count": 34,
+            "unexecuted_block": false,
+            "block_ids": [
+              2,
+              3
+            ],
+            "branches": [
+              {
+                "count": 14,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 2,
+                "destination_block_id": 3
+              },
+              {
+                "count": 20,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 2,
+                "destination_block_id": 4
+              }
+            ],
+            "calls": [
+              {
+                "source_block_id": 3,
+                "destination_block_id": 1,
+                "returned": 14
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 14,
+            "function_name": "close_probe",
+            "count": 34,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 16,
+            "function_name": "daemon_guest_ready_init",
+            "count": 11,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 17,
+            "function_name": "daemon_guest_ready_init",
+            "count": 11,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 18,
+            "function_name": "daemon_guest_ready_init",
+            "count": 11,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 19,
+            "function_name": "daemon_guest_ready_init",
+            "count": 11,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 21,
+            "function_name": "daemon_guest_ready_cancel",
+            "count": 19,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 22,
+            "function_name": "daemon_guest_ready_cancel",
+            "count": 19,
+            "unexecuted_block": false,
+            "block_ids": [
+              2
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 2,
+                "destination_block_id": 1,
+                "returned": 19
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 23,
+            "function_name": "daemon_guest_ready_cancel",
+            "count": 19,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 24,
+            "function_name": "daemon_guest_ready_cancel",
+            "count": 19,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 26,
+            "function_name": "daemon_guest_ready_start",
+            "count": 25,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 29,
+            "function_name": "daemon_guest_ready_start",
+            "count": 25,
+            "unexecuted_block": false,
+            "block_ids": [
+              2,
+              3,
+              4,
+              5,
+              6
+            ],
+            "branches": [
+              {
+                "count": 24,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 2,
+                "destination_block_id": 3
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 2,
+                "destination_block_id": 9
+              },
+              {
+                "count": 21,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 3,
+                "destination_block_id": 4
+              },
+              {
+                "count": 3,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 3,
+                "destination_block_id": 9
+              },
+              {
+                "count": 20,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 4,
+                "destination_block_id": 5
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 4,
+                "destination_block_id": 9
+              },
+              {
+                "count": 19,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 5,
+                "destination_block_id": 6
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 5,
+                "destination_block_id": 9
+              },
+              {
+                "count": 18,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 6,
+                "destination_block_id": 7
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 6,
+                "destination_block_id": 9
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 30,
+            "function_name": "daemon_guest_ready_start",
+            "count": 18,
+            "unexecuted_block": false,
+            "block_ids": [
+              7,
+              8
+            ],
+            "branches": [
+              {
+                "count": 17,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 7,
+                "destination_block_id": 8
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 7,
+                "destination_block_id": 9
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 8,
+                "destination_block_id": 9
+              },
+              {
+                "count": 16,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 8,
+                "destination_block_id": 10
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 31,
+            "function_name": "daemon_guest_ready_start",
+            "count": 9,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 32,
+            "function_name": "daemon_guest_ready_start",
+            "count": 9,
+            "unexecuted_block": false,
+            "block_ids": [
+              9
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 34,
+            "function_name": "daemon_guest_ready_start",
+            "count": 16,
+            "unexecuted_block": false,
+            "block_ids": [
+              10,
+              11
+            ],
+            "branches": [
+              {
+                "count": 15,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 10,
+                "destination_block_id": 11
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 10,
+                "destination_block_id": 12
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 11,
+                "destination_block_id": 12
+              },
+              {
+                "count": 14,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 11,
+                "destination_block_id": 13
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 35,
+            "function_name": "daemon_guest_ready_start",
+            "count": 2,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 36,
+            "function_name": "daemon_guest_ready_start",
+            "count": 2,
+            "unexecuted_block": false,
+            "block_ids": [
+              12
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 38,
+            "function_name": "daemon_guest_ready_start",
+            "count": 14,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 40,
+            "function_name": "daemon_guest_ready_start",
+            "count": 14,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 41,
+            "function_name": "daemon_guest_ready_start",
+            "count": 14,
+            "unexecuted_block": false,
+            "block_ids": [
+              13
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 44,
+            "function_name": "complete_probe",
+            "count": 5,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 46,
+            "function_name": "complete_probe",
+            "count": 5,
+            "unexecuted_block": false,
+            "block_ids": [
+              2
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 2,
+                "destination_block_id": 1,
+                "returned": 5
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 47,
+            "function_name": "complete_probe",
+            "count": 5,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 48,
+            "function_name": "complete_probe",
+            "count": 5,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 49,
+            "function_name": "complete_probe",
+            "count": 5,
+            "unexecuted_block": false,
+            "block_ids": [
+              3
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 52,
+            "function_name": "retry_probe",
+            "count": 10,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 53,
+            "function_name": "retry_probe",
+            "count": 10,
+            "unexecuted_block": false,
+            "block_ids": [
+              2
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 2,
+                "destination_block_id": 1,
+                "returned": 10
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 54,
+            "function_name": "retry_probe",
+            "count": 10,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 55,
+            "function_name": "retry_probe",
+            "count": 10,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 56,
+            "function_name": "retry_probe",
+            "count": 10,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 58,
+            "function_name": "daemon_guest_ready_step",
+            "count": 29,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 61,
+            "function_name": "daemon_guest_ready_step",
+            "count": 29,
+            "unexecuted_block": false,
+            "block_ids": [
+              2,
+              3
+            ],
+            "branches": [
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 2,
+                "destination_block_id": 3
+              },
+              {
+                "count": 28,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 2,
+                "destination_block_id": 4
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 62,
+            "function_name": "daemon_guest_ready_step",
+            "count": 28,
+            "unexecuted_block": false,
+            "block_ids": [
+              4,
+              5,
+              6
+            ],
+            "branches": [
+              {
+                "count": 2,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 4,
+                "destination_block_id": 5
+              },
+              {
+                "count": 26,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 4,
+                "destination_block_id": 7
+              }
+            ],
+            "calls": [
+              {
+                "source_block_id": 5,
+                "destination_block_id": 1,
+                "returned": 2
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 63,
+            "function_name": "daemon_guest_ready_step",
+            "count": 26,
+            "unexecuted_block": false,
+            "block_ids": [
+              7,
+              8,
+              9
+            ],
+            "branches": [
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 7,
+                "destination_block_id": 8
+              },
+              {
+                "count": 25,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 7,
+                "destination_block_id": 10
+              }
+            ],
+            "calls": [
+              {
+                "source_block_id": 8,
+                "destination_block_id": 1,
+                "returned": 1
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 64,
+            "function_name": "daemon_guest_ready_step",
+            "count": 25,
+            "unexecuted_block": false,
+            "block_ids": [
+              10
+            ],
+            "branches": [
+              {
+                "count": 9,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 10,
+                "destination_block_id": 11
+              },
+              {
+                "count": 16,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 10,
+                "destination_block_id": 26
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 65,
+            "function_name": "daemon_guest_ready_step",
+            "count": 9,
+            "unexecuted_block": false,
+            "block_ids": [
+              11
+            ],
+            "branches": [
+              {
+                "count": 3,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 11,
+                "destination_block_id": 12
+              },
+              {
+                "count": 6,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 11,
+                "destination_block_id": 13
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 66,
+            "function_name": "daemon_guest_ready_step",
+            "count": 3,
+            "unexecuted_block": false,
+            "block_ids": [
+              12
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 12,
+                "destination_block_id": 1,
+                "returned": 3
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 67,
+            "function_name": "daemon_guest_ready_step",
+            "count": 6,
+            "unexecuted_block": false,
+            "block_ids": [
+              13
+            ],
+            "branches": [
+              {
+                "count": 4,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 13,
+                "destination_block_id": 14
+              },
+              {
+                "count": 2,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 13,
+                "destination_block_id": 23
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 68,
+            "function_name": "daemon_guest_ready_step",
+            "count": 4,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 69,
+            "function_name": "daemon_guest_ready_step",
+            "count": 4,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 70,
+            "function_name": "daemon_guest_ready_step",
+            "count": 4,
+            "unexecuted_block": false,
+            "block_ids": [
+              14,
+              15
+            ],
+            "branches": [
+              {
+                "count": 3,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 15,
+                "destination_block_id": 16
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 15,
+                "destination_block_id": 20
+              }
+            ],
+            "calls": [
+              {
+                "source_block_id": 14,
+                "destination_block_id": 1,
+                "returned": 4
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 71,
+            "function_name": "daemon_guest_ready_step",
+            "count": 3,
+            "unexecuted_block": false,
+            "block_ids": [
+              16,
+              17
+            ],
+            "branches": [
+              {
+                "count": 2,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 16,
+                "destination_block_id": 17
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 16,
+                "destination_block_id": 20
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 17,
+                "destination_block_id": 18
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 17,
+                "destination_block_id": 20
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 72,
+            "function_name": "daemon_guest_ready_step",
+            "count": 1,
+            "unexecuted_block": false,
+            "block_ids": [
+              18,
+              19,
+              22
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 18,
+                "destination_block_id": 1,
+                "returned": 1
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 73,
+            "function_name": "daemon_guest_ready_step",
+            "count": 3,
+            "unexecuted_block": false,
+            "block_ids": [
+              20
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 20,
+                "destination_block_id": 1,
+                "returned": 3
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 74,
+            "function_name": "daemon_guest_ready_step",
+            "count": 2,
+            "unexecuted_block": false,
+            "block_ids": [
+              23
+            ],
+            "branches": [
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 23,
+                "destination_block_id": 24
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 23,
+                "destination_block_id": 25
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 75,
+            "function_name": "daemon_guest_ready_step",
+            "count": 1,
+            "unexecuted_block": false,
+            "block_ids": [
+              24
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 24,
+                "destination_block_id": 1,
+                "returned": 1
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 77,
+            "function_name": "daemon_guest_ready_step",
+            "count": 8,
+            "unexecuted_block": false,
+            "block_ids": [
+              25
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 79,
+            "function_name": "daemon_guest_ready_step",
+            "count": 16,
+            "unexecuted_block": false,
+            "block_ids": [
+              26,
+              27
+            ],
+            "branches": [
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 26,
+                "destination_block_id": 27
+              },
+              {
+                "count": 15,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 26,
+                "destination_block_id": 28
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 80,
+            "function_name": "daemon_guest_ready_step",
+            "count": 15,
+            "unexecuted_block": false,
+            "block_ids": [
+              28
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 28,
+                "destination_block_id": 1,
+                "returned": 15
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 81,
+            "function_name": "daemon_guest_ready_step",
+            "count": 15,
+            "unexecuted_block": false,
+            "block_ids": [
+              29
+            ],
+            "branches": [
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 29,
+                "destination_block_id": 30
+              },
+              {
+                "count": 14,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 29,
+                "destination_block_id": 32
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 82,
+            "function_name": "daemon_guest_ready_step",
+            "count": 1,
+            "unexecuted_block": false,
+            "block_ids": [
+              30
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 30,
+                "destination_block_id": 1,
+                "returned": 1
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 83,
+            "function_name": "daemon_guest_ready_step",
+            "count": 1,
+            "unexecuted_block": false,
+            "block_ids": [
+              31
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 85,
+            "function_name": "daemon_guest_ready_step",
+            "count": 14,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 86,
+            "function_name": "daemon_guest_ready_step",
+            "count": 14,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 87,
+            "function_name": "daemon_guest_ready_step",
+            "count": 14,
+            "unexecuted_block": false,
+            "block_ids": [
+              32,
+              33
+            ],
+            "branches": [
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 33,
+                "destination_block_id": 34
+              },
+              {
+                "count": 13,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 33,
+                "destination_block_id": 36
+              }
+            ],
+            "calls": [
+              {
+                "source_block_id": 32,
+                "destination_block_id": 1,
+                "returned": 14
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 88,
+            "function_name": "daemon_guest_ready_step",
+            "count": 1,
+            "unexecuted_block": false,
+            "block_ids": [
+              34,
+              35
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 34,
+                "destination_block_id": 1,
+                "returned": 1
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 89,
+            "function_name": "daemon_guest_ready_step",
+            "count": 13,
+            "unexecuted_block": false,
+            "block_ids": [
+              36,
+              37,
+              38
+            ],
+            "branches": [
+              {
+                "count": 4,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 36,
+                "destination_block_id": 37
+              },
+              {
+                "count": 9,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 36,
+                "destination_block_id": 41
+              },
+              {
+                "count": 3,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 37,
+                "destination_block_id": 38
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 37,
+                "destination_block_id": 41
+              },
+              {
+                "count": 2,
+                "throw": false,
+                "fallthrough": true,
+                "source_block_id": 38,
+                "destination_block_id": 39
+              },
+              {
+                "count": 1,
+                "throw": false,
+                "fallthrough": false,
+                "source_block_id": 38,
+                "destination_block_id": 41
+              }
+            ],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 90,
+            "function_name": "daemon_guest_ready_step",
+            "count": 2,
+            "unexecuted_block": false,
+            "block_ids": [
+              39
+            ],
+            "branches": [],
+            "calls": [
+              {
+                "source_block_id": 39,
+                "destination_block_id": 1,
+                "returned": 2
+              }
+            ],
+            "conditions": []
+          },
+          {
+            "line_number": 91,
+            "function_name": "daemon_guest_ready_step",
+            "count": 2,
+            "unexecuted_block": false,
+            "block_ids": [
+              40
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 93,
+            "function_name": "daemon_guest_ready_step",
+            "count": 11,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 94,
+            "function_name": "daemon_guest_ready_step",
+            "count": 11,
+            "unexecuted_block": false,
+            "block_ids": [],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          },
+          {
+            "line_number": 95,
+            "function_name": "daemon_guest_ready_step",
+            "count": 11,
+            "unexecuted_block": false,
+            "block_ids": [
+              41
+            ],
+            "branches": [],
+            "calls": [],
+            "conditions": []
+          }
+        ]
+      }
+    ]
+  },
+  "decoder_coverage_directory": "build/coverage/daemon/daemon_wire/run-20261024T222658800831Z-622746",
+  "decoder_lines": [
+    23,
+    23
+  ],
+  "decoder_branches": [
+    14,
+    14
+  ],
+  "sanitizers": {
+    "address": true,
+    "leak": true,
+    "undefined": true,
+    "detect_leaks": 1,
+    "exit_code": 0
+  }
+}

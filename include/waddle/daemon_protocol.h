@@ -99,6 +99,10 @@ typedef enum waddle_daemon_msg_type_t {
      * Timeout returns ETIMEDOUT without killing children or releasing mappings.
      */
     DaemonMsgStopGracefulReq   = 0x000F,
+    /** @brief Wait for configured guest-exec reachability; four-byte timeout. */
+    DaemonMsgGuestReadyReq     = 0x0010,
+    /** @brief Eight-byte signed status/CID response; no interop authority. */
+    DaemonMsgGuestReadyResp    = 0x0011,
     DaemonMsgErrorResp        = 0x00FF
 } waddle_daemon_msg_type_t;
 
@@ -157,6 +161,24 @@ typedef struct waddle_daemon_start_req_t {
     /** @brief Maximum wait time in seconds (0 = default WaddleDefaultStartTimeoutSec). */
     uint32_t timeout_sec;
 } waddle_daemon_start_req_t;
+
+/** @brief Caller-owned GuestReady request; little-endian, allocation-free.
+ * @note Serialized per connection; no pointers or retained memory.
+ */
+typedef struct waddle_daemon_guest_ready_req_t {
+    /** @brief 1..120000 ms; zero selects 120000 ms. */
+    uint32_t timeout_ms;
+} waddle_daemon_guest_ready_req_t;
+
+/** @brief Caller-owned GuestReady reply; no readiness beyond guest-exec reachability.
+ * @note Eight-byte little-endian wire value; no allocation or shared state.
+ */
+typedef struct waddle_daemon_guest_ready_resp_t {
+    /** @brief Zero, -ETIMEDOUT or -ENOTCONN. */
+    int32_t status;
+    /** @brief Configured guest CID, 3..UINT32_MAX-1. */
+    uint32_t cid;
+} waddle_daemon_guest_ready_resp_t;
 
 /**
  * @brief Payload for DaemonMsgStartResp, DaemonMsgStopResp, DaemonMsgKillResp, DaemonMsgErrorResp.

@@ -1088,10 +1088,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     Saves [verified checkpoint](checkpoint_2026_10_24_after_claude.md); all
     worker ownership is released. HEAD identifies this CI/checkpoint commit.
 
-- **Commit `HEAD`**: `docs(interop): freeze O5 preservation and runtime admission boundaries`
+- **Commit `363686a`**: `docs(interop): freeze O5 preservation and runtime admission boundaries`
   - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total18.00%).
   - **Summary**: Freezes129-key Destroy preservation, lifecycle/quarantine cleanup,
     bounded coordinator staging obligations, host lease/connector ownership and
     ambiguous-admission retry rejection. Defines isolated native overlay harness
     limits. Assigns disjoint Luna implementation lanes; source and native gates
     remain required before any new credit. HEAD identifies this contract commit.
+
+- **Commit `HEAD`**: `feat(daemon): add bounded guest readiness codec and probe owner`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
+  - **Summary**: Implements additive GuestReady wire values, bounds-checked Zig
+    decoding and an allocation-free configured-port VSOCK probe state machine.
+    Exact decoder production23/23 lines and14/14 branches pass; probe66/66 lines
+    and52/52 branches pass with deterministic syscall faults. Leak-enabled
+    ASan/LSan/UBSan passes. The daemon event loop/client and actual host entry
+    remain unintegrated; no native or runtime credit. HEAD identifies this commit.
