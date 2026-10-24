@@ -1,0 +1,61 @@
+{
+  "recorded_utc": "2026-10-24T15:30:01.551558+00:00",
+  "base": "4710cc7e32deb53ee996debb3829b54ba820fea6",
+  "source_sha256": {
+    "src/common/path_filesystem.c": "cda22880efb5eadf0259111b8cb228fadda1a3284a5234f47bd9fc4baec52b44",
+    "src/common/path_rules.h": "6744b3a4bf7c43650e5e9b4741afe2f3f43c2fc96db862b9f235f1cfa8bbc256",
+    "src/cli/host.c": "0193544c256dbf3fde068830db57b7fe17259c4a4a39da05310294310761615f",
+    "src/daemon/daemon_fs.c": "0d37949f9d8a4972ad22579e7c1223131b61f18b526f93e83c660cb2ad2a2395",
+    "src/daemon/daemon_state.c": "1ad4edb444efaa62e72124527aee38b15457f905dabd010d9c341bb77b9b5061",
+    "tests/interop/canonical_paths.c": "9b4ff85bab79bacdb890fc3101641990e400a85ea05723b1a035d6de50d328d5",
+    "tests/interop/canonical_coverage.py": "6f129385f3277fd67bd6b9f08dad01537c08fd370c9f9808f1ee8703bcfb64e9"
+  },
+  "tests": [
+    {
+      "command": "make test",
+      "exit_code": 0,
+      "log": "impl/seamless-interop/evidence/canonical_paths_2026_10_24/seamless_continue_full_test_final.log",
+      "scope": "Full host test suite, including mocked guest filesystem acceptance; not a Windows guest run"
+    },
+    {
+      "command": "python3 tests/interop/canonical_coverage.py",
+      "exit_code": 0,
+      "log": "impl/seamless-interop/evidence/canonical_paths_2026_10_24/seamless_continue_canonical_coverage.log",
+      "line": [
+        143,
+        143
+      ],
+      "branch": [
+        170,
+        170
+      ],
+      "scope": "Entire src/common/path_filesystem.c, six functions"
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 /tmp/seamless_canonical_paths_sanitized",
+      "compile_command": "cc -D_GNU_SOURCE -std=c11 -Wall -Wextra -Wpedantic -Werror -O1 -g -fsanitize=address,leak,undefined -fno-omit-frame-pointer -Iinclude -Isrc/common tests/interop/canonical_paths.c src/common/arguments.c src/common/path_filesystem.c build/path_rules.o -Wl,--wrap=malloc,--wrap=strdup,--wrap=strndup,--wrap=realpath,--wrap=open,--wrap=fstatat,--wrap=openat,--wrap=lstat -o /tmp/seamless_canonical_paths_sanitized",
+      "exit_code": 0,
+      "host_escalated": true,
+      "log": "impl/seamless-interop/evidence/canonical_paths_2026_10_24/seamless_continue_canonical_final_sanitizers.log"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/canonical_paths_2026_10_24/seamless_continue_canonical_coverage.log",
+      "sha256": "d3ab5fba9eac70a09ec23d416d0db044d4ce9c8b7bbc930d4abdc7d0e9b0e7b5"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/canonical_paths_2026_10_24/seamless_continue_canonical_final_sanitizers.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/canonical_paths_2026_10_24/seamless_continue_full_test_final.log",
+      "sha256": "2d597df48e5f5d2e6e6821daa8bad197f591dc2dc584f7da7434e19f53d49bb3"
+    }
+  ],
+  "limits": [
+    "Configured export roots must remain stable during VM lifetime; no inode-pinning authorization claim.",
+    "Guest drive/tag binding and native guest write-denial tests remain open.",
+    "No full feature or native acceptance credit."
+  ]
+}

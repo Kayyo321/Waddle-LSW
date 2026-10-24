@@ -34,7 +34,7 @@ expect_status 2 "$@" -- command
 # the absent peer is contacted. Explicit root exports still reach that peer.
 mapping_root=$(mktemp -d)
 trap 'rm -rf "$mapping_root"' EXIT HUP INT TERM
-mkdir -p "$mapping_root/waddle"
+mkdir -p "$mapping_root/waddle" "$mapping_root/shared"
 check_auto_mapping() {
     expected_error=$1
     shift
@@ -49,17 +49,14 @@ check_auto_mapping() {
     test "$actual" -eq 125
     grep -q "$expected_error" "$mapping_root/error"
 }
-cat >"$mapping_root/waddle/config.ini" <<'EOF'
-[filesystem]
-export=/export:Z:\:rw
-EOF
-check_auto_mapping 'Invalid argument' /outside/tool.exe
-check_auto_mapping 'Invalid argument' /export-sibling/tool.exe
-check_auto_mapping 'No such file or directory' /export/tool.exe
+printf '[filesystem]\nexport=%s:Z:\\:rw\n' "$mapping_root/shared" >"$mapping_root/waddle/config.ini"
+check_auto_mapping 'Invalid cross-device link' /outside/tool.exe
+check_auto_mapping 'Invalid cross-device link' "$mapping_root/shared-sibling/tool.exe"
+check_auto_mapping 'No such file or directory' "$mapping_root/shared/tool.exe"
 cat >"$mapping_root/waddle/config.ini" <<'EOF'
 [filesystem]
 EOF
-check_auto_mapping 'Invalid argument' /outside/tool.exe
+check_auto_mapping 'Invalid cross-device link' /outside/tool.exe
 cat >"$mapping_root/waddle/config.ini" <<'EOF'
 [filesystem]
 export=/:Z:\:rw

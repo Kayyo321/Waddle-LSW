@@ -327,14 +327,23 @@ int daemon_fs_spawn_for_mount(virtiofs_process_t *proc,
         return -1;
     }
 
+    const char *root_input[] = {shared_dir};
+    char *canonical_root[1] = {0};
+    if (waddle_path_roots_validate(root_input, 1, canonical_root) < 0) return -1;
+    char canonical_root_buf[WaddleMaxPathLen];
+    if (snprintf(canonical_root_buf, sizeof(canonical_root_buf), "%s", canonical_root[0]) >= (int)sizeof(canonical_root_buf)) {
+        waddle_path_roots_free(canonical_root, 1); errno = ENAMETOOLONG; return -1;
+    }
+    waddle_path_roots_free(canonical_root, 1);
+
     char *argv[VirtiofsMaxArgs] = {0};
-    int argc = daemon_fs_build_args_for_mount(socket_path, shared_dir, "none", "auto",
+    int argc = daemon_fs_build_args_for_mount(socket_path, canonical_root_buf, "none", "auto",
                                               read_only, argv, VirtiofsMaxArgs);
     if (argc < 0) return -1;
 
     /* Verify host directory exists */
     struct stat st;
-    int stat_result = stat(shared_dir, &st);
+    int stat_result = stat(canonical_root_buf, &st);
     if (stat_result != 0 || !S_ISDIR(st.st_mode)) {
         int saved = stat_result != 0 ? errno : ENOTDIR;
         daemon_fs_free_args(argv, (size_t)argc);
@@ -394,7 +403,7 @@ int daemon_fs_spawn_for_mount(virtiofs_process_t *proc,
     proc->log_fd = log_fd;
     proc->is_running = 1;
     snprintf(proc->socket_path, sizeof(proc->socket_path), "%s", socket_path);
-    snprintf(proc->shared_dir, sizeof(proc->shared_dir), "%s", shared_dir);
+    snprintf(proc->shared_dir, sizeof(proc->shared_dir), "%s", canonical_root_buf);
     snprintf(proc->log_path, sizeof(proc->log_path), "%s", log_path);
 
     /* Wait for socket to become ready */
@@ -501,14 +510,13 @@ char *daemon_fs_translate_path(const char *path, const daemon_config_t *config) 
         return NULL;
     }
 
-    if (config->mount_count > WaddleMaxMounts ||
-        (config->mount_count == 0 && path[0] == '/')) {
+    if (config->mount_count > WaddleMaxMounts) {
         errno = EINVAL;
         return NULL;
     }
     if (config->mount_count == 0) {
         /* Guest-native/relative strings need no host export. */
-        return waddle_translate_rules(path, NULL, 0);
+        return waddle_translate_filesystem_rules(path, NULL, 0);
     }
 
     path_rule_t rules[WaddleMaxMounts];
@@ -517,7 +525,7 @@ char *daemon_fs_translate_path(const char *path, const daemon_config_t *config) 
         return NULL;
     }
 
-    return waddle_translate_rules(path, rules, (size_t)rule_count);
+    return waddle_translate_filesystem_rules(path, rules, (size_t)rule_count);
 }
 
 void daemon_fs_cleanup(virtiofs_process_t *proc) {

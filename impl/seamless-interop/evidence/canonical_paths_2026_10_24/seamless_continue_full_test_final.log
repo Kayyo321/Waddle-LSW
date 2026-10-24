@@ -1,0 +1,263 @@
+make[1]: Entering directory '/home/dev/Waddle-LSW'
+{"identity": {"build_provenance_path": "/home/dev/Waddle-LSW/build/qemu-seamless-source/.waddle-qemu-build.json", "build_signature": "6458241b745199463eb01c4606776d1b38708e99d65b80b52baab83367971ee2", "destination_name": "qemu-system-x86_64", "kind": "qemu", "package": "qemu", "package_sha256": "741a54ce4748b98fb0fad1f92256212e187042bceed34885f18fa4976eeaa2fd", "schema": 1, "source_artifact_sha256": "741a54ce4748b98fb0fad1f92256212e187042bceed34885f18fa4976eeaa2fd", "source_commit": "b2995afed254e4804611df52210067a4d5dbdf0b", "source_kind": "pinned-source", "source_mode": 509, "source_path": "/home/dev/Waddle-LSW/build/qemu-seamless-source/qemu-system-x86_64", "version": "QEMU emulator version 9.2.4 (v9.2.4)\nCopyright (c) 2003-2024 Fabrice Bellard and the QEMU Project developers"}, "status": "verified"}
+{"identity": {"destination_name": "virtiofsd", "kind": "virtiofsd", "package": "virtiofsd", "package_sha256": "477d185c64d266e94cebb0662242e0553fe1756db27a4c28b82d8e365b9efc7b", "readonly_capability": "advertised", "readonly_probe_sha256": "93e928318172a58ccd82bba260e4d595893c2fa6ed1f9d45bc7dff6f54e22e7f", "schema": 1, "source_artifact_sha256": "477d185c64d266e94cebb0662242e0553fe1756db27a4c28b82d8e365b9efc7b", "source_kind": "system", "source_mode": 493, "source_path": "/usr/libexec/virtiofsd", "version": "virtiofsd 1.13.2"}, "status": "verified"}
+make[1]: Leaving directory '/home/dev/Waddle-LSW'
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror tests/unit/unit.c src/common/protocol.c src/common/arguments.c src/common/path_filesystem.c build/path_rules.o  -o build/unit
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror tests/integration/integration.c src/common/protocol.c src/common/arguments.c src/common/path_filesystem.c build/path_rules.o  -lutil -o build/integration
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c src/common/path_filesystem.c build/daemon_config.o build/path_rules.o  -o build/test_daemon_fs
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror tests/daemon/test_daemon_server.c build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c src/common/path_filesystem.c build/device_storage.o build/daemon_config.o build/path_rules.o  -Wl,--wrap=daemon_state_kill_subsystem -lpthread -o build/test_daemon_server
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror tests/daemon/test_daemon_client.c src/daemon/daemon_client.c build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c src/common/path_filesystem.c build/device_storage.o build/daemon_config.o build/path_rules.o  -lpthread -o build/test_daemon_client
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror tests/daemon/test_auto_terminal.c src/daemon/daemon_client.c build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c src/common/path_filesystem.c build/device_storage.o build/daemon_config.o build/path_rules.o  -lpthread -o build/test_auto_terminal
+zig test tests/unit/test_cli.zig -Iinclude -Isrc/common -Isrc/cli src/common/protocol.c src/common/arguments.c build/path_rules.o -lc
+1/17 test_cli.test.wire header and payload structure sizes and alignments...OK
+2/17 test_cli.test.protocol constants and enumeration values...OK
+3/17 test_cli.test.little endian integer encoding and decoding roundtrips...OK
+4/17 test_cli.test.CRC-32 standard test vector and edge cases...OK
+5/17 test_cli.test.queue buffer allocation, bounds, and compaction...OK
+6/17 test_cli.test.wire frame encoding and validation...OK
+7/17 test_cli.test.empty payload wire frame encoding and decoding...OK
+8/17 test_cli.test.stream and EOF frame helpers...OK
+9/17 test_cli.test.wire frame incremental decoding through socketpair...OK
+10/17 test_cli.test.wire decoder corrupted CRC detection...OK
+11/17 test_cli.test.wire decoder malformed magic and version detection...OK
+12/17 test_cli.test.wire decoder clean EOF on idle connection...OK
+13/17 test_cli.test.Win32 argument quoting and unquoting roundtrips...OK
+14/17 test_cli.test.Win32 argument unquoting rejection on invalid strings...OK
+15/17 test_cli.test.path translation for Linux to guest VirtIO-FS mapping...OK
+16/17 test_cli.test.monotonic millisecond clock monotonically advances...OK
+17/17 test_cli.test.zero memory leaks verification under testing allocator...OK
+All 17 tests passed.
+zig test src/common/path_rules.zig
+1/2 path_rules.test.rule validation, components and drive roots...OK
+2/2 path_rules.test.normalization, Unicode, boundaries, capacity and traversal...OK
+All 2 tests passed.
+zig test src/guest/guest_codec.zig
+1/6 guest_codec.test.headers reject corruption before payload allocation...OK
+2/6 guest_codec.test.spawn canonical arguments and bounded views...OK
+3/6 guest_codec.test.reject noncanonical commands and preserve executable selection...OK
+4/6 guest_codec.test.stream controls enforce payload and state boundaries...OK
+5/6 guest_codec.test.listener port parsing rejects overflow and signs...OK
+6/6 guest_codec.test.cmd switches stop rewriting at the shell command...OK
+All 6 tests passed.
+zig test src/daemon/daemon_config.zig -Iinclude -Isrc/daemon -lc
+1/19 daemon_config.test.daemon_config: defaults and validation...OK
+2/19 daemon_config.test.daemon_config: INI string parsing...OK
+3/19 daemon_config.test.daemon_config: export parsing edge cases...OK
+4/19 daemon_config.test.daemon_config: invalid configs rejected...OK
+5/19 daemon_config.test.daemon_config: failed parse leaves every original byte unchanged...OK
+6/19 daemon_config.test.daemon_config: full width vsock port and empty export section...OK
+7/19 daemon_config.test.seamless configuration defaults and all frozen keys parse...OK
+8/19 daemon_config.test.seamless configuration rejects malformed values atomically...OK
+9/19 daemon_config.test.config editor preserves unknown bytes and replaces repeated effective keys...OK
+10/19 daemon_config.test.config editor rejects invalid complete requests and bounded output...OK
+11/19 daemon_config.test.qualified seamless config edits support every new key and reset default...OK
+12/19 daemon_config.test.qualified editor names disambiguate AV enabled and clipboard enabled...OK
+13/19 daemon_config.test.qualified AV path edit uses its section-specific 1023-byte bound...OK
+14/19 daemon_config.test.config editor rejects duplicate aliases and enforces ten-change cap...OK
+15/19 daemon_config.test.qualified editor replacement preserves repeated-section effective value...OK
+16/19 daemon_config.test.AV device configuration is bounded and transactional...OK
+17/19 daemon_config.test.AV config edits enable only a complete bounded environment...OK
+18/19 daemon_config.test.mdev config validates UUID transactionally and requires bounded termination...OK
+19/19 daemon_config.test.managed config editor persists and resets slice identity...OK
+All 19 tests passed.
+zig test src/daemon/device_storage.zig -D_GNU_SOURCE -Iinclude -Isrc/daemon src/daemon/daemon_device.c build/daemon_config.o -lc
+1/7 device_storage.test.portable settings, sizes and root containment reject unsafe input...OK
+2/7 device_storage.test.bounded journal parsing rejects duplicates unknown fields and nesting...OK
+3/7 device_storage.test.portable seamless settings round-trip and legacy manifests retain defaults...OK
+4/7 device_storage.test.portable seamless settings reject invalid types, values, bounds and duplicate USB selectors...OK
+5/7 device_storage.test.portable seamless profile generation cleans up every allocation failure...OK
+6/7 device_storage.test.storage codec validators cover all field boundaries and allocation failures...OK
+7/7 device_storage.test.journal references remain inside declared identities under allocation failure...OK
+All 7 tests passed.
+zig test src/cli/device_commands.zig -D_GNU_SOURCE -Iinclude -Isrc/daemon src/daemon/daemon_device.c src/daemon/daemon_client.c src/daemon/daemon_protocol.c build/device_storage.o build/daemon_config.o -lc
+1/3 device_commands.test.device parser rejects duplicate flags, invalid UTF-8 and overflow...OK
+2/3 device_commands.test.device JSON strings are owned, escaped and allocator-clean...OK
+3/3 device_commands.test.every device option has bounded values and duplicate rejection...OK
+All 3 tests passed.
+./build/unit
+unit: layouts, CRC, queues, 7776 quoting cases, paths, fragmented/corrupt/truncated frames passed
+./build/integration
+integration: separate outputs and exit 42 passed
+integration: empty/space/quote/backslash/UTF-8 arguments passed
+integration: working directory and explicit environment passed
+integration: missing command returns 127 passed
+integration: 16 MiB binary duplex with slow output readers passed
+integration: SIGINT forwarding passed
+integration: SIGTERM forwarding passed
+integration: total session deadline returns 124 passed
+integration: disconnect/corrupt CRC/early exit/oversize/truncated peer passed
+integration: disconnect/corrupt CRC/early exit/oversize/truncated peer passed
+integration: disconnect/corrupt CRC/early exit/oversize/truncated peer passed
+integration: disconnect/corrupt CRC/early exit/oversize/truncated peer passed
+integration: disconnect/corrupt CRC/early exit/oversize/truncated peer passed
+integration: closed input preserves final success passed
+integration: closed input preserves nonzero exit passed
+integration: closed input rejects EOF without exit passed
+integration: closed input rejects truncated exit passed
+integration: closed input rejects exit before stream EOF passed
+integration: closed input drain has fixed deadline passed
+integration: closed input accepts fragmented final frames passed
+integration: stdin EOF before final frames succeeds passed
+integration: PTY resize/Ctrl-C and restoration passed
+integration: PTY disconnect and restoration passed
+integration: PTY unknown dimensions/resize/Ctrl-C and restoration passed
+integration: all 24 scenarios passed
+./build/test_session_shutdown
+session shutdown: case 0 passed (exit 0)
+session shutdown: case 1 passed (exit 42)
+session shutdown: case 2 passed (exit 125)
+session shutdown: case 3 passed (exit 125)
+session shutdown: case 4 passed (exit 125)
+session shutdown: case 5 passed (exit 125)
+session shutdown: case 6 passed (exit 125)
+session shutdown: case 7 passed (exit 0)
+session shutdown: case 8 passed (exit 125)
+session shutdown: case 9 passed (exit 125)
+session shutdown: case 10 passed (exit 124)
+session shutdown: case 11 passed (exit 0)
+session shutdown: case 12 passed (exit 125)
+session shutdown: case 13 passed (exit 124)
+session shutdown: case 14 passed (exit 0)
+session shutdown: all 15 cases passed
+./build/test_session_shutdown --stress
+session shutdown: 512 bounded production-session stress cases passed
+./build/test_daemon_protocol
+test_daemon_protocol: all wire protocol and data structure tests passed
+./build/test_daemon_config
+test_daemon_config: all daemon configuration and INI parsing tests passed
+./build/test_daemon_qemu
+test_daemon_qemu: all QEMU argument builder, process lifecycle, and QMP client tests passed
+./build/test_daemon_fs
+test_daemon_fs: all VirtIO-FS argument builder and path translation tests passed
+./build/test_daemon_fs_failures
+test_daemon_fs_failures: ownership retry and path preflight checks passed
+./build/test_daemon_mount_lifecycle
+daemon mount lifecycle tests passed
+./build/test_daemon_device
+test_daemon_device: all device registry and initialization tests passed
+./build/test_daemon_server
+test_daemon_server: all daemon lockfile, state machine, and IPC server tests passed
+./build/test_daemon_client
+Waddle Subsystem Status:
+  State:         Stopped
+  Daemon PID:    -
+  QEMU PID:      -
+  VirtIO-FS PID: -
+{
+  "state": "stopped",
+  "state_code": 0,
+  "daemon_pid": 0,
+  "qemu_pid": 0,
+  "virtiofsd_pid": 0,
+  "vsock_cid": 3,
+  "vsock_port": 5242,
+  "uptime_sec": 0,
+  "memory_mb": 0,
+  "vcpus": 0,
+  "mount_count": 0,
+  "mounts": []
+}
+[waddle] Subsystem daemon is not running.
+Waddle Subsystem Status:
+  State:         stopped
+  Daemon PID:    232410
+  QEMU PID:      -
+  VirtIO-FS PID: -
+  VSOCK:         CID 3, Port 5242
+  Uptime:        0s
+  Memory:        4096 MB
+  vCPUs:         4
+Active Filesystem Mounts (1):
+  - Host: /home/dev -> Guest: Z:\ (rw)
+{
+  "state": "stopped",
+  "state_code": 0,
+  "daemon_pid": 232410,
+  "qemu_pid": 0,
+  "virtiofsd_pid": 0,
+  "vsock_cid": 3,
+  "vsock_port": 5242,
+  "uptime_sec": 0,
+  "memory_mb": 4096,
+  "vcpus": 4,
+  "mount_count": 1,
+  "mounts": [
+    {
+      "host_path": "/home/dev",
+      "guest_drive": "Z:\",
+      "read_only": false
+    }
+  ]
+}
+Active VirtIO-FS Exports (1):
+  [1] /home/dev -> Z:\ (read-write)
+[waddle] Stopping background subsystem (graceful ACPI)...
+[waddle] Subsystem stopped successfully.
+All test_daemon_client tests passed successfully!
+./build/test_auto_terminal
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+AUTO_SESSION_SUCCESS
+All test_auto_terminal tests passed, including 32 real CLI/peer sessions!
+python3 tests/integration/device_commands.py
+device_commands: isolated JSON, selection, inspection, malformed and raw-transport cases passed
+device persistence: seamless values survive clone/export/import; mount policy is preserved
+device confirmation: exact name removes; SIGINT/mismatch/overlong cancel and preserve device
+python3 tests/integration/device_storage.py
+device_storage: real QCOW2 init/rename/clone/export/import/retention/removal passed
+device storage cancellation: SIGINT JSON/130, child reaped, transaction rollback clean
+python3 tests/integration/device_faults.py
+device_faults: init recovery and injected I/O/utility boundaries passed
+device_faults: clone recovery and injected I/O/utility boundaries passed
+device_faults: import recovery and injected I/O/utility boundaries passed
+device_faults: export recovery and injected I/O/utility boundaries passed
+device_faults: remove recovery and injected I/O/utility boundaries passed
+device_faults: retain recovery and injected I/O/utility boundaries passed
+device_faults: default recovery and injected I/O/utility boundaries passed
+device_faults: config recovery and injected I/O/utility boundaries passed
+device_faults: rename recovery and injected I/O/utility boundaries passed
+device_faults: 360 crash/failure boundaries recovered without mixed state or residual journals
+sh tests/integration/path_options.sh
+path options: syntax, duplicates, limits, export-only mapping and failures passed
+sh tests/acceptance/demo_fs.sh
+=== VirtIO-FS Live Filesystem Acceptance Test ===
+[Step 1] Running 'waddle fs test'...
+fs-demo: {"mounts":[{"host_path":"/tmp/waddle_fs_demo_QqS3ih/shared","guest_drive":"Z:\\","read_only":false,"verified":true}]}
+[Step 2] Starting mock guest agent on UNIX socket...
+[Step 3] Executing guest command to create directory and file in shared volume...
+[Step 4] Verifying immediate appearance of guest artifacts on Linux host...
+  -> Directory and file verified on Linux host filesystem:
+drwx------ 2 dev dev 60 Oct 24 11:18 /tmp/waddle_fs_demo_QqS3ih/shared/new_project_folder
+-rw------- 1 dev dev 24 Oct 24 11:18 /tmp/waddle_fs_demo_QqS3ih/shared/new_project_folder/guest_output.txt
+[Step 5] Host writes into shared folder; starting guest to read back...
+  -> Guest accurately read host-created file: host_authored_content
+=== VirtIO-FS Acceptance Test Passed Successfully! ===

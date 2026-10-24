@@ -294,7 +294,6 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     uint32_t timeout = 0;
     int interactive = -1;
     int translate = 0;
-    int configured_rules = 0;
     path_rule_t rules[64] = {0};
     size_t rule_count = 0;
     int start = 0;
@@ -428,7 +427,6 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
             result = 125;
             goto local_error;
         }
-        configured_rules = 1;
         for (size_t m = 0; m < cfg.mount_count; m++) {
             char *src = strdup(cfg.mounts[m].host_path);
             char *dst = strdup(cfg.mounts[m].guest_drive);
@@ -474,12 +472,7 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     }
 
     for (int i = start; i < argc; i++) {
-        if (translate && configured_rules && rule_count == 0 && argv[i][0] == '/') {
-            errno = EINVAL;
-            result = 125;
-            goto local_error;
-        }
-        args[i - start] = translate ? waddle_translate_rules(argv[i], rules, rule_count) : strdup(argv[i]);
+        args[i - start] = translate ? waddle_translate_filesystem_rules(argv[i], rules, rule_count) : strdup(argv[i]);
         if (args[i - start] == NULL) {
             result = 125;
             goto local_error;
@@ -487,12 +480,7 @@ static int cmd_exec(int argc, char **argv, int start_opt) {
     }
 
     if (translate) {
-        if (configured_rules && rule_count == 0 && cwd[0] == '/') {
-            errno = EINVAL;
-            result = 125;
-            goto local_error;
-        }
-        char *mapped = waddle_translate_rules(cwd, rules, rule_count);
+        char *mapped = waddle_translate_filesystem_rules(cwd, rules, rule_count);
         if (mapped == NULL) {
             result = 125;
             goto local_error;

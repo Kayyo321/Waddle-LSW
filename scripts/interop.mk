@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -21,7 +21,7 @@ interop-codec-test: build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage:
 	python3 tests/av/coverage.py interop_codec
@@ -30,6 +30,7 @@ interop-coverage:
 	python3 tests/av/coverage.py manifest
 	python3 tests/av/coverage.py interop_layout_abi
 	python3 tests/interop/native_atomic_coverage.py
+	python3 tests/interop/canonical_coverage.py
 # Windows link check of the same C ABI test (executed by guest_windows CI).
 build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@
@@ -79,7 +80,7 @@ build/interop_layout_abi_windows.lib: src/interop/interop_layout_abi.zig src/int
 build/interop_layout_abi_test.exe: tests/interop/layout_abi.c build/interop_layout_abi_windows.lib src/interop/interop_layout.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Isrc/interop $< build/interop_layout_abi_windows.lib -o $@
 
-.PHONY: interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test
+.PHONY: interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test
 build/interop_native_atomic_test: src/interop/interop_native_atomic.c src/interop/interop_native_atomic.h include/waddle/interop_memory.h tests/interop/native_atomic.c | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc/interop src/interop/interop_native_atomic.c tests/interop/native_atomic.c $(LDFLAGS) -pthread -o $@
 interop-native-atomic-test: build/interop_native_atomic_test
@@ -90,3 +91,9 @@ interop-qemu-build-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/qemu_build.py
 interop-vendor-copy-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/vendor_copy.py
+
+.PHONY: interop-canonical-path-test
+build/interop_canonical_paths: tests/interop/canonical_paths.c src/common/arguments.c src/common/path_filesystem.c src/common/path_rules.h build/path_rules.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) $< src/common/arguments.c src/common/path_filesystem.c build/path_rules.o $(LDFLAGS) -Wl,--wrap=malloc,--wrap=strdup,--wrap=strndup,--wrap=realpath,--wrap=open,--wrap=fstatat,--wrap=openat,--wrap=lstat -o $@
+interop-canonical-path-test: build/interop_canonical_paths
+	./build/interop_canonical_paths

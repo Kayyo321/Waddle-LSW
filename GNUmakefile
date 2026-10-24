@@ -4,7 +4,7 @@ CPPFLAGS += -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -I
 CFLAGS ?= -O2 -g
 CFLAGS += -std=c11 -Wall -Wextra -Wpedantic -Werror
 LDFLAGS ?=
-COMMON = src/common/protocol.c src/common/arguments.c build/path_rules.o
+COMMON = src/common/protocol.c src/common/arguments.c src/common/path_filesystem.c build/path_rules.o
 
 .PHONY: all cli test clean zig-test test-sanitizers demo windows windows-test coverage qemu-vendor qemu-clean
 
@@ -126,13 +126,13 @@ build/test_daemon_protocol: tests/daemon/test_daemon_protocol.c src/daemon/daemo
 build/test_daemon_qemu: tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c build/daemon_config.o src/daemon/daemon_qemu.h src/daemon/daemon_qmp.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_qemu.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c build/daemon_config.o $(LDFLAGS) -Wl,--wrap=lstat,--wrap=kill,--wrap=waitpid -lpthread -o $@
 
-build/test_daemon_fs: tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o src/daemon/daemon_fs.h src/daemon/daemon_config.h src/common/path_rules.h include/waddle/daemon_protocol.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c build/daemon_config.o build/path_rules.o $(LDFLAGS) -o $@
+build/test_daemon_fs: tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c src/common/path_filesystem.c build/daemon_config.o build/path_rules.o src/daemon/daemon_fs.h src/daemon/daemon_config.h src/common/path_rules.h include/waddle/daemon_protocol.h | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_fs.c src/daemon/daemon_fs.c src/common/arguments.c src/common/path_filesystem.c build/daemon_config.o build/path_rules.o $(LDFLAGS) -o $@
 
 build/test_daemon_device: tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o src/daemon/daemon_device.h src/daemon/daemon_config.h include/waddle/daemon_protocol.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) tests/daemon/test_daemon_device.c src/daemon/daemon_device.c build/device_storage.o build/daemon_config.o $(LDFLAGS) -o $@
 
-DAEMON_COMMON = build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c build/device_storage.o build/daemon_config.o build/path_rules.o
+DAEMON_COMMON = build/av_gpu.o build/av_codec.o build/av_environment.o build/av_layout.o src/daemon/daemon_protocol.c src/daemon/daemon_state.c src/daemon/daemon_server.c src/daemon/daemon_qemu.c src/daemon/daemon_qmp.c src/daemon/daemon_fs.c src/daemon/daemon_device.c src/common/arguments.c src/common/path_filesystem.c build/device_storage.o build/daemon_config.o build/path_rules.o
 
 build/waddled: src/daemon/daemon_main.c $(DAEMON_COMMON) | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_main.c $(DAEMON_COMMON) $(LDFLAGS) -lpthread -o $@
@@ -238,5 +238,5 @@ include scripts/vgpu_gui_diag.mk
 # Hardware-free supervisor failure injection uses only task-owned fixture children.
 build/test_daemon_mount_lifecycle: tests/daemon/test_daemon_mount_lifecycle.c src/daemon/daemon_state.c src/daemon/daemon_state.h src/daemon/daemon_qemu.h src/daemon/daemon_fs.h | build
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_state.c $< $(LDFLAGS) -o $@
-build/test_daemon_fs_failures: tests/daemon/test_daemon_fs_failures.c src/daemon/daemon_fs.c src/daemon/daemon_fs.h | build
-	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_fs.c $< $(LDFLAGS) -Wl,--wrap=fork,--wrap=lstat,--wrap=unlink,--wrap=kill,--wrap=waitpid -o $@
+build/test_daemon_fs_failures: tests/daemon/test_daemon_fs_failures.c src/daemon/daemon_fs.c src/daemon/daemon_fs.h src/common/arguments.c src/common/path_filesystem.c build/path_rules.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) src/daemon/daemon_fs.c $< src/common/arguments.c src/common/path_filesystem.c build/path_rules.o $(LDFLAGS) -Wl,--wrap=fork,--wrap=lstat,--wrap=unlink,--wrap=kill,--wrap=waitpid -o $@

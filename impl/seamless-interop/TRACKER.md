@@ -36,7 +36,7 @@ acceptance remain pending.
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
-| #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 50% | Root fix, QEMU mount arrays and owned supervisor lifecycle accepted; guest binding, canonical/symlink and native qualification pending |
+| #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
 | #10 | Session-wide window tracking, classification, ownership graph, generation ids | Pending | 4% | 0% | Waits on #6 |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `14.00%`
+**Total Feature Completion**: `14.10%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -74,7 +74,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; Linux/Windows coverage and tests pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
-| #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; fault/IPC/real-descriptor tests pass |
+| #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -486,7 +486,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     checkpoint-head workflows succeed (40058148467 interop,40058148519 Native
     AV). Planning and prior CI add no feature credit. Source commite86cf8e.
 
-- **Commit `HEAD`**: `docs(interop): reserve an isolated Claude window graph handoff`
+- **Commit `4710cc7`**: `docs(interop): reserve an isolated Claude window graph handoff`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total14.00%).
   - **Summary**: At the user's request, prepares a manual Claude Code handoff
     and mandatory return template, with a dedicated feature worktree pinned to
@@ -494,4 +494,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     is not launched; no subagent skill runner is used. Local commits and tests
     stay isolated; shared source/build/CI/runner/Git integration remain with
     Codex. Existing Luna lanes have no overlapping files. Planning earns no
-    implementation credit. HEAD identifies this containing handoff commit.
+    implementation credit. Source commit4710cc7 contains this handoff.
+
+- **Commit `HEAD`**: `fix(interop): canonicalize exported host paths before translation`
+  - **Task Impact**: +10% to TODO #9 (+0.10% overall; total14.10%).
+  - **Summary**: Adds a distinct C/POSIX filesystem boundary while retaining the
+    pure lexical API. Validates all existing export roots before startup, rejects
+    symlink root components and duplicate normalized roots, resolves input links
+    and missing-output ancestors, preserves file/ ENOTDIR behavior, and rejects
+    paths outside every export with EXDEV. CLI and daemon use this boundary.
+    Whole-module coverage is143/143 lines and170/170 branches; fault fixtures,
+    leak-enabled ASan/LSan/UBSan and the full host make test pass. Evidence:
+    [qualification receipt](canonical_qualification_2026_10_24.json). Roots must
+    remain stable; guest binding and native qualification remain open. HEAD
+    identifies this containing implementation commit.

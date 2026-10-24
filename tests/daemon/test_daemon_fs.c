@@ -10,7 +10,32 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
+static char test_root[WaddleMaxPathLen];
+static char shared_root[WaddleMaxPathLen];
+static char nested_root[WaddleMaxPathLen];
+static char other_root[WaddleMaxPathLen];
+
+static void setup_path_tree(void) {
+    snprintf(test_root, sizeof(test_root), "/tmp/waddle-paths-%ld-XXXXXX", (long)getpid());
+    assert(mkdtemp(test_root) != NULL);
+    assert(snprintf(shared_root, sizeof(shared_root), "%s/shared", test_root) < (int)sizeof(shared_root));
+    assert(snprintf(nested_root, sizeof(nested_root), "%s/shared/nested", test_root) < (int)sizeof(nested_root));
+    assert(snprintf(other_root, sizeof(other_root), "%s/other", test_root) < (int)sizeof(other_root));
+    assert(mkdir(shared_root, 0700) == 0);
+    assert(mkdir(nested_root, 0700) == 0);
+    assert(mkdir(other_root, 0700) == 0);
+}
+
+static void remove_path_tree(void) {
+    char path[WaddleMaxPathLen];
+    assert(snprintf(path, sizeof(path), "%s/other", test_root) < (int)sizeof(path)); assert(rmdir(path) == 0);
+    assert(snprintf(path, sizeof(path), "%s/shared/nested", test_root) < (int)sizeof(path)); assert(rmdir(path) == 0);
+    assert(snprintf(path, sizeof(path), "%s/shared", test_root) < (int)sizeof(path)); assert(rmdir(path) == 0);
+    assert(rmdir(test_root) == 0);
+}
 
 static void test_build_args(void) {
     char *argv[VirtiofsMaxArgs];
@@ -69,19 +94,22 @@ static void test_path_translation(void) {
     /* Default config maps $HOME to Z:\ */
     /* Add explicit mounts for testing */
     cfg.mount_count = 2;
-    strncpy(cfg.mounts[0].host_path, "/home/dev", sizeof(cfg.mounts[0].host_path) - 1);
+    memcpy(cfg.mounts[0].host_path, shared_root, strlen(shared_root) + 1);
     strncpy(cfg.mounts[0].guest_drive, "Z:\\", sizeof(cfg.mounts[0].guest_drive) - 1);
-    strncpy(cfg.mounts[1].host_path, "/mnt/work", sizeof(cfg.mounts[1].host_path) - 1);
+    memcpy(cfg.mounts[1].host_path, other_root, strlen(other_root) + 1);
     strncpy(cfg.mounts[1].guest_drive, "W:\\", sizeof(cfg.mounts[1].guest_drive) - 1);
 
     /* Test mapping primary mount */
-    char *translated = daemon_fs_translate_path("/home/dev/projects/waddle", &cfg);
+    char input[WaddleMaxPathLen];
+    assert(snprintf(input, sizeof(input), "%s/projects/waddle", shared_root) < (int)sizeof(input));
+    char *translated = daemon_fs_translate_path(input, &cfg);
     assert(translated != NULL);
     assert(strcmp(translated, "Z:\\projects\\waddle") == 0);
     free(translated);
 
     /* Test mapping secondary mount */
-    translated = daemon_fs_translate_path("/mnt/work/data.bin", &cfg);
+    assert(snprintf(input, sizeof(input), "%s/data.bin", other_root) < (int)sizeof(input));
+    translated = daemon_fs_translate_path(input, &cfg);
     assert(translated != NULL);
     assert(strcmp(translated, "W:\\data.bin") == 0);
     free(translated);
@@ -89,7 +117,7 @@ static void test_path_translation(void) {
     /* Test relative path */
     translated = daemon_fs_translate_path("relative/path", &cfg);
     assert(translated != NULL);
-    assert(strcmp(translated, "relative") != -1);
+    assert(strcmp(translated, "relative/path") == 0);
     free(translated);
 }
 
@@ -99,29 +127,32 @@ static void test_export_boundaries(void) {
     cfg.mount_count = 0;
     errno = 0;
     assert(daemon_fs_translate_path("/unshared/file", &cfg) == NULL);
-    assert(errno == EINVAL);
+    assert(errno == EXDEV);
     char *translated = daemon_fs_translate_path("C:\\native.exe", &cfg);
     assert(translated != NULL && strcmp(translated, "C:\\native.exe") == 0);
     free(translated);
     translated = NULL;
 
     cfg.mount_count = 2;
-    strcpy(cfg.mounts[0].host_path, "/shared");
+    strcpy(cfg.mounts[0].host_path, shared_root);
     strcpy(cfg.mounts[0].guest_drive, "X:\\");
-    strcpy(cfg.mounts[1].host_path, "/shared/nested");
+    strcpy(cfg.mounts[1].host_path, nested_root);
     strcpy(cfg.mounts[1].guest_drive, "Y:\\");
-    assert(daemon_fs_translate_path("/shared-sibling/file", &cfg) == NULL);
-    assert(daemon_fs_translate_path("/outside/file", &cfg) == NULL);
-    translated = daemon_fs_translate_path("/shared/nested/日本語", &cfg);
+    char input[WaddleMaxPathLen];
+    assert(snprintf(input, sizeof(input), "%s-sibling/file", shared_root) < (int)sizeof(input));
+    assert(daemon_fs_translate_path(input, &cfg) == NULL && errno == EXDEV);
+    assert(daemon_fs_translate_path("/outside/file", &cfg) == NULL && errno == EXDEV);
+    assert(snprintf(input, sizeof(input), "%s/日本語", nested_root) < (int)sizeof(input));
+    translated = daemon_fs_translate_path(input, &cfg);
     assert(translated != NULL && strcmp(translated, "Y:\\日本語") == 0);
     free(translated);
     translated = NULL;
 
-    strcpy(cfg.mounts[0].host_path, "/");
-    translated = daemon_fs_translate_path("/outside/file", &cfg);
-    assert(translated != NULL && strcmp(translated, "X:\\outside\\file") == 0);
-    free(translated);
-    translated = NULL;
+    strcpy(cfg.mounts[0].host_path, test_root);
+    assert(snprintf(input, sizeof(input), "%s/new/leaf", test_root) < (int)sizeof(input));
+    translated = daemon_fs_translate_path(input, &cfg);
+    assert(translated != NULL && strcmp(translated, "X:\\new\\leaf") == 0);
+    free(translated); translated = NULL;
 
     path_rule_t rules[2] = {{"sentinel", "sentinel"}, {NULL, NULL}};
     assert(daemon_fs_mounts_to_rules(cfg.mounts, 2, rules, 1) == -1 && errno == E2BIG);
@@ -153,12 +184,14 @@ static void test_daemon_fs_find_binary(void) {
 }
 
 int main(void) {
+    setup_path_tree();
     test_daemon_fs_find_binary();
     test_build_args();
     test_mounts_to_rules();
     test_path_translation();
     test_export_boundaries();
     test_invalid_spawn();
+    remove_path_tree();
     printf("test_daemon_fs: all VirtIO-FS argument builder and path translation tests passed\n");
     return 0;
 }

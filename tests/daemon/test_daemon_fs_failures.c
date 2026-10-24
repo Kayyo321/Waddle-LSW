@@ -80,32 +80,6 @@ int __wrap_kill(pid_t pid, int signal_number) {
     return __real_kill(pid, signal_number);
 }
 
-/* The lifecycle fixture does not exercise the unrelated Zig path translator. */
-int waddle_path_rule_valid(const char *source, const char *target) {
-    (void)source;
-    (void)target;
-    return 0;
-}
-
-int waddle_path_rule_apply(const char *path, const char *source, const char *target,
-                           unsigned char *output, size_t capacity) {
-    (void)path;
-    (void)source;
-    (void)target;
-    (void)output;
-    (void)capacity;
-    errno = EINVAL;
-    return -1;
-}
-
-char *waddle_translate_rules(const char *path, const path_rule_t *rules, size_t count) {
-    (void)path;
-    (void)rules;
-    (void)count;
-    errno = EINVAL;
-    return NULL;
-}
-
 static int run_backend_if_requested(int argc, char **argv) {
     static const char prefix[] = "--socket-path=";
     if (argc < 2 || strncmp(argv[1], prefix, sizeof(prefix) - 1) != 0) return 0;

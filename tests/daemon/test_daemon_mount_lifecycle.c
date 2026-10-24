@@ -26,6 +26,7 @@ static int fail_stop_pid = -1;
 static int mount_poll_dead_pid = -1;
 static int fail_fs_binary;
 static int fail_qemu_binary;
+static int fail_root_validation;
 static int fail_qemu_spawn;
 static int fail_qemu_kill;
 static int fail_av_prepare;
@@ -60,6 +61,7 @@ static void reset_mocks(void) {
     mount_poll_dead_pid = -1;
     fail_fs_binary = 0;
     fail_qemu_binary = 0;
+    fail_root_validation = 0;
     fail_qemu_spawn = 0;
     fail_qemu_kill = 0;
     fail_av_prepare = 0;
@@ -112,6 +114,17 @@ static void init_state(daemon_state_t *state, uint32_t mount_count) {
                  (int)('D' + i));
         state->config.mounts[i].read_only = (uint32_t)(i & 1U);
     }
+}
+
+/* The canonical-root module has separate real-filesystem tests. This seam
+ * verifies whole-set preflight happens before supervisor side effects. */
+int waddle_path_roots_validate(const char *const *roots, size_t count, char **output) {
+    if (fail_root_validation) { errno = ENOENT; return -1; }
+    for (size_t i = 0; i < count; i++) { output[i] = strdup(roots[i]); assert(output[i] != NULL); }
+    return (int)count;
+}
+void waddle_path_roots_free(char **roots, size_t count) {
+    for (size_t i = 0; i < count; i++) { free(roots[i]); roots[i] = NULL; }
 }
 
 /* Device/config/AV mocks satisfy daemon_state.c's direct dependencies. */
@@ -392,6 +405,15 @@ static void test_named_device_acquire_rewrites_every_mount_log_path(void) {
     rmdir(root);
 }
 
+static void test_invalid_root_set_rejected_before_spawning(void) {
+    daemon_state_t state;
+    reset_mocks(); init_state(&state, 2);
+    fail_root_validation = 1;
+    assert(daemon_state_start_subsystem(&state, 0, 1) == -1 && errno == ENOENT);
+    assert(state.state == SubsystemStateFailed);
+    assert(spawn_mount_calls == 0 && qemu_spawn_calls == 0 && av_prepare_calls == 0);
+}
+
 static void test_duplicate_drives_rejected_before_spawning(void) {
     daemon_state_t state;
     reset_mocks(); init_state(&state, 2);
@@ -511,6 +533,7 @@ int main(void) {
     test_failed_spawn_rolls_back_reverse_and_retains_failure();
     test_missing_backend_and_retry_identity();
     test_named_device_acquire_rewrites_every_mount_log_path();
+    test_invalid_root_set_rejected_before_spawning();
     test_duplicate_drives_rejected_before_spawning();
     test_dead_qemu_allows_config_change_after_cleanup();
     test_rollback_failures_override_original_start_error();

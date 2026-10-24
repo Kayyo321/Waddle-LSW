@@ -498,6 +498,18 @@ int daemon_state_start_subsystem(daemon_state_t *s, uint32_t flags, uint32_t tim
         }
     }
 
+    const char *mount_roots[WaddleMaxMounts];
+    char *canonical_roots[WaddleMaxMounts] = {0};
+    for (size_t i = 0; i < s->config.mount_count; i++) mount_roots[i] = s->config.mounts[i].host_path;
+    if (waddle_path_roots_validate(mount_roots, s->config.mount_count, canonical_roots) < 0) {
+        int root_error = errno;
+        snprintf(s->last_error, sizeof(s->last_error), "Invalid filesystem export roots: %.160s", strerror(root_error));
+        s->state = SubsystemStateFailed;
+        errno = root_error;
+        return -1;
+    }
+    waddle_path_roots_free(canonical_roots, s->config.mount_count);
+
     char qemu_bin[WaddleMaxPathLen];
     if (qemu_find_binary(qemu_bin, sizeof(qemu_bin)) != 0) {
         int saved = errno;
