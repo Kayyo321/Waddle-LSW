@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /** @brief Opaque allocation owned until destroy; never copy or forge its address. */
-typedef struct interop_peer interop_peer_t;
+typedef struct interop_peer_t interop_peer_t;
 /** @brief Stable C operation result; protocol errors instead appear in events. */
 typedef enum interop_peer_result_t {
     InteropPeerSuccess = 0, /**< Operation completed; inspect event phase/flags. */

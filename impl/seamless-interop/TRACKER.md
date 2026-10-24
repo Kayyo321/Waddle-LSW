@@ -873,7 +873,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     delivered-destroy loss unaccepted, no parent/native credit awarded.
     HEAD identifies this containing allocation/review commit.
 
-- **Commit `HEAD`**: `docs(interop): require contextual C peer error classification`
+- **Commit `bccad0b`**: `docs(interop): require contextual C peer error classification`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Replaces broad tag-only C status translation with read-only
     caller preflights and InternalInvariant for unexpected post-preflight helper
@@ -881,3 +881,10 @@ its uncompiled draft earns no credit until current acceptance passes.
     and ACK accounting. This closes retry/abort ambiguity independently of
     coverage; source corrections and exact qualification remain pending.
     HEAD identifies this containing contract commit.
+
+- **Commit `HEAD`**: `refactor(interop): conform opaque peer struct tag to type naming`
+  - **Task Impact**: +0% to TODO #6/#7 (+0% overall; total16.40%).
+  - **Summary**: Names the incomplete C struct tag interop_peer_t consistently
+    with its existing typedef and repository type rule. Pointer ABI, public
+    function names and numeric layouts remain unchanged; strict C fixture syntax
+    check passes. HEAD identifies this naming-only interface commit.
