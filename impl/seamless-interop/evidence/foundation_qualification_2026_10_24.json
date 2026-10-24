@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "ci_run": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40057377210",
+  "tested_head": "51f3923e977bc36f77ef1a97fd31024732f2816e",
+  "ci_conclusion": "success",
+  "native_windows_job": "success",
+  "accepted_subtasks": [
+    {
+      "todo": 5,
+      "subtask": "pure C ABI5%",
+      "source_commit": "ef39989"
+    },
+    {
+      "todo": 5,
+      "subtask": "native atomic adapters5%",
+      "source_commit": "6f1ce16"
+    }
+  ],
+  "limits": [
+    "CPU unit/ABI proof only; no integrated mapping/GUI/audio or peripherals",
+    "Later packaging and supervisor commits have focused host validation; CI rerun pending checkpoint push"
+  ],
+  "files": {
+    "evidence/checkpoint_2026_10_24/incomplete_native_virtiofsd-1.log": "bca31aca006005d4e965aae031a778494b5effb7858f0126326df66a91809287",
+    "evidence/checkpoint_2026_10_24/seamless_resume_interop_final.log": "091264ffb9829304fbec319723a44949ba0b3b5e8047f86773c49b719072a930",
+    "evidence/checkpoint_2026_10_24/seamless_resume_wide_recorder_sanitizers.log": "a3a2ca7aa5b42b40c9bfc25ac2a7a4194932639f12e2bb3c353b4f1c129fc66c",
+    "evidence/checkpoint_2026_10_24/seamless_resume_mount_sanitizers.log": "26b14ee24f0a3c0de60897af8b3ca02af908d9097ba39f6aa391a474752af496",
+    "evidence/checkpoint_2026_10_24/seamless_resume_vendor_copy_tests.log": "9a85a0d18127fcd4589be6c8209392f32070f382ffbf2586ab27712d373ddf64",
+    "evidence/checkpoint_2026_10_24/seamless_resume_vendor_copy_native.log": "2f008f9f174d0fa342de23486db11eb7390de388f7fe7cb4ec0f26cd1f679bf2",
+    "evidence/checkpoint_2026_10_24/seamless_checkpoint_mounts.log": "26b14ee24f0a3c0de60897af8b3ca02af908d9097ba39f6aa391a474752af496",
+    "evidence/checkpoint_2026_10_24/seamless_checkpoint_build.log": "f97c8ff4d6625a29f8615d6747074ce4b63ebdef61e3c018343cb7eca47650cf",
+    "evidence/checkpoint_2026_10_24/incomplete_native_virtiofsd.log": "bca31aca006005d4e965aae031a778494b5effb7858f0126326df66a91809287",
+    "evidence/checkpoint_2026_10_24/hosted_interop_native_windows.log": "612943e5833564cea76f2a01d7ff80170e59ee021291e07c0cb1f51a0442921f",
+    "evidence/checkpoint_2026_10_24/incomplete_native_status.log": "de7707c199df9b942d0a928dc4a05cb23b3743e27d5f70bc08295f379beb1109",
+    "evidence/checkpoint_2026_10_24/seamless_resume_qemu_source_verified_smoke.log": "8d457ed8c33b7c38118e077a4e786c8c22b9a8061be64fad125ea5efd2dc39ad",
+    "evidence/checkpoint_2026_10_24/hosted_interop_jobs.json": "a0dbae90547bd55d944fcf58ffa3b5bfc33387ee4bb951219eccb416d72f0ed6",
+    "evidence/checkpoint_2026_10_24/incomplete_native_qemu.log": "fd771baf90bf802fc71ab2cfaa0276d5d0b3f5aac28b259c2be23ccac6637a9b",
+    "evidence/checkpoint_2026_10_24/incomplete_native_vhost-vsock_acl.json": "c4dff7dcaded4bfd83e06783f2d805609d32ca26fe979d625dd066a83a60783c",
+    "evidence/checkpoint_2026_10_24/incomplete_native_start.log": "5b5ebd710de21a87704f359918d7e3b46157b4bab94cc9bd01581aa348e5ae88",
+    "evidence/checkpoint_2026_10_24/seamless_resume_server_sanitizers_final.log": "20978d68e17253359acf92042bd451d33dfd6771dd34b3d6ffaf687e3dfdadf7",
+    "evidence/checkpoint_2026_10_24/seamless_resume_full_test_final.log": "d652358f1aad284c7736b826138945b7aaa1723d45389660e25e553500d3a6d9",
+    "evidence/checkpoint_2026_10_24/incomplete_native_native_receipt.json": "1c5d171bac074f83a82819bcb2141b40263a81d43f07108e43d48989267b2f6e",
+    "evidence/checkpoint_2026_10_24/seamless_checkpoint_server.log": "20978d68e17253359acf92042bd451d33dfd6771dd34b3d6ffaf687e3dfdadf7",
+    "evidence/checkpoint_2026_10_24/incomplete_native_native_commands.log": "6c5ecffe7c6a9bc9d026b85ee0de145cc39732cc6ee8e9efad7b85d7373bc0d7"
+  }
+}

@@ -107,5 +107,31 @@
     "Lead alone owns Git/index, docs/tracker, shared build/workflow/header integration and native Windows/GPU runner",
     "No recursive delegation, README edits, shared make/clean, VM actions or installs by workers",
     "Worker tests use separate /tmp output/cache; no acceptance from mocked/native-unrun results"
-  ]
+  ],
+  "checkpoint_status": "paused_at_user_request",
+  "active_workers": [],
+  "completed_followups": [
+    {
+      "agent": "luna_layout",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "work": "C ABI, atomic proof support, sparse wide-edge recorder, next-slot proposal",
+      "handoff": "All edits accepted; slot proposal unapproved"
+    },
+    {
+      "agent": "luna_qemu_build",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "work": "Pinned build helper, vendor packaging, readonly FS primitives, journal proposal",
+      "handoff": "All edits accepted; journal proposal unapproved"
+    },
+    {
+      "agent": "luna_mounts",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "work": "QEMU arrays, supervisor lifecycle, process-group and FD/IPC review fixes, path proposal",
+      "handoff": "All edits accepted; canonical-path proposal unapproved"
+    }
+  ],
+  "resume_entry": "checkpoint_2026_10_24.md"
 }

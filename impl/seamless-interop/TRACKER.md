@@ -1,6 +1,6 @@
 # Feature Tracker: Seamless Interop
 
-- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna implementation/review (luna_foundations, luna_integration, luna_acceptance)
+- **Contributors / Agents**: Claude Code (cloud session), Codex (/root), Luna implementation/review (luna_foundations, luna_integration, luna_acceptance, luna_layout, luna_mounts, luna_qemu_build)
 - **Time Started**: 2026-10-22T00:59:49Z
 - **Time Ended**: TBD
 - **Feature Branch**: feat/seamless-interop
@@ -32,7 +32,7 @@ acceptance remain pending.
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **native pipeline readiness and hardware run pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE native hardware runs pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
-| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 40% | Snapshot primitives and first-fit reservations accepted; native ABI/atomics and slot pins/runtime remain open |
+| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 50% | Snapshot, heap, C ABI and native CPU atomics accepted; slot pins/growth/runtime and integrated qualification remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `13.70%`
+**Total Feature Completion**: `14.00%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -72,7 +72,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
-| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot primitives 20%; first-fit reservations 20%; focused coverage gates pass |
+| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; Linux/Windows coverage and tests pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; fault/IPC/real-descriptor tests pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
@@ -81,6 +81,8 @@ Execution resumed at the user's request from checkpoint4079560. Current
 exclusive Luna/high work orders and phase allocation are recorded in
 [resume_work_orders.json](resume_work_orders.json). Lead retains shared ABI,
 build/workflow, docs/tracker, Git and runner ownership. Shared builds are serial.
+Paused at the user's request after reviewed commits. Start tomorrow at
+[the current checkpoint](checkpoint_2026_10_24.md); all workers are stopped.
 The historical [checkpoint](checkpoint_2026_10_23.md) remains valid evidence;
 its uncompiled draft earns no credit until current acceptance passes.
 
@@ -440,7 +442,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     Publication interruption is detectable by hash verification; no atomic-pair
     or native guest behavior claim. Source commit571c884.
 
-- **Commit `HEAD`**: `feat(interop): supervise all configured filesystem backends`
+- **Commit `eea6671`**: `feat(interop): supervise all configured filesystem backends`
   - **Task Impact**: +30% to TODO #9 (+0.30% overall; total13.70%).
   - **Summary**: Owns all eight ordered backends with per-mount policy, reverse
     rollback and retained teardown failures. QEMU-first stop/reap, exact live
@@ -453,4 +455,17 @@ its uncompiled draft earns no credit until current acceptance passes.
     but the harness then failed on its assumption that CLI kill retains the
     supervisor. The ACL is restored and all task-owned processes are stopped;
     no completed native qualification or guest drive/write-denial credit.
-    HEAD identifies this containing supervisor lifecycle commit.
+    Source commiteea6671 provides the accepted supervisor milestone.
+
+- **Commit `HEAD`**: `docs(interop): checkpoint reviewed foundations for the next session`
+  - **Task Impact**: +10% to TODO #5 (+0.30% overall; total14.00%).
+  - **Summary**: Accepts the pending C ABI5% (ef39989) and atomic adapter5%
+    (6f1ce16) after hosted run40057377210 passes both Linux and actual native
+    Windows execution at51f3923. Native AV run40057377234 also succeeds. Saves
+    hashed logs/CI receipt, all three unapproved next-slice proposals, incomplete
+    native smoke and exact resume instructions. User requested stopping here;
+    workers are complete, all task-owned native processes are stopped and the
+    temporary vhost-vsock ACL is restored. Packaging/supervisor later commits
+    have focused host proof; hosted rerun on the checkpoint remains pending.
+    No integrated native feature acceptance, completion timestamp or merge.
+    HEAD identifies this containing checkpoint/evidence commit.

@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "root": "/tmp/wd-interop-kqyqdae2",
+  "guest_os": false,
+  "cycles": [],
+  "limits": [
+    "Empty disk boot/QMP/backend attach only",
+    "No guest drive binding or read-only write-denial proof"
+  ],
+  "vhost_acl_restored": true
+}
