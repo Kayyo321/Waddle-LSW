@@ -1,0 +1,42 @@
+{
+  "source_commit": "3e564ad4cd3977ec87aa4042029246a21c969c90",
+  "qualification_utc": "2026-10-24T20:53:50.483492+00:00",
+  "progress_impact": 0,
+  "scope": "Exact snapshot/native identity and fullscreen fault fixes plus identifier-only ABI rename. Linux full regression, leak-enabled sanitizer and production coverage gates; actual Windows graph/ABI/portable observer, native smoke and separate synthetic native-fault fixture. Does not accept O5 preservation, socket draft, or installed guest session.",
+  "interop": {
+    "run": 40129670503,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40129670503",
+    "conclusion": "success",
+    "jobs": {
+      "linux": "success",
+      "windows": "success"
+    }
+  },
+  "graph": {
+    "run": 40129670493,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40129670493",
+    "conclusion": "success",
+    "jobs": {
+      "linux": "success",
+      "windows": "success"
+    },
+    "windows_execution": "148 graph tests, 164 ABI tests, independent C consumer28, portable observer doubles65, real target-correlated Win32 smoke, and separate synthetic native identity/fullscreen fault fixture all succeeded."
+  },
+  "native_av": {
+    "run": 40129670494,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40129670494",
+    "conclusion": "success",
+    "jobs": {
+      "windows": "success",
+      "transport": "success"
+    }
+  },
+  "logs_sha256": {
+    "evidence/ci_3e564ad/graph_run.json": "76d233ae8d0a856216ff05a779cf7daed8ec0f8455a4788ff5f8b232a5887c35",
+    "evidence/ci_3e564ad/graph_windows.log": "e69e4c96fc63d3404490c8f34f087b60af4c5f46f8cc1937bca2027a57d3678c",
+    "evidence/ci_3e564ad/interop_run.json": "696b8d8398d6c8191f01f1520e4d680a331d22be58c1922fe44b36743d0ecd65",
+    "evidence/ci_3e564ad/interop_windows.log": "abd5f11da6ecd41e315460899dda7a5a25118bae70acf84609cbf00afeab1c70",
+    "evidence/ci_3e564ad/native_av_run.json": "448063aa99607d5ed2d8e273e440eac4a103eebe4fe109f8bfbf8bd56a3bb0f1",
+    "evidence/ci_3e564ad/native_av_windows.log": "887ea580f2f21b2784634f780fc96349499baba33acf573f132a4ebf6f769047"
+  }
+}

@@ -1,0 +1,174 @@
+{
+  "conclusion": "success",
+  "headSha": "3e564ad4cd3977ec87aa4042029246a21c969c90",
+  "jobs": [
+    {
+      "completedAt": "2026-10-24T20:39:56Z",
+      "conclusion": "success",
+      "databaseId": 120978495425,
+      "name": "linux",
+      "startedAt": "2026-10-24T20:24:57Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-10-24T20:24:59Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-24T20:24:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:25:03Z",
+          "conclusion": "success",
+          "name": "Initialize containers",
+          "number": 2,
+          "startedAt": "2026-10-24T20:24:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:25:24Z",
+          "conclusion": "success",
+          "name": "Install base build and platform development packages",
+          "number": 3,
+          "startedAt": "2026-10-24T20:25:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:25:26Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "number": 4,
+          "startedAt": "2026-10-24T20:25:24Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:25:28Z",
+          "conclusion": "success",
+          "name": "Check out pinned driver ABI dependency",
+          "number": 5,
+          "startedAt": "2026-10-24T20:25:26Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:25:34Z",
+          "conclusion": "success",
+          "name": "Install verified Zig",
+          "number": 6,
+          "startedAt": "2026-10-24T20:25:28Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:29:01Z",
+          "conclusion": "success",
+          "name": "Run hardware-free interop gates",
+          "number": 7,
+          "startedAt": "2026-10-24T20:25:34Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:30:55Z",
+          "conclusion": "success",
+          "name": "Run interop C consumers under ASan/LSan/UBSan",
+          "number": 8,
+          "startedAt": "2026-10-24T20:29:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:37:55Z",
+          "conclusion": "success",
+          "name": "Gate each implemented interop module's line/branch coverage",
+          "number": 9,
+          "startedAt": "2026-10-24T20:30:55Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:39:49Z",
+          "conclusion": "success",
+          "name": "Cross-build Windows ABI and foundation tests",
+          "number": 10,
+          "startedAt": "2026-10-24T20:37:55Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:39:52Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+          "number": 11,
+          "startedAt": "2026-10-24T20:39:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:39:52Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683",
+          "number": 21,
+          "startedAt": "2026-10-24T20:39:52Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:39:53Z",
+          "conclusion": "success",
+          "name": "Stop containers",
+          "number": 22,
+          "startedAt": "2026-10-24T20:39:52Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:39:53Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 23,
+          "startedAt": "2026-10-24T20:39:53Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40129670503/job/120978495425"
+    },
+    {
+      "completedAt": "2026-10-24T20:40:08Z",
+      "conclusion": "success",
+      "databaseId": 120981889536,
+      "name": "windows",
+      "startedAt": "2026-10-24T20:39:58Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-10-24T20:40:01Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-24T20:40:00Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:40:03Z",
+          "conclusion": "success",
+          "name": "Run actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+          "number": 2,
+          "startedAt": "2026-10-24T20:40:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:40:07Z",
+          "conclusion": "success",
+          "name": "Run ABI and foundation tests natively on Windows",
+          "number": 3,
+          "startedAt": "2026-10-24T20:40:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-24T20:40:07Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 4,
+          "startedAt": "2026-10-24T20:40:07Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40129670503/job/120981889536"
+    }
+  ],
+  "status": "completed",
+  "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40129670503"
+}

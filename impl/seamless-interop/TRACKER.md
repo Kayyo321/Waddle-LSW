@@ -1017,10 +1017,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     unaccepted. Parallel runtime/guard/reachability lanes continue.
     HEAD identifies this recovery-contract commit.
 
-- **Commit `HEAD`**: `fix(interop): name reserved socket poll alignment bytes`
+- **Commit `586aa49`**: `fix(interop): name reserved socket poll alignment bytes`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total17.80%).
   - **Summary**: Names poll snapshot offset20..23 as a zero reserved word,
     retaining size32, align8 and cookie offset24. Deterministic complete outputs
     now avoid unnamed C padding. Static size/offset checks pass; draft owner
     still requires90% branches and full qualification before credit.
     HEAD identifies this local interface correction commit.
+
+- **Commit `HEAD`**: `docs(interop): qualify snapshot and native guards on Linux and Windows`
+  - **Task Impact**: +0% to TODO #6/#7/#10/#34 (+0% overall; total17.80%).
+  - **Summary**: Exact3e564ad passes graph CI40129670493, interop40129670503
+    and Native AV40129670494, including every Linux/Windows job. Actual Windows
+    executes148 graph/164 ABI, C28/observer65, real native smoke and the separate
+    synthetic fact-failure fixture; peer47/ABI84 and independent C consumer
+    remain green. Archives exact jobs/logs and hashes. O5, installed guest
+    session and the unaccepted Linux socket draft remain open.
+    [Qualification](ci_qualification_3e564ad.json). HEAD is this evidence commit.

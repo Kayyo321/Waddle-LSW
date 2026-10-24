@@ -1,0 +1,234 @@
+windows	Set up job	﻿2026-10-24T20:24:57.7054038Z Current runner version: '2.338.0'
+windows	Set up job	2026-10-24T20:24:57.7112746Z ##[group]Runner Image Provisioner
+windows	Set up job	2026-10-24T20:24:57.7113978Z Hosted Compute Agent
+windows	Set up job	2026-10-24T20:24:57.7115018Z Version: 20261021.618
+windows	Set up job	2026-10-24T20:24:57.7115954Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+windows	Set up job	2026-10-24T20:24:57.7117125Z Build Date: 2026-10-21T00:45:21Z
+windows	Set up job	2026-10-24T20:24:57.7118182Z Worker ID: {5372c1a1-21f1-498c-a617-4fe00c0c9d4b}
+windows	Set up job	2026-10-24T20:24:57.7119964Z Region: eastus
+windows	Set up job	2026-10-24T20:24:57.7120898Z Cloud: Azure
+windows	Set up job	2026-10-24T20:24:57.7121737Z ##[endgroup]
+windows	Set up job	2026-10-24T20:24:57.7124275Z ##[group]Operating System
+windows	Set up job	2026-10-24T20:24:57.7125305Z Microsoft Windows Server 2022
+windows	Set up job	2026-10-24T20:24:57.7126232Z 10.0.20348
+windows	Set up job	2026-10-24T20:24:57.7127559Z Datacenter
+windows	Set up job	2026-10-24T20:24:57.7129260Z ##[endgroup]
+windows	Set up job	2026-10-24T20:24:57.7130379Z ##[group]Runner Image
+windows	Set up job	2026-10-24T20:24:57.7132154Z Image: windows-2022
+windows	Set up job	2026-10-24T20:24:57.7133139Z Version: 20261022.344.1
+windows	Set up job	2026-10-24T20:24:57.7135004Z Included Software: https://github.com/actions/runner-images/blob/win22/20261022.344/images/windows/Windows2022-Readme.md
+windows	Set up job	2026-10-24T20:24:57.7138341Z Image Release: https://github.com/actions/runner-images/releases/tag/win22%2F20261022.344
+windows	Set up job	2026-10-24T20:24:57.7139940Z ##[endgroup]
+windows	Set up job	2026-10-24T20:24:57.7141622Z ##[group]GITHUB_TOKEN Permissions
+windows	Set up job	2026-10-24T20:24:57.7144140Z Contents: read
+windows	Set up job	2026-10-24T20:24:57.7145041Z Metadata: read
+windows	Set up job	2026-10-24T20:24:57.7146062Z ##[endgroup]
+windows	Set up job	2026-10-24T20:24:57.7150545Z Secret source: Actions
+windows	Set up job	2026-10-24T20:24:57.7152174Z Cache mode: write
+windows	Set up job	2026-10-24T20:24:57.7153302Z Prepare workflow directory
+windows	Set up job	2026-10-24T20:24:57.7608954Z Prepare all required actions
+windows	Set up job	2026-10-24T20:24:57.7679164Z Getting action download info
+windows	Set up job	2026-10-24T20:24:57.9261960Z Download action repository 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)
+windows	Set up job	2026-10-24T20:24:58.0740440Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+windows	Set up job	2026-10-24T20:24:58.5076645Z Complete job name: windows
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	﻿2026-10-24T20:24:58.6590038Z ##[group]Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6591523Z with:
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6592009Z   submodules: false
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6592542Z   persist-credentials: false
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6593163Z   repository: Kayyo321/Waddle-LSW
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6596826Z   token: ***
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6597232Z   ssh-strict: true
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6597639Z   ssh-user: git
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6598038Z   clean: true
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6598447Z   sparse-checkout-cone-mode: true
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6598936Z   fetch-depth: 1
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6599339Z   fetch-tags: false
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6599743Z   show-progress: true
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6600152Z   lfs: false
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6600543Z   set-safe-directory: true
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.6601186Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.8126921Z Syncing repository: Kayyo321/Waddle-LSW
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.8128728Z ##[group]Getting Git version info
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.8129381Z Working directory is 'D:\a\Waddle-LSW\Waddle-LSW'
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:58.9167147Z [command]"C:\Program Files\Git\bin\git.exe" version
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.5038872Z git version 2.56.0.windows.3
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.5080117Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.5099087Z Temporarily overriding HOME='D:\a\_temp\9ee4ab10-fbc3-4801-9aa7-7827ba324407' before making global git config changes
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.5100995Z Adding repository directory to the temporary git global config as a safe directory
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.5109994Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\Waddle-LSW\Waddle-LSW
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.6019943Z Deleting the contents of 'D:\a\Waddle-LSW\Waddle-LSW'
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.6025041Z ##[group]Initializing the repository
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.6035407Z [command]"C:\Program Files\Git\bin\git.exe" init D:\a\Waddle-LSW\Waddle-LSW
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.7210020Z Initialized empty Git repository in D:/a/Waddle-LSW/Waddle-LSW/.git/
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.7250248Z [command]"C:\Program Files\Git\bin\git.exe" remote add origin https://github.com/Kayyo321/Waddle-LSW
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.8160141Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.8161738Z ##[group]Disabling automatic garbage collection
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.8169414Z [command]"C:\Program Files\Git\bin\git.exe" config --local gc.auto 0
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.8509280Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.8511719Z ##[group]Setting up auth
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.8522528Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:24:59.8934947Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:02.2610382Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:02.2902277Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:02.7166886Z [command]"C:\Program Files\Git\bin\git.exe" config --local http.https://github.com/.extraheader "AUTHORIZATION: basic ***"
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:02.7449796Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:02.7450635Z ##[group]Fetching the repository
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:02.7462300Z [command]"C:\Program Files\Git\bin\git.exe" -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +3e564ad4cd3977ec87aa4042029246a21c969c90:refs/remotes/origin/feat/seamless-interop
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.6588044Z From https://github.com/Kayyo321/Waddle-LSW
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.6588828Z  * [new ref]         3e564ad4cd3977ec87aa4042029246a21c969c90 -> origin/feat/seamless-interop
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.6616980Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.6617882Z ##[group]Determining the checkout info
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.6621242Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.6637686Z [command]"C:\Program Files\Git\bin\git.exe" sparse-checkout disable
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.7135732Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all extensions.worktreeConfig
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.7415497Z ##[group]Checking out the ref
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:04.7430274Z [command]"C:\Program Files\Git\bin\git.exe" checkout --progress --force -B feat/seamless-interop refs/remotes/origin/feat/seamless-interop
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.0523330Z Switched to a new branch 'feat/seamless-interop'
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.0634012Z branch 'feat/seamless-interop' set up to track 'origin/feat/seamless-interop'.
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.0673662Z ##[endgroup]
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.1184315Z [command]"C:\Program Files\Git\bin\git.exe" log -1 --format=%H
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.1448022Z 3e564ad4cd3977ec87aa4042029246a21c969c90
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.1479731Z ##[group]Removing auth
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.1487522Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.1765011Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.6228930Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.6476630Z http.https://github.com/.extraheader
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.6506641Z [command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:05.6798333Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+windows	Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:25:06.1702304Z ##[endgroup]
+windows	Check out pinned driver ABI dependency	﻿2026-10-24T20:25:06.2014990Z ##[group]Run git submodule update --init --depth 1 submodules/looking_glass
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:06.2015678Z ^[[36;1mgit submodule update --init --depth 1 submodules/looking_glass^[[0m
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:06.2399149Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:06.2399765Z ##[endgroup]
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:06.9975062Z Submodule 'submodules/looking_glass' (https://github.com/gnif/LookingGlass.git) registered for path 'submodules/looking_glass'
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:07.0548602Z Cloning into 'D:/a/Waddle-LSW/Waddle-LSW/submodules/looking_glass'...
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:08.1449878Z From https://github.com/gnif/LookingGlass
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:08.1450382Z  * branch            27fe47cbe2a3a8da986d310ab866f0b646ed68f5 -> FETCH_HEAD
+windows	Check out pinned driver ABI dependency	2026-10-24T20:25:08.4852403Z Submodule path 'submodules/looking_glass': checked out '27fe47cbe2a3a8da986d310ab866f0b646ed68f5'
+windows	Install verified Zig	﻿2026-10-24T20:25:08.6286350Z ##[group]Run Invoke-WebRequest https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip -OutFile "$env:RUNNER_TEMP/zig.zip"
+windows	Install verified Zig	2026-10-24T20:25:08.6287460Z ^[[36;1mInvoke-WebRequest https://ziglang.org/download/0.13.0/zig-windows-x86_64-0.13.0.zip -OutFile "$env:RUNNER_TEMP/zig.zip"^[[0m
+windows	Install verified Zig	2026-10-24T20:25:08.6288606Z ^[[36;1mif ((Get-FileHash "$env:RUNNER_TEMP/zig.zip" -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd859994725ef9402381e557c60bb57497215682e355204d754ee3df75ee3c158') { throw 'Zig checksum mismatch' }^[[0m
+windows	Install verified Zig	2026-10-24T20:25:08.6289540Z ^[[36;1mExpand-Archive "$env:RUNNER_TEMP/zig.zip" "$env:RUNNER_TEMP/zig"^[[0m
+windows	Install verified Zig	2026-10-24T20:25:08.6290159Z ^[[36;1m"$env:RUNNER_TEMP/zig/zig-windows-x86_64-0.13.0" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append^[[0m
+windows	Install verified Zig	2026-10-24T20:25:08.6333814Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Install verified Zig	2026-10-24T20:25:08.6334213Z ##[endgroup]
+windows	Build WinRT compatibility DLL with system SDK	﻿2026-10-24T20:25:34.0444812Z ##[group]Run scripts\build_wgc.cmd
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:34.0445373Z ^[[36;1mscripts\build_wgc.cmd^[[0m
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:34.0471258Z shell: C:\Windows\system32\cmd.EXE /D /E:ON /V:OFF /S /C "CALL "{0}""
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:34.0471647Z ##[endgroup]
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:35.1588860Z **********************************************************************
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:35.1589415Z ** Visual Studio 2022 Developer Command Prompt v17.14.42
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:35.1589940Z ** Copyright (c) 2025 Microsoft Corporation
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:35.1590291Z **********************************************************************
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:37.7277482Z [vcvarsall.bat] Environment initialized for: 'x64'
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:25:38.4310460Z av_wgc.cpp
+windows	Build WinRT compatibility DLL with system SDK	2026-10-24T20:26:29.5911085Z    Creating library build\av_wgc.lib and object build\av_wgc.exp
+windows	Build native C guest and lifecycle fixture	﻿2026-10-24T20:26:29.7753284Z ##[group]Run zig build-lib src/av/av_audio.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_audio_windows.lib'
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7754542Z ^[[36;1mzig build-lib src/av/av_audio.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_audio_windows.lib'^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7755295Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7756064Z ^[[36;1mzig build-lib src/av/av_codec.zig -Iinclude -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_codec_windows.lib'^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7756837Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7757552Z ^[[36;1mzig build-lib src/av/av_layout.zig -static -target x86_64-windows-gnu -O ReleaseSafe -fno-compiler-rt '-femit-bin=build/av_layout_windows.lib'^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7758267Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7759264Z ^[[36;1m$flags = @('-target','x86_64-windows-gnu','-U_WIN32_WINNT','-D_WIN32_WINNT=0x0A00','-DNTDDI_VERSION=0x0A000006','-std=c11','-Wall','-Wextra','-Wpedantic','-Werror','-Iinclude','-Isrc/av','-Isubmodules/looking_glass/vendor/ivshmem')^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7760895Z ^[[36;1m$sources = @('src/av/av_lease.c','src/av/av_identity.c','src/av/av_deploy.c','src/av/av_guest_setup.c','src/av/av_guids.c','src/av/av_windows.c','src/av/av_input.c','src/av/av_capture.c','src/av/av_wasapi.c','src/av/av_ivshmem.c','src/av/av_video.c')^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7762592Z ^[[36;1m$libraries = @('build/av_audio_windows.lib','build/av_codec_windows.lib','build/av_layout_windows.lib','-luser32','-ldwmapi','-ld3d11','-ldxgi','-lmmdevapi','-lavrt','-lole32','-luuid','-lsetupapi')^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7763661Z ^[[36;1mzig cc @flags tests/av/windows.c @sources @libraries -lgdi32 -lwinmm -o build/av_windows_test.exe^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7764860Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7766061Z ^[[36;1mzig cc @flags src/av/av_guest.c src/av/av_peer.c @sources @libraries -lws2_32 -o build/waddle-guest-av.exe^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7766897Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7767705Z ^[[36;1mzig cc @flags tests/av/guest_quiescence.c src/av/av_peer.c @sources @libraries -lws2_32 -o build/av_guest_quiescence_test.exe^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7768523Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7769244Z ^[[36;1mzig cc @flags tests/av/identity.c src/av/av_identity.c build/av_codec_windows.lib -o build/av_identity_test.exe^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7769964Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7770846Z ^[[36;1mzig cc @flags tests/av/input.c src/av/av_input.c build/av_codec_windows.lib -o build/av_input_test.exe^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7771528Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7772413Z ^[[36;1mzig cc @flags tests/av/windows_lease.c src/av/av_lease.c src/av/av_input.c src/av/av_identity.c build/av_codec_windows.lib -o build/av_windows_lease_test.exe^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7773354Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7812325Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Build native C guest and lifecycle fixture	2026-10-24T20:26:29.7812706Z ##[endgroup]
+windows	Run native window lifecycle and allocator tests	﻿2026-10-24T20:27:41.5674835Z ##[group]Run ./build/av_windows_test.exe
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5675268Z ^[[36;1m./build/av_windows_test.exe^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5675612Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5675978Z ^[[36;1m./build/av_guest_quiescence_test.exe^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5676330Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5676656Z ^[[36;1m./build/av_identity_test.exe^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5676981Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5677310Z ^[[36;1m./build/av_input_test.exe^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5677623Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5677969Z ^[[36;1m./build/av_windows_lease_test.exe^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5678299Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5678620Z ^[[36;1mzig test src/av/av_audio.zig^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5678925Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5679325Z ^[[36;1mzig test src/av/av_codec.zig -Iinclude^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5679660Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5679986Z ^[[36;1mzig test src/av/av_layout.zig -lc^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5680299Z ^[[36;1mif ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }^[[0m
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5718756Z shell: C:\Program Files\PowerShell\7\pwsh.EXE -command ". '{0}'"
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:41.5719122Z ##[endgroup]
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:45.6247726Z Native AV: window filtering, DWM geometry, lifecycle and WinRT C ABI passed
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:45.6441956Z AV guest quiescence: lifecycle failure, disabled tracker and terminal capture enqueue passed
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:45.6519870Z AV identity: capability lock, high-water, stale zero-effect controls and exhaustion passed
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:45.6629238Z AV input ownership, replay, failure and release fixtures passed
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:45.6702027Z Win32 lease API doubles: startup, recovery, exact accounting, lifecycle, deadlines and teardown passed
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:50.8476866Z 1/4 av_audio.test.bounded audio wrap, overflow, silence and corrupt metadata...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:50.8477989Z 2/4 av_audio.test.pixel validation prevents overflow and zero dimensions...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:50.8478836Z 3/4 av_audio.test.padded BGRA rows copy without touching destination tail...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:50.8479579Z 4/4 av_audio.test.latency target pixels reject stale tokens and bounded geometry...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:50.8480148Z All 4 tests passed.
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8466101Z 1/9 av_codec.test.canonical endian lifecycle and frame validation...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8467377Z 2/9 av_codec.test.bounded native session numbers...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8468465Z 3/9 av_codec.test.invalid lifecycle and frame fields never alter encoded output...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8469476Z 4/9 av_codec.test.PCI paths reject traversal and invalid slot/function...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8470433Z 5/9 av_codec.test.diagnostic tokens have bounded color and occlusion state...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8471463Z 6/9 av_codec.test.mdev UUID validation rejects path and spelling ambiguity...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8483465Z 7/9 av_codec.test.input envelopes round trip and reject every reserved byte transactionally...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8489807Z 8/9 av_codec.test.CreateV2 golden bytes and lifecycle identity remain fixed and transactional...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8546998Z 9/9 av_codec.test.CreateV3 and epoch opcodes have independent golden fields and canonical padding...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:27:52.8548633Z All 9 tests passed.
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:28:41.6847188Z 1/2 av_layout.test.mapping bounds and immutable ABI validation...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:28:41.6848289Z 2/2 av_layout.test.full sparse mapping initializes and rejects each ABI identity mismatch...OK
+windows	Run native window lifecycle and allocator tests	2026-10-24T20:28:41.6849114Z All 2 tests passed.
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	﻿2026-10-24T20:28:41.8079713Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8080554Z with:
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8080818Z   name: windows-av-agent
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8081361Z   path: build/waddle-guest-av.exe
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	build/av_wgc.dll
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	build/av_windows_test.exe
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8081883Z   if-no-files-found: warn
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8082165Z   compression-level: 6
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8082419Z   overwrite: false
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8082664Z   include-hidden-files: false
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.8082942Z ##[endgroup]
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.9877101Z (node:560) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.9878042Z (Use `node --trace-deprecation ...` to show where the warning was created)
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.9954692Z Multiple search paths detected. Calculating the least common ancestor of all paths
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.9959386Z The least common ancestor is D:\a\Waddle-LSW\Waddle-LSW\build. This will be the root directory of the artifact
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.9960155Z With the provided path, there will be 3 files uploaded
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.9965031Z Artifact name is valid!
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:41.9966984Z Root directory input is valid!
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.2078266Z Beginning upload of artifact content to blob storage
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.3076032Z (node:560) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.3685481Z Uploaded bytes 684703
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.3864017Z Finished uploading artifact content to blob storage!
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.3865628Z SHA256 digest of uploaded artifact zip is b07166b68ea55da50926fb04e588d4de45cc5352c860c91e04c9bc606cc01771
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.3867857Z Finalizing artifact upload
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.7899382Z Artifact windows-av-agent.zip successfully finalized. Artifact ID 12574348332
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.7901698Z Artifact windows-av-agent has been successfully uploaded! Final size is 684703 bytes. Artifact ID is 12574348332
+windows	Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02	2026-10-24T20:28:42.7912966Z Artifact download URL: https://github.com/Kayyo321/Waddle-LSW/actions/runs/40129670494/artifacts/12574348332
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	﻿2026-10-24T20:28:42.8246707Z Post job cleanup.
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.0416232Z [command]"C:\Program Files\Git\bin\git.exe" version
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.0770456Z git version 2.56.0.windows.3
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.0844058Z Temporarily overriding HOME='D:\a\_temp\57a050e5-df6a-4554-b37f-88692141bee5' before making global git config changes
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.0845370Z Adding repository directory to the temporary git global config as a safe directory
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.0857502Z [command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\Waddle-LSW\Waddle-LSW
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.1193030Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.1508758Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.6405418Z Entering 'submodules/looking_glass'
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.7793825Z [command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:43.8218696Z [command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+windows	Post Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683	2026-10-24T20:28:44.3598771Z Entering 'submodules/looking_glass'
+windows	Complete job	﻿2026-10-24T20:28:44.4732386Z Cleaning up orphan processes
+windows	Complete job	2026-10-24T20:28:44.5129944Z Terminate orphan process: pid (828) (vctip)
+windows	Complete job	2026-10-24T20:28:44.5336689Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
