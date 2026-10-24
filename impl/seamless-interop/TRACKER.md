@@ -810,15 +810,27 @@ its uncompiled draft earns no credit until current acceptance passes.
     could expose already-sent bytes again. Requires exact queue/metadata progress
     while suppressing Ready, preflights short output/local callbacks before time
     effects and makes the peer terminal phase authoritative for untimed errors.
-    Distinguishes invalid local callbacks from failed host native proof. HEAD is
-    source commit ee7e1bf contains this reviewed clarification.
+    Distinguishes invalid local callbacks from failed host native proof. Source
+    commit ee7e1bf contains this reviewed clarification.
 
-- **Commit `HEAD`**: `docs(interop): abort unfinished negotiation writes on local drain`
+- **Commit `e72422c`**: `docs(interop): abort unfinished negotiation writes on local drain`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total16.40%).
   - **Summary**: Freezes a transport-abort latch for unfinished Hello/Ack when
     local drain closes admission; actual sent bytes still advance bookkeeping,
     and terminal handshake hooks are suppressed. Explicitly permits remote
     transient Ready from bytes already in flight without treating it as local
     admission or native proof. Saves the independent draft-source review so its
-    deadline/terminal regressions are mandatory before acceptance. HEAD is this
-    clarification commit.
+    deadline/terminal regressions are mandatory before acceptance. Source commit
+    e72422c contains this clarification.
+
+- **Commit `HEAD`**: `feat(interop): retain exact host frame lifetimes through notification`
+  - **Task Impact**: +0% to TODO #5/#7/#34 (+0% overall; total16.40%).
+  - **Summary**: Adds a fixed192-record Zig ledger with exact epoch/frame keys,
+    non-reused tickets, explicit compositor versus never-attached completion,
+    slot-free/queue ownership ordering and retained drain/quarantine. Independent
+    source/test reviews find no internal defect. Eight new builtins plus eight
+    independent adversarial tests pass; production98.85% lines/94.44% branches.
+    Full interop and leak-enabled C sanitizer suites pass, both Windows suites
+    cross-build and native CI is wired. No live compositor or unmap proof is
+    implied. [Qualification](host_buffer_registry_qualification_2026_10_24.json).
+    HEAD is this containing implementation commit.

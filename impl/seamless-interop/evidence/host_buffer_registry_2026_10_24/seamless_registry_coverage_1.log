@@ -1,0 +1,32 @@
+preserved host_buffer_registry coverage: /home/dev/Waddle-LSW/build/coverage/interop/host_buffer_registry/run-20261024T180841641347Z-359641
+host_buffer_registry instrumentation: 167 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 836/524288 bytes; 167 sites
+1/16 host_buffer_registry.test.initialization rejects zero and stores one immutable epoch...OK
+2/16 host_buffer_registry.test.admission validates every key component and errors preserve all state...OK
+3/16 host_buffer_registry.test.exact frame lifecycle retains identity through notify and rejects stale callbacks...OK
+4/16 host_buffer_registry.test.never attached requires callback quiescence and exact slot-free before notify...OK
+5/16 host_buffer_registry.test.full capacity preserves state and reuses slots only after committed notification...OK
+6/16 host_buffer_registry.test.drain and quarantine stop admission but retain completions...OK
+7/16 host_buffer_registry.test.quarantine from open and ticket exhaustion never wraps or reuses...OK
+8/16 host_buffer_registry.test.completion lookup rejects wrong epoch unknown ticket and pending phase unchanged...OK
+9/16 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+10/16 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+11/16 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+12/16 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+13/16 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+14/16 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+15/16 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+16/16 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 16 tests passed.
+host_buffer_registry production branch coverage: 94.44% (51/54); 29 compiler panic/stack-canary guards excluded
+host_buffer_registry production line coverage: 98.85% (86/87); 29 compiler panic/stack-canary guards excluded

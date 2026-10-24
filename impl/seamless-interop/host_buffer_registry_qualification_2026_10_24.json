@@ -1,0 +1,89 @@
+{
+  "recorded_utc": "2026-10-24T18:20:04.438872+00:00",
+  "sources": [
+    {
+      "path": "src/interop/host_buffer_registry.zig",
+      "sha256": "32563d3ddd9ac243dafe7c53b9c43c115742e699d9560380a9245e2637ab989f"
+    },
+    {
+      "path": "tests/interop/host_buffer_registry.zig",
+      "sha256": "fdcd968c2e211ae3286936995cd26b94d23420b8a1401de81ddf7361acb088d9"
+    },
+    {
+      "path": "src/interop/interop_layout.zig",
+      "sha256": "493f9be29202afd544ac661ac945301cb4ddd9c0ee5c02847fff9e1847e4b916"
+    },
+    {
+      "path": "scripts/interop.mk",
+      "sha256": "2f0924d7234eebd7700d0f5fbc127562216060864e1b051d2f4cb6148e005115"
+    },
+    {
+      "path": "tests/av/coverage.py",
+      "sha256": "35d6370b709fb031993862d66a25c48a585b111cd9fcbf5517faeec38521f067"
+    },
+    {
+      "path": ".github/workflows/interop.yml",
+      "sha256": "e273eda922eb2d2cc62f3b8f78afebd04ff9f2666a4f39593d351ef10d6bb3ee"
+    }
+  ],
+  "commands": [
+    {
+      "command": "make interop-host-buffer-registry-test build/interop_host_buffer_registry_test.exe build/interop_host_buffer_registry_adversarial_test.exe",
+      "exit_code": 0,
+      "registry_builtin_tests": 8,
+      "imported_layout_tests": 8,
+      "independent_tests": 8
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py host_buffer_registry",
+      "exit_code": 0,
+      "production_line": [
+        86,
+        87
+      ],
+      "production_branch": [
+        51,
+        54
+      ]
+    },
+    {
+      "command": "make interop-test",
+      "exit_code": 0
+    },
+    {
+      "command": "make interop-sanitizers",
+      "exit_code": 0,
+      "leak_detection": true
+    }
+  ],
+  "review": [
+    "Independent source review found no internal transition/ticket/exhaustion/error-preservation defect.",
+    "Independent adversarial tests cover full192, slot reuse/stale callbacks, never-attached proof ordering, backpressure, retained quarantine and UINT64_MAX exhaustion.",
+    "Lead derives capacity from frozen layout, removes redundant whole-struct admission copy and duplicate lookup, documents public ledger fields."
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/host_buffer_registry_2026_10_24/seamless_registry_coverage_1.log",
+      "sha256": "89bb16ff86010b51a2e64d657fe73772e891dba5c8ab9e2caef1ce22ebd8483e"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/host_buffer_registry_2026_10_24/seamless_registry_qualified.log",
+      "sha256": "83384605fe55fc111310e82e8531b92f7267c387ae6e3d421bf622675bb8eb5f"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/host_buffer_registry_2026_10_24/seamless_registry_full_interop.log",
+      "sha256": "8a23ebd76a7fc15bdc237ec211eb9f9be1cabedbf37b42e9e1404a16550f7119"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/host_buffer_registry_2026_10_24/seamless_registry_full_sanitizers.log",
+      "sha256": "869cd6fdcc6474ca6363cf94a071bcdd401689aa43d5aa5979d71cbee850e641"
+    }
+  ],
+  "limits": [
+    "Pure scalar ownership bookkeeping; no actual Wayland callback, driver, pending-import cancellation or mapping proof is authenticated.",
+    "Native owner must keep one canonical registry per unique authorized epoch and quiesce every immutable callback context before replacing it.",
+    "Windows executables cross-build; actual execution awaits next exact-commit CI.",
+    "No standalone progress credit; live host endpoint/module integration remains open."
+  ],
+  "progress_credit": 0
+}

@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-mapping-windows-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-mapping-windows-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -20,7 +20,7 @@ interop-codec-test: build/interop_codec_abi_test
 	./build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
-interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test
+interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o
@@ -35,6 +35,7 @@ interop-coverage: build/interop_codec.o
 	python3 tests/av/coverage.py session_handshake
 	python3 tests/av/coverage.py agent_version
 	python3 tests/av/coverage.py request_ids
+	python3 tests/av/coverage.py host_buffer_registry
 	python3 tests/av/coverage.py manifest
 	python3 tests/av/coverage.py interop_layout_abi
 	python3 tests/interop/native_atomic_coverage.py
@@ -199,3 +200,13 @@ build/interop_mapping_windows_sdk.o: src/interop/interop_mapping_windows.c $(Int
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/interop -Isubmodules/looking_glass/vendor/ivshmem -c $< -o $@
 build/interop_mapping_windows_test.exe: tests/interop/mapping_windows.c $(InteropMappingWindowsDependencies) | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop -Isubmodules/looking_glass/vendor/ivshmem $< -o $@
+
+.PHONY: interop-host-buffer-registry-test
+# Pure exact-ticket ownership ledger; actual compositor callbacks remain external.
+interop-host-buffer-registry-test:
+	$(ZIG) test src/interop/host_buffer_registry.zig -lc
+	$(ZIG) test --dep registry -Mroot=tests/interop/host_buffer_registry.zig -Mregistry=src/interop/host_buffer_registry.zig -lc
+build/interop_host_buffer_registry_test.exe: src/interop/host_buffer_registry.zig src/interop/interop_layout.zig | build
+	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+build/interop_host_buffer_registry_adversarial_test.exe: tests/interop/host_buffer_registry.zig src/interop/host_buffer_registry.zig src/interop/interop_layout.zig | build
+	$(ZIG) test -target x86_64-windows-gnu --dep registry -Mroot=tests/interop/host_buffer_registry.zig -Mregistry=src/interop/host_buffer_registry.zig -lc --test-no-exec -femit-bin=$@

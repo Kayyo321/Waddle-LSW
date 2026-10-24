@@ -1,0 +1,30 @@
+zig test src/interop/host_buffer_registry.zig -lc
+1/16 host_buffer_registry.test.initialization rejects zero and stores one immutable epoch...OK
+2/16 host_buffer_registry.test.admission validates every key component and errors preserve all state...OK
+3/16 host_buffer_registry.test.exact frame lifecycle retains identity through notify and rejects stale callbacks...OK
+4/16 host_buffer_registry.test.never attached requires callback quiescence and exact slot-free before notify...OK
+5/16 host_buffer_registry.test.full capacity preserves state and reuses slots only after committed notification...OK
+6/16 host_buffer_registry.test.drain and quarantine stop admission but retain completions...OK
+7/16 host_buffer_registry.test.quarantine from open and ticket exhaustion never wraps or reuses...OK
+8/16 host_buffer_registry.test.completion lookup rejects wrong epoch unknown ticket and pending phase unchanged...OK
+9/16 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+10/16 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+11/16 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+12/16 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+13/16 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+14/16 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+15/16 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+16/16 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 16 tests passed.
+zig test --dep registry -Mroot=tests/interop/host_buffer_registry.zig -Mregistry=src/interop/host_buffer_registry.zig -lc
+1/8 host_buffer_registry.test.admission validates epoch key fields and preserves state on errors...OK
+2/8 host_buffer_registry.test.ticket transitions enforce proof ordering and preserve counts on failure...OK
+3/8 host_buffer_registry.test.never-attached completion requires quiesced callback and exact release sequence...OK
+4/8 host_buffer_registry.test.stale ticket cannot complete a reused slot...OK
+5/8 host_buffer_registry.test.drain and quarantine retain pending and attached records while allowing exact completion...OK
+6/8 host_buffer_registry.test.all 192 records are bounded and capacity failure is transactional...OK
+7/8 host_buffer_registry.test.ticket UINT64_MAX is usable once and exhaustion never wraps...OK
+8/8 host_buffer_registry.test.192-frame varied completion and slot-reuse churn stays bounded...OK
+All 8 tests passed.
+zig test src/interop/host_buffer_registry.zig -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=build/interop_host_buffer_registry_test.exe
+zig test -target x86_64-windows-gnu --dep registry -Mroot=tests/interop/host_buffer_registry.zig -Mregistry=src/interop/host_buffer_registry.zig -lc --test-no-exec -femit-bin=build/interop_host_buffer_registry_adversarial_test.exe
