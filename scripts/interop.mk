@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test interop-control-peer-abi-test interop-mapping-windows-test interop-linux-socket-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -21,9 +21,9 @@ interop-codec-test: build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-host-buffer-registry-test interop-control-peer-test
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test interop-control-peer-abi-test interop-linux-socket-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
-interop-coverage: build/interop_codec.o
+interop-coverage: build/interop_codec.o build/interop_control_peer_abi.o
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
 	python3 tests/av/coverage.py interop_heap
@@ -44,6 +44,7 @@ interop-coverage: build/interop_codec.o
 	python3 tests/interop/canonical_coverage.py
 	python3 tests/interop/mapping_init_coverage.py
 	python3 tests/interop/mapping_windows_coverage.py
+	python3 tests/interop/linux_socket_owner_coverage.py
 # Windows link check of the same C ABI test (executed by guest_windows CI).
 build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@
@@ -242,3 +243,18 @@ build/interop_control_peer_abi_fixture_windows.o: tests/interop/control_peer_abi
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Dmain=interop_peer_c_fixture_main -Iinclude -c $< -o $@
 build/interop_control_peer_abi_unit_test.exe: src/interop/control_peer_abi.zig include/waddle/interop_peer.h $(InteropControlPeerDependencies) build/interop_control_peer_abi_fixture_windows.o build/interop_codec_windows.lib | build
 	$(ZIG) test $< -Iinclude -lc -target x86_64-windows-gnu build/interop_control_peer_abi_fixture_windows.o build/interop_codec_windows.lib --test-no-exec -femit-bin=$@
+
+# Connected Linux byte ownership only; no VSOCK admission or native release proof.
+# The private fixture includes the unchanged C source; build the ordinary object
+# separately and verify its exact eight exports to keep the release path checked.
+InteropLinuxSocketDependencies = src/interop/linux_socket_owner.c include/waddle/interop_linux_socket.h include/waddle/interop_peer.h include/waddle/interop_protocol.h
+InteropLinuxSocketFixtures = tests/interop/linux_socket_owner.c tests/interop/linux_socket_owner_guards.c tests/interop/linux_socket_owner_private.c
+InteropLinuxSocketWrapFlags = -Wl,--wrap=calloc -Wl,--wrap=close -Wl,--wrap=fcntl -Wl,--wrap=getsockopt -Wl,--wrap=interop_peer_ack_tx -Wl,--wrap=interop_peer_begin_drain -Wl,--wrap=interop_peer_copy_tx -Wl,--wrap=interop_peer_create -Wl,--wrap=interop_peer_destroy -Wl,--wrap=interop_peer_feed -Wl,--wrap=interop_peer_get_state -Wl,--wrap=interop_peer_mapping_result -Wl,--wrap=interop_peer_next_event -Wl,--wrap=interop_peer_pending_bytes -Wl,--wrap=interop_peer_tick -Wl,--wrap=interop_peer_transport_lost -Wl,--wrap=interop_peer_tx_bytes -Wl,--wrap=recv -Wl,--wrap=send
+.PHONY: interop-linux-socket-test
+build/interop_linux_socket_owner.o: $(InteropLinuxSocketDependencies) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -pthread -c $< -o $@
+build/interop_linux_socket_test: $(InteropLinuxSocketFixtures) $(InteropLinuxSocketDependencies) build/interop_control_peer_abi.o build/interop_codec.o | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $(InteropLinuxSocketFixtures) build/interop_control_peer_abi.o build/interop_codec.o $(LDFLAGS) $(InteropLinuxSocketWrapFlags) -pthread -o $@
+interop-linux-socket-test: build/interop_linux_socket_owner.o build/interop_linux_socket_test
+	python3 tests/interop/linux_socket_owner_abi.py build/interop_linux_socket_owner.o
+	./build/interop_linux_socket_test

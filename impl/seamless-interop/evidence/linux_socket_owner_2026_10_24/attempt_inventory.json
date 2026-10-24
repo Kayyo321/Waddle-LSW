@@ -1,0 +1,789 @@
+[
+  {
+    "attempt": "run-20261024T202321-b1af5aea",
+    "source_sha256": "91651a13f998f8015e582595d936231573e1bc7e4e776ebb66b205c901d1ef04",
+    "coverage": {
+      "line": {
+        "covered": 517,
+        "total": 726,
+        "percent": 71.21212121212122
+      },
+      "branch": {
+        "covered": 296,
+        "total": 569,
+        "percent": 52.021089630931456
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T202603-4d64fb3b",
+    "source_sha256": "b72ff45a1534792ebe7bb22192b9210987c33b45e24029da6056652eb8e57685",
+    "coverage": {
+      "line": {
+        "covered": 537,
+        "total": 742,
+        "percent": 72.37196765498652
+      },
+      "branch": {
+        "covered": 311,
+        "total": 583,
+        "percent": 53.34476843910806
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T202613-68cd8e2e",
+    "source_sha256": "b72ff45a1534792ebe7bb22192b9210987c33b45e24029da6056652eb8e57685",
+    "coverage": {
+      "line": {
+        "covered": 537,
+        "total": 742,
+        "percent": 72.37196765498652
+      },
+      "branch": {
+        "covered": 311,
+        "total": 583,
+        "percent": 53.34476843910806
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T202642-eb3da6d9",
+    "source_sha256": "b72ff45a1534792ebe7bb22192b9210987c33b45e24029da6056652eb8e57685",
+    "coverage": {
+      "line": {
+        "covered": 542,
+        "total": 742,
+        "percent": 73.04582210242587
+      },
+      "branch": {
+        "covered": 317,
+        "total": 583,
+        "percent": 54.37392795883362
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T202714-8873daa6",
+    "source_sha256": "b72ff45a1534792ebe7bb22192b9210987c33b45e24029da6056652eb8e57685",
+    "coverage": {
+      "line": {
+        "covered": 565,
+        "total": 742,
+        "percent": 76.1455525606469
+      },
+      "branch": {
+        "covered": 339,
+        "total": 583,
+        "percent": 58.147512864494
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T202832-2b899d8e",
+    "source_sha256": "b72ff45a1534792ebe7bb22192b9210987c33b45e24029da6056652eb8e57685",
+    "coverage": {
+      "line": {
+        "covered": 600,
+        "total": 742,
+        "percent": 80.86253369272237
+      },
+      "branch": {
+        "covered": 357,
+        "total": 583,
+        "percent": 61.23499142367067
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T202924-3558897c",
+    "source_sha256": "b72ff45a1534792ebe7bb22192b9210987c33b45e24029da6056652eb8e57685",
+    "coverage": {
+      "line": {
+        "covered": 619,
+        "total": 742,
+        "percent": 83.42318059299191
+      },
+      "branch": {
+        "covered": 370,
+        "total": 583,
+        "percent": 63.46483704974271
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T202957-16c9b71b",
+    "source_sha256": "fc7cbe98cb371c863357415e0807bea3ff36eead886a0a934382abdc4bc3da85",
+    "coverage": {
+      "line": {
+        "covered": 636,
+        "total": 747,
+        "percent": 85.14056224899599
+      },
+      "branch": {
+        "covered": 393,
+        "total": 595,
+        "percent": 66.05042016806723
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203122-fc7f92ed",
+    "source_sha256": "01f213836d984afe8bda8dd0899cde79d4dfa26503f370fa8793d1b35ee5e83c",
+    "coverage": {
+      "line": {
+        "covered": 640,
+        "total": 750,
+        "percent": 85.33333333333333
+      },
+      "branch": {
+        "covered": 402,
+        "total": 609,
+        "percent": 66.00985221674877
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203319-60c31474",
+    "source_sha256": "01f213836d984afe8bda8dd0899cde79d4dfa26503f370fa8793d1b35ee5e83c",
+    "coverage": {
+      "line": {
+        "covered": 658,
+        "total": 750,
+        "percent": 87.73333333333333
+      },
+      "branch": {
+        "covered": 434,
+        "total": 609,
+        "percent": 71.26436781609195
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203516-d5cd61fe",
+    "source_sha256": "01f213836d984afe8bda8dd0899cde79d4dfa26503f370fa8793d1b35ee5e83c",
+    "coverage": {
+      "line": {
+        "covered": 660,
+        "total": 750,
+        "percent": 88.0
+      },
+      "branch": {
+        "covered": 438,
+        "total": 609,
+        "percent": 71.92118226600985
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203533-621dbaa2",
+    "source_sha256": "01f213836d984afe8bda8dd0899cde79d4dfa26503f370fa8793d1b35ee5e83c",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T203543-81d72fa7",
+    "source_sha256": "01f213836d984afe8bda8dd0899cde79d4dfa26503f370fa8793d1b35ee5e83c",
+    "coverage": {
+      "line": {
+        "covered": 660,
+        "total": 750,
+        "percent": 88.0
+      },
+      "branch": {
+        "covered": 438,
+        "total": 609,
+        "percent": 71.92118226600985
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203600-5e32b4f8",
+    "source_sha256": "01f213836d984afe8bda8dd0899cde79d4dfa26503f370fa8793d1b35ee5e83c",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T203854-46165c66",
+    "source_sha256": "f3c2281b01da4668bd9639c51b0069ed5b2e396f7fa4d901c97c533f9b44103b",
+    "coverage": {
+      "line": {
+        "covered": 664,
+        "total": 740,
+        "percent": 89.72972972972973
+      },
+      "branch": {
+        "covered": 471,
+        "total": 604,
+        "percent": 77.98013245033113
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203923-43446c8b",
+    "source_sha256": "f3c2281b01da4668bd9639c51b0069ed5b2e396f7fa4d901c97c533f9b44103b",
+    "coverage": {
+      "line": {
+        "covered": 664,
+        "total": 740,
+        "percent": 89.72972972972973
+      },
+      "branch": {
+        "covered": 471,
+        "total": 604,
+        "percent": 77.98013245033113
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203940-9dc2c635",
+    "source_sha256": "f3c2281b01da4668bd9639c51b0069ed5b2e396f7fa4d901c97c533f9b44103b",
+    "coverage": {
+      "line": {
+        "covered": 665,
+        "total": 740,
+        "percent": 89.86486486486487
+      },
+      "branch": {
+        "covered": 472,
+        "total": 604,
+        "percent": 78.1456953642384
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T203952-7c8e9390",
+    "source_sha256": "f3c2281b01da4668bd9639c51b0069ed5b2e396f7fa4d901c97c533f9b44103b",
+    "coverage": {
+      "line": {
+        "covered": 671,
+        "total": 740,
+        "percent": 90.67567567567568
+      },
+      "branch": {
+        "covered": 482,
+        "total": 604,
+        "percent": 79.80132450331126
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204037-a92c345b",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": {
+      "line": {
+        "covered": 667,
+        "total": 732,
+        "percent": 91.12021857923497
+      },
+      "branch": {
+        "covered": 478,
+        "total": 590,
+        "percent": 81.01694915254237
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204100-0db53960",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": {
+      "line": {
+        "covered": 667,
+        "total": 732,
+        "percent": 91.12021857923497
+      },
+      "branch": {
+        "covered": 478,
+        "total": 590,
+        "percent": 81.01694915254237
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204129-97488ccd",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": {
+      "line": {
+        "covered": 667,
+        "total": 732,
+        "percent": 91.12021857923497
+      },
+      "branch": {
+        "covered": 479,
+        "total": 590,
+        "percent": 81.1864406779661
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204252-27b153d9",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204300-c2b64eca",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204306-34034c16",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204320-f69284f3",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204344-5a42839f",
+    "source_sha256": "8e7328aa25a939b3e8bf474f7e62a63b1606c0b6c831ee4e1d562880ccbf94bb",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204351-9053f4b6",
+    "source_sha256": "8e7328aa25a939b3e8bf474f7e62a63b1606c0b6c831ee4e1d562880ccbf94bb",
+    "coverage": {
+      "line": {
+        "covered": 673,
+        "total": 735,
+        "percent": 91.56462585034014
+      },
+      "branch": {
+        "covered": 484,
+        "total": 590,
+        "percent": 82.03389830508475
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204417-2bc058bc",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": {
+      "line": {
+        "covered": 670,
+        "total": 732,
+        "percent": 91.53005464480874
+      },
+      "branch": {
+        "covered": 484,
+        "total": 590,
+        "percent": 82.03389830508475
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204530-3784416e",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204540-31f7efe6",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204546-93b6124e",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204553-cc31f5ac",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": {
+      "line": {
+        "covered": 671,
+        "total": 732,
+        "percent": 91.66666666666667
+      },
+      "branch": {
+        "covered": 487,
+        "total": 590,
+        "percent": 82.54237288135593
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204611-13dbcec8",
+    "source_sha256": "58b2750c05e97a16072e6ba0d008db515111d8fc213ec4c5c13fb282d2ba3f61",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204621-462fb9e8",
+    "source_sha256": "56135b87f5732c7b8d27112cd71e2643d842cbf1a93e9aa21a349a764602c73d",
+    "coverage": {
+      "line": {
+        "covered": 681,
+        "total": 734,
+        "percent": 92.77929155313352
+      },
+      "branch": {
+        "covered": 491,
+        "total": 594,
+        "percent": 82.65993265993266
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204708-b2ef9712",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": {
+      "line": {
+        "covered": 680,
+        "total": 732,
+        "percent": 92.89617486338798
+      },
+      "branch": {
+        "covered": 490,
+        "total": 590,
+        "percent": 83.05084745762711
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204804-0db8f469",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": {
+      "line": {
+        "covered": 681,
+        "total": 732,
+        "percent": 93.0327868852459
+      },
+      "branch": {
+        "covered": 492,
+        "total": 590,
+        "percent": 83.38983050847457
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204904-ccbb4cbe",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T204909-4d6bff6d",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": {
+      "line": {
+        "covered": 681,
+        "total": 732,
+        "percent": 93.0327868852459
+      },
+      "branch": {
+        "covered": 492,
+        "total": 590,
+        "percent": 83.38983050847457
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T204939-504383ca",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": {
+      "line": {
+        "covered": 682,
+        "total": 732,
+        "percent": 93.16939890710383
+      },
+      "branch": {
+        "covered": 494,
+        "total": 590,
+        "percent": 83.72881355932203
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205005-9a28e383",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": {
+      "line": {
+        "covered": 682,
+        "total": 732,
+        "percent": 93.16939890710383
+      },
+      "branch": {
+        "covered": 494,
+        "total": 590,
+        "percent": 83.72881355932203
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205109-423e9e0a",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205117-b10d2c1b",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": {
+      "line": {
+        "covered": 683,
+        "total": 732,
+        "percent": 93.30601092896175
+      },
+      "branch": {
+        "covered": 495,
+        "total": 590,
+        "percent": 83.89830508474576
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205150-88c35809",
+    "source_sha256": "9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1",
+    "coverage": {
+      "line": {
+        "covered": 683,
+        "total": 732,
+        "percent": 93.30601092896175
+      },
+      "branch": {
+        "covered": 495,
+        "total": 590,
+        "percent": 83.89830508474576
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205428-a3f61dff",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205452-64f7cfdb",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205509-e4d0f86e",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205536-02ba6fa1",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205544-dc5785db",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205555-23e38881",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205607-eb6d495e",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205616-e8d806f5",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205626-cc16b917",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T205643-e833c6d1",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": {
+      "line": {
+        "covered": 696,
+        "total": 735,
+        "percent": 94.6938775510204
+      },
+      "branch": {
+        "covered": 514,
+        "total": 594,
+        "percent": 86.53198653198653
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205707-bf3550ce",
+    "source_sha256": "7ecf73a2701c3bde9717a0e110d39309de02bb15e9a3ac579b78aff3cf23f209",
+    "coverage": {
+      "line": {
+        "covered": 696,
+        "total": 735,
+        "percent": 94.6938775510204
+      },
+      "branch": {
+        "covered": 514,
+        "total": 594,
+        "percent": 86.53198653198653
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205737-435cf7b8",
+    "source_sha256": "c08b0487e4d1ed4fd464a5b84f5b7677de73d329cf046b81daa4362cdf5e766f",
+    "coverage": {
+      "line": {
+        "covered": 686,
+        "total": 722,
+        "percent": 95.01385041551247
+      },
+      "branch": {
+        "covered": 502,
+        "total": 576,
+        "percent": 87.15277777777777
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205758-74cbbf21",
+    "source_sha256": "c08b0487e4d1ed4fd464a5b84f5b7677de73d329cf046b81daa4362cdf5e766f",
+    "coverage": {
+      "line": {
+        "covered": 686,
+        "total": 722,
+        "percent": 95.01385041551247
+      },
+      "branch": {
+        "covered": 502,
+        "total": 576,
+        "percent": 87.15277777777777
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205901-f06a128a",
+    "source_sha256": "feff90252215f948b43f07e38641d43653797ea875e091855e0900fd2447222b",
+    "coverage": {
+      "line": {
+        "covered": 707,
+        "total": 746,
+        "percent": 94.77211796246648
+      },
+      "branch": {
+        "covered": 534,
+        "total": 610,
+        "percent": 87.54098360655738
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T205944-2c368f67",
+    "source_sha256": "03fee603212df0519eef535e0862604784ada2d2d9b6d402d2f35e9c6b1f98b4",
+    "coverage": {
+      "line": {
+        "covered": 707,
+        "total": 744,
+        "percent": 95.02688172043011
+      },
+      "branch": {
+        "covered": 534,
+        "total": 609,
+        "percent": 87.6847290640394
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T210142-a4e2961b",
+    "source_sha256": "03fee603212df0519eef535e0862604784ada2d2d9b6d402d2f35e9c6b1f98b4",
+    "coverage": "No completed report; not accepted"
+  },
+  {
+    "attempt": "run-20261024T210256-15fcc3c2",
+    "source_sha256": "c793cbfb5588ee35031f507118cafcc4654deec0ecd70efd108f18c88ca51240",
+    "coverage": {
+      "line": {
+        "covered": 724,
+        "total": 744,
+        "percent": 97.31182795698925
+      },
+      "branch": {
+        "covered": 547,
+        "total": 609,
+        "percent": 89.81937602627258
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T210408-f4bc2786",
+    "source_sha256": "46a66725ca8d08870161f6290c761df1defe6b0c4f3b5de420cd61d3e066ac54",
+    "coverage": {
+      "line": {
+        "covered": 728,
+        "total": 748,
+        "percent": 97.32620320855615
+      },
+      "branch": {
+        "covered": 545,
+        "total": 605,
+        "percent": 90.08264462809917
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T210431-b806ed2a",
+    "source_sha256": "46a66725ca8d08870161f6290c761df1defe6b0c4f3b5de420cd61d3e066ac54",
+    "coverage": {
+      "line": {
+        "covered": 728,
+        "total": 748,
+        "percent": 97.32620320855615
+      },
+      "branch": {
+        "covered": 545,
+        "total": 605,
+        "percent": 90.08264462809917
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T211223-bc4a22df",
+    "source_sha256": "74907d6f6fa2c5d95d210ad4552a28abef207b3dcbc6fc796b8f55c11dd2c581",
+    "coverage": {
+      "line": {
+        "covered": 731,
+        "total": 752,
+        "percent": 97.20744680851064
+      },
+      "branch": {
+        "covered": 546,
+        "total": 607,
+        "percent": 89.9505766062603
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T211310-0770a813",
+    "source_sha256": "74907d6f6fa2c5d95d210ad4552a28abef207b3dcbc6fc796b8f55c11dd2c581",
+    "coverage": {
+      "line": {
+        "covered": 731,
+        "total": 752,
+        "percent": 97.20744680851064
+      },
+      "branch": {
+        "covered": 547,
+        "total": 607,
+        "percent": 90.1153212520593
+      }
+    }
+  },
+  {
+    "attempt": "run-20261024T211415-96b1617f",
+    "source_sha256": "74907d6f6fa2c5d95d210ad4552a28abef207b3dcbc6fc796b8f55c11dd2c581",
+    "coverage": {
+      "line": {
+        "covered": 731,
+        "total": 752,
+        "percent": 97.20744680851064
+      },
+      "branch": {
+        "covered": 547,
+        "total": 607,
+        "percent": 90.1153212520593
+      }
+    }
+  }
+]

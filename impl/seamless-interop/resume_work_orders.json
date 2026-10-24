@@ -223,5 +223,10 @@
     "ci_run": 40126247004,
     "ci_conclusion": "success"
   },
-  "lead_current_work": "Reviewed graph import35% accepted, total17.80%. Exact57847b1 all3CIgreen. Snapshot/nativeguard3e564ad graph+NativeAVCIgreen, interopCIpending. Root owns coverage helper, buildintegration, docs/tracker/Git/CI; socket draft91.12line81.02branchunaccepted. O5 design advisory; only graphsnapshot prerequisiteimplemented. NoVMactions."
+  "lead_current_work": "Reviewed Claude graph import, snapshot and native guards qualified on Linux/actual Windows at3e564ad (all3CIgreen). Linux connected-byte-owner accepted after root optimized/sanitizer/fullcoverage gates:97.21line90.12branch, exactly8exports, source74907d6f; total18.00%. Exact implementation CI pending. All3Luna lanes released; root owns code/build/docs/Git. O5 and Linux admission plans advisory; no VM actions.",
+  "current_lane_receipts": {
+    "luna_qemu_build": "Linux socket source/main released; lead-reviewed corrections/gates accepted5%TODO7. Return in evidence/linux_socket_owner_2026_10_24.",
+    "luna_layout": "Guard/private fixtures released; final source74907d6f reviewed. O5 review advisory only.",
+    "luna_mounts": "Gate/reachability review complete; no edits pending. Linux admission plan advisory only."
+  }
 }

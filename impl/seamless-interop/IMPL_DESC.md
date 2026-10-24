@@ -3503,3 +3503,28 @@ object representations. Header static size assertions and explicit offsets,
 byte-preservation tests and fresh source hashes qualify this local amendment.
 No public owner exists outside this unmerged feature and no socket credit is
 awarded by this header correction.
+
+
+### 8.23.3 Connected-owner phase, event and final qualification containment
+
+`linux_socket_owner.md` final containment rules are normative. A successful live
+peer result must contain a frozen phase from AwaitHello through Draining;
+TransportClosed or an unknown value is an invariant failure, not a new live
+owner state. Validate before outward event publication/mapping bookkeeping;
+invalid scalar results cannot surface FeatureFrame actions. Non-drive caller
+outputs remain unchanged on PeerFailure, while drive commits WorkPeerFailure
+and terminalizes once. Positive OS-send counts remain counted and unreplayable.
+A tick AbortTransport terminalizes before SO_ERROR diagnosis/data I/O. Receive
+abort statuses cannot be overwritten by Progress. Explicit destroy may close
+transport before a peer-cleanup failure, retains its allocation for retry, and
+never retries close or implies external resource release.
+
+Final acceptance builds the ordinary production C object and verifies exactly
+eight frozen exports in addition to the exact-source private unit fixture,
+128 repeated real socketpair lifecycles, injected cleanup/scalar-output faults,
+>=90% production line/branch coverage, leak-enabled ASan/LSan/UBSan and the full
+interop regression gates. Linux alias errno checks compile once; no runtime
+branch exclusions or coverage threshold reductions are permitted. These gates
+accept only the5% connected-byte-owner portion of TODO#7 after the lead records
+their exact evidence. VSOCK/singleton, daemon control and native release remain
+separate unfinished tasks.

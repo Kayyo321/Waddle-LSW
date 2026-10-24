@@ -34,10 +34,10 @@ acceptance remain pending.
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 23 codec/imported parser tests; 97.13% branch / 96.56% line; bounded SemVer2 and app-key helpers; native Windows/ASan/LSan gates pass |
 | #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 60% | Snapshot, heap, C ABI, native CPU atomics and pure slot pins/growth/drain accepted; live mapping/session integration and qualification remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; Win32 listener/mapping, signing/deploy and native acceptance remain open |
-| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 25% | Shared framing/owned queue/handshake/liveness qualified on Linux and Windows; host transport, singleton, module extraction and native acceptance remain open |
+| #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | In Progress | 4% | 30% | Shared protocol25% + Linux connected-byte-owner5% accepted; VSOCK admission/singleton, daemon control, module extraction and native acceptance remain open |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
 | #9  | Export all virtiofs mounts + root path fallback fix | In Progress | 1% | 60% | Root fix, QEMU mount arrays, owned supervisor lifecycle and canonical/symlink translation accepted; guest binding and native qualification pending |
-| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 35% | Pure graph25% + C ABI10% accepted after reviewed73bc833 import, full main gates and actual Windows CI40126247004; O5/native fact findings block observer credit; coordinator and installed session remain open |
+| #10 | Session-wide window tracking, classification, ownership graph, generation ids | In Progress | 4% | 35% | Pure graph25% + C ABI10% accepted after reviewed73bc833 import; snapshot/native fact fixes and full Linux/Windows CI40129670493 green. O5 preservation blocks observer credit; coordinator and installed session remain open |
 | #11 | Host toplevel/popup/parent mapping, positioner, title/app_id updates, decoration negotiation | Pending | 4% | 0% | Waits on #7, #10 |
 | #12 | Move/resize via WM_NCHITTEST interception, caption double-click maximize | Pending | 3% | 0% | Waits on #11 |
 | #13 | Minimize/maximize/fullscreen/restore/close state machine | Pending | 3% | 0% | Waits on #11 |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `17.80%`
+**Total Feature Completion**: `18.00%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -74,10 +74,10 @@ Design assignments earn no credit; only accepted implementation is recorded.
 |---|---|---|
 | #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration 15%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; pure pin/growth/drain10%; Linux/Windows coverage and tests pass |
 | #6 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; Win32 listener/mapping loop25%; signing/deploy/update/autostart30%; native qualification20% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated agent remains open |
-| #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; native CPU units accepted; integrated host client remains open |
+| #7 | Shared ingress framing5%; owned send queue5%; handshake10%; liveness5%; host singleton/daemon/VSOCK/local control25%; AV/Wayland module boundary20%; reconnect/autostart15%; native qualification15% | Shared framing5%; owned queue5%; handshake10%; liveness5%; Linux connected-byte-owner5% with full local gates. Remaining transport: VSOCK admission/singleton10%, daemon/local-control10%. Integrated host client remains open |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
-| #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; O25 pruning corrected and Linux/Windows qualified. O5 delivered-destroy loss and native fact consistency remain open; no observer/native/session credit |
+| #10 | Pure bounded graph25%; opaque C ABI10%; portable observer15%; native adapter15%; coordinator/capture/slot/wire integration20%; native installed-session qualification15% | Pure graph25%; C ABI10%; O25 pruning corrected and Linux/Windows qualified. O5 delivered-destroy loss remains open; native identity/fullscreen guards corrected and actual Windows CI40129670493 green; no observer/native/session credit |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
 
 Execution resumed at the user's request from checkpoint4079560. Current
@@ -1035,7 +1035,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     session and the unaccepted Linux socket draft remain open.
     [Qualification](ci_qualification_3e564ad.json). HEAD is this evidence commit.
 
-- **Commit `HEAD`**: `docs(interop): preserve observer destroy contract review blockers`
+- **Commit `14bcef4`**: `docs(interop): preserve observer destroy contract review blockers`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total17.80%).
   - **Summary**: Reconciles the advisory O5 proposal with the accepted const/
     uint32 graph snapshot API, identifies mandatory callback reserve points,
@@ -1043,3 +1043,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     cleanup requirements. Keeps all proposals explicitly unaccepted until a
     consolidated normative observer contract and implementation pass review.
     HEAD identifies this advisory review preservation commit.
+
+- **Commit `HEAD`**: `feat(interop): own bounded Linux connected socket transport`
+  - **Task Impact**: +5% to TODO #7 (+0.20% overall; total18.00%); +0% to #6/#34.
+  - **Summary**: Implements exclusive fd/peer ownership, bounded copied RX/TX,
+    exact positive-send ACKs, single-use cookies, mapping wait, finite drain
+    and one-shot close with retryable peer cleanup. Lead corrects pending-frame
+    starvation, fatal/event ordering, phase publication and closed-abort
+    idempotence. Real socketpairs,128 lifecycle iterations, scalar boundaries
+    and injected faults pass optimized C and leak-enabled ASan/LSan/UBSan.
+    Full interop regression/sanitizer gates pass; final owner-only corrections
+    retested separately. Final full coverage:731/752 lines97.21%,547/607
+    branches90.12%, no owner exclusions; exact8 ordinary-object exports.
+    Archives65 attempts and independent reviews. Exact-commit CI pending;
+    VSOCK, native mappings/session, reconnect and release proof remain open.
+    [Qualification](linux_socket_owner_qualification_2026_10_24.json).
+    HEAD identifies this byte-owner implementation and acceptance commit.

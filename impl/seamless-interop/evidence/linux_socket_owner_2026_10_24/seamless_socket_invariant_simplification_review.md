@@ -1,0 +1,39 @@
+# Linux socket-owner invariant simplification review
+
+Read-only review of `src/interop/linux_socket_owner.c`, SHA-256 at inspection: `9a2a8720b451d6209f1a3ea8c9a8f2bbdd7e63473fb6c2e795e1016cf0223ac1`. The file is changing concurrently; line numbers below refer to this snapshot and function/field relationships are the stable references. No edits, builds, or tests were run.
+
+## Safe simplifications supported by the current whole-callgraph invariants
+
+1. **`has_time` is redundant for a published owner** (`has_time`, `check_time`, create, `commit_time`; lines 41, 110-115, 117-122, 507-509). Successful create sets it true before publishing `*out_owner`; the only later write also sets true. There is no valid operation that clears it. `check_time` can compare `now_ms < last_ms` directly and the field can be removed. Keep the nondecreasing-time error and commit-on-success semantics unchanged.
+
+2. **The first-cause sentinel check for `terminal_reason` is redundant** (`close_transport`, lines 200-217). `terminal_reason` is calloc-zeroed and only written here. Every successful first close sets `closed=true` in this function, and all later calls return at the opening closed check. Therefore a live owner always has `TerminalNone` on entry. Assign `reason` directly on first close. Keep the first-cause behavior by preserving the early return before assignment.
+
+3. **The `terminal_errno == 0` half of the initial system-error guard is redundant** (lines 205-206), but the later close-error guard at 213-214 is not. `terminal_errno` is calloc-zeroed and has no writer before the first `close_transport`. It is safe to assign `system_error` whenever it is nonzero. Preserve the second guard so a close error does not overwrite a previously saved recv/send/SO_ERROR errno. Preserve close-error diagnostic storage and one-close behavior.
+
+4. **The post-`observe_phase` drain-deadline retries are redundant** (`mapping_result` lines 1027-1029, `begin_drain` lines 1066-1068). `observe_phase` calls `note_draining` for every Draining phase, and `note_draining` sets `drain_deadline_set=true`; the immediately following `phase==Draining && !drain_deadline_set` checks therefore cannot succeed. Removing only the duplicate checks does not extend/recompute a deadline.
+
+5. **The second Draining-event save in `accept_peer_event` is redundant** (lines 308-312). `observe_phase(owner, event->phase, ..., event)` immediately follows and calls `save_terminal_event` for exactly the same `kind==Draining && phase==Draining` predicate. Remove the inner save while keeping the event copy; the diagnostic is still captured by `observe_phase` before abort handling.
+
+6. **`service_carry`’s non-Active guard duplicates every current call-site guard** (lines 353-355). Its callers are the Active-only carry loop (drive around 745), the Active plus empty-carry pending path (around 764), and the post-recv call explicitly guarded by `state==Active` (around 805). Under that fixed call graph the state check is redundant; it may be removed if the Active-only precondition is documented at the helper. Keeping it is a harmless future-proofing guard, but its false arm is not a reachable test scenario today.
+
+7. **`close_transport`’s work-step comparison does not need a failure arm** (lines 218-229). `init_work` starts at zero; `take_internal_step` refuses at 63, and a positive send reserves two steps for ACK plus state query. Any work-bearing terminal path therefore reaches close with `internal_steps <= 63`; close may charge the terminal notification as step 64. `work==NULL` callers also intentionally perform the notification outside a drive budget. The condition `work == NULL || internal_steps < MaxInternalStepsPerDrive` is consequently true for every authentic call. It can become an unconditional notification when `!transport_notified && peer != NULL`, incrementing the counter only when `work != NULL`. Preserve the error path that sets `peer_notify_failed` and the destroy retry after a failed notification.
+
+8. **The `fd >= 0` check on first close is invariant-redundant** (lines 208-215). A published owner is only assigned the already-validated nonnegative connected fd at line 517. The only code that writes `fd=-1` is this first close, which also sets `closed`; later calls return before reaching it. Removing the check is safe only while create remains the sole publication path and external code cannot close/change the owned fd. It is a reasonable defensive assertion, but not a reachable alternate runtime case.
+
+9. **The final `WorkIdle` promotion is unreachable under the current drive call graph** (lines 962-975). A live drive successfully calls tick first, then sets `WorkProgress` at line 730 even if tick has no event. Every path that closes during drive also assigns a terminal/peer-failure status before jumping to the epilogue; the already-closed path returns early after setting `WorkTransportClosed`. Thus both the idle-to-progress byte/event fallback and the closed+idle fallback are redundant for current production flows. Keep explicit status assignments at their owning terminal paths if removing the epilogue fallback.
+
+## Defensive branches to retain or change only with an explicit contract proof
+
+- **`observe_phase(TransportClosed)`** (lines 248-255) appears unreachable from a live owner: frozen peer transport becomes `TransportClosed` only after `interop_peer_transport_lost`, and this adapter invokes that only after setting its own `closed` flag. Poll and drive bypass phase observation once owner is closed. However, the current branch fails closed at least at the state-label level if the peer reports that phase unexpectedly; blindly deleting it would route the phase into the default Active arm. Keep it unless replacing it with an equally safe invariant-failure/close action.
+- **`transport_notified` and `peer != NULL` on first close** (lines 218-224) are also implied by construction, but retain a clear cleanup guard if desired; the failed-notification retry state in destroy is important. Do not collapse `peer_notify_failed` or its status reporting.
+- **`fd >= 0`** is redundant under ownership but protects cleanup against internal corruption. If retained for defensive cleanup, it should not be counted as a public branch requirement.
+
+## Additional reachable fault combinations for the root
+
+- Exercise `abort()` with `interop_peer_transport_lost` failing once. The expected API return remains Success because closure committed, `out_work.status` is PeerFailure, and destroy retries transport notification before freeing the peer. Existing tests inject transport-lost failure on a drive EOF path, but that does not cover abort’s status selection at lines 1087-1097.
+- Combine a fatal OS errno with `close()` failure and transport-lost failure in one drive. Verify terminal reason/system errno retain the original OS cause, work status reports PeerFailure, destroy retries the peer notification, returns CloseDiagnostic, and NULLs the slot without retrying close. The current fixture tests the first errno vs close error separately and notification retry separately.
+- Inject a peer `TransportClosed` phase only if the peer wrapper can do so without fabricating internal pointers/counts; this is a defensive invariant test, not normal acceptance. The proper expected behavior should be explicit because `observe_phase` currently changes only `state`, not fd ownership/`closed` or transport notification.
+
+## Limits and moving-source note
+
+The has-time, close sentinel, duplicate drain setup, helper call graph, and work-status reasoning above follow all writes/callers found in this snapshot. The peer-phase reachability statement depends on the frozen peer contract. Since the author is editing concurrently, re-hash/re-check every proposed simplification on the final source; this report is advisory only and makes no coverage or acceptance claim.

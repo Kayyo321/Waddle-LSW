@@ -208,7 +208,7 @@ int interop_linux_socket_begin_drain(interop_linux_socket_t *owner, uint64_t tok
  * @param[in,out] owner Authentic owner; owner-thread only.
  * @param[in] token Exact connection token.
  * @param[out] out_work Non-NULL aligned output, disjoint from owner; unchanged on API error.
- * @return Success commits LocalAbort and a stable closed snapshot.
+ * @return Success commits closure and a stable snapshot; the first terminal cause is retained.
  * @note No cookie/time required; invalidates any poll cookie and never proves resource release.
  */
 int interop_linux_socket_abort(interop_linux_socket_t *owner, uint64_t token, interop_linux_socket_work_t *out_work);
@@ -216,7 +216,8 @@ int interop_linux_socket_abort(interop_linux_socket_t *owner, uint64_t token, in
 /** @brief Close transport once and release peer/owner allocations.
  * @param[in,out] owner_slot Non-NULL aligned slot containing NULL or authentic owner.
  * @return Success NULLs slot; CloseDiagnostic also NULLs slot after full cleanup.
- * @note Other errors preserve slot/owner. Serialized; close is attempted once, never retried on EINTR.
+ * @note Other errors retain the allocation and slot for retry; transport may already be closed.
+ *       Serialized; close is attempted once, never retried on EINTR.
  * @note CloseDiagnostic sets errno to the one close error; fd ownership is still relinquished.
  */
 int interop_linux_socket_destroy(interop_linux_socket_t **owner_slot);
