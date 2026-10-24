@@ -1,0 +1,15 @@
+{
+  "run_root": "/home/dev/Waddle-LSW/build/fresh_native_guests/fresh-0582e3b441114ef5980dbacb27af3a7c",
+  "failure": {
+    "message": "details suppressed",
+    "retained": true,
+    "type": "KeyError"
+  },
+  "selected_image_name": "Windows Server 2025 SERVERSTANDARD",
+  "guest_booted": false,
+  "guest_vsock_listener_verified": false,
+  "native_acceptance_credit": false,
+  "unit_tests_passed": 15,
+  "existing_vm_credential_access": false,
+  "secret_bearing_artifacts_excluded_from_git": true
+}

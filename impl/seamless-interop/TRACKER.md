@@ -1191,7 +1191,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     no build directory and PATH=/nonexistent. No production runner requirement
     is relaxed, no test is skipped; fresh remote qualification is pending.
 
-- **Commit `HEAD`**: `fix(interop): preserve delivered Destroy evidence across observer lifecycles`
+- **Commit `89ff058`**: `fix(interop): preserve delivered Destroy evidence across observer lifecycles`
   - **Task Impact**: +0% to TODO #10/#34 (+0% overall; total18.00%).
   - **Summary**: Implements immutable graph binding,129-key protected Destroy
     mailbox, callback/admission reservation, exact-stamp clearing, lossless dirty
@@ -1203,3 +1203,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](o5_evidence_2026_10_24/qualification.json) retains failed/interrupted
     attempts. Updated Windows runtime CI, coordinator/capture staging and installed
     native acceptance remain pending; no new feature credit before those gates.
+
+- **Commit `HEAD`**: `test(interop): save recoverable fresh guest preparation prototype`
+  - **Task Impact**: +0% to TODO #6/#34 (+0% overall; total18.00%).
+  - **Summary**: Saves the isolated prepare-only generator,15 passing unit tests,
+    pinned media/verified WIM edition, private GPT disk/account/driver/startup
+    artifacts and [known integration defect](fresh_native_guest.md). First real
+    preparation retains a KeyError because the actual QEMU provenance result has
+    no path field; no VM/TPM process started. Secret-bearing assets stay outside
+    Git in the private ignored build directory. Prototype is not native acceptance.
