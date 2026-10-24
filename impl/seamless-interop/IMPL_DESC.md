@@ -2813,3 +2813,44 @@ Hello/HelloAck through writer and receive validation, not only the helper. Both
 module and whole codec retain >=90% production line and branch gates; actual
 Windows CPU execution remains required. No extra #4 progress is awarded for
 correcting its existing semantic-version contract.
+
+### 8.17 Shared per-direction request identifier owner
+
+New request_ids.zig implements the header request sequence from §3.1 as one
+allocation-free value per connected endpoint direction. This is the common
+owner for Hello, Ping and later feature requests expecting a response. Replies
+echo peer IDs and unsolicited frames use0; neither reserves a local request ID.
+Input serial/window generation counters are separate namespaces. All callers on
+one connection serialize operations and keep the value alive until its request
+users have stopped. The new connection starts a new allocator at1.
+
+Use a fixed4096-element uint32 slot array (zero means free), bounded occupied
+count and next_candidate initialized1. The4096 cap is a local memory/admission
+policy, not a wire field, peer limit or permission to drop required control
+traffic. No socket, response object, queue or timer is owned. reserve returns
+one nonzero copied ID and inserts it only on success. At capacity return Full
+without any mutation. Starting at next_candidate, skip only currently occupied
+IDs, wrapping UINT32_MAX to1. At most count+1 candidates need checking because
+there are only count occupied distinct IDs. Preserve global sequence order
+while skipping occupied IDs at wrap. After insertion set next_candidate to the
+following nonzero ID. Use bounded loops and no overflowing ordinary arithmetic.
+
+release takes a nonzero ID and removes exactly its occupied record; zero returns
+InvalidRequestId, an absent ID returns UnknownRequestId, both unchanged. contains
+returns false for0 or absent IDs and otherwise true, without mutation. retire_all
+clears all occupied slots/count after the connection owner stopped every request
+user, preserving next_candidate; it does not release feature resources or imply
+mapping drain. Reinitializing an allocator to force ID reuse while old callbacks
+remain possible is forbidden. Correlation to message type, response payload and
+connection token remains the peer/feature dispatcher's responsibility. Local
+queue admission failure must explicitly release its reservation or close and
+retire the whole connection; no silent leak or second Ping sequence is allowed.
+
+Public APIs are init/reserve/release/contains/retire_all with explicit ownership,
+errors and serialized-thread documentation. Tests cover initial1, sequential
+allocation, release/reuse distinction, UINT32_MAX wrap with live1 and UINT32_MAX,
+full transactional failure, unknown/zero/double release, holes, retire_all without
+sequence reset and deterministic bounded reserve/release stress. Direct test
+seeding of next_candidate is only a wrap fixture; production init always starts1.
+Retain >=90% production line/branch and actual Windows CPU test gates. No extra
+progress is credited beyond the endpoint allocations already frozen in §8.14.

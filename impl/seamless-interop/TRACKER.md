@@ -678,7 +678,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     cross-build and CI gates added; liveness5% per endpoint awaits native CI.
     [Qualification](session_liveness_qualification_2026_10_24.json). Source commit31fbea9 contains this implementation.
 
-- **Commit `HEAD`**: `feat(interop): enforce staged peer handshake readiness`
+- **Commit `ce9178d`**: `feat(interop): enforce staged peer handshake readiness`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Implements both typed handshake roles, overall5s deadline,
     mapping validation, capability subset/intersection, exact Hello correlation
@@ -687,5 +687,12 @@ its uncompiled draft earns no credit until current acceptance passes.
     pass,100% production lines/90.60% branches, including each callback's stale
     token/backward clock, exact deadline, role/phase/version and terminal guards.
     Windows cross-build/CI added; handshake10% per endpoint awaits native CI.
-    [Qualification](session_handshake_qualification_2026_10_24.json). HEAD identifies
-    this containing implementation commit.
+    [Qualification](session_handshake_qualification_2026_10_24.json). Source commitce9178d contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): define common bounded request identifier ownership`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Specifies a common per-direction sequence,4096-record local
+    admission bound, wrap skipping only live IDs, explicit release and unchanged
+    failures. Separates IDs from feature resource ownership and prevents a second
+    private Ping sequence when composing endpoint cores. HEAD identifies this
+    containing specification commit.

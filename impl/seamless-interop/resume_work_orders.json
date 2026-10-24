@@ -111,21 +111,20 @@
   "checkpoint_status": "active",
   "active_workers": [
     {
-      "agent": "luna_mounts",
+      "agent": "luna_layout",
       "model": "gpt-6-luna",
       "effort": "high",
       "allocation_source": "user_override",
       "owned_files": [
-        "src/interop/agent_version.zig",
-        "src/interop/interop_codec.zig"
+        "src/interop/request_ids.zig"
       ],
-      "task": "Implement shared bounded semantic-version major parser and correct private codec version guard against IMPL_DESC8.16",
+      "task": "Implement shared bounded per-direction request identifier value owner against IMPL_DESC8.17",
       "acceptance": [
-        "isolated Zig tests and codec regression",
-        "lead unchanged90% per-module production line/branch coverage and native Windows CI"
+        "isolated Zig tests for full capacity/wrap/stress",
+        "lead unchanged90% production line/branch and native Windows CI"
       ],
       "constraints": [
-        "No shared build/Git/header/VM/Claude or recursive agents"
+        "No shared build/Git/VM/Claude or recursive agents"
       ],
       "runner_ownership": "isolated /tmp CPU only"
     }
@@ -182,5 +181,5 @@
       "Codex does not edit owned paths until explicit return and ownership release"
     ]
   },
-  "lead_current_work": "Review session cores, qualify send queue and wire shared CI; no dependency on Claude window graph"
+  "lead_current_work": "Review parser/codec correction, integrate common request ownership and qualify combined Linux/Windows session core CI"
 }
