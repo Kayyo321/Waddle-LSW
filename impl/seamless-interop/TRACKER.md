@@ -1060,7 +1060,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Qualification](linux_socket_owner_qualification_2026_10_24.json).
     HEAD identifies this byte-owner implementation and acceptance commit.
 
-- **Commit `HEAD`**: `docs(interop): preserve Linux admission and singleton work plan`
+- **Commit `2a2186e`**: `docs(interop): preserve Linux admission and singleton work plan`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
   - **Summary**: Maps existing daemon/device/guest-exec/AV-lock seams and
     missing GuestReady/session runtime to a bounded next-slice investigation.
@@ -1068,3 +1068,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     transfer boundaries, without treating daemon reachability or EOF as native
     authority. Advisory only; normative API review and implementation remain
     pending. HEAD identifies this investigation preservation commit.
+
+- **Commit `HEAD`**: `docs(interop): record exact committed socket regression gates`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total18.00%).
+  - **Summary**: Rechecks complete interop-test and leak-enabled sanitizer
+    sequences after every final owner/fixture correction at implementation
+    commit3b50946. Both exit0; archives exact logs and binds the qualification
+    receipt to its full SHA. Source, API and accepted progress unchanged.
+    Exact implementation CI is still pending; HEAD identifies this evidence commit.

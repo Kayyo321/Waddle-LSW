@@ -1,6 +1,6 @@
 {
   "qualified_at_utc": "2026-10-24T21:15:36.186134+00:00",
-  "implementation_commit": "SELF (recorded in TRACKER.md after commit)",
+  "implementation_commit": "3b50946a7b9ac702f28ca16c72711f99efd80545",
   "scope": "Linux connected nonblocking CLOEXEC stream-byte owner only; AF_UNIX socketpairs plus explicitly injected scalar/syscall faults. No AF_VSOCK admission, daemon/native mappings, external release, reconnect continuity, Windows socket owner or installed VM session acceptance.",
   "source_sha256": {
     "src/interop/linux_socket_owner.c": "74907d6f6fa2c5d95d210ad4552a28abef207b3dcbc6fc796b8f55c11dd2c581",
@@ -17,12 +17,12 @@
     "full_interop_test": {
       "command": "make interop-test",
       "exit_code": 0,
-      "phase": "Before last owner-only closed-abort/create-alias corrections; all other modules unchanged. Final owner and guard changes retested separately at optimized flags."
+      "phase": "Rerun passed on exact committed implementation3b50946 after all root source/fixture corrections; current HEAD differs only by the separate advisory-plan docs commit."
     },
     "full_interop_sanitizers": {
       "command": "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 make interop-sanitizers",
       "exit_code": 0,
-      "phase": "Before last owner-only corrections; final socket target rerun below."
+      "phase": "Rerun passed on exact committed implementation3b50946 after all root source/fixture corrections; current HEAD differs only by the separate advisory-plan docs commit."
     },
     "final_owner_test": {
       "command": "make -W tests/interop/linux_socket_owner_guards.c interop-linux-socket-test",
@@ -150,6 +150,8 @@
   "ci": "Pending exact implementation commit; accepted previous code snapshot3e564ad has all3 workflows green.",
   "evidence_sha256": {
     "evidence/linux_socket_owner_2026_10_24/attempt_inventory.json": "db873f5edc90e79e87e0b2128b3db23668e8e475c0f069b68f8d79537f200bbd",
+    "evidence/linux_socket_owner_2026_10_24/exact_interop_sanitizers.log": "baf2de15f449dab4cc91e0a54517b27d17684a73cd91552154d12cd3ed137c3b",
+    "evidence/linux_socket_owner_2026_10_24/exact_interop_test.log": "898571243864f6a9f40a3ac3a175f65041220bf0f5a3fdf2ec93d17fa09e55a7",
     "evidence/linux_socket_owner_2026_10_24/inputs.json": "ef6ba7d02442b7f794f26a1ef159d6e825686750733f49e0ba702290405c2916",
     "evidence/linux_socket_owner_2026_10_24/interop_coverage.log": "a68a30189526e9924b3769562b2810b54f8ec7207477cfb57fe44f2a6d3634b8",
     "evidence/linux_socket_owner_2026_10_24/interop_sanitizers.log": "baf2de15f449dab4cc91e0a54517b27d17684a73cd91552154d12cd3ed137c3b",
@@ -166,5 +168,6 @@
     "evidence/linux_socket_owner_2026_10_24/socket_sanitizers_final.log": "fa140f39c24e320ba009a90bb7c977855e763e9952f702d462036b23dfc4ecb5",
     "evidence/linux_socket_owner_2026_10_24/socket_test_final.log": "3e9d6d76e12dae2236b808bdbaffda6ddcdb39d92571b6612a7a46000a1b8e22",
     "evidence/linux_socket_owner_2026_10_24/summary.json": "ca7f4f374348d68aa76b1e21d9333f3dd96cc5c0da69b2c3a3bde9bd98644338"
-  }
+  },
+  "exact_full_gates_rechecked_at_utc": "2026-10-24T21:24:40.841301+00:00"
 }
