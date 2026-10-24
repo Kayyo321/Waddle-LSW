@@ -133,7 +133,7 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     correction is under review. Original handback92.25% remains historical.
     HEAD identifies this contract correction.
 
-- **Commit `HEAD`**: `test(interop): correlate native hook delivery with fixture HWND`
+- **Commit `98cfc6f`**: `test(interop): correlate native hook delivery with fixture HWND`
   - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local90.50%).
   - **Summary**: Independent review found aggregate hint counters could pass on
     unrelated desktop traffic. White-box inclusion now inspects the exact
@@ -141,3 +141,11 @@ Task Impact percentages are task-local; global TODO #10 credit is +0 for every c
     a production seam. Bounds message dispatch per poll; preserves10s timeout.
     Strict Windows cross-link passes; native runtime evidence remains pending.
     HEAD identifies this containing smoke-test correction.
+
+- **Commit `HEAD`**: `docs(interop): record isolated Linux and real Windows review qualification`
+  - **Task Impact**: +0% to local #3/#4; +0% global TODO #10 (local90.50%).
+  - **Summary**: CI40123985933 succeeds on Linux and Windows at exact5aff081:
+    C ABI27, observer doubles65 and actual native smoke execute. Records the
+    aggregate-hint limitation and excludes newer snapshot cleanup, target
+    correlation and pending graph fixes from this result. No installed-session
+    credit or standard merge. HEAD identifies this evidence commit.
