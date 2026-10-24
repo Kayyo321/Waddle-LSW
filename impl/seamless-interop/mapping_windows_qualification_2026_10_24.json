@@ -1,0 +1,86 @@
+{
+  "recorded_utc": "2026-10-24T17:38:53.274279+00:00",
+  "sources": [
+    {
+      "path": "src/interop/interop_mapping_windows.c",
+      "sha256": "f14969eea91f564b23b05d95d37ae8e95e00915f7f339d66bb05763c9a9011e5"
+    },
+    {
+      "path": "src/interop/interop_mapping_windows.h",
+      "sha256": "38242db5d8dc0ee1dcf706808b32f9d1e820bd31126f692d09fc15f2b2bffb73"
+    },
+    {
+      "path": "src/interop/interop_ivshmem_driver.h",
+      "sha256": "7cc1ab3980fda1ae21681b8f9e6b36f443758f4748311f604e43cf39b15fe336"
+    },
+    {
+      "path": "tests/interop/mapping_windows.c",
+      "sha256": "451476ee26a2bcefb30230a1e7dceca856c62ae542dcb63c3fccf934208fd274"
+    },
+    {
+      "path": "tests/interop/mapping_windows_api_double.h",
+      "sha256": "6d90b75a986f296898464d2ba1025a6015ff6cee1c061a64fe36a43ee0e44161"
+    },
+    {
+      "path": "tests/interop/win32_shim/initguid.h",
+      "sha256": "533ebca035477f348597951386a7a43f7809e39d4a0e0c29ac9dd7e43903ec55"
+    }
+  ],
+  "commands": [
+    {
+      "command": "make interop-mapping-windows-test build/interop_mapping_windows_sdk.o build/interop_mapping_windows_test.exe",
+      "exit_code": 0,
+      "scenario_groups": 9
+    },
+    {
+      "command": "ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 make -B interop-mapping-windows-test CFLAGS=\"-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer\" LDFLAGS=\"-fsanitize=address,leak,undefined\"",
+      "exit_code": 0,
+      "leak_detection": true
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/interop/mapping_windows_coverage.py",
+      "exit_code": 0,
+      "line": [
+        202,
+        206
+      ],
+      "branch": [
+        125,
+        138
+      ]
+    }
+  ],
+  "review": [
+    "Lead fixed publication history being forgotten after a failed driver-map release; regression requires proof1 again until release succeeds.",
+    "Independent source/ABI review found no remaining concrete defect.",
+    "Fixture independently tracks every fake SDK set/device/map and allocation; combined cleanup failure retains all resources and preserves first diagnostic.",
+    "Removed redundant duplicate diagnostic normalization after documenting nonzero native-boundary errors and single primary-error binding."
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/mapping_windows_2026_10_24/seamless_mapping_windows_build.log",
+      "sha256": "0e7696a4a7f17b7f13897c90903f7b2530ef78ad50e8b411a0804a35b4496600"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/mapping_windows_2026_10_24/seamless_mapping_windows_accepted_sanitizers.log",
+      "sha256": "e2396f0f2b39ee196b430e467de4f45ed659a2ba7a3c5047fc2bd29644144432"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/mapping_windows_2026_10_24/seamless_mapping_windows_final_coverage.log",
+      "sha256": "be3bf55b46eed3379c3f04cc590eeace0352741f07110c2838059d644acffa1a"
+    }
+  ],
+  "dependency": {
+    "gitlink": "submodules/looking_glass",
+    "commit": "27fe47cbe2a3a8da986d310ab866f0b646ed68f5",
+    "url": "https://github.com/gnif/LookingGlass.git",
+    "scope": "Existing driver declarations only; no gitlink change or loose vendoring."
+  },
+  "limits": [
+    "Actual Windows SDK production translation unit and fixture cross-build pass; CPU execution pending next CI.",
+    "Driver calls are substituted in both fixture builds; this does not prove installed signed-driver mapping or accessible live2GiB BAR.",
+    "No session listener, metadata initialization, producers, compositor detachment or native endpoint acceptance is implied.",
+    "Required leak detection passes under lead host escalation; worker leak-disabled supplemental runs were not accepted as qualification."
+  ],
+  "progress_credit": 0
+}

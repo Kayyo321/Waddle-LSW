@@ -2921,3 +2921,11 @@ cleanup_error records that failure, map/device rollback is attempted and the set
 remains retained for a later close. Fake SDK resource counts must independently
 track successful sets/handles/maps and successful cleanup, not merely inspect
 the owner's cached flags or count call attempts.
+
+The reused Looking Glass gitlink is27fe47cbe2a3a8da986d310ab866f0b646ed68f5 at
+public https://github.com/gnif/LookingGlass.git. Its project LICENSE is GPLv2;
+this existing dependency supplies only the signed-driver interface declarations
+and GUID at this boundary, following the existing AV/vGPU include boundary.
+No Looking Glass runtime is linked, no vendor source is copied and no gitlink
+is changed. CI explicitly initializes that exact existing submodule before
+building the Linux double or cross-compiling the SDK translation unit.

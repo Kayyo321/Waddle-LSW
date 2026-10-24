@@ -1,0 +1,4 @@
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O2 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -DInteropMappingWindowsTestApi='"mapping_windows_api_double.h"' -Isrc/interop -Itests/interop -Itests/interop/win32_shim -Isubmodules/looking_glass/vendor/ivshmem tests/interop/mapping_windows.c  -o build/interop_mapping_windows_test
+./build/interop_mapping_windows_test
+zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/interop -Isubmodules/looking_glass/vendor/ivshmem -c src/interop/interop_mapping_windows.c -o build/interop_mapping_windows_sdk.o
+zig cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop -Isubmodules/looking_glass/vendor/ivshmem tests/interop/mapping_windows.c -o build/interop_mapping_windows_test.exe

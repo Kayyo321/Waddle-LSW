@@ -1,0 +1,3 @@
+mkdir -p build
+cc -D_GNU_SOURCE -Iinclude -Isrc -Isrc/common -Isrc/cli -Isrc/daemon -Isrc/guest -Isrc/mock -O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer -UNDEBUG -DInteropMappingWindowsTestApi='"mapping_windows_api_double.h"' -Isrc/interop -Itests/interop -Itests/interop/win32_shim -Isubmodules/looking_glass/vendor/ivshmem tests/interop/mapping_windows.c -fsanitize=address,leak,undefined -o build/interop_mapping_windows_test
+./build/interop_mapping_windows_test

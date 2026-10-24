@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test interop-device-smoke-cleanup-test interop-slot-runtime-abi-test interop-mapping-init-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test interop-mapping-windows-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig src/interop/agent_version.zig include/waddle/interop_protocol.h | build
@@ -21,7 +21,7 @@ interop-codec-test: build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
 interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test interop-stream-reader-test interop-stream-send-queue-test interop-session-liveness-test interop-session-handshake-test interop-agent-version-test interop-request-ids-test
-	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test interop-slot-runtime-abi-test interop-mapping-init-test interop-mapping-windows-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage: build/interop_codec.o
 	python3 tests/av/coverage.py interop_codec
@@ -40,6 +40,7 @@ interop-coverage: build/interop_codec.o
 	python3 tests/interop/native_atomic_coverage.py
 	python3 tests/interop/canonical_coverage.py
 	python3 tests/interop/mapping_init_coverage.py
+	python3 tests/interop/mapping_windows_coverage.py
 # Windows link check of the same C ABI test (executed by guest_windows CI).
 build/interop_codec_abi_test.exe: tests/interop/codec_abi.c build/interop_codec_windows.lib include/waddle/interop_memory.h | build
 	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude tests/interop/codec_abi.c build/interop_codec_windows.lib -o $@
@@ -185,3 +186,16 @@ interop-request-ids-test:
 	$(ZIG) test src/interop/request_ids.zig -lc
 build/interop_request_ids_test.exe: src/interop/request_ids.zig | build
 	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@
+
+# Same source against narrow Linux doubles and actual Windows SDK declarations.
+InteropMappingWindowsFixtureFlags = -DInteropMappingWindowsTestApi='"mapping_windows_api_double.h"' -Isrc/interop -Itests/interop -Itests/interop/win32_shim -Isubmodules/looking_glass/vendor/ivshmem
+InteropMappingWindowsDependencies = src/interop/interop_mapping_windows.c src/interop/interop_mapping_windows.h src/interop/interop_ivshmem_driver.h tests/interop/mapping_windows_api_double.h tests/interop/win32_shim/initguid.h submodules/looking_glass/vendor/ivshmem/ivshmem.h
+.PHONY: interop-mapping-windows-test
+build/interop_mapping_windows_test: tests/interop/mapping_windows.c $(InteropMappingWindowsDependencies) | build
+	$(CC) $(CPPFLAGS) $(CFLAGS) -UNDEBUG $(InteropMappingWindowsFixtureFlags) $< $(LDFLAGS) -o $@
+interop-mapping-windows-test: build/interop_mapping_windows_test
+	./build/interop_mapping_windows_test
+build/interop_mapping_windows_sdk.o: src/interop/interop_mapping_windows.c $(InteropMappingWindowsDependencies) | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc/interop -Isubmodules/looking_glass/vendor/ivshmem -c $< -o $@
+build/interop_mapping_windows_test.exe: tests/interop/mapping_windows.c $(InteropMappingWindowsDependencies) | build
+	$(ZIG) cc -target x86_64-windows-gnu -std=c11 -Wall -Wextra -Wpedantic -Werror -UNDEBUG -Iinclude -Isrc/interop -Isubmodules/looking_glass/vendor/ivshmem $< -o $@

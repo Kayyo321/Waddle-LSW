@@ -756,11 +756,25 @@ its uncompiled draft earns no credit until current acceptance passes.
     state and future disposable Windows runner plan are preserved separately.
     [Qualification](session_core_qualification_2026_10_24.json). Source commit4dc8df7 contains this milestone qualification.
 
-- **Commit `HEAD`**: `docs(interop): clarify published-map cleanup retry proof`
+- **Commit `894142b`**: `docs(interop): clarify published-map cleanup retry proof`
   - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total16.40%).
   - **Summary**: Review requires proof1 on every retry while a published driver
     map remains owned, but permits proof0 for retained handle/set after successful
     release. Clarifies malformed SDK data and cleanup-only diagnostic results,
     and requires fake SDK resource accounting independent of owner flags. Assigns
     source latch correction and failure regressions to separate Luna owners.
-    HEAD identifies this containing review-contract commit.
+    Source commit894142b contains this review contract.
+
+- **Commit `HEAD`**: `feat(interop): retain raw Windows mapping leases across cleanup failures`
+  - **Task Impact**: +0% to TODO #5/#6/#34 (+0% overall; total16.40%).
+  - **Summary**: Implements the opaque SDK lease owner with bounded SetupAPI
+    path acquisition, exact pinned IOCTL ABI, output preservation and retained
+    map/device/set ownership on rollback/close failures. Review fixes lost
+    publication history; independent review finds no remaining concrete defect.
+    Same source runs with independent fake-resource counters, combined cleanup
+    faults and retry regressions. Required lead ASan/LSan/UBSan passes with
+    detect_leaks1; production98.06% lines/90.58% branches. Actual SDK object and
+    Windows fixture cross-build pass; native CPU CI is wired, live driver/session
+    integration remains unaccepted and earns no progress by itself.
+    [Qualification](mapping_windows_qualification_2026_10_24.json). HEAD identifies
+    this containing implementation commit.
