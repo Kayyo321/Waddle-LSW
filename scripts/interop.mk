@@ -3,7 +3,7 @@
 
 .PHONY: interop-test
 # Hardware-free gates for the seamless-interop feature.
-interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test
+interop-test: interop-codec-test interop-layout-test interop-heap-test interop-manifest-test interop-layout-abi-test interop-native-atomic-test interop-qemu-build-test interop-vendor-copy-test interop-canonical-path-test interop-slot-runtime-test
 	bash tests/interop/verify_m0.sh
 
 build/interop_codec.o: src/interop/interop_codec.zig include/waddle/interop_protocol.h | build
@@ -20,13 +20,14 @@ interop-codec-test: build/interop_codec_abi_test
 	./build/interop_codec_abi_test
 # Bounds-checked Zig/testing-allocator suites plus C consumers under ASan/LSan/UBSan.
 # Native C mapping adapters remain a separate acceptance subtask.
-interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test
+interop-sanitizers: interop-layout-test interop-heap-test interop-manifest-test interop-slot-runtime-test
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 $(MAKE) -B interop-codec-test interop-layout-abi-test interop-native-atomic-test interop-canonical-path-test CFLAGS="-O1 -g -std=c11 -Wall -Wextra -Wpedantic -Werror -fsanitize=address,leak,undefined -fno-omit-frame-pointer" LDFLAGS="-fsanitize=address,leak,undefined"
 # >= 90% production line and branch coverage for each implemented interop module.
 interop-coverage:
 	python3 tests/av/coverage.py interop_codec
 	python3 tests/av/coverage.py interop_layout
 	python3 tests/av/coverage.py interop_heap
+	python3 tests/av/coverage.py interop_slot_runtime
 	python3 tests/av/coverage.py manifest
 	python3 tests/av/coverage.py interop_layout_abi
 	python3 tests/interop/native_atomic_coverage.py
@@ -97,3 +98,12 @@ build/interop_canonical_paths: tests/interop/canonical_paths.c src/common/argume
 	$(CC) $(CPPFLAGS) $(CFLAGS) $< src/common/arguments.c src/common/path_filesystem.c build/path_rules.o $(LDFLAGS) -Wl,--wrap=malloc,--wrap=strdup,--wrap=strndup,--wrap=realpath,--wrap=open,--wrap=fstatat,--wrap=openat,--wrap=lstat -o $@
 interop-canonical-path-test: build/interop_canonical_paths
 	./build/interop_canonical_paths
+
+.PHONY: interop-slot-runtime-test interop-slot-runtime-coverage
+# Fixed bookkeeping only; live mapping/capture integration remains separate.
+interop-slot-runtime-test:
+	$(ZIG) test src/interop/interop_slot_runtime.zig -lc
+interop-slot-runtime-coverage:
+	python3 tests/av/coverage.py interop_slot_runtime
+build/interop_slot_runtime_test.exe: src/interop/interop_slot_runtime.zig src/interop/interop_heap.zig src/interop/interop_layout.zig | build
+	$(ZIG) test $< -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=$@

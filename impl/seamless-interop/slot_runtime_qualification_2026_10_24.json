@@ -1,0 +1,42 @@
+{
+  "recorded_utc": "2026-10-24T15:56:34.614699+00:00",
+  "source_sha256": "f7d9f1c267a7a76128a048ebebe1f7c8d93ad2f1b16fb7cccceb840aabf863c8",
+  "source": "src/interop/interop_slot_runtime.zig",
+  "tests": [
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py interop_slot_runtime",
+      "exit_code": 0,
+      "line": [
+        202,
+        204
+      ],
+      "branch": [
+        149,
+        164
+      ],
+      "log": "impl/seamless-interop/evidence/slot_runtime_2026_10_24/seamless_slot_runtime_coverage.log"
+    },
+    {
+      "command": "make interop-slot-runtime-test build/interop_slot_runtime_test.exe",
+      "exit_code": 0,
+      "tests_passed": 40,
+      "log": "impl/seamless-interop/evidence/slot_runtime_2026_10_24/seamless_slot_runtime_make.log"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/slot_runtime_2026_10_24/seamless_slot_runtime_coverage.log",
+      "sha256": "c2ba6263e5752cf0bdf1948849bfa6d44e68b9a0cca75931e954d181c69557b1"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/slot_runtime_2026_10_24/seamless_slot_runtime_make.log",
+      "sha256": "cba2d1883d533edb4de1b6812ba98a4cdfa92e6648e8b3f3679fa6dc20d95043"
+    }
+  ],
+  "limits": [
+    "Pure bookkeeping only; does not access or own a mapping or perform native atomics.",
+    "Windows cross-build succeeded; actual Windows execution is pending hosted CI.",
+    "No native compositor/capture/session teardown acceptance."
+  ],
+  "progress_credit": 0
+}

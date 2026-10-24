@@ -1,0 +1,43 @@
+zig test src/interop/interop_slot_runtime.zig -lc
+1/40 interop_slot_runtime.test.admission, descriptor indices, identity and unchanged errors...OK
+2/40 interop_slot_runtime.test.provisional writer has distinct cancellation and exact release pin...OK
+3/40 interop_slot_runtime.test.growth waits on every pin and switches only free descriptors...OK
+4/40 interop_slot_runtime.test.retirement quarantines claims and releases on exact final pin...OK
+5/40 interop_slot_runtime.test.drain requires producer and host proofs and releases all pinned runs...OK
+6/40 interop_slot_runtime.test.all descriptor indices are assigned and generation never reuses...OK
+7/40 interop_slot_runtime.test.transactional allocation errors preserve output and allocator...OK
+8/40 interop_slot_runtime.test.shrink updates future geometry without replacing pinned runs...OK
+9/40 interop_slot_runtime.test.invalid writer evidence fails closed and explicit proof still drains...OK
+10/40 interop_slot_runtime.test.sequence is strictly increasing and exhausted sequence cannot wrap...OK
+11/40 interop_slot_runtime.test.long-running slot cycle preserves exact ownership across reuse...OK
+12/40 interop_slot_runtime.test.capture dimensions use frozen independent clamps...OK
+13/40 interop_slot_runtime.test.retirement cancels a provisional claim before releasing descriptors...OK
+14/40 interop_slot_runtime.test.drain releases mixed active replacement and retired runs...OK
+15/40 interop_slot_runtime.test.slot capacity corruption is rejected without claiming a writer...OK
+16/40 interop_slot_runtime.test.growth release corruption fails closed and retains reservations...OK
+17/40 interop_slot_runtime.test.retirement release corruption remains recoverable only with drain proof...OK
+18/40 interop_slot_runtime.test.host drain allocation failure does not partially release runtime runs...OK
+19/40 interop_slot_runtime.test.caller-owned runtime allocation has a complete leak-free lifecycle...OK
+20/40 interop_slot_runtime.test.writer identity guards and active-writer drain guard...OK
+21/40 interop_slot_runtime.test.pending growth accepts a smaller desired geometry without dropping replacement...OK
+22/40 interop_slot_runtime.test.corrupt post-publication bookkeeping fails closed and preserves all runs...OK
+23/40 interop_slot_runtime.test.stale asynchronous writer work cannot mutate a replacement session...OK
+24/40 interop_heap.test.initialization and capacity errors preserve outputs...OK
+25/40 interop_heap.test.first fit skips a partially occupied candidate...OK
+26/40 interop_heap.test.all single-page records can be reserved and ledger exhaustion is atomic...OK
+27/40 interop_heap.test.full heap allocates all pages then rejects another reservation unchanged...OK
+28/40 interop_heap.test.first fit respects fragmentation and coalesces released neighbors...OK
+29/40 interop_heap.test.release rejects altered, stale, interior, and duplicate tokens atomically...OK
+30/40 interop_heap.test.release detects corrupt stored range and missing bitmap pages atomically...OK
+31/40 interop_heap.test.ticket exhaustion does not wrap or partially allocate...OK
+32/40 interop_heap.test.deterministic randomized operations match independent page oracle...OK
+33/40 interop_layout.test.valid layout header is snapshotted with ABI fields...OK
+34/40 interop_layout.test.header validation rejects length mapping alignment and epoch boundaries...OK
+35/40 interop_layout.test.header validation rejects changed fixed fields and nonzero reserved bytes...OK
+36/40 interop_layout.test.ready descriptor validates identity geometry and complete heap bounds...OK
+37/40 interop_layout.test.descriptor validation rejects malformed identity state and bounds without changing output...OK
+38/40 interop_layout.test.frame layout clamps maxima and rounds stride and heap pages...OK
+39/40 interop_layout.test.audio ring bounds cover eight disjoint strides and preserve output on error...OK
+40/40 interop_layout.test.header parser survives deterministic one-byte mutation corpus...OK
+All 40 tests passed.
+zig test src/interop/interop_slot_runtime.zig -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=build/interop_slot_runtime_test.exe

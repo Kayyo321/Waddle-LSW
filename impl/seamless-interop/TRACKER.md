@@ -72,7 +72,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
-| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pinned slot/growth/runtime integration 25%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; Linux/Windows coverage and tests pass |
+| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration 15%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; Linux/Windows coverage and tests pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
@@ -508,11 +508,23 @@ its uncompiled draft earns no credit until current acceptance passes.
     [qualification receipt](canonical_qualification_2026_10_24.json). Roots must
     remain stable; guest binding and native qualification remain open. Source commit7d66882 contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): bound parallel runtime and recovery follow-ups`
+- **Commit `d547f5b`**: `docs(interop): bound parallel runtime and recovery follow-ups`
   - **Task Impact**: +0% to TODO #5/#9/#33/#34 (+0% overall; total14.10%).
   - **Summary**: Records the opaque scalar slot-runtime C API, explicit epoch
     and proof-gated destruction, and resumes bounded independent Luna tasks
     after the manifest worker hit an output limit. Reserves all Claude-owned
     paths unchanged. Clarifies menu roots and writer epoch requirements.
-    Planning and pending unaccepted source add no credit. HEAD identifies this
-    containing design/ownership commit.
+    Planning and pending unaccepted source add no credit. Source commitd547f5b contains this design/ownership update.
+
+- **Commit `HEAD`**: `feat(interop): track slot pins growth and proof-gated drain`
+  - **Task Impact**: +0% to TODO #5/#34 (+0% overall; total14.10%).
+  - **Summary**: Adds fixed, allocation-free window/triple ownership, transactional
+    growth, exact release pins, captured-epoch writer operations, retirement
+    quarantine and explicit producer/host drain proofs. Forty tests pass and
+    production coverage is202/204 lines and149/164 branches. Adds this suite to
+    Linux gates and Windows artifact execution. Windows cross-build passes;
+    actual Windows execution remains pending, so the10% pure bookkeeping
+    milestone receives no credit yet. The previous25% runtime allocation is
+    split into10% pure bookkeeping and15% live integration; weights unchanged.
+    [Qualification](slot_runtime_qualification_2026_10_24.json). HEAD identifies
+    this containing implementation commit.
