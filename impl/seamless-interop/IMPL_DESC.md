@@ -2713,3 +2713,62 @@ both complete roles, zero/subset/intersection negotiation, every wrong token/
 time/phase/ID/epoch/version/capability boundary, exact deadline and uint64 end
 boundaries, pending-send readiness, transport loss, repeated drain and explicit
 teardown. No reconnect/socket/signed-driver acceptance is implied.
+
+### 8.15 Bounded Ready-session control liveness
+
+New session_liveness.zig starts only after handshake Ready. It is a pure,
+allocation-free, serialized value machine initialized with Host/Guest role,
+nonzero connection_token and ready_at_ms. Store last accepted event, last valid
+receive and last registered host Ping times, initially ready_at_ms, plus four
+optional Ping records(request_id, issued_at_ms) and a closed flag. No socket,
+frame allocation, mapping, request counter or shared heartbeat is owned.
+
+Every call checks connection token, nondecreasing monotonic time and live state
+before mutation. Local invalid role/ID/due/capacity errors preserve the entire
+state; use a staged copy for checks that can fail after time processing. Elapsed
+subtraction avoids deadline overflow. If now-last_valid_rx>=6000, close before
+processing even a newly arrived frame at that exact deadline. Return a copied
+Disconnect action and release every outstanding local Ping ID. EOF/transport
+loss likewise closes and releases local Ping tracking only; no action releases
+a frame pin or proves producer/host drain. A new connection uses a new instance.
+
+Only complete codec-valid inbound frames count as traffic. observe_valid_frame
+refreshes receive time without completing Ping requests. Guest receive_ping
+requires a nonzero host request ID and returns SendPong echoing it immediately;
+host receive_pong requires a nonzero ID, completes a matching pending Ping, or
+ignores an unmatched/late ID while still counting the valid inbound frame.
+This is explicit endpoint policy: do not invent all-time replay tracking or
+terminate an otherwise live session solely for a late Pong. Wrong-direction
+message dispatch remains a fatal owner/handshake policy; local wrong-role API
+calls preserve state and return an error.
+
+Host tick reports PingDue whenever now-last_registered_ping>=2000. It does not
+allocate an ID or pretend a queued frame was sent. The owner obtains an unused
+nonzero ID from its shared per-direction request allocator, calls register_ping
+before enqueuing, then queues the Ping; a required enqueue failure closes the
+session. Registration requires Host, PingDue, no matching pending ID and a free
+record. It records issued_at_ms=now and updates last_registered_ping=now.
+There is no catch-up burst after missed ticks: one registration resets cadence.
+Repeated ticks can report the same due advice until registration succeeds.
+
+Each Ping record independently expires when now-issued_at_ms>=6000, even if
+other valid traffic keeps the connection alive. Expire records before admission
+or Pong matching. Returned actions include a fixed vector of up to four released
+IDs (expiry, matched response or disconnect); the owner retires those IDs from
+its allocator. With registration no faster than2s, expiry before admission and
+four records, normal traffic cannot exhaust this table. An unmatched response
+after expiry is harmless. This solves unbounded outstanding requests when a
+peer sends valid non-Pong traffic indefinitely. The caller's common allocator
+must still avoid IDs outstanding in other feature modules and implement frozen
+nonzero wrap semantics; this module does not mint a separate ID namespace.
+
+Actions contain copied flags(PingDue, Disconnect), optional echoed Pong ID,
+matched-response information and released-ID vector/count. Guest tick never
+requests Ping. Valid ordinary traffic does not postpone host Ping cadence.
+Closed calls, backwards clocks, wrong tokens, duplicate IDs and early Ping
+registration have no state mutation. Tests cover exact1999/2000 and5999/6000
+boundaries, both roles, queued registration before response, independent expiry
+under continuous other traffic, out-of-order/late/unknown Pongs, shared allocator
+handoff outputs, disconnect, stale callback tokens, uint64 end boundaries and
+long deterministic traffic without allocation. Shared-memory500ms heartbeats
+remain independent and are never interpreted as detach/drain evidence.

@@ -116,15 +116,15 @@
       "effort": "high",
       "allocation_source": "user_override",
       "owned_files": [
-        "src/interop/stream_send_queue.zig"
+        "src/interop/session_liveness.zig"
       ],
-      "task": "Implement codec-validated owned FIFO per IMPL_DESC8.13; bounded512frames,8reservedadmission, partialwrite and allocator failure invariants",
+      "task": "Implement pure Ready-session liveness against IMPL_DESC8.15 with four expiring Ping records and caller-owned IDs",
       "acceptance": [
-        "isolated Zig tests linked with correctly built production codec object",
-        "lead unchanged90% line/branch and WindowsCI"
+        "isolated Zig exact-time/traffic/ownership tests",
+        "lead unchanged90% production line/branch and nativeWindowsCI"
       ],
       "constraints": [
-        "No Git/sharedbuild/VM/Claude/nestedagents; reader and frozen codec unchanged"
+        "No Git/sharedbuild/VM/Claude/recursiveagents; no wire/header/counter invention"
       ],
       "runner_ownership": "isolated/tmp CPU only"
     },

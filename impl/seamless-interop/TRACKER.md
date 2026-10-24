@@ -600,11 +600,20 @@ its uncompiled draft earns no credit until current acceptance passes.
     no build/command consumer or engine credit is claimed. Resume instructions
     are in[the review](resume_proposals/manifest_store_review.md). Source commit0d870e7 contains this draft/evidence.
 
-- **Commit `HEAD`**: `docs(interop): define owned queue and handshake acceptance`
+- **Commit `0f341a5`**: `docs(interop): define owned queue and handshake acceptance`
   - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Specifies FIFO ownership,512-frame/eight-slot admission bounds,
     partial writes and allocation-failure invariants; freezes bounded typed
     handshake roles, validation, complete-send readiness, exact deadline and
     external mapping obligations. Defines endpoint subtask allocations before
     qualification; isolated common modules earn no native endpoint credit.
-    Reserves independent Luna files. HEAD identifies this design/ownership commit.
+    Reserves independent Luna files. Source commit0f341a5 contains this design/ownership.
+
+- **Commit `HEAD`**: `docs(interop): specify bounded control liveness and adapter maps`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Defines Ready-only receive deadlines, Ping cadence and bounded
+    per-request expiry under continuous other traffic, plus caller-owned request
+    IDs and lifecycle-only disconnect actions. Saves read-only host/guest API
+    maps for actual OS adapters; legacy driver validation and daemon Running
+    are not new-session readiness. No live endpoint or qualification credit.
+    HEAD identifies this containing specification/evidence commit.
