@@ -1,0 +1,16 @@
+zig test src/interop/session_liveness.zig -Iinclude -lc
+1/13 session_liveness.test.host cadence registration and matched pong handoff...OK
+2/13 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+3/13 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+4/13 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+5/13 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+6/13 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+7/13 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+8/13 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+9/13 session_liveness.test.local errors and stale tokens preserve complete state...OK
+10/13 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+11/13 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+12/13 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+13/13 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+All 13 tests passed.
+zig test src/interop/session_liveness.zig -Iinclude -lc -target x86_64-windows-gnu --test-no-exec -femit-bin=build/interop_session_liveness_test.exe

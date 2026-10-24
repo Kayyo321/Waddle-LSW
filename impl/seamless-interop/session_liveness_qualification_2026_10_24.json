@@ -1,0 +1,44 @@
+{
+  "source": "src/interop/session_liveness.zig",
+  "source_sha256": "5655e835e3beac19900b1d564228fa5c5f68b1dce0a5762197c24b1b31c662fc",
+  "recorded_utc": "2026-10-24T16:57:37.332285+00:00",
+  "commands": [
+    {
+      "command": "make interop-session-liveness-test build/interop_session_liveness_test.exe",
+      "exit_code": 0,
+      "tests_passed": 13
+    },
+    {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 tests/av/coverage.py session_liveness",
+      "exit_code": 0,
+      "line": [
+        100,
+        103
+      ],
+      "branch": [
+        36,
+        40
+      ]
+    }
+  ],
+  "review": [
+    "Lead rejected returning an expired request ID as retired while immediately re-registering the same ID. Tracked IDs now require explicit prior release; regression passes.",
+    "Independent semantic review and out-of-order/unknown Pong regressions completed."
+  ],
+  "artifacts": [
+    {
+      "path": "impl/seamless-interop/evidence/session_liveness_2026_10_24/seamless_liveness_build.log",
+      "sha256": "c7a3f84def176f2f0e59036e5878f512b88d3a16b8fc6d1d67000c4b0ee3fd3a"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/session_liveness_2026_10_24/seamless_liveness_accepted_coverage.log",
+      "sha256": "5d0f155aa77442df49513b8a47764bf0b3ae144a7a3a5b2843a90017923b0b3e"
+    }
+  ],
+  "limits": [
+    "Ready-only allocation-free state machine; owns no socket, shared request allocator, mapping or frame pins.",
+    "Only complete codec-valid frames may refresh receive time. Connection owner must enqueue required Ping/Pong and close on required send failure.",
+    "Windows cross-build passes; actual Windows execution pending next CI."
+  ],
+  "progress_credit": 0
+}

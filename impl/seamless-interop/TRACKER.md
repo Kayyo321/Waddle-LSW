@@ -658,12 +658,23 @@ its uncompiled draft earns no credit until current acceptance passes.
     endpoint remains uncredited until native Windows execution.
     [Qualification](stream_send_queue_qualification_2026_10_24.json). Source commitab676a8 contains this implementation.
 
-- **Commit `HEAD`**: `docs(interop): specify shared semantic version parsing`
+- **Commit `6593765`**: `docs(interop): specify shared semantic version parsing`
   - **Task Impact**: +0% to TODO #4/#6/#7/#34 (+0% overall; total14.40%).
   - **Summary**: Records a discovered codec contract defect: digits-only parsing
     rejects prerelease/build labels and permits leading zeroes. Specifies one
     bounded allocation-free SemVer2 parser for codec and peer consumers, checked
     uint32 major conversion and full grammar/Windows/coverage verification.
     Saves the C/OS peer-boundary investigation as a proposal; unresolved policy
-    choices are not implementation acceptance. HEAD identifies this containing
-    specification commit.
+    choices are not implementation acceptance. Source commit6593765 contains this specification.
+
+- **Commit `HEAD`**: `feat(interop): track bounded Ready-session liveness`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total14.40%).
+  - **Summary**: Implements exact2s Ping cadence and6s receive/per-request
+    deadlines with four bounded records, caller-owned request IDs and copied
+    retirement actions. Review closes expired-ID reuse/retirement collision;
+    tests cover out-of-order/unknown/late Pongs, continuous other traffic and
+    exact deadline/clock/token boundaries. Thirteen tests pass,97.09% production
+    lines/90% branches; no socket or mapping-drain proof is claimed. Windows
+    cross-build and CI gates added; liveness5% per endpoint awaits native CI.
+    [Qualification](session_liveness_qualification_2026_10_24.json). HEAD identifies
+    this containing implementation commit.

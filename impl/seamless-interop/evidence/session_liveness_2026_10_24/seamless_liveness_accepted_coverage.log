@@ -1,0 +1,29 @@
+preserved session_liveness coverage: /home/dev/Waddle-LSW/build/coverage/interop/session_liveness/run-20261024T165631574996Z-315174
+session_liveness instrumentation: 201 exact metadata-bound sites; 2/32 maximum edges; native target x86_64-unknown-linux-gnu CPUs ['x86-64']
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+'-3dnow' is not a recognized feature for this target (ignoring feature)
+'-3dnowa' is not a recognized feature for this target (ignoring feature)
+'-avx512er' is not a recognized feature for this target (ignoring feature)
+'-avx512pf' is not a recognized feature for this target (ignoring feature)
+'-prefetchwt1' is not a recognized feature for this target (ignoring feature)
+Coverage recorder storage: 1008/524288 bytes; 201 sites
+1/13 session_liveness.test.host cadence registration and matched pong handoff...OK
+2/13 session_liveness.test.guest echoes only nonzero Ping and never asks to ping...OK
+3/13 session_liveness.test.exact any-frame deadline closes before a boundary frame...OK
+4/13 session_liveness.test.ping records expire independently during continuous ordinary traffic...OK
+5/13 session_liveness.test.registration limits are transactional and reused IDs require release...OK
+6/13 session_liveness.test.expired ID remains unavailable until an event returns its release...OK
+7/13 session_liveness.test.multiple pongs match out of order and unknown IDs remain harmless...OK
+8/13 session_liveness.test.Ping APIs close at connection deadline and wrong-role Pong is transactional...OK
+9/13 session_liveness.test.local errors and stale tokens preserve complete state...OK
+10/13 session_liveness.test.disconnect releases all pending IDs exactly once...OK
+11/13 session_liveness.test.role errors at future times do not mutate or trigger timeout...OK
+12/13 session_liveness.test.elapsed comparisons remain correct near uint64 maximum...OK
+13/13 session_liveness.test.deterministic long Ready traffic stays bounded and allocation free...OK
+All 13 tests passed.
+session_liveness production branch coverage: 90.00% (36/40); 46 compiler panic/stack-canary guards excluded
+session_liveness production line coverage: 97.09% (100/103); 46 compiler panic/stack-canary guards excluded
