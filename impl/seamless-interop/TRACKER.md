@@ -995,7 +995,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     [Token proof](claude_window_graph/type_naming_receipt_2026_10_24.json).
     HEAD identifies this identifier-only conformance commit.
 
-- **Commit `HEAD`**: `docs(interop): archive green import CI and open destroy preservation design`
+- **Commit `3b5cb2d`**: `docs(interop): archive green import CI and open destroy preservation design`
   - **Task Impact**: +0% to TODO #7/#10/#34 (+0% overall; total17.80%).
   - **Summary**: Graph CI40128006111 at exact57847b1 passes Linux and actual
     Windows, joining green interop40128006140 and Native AV40128006121. Later
@@ -1005,3 +1005,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     independent review finds pending-frame starvation and unresolved POLLERR
     dispatch. Source stays unaccepted while Luna fixes/expands tests. No
     observer/native/socket-owner credit is granted. HEAD is this audit commit.
+
+- **Commit `HEAD`**: `docs(interop): require contextual socket owner failure recovery`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total17.80%).
+  - **Summary**: Proves sole-owner phase/role invariants and moves legitimate
+    mapping errors before ABI calls; any escaped mapping/drain ABI error must
+    close and report PeerFailure, preserving caller output. Archives independent
+    initial socket and guard-test reviews. Draft regressions now cover real
+    helper-cap completion, POLLERR/EINTR, drain tick/flush and notification failure;
+    latest91.12% lines81.02% branches still fails90% branch gate, so source remains
+    unaccepted. Parallel runtime/guard/reachability lanes continue.
+    HEAD identifies this recovery-contract commit.

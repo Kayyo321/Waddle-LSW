@@ -53,7 +53,7 @@
       ]
     }
   ],
-  "baseline": "4f5a92d",
+  "baseline": "3e564ad",
   "workers": [
     {
       "agent": "luna_layout",
@@ -111,17 +111,6 @@
   "checkpoint_status": "active",
   "active_workers": [
     {
-      "agent": "luna_layout",
-      "model": "gpt-6-luna",
-      "effort": "high",
-      "owned_files": [
-        "src/interop/window_graph.zig",
-        "src/interop/window_graph_abi.zig",
-        "include/waddle/interop_window_graph.h"
-      ],
-      "task": "Implement frozen8.22.3 tracked snapshot with engine/ABI tests; isolated builds only"
-    },
-    {
       "agent": "luna_qemu_build",
       "model": "gpt-6-luna",
       "effort": "high",
@@ -129,16 +118,25 @@
         "src/interop/linux_socket_owner.c",
         "tests/interop/linux_socket_owner.c"
       ],
-      "task": "Implement frozen8.23 bounded connected socket owner; real socketpair/fault tests in /tmp"
+      "task": "8.23/8.23.1 byte-owner drive/fault/stress cases; branch gate remains below90%"
+    },
+    {
+      "agent": "luna_layout",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "owned_files": [
+        "tests/interop/linux_socket_owner_guards.c"
+      ],
+      "task": "Independent public API pointer/alias/thread/creation/closed guards; source/main untouched"
     },
     {
       "agent": "luna_mounts",
       "model": "gpt-6-luna",
       "effort": "high",
       "owned_files": [
-        "/tmp/seamless_priority_destroy_cleanup_api.md"
+        "/tmp/seamless_socket_remaining_branch_review.md"
       ],
-      "task": "Advisory quiesced local cleanup/evidence handoff proposal; no repository changes"
+      "task": "Read-only remaining branch reachability and correctness audit; no repository changes"
     }
   ],
   "completed_followups": [
@@ -225,5 +223,5 @@
     "ci_run": 40126247004,
     "ci_conclusion": "success"
   },
-  "lead_current_work": "Main reviewed graph57847b1 imported, pure graph/ABI35% accepted; total17.80%. Peer and Native AV CI40128006140/40128006121 green including actual Windows47/84. Graph CI40128006111 pending. Native guard5ed706d committed with cross-builds; snapshot worker pending qualification; Linux connected-owner implementation active under8.23. Root owns C integration fixture, make/coverage/CI, docs/tracker/Git and native runner; no VM actions."
+  "lead_current_work": "Reviewed graph import35% accepted, total17.80%. Exact57847b1 all3CIgreen. Snapshot/nativeguard3e564ad graph+NativeAVCIgreen, interopCIpending. Root owns coverage helper, buildintegration, docs/tracker/Git/CI; socket draft91.12line81.02branchunaccepted. O5 design advisory; only graphsnapshot prerequisiteimplemented. NoVMactions."
 }

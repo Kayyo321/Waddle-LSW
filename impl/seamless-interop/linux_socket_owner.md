@@ -114,3 +114,12 @@ full interop regression checks. Socketpair proves this byte owner only. Within
 VSOCK admission/singleton is10% and daemon/local-control integration is10%.
 No completion is awarded until implemented and qualified. No #6 Windows-owner
 or native mapping/capture/reconnect/epoch-drain credit is granted.
+
+## Contextual result amendment
+
+IMPL_DESC8.23.1 supersedes broad post-call status mapping. Once local mapping/
+drain preflights pass, every escaped peer non-Success is an invariant failure
+requiring close and PeerFailure with unchanged caller event output. Guest
+false/layout/epoch errors and owner wrong phase remain local preflights; Host
+failed validation remains forwarded evidence. Creation alone maps its documented
+argument/allocation results before fd transfer.

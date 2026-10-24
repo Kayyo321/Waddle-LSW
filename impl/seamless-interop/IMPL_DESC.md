@@ -3456,3 +3456,35 @@ connected-byte-owner5%, connection/VSOCK/singleton10%, daemon/local-control10%.
 The portable owner earns no credit until real socketpair, adversarial coverage,
 zero-leak sanitizers and full shared regression gates pass. Other #7 allocations
 and all Windows/native session qualification stay separate.
+
+
+#### 8.23.1 Contextual mapping/drain result classification
+
+The socket owner is the sole serialized caller of its private peer, retains
+immutable configured role/token, and updates its phase/wait latch immediately
+after every successful peer operation. Host MappingWait exists only after
+ValidateMapping/AwaitMapping; Guest initial MappingWait corresponds exactly to
+InitializingMapping. Caller mapping-result checks are read-only before the ABI
+call: owner/thread/token/time, closed/state/pending phase, boolean success, then
+Guest layout, failed initialization and zero epoch in the existing peer order.
+Host false/mismatched evidence is forwarded unchanged and can validly return
+Success with Draining. These preflights expose all legitimate caller errors
+without I/O or output changes.
+
+After these checks, every non-Success peer mapping result is an unexpected
+owner/peer disagreement, including WrongPhase, InvalidArgument or MappingFailed.
+It returns socket PeerFailure, closes transport once, retains the first cause,
+quiesces synchronous I/O, reports transport loss and preserves caller event
+bytes. It must not be advertised as retryable bad caller input. Likewise the
+pure peer begin_drain accepts every phase (including idempotent terminal
+handling); the live socket owner has already checked token/time/closed status.
+Every escaped non-Success from begin_drain is therefore PeerFailure with the
+same close/output contract, never a new local WrongPhase allowance.
+
+Creation alone maps documented peer InvalidArgument/OutOfMemory/Success; all
+other create results become PeerFailure before descriptor transfer, with owner
+output NULL and caller retaining fd. Safe link-wrapper regressions distinguish
+real bad-caller mapping preflights from unexpected post-preflight ABI statuses.
+No blanket error-tag allowlist is permitted after operation preflight. This
+corrects retry-versus-abort semantics independently of coverage and supersedes
+more general wording in linux_socket_owner.md.
