@@ -8,17 +8,25 @@ import json
 import os
 from pathlib import Path
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
 from native_guest_runner import (
+    MaximumGuestVsockCid,
+    MinimumGuestVsockCid,
+    VhostVsockMajor,
+    VhostVsockMinor,
     _check_no_writable_base_holder,
+    _duplicate_vhost_vsock_fd,
     _protected_snapshot,
     _reject_external_qcow2_storage,
     _run_bounded,
+    _validate_guest_vsock_cid,
     _validate_qemu,
     base_read_lease_t,
     native_guest_runner_t,
@@ -495,6 +503,188 @@ class native_guest_runner_contract_tests_t(unittest.TestCase):
         self.assertNotIn("usb-host", joined)
         self.assertNotIn("audiodev", joined)
         self.assertNotIn("windows.qcow2", joined)
+
+    def test_guest_vsock_cid_rejects_reserved_and_noninteger_values(self) -> None:
+        _validate_guest_vsock_cid(None)
+        for value in (0, 1, 2, 0xFFFFFFFF, -1, MaximumGuestVsockCid + 1,
+                      True, 3.0, "3"):
+            with self.subTest(value=value), self.assertRaisesRegex(runner_error_t, "guest vsock CID"):
+                _validate_guest_vsock_cid(value)  # type: ignore[arg-type]
+        _validate_guest_vsock_cid(MinimumGuestVsockCid)
+        _validate_guest_vsock_cid(MaximumGuestVsockCid)
+
+    def test_vhost_vsock_duplicate_rejects_closed_regular_and_wrong_device_fds(self) -> None:
+        with self.assertRaisesRegex(runner_error_t, "nonnegative open"):
+            _duplicate_vhost_vsock_fd(-1)
+        with self.assertRaisesRegex(runner_error_t, "duplicate"):
+            _duplicate_vhost_vsock_fd(999999)
+        source_fd = os.open(self.root / "ordinary-file", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        self.addCleanup(os.close, source_fd)
+        with self.assertRaisesRegex(runner_error_t, "character device"):
+            _duplicate_vhost_vsock_fd(source_fd)
+        char_info = SimpleNamespace(st_mode=stat.S_IFCHR | 0o600, st_rdev=os.makedev(10, 240))
+        duplicates: list[int] = []
+        original_dup = os.dup
+
+        def tracked_dup(fd: int) -> int:
+            duplicate_fd = original_dup(fd)
+            duplicates.append(duplicate_fd)
+            return duplicate_fd
+
+        with mock.patch("native_guest_runner.os.fstat", return_value=char_info):
+            with mock.patch("native_guest_runner.os.dup", side_effect=tracked_dup):
+                with self.assertRaisesRegex(runner_error_t, "10:241"):
+                    _duplicate_vhost_vsock_fd(source_fd)
+        self.assertEqual(len(duplicates), 1)
+        with self.assertRaises(OSError):
+            fcntl.fcntl(duplicates[0], fcntl.F_GETFD)
+
+    def test_vhost_vsock_fd_duplicates_cloexec_and_preserves_caller_fd(self) -> None:
+        source_fd = os.open(self.root / "vhost-source", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        self.addCleanup(os.close, source_fd)
+        char_info = SimpleNamespace(st_mode=stat.S_IFCHR | 0o600,
+                                    st_rdev=os.makedev(VhostVsockMajor, VhostVsockMinor))
+        with mock.patch("native_guest_runner.os.fstat", return_value=char_info):
+            duplicate_fd = _duplicate_vhost_vsock_fd(source_fd)
+        try:
+            self.assertNotEqual(duplicate_fd, source_fd)
+            self.assertFalse(os.get_inheritable(duplicate_fd))
+            self.assertTrue(os.fstat(source_fd))
+        finally:
+            os.close(duplicate_fd)
+
+    def test_vhost_vsock_duplicate_failure_does_not_close_caller_fd(self) -> None:
+        source_fd = os.open(self.root / "vhost-dup-failure", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        self.addCleanup(os.close, source_fd)
+        with mock.patch("native_guest_runner.os.dup", side_effect=OSError("mock dup failure")):
+            with self.assertRaisesRegex(runner_error_t, "mock dup failure"):
+                _duplicate_vhost_vsock_fd(source_fd)
+        self.assertTrue(os.fstat(source_fd))
+
+    def test_vhost_vsock_validation_failure_closes_duplicate(self) -> None:
+        source_fd = os.open(self.root / "vhost-validation-failure", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        self.addCleanup(os.close, source_fd)
+        duplicates: list[int] = []
+        original_dup = os.dup
+
+        def tracked_dup(fd: int) -> int:
+            duplicate_fd = original_dup(fd)
+            duplicates.append(duplicate_fd)
+            return duplicate_fd
+
+        with mock.patch("native_guest_runner.os.dup", side_effect=tracked_dup):
+            with mock.patch("native_guest_runner.os.set_inheritable", side_effect=OSError("mock CLOEXEC failure")):
+                with self.assertRaisesRegex(runner_error_t, "mock CLOEXEC failure"):
+                    _duplicate_vhost_vsock_fd(source_fd)
+        self.assertEqual(len(duplicates), 1)
+        with self.assertRaises(OSError):
+            fcntl.fcntl(duplicates[0], fcntl.F_GETFD)
+        self.assertTrue(os.fstat(source_fd))
+
+    def test_vhost_vsock_rejects_readonly_and_writeonly_fds(self) -> None:
+        char_info = SimpleNamespace(st_mode=stat.S_IFCHR | 0o600,
+                                    st_rdev=os.makedev(VhostVsockMajor, VhostVsockMinor))
+        original_dup = os.dup
+        for access_mode in (os.O_RDONLY, os.O_WRONLY):
+            with self.subTest(access_mode=access_mode):
+                source_fd = os.open(self.root / f"vhost-mode-{access_mode}",
+                                    os.O_CREAT | access_mode | os.O_CLOEXEC, 0o600)
+                duplicates: list[int] = []
+
+                def tracked_dup(fd: int) -> int:
+                    duplicate_fd = original_dup(fd)
+                    duplicates.append(duplicate_fd)
+                    return duplicate_fd
+
+                try:
+                    with mock.patch("native_guest_runner.os.fstat", return_value=char_info):
+                        with mock.patch("native_guest_runner.os.dup", side_effect=tracked_dup):
+                            with mock.patch("native_guest_runner.fcntl.fcntl", return_value=access_mode):
+                                with self.assertRaisesRegex(runner_error_t, "read/write access"):
+                                    _duplicate_vhost_vsock_fd(source_fd)
+                    self.assertEqual(len(duplicates), 1)
+                    with self.assertRaises(OSError):
+                        fcntl.fcntl(duplicates[0], fcntl.F_GETFD)
+                    self.assertTrue(os.fstat(source_fd))
+                finally:
+                    os.close(source_fd)
+
+    def test_vhost_vsock_run_api_closes_only_owned_duplicate(self) -> None:
+        source_fd = os.open(self.root / "vhost-run-api", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        self.addCleanup(os.close, source_fd)
+        char_info = SimpleNamespace(st_mode=stat.S_IFCHR | 0o600,
+                                    st_rdev=os.makedev(VhostVsockMajor, VhostVsockMinor))
+        runner = native_guest_runner_t(runner_config_t(guest_vsock_cid=42))
+        duplicated: list[int] = []
+        original_dup = os.dup
+
+        def tracked_dup(fd: int) -> int:
+            result_fd = original_dup(fd)
+            duplicated.append(result_fd)
+            return result_fd
+
+        with mock.patch("native_guest_runner.os.fstat", return_value=char_info):
+            with mock.patch("native_guest_runner.os.dup", side_effect=tracked_dup):
+                runner.run = mock.Mock(return_value={"test_only": True})  # type: ignore[method-assign]
+                result = runner.run_with_vhost_vsock_fd(source_fd)
+        self.assertEqual(result, {"test_only": True})
+        self.assertIsNone(runner._vhost_vsock_fd)
+        self.assertTrue(os.fstat(source_fd))
+        self.assertEqual(len(duplicated), 1)
+        with self.assertRaises(OSError):
+            fcntl.fcntl(duplicated[0], fcntl.F_GETFD)
+        self.assertEqual(runner.run.call_count, 1)  # type: ignore[attr-defined]
+
+        with mock.patch("native_guest_runner.os.fstat", return_value=char_info):
+            with mock.patch("native_guest_runner.os.dup", side_effect=tracked_dup):
+                runner.run = mock.Mock(side_effect=runner_error_t("mock run failure"))  # type: ignore[method-assign]
+                with self.assertRaisesRegex(runner_error_t, "mock run failure"):
+                    runner.run_with_vhost_vsock_fd(source_fd)
+        self.assertEqual(len(duplicated), 2)
+        with self.assertRaises(OSError):
+            fcntl.fcntl(duplicated[1], fcntl.F_GETFD)
+        self.assertIsNone(runner._vhost_vsock_fd)
+
+    def test_vhost_vsock_pair_and_qemu_arguments_are_explicit(self) -> None:
+        runner = native_guest_runner_t(runner_config_t(guest_vsock_cid=42, run_parent=self.root))
+        runner.run_root = self.root
+        with self.assertRaisesRegex(runner_error_t, "requires an owned"):
+            runner._qemu_argv(self.root / "tpm.sock")
+        runner._vhost_vsock_fd = 73
+        argv = runner._qemu_argv(self.root / "tpm.sock")
+        self.assertIn("vhost-vsock-pci,guest-cid=42,vhostfd=73", argv)
+        self.assertEqual(argv[argv.index("-machine") + 1], "q35,accel=tcg")
+
+    def test_qemu_child_receives_only_the_supplied_duplicate_fd(self) -> None:
+        runner = native_guest_runner_t(runner_config_t(run_parent=self.root))
+        calls: list[dict[str, object]] = []
+        process = fake_process_t()
+
+        def fake_popen(_argv: list[str], **kwargs: object) -> fake_process_t:
+            calls.append(kwargs)
+            return process
+
+        runner._popen = fake_popen
+        source_fd = os.open(self.root / "vhost-pass-fds", os.O_CREAT | os.O_RDWR | os.O_CLOEXEC, 0o600)
+        duplicate_fd = os.dup(source_fd)
+        os.set_inheritable(duplicate_fd, False)
+        self.addCleanup(os.close, duplicate_fd)
+        self.addCleanup(os.close, source_fd)
+        runner._start_child("qemu", ["qemu-test"], self.root / "qemu-child.log",
+                            pass_fds=(duplicate_fd,))
+        self.assertEqual(calls[0]["pass_fds"], (duplicate_fd,))
+        self.assertTrue(calls[0]["close_fds"])
+        self.assertNotIn(source_fd, calls[0]["pass_fds"])
+        self.assertEqual(calls[0]["stdin"], subprocess.DEVNULL)
+        runner._close_child_log(process)
+
+    def test_guest_vsock_configuration_requires_the_fd_callback_api(self) -> None:
+        runner = native_guest_runner_t(runner_config_t(guest_vsock_cid=42))
+        with self.assertRaisesRegex(runner_error_t, "requires run_with_vhost_vsock_fd"):
+            runner.run()
+        no_cid_runner = native_guest_runner_t(runner_config_t())
+        with self.assertRaisesRegex(runner_error_t, "CID is required"):
+            no_cid_runner.run_with_vhost_vsock_fd(999999)
 
 
 if __name__ == "__main__":

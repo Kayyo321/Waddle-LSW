@@ -75,3 +75,27 @@ start QEMU, swtpm, or a Windows guest. The real kernel read-lease tests require
 a Linux filesystem supporting leases and fail if exclusion or break handling
 is unavailable; they do not turn a failed protection check into a skip. This
 qualifies runner recoverability only and grants no installed-session credit.
+
+### Optional inherited VSOCK backend for private native runs
+
+The runner accepts `runner_config_t.guest_vsock_cid` only together with
+`run_with_vhost_vsock_fd(source_fd)`. CID is an integer in 3..0xfffffffe;
+reserved values and booleans are rejected. The caller retains its descriptor.
+The runner duplicates it, requires an actual character device with major 10,
+minor 241 and `O_RDWR`, and keeps the duplicate close-on-exec in the parent.
+Only QEMU receives that duplicate through explicit `pass_fds`; swtpm and
+preparation tools do not. Every success/error closes the runner's duplicate,
+including preparation or launch failure. QEMU's inherited descriptor remains
+owned by its supervised process until that process exits. No CID/fd pair keeps
+the existing boot-only argv unchanged. The runner performs no sudo, mknod,
+ACL edit, device policy edit, or global registry allocation.
+
+A caller may obtain the initial device descriptor through a scoped privileged
+open and SCM_RIGHTS handoff; the runner and its children must still execute as
+the ordinary user. Before selecting a CID inspect live VMs and registries;
+kernel rejection of a duplicate CID must fail this isolated launch rather than
+reconfigure another VM. Any manual run retains the selected CID, QEMU argv,
+protected-input checks and forced-shutdown result in its manifest. A reachable
+VSOCK family or backend is not evidence that Windows has its driver or an
+installed guest-exec listener. Installed-session qualification still requires
+the real guest command and feature tests to succeed.

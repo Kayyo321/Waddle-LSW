@@ -1144,9 +1144,19 @@ its uncompiled draft earns no credit until current acceptance passes.
     The actual waddle-session/Wayland/mapping entry and native VSOCK remain open.
     HEAD identifies this daemon integration/qualification commit.
 
-- **Commit `HEAD`**: `ci(interop): exercise native runner recoverability in hardware-free gates`
+- **Commit `544f94d`**: `ci(interop): exercise native runner recoverability in hardware-free gates`
   - **Task Impact**: +0% to TODO #34 (+0% overall; total18.00%).
   - **Summary**: Makes the 24 isolated runner contract/fault tests an interop-test
     prerequisite, including real kernel read-lease writer exclusion and break
     handling. Tests launch no VM or TPM and provide no installed-session credit.
     Local target passes; remote CI qualification remains required.
+
+- **Commit `HEAD`**: `test(interop): pass owned VSOCK backend into isolated native runner`
+  - **Task Impact**: +0% to TODO #6/#7/#34 (+0% overall; total18.00%).
+  - **Summary**: Adds an explicit CID/inherited-device-FD pair, validates the
+    actual read/write character device, duplicates it close-on-exec, passes only
+    that duplicate to QEMU and closes it on all paths. All 34 isolated runner
+    tests pass, including read-only/write-only rejection and failed-run cleanup.
+    Elevated inspection finds usable KVM/VSOCK nodes and a privileged backend-open
+    path; earlier sandbox-only missing-node observations do not establish a host
+    limitation. Private native VSOCK boot/listener qualification remains pending.

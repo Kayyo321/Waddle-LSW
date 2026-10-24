@@ -40,6 +40,10 @@ MaxPreparationCommandSeconds = 30.0
 ForcedCleanupBudgetSeconds = 8.0
 LeaseSafetyMarginSeconds = 5.0
 LeasePollSeconds = 0.1
+VhostVsockMajor = 10
+VhostVsockMinor = 241
+MinimumGuestVsockCid = 3
+MaximumGuestVsockCid = 0xFFFFFFFE
 
 
 class base_read_lease_t:
@@ -217,6 +221,7 @@ class runner_config_t:
     payload_files: tuple[Path, ...] = ()
     expected_payload_hashes: tuple[tuple[str, str], ...] = ()
     enable_test_result_channel: bool = False
+    guest_vsock_cid: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -291,6 +296,53 @@ def _verify_snapshot(base_dir: Path, expected: dict[str, Any]) -> None:
     actual = _protected_snapshot(base_dir)
     if actual != expected:
         raise runner_error_t("a protected base disk, UEFI vars, or TPM source changed during the run")
+
+
+def _validate_guest_vsock_cid(guest_cid: int | None) -> None:
+    """Validate one explicitly selected, non-reserved guest AF_VSOCK CID."""
+    if guest_cid is None:
+        return
+    if (isinstance(guest_cid, bool) or not isinstance(guest_cid, int) or
+            not MinimumGuestVsockCid <= guest_cid <= MaximumGuestVsockCid):
+        raise runner_error_t(
+            f"guest vsock CID must be an integer in {MinimumGuestVsockCid}..{MaximumGuestVsockCid}"
+        )
+
+
+def _duplicate_vhost_vsock_fd(source_fd: int) -> int:
+    """Duplicate an already-open /dev/vhost-vsock character device as CLOEXEC.
+
+    The caller retains its descriptor. This function owns and returns only the
+    duplicate; every validation failure closes that duplicate before raising.
+    Device identity is checked from fstat, never from a caller-provided path.
+    """
+    if isinstance(source_fd, bool) or not isinstance(source_fd, int) or source_fd < 0:
+        raise runner_error_t("vhost-vsock fd must be a nonnegative open descriptor")
+    try:
+        duplicate_fd = os.dup(source_fd)
+    except OSError as error:
+        raise runner_error_t(f"cannot duplicate vhost-vsock fd: {error}") from error
+    try:
+        os.set_inheritable(duplicate_fd, False)
+        info = os.fstat(duplicate_fd)
+        if not stat.S_ISCHR(info.st_mode):
+            raise runner_error_t("vhost-vsock fd must refer to a character device")
+        if (os.major(info.st_rdev), os.minor(info.st_rdev)) != (VhostVsockMajor, VhostVsockMinor):
+            raise runner_error_t("vhost-vsock fd must refer to character device 10:241")
+        if fcntl.fcntl(duplicate_fd, fcntl.F_GETFL) & os.O_ACCMODE != os.O_RDWR:
+            raise runner_error_t("vhost-vsock fd must be open for read/write access")
+        if os.get_inheritable(duplicate_fd):
+            raise runner_error_t("duplicated vhost-vsock fd must remain close-on-exec")
+        return duplicate_fd
+    except runner_error_t:
+        os.close(duplicate_fd)
+        raise
+    except OSError as error:
+        os.close(duplicate_fd)
+        raise runner_error_t(f"cannot validate duplicated vhost-vsock fd: {error}") from error
+    except BaseException:
+        os.close(duplicate_fd)
+        raise
 
 
 def _process_mount_devices(process_dir: Path) -> dict[int, tuple[int, int]]:
@@ -797,10 +849,34 @@ class native_guest_runner_t:
         self._result_channel: result_channel_t | None = None
         self._base_lease = base_read_lease_t()
         self._proc_visibility_skips: list[dict[str, int | str]] = []
+        self._vhost_vsock_fd: int | None = None
+
+    def run_with_vhost_vsock_fd(self, source_fd: int) -> dict[str, Any]:
+        """Run with an inherited vhost-vsock descriptor and close its owned duplicate.
+
+        The caller opens and owns ``source_fd`` (for example, by receiving it
+        over a scoped SCM_RIGHTS handoff). This method duplicates and validates
+        the device, passes only that duplicate to QEMU, and closes it on every
+        return or exception. The caller's descriptor is never closed or made
+        inheritable.
+        """
+        if self.config.guest_vsock_cid is None:
+            raise runner_error_t("guest vsock CID is required when supplying vhost-vsock fd")
+        if self._vhost_vsock_fd is not None:
+            raise runner_error_t("vhost-vsock fd is already owned by this runner")
+        _validate_guest_vsock_cid(self.config.guest_vsock_cid)
+        duplicate_fd = _duplicate_vhost_vsock_fd(source_fd)
+        self._vhost_vsock_fd = duplicate_fd
+        try:
+            return self.run()
+        finally:
+            self._vhost_vsock_fd = None
+            os.close(duplicate_fd)
 
     def prepare(self) -> dict[str, Any]:
         """Validate inputs, create private copies and an overlay, and retain evidence."""
         config = self.config
+        _validate_guest_vsock_cid(config.guest_vsock_cid)
         limits = ((config.run_seconds, 3600.0), (config.startup_seconds, 300.0),
                   (config.shutdown_seconds, 300.0))
         if any(not math.isfinite(value) or value <= 0 or value > maximum for value, maximum in limits):
@@ -878,15 +954,20 @@ class native_guest_runner_t:
                     "result_channel": ({"transport": "test-only guestfwd TCP", "port": ResultPort,
                                         "nonce": self._result_channel.nonce}
                                        if self._result_channel is not None else None),
+                    "guest_vsock": ({"guest_cid": config.guest_vsock_cid,
+                                     "host_device": "vhost-vsock 10:241"}
+                                    if config.guest_vsock_cid is not None else None),
                     "test_only": True, "interop_credit": False}
         (self.run_root / "run-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         return manifest
 
-    def _start_child(self, name: str, argv: Sequence[str], log_path: Path) -> Any:
+    def _start_child(self, name: str, argv: Sequence[str], log_path: Path,
+                     *, pass_fds: Sequence[int] = ()) -> Any:
         log = log_path.open("wb")
         try:
             process = self._popen(list(argv), stdin=subprocess.DEVNULL, stdout=log,
-                                  stderr=subprocess.STDOUT, close_fds=True)
+                                  stderr=subprocess.STDOUT, close_fds=True,
+                                  pass_fds=tuple(pass_fds))
         except BaseException:
             log.close()
             raise
@@ -957,6 +1038,13 @@ class native_guest_runner_t:
                 f"unix:{root / 'qmp.sock'},server=on,wait=off", "-D", str(root / "qemu.log"), "-no-reboot"]
         if self.config.payload_files:
             argv.extend(["-drive", f"file={root / 'test-payload.iso'},media=cdrom,readonly=on,format=raw"])
+        if self.config.guest_vsock_cid is not None:
+            if self._vhost_vsock_fd is None:
+                raise runner_error_t("guest vsock requires an owned vhost-vsock fd")
+            _validate_guest_vsock_cid(self.config.guest_vsock_cid)
+            argv.extend(["-device",
+                         f"vhost-vsock-pci,guest-cid={self.config.guest_vsock_cid},"
+                         f"vhostfd={self._vhost_vsock_fd}"])
         if self._result_channel is not None:
             argv.extend(["-chardev", f"socket,id=interop_result,path={self._result_channel.path},server=off,wait=off",
                          "-netdev", f"user,id=interop_guestnet,restrict=on,guestfwd=tcp:10.0.2.100:{ResultPort}-chardev:interop_result",
@@ -1053,6 +1141,11 @@ class native_guest_runner_t:
         """Run one bounded boot observation and retain its private evidence."""
         if self.run_root is not None:
             raise runner_error_t("runner instances are single-use")
+        _validate_guest_vsock_cid(self.config.guest_vsock_cid)
+        if self.config.guest_vsock_cid is not None and self._vhost_vsock_fd is None:
+            raise runner_error_t("guest vsock CID requires run_with_vhost_vsock_fd")
+        if self.config.guest_vsock_cid is None and self._vhost_vsock_fd is not None:
+            raise runner_error_t("vhost-vsock fd requires an explicit guest CID")
         try:
             manifest = self.prepare()
         except BaseException as error:
@@ -1079,7 +1172,9 @@ class native_guest_runner_t:
             tpm_process, tpm_socket = self._start_swtpm()
             self._revalidate_launch_inputs(manifest)
             self._base_lease.check()
-            qemu_process = self._start_child("qemu", self._qemu_argv(tpm_socket), root / "qemu-console.log")
+            qemu_pass_fds = (() if self._vhost_vsock_fd is None else (self._vhost_vsock_fd,))
+            qemu_process = self._start_child("qemu", self._qemu_argv(tpm_socket),
+                                             root / "qemu-console.log", pass_fds=qemu_pass_fds)
             self._qmp = self._connect_qmp(qemu_process)
             status = self._qmp.execute("query-status")
             topology = self._qmp.execute("query-pci")
