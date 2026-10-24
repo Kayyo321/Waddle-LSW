@@ -31,12 +31,27 @@
     {
       "path": "impl/seamless-interop/evidence/slot_runtime_2026_10_24/seamless_slot_runtime_make.log",
       "sha256": "cba2d1883d533edb4de1b6812ba98a4cdfa92e6648e8b3f3679fa6dc20d95043"
+    },
+    {
+      "path": "impl/seamless-interop/evidence/slot_runtime_2026_10_24/ci_40109278457.json",
+      "sha256": "3f237e343749e6e49e59956f54b5d3d09c3712bef7646fcea292b091a8434f79"
     }
   ],
   "limits": [
     "Pure bookkeeping only; does not access or own a mapping or perform native atomics.",
-    "Windows cross-build succeeded; actual Windows execution is pending hosted CI.",
     "No native compositor/capture/session teardown acceptance."
   ],
-  "progress_credit": 0
+  "progress_credit": {
+    "task": 5,
+    "delta_percent": 10,
+    "overall_delta_percent": 0.3
+  },
+  "ci": {
+    "run_id": 40109278457,
+    "head_sha": "c6ed0b67aedefc35d916e6f7a1684d7812ab974a",
+    "status": "completed",
+    "conclusion": "success",
+    "native_windows_executed": true,
+    "url": "https://github.com/Kayyo321/Waddle-LSW/actions/runs/40109278457"
+  }
 }

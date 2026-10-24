@@ -32,7 +32,7 @@ acceptance remain pending.
 | #2  | Verify audio passthrough on the existing pipeline: evidence script + manual run recorded in VERIFICATION_M0.md | In Progress | 3% | 60% | Script, fixture and template done; **native pipeline readiness and hardware run pending** (`scripts/interop_verify_m0.sh audio`) |
 | #3  | Verify a guest window appears like a native window on GNOME + KDE; fix defects found (title updates, CSD negotiation) | In Progress | 3% | 60% | Configure listener, staged modes and server-decoration fallback fixed; **GNOME and KDE native hardware runs pending** |
 | #4  | Interop protocol v2 header + Zig codec, Hello/capabilities, chunked transfers | Done | 4% | 100% | 19 tests; 97.23% branch / 96.65% line; sanitizers clean; Windows ABI link; bounded app-key helper |
-| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 50% | Snapshot, heap, C ABI and native CPU atomics accepted; slot pins/growth/runtime and integrated qualification remain open |
+| #5  | IVSHMEM layout v3 (slot heap, 64 windows, 8 audio rings) | In Progress | 3% | 60% | Snapshot, heap, C ABI, native CPU atomics and pure slot pins/growth/drain accepted; live mapping/session integration and qualification remain open |
 | #6  | Guest session agent skeleton, guest-local code signing + UIAccess install, logon autostart, versioned deploy/update | Pending | 4% | 0% | Waits on #4 |
 | #7  | `waddle-session` host client, module extraction from av_wayland.c, singleton, reconnect, autostart | Pending | 4% | 0% | Waits on #4, #5 |
 | #8  | VM devices: explicit network + CUPS guestfwd, qemu-xhci, PipeWire audiodev, QEMU configure flags, new config keys | In Progress | 3% | 65% | Config, CLI, persistence, device argv and pinned source build accepted; VM lifecycle/native gates and audio routing remain open |
@@ -63,7 +63,7 @@ acceptance remain pending.
 | #33 | Integration manifest + install/remove/repair/status/migrate, TryExec self-hiding | In Progress | 3% | 15% | Owned bounded schema codec accepted; journal/artifact API, commands and removal qualification remain pending |
 | #34 | End-to-end acceptance matrix (GNOME/KDE/Sway), CI workflow, coverage/sanitizer gates | In Progress | 4% | 0% | Foundation CI extended; native CPU units pass; full integrated acceptance waits on all |
 
-**Total Feature Completion**: `14.10%`
+**Total Feature Completion**: `14.40%`
 
 ## Active Foundation Subtasks and Ownership
 
@@ -72,7 +72,7 @@ Design assignments earn no credit; only accepted implementation is recorded.
 
 | Task | Acceptance allocation | Current accepted subtasks |
 |---|---|---|
-| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration 15%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; Linux/Windows coverage and tests pass |
+| #5 | Snapshot validator/geometry/audio bounds 20%; bitmap allocator 20%; Pure C ABI wrappers 5%; native atomic adapters/proof 5%; pure pin/growth/drain bookkeeping 10%; live runtime integration 15%; coverage/sanitizer/stress/native proof 25% | Snapshot20%; heap20%; C ABI5%; native CPU atomic adapters5%; pure pin/growth/drain10%; Linux/Windows coverage and tests pass |
 | #8 | Config parse/validate/edit-reset 25%; typed CLI get/set/reset 5%; export/import/clone persistence 5%; QEMU argv 15%; QEMU build features 15%; VM lifecycle/device integration 15%; regression/native qualification 20% | Config25%; typed CLI5%; persistence5%; QEMU argv15%; pinned source build15%; focused startup gates pass |
 | #9 | QEMU many-mount API 10%; all-mount process lifecycle 30%; guest drive/tag integration 20%; root fallback removal 10%; canonical/symlink translation 10%; fault/restart/native qualification 20% | Root fallback10%; QEMU API10%; all-mount supervisor30%; canonical/symlink10%; whole-module100% line/branch, leak-enabled sanitizers and full host tests pass |
 | #33 | Bounded schema codec 15%; journal/lock/recovery engine 30%; artifact ownership/backup API 20%; integrated commands/all producers 20%; crash/native/full-removal qualification 15% | Bounded schema codec 15%; allocator-failure tests and 92.75% branch / 100% line |
@@ -516,7 +516,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     paths unchanged. Clarifies menu roots and writer epoch requirements.
     Planning and pending unaccepted source add no credit. Source commitd547f5b contains this design/ownership update.
 
-- **Commit `HEAD`**: `feat(interop): track slot pins growth and proof-gated drain`
+- **Commit `c6ed0b6`**: `feat(interop): track slot pins growth and proof-gated drain`
   - **Task Impact**: +0% to TODO #5/#34 (+0% overall; total14.10%).
   - **Summary**: Adds fixed, allocation-free window/triple ownership, transactional
     growth, exact release pins, captured-epoch writer operations, retirement
@@ -526,5 +526,14 @@ its uncompiled draft earns no credit until current acceptance passes.
     actual Windows execution remains pending, so the10% pure bookkeeping
     milestone receives no credit yet. The previous25% runtime allocation is
     split into10% pure bookkeeping and15% live integration; weights unchanged.
-    [Qualification](slot_runtime_qualification_2026_10_24.json). HEAD identifies
-    this containing implementation commit.
+    [Qualification](slot_runtime_qualification_2026_10_24.json). Source commitc6ed0b6 contains this implementation.
+
+- **Commit `HEAD`**: `docs(interop): qualify slot bookkeeping on Linux and Windows`
+  - **Task Impact**: +10% to TODO #5 (+0.30% overall; total14.40%).
+  - **Summary**: Accepts the pure pin/growth/drain bookkeeping milestone from
+    c6ed0b6 after run40109278457 passes Linux gates and actual Windows execution
+    on that exact commit. Production coverage and tests remain as recorded in
+    [the qualification receipt](slot_runtime_qualification_2026_10_24.json).
+    Live mapping/capture/session integration and the separate15% allocation
+    remain open. This is CPU module qualification, not compositor acceptance.
+    HEAD identifies this containing qualification commit.
