@@ -3488,3 +3488,18 @@ real bad-caller mapping preflights from unexpected post-preflight ABI statuses.
 No blanket error-tag allowlist is permitted after operation preflight. This
 corrects retry-versus-abort semantics independently of coverage and supersedes
 more general wording in linux_socket_owner.md.
+
+
+#### 8.23.2 Explicit poll snapshot reserved bytes
+
+The local poll struct's32-byte layout now names the four alignment bytes at
+offset20 as uint32_t reserved_zero_2. Cookie remains offset24, size32/align8;
+fd/events/timeout/immediate/reserved offsets and every existing struct/wire
+layout remain unchanged. Both reserved fields are zero on successful output.
+This removes unnamed padding so deterministic complete output bytes do not
+depend on C structure-assignment padding semantics. The owner already zeroes
+staged output before setting fields. Guard snapshots must use memcpy for exact
+object representations. Header static size assertions and explicit offsets,
+byte-preservation tests and fresh source hashes qualify this local amendment.
+No public owner exists outside this unmerged feature and no socket credit is
+awarded by this header correction.

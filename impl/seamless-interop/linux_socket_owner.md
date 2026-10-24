@@ -123,3 +123,8 @@ requiring close and PeerFailure with unchanged caller event output. Guest
 false/layout/epoch errors and owner wrong phase remain local preflights; Host
 failed validation remains forwarded evidence. Creation alone maps its documented
 argument/allocation results before fd transfer.
+
+The poll snapshot explicitly names offset20..23 as reserved_zero_2, per
+IMPL_DESC8.23.2. All32 bytes are covered by named fields; cookie offset24 is
+unchanged. Both reserved words are zero. Other local structs already contain
+no unnamed alignment holes on the supported64-bit ABI.

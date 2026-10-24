@@ -107,6 +107,7 @@ typedef struct interop_linux_socket_poll_t {
     uint32_t timeout_ms; /**< Recommended timeout; never above 100 ms. */
     uint32_t immediate_work; /**< Exactly 0 or 1. */
     uint32_t reserved_zero; /**< Always zero. */
+    uint32_t reserved_zero_2; /**< Always zero; occupies the old implicit alignment padding. */
     uint64_t poll_cookie; /**< Latest nonzero single-use snapshot generation. */
 } interop_linux_socket_poll_t;
 

@@ -1006,7 +1006,7 @@ its uncompiled draft earns no credit until current acceptance passes.
     dispatch. Source stays unaccepted while Luna fixes/expands tests. No
     observer/native/socket-owner credit is granted. HEAD is this audit commit.
 
-- **Commit `HEAD`**: `docs(interop): require contextual socket owner failure recovery`
+- **Commit `f6b347e`**: `docs(interop): require contextual socket owner failure recovery`
   - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total17.80%).
   - **Summary**: Proves sole-owner phase/role invariants and moves legitimate
     mapping errors before ABI calls; any escaped mapping/drain ABI error must
@@ -1016,3 +1016,11 @@ its uncompiled draft earns no credit until current acceptance passes.
     latest91.12% lines81.02% branches still fails90% branch gate, so source remains
     unaccepted. Parallel runtime/guard/reachability lanes continue.
     HEAD identifies this recovery-contract commit.
+
+- **Commit `HEAD`**: `fix(interop): name reserved socket poll alignment bytes`
+  - **Task Impact**: +0% to TODO #7/#34 (+0% overall; total17.80%).
+  - **Summary**: Names poll snapshot offset20..23 as a zero reserved word,
+    retaining size32, align8 and cookie offset24. Deterministic complete outputs
+    now avoid unnamed C padding. Static size/offset checks pass; draft owner
+    still requires90% branches and full qualification before credit.
+    HEAD identifies this local interface correction commit.
